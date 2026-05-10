@@ -1,0 +1,8 @@
+{
+  "_comment": "Add the 'skopos' entry into the 'mcpServers' object in ~/.kiro/settings/mcp.json (global) or .kiro/settings/mcp.json (project-level)",
+  "mcpServers": {
+    "skopos": {
+      "url": "http://localhost:9000/mcp"
+    }
+  }
+}
