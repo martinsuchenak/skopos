@@ -28,8 +28,8 @@ Create `~/bin/gemini-skopos` (or any name you prefer):
 
 ```bash
 #!/usr/bin/env bash
-HOOKS="$(dirname "$(readlink -f "$0")")/../path/to/docs/integrations/gemini-cli/hooks.sh"
-# Replace the above path with the absolute path to hooks.sh
+# Replace this with the absolute path to hooks.sh in your skopos repo:
+HOOKS="/absolute/path/to/skopos/docs/integrations/gemini-cli/hooks.sh"
 
 bash "$HOOKS" start
 gemini "$@"
