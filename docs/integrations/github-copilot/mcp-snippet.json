@@ -1,0 +1,9 @@
+{
+  "_comment": "Add the 'skopos' entry under 'servers' in ~/Library/Application Support/Code/User/mcp.json (global) or .vscode/mcp.json (workspace-level)",
+  "servers": {
+    "skopos": {
+      "type": "http",
+      "url": "http://localhost:9000/mcp"
+    }
+  }
+}
