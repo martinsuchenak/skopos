@@ -1,0 +1,44 @@
+{
+  "_comment": "Merge this into ~/.claude/settings.json or .claude/settings.json. Replace SKOPOS_HOOKS_PATH with the absolute path to docs/integrations/claude-code/hooks.sh",
+  "mcpServers": {
+    "skopos": {
+      "type": "http",
+      "url": "http://localhost:9000/mcp"
+    }
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash SKOPOS_HOOKS_PATH pre-tool"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash SKOPOS_HOOKS_PATH post-tool"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash SKOPOS_HOOKS_PATH stop"
+          }
+        ]
+      }
+    ]
+  }
+}
