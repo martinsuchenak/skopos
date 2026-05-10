@@ -1,0 +1,10 @@
+{
+  "_comment": "Add the 'skopos' entry under mcpServers in ~/.gemini/settings.json",
+  "mcpServers": {
+    "skopos": {
+      "url": "http://localhost:9000/mcp",
+      "type": "http",
+      "trust": true
+    }
+  }
+}
