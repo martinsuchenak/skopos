@@ -38,6 +38,9 @@ check "hash stability" "$id1" "$id2"
 # Test 4: hash is 12 chars
 check "hash length" "${#id1}" "12"
 
+# Test 5: hash is persisted to .skopos-session file
+check "file written after hash" "$(cat "$TMPDIR/.skopos-session")" "$id1"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -17,7 +17,7 @@ skopos_session_id() {
   fi
 
   local id
-  id=$(printf '%s-%s' "$workspace" "$(date +%Y-%m-%d)" | shasum -a 256 | cut -c1-12)
-  echo "$id" > "$session_file"
+  id=$(printf '%s-%s' "$workspace" "$(date +%Y-%m-%d)" | (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-12)
+  echo "$id" > "$session_file" 2>/dev/null || true
   echo "$id"
 }
