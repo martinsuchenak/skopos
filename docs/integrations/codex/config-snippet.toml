@@ -1,0 +1,4 @@
+# Add this block to ~/.codex/config.toml
+[mcp_servers.skopos]
+enabled = true
+url = "http://localhost:9000/mcp"
