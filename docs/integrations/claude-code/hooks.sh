@@ -7,13 +7,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../shared/skopos-session.sh
-source "$SCRIPT_DIR/../shared/skopos-session.sh"
+source "$SCRIPT_DIR/../shared/skopos-session.sh" 2>/dev/null || true
 
 EVENT="${1:-stop}"
 SKOPOS_SERVER_URL="${SKOPOS_SERVER_URL:-http://localhost:8080}"
 SKOPOS_API_KEY="${SKOPOS_API_KEY:-}"
 AGENT_ID="claude-code-$(hostname -s)"
-SESSION_ID="$(skopos_session_id "$PWD")"
+SESSION_ID="$(skopos_session_id "$PWD" 2>/dev/null)" || SESSION_ID="unknown-session"
 
 INPUT=$(cat)
 
@@ -22,7 +22,7 @@ case "$EVENT" in
     TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.tool_name // "unknown"' 2>/dev/null || echo "unknown")
     skopos report \
       --server-url "$SKOPOS_SERVER_URL" \
-      --api-key "$SKOPOS_API_KEY" \
+      ${SKOPOS_API_KEY:+--api-key "$SKOPOS_API_KEY"} \
       --agent-id "$AGENT_ID" \
       --agent-type "claude-code" \
       --workspace "$PWD" \
@@ -34,7 +34,7 @@ case "$EVENT" in
     TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.tool_name // "unknown"' 2>/dev/null || echo "unknown")
     skopos report \
       --server-url "$SKOPOS_SERVER_URL" \
-      --api-key "$SKOPOS_API_KEY" \
+      ${SKOPOS_API_KEY:+--api-key "$SKOPOS_API_KEY"} \
       --agent-id "$AGENT_ID" \
       --agent-type "claude-code" \
       --workspace "$PWD" \
@@ -45,12 +45,16 @@ case "$EVENT" in
   stop)
     skopos report \
       --server-url "$SKOPOS_SERVER_URL" \
-      --api-key "$SKOPOS_API_KEY" \
+      ${SKOPOS_API_KEY:+--api-key "$SKOPOS_API_KEY"} \
       --agent-id "$AGENT_ID" \
       --agent-type "claude-code" \
       --workspace "$PWD" \
       --session-id "$SESSION_ID" \
       --status succeeded \
       --message "session complete" || true
+    ;;
+  *)
+    # Unknown event — log to stderr but always exit 0
+    echo "skopos-hook: unknown event '$EVENT'" >&2 || true
     ;;
 esac
