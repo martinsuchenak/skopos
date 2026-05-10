@@ -9,10 +9,10 @@ import (
 	"strings"
 
 	"github.com/fortix/go-libs/netx/dns"
-	"github.com/paularlott/logger"
-	_ "modernc.org/sqlite"
 	xdaldb "github.com/martinsuchenak/xdal/pkg/sqlite"
 	"github.com/martinsuchenak/xdal/pkg/xdal"
+	"github.com/paularlott/logger"
+	_ "modernc.org/sqlite"
 )
 
 //go:embed schema.sql

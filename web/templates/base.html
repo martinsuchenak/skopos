@@ -4,17 +4,86 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{.Title}} - skopos</title>
-    <link rel="stylesheet" href="/static/dist/style.css">
+    <link rel="stylesheet" href="/static/style.css">
 </head>
-<body x-data="app()" class="min-h-screen bg-gray-100">
-    <nav class="bg-white shadow">
-        <div class="max-w-7xl mx-auto px-4 py-3">
-            <h1 class="text-xl font-bold">skopos</h1>
+<body x-data="app()" x-init="init()" class="min-h-screen bg-zinc-950 text-zinc-100">
+    <nav class="border-b border-zinc-800 bg-zinc-950/95">
+        <div class="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
+            <div>
+                <h1 class="text-xl font-semibold">skopos</h1>
+                <p class="text-sm text-zinc-400">Agent status dashboard</p>
+            </div>
+            <button type="button" @click="refresh()" class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-200 hover:border-cyan-500 hover:text-white">Refresh</button>
         </div>
     </nav>
-    <main class="max-w-7xl mx-auto px-4 py-6">
-        {{block "content" .}}{{end}}
+    <main class="mx-auto grid max-w-7xl gap-6 px-4 py-6 lg:grid-cols-[360px_1fr]">
+        <section class="min-h-[480px] border-r border-zinc-800 pr-0 lg:pr-6">
+            <div class="mb-4 flex items-center justify-between">
+                <h2 class="text-sm font-semibold uppercase tracking-wide text-zinc-400">Sessions</h2>
+                <span class="text-sm text-zinc-500" x-text="sessions.length"></span>
+            </div>
+            <div class="space-y-2">
+                <template x-for="session in sessions" :key="session.id">
+                    <button type="button" @click="selectSession(session.id)" class="w-full rounded border p-3 text-left transition" :class="selectedSessionId === session.id ? 'border-cyan-500 bg-cyan-950/40' : 'border-zinc-800 bg-zinc-900 hover:border-zinc-700'">
+                        <div class="flex items-center justify-between gap-3">
+                            <span class="truncate text-sm font-medium" x-text="session.title"></span>
+                            <span class="shrink-0 rounded px-2 py-1 text-xs" :class="statusClass(session.status)" x-text="session.status"></span>
+                        </div>
+                        <div class="mt-2 flex items-center justify-between text-xs text-zinc-500">
+                            <span class="truncate" x-text="session.workspace"></span>
+                            <span x-text="`${session.agent_count} agents`"></span>
+                        </div>
+                    </button>
+                </template>
+            </div>
+            <p x-show="!loading && sessions.length === 0" class="rounded border border-zinc-800 bg-zinc-900 p-4 text-sm text-zinc-400">No reports yet.</p>
+        </section>
+
+        <section class="min-w-0">
+            <div class="mb-5 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <h2 class="text-2xl font-semibold" x-text="selectedSession?.title || 'No session selected'"></h2>
+                    <p class="mt-1 text-sm text-zinc-400" x-text="selectedSession?.workspace || 'Reports will appear here as agents check in.'"></p>
+                </div>
+                <span x-show="selectedSession" class="rounded px-2 py-1 text-xs" :class="statusClass(selectedSession?.status)" x-text="selectedSession?.status"></span>
+            </div>
+
+            <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                <template x-for="agent in selectedSession?.agents || []" :key="agent.agent_id">
+                    <article class="rounded border border-zinc-800 bg-zinc-900 p-4">
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="min-w-0">
+                                <h3 class="truncate text-sm font-semibold" x-text="agent.agent_id"></h3>
+                                <p class="text-xs text-zinc-500" x-text="agent.agent_type"></p>
+                            </div>
+                            <span class="rounded px-2 py-1 text-xs" :class="statusClass(agent.status)" x-text="agent.status"></span>
+                        </div>
+                        <div class="mt-4 h-2 overflow-hidden rounded bg-zinc-800">
+                            <div class="h-full bg-cyan-400" :style="`width: ${agent.progress ?? 0}%`"></div>
+                        </div>
+                        <p class="mt-3 line-clamp-2 text-sm text-zinc-300" x-text="agent.message || 'No message'"></p>
+                        <pre x-show="agent.snippet" class="mt-3 max-h-24 overflow-auto rounded bg-zinc-950 p-3 text-xs text-zinc-400" x-text="agent.snippet"></pre>
+                    </article>
+                </template>
+            </div>
+
+            <div class="mt-8">
+                <h3 class="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">Events</h3>
+                <div class="space-y-2">
+                    <template x-for="event in selectedSession?.events || []" :key="event.id">
+                        <article class="rounded border border-zinc-800 bg-zinc-900 p-3">
+                            <div class="flex flex-wrap items-center gap-2 text-sm">
+                                <span class="font-medium" x-text="event.agent_id"></span>
+                                <span class="rounded px-2 py-1 text-xs" :class="statusClass(event.status)" x-text="event.status"></span>
+                                <span class="text-xs text-zinc-500" x-text="formatTime(event.created_at)"></span>
+                            </div>
+                            <p class="mt-2 text-sm text-zinc-300" x-text="event.message"></p>
+                        </article>
+                    </template>
+                </div>
+            </div>
+        </section>
     </main>
-    <script src="/static/dist/app.js"></script>
+    <script type="module" src="/static/app.js"></script>
 </body>
 </html>

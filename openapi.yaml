@@ -28,32 +28,46 @@ paths:
       responses:
         "200":
           description: Current metrics
-  /api/samples:
-    get:
-      summary: List samples
-      operationId: listSamples
-      responses:
-        "200":
-          description: List of samples
+  /api/reports:
     post:
-      summary: Create a sample
-      operationId: createSample
+      summary: Report an agent status update
+      operationId: reportStatus
+      security:
+        - ApiKeyAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                name:
-                  type: string
+              $ref: "#/components/schemas/ReportInput"
       responses:
         "201":
-          description: Sample created
-  /api/samples/{id}:
+          description: Report accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportResult"
+        "400":
+          description: Invalid report
+        "401":
+          description: Unauthorized
+  /api/sessions:
     get:
-      summary: Get a sample by ID
-      operationId: getSample
+      summary: List sessions
+      operationId: listSessions
+      responses:
+        "200":
+          description: Session summaries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SessionSummary"
+  /api/sessions/{id}:
+    get:
+      summary: Get a session by ID
+      operationId: getSession
       parameters:
         - name: id
           in: path
@@ -62,6 +76,165 @@ paths:
             type: string
       responses:
         "200":
-          description: Sample found
+          description: Session detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionDetail"
         "404":
-          description: Sample not found
+          description: Session not found
+  /api/sessions/{id}/events:
+    get:
+      summary: List session events
+      operationId: listSessionEvents
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Event"
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  schemas:
+    ReportInput:
+      type: object
+      required:
+        - agent_id
+        - agent_type
+        - workspace
+        - status
+      properties:
+        session_id:
+          type: string
+        agent_id:
+          type: string
+        agent_type:
+          type: string
+        workspace:
+          type: string
+        status:
+          $ref: "#/components/schemas/Status"
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        step_current:
+          type: integer
+          minimum: 0
+        step_total:
+          type: integer
+          minimum: 0
+        message:
+          type: string
+        snippet:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+    ReportResult:
+      type: object
+      properties:
+        session_id:
+          type: string
+        event_id:
+          type: string
+    SessionSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        workspace:
+          type: string
+        status:
+          $ref: "#/components/schemas/Status"
+        agent_count:
+          type: integer
+        started_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        agents:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentState"
+    SessionDetail:
+      allOf:
+        - $ref: "#/components/schemas/SessionSummary"
+        - type: object
+          properties:
+            events:
+              type: array
+              items:
+                $ref: "#/components/schemas/Event"
+    AgentState:
+      type: object
+      properties:
+        session_id:
+          type: string
+        agent_id:
+          type: string
+        agent_type:
+          type: string
+        workspace:
+          type: string
+        status:
+          $ref: "#/components/schemas/Status"
+        progress:
+          type: integer
+        step_current:
+          type: integer
+        step_total:
+          type: integer
+        message:
+          type: string
+        snippet:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        updated_at:
+          type: string
+          format: date-time
+    Event:
+      allOf:
+        - $ref: "#/components/schemas/AgentState"
+        - type: object
+          properties:
+            id:
+              type: string
+            created_at:
+              type: string
+              format: date-time
+    Status:
+      type: string
+      enum:
+        - pending
+        - thinking
+        - planning
+        - running
+        - editing
+        - testing
+        - waiting
+        - blocked
+        - paused
+        - handoff
+        - succeeded
+        - failed
+        - cancelled

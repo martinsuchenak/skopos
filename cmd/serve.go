@@ -10,6 +10,8 @@ import (
 	logslog "github.com/paularlott/logger/slog"
 
 	"github.com/martinsuchenak/skopos/cmd/routes"
+	"github.com/martinsuchenak/skopos/internal/db"
+	"github.com/martinsuchenak/skopos/internal/status"
 
 	mcpserver "github.com/martinsuchenak/skopos/cmd/mcp"
 	// go-scaffolder:serve-imports
@@ -38,6 +40,19 @@ func serveCmd() *cli.Command {
 				ConfigPath:   []string{"server.port"},
 				EnvVars:      []string{"SERVER_PORT"},
 			},
+			&cli.StringFlag{
+				Name:         "database-path",
+				DefaultValue: "skopos.db",
+				Usage:        "SQLite database path",
+				ConfigPath:   []string{"database.path"},
+				EnvVars:      []string{"DATABASE_PATH"},
+			},
+			&cli.StringFlag{
+				Name:       "api-key",
+				Usage:      "API key required for write endpoints",
+				ConfigPath: []string{"auth.api_key"},
+				EnvVars:    []string{"SKOPOS_API_KEY"},
+			},
 		},
 		// go-scaffolder:serve-flags
 		Run: func(ctx context.Context, cmd *cli.Command) error {
@@ -48,11 +63,23 @@ func serveCmd() *cli.Command {
 			})
 			log.Info("starting skopos service")
 
-			mcpserver.StartMCPServer(log)
+			conn, err := db.Connect(log, "localhost:0", "", "", cmd.GetString("database-path"))
+			if err != nil {
+				return err
+			}
+			defer conn.SQL.Close()
+			if err := db.RunMigrations(conn.SQL); err != nil {
+				return err
+			}
+
+			statusService := status.NewService(status.NewStorage(conn.SQL))
+			statusHandler := status.NewHandler(statusService, cmd.GetString("api-key"))
+
+			mcpserver.StartMCPServer(log, statusService)
 			// go-scaffolder:serve-init
 
 			mux := http.NewServeMux()
-			routes.RegisterRoutes(mux)
+			routes.RegisterRoutes(mux, statusHandler)
 
 			addr := fmt.Sprintf("%s:%d", cmd.GetString("server-host"), cmd.GetInt("server-port"))
 			log.Info("starting HTTP server", "addr", addr)
