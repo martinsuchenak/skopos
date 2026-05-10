@@ -31,3 +31,6 @@ go.work.sum
 Thumbs.db
 # Frontend
 web/node_modules/
+
+# Skopos session ID files (auto-generated per workspace)
+.skopos-session
