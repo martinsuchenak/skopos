@@ -1,0 +1,67 @@
+openapi: "3.1.0"
+info:
+  title: skopos
+  version: "1.0.0"
+  description: API for skopos service
+servers:
+  - url: http://localhost:8080
+    description: Local development
+paths:
+  /health:
+    get:
+      summary: Health check
+      operationId: healthCheck
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+  /metrics:
+    get:
+      summary: Application metrics
+      operationId: getMetrics
+      responses:
+        "200":
+          description: Current metrics
+  /api/samples:
+    get:
+      summary: List samples
+      operationId: listSamples
+      responses:
+        "200":
+          description: List of samples
+    post:
+      summary: Create a sample
+      operationId: createSample
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+      responses:
+        "201":
+          description: Sample created
+  /api/samples/{id}:
+    get:
+      summary: Get a sample by ID
+      operationId: getSample
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Sample found
+        "404":
+          description: Sample not found

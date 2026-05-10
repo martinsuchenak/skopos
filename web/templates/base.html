@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}} - skopos</title>
+    <link rel="stylesheet" href="/static/dist/style.css">
+</head>
+<body x-data="app()" class="min-h-screen bg-gray-100">
+    <nav class="bg-white shadow">
+        <div class="max-w-7xl mx-auto px-4 py-3">
+            <h1 class="text-xl font-bold">skopos</h1>
+        </div>
+    </nav>
+    <main class="max-w-7xl mx-auto px-4 py-6">
+        {{block "content" .}}{{end}}
+    </main>
+    <script src="/static/dist/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+app_name: skopos
+output_dir: ""
+module_path: github.com/martinsuchenak/skopos
+features:
+    - api
+    - mcp
+    - ui
+    - db
+    - cache
+    - docker
+    - nomad
+db_type: sqlite
+use_xdal: true
+cache_type: valkey

@@ -1,0 +1,53 @@
+version: '3'
+
+vars:
+  APP_NAME: skopos
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
+  DATE:
+    sh: date -u '+%Y-%m-%dT%H:%M:%SZ'
+  GO_CACHE_DIR:
+    sh: pwd
+  LDFLAGS: -s -w -X github.com/martinsuchenak/skopos/build.Version={{.VERSION}} -X github.com/martinsuchenak/skopos/build.Date={{.DATE}}
+
+tasks:
+  default:
+    cmds:
+      - task --list
+
+  build:
+    desc: Build the application
+    cmds:
+      - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "{{.LDFLAGS}}" -o bin/{{.APP_NAME}}-linux-amd64 .
+      - CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "{{.LDFLAGS}}" -o bin/{{.APP_NAME}}-linux-arm64 .
+      - CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "{{.LDFLAGS}}" -o bin/{{.APP_NAME}}-darwin-amd64 .
+      - CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "{{.LDFLAGS}}" -o bin/{{.APP_NAME}}-darwin-arm64 .
+
+  build-local:
+    desc: Build for local platform
+    cmds:
+      - CGO_ENABLED=0 go build -ldflags "{{.LDFLAGS}}" -o bin/{{.APP_NAME}} .
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test ./... -v -count=1
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf bin/
+      - go clean
+
+  lint:
+    desc: Run linter
+    cmds:
+      - GOCACHE={{.GO_CACHE_DIR}}/.cache/go-build golangci-lint run .
+
+  frontend-build:
+    desc: Build frontend assets
+    dir: web
+    cmds:
+      - bun install
+      - bun run build
+  # go-scaffolder:taskfile-tasks
