@@ -10,6 +10,14 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func TestModelsHaveStuckAndOrphanedStatus(t *testing.T) {
+	_ = StatusStuck
+	_ = StatusOrphaned
+	var state AgentState
+	_ = state.OriginalStatus
+	_ = state.StuckAt
+}
+
 func testStorage(t *testing.T) *Storage {
 	t.Helper()
 

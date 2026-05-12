@@ -18,6 +18,8 @@ const (
 	StatusSucceeded Status = "succeeded"
 	StatusFailed    Status = "failed"
 	StatusCancelled Status = "cancelled"
+	StatusStuck     Status = "stuck"
+	StatusOrphaned  Status = "orphaned"
 )
 
 type ReportInput struct {
@@ -64,18 +66,20 @@ type Agent struct {
 }
 
 type AgentState struct {
-	SessionID   string         `json:"session_id"`
-	AgentID     string         `json:"agent_id"`
-	AgentType   string         `json:"agent_type"`
-	Workspace   string         `json:"workspace"`
-	Status      Status         `json:"status"`
-	Progress    *int           `json:"progress,omitempty"`
-	StepCurrent *int           `json:"step_current,omitempty"`
-	StepTotal   *int           `json:"step_total,omitempty"`
-	Message     string         `json:"message"`
-	Snippet     string         `json:"snippet"`
-	Metadata    map[string]any `json:"metadata"`
-	UpdatedAt   time.Time      `json:"updated_at"`
+	SessionID      string         `json:"session_id"`
+	AgentID        string         `json:"agent_id"`
+	AgentType      string         `json:"agent_type"`
+	Workspace      string         `json:"workspace"`
+	Status         Status         `json:"status"`
+	Progress       *int           `json:"progress,omitempty"`
+	StepCurrent    *int           `json:"step_current,omitempty"`
+	StepTotal      *int           `json:"step_total,omitempty"`
+	Message        string         `json:"message"`
+	Snippet        string         `json:"snippet"`
+	Metadata       map[string]any `json:"metadata"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+	OriginalStatus *Status        `json:"original_status,omitempty"`
+	StuckAt        *time.Time     `json:"stuck_at,omitempty"`
 }
 
 type Event struct {
