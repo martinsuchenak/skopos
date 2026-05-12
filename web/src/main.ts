@@ -20,6 +20,8 @@ type AgentState = {
   progress?: number;
   message: string;
   snippet: string;
+  original_status?: string;
+  stuck_at?: string;
 };
 
 type Event = AgentState & {
@@ -80,12 +82,15 @@ window.app = () => ({
       case 'failed':
       case 'blocked':
         return 'bg-rose-500/15 text-rose-300';
+      case 'orphaned':
+        return 'bg-rose-500/15 text-rose-200';
       case 'testing':
       case 'running':
       case 'editing':
         return 'bg-cyan-500/15 text-cyan-300';
       case 'waiting':
       case 'paused':
+      case 'stuck':
         return 'bg-amber-500/15 text-amber-300';
       default:
         return 'bg-zinc-700 text-zinc-200';
