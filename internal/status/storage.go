@@ -55,9 +55,9 @@ func (s *Storage) RecordReport(ctx context.Context, report Event, sessionTitle s
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO agent_states (
 			session_id, agent_id, agent_type, workspace, status, progress, step_current,
-			step_total, message, snippet, metadata, updated_at
+			step_total, message, snippet, metadata, updated_at, original_status, stuck_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
 		ON CONFLICT(session_id, agent_id) DO UPDATE SET
 			agent_type = excluded.agent_type,
 			workspace = excluded.workspace,
@@ -68,7 +68,9 @@ func (s *Storage) RecordReport(ctx context.Context, report Event, sessionTitle s
 			message = excluded.message,
 			snippet = excluded.snippet,
 			metadata = excluded.metadata,
-			updated_at = excluded.updated_at
+			updated_at = excluded.updated_at,
+			original_status = NULL,
+			stuck_at = NULL
 	`, report.SessionID, report.AgentID, report.AgentType, report.Workspace, string(report.Status),
 		nullableInt(report.Progress), nullableInt(report.StepCurrent), nullableInt(report.StepTotal),
 		report.Message, report.Snippet, string(metadata), now); err != nil {
@@ -183,7 +185,7 @@ func (s *Storage) ListEvents(ctx context.Context, sessionID string) ([]Event, er
 func (s *Storage) listAgentStates(ctx context.Context, sessionID string) ([]AgentState, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT session_id, agent_id, agent_type, workspace, status, progress, step_current,
-			step_total, message, snippet, metadata, updated_at
+			step_total, message, snippet, metadata, updated_at, original_status, stuck_at
 		FROM agent_states
 		WHERE session_id = ?
 		ORDER BY updated_at DESC
@@ -231,8 +233,12 @@ func scanAgentState(row rowScanner) (AgentState, error) {
 	var state AgentState
 	var progress, stepCurrent, stepTotal sql.NullInt64
 	var metadata, updatedAt string
-	if err := row.Scan(&state.SessionID, &state.AgentID, &state.AgentType, &state.Workspace,
-		&state.Status, &progress, &stepCurrent, &stepTotal, &state.Message, &state.Snippet, &metadata, &updatedAt); err != nil {
+	var originalStatus, stuckAt sql.NullString
+	if err := row.Scan(
+		&state.SessionID, &state.AgentID, &state.AgentType, &state.Workspace,
+		&state.Status, &progress, &stepCurrent, &stepTotal, &state.Message, &state.Snippet,
+		&metadata, &updatedAt, &originalStatus, &stuckAt,
+	); err != nil {
 		return state, fmt.Errorf("scanning agent state: %w", err)
 	}
 	state.Progress = intPtr(progress)
@@ -240,6 +246,14 @@ func scanAgentState(row rowScanner) (AgentState, error) {
 	state.StepTotal = intPtr(stepTotal)
 	state.Metadata = parseMetadata(metadata)
 	state.UpdatedAt = parseTime(updatedAt)
+	if originalStatus.Valid {
+		s := Status(originalStatus.String)
+		state.OriginalStatus = &s
+	}
+	if stuckAt.Valid {
+		t := parseTime(stuckAt.String)
+		state.StuckAt = &t
+	}
 	return state, nil
 }
 

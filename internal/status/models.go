@@ -18,8 +18,10 @@ const (
 	StatusSucceeded Status = "succeeded"
 	StatusFailed    Status = "failed"
 	StatusCancelled Status = "cancelled"
-	StatusStuck     Status = "stuck"
-	StatusOrphaned  Status = "orphaned"
+	// StatusStuck and StatusOrphaned are set exclusively by the health ticker.
+	// Agents must not self-report these; see validStatus() in service.go.
+	StatusStuck    Status = "stuck"
+	StatusOrphaned Status = "orphaned"
 )
 
 type ReportInput struct {

@@ -110,3 +110,67 @@ func TestStorageRecordReportUpdatesLatestAgentState(t *testing.T) {
 		t.Fatalf("expected event history, got %d", len(detail.Events))
 	}
 }
+
+func TestStorageRecordReportClearsStuckFields(t *testing.T) {
+	storage := testStorage(t)
+	ctx := context.Background()
+	now := time.Date(2026, 5, 12, 10, 0, 0, 0, time.UTC)
+
+	// Create the initial agent state
+	err := storage.RecordReport(ctx, Event{
+		ID:        "event-1",
+		SessionID: "session-1",
+		AgentID:   "agent-1",
+		AgentType: "codex",
+		Workspace: "/repo",
+		Status:    StatusRunning,
+		Message:   "running",
+		Metadata:  map[string]any{},
+		CreatedAt: now,
+	}, "/repo")
+	if err != nil {
+		t.Fatalf("record initial report: %v", err)
+	}
+
+	// Simulate the health ticker writing stuck state directly
+	_, err = storage.db.ExecContext(ctx,
+		`UPDATE agent_states SET original_status = 'running', status = 'stuck', stuck_at = '2026-05-12T09:00:00Z'
+		 WHERE session_id = 'session-1' AND agent_id = 'agent-1'`)
+	if err != nil {
+		t.Fatalf("inject stuck state: %v", err)
+	}
+
+	// Agent sends a new report — RecordReport upsert should clear original_status and stuck_at
+	err = storage.RecordReport(ctx, Event{
+		ID:        "event-2",
+		SessionID: "session-1",
+		AgentID:   "agent-1",
+		AgentType: "codex",
+		Workspace: "/repo",
+		Status:    StatusRunning,
+		Message:   "back online",
+		Metadata:  map[string]any{},
+		CreatedAt: now.Add(time.Minute),
+	}, "/repo")
+	if err != nil {
+		t.Fatalf("record recovery report: %v", err)
+	}
+
+	session, err := storage.GetSession(ctx, "session-1")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if len(session.Agents) != 1 {
+		t.Fatalf("expected 1 agent, got %d", len(session.Agents))
+	}
+	agent := session.Agents[0]
+	if agent.Status != StatusRunning {
+		t.Errorf("status: got %q, want %q", agent.Status, StatusRunning)
+	}
+	if agent.OriginalStatus != nil {
+		t.Errorf("original_status: got %q, want nil", *agent.OriginalStatus)
+	}
+	if agent.StuckAt != nil {
+		t.Errorf("stuck_at: got %v, want nil", *agent.StuckAt)
+	}
+}
