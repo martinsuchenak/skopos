@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS agent_states (
     snippet TEXT NOT NULL DEFAULT '',
     metadata TEXT NOT NULL DEFAULT '{}',
     updated_at TEXT NOT NULL,
+    original_status TEXT,
+    stuck_at        TEXT,
     PRIMARY KEY (session_id, agent_id),
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
     FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
