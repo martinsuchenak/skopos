@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/db"
+	"github.com/paularlott/logger"
 	_ "modernc.org/sqlite"
 )
 
@@ -49,7 +50,7 @@ func seedAgentState(t *testing.T, sqlDB *sql.DB, sessionID, agentID, agentType, 
 }
 
 func checkerAt(sqlDB *sql.DB, now time.Time) *Checker {
-	c := NewChecker(sqlDB, time.Minute)
+	c := NewChecker(sqlDB, time.Minute, logger.NewNullLogger())
 	c.now = func() time.Time { return now }
 	return c
 }

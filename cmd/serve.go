@@ -87,7 +87,7 @@ func serveCmd() *cli.Command {
 			mcpserver.StartMCPServer(log, statusService)
 
 			threshold := time.Duration(cmd.GetInt("health-stuck-threshold")) * time.Minute
-			health.NewChecker(conn.SQL, threshold).Start(ctx)
+			health.NewChecker(conn.SQL, threshold, log).Start(ctx)
 			// go-scaffolder:serve-init
 
 			mux := http.NewServeMux()

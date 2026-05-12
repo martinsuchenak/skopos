@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/paularlott/logger"
 )
 
 type Checker struct {
@@ -14,14 +15,16 @@ type Checker struct {
 	threshold time.Duration
 	interval  time.Duration
 	now       func() time.Time
+	log       logger.Logger
 }
 
-func NewChecker(db *sql.DB, threshold time.Duration) *Checker {
+func NewChecker(db *sql.DB, threshold time.Duration, log logger.Logger) *Checker {
 	return &Checker{
 		db:        db,
 		threshold: threshold,
 		interval:  60 * time.Second,
 		now:       time.Now,
+		log:       log,
 	}
 }
 
@@ -32,7 +35,9 @@ func (c *Checker) Start(ctx context.Context) {
 		for {
 			select {
 			case <-ticker.C:
-				_ = c.check(ctx)
+				if err := c.check(ctx); err != nil {
+				c.log.Warn("health check failed", "error", err)
+			}
 			case <-ctx.Done():
 				return
 			}

@@ -57,5 +57,6 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_agent_states_session_id ON agent_states(session_id);
+CREATE INDEX IF NOT EXISTS idx_agent_states_health ON agent_states(status, updated_at, stuck_at);
 CREATE INDEX IF NOT EXISTS idx_events_session_created_at ON events(session_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_agent_created_at ON events(agent_id, created_at DESC);
