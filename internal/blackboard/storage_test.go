@@ -18,6 +18,9 @@ func testStorage(t *testing.T) *Storage {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	t.Cleanup(func() { sqlDB.Close() })
+	if _, err := sqlDB.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		t.Fatalf("enable foreign keys: %v", err)
+	}
 	if err := db.RunMigrations(sqlDB); err != nil {
 		t.Fatalf("run migrations: %v", err)
 	}
@@ -167,9 +170,11 @@ func TestStoragePromote(t *testing.T) {
 	now := time.Now().UTC()
 
 	// session -> branch requires a sessions row
-	_, _ = s.db.ExecContext(ctx,
+	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO sessions (id, title, workspace, status, started_at, updated_at) VALUES ('s1','t','/r','running',?,?)`,
-		formatTime(now), formatTime(now))
+		formatTime(now), formatTime(now)); err != nil {
+		t.Fatalf("insert session for promote test: %v", err)
+	}
 
 	if err := s.Write(ctx, Entry{
 		ID: "p-1", Scope: ScopeSession, SessionID: "s1",

@@ -72,6 +72,10 @@ func Connect(log logger.Logger, host string, user, password, dbName string) (*Co
 		return nil, fmt.Errorf("pinging database: %w", err)
 	}
 
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		return nil, fmt.Errorf("enabling foreign keys: %w", err)
+	}
+
 	log.Info("connected to database", "host", addr.Host, "port", addr.Port)
 	return &Connection{
 		SQL: db,

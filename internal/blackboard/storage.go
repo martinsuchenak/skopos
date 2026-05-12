@@ -21,9 +21,6 @@ type Storage struct {
 }
 
 func NewStorage(db *sql.DB) *Storage {
-	// SQLite does not enforce foreign key constraints by default.
-	// Enable them so ON DELETE CASCADE behaves correctly.
-	db.Exec("PRAGMA foreign_keys = ON") //nolint:errcheck
 	return &Storage{db: db}
 }
 
@@ -82,18 +79,34 @@ func (s *Storage) Bundle(ctx context.Context, branchName, sessionID string) ([]E
 }
 
 func (s *Storage) Get(ctx context.Context, id string) (*Entry, error) {
-	row := s.db.QueryRowContext(ctx, `
+	var e Entry
+	var branchName, sessionID, codeRef sql.NullString
+	var createdAt, updatedAt string
+	err := s.db.QueryRowContext(ctx, `
 		SELECT id, scope, branch_name, session_id, entry_type, title, content, code_ref,
 		       author_agent_id, created_at, updated_at
 		FROM blackboard_entries WHERE id = ?
-	`, id)
-	e, err := scanEntry(row)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("%w: entry %s", ErrNotFound, id)
-		}
-		return nil, err
+	`, id).Scan(
+		&e.ID, &e.Scope, &branchName, &sessionID, &e.EntryType,
+		&e.Title, &e.Content, &codeRef, &e.AuthorAgentID, &createdAt, &updatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: entry %s", ErrNotFound, id)
 	}
+	if err != nil {
+		return nil, fmt.Errorf("getting entry: %w", err)
+	}
+	if branchName.Valid {
+		e.BranchName = branchName.String
+	}
+	if sessionID.Valid {
+		e.SessionID = sessionID.String
+	}
+	if codeRef.Valid {
+		e.CodeRef = codeRef.String
+	}
+	e.CreatedAt = parseTime(createdAt)
+	e.UpdatedAt = parseTime(updatedAt)
 	return &e, nil
 }
 
