@@ -47,8 +47,9 @@ func (c *Checker) check(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 
-	now := formatTime(c.now().UTC())
-	staleTime := formatTime(c.now().UTC().Add(-c.threshold))
+	t := c.now().UTC()
+	now := formatTime(t)
+	staleTime := formatTime(t.Add(-c.threshold))
 
 	rows, err := tx.QueryContext(ctx, `
 		SELECT session_id, agent_id, agent_type, workspace
@@ -85,7 +86,10 @@ func (c *Checker) check(ctx context.Context) error {
 			return fmt.Errorf("marking agent stuck: %w", err)
 		}
 
-		id, _ := uuid.NewV7()
+		id, err := uuid.NewV7()
+		if err != nil {
+			id = uuid.New()
+		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO events (id, session_id, agent_id, agent_type, workspace, status, message, snippet, metadata, created_at)
 			VALUES (?, ?, ?, ?, ?, 'stuck', 'agent not responding', '', '{}', ?)
