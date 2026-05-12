@@ -174,3 +174,35 @@ func TestStorageRecordReportClearsStuckFields(t *testing.T) {
 		t.Errorf("stuck_at: got %v, want nil", *agent.StuckAt)
 	}
 }
+
+func TestStorageRecordReportStoresGitBranch(t *testing.T) {
+	storage := testStorage(t)
+	ctx := context.Background()
+
+	err := storage.RecordReport(ctx, Event{
+		ID:        "event-1",
+		SessionID: "session-1",
+		AgentID:   "agent-1",
+		AgentType: "codex",
+		Workspace: "/repo",
+		Status:    StatusRunning,
+		Message:   "working",
+		Metadata:  map[string]any{},
+		CreatedAt: time.Now(),
+		GitBranch: "feat-auth",
+	}, "/repo")
+	if err != nil {
+		t.Fatalf("record report: %v", err)
+	}
+
+	detail, err := storage.GetSession(ctx, "session-1")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if len(detail.Agents) != 1 {
+		t.Fatalf("expected 1 agent, got %d", len(detail.Agents))
+	}
+	if detail.Agents[0].GitBranch != "feat-auth" {
+		t.Errorf("git_branch: got %q, want %q", detail.Agents[0].GitBranch, "feat-auth")
+	}
+}

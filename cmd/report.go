@@ -34,6 +34,7 @@ func reportCmd() *cli.Command {
 			&cli.StringFlag{Name: "message", Usage: "Short status message"},
 			&cli.StringFlag{Name: "snippet", Usage: "Short output snippet"},
 			&cli.StringFlag{Name: "metadata", Usage: "Optional metadata JSON object"},
+			&cli.StringFlag{Name: "git-branch", Usage: "Optional current git branch"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			input, err := reportInputFromCommand(cmd)
@@ -70,6 +71,7 @@ func reportInputFromCommand(cmd *cli.Command) (status.ReportInput, error) {
 	if stepTotal := cmd.GetInt("step-total"); stepTotal >= 0 {
 		input.StepTotal = &stepTotal
 	}
+	input.GitBranch = cmd.GetString("git-branch")
 	if rawMetadata := strings.TrimSpace(cmd.GetString("metadata")); rawMetadata != "" {
 		if err := json.Unmarshal([]byte(rawMetadata), &input.Metadata); err != nil {
 			return input, fmt.Errorf("invalid metadata JSON: %w", err)

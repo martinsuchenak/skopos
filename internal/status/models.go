@@ -36,6 +36,7 @@ type ReportInput struct {
 	Message     string         `json:"message,omitempty"`
 	Snippet     string         `json:"snippet,omitempty"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
+	GitBranch   string         `json:"git_branch,omitempty"`
 }
 
 type ReportResult struct {
@@ -82,6 +83,7 @@ type AgentState struct {
 	UpdatedAt      time.Time      `json:"updated_at"`
 	OriginalStatus *Status        `json:"original_status,omitempty"`
 	StuckAt        *time.Time     `json:"stuck_at,omitempty"`
+	GitBranch      string         `json:"git_branch,omitempty"`
 }
 
 type Event struct {
@@ -98,4 +100,5 @@ type Event struct {
 	Snippet     string         `json:"snippet"`
 	Metadata    map[string]any `json:"metadata"`
 	CreatedAt   time.Time      `json:"created_at"`
+	GitBranch   string         `json:"git_branch,omitempty"`
 }

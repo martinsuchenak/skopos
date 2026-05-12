@@ -60,6 +60,7 @@ func (s *Service) Report(ctx context.Context, input ReportInput) (*ReportResult,
 		Snippet:     normalized.Snippet,
 		Metadata:    normalized.Metadata,
 		CreatedAt:   now,
+		GitBranch:   normalized.GitBranch,
 	}
 
 	if err := s.store.RecordReport(ctx, event, sessionTitle(normalized)); err != nil {

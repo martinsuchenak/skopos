@@ -26,6 +26,7 @@ func registerReportStatusTool(server *mcplib.Server, service *status.Service) {
 			mcplib.String("message", "Short status message"),
 			mcplib.String("snippet", "Short output snippet"),
 			mcplib.String("metadata", "Optional metadata JSON string"),
+			mcplib.String("git_branch", "Optional current git branch name"),
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 			input := status.ReportInput{
@@ -52,6 +53,7 @@ func registerReportStatusTool(server *mcplib.Server, service *status.Service) {
 					return nil, mcplib.NewToolErrorInvalidParams("metadata must be a JSON object")
 				}
 			}
+			input.GitBranch = req.StringOr("git_branch", "")
 
 			result, err := service.Report(ctx, input)
 			if err != nil {
