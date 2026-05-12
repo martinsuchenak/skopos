@@ -36,8 +36,8 @@ func (c *Checker) Start(ctx context.Context) {
 			select {
 			case <-ticker.C:
 				if err := c.check(ctx); err != nil {
-				c.log.Warn("health check failed", "error", err)
-			}
+					c.log.Warn("health check failed", "error", err)
+				}
 			case <-ctx.Done():
 				return
 			}

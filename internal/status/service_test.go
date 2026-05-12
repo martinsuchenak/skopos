@@ -72,6 +72,21 @@ func TestServiceReportRejectsInvalidStatus(t *testing.T) {
 	}
 }
 
+func TestServiceReportRejectsHealthTickerStatuses(t *testing.T) {
+	svc := NewService(&fakeStore{})
+	for _, status := range []Status{StatusStuck, StatusOrphaned} {
+		_, err := svc.Report(context.Background(), ReportInput{
+			AgentID:   "agent",
+			AgentType: "codex",
+			Workspace: "/repo",
+			Status:    status,
+		})
+		if !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("status %q: expected ErrInvalidInput, got %v", status, err)
+		}
+	}
+}
+
 func TestServiceReportRejectsInvalidProgress(t *testing.T) {
 	svc := NewService(&fakeStore{})
 	progress := 101
