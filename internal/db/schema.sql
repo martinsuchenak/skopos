@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS agent_states (
     updated_at TEXT NOT NULL,
     original_status TEXT,
     stuck_at TEXT,
+    git_branch TEXT,
     PRIMARY KEY (session_id, agent_id),
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
     FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
@@ -60,3 +61,22 @@ CREATE INDEX IF NOT EXISTS idx_agent_states_session_id ON agent_states(session_i
 CREATE INDEX IF NOT EXISTS idx_agent_states_health ON agent_states(status, updated_at, stuck_at);
 CREATE INDEX IF NOT EXISTS idx_events_session_created_at ON events(session_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_agent_created_at ON events(agent_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS blackboard_entries (
+    id              TEXT PRIMARY KEY,
+    scope           TEXT NOT NULL,
+    branch_name     TEXT,
+    session_id      TEXT,
+    entry_type      TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    content         TEXT NOT NULL DEFAULT '',
+    code_ref        TEXT,
+    author_agent_id TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_blackboard_scope   ON blackboard_entries(scope, branch_name);
+CREATE INDEX IF NOT EXISTS idx_blackboard_session ON blackboard_entries(session_id);
+CREATE INDEX IF NOT EXISTS idx_blackboard_type    ON blackboard_entries(entry_type);
