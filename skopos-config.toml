@@ -16,4 +16,7 @@ api_key = ""
 host = "localhost"
 port = 6379
 password = ""
+
+[health]
+stuck_threshold_minutes = 15
 # go-scaffolder:config-sections

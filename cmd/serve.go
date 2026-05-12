@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/paularlott/cli"
 	logslog "github.com/paularlott/logger/slog"
 
 	"github.com/martinsuchenak/skopos/cmd/routes"
 	"github.com/martinsuchenak/skopos/internal/db"
+	"github.com/martinsuchenak/skopos/internal/health"
 	"github.com/martinsuchenak/skopos/internal/status"
 
 	mcpserver "github.com/martinsuchenak/skopos/cmd/mcp"
@@ -53,6 +55,13 @@ func serveCmd() *cli.Command {
 				ConfigPath: []string{"auth.api_key"},
 				EnvVars:    []string{"SKOPOS_API_KEY"},
 			},
+			&cli.IntFlag{
+				Name:         "health-stuck-threshold",
+				DefaultValue: 15,
+				Usage:        "Minutes before an active agent is marked stuck",
+				ConfigPath:   []string{"health.stuck_threshold_minutes"},
+				EnvVars:      []string{"HEALTH_STUCK_THRESHOLD"},
+			},
 		},
 		// go-scaffolder:serve-flags
 		Run: func(ctx context.Context, cmd *cli.Command) error {
@@ -76,6 +85,9 @@ func serveCmd() *cli.Command {
 			statusHandler := status.NewHandler(statusService, cmd.GetString("api-key"))
 
 			mcpserver.StartMCPServer(log, statusService)
+
+			threshold := time.Duration(cmd.GetInt("health-stuck-threshold")) * time.Minute
+			health.NewChecker(conn.SQL, threshold).Start(ctx)
 			// go-scaffolder:serve-init
 
 			mux := http.NewServeMux()
