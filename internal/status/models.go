@@ -100,5 +100,6 @@ type Event struct {
 	Snippet     string         `json:"snippet"`
 	Metadata    map[string]any `json:"metadata"`
 	CreatedAt   time.Time      `json:"created_at"`
-	GitBranch   string         `json:"git_branch,omitempty"`
+	// GitBranch is carried through the event to populate agent_states only; not persisted in the events table.
+	GitBranch string `json:"git_branch,omitempty"`
 }

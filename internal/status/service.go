@@ -97,6 +97,7 @@ func normalizeReport(input ReportInput) (ReportInput, error) {
 	input.Workspace = strings.TrimSpace(input.Workspace)
 	input.Message = strings.TrimSpace(input.Message)
 	input.Status = Status(strings.TrimSpace(string(input.Status)))
+	input.GitBranch = strings.TrimSpace(input.GitBranch)
 
 	if input.AgentID == "" {
 		return input, fmt.Errorf("%w: agent_id is required", ErrInvalidInput)
