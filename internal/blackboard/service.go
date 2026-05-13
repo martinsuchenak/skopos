@@ -66,7 +66,9 @@ func (s *Service) Write(ctx context.Context, input WriteInput) (*WriteResult, er
 }
 
 func (s *Service) Bundle(ctx context.Context, branchName, sessionID string) (*Bundle, error) {
-	entries, err := s.store.Bundle(ctx, strings.TrimSpace(branchName), strings.TrimSpace(sessionID))
+	branchName = strings.TrimSpace(branchName)
+	sessionID = strings.TrimSpace(sessionID)
+	entries, err := s.store.Bundle(ctx, branchName, sessionID)
 	if err != nil {
 		return nil, err
 	}

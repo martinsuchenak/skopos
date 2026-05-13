@@ -139,3 +139,33 @@ func TestServiceBundleEmptyMarkdown(t *testing.T) {
 		t.Fatal("expected non-empty markdown even with no entries")
 	}
 }
+
+func TestServicePromoteEmptyID(t *testing.T) {
+	svc := NewService(&fakeStore{})
+	err := svc.Promote(context.Background(), "")
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+}
+
+func TestServiceDeleteEmptyID(t *testing.T) {
+	svc := NewService(&fakeStore{})
+	err := svc.Delete(context.Background(), "")
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+}
+
+func TestServiceWriteStoreError(t *testing.T) {
+	store := &fakeStore{writeErr: ErrInvalidInput}
+	svc := NewService(store)
+	_, err := svc.Write(context.Background(), WriteInput{
+		Scope:         ScopeProject,
+		EntryType:     TypeFinding,
+		Title:         "T",
+		AuthorAgentID: "a",
+	})
+	if err == nil {
+		t.Fatal("expected error from store, got nil")
+	}
+}
