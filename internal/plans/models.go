@@ -24,7 +24,7 @@ const (
 type Plan struct {
 	ID            string     `json:"id"`
 	Name          string     `json:"name"`
-	BranchName    string     `json:"branch_name,omitempty"`
+	BranchName    string     `json:"branch_name,omitempty"` // nullable in DB; storage scans via sql.NullString
 	Description   string     `json:"description,omitempty"`
 	Status        PlanStatus `json:"status"`
 	AuthorAgentID string     `json:"author_agent_id"`
@@ -40,7 +40,7 @@ type Item struct {
 	Description      string     `json:"description,omitempty"`
 	Status           ItemStatus `json:"status"`
 	Position         int        `json:"position"`
-	ClaimedByAgentID string     `json:"claimed_by_agent_id,omitempty"`
+	ClaimedByAgentID string     `json:"claimed_by_agent_id,omitempty"` // nullable in DB; storage scans via sql.NullString
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
 }
