@@ -11,6 +11,7 @@ import (
 	logslog "github.com/paularlott/logger/slog"
 
 	"github.com/martinsuchenak/skopos/cmd/routes"
+	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/health"
 	"github.com/martinsuchenak/skopos/internal/status"
@@ -84,14 +85,17 @@ func serveCmd() *cli.Command {
 			statusService := status.NewService(status.NewStorage(conn.SQL))
 			statusHandler := status.NewHandler(statusService, cmd.GetString("api-key"))
 
-			mcpserver.StartMCPServer(log, statusService)
+			blackboardService := blackboard.NewService(blackboard.NewStorage(conn.SQL))
+			blackboardHandler := blackboard.NewHandler(blackboardService, cmd.GetString("api-key"))
+
+			mcpserver.StartMCPServer(log, statusService, blackboardService)
 
 			threshold := time.Duration(cmd.GetInt("health-stuck-threshold")) * time.Minute
 			health.NewChecker(conn.SQL, threshold, log).Start(ctx)
 			// go-scaffolder:serve-init
 
 			mux := http.NewServeMux()
-			routes.RegisterRoutes(mux, statusHandler)
+			routes.RegisterRoutes(mux, statusHandler, blackboardHandler)
 
 			addr := fmt.Sprintf("%s:%d", cmd.GetString("server-host"), cmd.GetInt("server-port"))
 			log.Info("starting HTTP server", "addr", addr)
