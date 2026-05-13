@@ -27,12 +27,13 @@ export SKOPOS_API_KEY=your-key-here
 export SKOPOS_SERVER_URL=http://localhost:8080
 ```
 
-## Step 2: Install the skill (optional, for manual reporting)
+## Step 2: Install the slash command (optional, for manual reporting)
 
-Copy `skopos-skill.md` to your skills directory:
+Copy `skopos-skill.md` to the Claude Code commands directory:
 
 ```bash
-cp docs/integrations/claude-code/skopos-skill.md ~/.claude/plugins/skills/
+mkdir -p ~/.claude/commands
+cp docs/integrations/claude-code/skopos-skill.md ~/.claude/commands/skopos-report.md
 ```
 
 Then use `/skopos-report` in any Claude Code session to report rich status.
