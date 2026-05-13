@@ -90,6 +90,19 @@ func TestHandlerWriteRejectsInvalidPayload(t *testing.T) {
 	}
 }
 
+func TestHandlerWriteRejectsInvalidScope(t *testing.T) {
+	h := testHandler(t, "")
+	body := bytes.NewBufferString(`{
+		"scope":"global","entry_type":"finding","title":"T","author_agent_id":"a"
+	}`)
+	req := httptest.NewRequest("POST", "/api/blackboard/entries", body)
+	w := httptest.NewRecorder()
+	h.WriteEntry(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
 func TestHandlerPromoteNotFound(t *testing.T) {
 	h := testHandler(t, "")
 	req := httptest.NewRequest("PATCH", "/api/blackboard/entries/missing/promote", nil)

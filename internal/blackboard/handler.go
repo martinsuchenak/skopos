@@ -86,7 +86,7 @@ func (h *Handler) Promote(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	rest.RespondJSON(w, http.StatusNoContent, nil)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // Delete handles DELETE /api/blackboard/entries/{id}.
@@ -108,5 +108,5 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	rest.RespondJSON(w, http.StatusNoContent, nil)
+	w.WriteHeader(http.StatusNoContent)
 }
