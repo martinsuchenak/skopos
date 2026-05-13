@@ -13,10 +13,18 @@
                 <h1 class="text-xl font-semibold">skopos</h1>
                 <p class="text-sm text-zinc-400">Agent status dashboard</p>
             </div>
-            <button type="button" @click="refresh()" class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-200 hover:border-cyan-500 hover:text-white">Refresh</button>
+            <div class="flex items-center gap-3">
+                <div class="flex rounded border border-zinc-700 text-sm">
+                    <button type="button" @click="switchTab('sessions')" class="px-3 py-1.5 transition" :class="activeTab === 'sessions' ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-white'">Sessions</button>
+                    <button type="button" @click="switchTab('blackboard')" class="px-3 py-1.5 transition" :class="activeTab === 'blackboard' ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-white'">Blackboard</button>
+                </div>
+                <button type="button" @click="refresh()" class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-200 hover:border-cyan-500 hover:text-white">Refresh</button>
+            </div>
         </div>
     </nav>
-    <main class="mx-auto grid max-w-7xl gap-6 px-4 py-6 lg:grid-cols-[360px_1fr]">
+
+    <!-- Sessions tab -->
+    <main x-show="activeTab === 'sessions'" class="mx-auto grid max-w-7xl gap-6 px-4 py-6 lg:grid-cols-[360px_1fr]">
         <section class="min-h-[480px] border-r border-zinc-800 pr-0 lg:pr-6">
             <div class="mb-4 flex items-center justify-between">
                 <h2 class="text-sm font-semibold uppercase tracking-wide text-zinc-400">Sessions</h2>
@@ -84,6 +92,54 @@
             </div>
         </section>
     </main>
+
+    <!-- Blackboard tab -->
+    <main x-show="activeTab === 'blackboard'" class="mx-auto max-w-7xl px-4 py-6">
+        <div class="mb-6 flex flex-wrap items-center gap-3">
+            <h2 class="text-sm font-semibold uppercase tracking-wide text-zinc-400">Knowledge Bundle</h2>
+            <div class="flex items-center gap-2 rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5">
+                <span class="text-xs text-zinc-500">branch:</span>
+                <input type="text" x-model="blackboardBranch" @input.debounce.300ms="fetchBundle()" placeholder="all" class="w-36 bg-transparent text-sm text-zinc-200 outline-none placeholder-zinc-600" />
+            </div>
+            <span x-show="blackboardLoading" class="text-xs text-zinc-500">Loading…</span>
+            <span x-show="!blackboardLoading" class="text-xs text-zinc-500" x-text="`${entries.length} entries`"></span>
+        </div>
+
+        <!-- empty state -->
+        <p x-show="!blackboardLoading && entries.length === 0" class="rounded border border-zinc-800 bg-zinc-900 p-6 text-sm text-zinc-400">
+            No blackboard entries yet. Agents write entries via the MCP <code class="text-zinc-300">blackboard_write</code> tool or <code class="text-zinc-300">POST /api/blackboard/entries</code>.
+        </p>
+
+        <!-- entries grouped by type -->
+        <div class="space-y-8">
+            <template x-for="group in entriesByType()" :key="group.type">
+                <section>
+                    <h3 class="mb-3 text-sm font-semibold" :class="group.colorClass" x-text="group.label"></h3>
+                    <div class="space-y-2">
+                        <template x-for="entry in group.items" :key="entry.id">
+                            <article class="rounded border border-zinc-800 bg-zinc-900 p-4">
+                                <div class="flex flex-wrap items-start justify-between gap-2">
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <span class="rounded px-2 py-0.5 text-xs" :class="entryTypeClass(entry.entry_type)" x-text="entry.entry_type"></span>
+                                        <span class="rounded px-2 py-0.5 text-xs" :class="scopeClass(entry.scope)" x-text="entry.scope"></span>
+                                        <span x-show="entry.branch_name" class="text-xs text-zinc-500" x-text="`@ ${entry.branch_name}`"></span>
+                                    </div>
+                                    <span class="text-xs text-zinc-600" x-text="formatTime(entry.created_at)"></span>
+                                </div>
+                                <p class="mt-2 text-sm font-medium text-zinc-100" x-text="entry.title"></p>
+                                <p x-show="entry.content" class="mt-1 text-sm text-zinc-400" x-text="entry.content"></p>
+                                <div class="mt-2 flex flex-wrap items-center gap-3 text-xs text-zinc-600">
+                                    <code x-show="entry.code_ref" class="text-zinc-400" x-text="entry.code_ref"></code>
+                                    <span x-text="`— ${entry.author_agent_id}`"></span>
+                                </div>
+                            </article>
+                        </template>
+                    </div>
+                </section>
+            </template>
+        </div>
+    </main>
+
     <script type="module" src="/static/app.js"></script>
 </body>
 </html>
