@@ -80,3 +80,30 @@ CREATE TABLE IF NOT EXISTS blackboard_entries (
 CREATE INDEX IF NOT EXISTS idx_blackboard_scope   ON blackboard_entries(scope, branch_name);
 CREATE INDEX IF NOT EXISTS idx_blackboard_session ON blackboard_entries(session_id);
 CREATE INDEX IF NOT EXISTS idx_blackboard_type    ON blackboard_entries(entry_type);
+
+CREATE TABLE IF NOT EXISTS plans (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    branch_name     TEXT,
+    description     TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'active',
+    author_agent_id TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS plan_items (
+    id                  TEXT PRIMARY KEY,
+    plan_id             TEXT NOT NULL,
+    title               TEXT NOT NULL,
+    description         TEXT NOT NULL DEFAULT '',
+    status              TEXT NOT NULL DEFAULT 'pending',
+    position            INTEGER NOT NULL DEFAULT 0,
+    claimed_by_agent_id TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL,
+    FOREIGN KEY (plan_id) REFERENCES plans(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_plans_branch    ON plans(branch_name);
+CREATE INDEX IF NOT EXISTS idx_plan_items_plan ON plan_items(plan_id, position);
