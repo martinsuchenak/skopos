@@ -124,3 +124,26 @@ func TestHandlerDeleteNotFound(t *testing.T) {
 		t.Fatalf("expected 404, got %d", w.Code)
 	}
 }
+
+func TestHandlerPromoteAlreadyAtTopScope(t *testing.T) {
+	h := testHandler(t, "")
+	body := bytes.NewBufferString(`{
+		"scope":"project","entry_type":"finding","title":"T","author_agent_id":"a"
+	}`)
+	req := httptest.NewRequest("POST", "/api/blackboard/entries", body)
+	w := httptest.NewRecorder()
+	h.WriteEntry(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("setup write: %d %s", w.Code, w.Body)
+	}
+	var result WriteResult
+	json.NewDecoder(w.Body).Decode(&result)
+
+	req2 := httptest.NewRequest("PATCH", "/api/blackboard/entries/"+result.ID+"/promote", nil)
+	req2.SetPathValue("id", result.ID)
+	w2 := httptest.NewRecorder()
+	h.Promote(w2, req2)
+	if w2.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d %s", w2.Code, w2.Body)
+	}
+}
