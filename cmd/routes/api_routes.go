@@ -7,23 +7,33 @@ import (
 	"net/http"
 	"runtime"
 
+	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/status"
 	appweb "github.com/martinsuchenak/skopos/web"
 )
 
 var registrations []func(*http.ServeMux, *status.Handler)
+var blackboardRegistrations []func(*http.ServeMux, *blackboard.Handler)
 
 func Register(fn func(*http.ServeMux, *status.Handler)) {
 	registrations = append(registrations, fn)
 }
 
-func RegisterRoutes(mux *http.ServeMux, statusHandler *status.Handler) {
+func RegisterBlackboard(fn func(*http.ServeMux, *blackboard.Handler)) {
+	blackboardRegistrations = append(blackboardRegistrations, fn)
+}
+
+func RegisterRoutes(mux *http.ServeMux, statusHandler *status.Handler, blackboardHandler *blackboard.Handler) {
 	mux.HandleFunc("GET /health", healthHandler)
 	mux.HandleFunc("GET /metrics", metricsHandler)
 	registerWebRoutes(mux)
 
 	for _, fn := range registrations {
 		fn(mux, statusHandler)
+	}
+
+	for _, fn := range blackboardRegistrations {
+		fn(mux, blackboardHandler)
 	}
 }
 
