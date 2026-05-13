@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/martinsuchenak/skopos/internal/blackboard"
@@ -183,16 +184,17 @@ func blackboardPostEntry(ctx context.Context, serverURL, apiKey string, input bl
 }
 
 func blackboardGetBundle(ctx context.Context, serverURL, branch, sessionID string) (*blackboard.Bundle, error) {
-	u := strings.TrimRight(serverURL, "/") + "/api/blackboard/entries"
-	var params []string
+	base := strings.TrimRight(serverURL, "/") + "/api/blackboard/entries"
+	q := url.Values{}
 	if branch != "" {
-		params = append(params, "branch="+branch)
+		q.Set("branch", branch)
 	}
 	if sessionID != "" {
-		params = append(params, "session_id="+sessionID)
+		q.Set("session_id", sessionID)
 	}
-	if len(params) > 0 {
-		u += "?" + strings.Join(params, "&")
+	u := base
+	if len(q) > 0 {
+		u += "?" + q.Encode()
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -214,7 +216,7 @@ func blackboardGetBundle(ctx context.Context, serverURL, branch, sessionID strin
 }
 
 func blackboardPatchPromote(ctx context.Context, serverURL, apiKey, id string) error {
-	u := strings.TrimRight(serverURL, "/") + "/api/blackboard/entries/" + id + "/promote"
+	u := strings.TrimRight(serverURL, "/") + "/api/blackboard/entries/" + url.PathEscape(id) + "/promote"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, u, nil)
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
@@ -235,7 +237,7 @@ func blackboardPatchPromote(ctx context.Context, serverURL, apiKey, id string) e
 }
 
 func blackboardDoDelete(ctx context.Context, serverURL, apiKey, id string) error {
-	u := strings.TrimRight(serverURL, "/") + "/api/blackboard/entries/" + id
+	u := strings.TrimRight(serverURL, "/") + "/api/blackboard/entries/" + url.PathEscape(id)
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u, nil)
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)

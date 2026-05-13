@@ -23,7 +23,7 @@ func registerBlackboardReadTool(server *mcplib.Server, service *blackboard.Servi
 				req.StringOr("session_id", ""),
 			)
 			if err != nil {
-				return nil, mcplib.NewToolErrorInvalidParams(err.Error())
+				return nil, mcplib.NewToolErrorInternal(err.Error())
 			}
 			return mcplib.NewToolResponseJSON(bundle), nil
 		},
