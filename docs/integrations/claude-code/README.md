@@ -41,6 +41,37 @@ Then use `/skopos-report` in any Claude Code session to report rich status.
 
 Start a Claude Code session in any directory. Open the Skopos dashboard at `http://localhost:8080`. Use a tool (e.g. ask Claude to run `ls`). You should see a new session appear with status `running`.
 
+## Blackboard
+
+Once MCP is connected, Claude Code automatically has access to two blackboard tools:
+
+- **`blackboard_write`** — record a finding, decision, bug, debt, warning, or context note
+- **`blackboard_read`** — fetch the Knowledge Bundle for the current branch (structured entries + formatted markdown)
+
+Typical workflow:
+
+```text
+# At session start — load prior context
+blackboard_read(branch: "feat-auth")
+
+# During work — record discoveries
+blackboard_write(
+  scope: "branch", branch_name: "feat-auth",
+  entry_type: "finding", title: "JWT expiry not checked on refresh",
+  content: "Refresh tokens bypass expiry validation entirely.",
+  code_ref: "auth/jwt.go:45", author_agent_id: "claude-code-macbook"
+)
+
+# Critical issues float to all branches automatically (use scope: "project" or entry_type: "bug"/"debt")
+```
+
+Entry types: `finding`, `decision`, `bug`, `debt`, `warning`, `context`
+Scopes: `session` (this session only), `branch` (shared per branch), `project` (all agents)
+
+`bug` and `debt` entries are always visible across all branches regardless of scope.
+
+Entries are visible in the Skopos dashboard under the **Blackboard** tab at `http://localhost:8080`.
+
 ## Session IDs
 
 Sessions are resolved in this order:

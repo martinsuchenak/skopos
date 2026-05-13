@@ -37,6 +37,30 @@ export SKOPOS_SERVER_URL=http://localhost:8080
 
 Start a Codex session. Open `http://localhost:8080`. You should see a `codex-<hostname>` agent appear.
 
+## Blackboard
+
+Codex can use blackboard via MCP tools (if MCP is connected) or the CLI.
+
+**Via MCP** — tools appear as `skopos__blackboard_write` and `skopos__blackboard_read` once Codex connects to the MCP server.
+
+**Via CLI** — call `skopos blackboard` commands from shell steps in your AGENTS.md:
+
+```bash
+# Read prior findings at session start
+skopos blackboard read --branch "$(git branch --show-current)" || true
+
+# Write a finding during work
+skopos blackboard write \
+  --scope branch --branch "$(git branch --show-current)" \
+  --type finding --title "..." --content "..." \
+  --agent-id "codex-$(hostname -s)" \
+  ${SKOPOS_API_KEY:+--api-key "$SKOPOS_API_KEY"} || true
+```
+
+Entry types: `finding`, `decision`, `bug`, `debt`, `warning`, `context`
+
+`bug` and `debt` entries are always visible across all branches. Entries appear in the Skopos dashboard under the **Blackboard** tab.
+
 ## Session IDs
 
 Same resolution as other agents — see `shared/skopos-session.sh`. Set `$SKOPOS_SESSION_ID` to share a session across agents.

@@ -65,6 +65,25 @@ export SKOPOS_SERVER_URL=http://localhost:8080
 
 Run `gemini-skopos` in a project directory. Open `http://localhost:8080`. You should see a `gemini-<hostname>` agent with status `running`, then `succeeded` after exit.
 
+## Blackboard
+
+Once MCP is connected, Gemini CLI has access to `skopos__blackboard_write` and `skopos__blackboard_read` tools.
+
+Read the Knowledge Bundle at session start to load prior findings:
+
+```text
+Call skopos__blackboard_read with branch set to the current git branch name.
+```
+
+Write an entry when you discover something worth sharing:
+
+```text
+Call skopos__blackboard_write with scope "branch", the current branch_name,
+entry_type "finding"/"bug"/"decision"/etc., title, content, and author_agent_id.
+```
+
+`bug` and `debt` entries are always visible to all agents regardless of branch. Entries appear in the Skopos dashboard under the **Blackboard** tab at `http://localhost:8080`.
+
 ## Session IDs
 
 Same resolution as other agents — see `shared/skopos-session.sh` for details. Set `$SKOPOS_SESSION_ID` to share a session across agents.

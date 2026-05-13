@@ -21,6 +21,29 @@ skopos report --agent-id "codex-$(hostname -s)" --agent-type codex \
   ${SKOPOS_API_KEY:+--api-key "$SKOPOS_API_KEY"} || true
 ```
 
+## Skopos Blackboard
+
+Use the blackboard to share knowledge across sessions and agents.
+
+At session start, read prior findings for the current branch:
+
+```bash
+skopos blackboard read --branch "$(git branch --show-current)" || true
+```
+
+When you discover something worth recording (bug, decision, finding), write an entry:
+
+```bash
+skopos blackboard write \
+  --scope branch --branch "$(git branch --show-current)" \
+  --type finding --title "short description" --content "details" \
+  --agent-id "codex-$(hostname -s)" \
+  ${SKOPOS_API_KEY:+--api-key "$SKOPOS_API_KEY"} || true
+```
+
+Use `--type bug` or `--type debt` for critical issues — these are visible to all agents regardless of branch.
+Use `--scope project` to share a finding with all agents on all branches.
+
 Environment:
 - `SKOPOS_SERVER_URL` — Skopos server URL (default: `http://localhost:8080`)
 - `SKOPOS_API_KEY` — API key for write endpoints

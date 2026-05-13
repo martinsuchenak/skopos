@@ -14,3 +14,24 @@ Call the report_status tool with:
 - status: the status that best describes what you are doing right now
 - message: a short human-readable description (e.g. "investigating the auth bug", "waiting for user input", "blocked on missing API key")
 - snippet: (optional) a one-line excerpt of relevant output or code
+- git_branch: (optional) current git branch name
+
+## Blackboard
+
+Use the blackboard tools to share knowledge with other agents across sessions.
+
+**Read the Knowledge Bundle at session start** (loads prior findings for the current branch):
+Call `blackboard_read` with `branch` set to the current git branch name.
+
+**Write an entry when you discover something worth sharing:**
+Call `blackboard_write` with:
+
+- scope: "session" (this session only), "branch" (shared on this branch), or "project" (all agents)
+- branch_name: current branch (required when scope is "branch")
+- entry_type: "finding", "decision", "bug", "debt", "warning", or "context"
+- title: short description
+- content: (optional) details
+- code_ref: (optional) file and line, e.g. "auth/jwt.go:45"
+- author_agent_id: "claude-code-HOSTNAME" (your machine's hostname)
+
+Note: "bug" and "debt" entries are always visible to all agents regardless of branch.

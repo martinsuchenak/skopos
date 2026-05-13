@@ -86,6 +86,14 @@ GitHub Copilot does not manage `session_id` automatically. Options:
 - Let the workspace task generate a stable ID via the shared helper (not wired by default), or
 - Leave unset — the server creates a new session per run, grouped by `agent_id`
 
+## Blackboard
+
+Once MCP is connected, Copilot Chat has access to `skopos__blackboard_write` and `skopos__blackboard_read` tools.
+
+Read the Knowledge Bundle at the start of a task to load prior context for the current branch. Write entries when you find bugs, make decisions, or want to leave a note for the next agent session. `bug` and `debt` entries are always visible to all agents regardless of branch.
+
+Entries appear in the Skopos dashboard under the **Blackboard** tab at `http://localhost:8080`.
+
 ## Notes
 
 - The MCP tool name in Copilot Chat appears as `skopos__report_status` (server name + double underscore + tool name)

@@ -39,6 +39,21 @@ Kiro does not auto-set `session_id` when calling the MCP tool. Either:
 - Set `$SKOPOS_SESSION_ID` in your shell before starting Kiro, or
 - Leave it empty — the server will create a new session per run, grouped by agent ID
 
+## Blackboard
+
+Once MCP is connected, Kiro has access to `skopos__blackboard_write` and `skopos__blackboard_read` tools.
+
+Add `"blackboard_read"` and `"blackboard_write"` to the `autoApprove` list in `mcp.json` so Kiro can call them without prompting:
+
+```json
+"skopos": {
+  "url": "http://localhost:9000/mcp",
+  "autoApprove": ["report_status", "blackboard_read", "blackboard_write"]
+}
+```
+
+See the steering snippet for usage instructions. Entries appear in the Skopos dashboard under the **Blackboard** tab at `http://localhost:8080`.
+
 ## Notes
 
 - The MCP tool name in Kiro will appear as `skopos__report_status` (server name + double underscore + tool name)

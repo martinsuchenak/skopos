@@ -50,6 +50,27 @@ export SKOPOS_SERVER_URL=http://localhost:8080
 
 Start an OpenCode session in your project. Open `http://localhost:8080`. You should see an `opencode-<hostname>` agent appear after the agent calls the `skopos__report_status` tool.
 
+## Blackboard
+
+Once MCP is connected, OpenCode has access to `skopos__blackboard_write` and `skopos__blackboard_read` tools.
+
+Add to your project's `AGENTS.md`:
+
+```markdown
+## Skopos Blackboard
+
+At the start of a session, call `skopos__blackboard_read` with `branch` set to
+the current git branch to load prior findings from other agents.
+
+When you discover something worth recording, call `skopos__blackboard_write` with
+scope "branch" or "project", the appropriate entry_type (finding, decision, bug,
+debt, warning, context), a short title, and optional content and code_ref.
+Use entry_type "bug" or "debt" for critical issues — these are always visible
+to all agents regardless of branch.
+```
+
+Entries appear in the Skopos dashboard under the **Blackboard** tab at `http://localhost:8080`.
+
 ## Session IDs
 
 Set `$SKOPOS_SESSION_ID` in your shell to share a session across agents working in the same workspace.
