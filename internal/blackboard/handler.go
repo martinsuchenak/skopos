@@ -54,10 +54,11 @@ func (h *Handler) WriteEntry(w http.ResponseWriter, r *http.Request) {
 
 // ReadBundle handles GET /api/blackboard/entries.
 func (h *Handler) ReadBundle(w http.ResponseWriter, r *http.Request) {
+	workspaceID := r.URL.Query().Get("workspace")
 	branchName := r.URL.Query().Get("branch")
 	sessionID := r.URL.Query().Get("session_id")
 
-	bundle, err := h.service.Bundle(r.Context(), branchName, sessionID)
+	bundle, err := h.service.Bundle(r.Context(), workspaceID, branchName, sessionID)
 	if err != nil {
 		rest.RespondError(w, http.StatusInternalServerError, err.Error())
 		return

@@ -8,15 +8,25 @@
 </head>
 <body x-data="app()" x-init="init()" class="min-h-screen bg-zinc-950 text-zinc-100">
     <nav class="border-b border-zinc-800 bg-zinc-950/95">
-        <div class="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
+        <div class="flex items-center justify-between px-6 py-3">
             <div>
                 <h1 class="text-xl font-semibold">skopos</h1>
                 <p class="text-sm text-zinc-400">Agent status dashboard</p>
             </div>
             <div class="flex items-center gap-3">
+                <div class="flex items-center gap-2 rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5" x-show="workspaces.length > 0">
+                    <span class="text-xs text-zinc-500">workspace:</span>
+                    <select x-model="activeWorkspace" @change="setWorkspace(activeWorkspace)" class="appearance-none bg-transparent text-sm text-zinc-200 outline-none cursor-pointer">
+                        <option value="" class="bg-zinc-900">All</option>
+                        <template x-for="ws in workspaces" :key="ws">
+                            <option :value="ws" x-text="ws" class="bg-zinc-900"></option>
+                        </template>
+                    </select>
+                </div>
                 <div class="flex rounded border border-zinc-700 text-sm">
                     <button type="button" @click="switchTab('sessions')" class="px-3 py-1.5 transition" :class="activeTab === 'sessions' ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-white'">Sessions</button>
                     <button type="button" @click="switchTab('blackboard')" class="px-3 py-1.5 transition" :class="activeTab === 'blackboard' ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-white'">Blackboard</button>
+                    <button type="button" @click="switchTab('plans')" class="px-3 py-1.5 transition" :class="activeTab === 'plans' ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-white'">Plans</button>
                 </div>
                 <button type="button" @click="refresh()" class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-200 hover:border-cyan-500 hover:text-white">Refresh</button>
             </div>
@@ -24,7 +34,7 @@
     </nav>
 
     <!-- Sessions tab -->
-    <main x-show="activeTab === 'sessions'" class="mx-auto grid max-w-7xl gap-6 px-4 py-6 lg:grid-cols-[360px_1fr]">
+    <main x-show="activeTab === 'sessions'" class="grid gap-6 px-6 py-6 lg:grid-cols-[360px_1fr]">
         <section class="min-h-[480px] border-r border-zinc-800 pr-0 lg:pr-6">
             <div class="mb-4 flex items-center justify-between">
                 <h2 class="text-sm font-semibold uppercase tracking-wide text-zinc-400">Sessions</h2>
@@ -32,16 +42,19 @@
             </div>
             <div class="space-y-2">
                 <template x-for="session in sessions" :key="session.id">
-                    <button type="button" @click="selectSession(session.id)" class="w-full rounded border p-3 text-left transition" :class="selectedSessionId === session.id ? 'border-cyan-500 bg-cyan-950/40' : 'border-zinc-800 bg-zinc-900 hover:border-zinc-700'">
-                        <div class="flex items-center justify-between gap-3">
-                            <span class="truncate text-sm font-medium" x-text="session.title"></span>
-                            <span class="shrink-0 rounded px-2 py-1 text-xs" :class="statusClass(session.status)" x-text="session.status"></span>
-                        </div>
-                        <div class="mt-2 flex items-center justify-between text-xs text-zinc-500">
-                            <span class="truncate" x-text="session.workspace"></span>
-                            <span x-text="`${session.agent_count} agents`"></span>
-                        </div>
-                    </button>
+                    <div class="group relative w-full rounded border p-3 text-left transition" :class="selectedSessionId === session.id ? 'border-cyan-500 bg-cyan-950/40' : 'border-zinc-800 bg-zinc-900 hover:border-zinc-700'">
+                        <button type="button" @click="selectSession(session.id)" class="w-full text-left">
+                            <div class="flex items-center justify-between gap-3">
+                                <span class="truncate text-sm font-medium" x-text="session.title"></span>
+                                <span class="shrink-0 rounded px-2 py-1 text-xs" :class="statusClass(session.status)" x-text="session.status"></span>
+                            </div>
+                            <div class="mt-2 flex items-center justify-between text-xs text-zinc-500">
+                                <span class="truncate" x-text="session.workspace"></span>
+                                <span x-text="`${session.agent_count} agents`"></span>
+                            </div>
+                        </button>
+                        <button type="button" @click.stop="deleteSession(session.id)" class="absolute right-2 top-2 rounded p-1 text-xs text-zinc-600 opacity-0 transition hover:bg-rose-500/20 hover:text-rose-400 group-hover:opacity-100" title="Delete session">&times;</button>
+                    </div>
                 </template>
             </div>
             <p x-show="!loading && sessions.length === 0" class="rounded border border-zinc-800 bg-zinc-900 p-4 text-sm text-zinc-400">No reports yet.</p>
@@ -94,7 +107,7 @@
     </main>
 
     <!-- Blackboard tab -->
-    <main x-show="activeTab === 'blackboard'" class="mx-auto max-w-7xl px-4 py-6">
+    <main x-show="activeTab === 'blackboard'" class="px-6 py-6">
         <div class="mb-6 flex flex-wrap items-center gap-3">
             <h2 class="text-sm font-semibold uppercase tracking-wide text-zinc-400">Knowledge Bundle</h2>
             <div class="flex items-center gap-2 rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5">
@@ -117,14 +130,17 @@
                     <h3 class="mb-3 text-sm font-semibold" :class="group.colorClass" x-text="group.label"></h3>
                     <div class="space-y-2">
                         <template x-for="entry in group.items" :key="entry.id">
-                            <article class="rounded border border-zinc-800 bg-zinc-900 p-4">
+                            <article class="group relative rounded border border-zinc-800 bg-zinc-900 p-4">
                                 <div class="flex flex-wrap items-start justify-between gap-2">
                                     <div class="flex flex-wrap items-center gap-2">
                                         <span class="rounded px-2 py-0.5 text-xs" :class="entryTypeClass(entry.entry_type)" x-text="entry.entry_type"></span>
                                         <span class="rounded px-2 py-0.5 text-xs" :class="scopeClass(entry.scope)" x-text="entry.scope"></span>
                                         <span x-show="entry.branch_name" class="text-xs text-zinc-500" x-text="`@ ${entry.branch_name}`"></span>
                                     </div>
-                                    <span class="text-xs text-zinc-600" x-text="formatTime(entry.created_at)"></span>
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-xs text-zinc-600" x-text="formatTime(entry.created_at)"></span>
+                                        <button type="button" @click.stop="deleteEntry(entry.id)" class="rounded p-1 text-xs text-zinc-600 opacity-0 transition hover:bg-rose-500/20 hover:text-rose-400 group-hover:opacity-100" title="Delete entry">&times;</button>
+                                    </div>
                                 </div>
                                 <p class="mt-2 text-sm font-medium text-zinc-100" x-text="entry.title"></p>
                                 <p x-show="entry.content" class="mt-1 text-sm text-zinc-400" x-text="entry.content"></p>
@@ -136,6 +152,83 @@
                         </template>
                     </div>
                 </section>
+            </template>
+        </div>
+    </main>
+
+    <!-- Plans tab -->
+    <main x-show="activeTab === 'plans'" class="px-6 py-6">
+        <div class="mb-6 flex flex-wrap items-center gap-3">
+            <h2 class="text-sm font-semibold uppercase tracking-wide text-zinc-400">Plans</h2>
+            <div class="flex items-center gap-2 rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5">
+                <span class="text-xs text-zinc-500">branch:</span>
+                <input type="text" x-model="plansBranch" @input.debounce.300ms="fetchPlans()" placeholder="all" class="w-36 bg-transparent text-sm text-zinc-200 outline-none placeholder-zinc-600" />
+            </div>
+            <span x-show="plansLoading" class="text-xs text-zinc-500">Loading…</span>
+            <span x-show="!plansLoading" class="text-xs text-zinc-500" x-text="`${plans.length} plans`"></span>
+        </div>
+
+        <p x-show="!plansLoading && plans.length === 0" class="rounded border border-zinc-800 bg-zinc-900 p-6 text-sm text-zinc-400">
+            No plans yet. Agents create plans via the <code class="text-zinc-300">plan_create</code> MCP tool or <code class="text-zinc-300">POST /api/plans</code>.
+        </p>
+
+        <div class="space-y-3">
+            <template x-for="plan in plans" :key="plan.id">
+                <article class="group relative rounded border border-zinc-800 bg-zinc-900">
+                    <button type="button" @click="togglePlan(plan)" class="w-full p-4 text-left">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="font-medium text-zinc-100" x-text="plan.name"></span>
+                                <span x-show="plan.branch_name" class="rounded bg-violet-500/15 px-2 py-0.5 text-xs text-violet-300" x-text="plan.branch_name"></span>
+                                <span x-show="!plan.branch_name" class="rounded bg-indigo-500/15 px-2 py-0.5 text-xs text-indigo-300">project-wide</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="rounded px-2 py-0.5 text-xs" :class="planStatusClass(plan.status)" x-text="plan.status"></span>
+                                <span class="text-xs text-zinc-600" x-text="formatTime(plan.created_at)"></span>
+                            </div>
+                        </div>
+                        <p x-show="plan.description" class="mt-1 text-sm text-zinc-400" x-text="plan.description"></p>
+                        <p x-show="plan.depends_on && plan.depends_on.length > 0" class="mt-1 inline-flex items-center gap-1 text-xs text-zinc-500">
+                            <span class="text-rose-400">↻</span>
+                            <span>depends on</span>
+                            <span class="text-amber-400" x-text="planDepNames(plan)"></span>
+                        </p>
+                    </button>
+                    <button type="button" @click.stop="deletePlan(plan.id)" class="absolute right-3 top-3 rounded p-1 text-xs text-zinc-600 opacity-0 transition hover:bg-rose-500/20 hover:text-rose-400 group-hover:opacity-100" title="Delete plan">&times;</button>
+
+                    <!-- Expanded item list -->
+                    <div x-show="expandedPlan?.id === plan.id" class="border-t border-zinc-800 px-4 pb-4">
+                        <p x-show="!expandedPlan?.items || expandedPlan.items.length === 0" class="pt-4 text-sm text-zinc-500">No items.</p>
+                        <div class="mt-3 space-y-4">
+                            <template x-for="group in itemsGroupedByPhase(expandedPlan?.id === plan.id ? expandedPlan?.items ?? [] : [])" :key="group.phase">
+                                <div>
+                                    <h4 x-show="group.phase" class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500" x-text="group.phase"></h4>
+                                    <div class="space-y-2">
+                                        <template x-for="item in group.items" :key="item.id">
+                                            <div class="group/item relative flex flex-wrap items-start gap-2 rounded border border-zinc-800 bg-zinc-950 p-3">
+                                                <span class="mt-0.5 rounded bg-zinc-800 px-1.5 py-0.5 text-xs font-mono text-zinc-400" x-text="`#${item.position}`"></span>
+                                                <span class="mt-0.5 rounded px-2 py-0.5 text-xs" :class="itemStatusClass(item.status)" x-text="item.status"></span>
+                                                <div class="min-w-0 flex-1">
+                                                    <p class="text-sm text-zinc-200" x-text="item.title"></p>
+                                                    <p x-show="item.description" class="mt-0.5 text-xs text-zinc-500" x-text="item.description"></p>
+                                                    <div class="mt-1 flex flex-wrap items-center gap-2">
+                                                        <span x-show="item.depends_on && item.depends_on.length > 0" class="inline-flex items-center gap-1 text-xs text-zinc-500">
+                                                            <span class="text-rose-400">↻</span>
+                                                            <span>depends on</span>
+                                                            <span class="font-mono text-amber-400" x-text="depLabel(item)"></span>
+                                                        </span>
+                                                        <span x-show="item.claimed_by_agent_id" class="text-xs text-zinc-600" x-text="`claimed by ${item.claimed_by_agent_id}`"></span>
+                                                    </div>
+                                                </div>
+                                                <button type="button" @click.stop="deletePlanItem(plan.id, item.id)" class="rounded p-1 text-xs text-zinc-600 opacity-0 transition hover:bg-rose-500/20 hover:text-rose-400 group-hover/item:opacity-100" title="Delete item">&times;</button>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </article>
             </template>
         </div>
     </main>

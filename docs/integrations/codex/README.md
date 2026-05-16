@@ -61,6 +61,31 @@ Entry types: `finding`, `decision`, `bug`, `debt`, `warning`, `context`
 
 `bug` and `debt` entries are always visible across all branches. Entries appear in the Skopos dashboard under the **Blackboard** tab.
 
+## Plans
+
+Codex can use plans via MCP tools (if MCP is connected) or the CLI.
+
+**Via MCP** — tools appear as `skopos__plan_create`, `skopos__plan_read`, `skopos__plan_add_item`, and `skopos__plan_update_item`.
+
+**Via CLI** — call `skopos plan` commands from shell steps in your AGENTS.md:
+
+```bash
+# Create a plan at task start
+skopos plan create --name "Task name" --branch "$(git branch --show-current)" \
+  --agent-id "codex-$(hostname -s)" \
+  ${SKOPOS_API_KEY:+--api-key "$SKOPOS_API_KEY"} || true
+
+# Add items
+skopos plan item add --plan-id "PLAN_ID" --title "Item title" \
+  ${SKOPOS_API_KEY:+--api-key "$SKOPOS_API_KEY"} || true
+
+# Mark items done
+skopos plan item done --plan-id "PLAN_ID" --item-id "ITEM_ID" \
+  ${SKOPOS_API_KEY:+--api-key "$SKOPOS_API_KEY"} || true
+```
+
+Plans appear in the Skopos dashboard under the **Plans** tab.
+
 ## Session IDs
 
 Same resolution as other agents — see `shared/skopos-session.sh`. Set `$SKOPOS_SESSION_ID` to share a session across agents.

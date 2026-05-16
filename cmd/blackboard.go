@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/martinsuchenak/skopos/internal/blackboard"
+	"github.com/martinsuchenak/skopos/internal/workspace"
 	"github.com/paularlott/cli"
 )
 
@@ -46,8 +47,15 @@ func blackboardWriteCmd() *cli.Command {
 			&cli.StringFlag{Name: "content", Usage: "Detailed content"},
 			&cli.StringFlag{Name: "code-ref", Usage: "Code reference, e.g. auth/jwt.go:45"},
 			&cli.StringFlag{Name: "agent-id", Usage: "Agent identifier", EnvVars: []string{"SKOPOS_AGENT_ID"}},
+			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
+			ws := cmd.GetString("workspace")
+			if ws == "" {
+				if id, err := workspace.Resolve("."); err == nil {
+					ws = id
+				}
+			}
 			input := blackboard.WriteInput{
 				Scope:         blackboard.Scope(cmd.GetString("scope")),
 				BranchName:    cmd.GetString("branch"),
@@ -57,6 +65,7 @@ func blackboardWriteCmd() *cli.Command {
 				Content:       cmd.GetString("content"),
 				CodeRef:       cmd.GetString("code-ref"),
 				AuthorAgentID: cmd.GetString("agent-id"),
+				WorkspaceID:   ws,
 			}
 			result, err := blackboardPostEntry(ctx, cmd.GetString("server-url"), cmd.GetString("api-key"), input)
 			if err != nil {
@@ -76,9 +85,16 @@ func blackboardReadCmd() *cli.Command {
 			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}},
 			&cli.StringFlag{Name: "branch", Usage: "Branch name"},
 			&cli.StringFlag{Name: "session-id", Usage: "Session ID"},
+			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			bundle, err := blackboardGetBundle(ctx, cmd.GetString("server-url"), cmd.GetString("branch"), cmd.GetString("session-id"))
+			ws := cmd.GetString("workspace")
+			if ws == "" {
+				if id, err := workspace.Resolve("."); err == nil {
+					ws = id
+				}
+			}
+			bundle, err := blackboardGetBundle(ctx, cmd.GetString("server-url"), cmd.GetString("branch"), cmd.GetString("session-id"), ws)
 			if err != nil {
 				return err
 			}
@@ -96,9 +112,16 @@ func blackboardListCmd() *cli.Command {
 			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}},
 			&cli.StringFlag{Name: "branch", Usage: "Branch name"},
 			&cli.StringFlag{Name: "session-id", Usage: "Session ID"},
+			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			bundle, err := blackboardGetBundle(ctx, cmd.GetString("server-url"), cmd.GetString("branch"), cmd.GetString("session-id"))
+			ws := cmd.GetString("workspace")
+			if ws == "" {
+				if id, err := workspace.Resolve("."); err == nil {
+					ws = id
+				}
+			}
+			bundle, err := blackboardGetBundle(ctx, cmd.GetString("server-url"), cmd.GetString("branch"), cmd.GetString("session-id"), ws)
 			if err != nil {
 				return err
 			}
@@ -183,7 +206,7 @@ func blackboardPostEntry(ctx context.Context, serverURL, apiKey string, input bl
 	return &result, nil
 }
 
-func blackboardGetBundle(ctx context.Context, serverURL, branch, sessionID string) (*blackboard.Bundle, error) {
+func blackboardGetBundle(ctx context.Context, serverURL, branch, sessionID, workspaceID string) (*blackboard.Bundle, error) {
 	base := strings.TrimRight(serverURL, "/") + "/api/blackboard/entries"
 	q := url.Values{}
 	if branch != "" {
@@ -191,6 +214,9 @@ func blackboardGetBundle(ctx context.Context, serverURL, branch, sessionID strin
 	}
 	if sessionID != "" {
 		q.Set("session_id", sessionID)
+	}
+	if workspaceID != "" {
+		q.Set("workspace", workspaceID)
 	}
 	u := base
 	if len(q) > 0 {

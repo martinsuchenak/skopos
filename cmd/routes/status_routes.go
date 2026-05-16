@@ -15,4 +15,5 @@ func registerStatusRoutes(mux *http.ServeMux, statusHandler *status.Handler) {
 	mux.HandleFunc("GET /api/sessions", statusHandler.ListSessions)
 	mux.HandleFunc("GET /api/sessions/{id}", statusHandler.GetSession)
 	mux.HandleFunc("GET /api/sessions/{id}/events", statusHandler.ListEvents)
+	mux.HandleFunc("DELETE /api/sessions/{id}", statusHandler.DeleteSession)
 }

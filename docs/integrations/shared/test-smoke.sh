@@ -56,5 +56,35 @@ echo "$SESSIONS" | grep -q "$SESSION_ID"
 check "Session visible in GET /api/sessions" $?
 
 echo ""
+echo "--- Plans"
+PLAN_HTTP=$(curl -s -o /tmp/skopos-plan.json -w "%{http_code}" \
+  -X POST "$BASE_URL/api/plans" \
+  -H "Content-Type: application/json" \
+  ${API_KEY:+-H "X-API-Key: $API_KEY"} \
+  -d "{\"name\":\"Smoke test plan\",\"author_agent_id\":\"smoke-test-agent\"}")
+[ "$PLAN_HTTP" = "201" ]
+check "Plan created (HTTP $PLAN_HTTP)" $?
+
+PLAN_ID=$(jq -r '.id' /tmp/skopos-plan.json)
+
+ITEM_HTTP=$(curl -s -o /tmp/skopos-item.json -w "%{http_code}" \
+  -X POST "$BASE_URL/api/plans/$PLAN_ID/items" \
+  -H "Content-Type: application/json" \
+  ${API_KEY:+-H "X-API-Key: $API_KEY"} \
+  -d "{\"title\":\"Test item\"}")
+[ "$ITEM_HTTP" = "201" ]
+check "Plan item added (HTTP $ITEM_HTTP)" $?
+
+ITEM_ID=$(jq -r '.id' /tmp/skopos-item.json)
+
+PATCH_HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+  -X PATCH "$BASE_URL/api/plans/$PLAN_ID/items/$ITEM_ID" \
+  -H "Content-Type: application/json" \
+  ${API_KEY:+-H "X-API-Key: $API_KEY"} \
+  -d '{"status":"done"}')
+[ "$PATCH_HTTP" = "204" ]
+check "Plan item updated to done (HTTP $PATCH_HTTP)" $?
+
+echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

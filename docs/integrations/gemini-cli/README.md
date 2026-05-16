@@ -84,6 +84,20 @@ entry_type "finding"/"bug"/"decision"/etc., title, content, and author_agent_id.
 
 `bug` and `debt` entries are always visible to all agents regardless of branch. Entries appear in the Skopos dashboard under the **Blackboard** tab at `http://localhost:8080`.
 
+## Plans
+
+Gemini CLI has access to `skopos__plan_create`, `skopos__plan_read`, `skopos__plan_add_item`, and `skopos__plan_update_item` tools.
+
+Create a plan at the start of a multi-step task and track progress with items:
+
+```text
+Call skopos__plan_create with name, optional branch_name, and author_agent_id.
+Call skopos__plan_add_item for each work item.
+Call skopos__plan_update_item with status: "in_progress", "done", or "blocked" as you work.
+```
+
+Plans appear in the Skopos dashboard under the **Plans** tab at `http://localhost:8080`.
+
 ## Session IDs
 
 Same resolution as other agents — see `shared/skopos-session.sh` for details. Set `$SKOPOS_SESSION_ID` to share a session across agents.

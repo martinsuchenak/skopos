@@ -48,3 +48,29 @@ Environment:
 - `SKOPOS_SERVER_URL` — Skopos server URL (default: `http://localhost:8080`)
 - `SKOPOS_API_KEY` — API key for write endpoints
 - `SKOPOS_SESSION_ID` — optional; set to share a session across agents in the same workspace
+
+## Skopos Plans
+
+Use plans to coordinate multi-step work across sessions.
+
+At task start, create a plan:
+
+```bash
+PLAN_ID=$(skopos plan create --name "Task name" --branch "$(git branch --show-current)" \
+  --agent-id "codex-$(hostname -s)" \
+  ${SKOPOS_API_KEY:+--api-key "$SKOPOS_API_KEY"} 2>&1 | grep -o 'id=[^ ]*' | cut -d= -f2) || true
+```
+
+Add work items:
+
+```bash
+skopos plan item add --plan-id "$PLAN_ID" --title "Short description" \
+  ${SKOPOS_API_KEY:+--api-key "$SKOPOS_API_KEY"} || true
+```
+
+Mark items done as you complete them:
+
+```bash
+skopos plan item done --plan-id "$PLAN_ID" --item-id "ITEM_ID" \
+  ${SKOPOS_API_KEY:+--api-key "$SKOPOS_API_KEY"} || true
+```

@@ -94,6 +94,12 @@ Read the Knowledge Bundle at the start of a task to load prior context for the c
 
 Entries appear in the Skopos dashboard under the **Blackboard** tab at `http://localhost:8080`.
 
+## Plans
+
+Once MCP is connected, Copilot Chat has access to `skopos__plan_create`, `skopos__plan_read`, `skopos__plan_add_item`, and `skopos__plan_update_item` tools.
+
+Create a plan at the start of a multi-step task, add items, and update their status as you work. Plans appear in the Skopos dashboard under the **Plans** tab at `http://localhost:8080`.
+
 ## Notes
 
 - The MCP tool name in Copilot Chat appears as `skopos__report_status` (server name + double underscore + tool name)

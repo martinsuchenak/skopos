@@ -14,6 +14,7 @@ func init() {
 func registerBlackboardWriteTool(server *mcplib.Server, service *blackboard.Service) {
 	server.RegisterTool(
 		mcplib.NewTool("blackboard_write", "Write an entry to the Skopos blackboard memory",
+			mcplib.String("workspace_id", "Workspace ID to scope the entry to"),
 			mcplib.String("scope", "Memory scope: session, branch, or project", mcplib.Required()),
 			mcplib.String("entry_type", "Entry type: finding, decision, bug, debt, warning, or context", mcplib.Required()),
 			mcplib.String("title", "Short descriptive title", mcplib.Required()),
@@ -25,6 +26,7 @@ func registerBlackboardWriteTool(server *mcplib.Server, service *blackboard.Serv
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 			input := blackboard.WriteInput{
+				WorkspaceID:   req.StringOr("workspace_id", ""),
 				Scope:         blackboard.Scope(req.StringOr("scope", "")),
 				EntryType:     blackboard.EntryType(req.StringOr("entry_type", "")),
 				Title:         req.StringOr("title", ""),

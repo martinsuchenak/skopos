@@ -147,3 +147,49 @@ func TestHandlerPromoteAlreadyAtTopScope(t *testing.T) {
 		t.Fatalf("expected 409, got %d %s", w2.Code, w2.Body)
 	}
 }
+
+func TestHandlerReadBundleWorkspaceFilter(t *testing.T) {
+	h := testHandler(t, "")
+	body := bytes.NewBufferString(`{
+		"scope":"project","entry_type":"finding","title":"Scoped entry",
+		"author_agent_id":"a","workspace_id":"ws-1"
+	}`)
+	req := httptest.NewRequest("POST", "/api/blackboard/entries", body)
+	w := httptest.NewRecorder()
+	h.WriteEntry(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("write: %d %s", w.Code, w.Body)
+	}
+
+	body2 := bytes.NewBufferString(`{
+		"scope":"project","entry_type":"finding","title":"Global entry",
+		"author_agent_id":"a"
+	}`)
+	req2 := httptest.NewRequest("POST", "/api/blackboard/entries", body2)
+	w2 := httptest.NewRecorder()
+	h.WriteEntry(w2, req2)
+	if w2.Code != http.StatusCreated {
+		t.Fatalf("write global: %d %s", w2.Code, w2.Body)
+	}
+
+	reqFilter := httptest.NewRequest("GET", "/api/blackboard/entries?workspace=ws-1", nil)
+	wFilter := httptest.NewRecorder()
+	h.ReadBundle(wFilter, reqFilter)
+	if wFilter.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", wFilter.Code)
+	}
+	var bundle Bundle
+	if err := json.NewDecoder(wFilter.Body).Decode(&bundle); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(bundle.Entries) != 2 {
+		t.Fatalf("expected 2 entries (global + scoped), got %d", len(bundle.Entries))
+	}
+	titles := map[string]bool{}
+	for _, e := range bundle.Entries {
+		titles[e.Title] = true
+	}
+	if !titles["Scoped entry"] || !titles["Global entry"] {
+		t.Errorf("expected both scoped and global entries, got titles: %v", titles)
+	}
+}

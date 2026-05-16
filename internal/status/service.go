@@ -17,9 +17,12 @@ var (
 
 type Store interface {
 	RecordReport(ctx context.Context, report Event, sessionTitle string) error
-	ListSessions(ctx context.Context) ([]SessionSummary, error)
+	ListSessions(ctx context.Context, workspaceID string) ([]SessionSummary, error)
 	GetSession(ctx context.Context, id string) (*SessionDetail, error)
 	ListEvents(ctx context.Context, sessionID string) ([]Event, error)
+	DeleteSession(ctx context.Context, id string) error
+	DeleteOldEvents(ctx context.Context, olderThan time.Time) (int64, error)
+	DeleteOrphanedSessions(ctx context.Context, olderThan time.Time) (int64, error)
 }
 
 type Service struct {
@@ -70,8 +73,8 @@ func (s *Service) Report(ctx context.Context, input ReportInput) (*ReportResult,
 	return &ReportResult{SessionID: normalized.SessionID, EventID: eventID}, nil
 }
 
-func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
-	return s.store.ListSessions(ctx)
+func (s *Service) ListSessions(ctx context.Context, workspaceID string) ([]SessionSummary, error) {
+	return s.store.ListSessions(ctx, workspaceID)
 }
 
 func (s *Service) GetSession(ctx context.Context, id string) (*SessionDetail, error) {
@@ -88,6 +91,14 @@ func (s *Service) ListEvents(ctx context.Context, sessionID string) ([]Event, er
 		return nil, fmt.Errorf("%w: session_id is required", ErrInvalidInput)
 	}
 	return s.store.ListEvents(ctx, sessionID)
+}
+
+func (s *Service) DeleteSession(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("%w: session_id is required", ErrInvalidInput)
+	}
+	return s.store.DeleteSession(ctx, id)
 }
 
 func normalizeReport(input ReportInput) (ReportInput, error) {

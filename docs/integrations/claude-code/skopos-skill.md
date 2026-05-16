@@ -35,3 +35,25 @@ Call `blackboard_write` with:
 - author_agent_id: "claude-code-HOSTNAME" (your machine's hostname)
 
 Note: "bug" and "debt" entries are always visible to all agents regardless of branch.
+
+## Plans
+
+Use the plan tools to coordinate multi-step work across sessions.
+
+**Create a plan at the start of a task:**
+Call `plan_create` with:
+- name: descriptive plan name
+- branch_name: current branch (optional — omit for project-wide)
+- author_agent_id: "claude-code-HOSTNAME"
+- description: optional overview
+
+**Add work items:**
+Call `plan_add_item` with `plan_id`, `title`, and optional `description`.
+
+**Update item progress:**
+Call `plan_update_item` with `plan_id`, `item_id`, and:
+- status: "pending", "in_progress", "done", or "blocked"
+- claimed_by_agent_id: your agent ID (optional — pass empty string to release)
+
+**Read a plan with all items:**
+Call `plan_read` with `id` (the plan ID).

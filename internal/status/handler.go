@@ -41,7 +41,8 @@ func (h *Handler) Report(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
-	sessions, err := h.service.ListSessions(r.Context())
+	workspaceID := r.URL.Query().Get("workspace")
+	sessions, err := h.service.ListSessions(r.Context(), workspaceID)
 	if err != nil {
 		rest.RespondError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -73,6 +74,18 @@ func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rest.RespondJSON(w, http.StatusOK, events)
+}
+
+func (h *Handler) DeleteSession(w http.ResponseWriter, r *http.Request) {
+	if err := h.service.DeleteSession(r.Context(), r.PathValue("id")); err != nil {
+		if errors.Is(err, ErrInvalidInput) {
+			rest.RespondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		rest.RespondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) authorized(r *http.Request) bool {

@@ -1,6 +1,5 @@
 # Binaries
 bin/
-dist/
 *.exe
 *.exe~
 *.dll
@@ -29,8 +28,15 @@ go.work.sum
 # OS
 .DS_Store
 Thumbs.db
+
 # Frontend
 web/node_modules/
+web/dist/
+
+# Database (runtime)
+skopos.db
+skopos.db-shm
+skopos.db-wal
 
 # Skopos session ID files (auto-generated per workspace)
 .skopos-session

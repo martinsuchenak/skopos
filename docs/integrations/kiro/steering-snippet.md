@@ -38,3 +38,18 @@ Use the blackboard to share knowledge with other agent sessions.
 - `author_agent_id`: "kiro-HOSTNAME"
 
 Use `entry_type: "bug"` or `"debt"` for critical issues — these are always visible to all agents regardless of branch.
+
+## Skopos Plans
+
+Use plans to coordinate multi-step work across sessions.
+
+**At the start of a multi-step task:** Call `skopos__plan_create` with:
+- `name`: descriptive plan name
+- `branch_name`: current branch (optional — omit for project-wide)
+- `author_agent_id`: "kiro-HOSTNAME"
+
+**Add work items:** Call `skopos__plan_add_item` with `plan_id`, `title`, and optional `description`.
+
+**Update item progress:** Call `skopos__plan_update_item` with `plan_id`, `item_id`, and:
+- `status`: "pending", "in_progress", "done", or "blocked"
+- `claimed_by_agent_id`: your agent ID (optional — pass empty string to release)

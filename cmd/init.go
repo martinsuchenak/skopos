@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/martinsuchenak/skopos/internal/workspace"
 	"github.com/paularlott/cli"
 	logslog "github.com/paularlott/logger/slog"
 )
@@ -30,10 +31,20 @@ func initCmd() *cli.Command {
 				return fmt.Errorf("config file %s already exists", configPath)
 			}
 
-			defaultConfig := `[log]
+			wsID := ""
+			if id, err := workspace.Resolve("."); err == nil {
+				wsID = id
+			} else {
+				log.Warn("could not resolve workspace", "error", err.Error())
+			}
+
+			defaultConfig := fmt.Sprintf(`[workspace]
+id = "%s"
+
+[log]
 level = "info"
 format = "text"
-`
+`, wsID)
 			if err := os.WriteFile(configPath, []byte(defaultConfig), 0644); err != nil {
 				return fmt.Errorf("writing config file: %w", err)
 			}

@@ -63,7 +63,7 @@ func Connect(log logger.Logger, host string, user, password, dbName string) (*Co
 	if err != nil {
 		return nil, fmt.Errorf("resolving host: %w", err)
 	}
-	db, err := sql.Open("sqlite", dbName)
+	db, err := sql.Open("sqlite", dbName+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}

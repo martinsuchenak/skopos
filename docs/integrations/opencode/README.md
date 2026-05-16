@@ -71,6 +71,23 @@ to all agents regardless of branch.
 
 Entries appear in the Skopos dashboard under the **Blackboard** tab at `http://localhost:8080`.
 
+## Plans
+
+OpenCode has access to `skopos__plan_create`, `skopos__plan_read`, `skopos__plan_add_item`, and `skopos__plan_update_item` tools.
+
+Add to your project's `AGENTS.md`:
+
+```markdown
+## Skopos Plans
+
+At the start of a multi-step task, call `skopos__plan_create` with a name, optional
+branch_name, and your author_agent_id. Then call `skopos__plan_add_item` for each
+work item. Update item status with `skopos__plan_update_item` as you work.
+Item statuses: pending, in_progress, done, blocked.
+```
+
+Plans appear in the Skopos dashboard under the **Plans** tab at `http://localhost:8080`.
+
 ## Session IDs
 
 Set `$SKOPOS_SESSION_ID` in your shell to share a session across agents working in the same workspace.

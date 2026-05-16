@@ -12,8 +12,10 @@ import (
 
 	"github.com/martinsuchenak/skopos/cmd/routes"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
+	"github.com/martinsuchenak/skopos/internal/cleanup"
 	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/health"
+	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/status"
 
 	mcpserver "github.com/martinsuchenak/skopos/cmd/mcp"
@@ -63,6 +65,13 @@ func serveCmd() *cli.Command {
 				ConfigPath:   []string{"health.stuck_threshold_minutes"},
 				EnvVars:      []string{"HEALTH_STUCK_THRESHOLD"},
 			},
+			&cli.IntFlag{
+				Name:         "cleanup-retention-days",
+				DefaultValue: 30,
+				Usage:        "Days to retain data before automatic cleanup (0 to disable)",
+				ConfigPath:   []string{"cleanup.retention_days"},
+				EnvVars:      []string{"CLEANUP_RETENTION_DAYS"},
+			},
 		},
 		// go-scaffolder:serve-flags
 		Run: func(ctx context.Context, cmd *cli.Command) error {
@@ -88,14 +97,23 @@ func serveCmd() *cli.Command {
 			blackboardService := blackboard.NewService(blackboard.NewStorage(conn.SQL))
 			blackboardHandler := blackboard.NewHandler(blackboardService, cmd.GetString("api-key"))
 
-			mcpserver.StartMCPServer(log, statusService, blackboardService)
+			plansStorage := plans.NewStorage(conn.SQL)
+			plansService := plans.NewService(plansStorage)
+			plansHandler := plans.NewHandler(plansService, cmd.GetString("api-key"))
+
+			mcpserver.StartMCPServer(log, statusService, blackboardService, plansService)
 
 			threshold := time.Duration(cmd.GetInt("health-stuck-threshold")) * time.Minute
 			health.NewChecker(conn.SQL, threshold, log).Start(ctx)
+			retentionDays := cmd.GetInt("cleanup-retention-days")
+			if retentionDays > 0 {
+				cleanupRetention := time.Duration(retentionDays) * 24 * time.Hour
+				cleanup.NewCleaner(conn.SQL, cleanupRetention, log).Start(ctx)
+			}
 			// go-scaffolder:serve-init
 
 			mux := http.NewServeMux()
-			routes.RegisterRoutes(mux, statusHandler, blackboardHandler)
+			routes.RegisterRoutes(mux, statusHandler, blackboardHandler, plansHandler)
 
 			addr := fmt.Sprintf("%s:%d", cmd.GetString("server-host"), cmd.GetInt("server-port"))
 			log.Info("starting HTTP server", "addr", addr)

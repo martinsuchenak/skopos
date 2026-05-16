@@ -64,6 +64,7 @@ CREATE INDEX IF NOT EXISTS idx_events_agent_created_at ON events(agent_id, creat
 
 CREATE TABLE IF NOT EXISTS blackboard_entries (
     id              TEXT PRIMARY KEY,
+    workspace_id    TEXT,
     scope           TEXT NOT NULL,
     branch_name     TEXT,
     session_id      TEXT,
@@ -73,16 +74,17 @@ CREATE TABLE IF NOT EXISTS blackboard_entries (
     code_ref        TEXT,
     author_agent_id TEXT NOT NULL,
     created_at      TEXT NOT NULL,
-    updated_at      TEXT NOT NULL,
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    updated_at      TEXT NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS idx_blackboard_workspace ON blackboard_entries(workspace_id, scope, branch_name);
 CREATE INDEX IF NOT EXISTS idx_blackboard_scope   ON blackboard_entries(scope, branch_name);
 CREATE INDEX IF NOT EXISTS idx_blackboard_session ON blackboard_entries(session_id);
 CREATE INDEX IF NOT EXISTS idx_blackboard_type    ON blackboard_entries(entry_type);
 
 CREATE TABLE IF NOT EXISTS plans (
     id              TEXT PRIMARY KEY,
+    workspace_id    TEXT,
     name            TEXT NOT NULL,
     branch_name     TEXT,
     description     TEXT NOT NULL DEFAULT '',
@@ -97,6 +99,7 @@ CREATE TABLE IF NOT EXISTS plan_items (
     plan_id             TEXT NOT NULL,
     title               TEXT NOT NULL,
     description         TEXT NOT NULL DEFAULT '',
+    phase               TEXT,
     status              TEXT NOT NULL DEFAULT 'pending',
     position            INTEGER NOT NULL DEFAULT 0,
     claimed_by_agent_id TEXT,
@@ -105,5 +108,26 @@ CREATE TABLE IF NOT EXISTS plan_items (
     FOREIGN KEY (plan_id) REFERENCES plans(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS plan_item_dependencies (
+    item_id           TEXT NOT NULL,
+    depends_on_item_id TEXT NOT NULL,
+    PRIMARY KEY (item_id, depends_on_item_id),
+    FOREIGN KEY (item_id) REFERENCES plan_items(id) ON DELETE CASCADE,
+    FOREIGN KEY (depends_on_item_id) REFERENCES plan_items(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS plan_dependencies (
+    plan_id             TEXT NOT NULL,
+    depends_on_plan_id  TEXT NOT NULL,
+    PRIMARY KEY (plan_id, depends_on_plan_id),
+    FOREIGN KEY (plan_id) REFERENCES plans(id) ON DELETE CASCADE,
+    FOREIGN KEY (depends_on_plan_id) REFERENCES plans(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_plans_workspace ON plans(workspace_id, branch_name);
 CREATE INDEX IF NOT EXISTS idx_plans_branch    ON plans(branch_name);
 CREATE INDEX IF NOT EXISTS idx_plan_items_plan ON plan_items(plan_id, position);
+CREATE INDEX IF NOT EXISTS idx_item_deps_item  ON plan_item_dependencies(item_id);
+CREATE INDEX IF NOT EXISTS idx_item_deps_dep   ON plan_item_dependencies(depends_on_item_id);
+CREATE INDEX IF NOT EXISTS idx_plan_deps_plan  ON plan_dependencies(plan_id);
+CREATE INDEX IF NOT EXISTS idx_plan_deps_dep   ON plan_dependencies(depends_on_plan_id);

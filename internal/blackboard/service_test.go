@@ -19,11 +19,12 @@ func (f *fakeStore) Write(_ context.Context, e Entry) error {
 	f.entries = append(f.entries, e)
 	return nil
 }
-func (f *fakeStore) Bundle(_ context.Context, _, _ string) ([]Entry, error) {
+func (f *fakeStore) Bundle(_ context.Context, _, _, _ string) ([]Entry, error) {
 	return f.entries, nil
 }
 func (f *fakeStore) Promote(_ context.Context, _ string) error { return nil }
 func (f *fakeStore) Delete(_ context.Context, _ string) error  { return nil }
+func (f *fakeStore) DeleteBySession(_ context.Context, _ string) error { return nil }
 func (f *fakeStore) Get(_ context.Context, _ string) (*Entry, error) {
 	return nil, ErrNotFound
 }
@@ -117,7 +118,7 @@ func TestServiceBundleMarkdownNotEmpty(t *testing.T) {
 		{EntryType: TypeBug, Title: "Crash on nil", AuthorAgentID: "a", Scope: ScopeBranch, BranchName: "feat"},
 	}}
 	svc := NewService(store)
-	bundle, err := svc.Bundle(context.Background(), "feat", "")
+	bundle, err := svc.Bundle(context.Background(), "", "feat", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -131,7 +132,7 @@ func TestServiceBundleMarkdownNotEmpty(t *testing.T) {
 
 func TestServiceBundleEmptyMarkdown(t *testing.T) {
 	svc := NewService(&fakeStore{})
-	bundle, err := svc.Bundle(context.Background(), "", "")
+	bundle, err := svc.Bundle(context.Background(), "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

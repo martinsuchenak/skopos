@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 type fakeStore struct {
@@ -17,7 +18,7 @@ func (s *fakeStore) RecordReport(ctx context.Context, report Event, sessionTitle
 	return nil
 }
 
-func (s *fakeStore) ListSessions(ctx context.Context) ([]SessionSummary, error) {
+func (s *fakeStore) ListSessions(ctx context.Context, workspaceID string) ([]SessionSummary, error) {
 	return nil, nil
 }
 
@@ -27,6 +28,14 @@ func (s *fakeStore) GetSession(ctx context.Context, id string) (*SessionDetail, 
 
 func (s *fakeStore) ListEvents(ctx context.Context, sessionID string) ([]Event, error) {
 	return nil, nil
+}
+
+func (s *fakeStore) DeleteSession(_ context.Context, _ string) error { return nil }
+func (s *fakeStore) DeleteOldEvents(_ context.Context, _ time.Time) (int64, error) {
+	return 0, nil
+}
+func (s *fakeStore) DeleteOrphanedSessions(_ context.Context, _ time.Time) (int64, error) {
+	return 0, nil
 }
 
 func TestServiceReportCreatesImplicitSession(t *testing.T) {

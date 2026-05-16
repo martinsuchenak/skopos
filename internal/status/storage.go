@@ -96,14 +96,21 @@ func (s *Storage) RecordReport(ctx context.Context, report Event, sessionTitle s
 	return nil
 }
 
-func (s *Storage) ListSessions(ctx context.Context) ([]SessionSummary, error) {
-	rows, err := s.db.QueryContext(ctx, `
+func (s *Storage) ListSessions(ctx context.Context, workspaceID string) ([]SessionSummary, error) {
+	query := `
 		SELECT s.id, s.title, s.workspace, s.status, s.started_at, s.updated_at, COUNT(a.agent_id)
 		FROM sessions s
-		LEFT JOIN agent_states a ON a.session_id = s.id
+		LEFT JOIN agent_states a ON a.session_id = s.id`
+	var args []any
+	if workspaceID != "" {
+		query += "\n\t\tWHERE s.workspace = ?"
+		args = append(args, workspaceID)
+	}
+	query += `
 		GROUP BY s.id, s.title, s.workspace, s.status, s.started_at, s.updated_at
 		ORDER BY s.updated_at DESC
-	`)
+	`
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing sessions: %w", err)
 	}
@@ -208,6 +215,30 @@ func (s *Storage) listAgentStates(ctx context.Context, sessionID string) ([]Agen
 		return nil, fmt.Errorf("iterating agent states: %w", err)
 	}
 	return states, nil
+}
+
+func (s *Storage) DeleteSession(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("deleting session: %w", err)
+	}
+	return nil
+}
+
+func (s *Storage) DeleteOldEvents(ctx context.Context, olderThan time.Time) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM events WHERE created_at < ?`, formatTime(olderThan))
+	if err != nil {
+		return 0, fmt.Errorf("deleting old events: %w", err)
+	}
+	return result.RowsAffected()
+}
+
+func (s *Storage) DeleteOrphanedSessions(ctx context.Context, olderThan time.Time) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE status = 'orphaned' AND updated_at < ?`, formatTime(olderThan))
+	if err != nil {
+		return 0, fmt.Errorf("deleting orphaned sessions: %w", err)
+	}
+	return result.RowsAffected()
 }
 
 type rowScanner interface {

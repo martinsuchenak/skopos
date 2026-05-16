@@ -18,11 +18,12 @@ func TestRegisterBlackboardRoutes(t *testing.T) {
 type noopBlackboardStore struct{}
 
 func (s *noopBlackboardStore) Write(_ context.Context, _ blackboard.Entry) error { return nil }
-func (s *noopBlackboardStore) Bundle(_ context.Context, _, _ string) ([]blackboard.Entry, error) {
+func (s *noopBlackboardStore) Bundle(_ context.Context, _, _, _ string) ([]blackboard.Entry, error) {
 	return nil, nil
 }
 func (s *noopBlackboardStore) Promote(_ context.Context, _ string) error { return nil }
 func (s *noopBlackboardStore) Delete(_ context.Context, _ string) error  { return nil }
+func (s *noopBlackboardStore) DeleteBySession(_ context.Context, _ string) error { return nil }
 func (s *noopBlackboardStore) Get(_ context.Context, _ string) (*blackboard.Entry, error) {
 	return nil, blackboard.ErrNotFound
 }

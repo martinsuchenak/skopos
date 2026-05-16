@@ -73,6 +73,33 @@ Scopes: `session` (this session only), `branch` (shared per branch), `project` (
 
 Entries are visible in the Skopos dashboard under the **Blackboard** tab at `http://localhost:8080`.
 
+## Plans
+
+Once MCP is connected, Claude Code has access to plan tools for coordinating work across sessions:
+
+- **`plan_create`** — create a named plan, optionally scoped to a branch
+- **`plan_read`** — fetch a plan with all its items
+- **`plan_add_item`** — add a work item to a plan
+- **`plan_update_item`** — update item status or claim it
+
+Typical workflow:
+
+```text
+# At session start — create a plan for this task
+plan_create(name: "Auth refactor", branch_name: "feat-auth", author_agent_id: "claude-code-macbook")
+
+# During work — add items and update status
+plan_add_item(plan_id: "...", title: "Audit refresh token logic")
+plan_update_item(plan_id: "...", item_id: "...", status: "in_progress", claimed_by_agent_id: "claude-code-macbook")
+
+# Mark items done as you complete them
+plan_update_item(plan_id: "...", item_id: "...", status: "done")
+```
+
+Item statuses: `pending`, `in_progress`, `done`, `blocked`
+
+Plans are visible in the Skopos dashboard under the **Plans** tab at `http://localhost:8080`.
+
 ## Session IDs
 
 Sessions are resolved in this order:

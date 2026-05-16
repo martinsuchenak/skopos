@@ -48,11 +48,17 @@ Add `"blackboard_read"` and `"blackboard_write"` to the `autoApprove` list in `m
 ```json
 "skopos": {
   "url": "http://localhost:9000/mcp",
-  "autoApprove": ["report_status", "blackboard_read", "blackboard_write"]
+  "autoApprove": ["report_status", "blackboard_read", "blackboard_write", "plan_create", "plan_read", "plan_add_item", "plan_update_item"]
 }
 ```
 
 See the steering snippet for usage instructions. Entries appear in the Skopos dashboard under the **Blackboard** tab at `http://localhost:8080`.
+
+## Plans
+
+Once MCP is connected, Kiro has access to `skopos__plan_create`, `skopos__plan_read`, `skopos__plan_add_item`, and `skopos__plan_update_item` tools.
+
+See the steering snippet for plan usage instructions. Plans appear in the Skopos dashboard under the **Plans** tab at `http://localhost:8080`.
 
 ## Notes
 

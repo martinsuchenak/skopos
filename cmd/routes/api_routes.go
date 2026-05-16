@@ -8,12 +8,14 @@ import (
 	"runtime"
 
 	"github.com/martinsuchenak/skopos/internal/blackboard"
+	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/status"
 	appweb "github.com/martinsuchenak/skopos/web"
 )
 
 var registrations []func(*http.ServeMux, *status.Handler)
 var blackboardRegistrations []func(*http.ServeMux, *blackboard.Handler)
+var plansRegistrations []func(*http.ServeMux, *plans.Handler)
 
 func Register(fn func(*http.ServeMux, *status.Handler)) {
 	registrations = append(registrations, fn)
@@ -23,7 +25,11 @@ func RegisterBlackboard(fn func(*http.ServeMux, *blackboard.Handler)) {
 	blackboardRegistrations = append(blackboardRegistrations, fn)
 }
 
-func RegisterRoutes(mux *http.ServeMux, statusHandler *status.Handler, blackboardHandler *blackboard.Handler) {
+func RegisterPlans(fn func(*http.ServeMux, *plans.Handler)) {
+	plansRegistrations = append(plansRegistrations, fn)
+}
+
+func RegisterRoutes(mux *http.ServeMux, statusHandler *status.Handler, blackboardHandler *blackboard.Handler, plansHandler *plans.Handler) {
 	mux.HandleFunc("GET /health", healthHandler)
 	mux.HandleFunc("GET /metrics", metricsHandler)
 	registerWebRoutes(mux)
@@ -34,6 +40,10 @@ func RegisterRoutes(mux *http.ServeMux, statusHandler *status.Handler, blackboar
 
 	for _, fn := range blackboardRegistrations {
 		fn(mux, blackboardHandler)
+	}
+
+	for _, fn := range plansRegistrations {
+		fn(mux, plansHandler)
 	}
 }
 

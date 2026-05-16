@@ -26,6 +26,7 @@ const (
 type Entry struct {
 	ID            string    `json:"id"`
 	Scope         Scope     `json:"scope"`
+	WorkspaceID   string    `json:"workspace_id,omitempty"`
 	BranchName    string    `json:"branch_name,omitempty"`
 	SessionID     string    `json:"session_id,omitempty"`
 	EntryType     EntryType `json:"entry_type"`
@@ -45,6 +46,7 @@ var (
 
 type WriteInput struct {
 	Scope         Scope     `json:"scope"`
+	WorkspaceID   string    `json:"workspace_id,omitempty"`
 	BranchName    string    `json:"branch_name,omitempty"`
 	SessionID     string    `json:"session_id,omitempty"`
 	EntryType     EntryType `json:"entry_type"`

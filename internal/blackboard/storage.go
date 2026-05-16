@@ -10,9 +10,10 @@ import (
 
 type Store interface {
 	Write(ctx context.Context, entry Entry) error
-	Bundle(ctx context.Context, branchName, sessionID string) ([]Entry, error)
+	Bundle(ctx context.Context, workspaceID, branchName, sessionID string) ([]Entry, error)
 	Promote(ctx context.Context, id string) error
 	Delete(ctx context.Context, id string) error
+	DeleteBySession(ctx context.Context, sessionID string) error
 	Get(ctx context.Context, id string) (*Entry, error)
 }
 
@@ -27,11 +28,12 @@ func NewStorage(db *sql.DB) *Storage {
 func (s *Storage) Write(ctx context.Context, entry Entry) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO blackboard_entries (
-			id, scope, branch_name, session_id, entry_type, title, content, code_ref,
+			id, scope, workspace_id, branch_name, session_id, entry_type, title, content, code_ref,
 			author_agent_id, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, entry.ID,
 		string(entry.Scope),
+		nullableString(entry.WorkspaceID),
 		nullableString(entry.BranchName),
 		nullableString(entry.SessionID),
 		string(entry.EntryType),
@@ -48,17 +50,24 @@ func (s *Storage) Write(ctx context.Context, entry Entry) error {
 	return nil
 }
 
-func (s *Storage) Bundle(ctx context.Context, branchName, sessionID string) ([]Entry, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, scope, branch_name, session_id, entry_type, title, content, code_ref,
+func (s *Storage) Bundle(ctx context.Context, workspaceID, branchName, sessionID string) ([]Entry, error) {
+	query := `
+		SELECT id, scope, workspace_id, branch_name, session_id, entry_type, title, content, code_ref,
 		       author_agent_id, created_at, updated_at
 		FROM blackboard_entries
-		WHERE scope = 'project'
+		WHERE (scope = 'project'
 		   OR (scope = 'branch' AND branch_name = ?)
 		   OR (scope = 'session' AND session_id = ?)
-		   OR entry_type IN ('bug', 'debt')
-		ORDER BY entry_type, created_at ASC
-	`, branchName, sessionID)
+		   OR entry_type IN ('bug', 'debt'))
+	`
+	args := []any{branchName, sessionID}
+	if workspaceID != "" {
+		query += ` AND (workspace_id = ? OR workspace_id IS NULL)`
+		args = append(args, workspaceID)
+	}
+	query += ` ORDER BY entry_type, created_at ASC`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("querying bundle: %w", err)
 	}
@@ -80,14 +89,14 @@ func (s *Storage) Bundle(ctx context.Context, branchName, sessionID string) ([]E
 
 func (s *Storage) Get(ctx context.Context, id string) (*Entry, error) {
 	var e Entry
-	var branchName, sessionID, codeRef sql.NullString
+	var workspaceID, branchName, sessionID, codeRef sql.NullString
 	var createdAt, updatedAt string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, scope, branch_name, session_id, entry_type, title, content, code_ref,
+		SELECT id, scope, workspace_id, branch_name, session_id, entry_type, title, content, code_ref,
 		       author_agent_id, created_at, updated_at
 		FROM blackboard_entries WHERE id = ?
 	`, id).Scan(
-		&e.ID, &e.Scope, &branchName, &sessionID, &e.EntryType,
+		&e.ID, &e.Scope, &workspaceID, &branchName, &sessionID, &e.EntryType,
 		&e.Title, &e.Content, &codeRef, &e.AuthorAgentID, &createdAt, &updatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -95,6 +104,9 @@ func (s *Storage) Get(ctx context.Context, id string) (*Entry, error) {
 	}
 	if err != nil {
 		return nil, fmt.Errorf("getting entry: %w", err)
+	}
+	if workspaceID.Valid {
+		e.WorkspaceID = workspaceID.String
 	}
 	if branchName.Valid {
 		e.BranchName = branchName.String
@@ -156,19 +168,30 @@ func (s *Storage) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+func (s *Storage) DeleteBySession(ctx context.Context, sessionID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM blackboard_entries WHERE session_id = ?`, sessionID)
+	if err != nil {
+		return fmt.Errorf("deleting entries by session: %w", err)
+	}
+	return nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }
 
 func scanEntry(row rowScanner) (Entry, error) {
 	var e Entry
-	var branchName, sessionID, codeRef sql.NullString
+	var workspaceID, branchName, sessionID, codeRef sql.NullString
 	var createdAt, updatedAt string
 	if err := row.Scan(
-		&e.ID, &e.Scope, &branchName, &sessionID, &e.EntryType,
+		&e.ID, &e.Scope, &workspaceID, &branchName, &sessionID, &e.EntryType,
 		&e.Title, &e.Content, &codeRef, &e.AuthorAgentID, &createdAt, &updatedAt,
 	); err != nil {
 		return e, fmt.Errorf("scanning entry: %w", err)
+	}
+	if workspaceID.Valid {
+		e.WorkspaceID = workspaceID.String
 	}
 	if branchName.Valid {
 		e.BranchName = branchName.String

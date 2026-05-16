@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/martinsuchenak/skopos/internal/blackboard"
+	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/status"
 	"github.com/paularlott/logger"
 	mcplib "github.com/paularlott/mcp"
@@ -11,6 +12,7 @@ import (
 
 var toolRegistrations []func(*mcplib.Server, *status.Service)
 var blackboardToolRegistrations []func(*mcplib.Server, *blackboard.Service)
+var plansToolRegistrations []func(*mcplib.Server, *plans.Service)
 
 func RegisterTool(fn func(*mcplib.Server, *status.Service)) {
 	toolRegistrations = append(toolRegistrations, fn)
@@ -20,7 +22,11 @@ func RegisterBlackboardTool(fn func(*mcplib.Server, *blackboard.Service)) {
 	blackboardToolRegistrations = append(blackboardToolRegistrations, fn)
 }
 
-func StartMCPServer(log logger.Logger, statusService *status.Service, blackboardService *blackboard.Service) {
+func RegisterPlansTool(fn func(*mcplib.Server, *plans.Service)) {
+	plansToolRegistrations = append(plansToolRegistrations, fn)
+}
+
+func StartMCPServer(log logger.Logger, statusService *status.Service, blackboardService *blackboard.Service, plansService *plans.Service) {
 	server := mcplib.NewServer("skopos-mcp", "1.0.0")
 
 	for _, fn := range toolRegistrations {
@@ -29,6 +35,10 @@ func StartMCPServer(log logger.Logger, statusService *status.Service, blackboard
 
 	for _, fn := range blackboardToolRegistrations {
 		fn(server, blackboardService)
+	}
+
+	for _, fn := range plansToolRegistrations {
+		fn(server, plansService)
 	}
 
 	go func() {

@@ -54,7 +54,7 @@ func TestStorageRecordReportCreatesSessionAgentStateAndEvent(t *testing.T) {
 		t.Fatalf("record report: %v", err)
 	}
 
-	sessions, err := storage.ListSessions(context.Background())
+	sessions, err := storage.ListSessions(context.Background(), "")
 	if err != nil {
 		t.Fatalf("list sessions: %v", err)
 	}

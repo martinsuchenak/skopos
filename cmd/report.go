@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/martinsuchenak/skopos/internal/status"
+	"github.com/martinsuchenak/skopos/internal/workspace"
 	"github.com/paularlott/cli"
 )
 
@@ -75,6 +76,11 @@ func reportInputFromCommand(cmd *cli.Command) (status.ReportInput, error) {
 	if rawMetadata := strings.TrimSpace(cmd.GetString("metadata")); rawMetadata != "" {
 		if err := json.Unmarshal([]byte(rawMetadata), &input.Metadata); err != nil {
 			return input, fmt.Errorf("invalid metadata JSON: %w", err)
+		}
+	}
+	if input.Workspace == "" {
+		if ws, err := workspace.Resolve("."); err == nil {
+			input.Workspace = ws
 		}
 	}
 	return input, nil

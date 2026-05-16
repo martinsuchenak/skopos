@@ -4,34 +4,68 @@
 
 - Name: `skopos`
 - Module: `github.com/martinsuchenak/skopos`
+- Go 1.26.3, SQLite (modernc.org/sqlite — no CGO), Bun for frontend
 
-## Generated Structure
+## Commands
 
-- CLI is always enabled.
-- API feature is enabled.
-- MCP feature is enabled.
-- UI feature is enabled under `web/`.
-- DB feature is enabled with `sqlite` and `xdal`.
-- Cache feature is enabled with `valkey`.
-- Docker support is enabled.
-- Nomad support is enabled.
+```sh
+task build-local      # build for current OS (runs frontend-build first)
+task build            # cross-compile for linux/darwin amd64+arm64
+task test             # go test ./... -v -count=1
+task lint             # golangci-lint run .
+task frontend-build   # bun install && bun run build in web/
+```
 
-## Working Rules
+Running a single test package: `go test ./internal/status/... -v -count=1`
 
-- Prefer `task build`, `task test`, and `task lint` before custom commands.
-- Keep generated layering intact: handler -> service -> storage for API code.
+The server must be running for MCP/REST integration testing: `go run . serve` (REST on :8080, MCP on :9000).
+
+## Architecture
+
+```
+main.go → cmd/register.go → cmd/serve.go
+                              ├── cmd/routes/       (HTTP handlers)
+                              ├── cmd/mcp/          (MCP tool definitions)
+                              └── cmd/              (CLI commands: report, blackboard, plans)
+internal/
+  ├── status/     handler → service → storage   (agent status, sessions, events)
+  ├── blackboard/ handler → service → storage   (scoped knowledge entries)
+  ├── plans/      handler → service → storage   (plans, items, dependencies)
+  ├── auth/       API key middleware (X-API-Key header, write-only)
+  ├── health/     background goroutine: stuck-agent detection
+  ├── cleanup/    background goroutine: data retention cleanup
+  ├── db/         SQLite connection + schema.sql migrations
+  └── valkey/     Valkey client (SRV DNS support)
+web/              Alpine.js + Tailwind CSS, embedded via go:embed, Bun build
+```
+
+Every domain package follows `handler → service → storage` layering. Storage uses raw `*sql.DB` (not xdal for the main tables). Services are interface-based for testability.
+
+## Key Patterns
+
+- Commands self-register via `init()` in `cmd/` using `Register()`.
+- Routes self-register via `init()` in `cmd/routes/`.
+- `go-scaffolder:` comments are patch markers — do not remove them.
 - Add new CLI commands, API endpoints, or MCP tools with `go-scaffolder add` where possible.
-- Do not remove marker comments beginning with `go-scaffolder:` unless you also update the patching flow.
+- All IDs are UUIDv7 (text, time-sortable).
+- Config: TOML (`skopos-config.toml`) + env var overrides (`SERVER_PORT`, `SKOPOS_API_KEY`, etc.).
+- Frontend assets are embedded in the binary via `web/embed.go`. Run `task frontend-build` before `task build` (the build task depends on it automatically).
+- `task lint` sets `GOCACHE` to a local directory — don't run bare `golangci-lint`.
 
-## Common Commands
+## Blackboard
 
-```sh
-task build
-task test
-task lint
-```
-Frontend build:
+Three scopes: `session` (requires `session_id`, cascade-deleted with session), `branch` (requires `branch_name`), `project` (global).
+Six entry types: `finding`, `decision`, `warning`, `context`, `bug`, `debt`.
+`bug` and `debt` are "floating" — always included in reads regardless of branch filter.
+Read returns both structured `entries` array and a `markdown_bundle` text block.
 
-```sh
-task frontend-build
-```
+## Plans
+
+Item statuses: `pending`, `in_progress`, `done`, `blocked`.
+`add_dependency` auto-blocks the dependent item. Completing a dependency auto-unblocks dependents.
+`remove_dependency` auto-unblocks if remaining deps are all done.
+Plan-to-plan dependencies work the same way — adding one blocks the dependent plan, completing the dependency plan auto-unblocks it.
+
+## Database
+
+Schema lives in `internal/db/schema.sql`. On `serve`, `db.RunMigrations(conn.SQL)` runs all CREATE statements. No separate migration files — schema.sql is the source of truth and is re-run with `IF NOT EXISTS`. The DB is file-based SQLite (`skopos.db` by default).

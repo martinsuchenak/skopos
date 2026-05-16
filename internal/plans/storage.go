@@ -12,13 +12,29 @@ import (
 type Store interface {
 	CreatePlan(ctx context.Context, plan Plan) error
 	GetPlan(ctx context.Context, id string) (*Plan, error)
-	ListPlans(ctx context.Context, branchName string) ([]Plan, error)
+	ListPlans(ctx context.Context, workspaceID, branchName string) ([]Plan, error)
 	UpdatePlan(ctx context.Context, id string, input UpdatePlanInput) error
 	DeletePlan(ctx context.Context, id string) error
 	AddItem(ctx context.Context, item Item) error
 	UpdateItem(ctx context.Context, planID, itemID string, input UpdateItemInput) error
 	GetItem(ctx context.Context, planID, itemID string) (*Item, error)
 	DeleteItem(ctx context.Context, planID, itemID string) error
+	ShiftPositions(ctx context.Context, planID string, fromPosition int) error
+	AddDependency(ctx context.Context, itemID, dependsOnItemID string) error
+	RemoveDependency(ctx context.Context, itemID, dependsOnItemID string) error
+	ListDependencies(ctx context.Context, itemID string) ([]string, error)
+	ListDependents(ctx context.Context, itemID string) ([]string, error)
+	ItemExistsInPlan(ctx context.Context, planID, itemID string) (bool, error)
+	ItemStatus(ctx context.Context, itemID string) (ItemStatus, error)
+	SetItemStatus(ctx context.Context, itemID string, status ItemStatus) error
+	AddPlanDependency(ctx context.Context, planID, dependsOnPlanID string) error
+	RemovePlanDependency(ctx context.Context, planID, dependsOnPlanID string) error
+	ListPlanDependencies(ctx context.Context, planID string) ([]string, error)
+	ListPlanDependents(ctx context.Context, planID string) ([]string, error)
+	PlanStatus(ctx context.Context, planID string) (PlanStatus, error)
+	SetPlanStatus(ctx context.Context, planID string, status PlanStatus) error
+	PlanExists(ctx context.Context, planID string) (bool, error)
+	AllItemsDone(ctx context.Context, planID string) (bool, error)
 }
 
 type Storage struct {
@@ -31,9 +47,9 @@ func NewStorage(db *sql.DB) *Storage {
 
 func (s *Storage) CreatePlan(ctx context.Context, plan Plan) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO plans (id, name, branch_name, description, status, author_agent_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, plan.ID, plan.Name, nullableString(plan.BranchName), plan.Description,
+		INSERT INTO plans (id, name, branch_name, workspace_id, description, status, author_agent_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, plan.ID, plan.Name, nullableString(plan.BranchName), nullableString(plan.WorkspaceID), plan.Description,
 		string(plan.Status), plan.AuthorAgentID,
 		formatTime(plan.CreatedAt), formatTime(plan.UpdatedAt))
 	if err != nil {
@@ -44,12 +60,12 @@ func (s *Storage) CreatePlan(ctx context.Context, plan Plan) error {
 
 func (s *Storage) GetPlan(ctx context.Context, id string) (*Plan, error) {
 	var p Plan
-	var branchName, description sql.NullString
+	var branchName, workspaceID, description sql.NullString
 	var createdAt, updatedAt string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, name, branch_name, description, status, author_agent_id, created_at, updated_at
+		SELECT id, name, branch_name, workspace_id, description, status, author_agent_id, created_at, updated_at
 		FROM plans WHERE id = ?
-	`, id).Scan(&p.ID, &p.Name, &branchName, &description, &p.Status,
+	`, id).Scan(&p.ID, &p.Name, &branchName, &workspaceID, &description, &p.Status,
 		&p.AuthorAgentID, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: plan %s", ErrNotFound, id)
@@ -59,6 +75,9 @@ func (s *Storage) GetPlan(ctx context.Context, id string) (*Plan, error) {
 	}
 	if branchName.Valid {
 		p.BranchName = branchName.String
+	}
+	if workspaceID.Valid {
+		p.WorkspaceID = workspaceID.String
 	}
 	if description.Valid {
 		p.Description = description.String
@@ -71,12 +90,17 @@ func (s *Storage) GetPlan(ctx context.Context, id string) (*Plan, error) {
 		return nil, err
 	}
 	p.Items = items
+	planDeps, err := s.ListPlanDependencies(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	p.DependsOn = planDeps
 	return &p, nil
 }
 
 func (s *Storage) listItems(ctx context.Context, planID string) ([]Item, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, plan_id, title, description, status, position, claimed_by_agent_id, created_at, updated_at
+		SELECT id, plan_id, title, description, phase, status, position, claimed_by_agent_id, created_at, updated_at
 		FROM plan_items WHERE plan_id = ? ORDER BY position ASC, created_at ASC
 	`, planID)
 	if err != nil {
@@ -91,20 +115,38 @@ func (s *Storage) listItems(ctx context.Context, planID string) ([]Item, error) 
 		}
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating items: %w", err)
+	}
+	for i := range items {
+		deps, err := s.ListDependencies(ctx, items[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		items[i].DependsOn = deps
+	}
+	return items, nil
 }
 
-func (s *Storage) ListPlans(ctx context.Context, branchName string) ([]Plan, error) {
+func (s *Storage) ListPlans(ctx context.Context, workspaceID, branchName string) ([]Plan, error) {
 	var (
 		query string
 		args  []any
 	)
-	if branchName != "" {
-		query = `SELECT id, name, branch_name, description, status, author_agent_id, created_at, updated_at
+	if workspaceID != "" && branchName != "" {
+		query = `SELECT id, name, branch_name, workspace_id, description, status, author_agent_id, created_at, updated_at
+		         FROM plans WHERE (workspace_id = ? OR workspace_id IS NULL) AND (branch_name = ? OR branch_name IS NULL) ORDER BY created_at DESC`
+		args = []any{workspaceID, branchName}
+	} else if workspaceID != "" {
+		query = `SELECT id, name, branch_name, workspace_id, description, status, author_agent_id, created_at, updated_at
+		         FROM plans WHERE workspace_id = ? OR workspace_id IS NULL ORDER BY created_at DESC`
+		args = []any{workspaceID}
+	} else if branchName != "" {
+		query = `SELECT id, name, branch_name, workspace_id, description, status, author_agent_id, created_at, updated_at
 		         FROM plans WHERE branch_name = ? OR branch_name IS NULL ORDER BY created_at DESC`
 		args = []any{branchName}
 	} else {
-		query = `SELECT id, name, branch_name, description, status, author_agent_id, created_at, updated_at
+		query = `SELECT id, name, branch_name, workspace_id, description, status, author_agent_id, created_at, updated_at
 		         FROM plans ORDER BY created_at DESC`
 	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -116,14 +158,17 @@ func (s *Storage) ListPlans(ctx context.Context, branchName string) ([]Plan, err
 	var result []Plan
 	for rows.Next() {
 		var p Plan
-		var bn, desc sql.NullString
+		var bn, ws, desc sql.NullString
 		var ca, ua string
-		if err := rows.Scan(&p.ID, &p.Name, &bn, &desc, &p.Status,
+		if err := rows.Scan(&p.ID, &p.Name, &bn, &ws, &desc, &p.Status,
 			&p.AuthorAgentID, &ca, &ua); err != nil {
 			return nil, fmt.Errorf("scanning plan: %w", err)
 		}
 		if bn.Valid {
 			p.BranchName = bn.String
+		}
+		if ws.Valid {
+			p.WorkspaceID = ws.String
 		}
 		if desc.Valid {
 			p.Description = desc.String
@@ -183,9 +228,9 @@ func (s *Storage) DeletePlan(ctx context.Context, id string) error {
 func (s *Storage) AddItem(ctx context.Context, item Item) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO plan_items
-		    (id, plan_id, title, description, status, position, claimed_by_agent_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, item.ID, item.PlanID, item.Title, item.Description, string(item.Status),
+		    (id, plan_id, title, description, phase, status, position, claimed_by_agent_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, item.ID, item.PlanID, item.Title, item.Description, nullableString(item.Phase), string(item.Status),
 		item.Position, nullableString(item.ClaimedByAgentID),
 		formatTime(item.CreatedAt), formatTime(item.UpdatedAt))
 	if err != nil {
@@ -229,7 +274,7 @@ func (s *Storage) UpdateItem(ctx context.Context, planID, itemID string, input U
 
 func (s *Storage) GetItem(ctx context.Context, planID, itemID string) (*Item, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, plan_id, title, description, status, position, claimed_by_agent_id, created_at, updated_at
+		SELECT id, plan_id, title, description, phase, status, position, claimed_by_agent_id, created_at, updated_at
 		FROM plan_items WHERE id = ? AND plan_id = ?
 	`, itemID, planID)
 	item, err := scanItem(row)
@@ -239,6 +284,11 @@ func (s *Storage) GetItem(ctx context.Context, planID, itemID string) (*Item, er
 	if err != nil {
 		return nil, err
 	}
+	deps, err := s.ListDependencies(ctx, itemID)
+	if err != nil {
+		return nil, err
+	}
+	item.DependsOn = deps
 	return &item, nil
 }
 
@@ -255,20 +305,215 @@ func (s *Storage) DeleteItem(ctx context.Context, planID, itemID string) error {
 	return nil
 }
 
+func (s *Storage) ShiftPositions(ctx context.Context, planID string, fromPosition int) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE plan_items SET position = position + 1 WHERE plan_id = ? AND position >= ?`,
+		planID, fromPosition)
+	if err != nil {
+		return fmt.Errorf("shifting positions: %w", err)
+	}
+	return nil
+}
+
+func (s *Storage) AddDependency(ctx context.Context, itemID, dependsOnItemID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO plan_item_dependencies (item_id, depends_on_item_id) VALUES (?, ?)`,
+		itemID, dependsOnItemID)
+	if err != nil {
+		return fmt.Errorf("adding dependency: %w", err)
+	}
+	return nil
+}
+
+func (s *Storage) RemoveDependency(ctx context.Context, itemID, dependsOnItemID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM plan_item_dependencies WHERE item_id = ? AND depends_on_item_id = ?`,
+		itemID, dependsOnItemID)
+	if err != nil {
+		return fmt.Errorf("removing dependency: %w", err)
+	}
+	return nil
+}
+
+func (s *Storage) ListDependencies(ctx context.Context, itemID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT depends_on_item_id FROM plan_item_dependencies WHERE item_id = ?`, itemID)
+	if err != nil {
+		return nil, fmt.Errorf("listing dependencies: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (s *Storage) ListDependents(ctx context.Context, itemID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT item_id FROM plan_item_dependencies WHERE depends_on_item_id = ?`, itemID)
+	if err != nil {
+		return nil, fmt.Errorf("listing dependents: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (s *Storage) ItemExistsInPlan(ctx context.Context, planID, itemID string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx,
+		`SELECT true FROM plan_items WHERE id = ? AND plan_id = ?`, itemID, planID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return exists, err
+}
+
+func (s *Storage) ItemStatus(ctx context.Context, itemID string) (ItemStatus, error) {
+	var status ItemStatus
+	err := s.db.QueryRowContext(ctx,
+		`SELECT status FROM plan_items WHERE id = ?`, itemID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("%w: item %s", ErrNotFound, itemID)
+	}
+	return status, err
+}
+
+func (s *Storage) SetItemStatus(ctx context.Context, itemID string, status ItemStatus) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE plan_items SET status = ?, updated_at = ? WHERE id = ?`,
+		string(status), formatTime(time.Now().UTC()), itemID)
+	return err
+}
+
+func (s *Storage) AddPlanDependency(ctx context.Context, planID, dependsOnPlanID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO plan_dependencies (plan_id, depends_on_plan_id) VALUES (?, ?)`,
+		planID, dependsOnPlanID)
+	if err != nil {
+		return fmt.Errorf("adding plan dependency: %w", err)
+	}
+	return nil
+}
+
+func (s *Storage) RemovePlanDependency(ctx context.Context, planID, dependsOnPlanID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM plan_dependencies WHERE plan_id = ? AND depends_on_plan_id = ?`,
+		planID, dependsOnPlanID)
+	if err != nil {
+		return fmt.Errorf("removing plan dependency: %w", err)
+	}
+	return nil
+}
+
+func (s *Storage) ListPlanDependencies(ctx context.Context, planID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT depends_on_plan_id FROM plan_dependencies WHERE plan_id = ?`, planID)
+	if err != nil {
+		return nil, fmt.Errorf("listing plan dependencies: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (s *Storage) ListPlanDependents(ctx context.Context, planID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT plan_id FROM plan_dependencies WHERE depends_on_plan_id = ?`, planID)
+	if err != nil {
+		return nil, fmt.Errorf("listing plan dependents: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (s *Storage) PlanStatus(ctx context.Context, planID string) (PlanStatus, error) {
+	var status PlanStatus
+	err := s.db.QueryRowContext(ctx,
+		`SELECT status FROM plans WHERE id = ?`, planID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("%w: plan %s", ErrNotFound, planID)
+	}
+	return status, err
+}
+
+func (s *Storage) SetPlanStatus(ctx context.Context, planID string, status PlanStatus) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE plans SET status = ?, updated_at = ? WHERE id = ?`,
+		string(status), formatTime(time.Now().UTC()), planID)
+	return err
+}
+
+func (s *Storage) PlanExists(ctx context.Context, planID string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx,
+		`SELECT true FROM plans WHERE id = ?`, planID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return exists, err
+}
+
+func (s *Storage) AllItemsDone(ctx context.Context, planID string) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM plan_items WHERE plan_id = ? AND status != 'done'`, planID).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("checking all items done: %w", err)
+	}
+	var hasItems int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM plan_items WHERE plan_id = ?`, planID).Scan(&hasItems)
+	if err != nil {
+		return false, fmt.Errorf("checking plan has items: %w", err)
+	}
+	return hasItems > 0 && count == 0, nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }
 
 func scanItem(row rowScanner) (Item, error) {
 	var item Item
-	var description, claimedBy sql.NullString
+	var description, phase, claimedBy sql.NullString
 	var createdAt, updatedAt string
 	if err := row.Scan(&item.ID, &item.PlanID, &item.Title, &description,
-		&item.Status, &item.Position, &claimedBy, &createdAt, &updatedAt); err != nil {
+		&phase, &item.Status, &item.Position, &claimedBy, &createdAt, &updatedAt); err != nil {
 		return item, fmt.Errorf("scanning item: %w", err)
 	}
 	if description.Valid {
 		item.Description = description.String
+	}
+	if phase.Valid {
+		item.Phase = phase.String
 	}
 	if claimedBy.Valid {
 		item.ClaimedByAgentID = claimedBy.String

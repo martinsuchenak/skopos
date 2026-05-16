@@ -49,6 +49,7 @@ func (s *Service) Write(ctx context.Context, input WriteInput) (*WriteResult, er
 	entry := Entry{
 		ID:            generateID(),
 		Scope:         input.Scope,
+		WorkspaceID:   strings.TrimSpace(input.WorkspaceID),
 		BranchName:    input.BranchName,
 		SessionID:     input.SessionID,
 		EntryType:     input.EntryType,
@@ -65,10 +66,10 @@ func (s *Service) Write(ctx context.Context, input WriteInput) (*WriteResult, er
 	return &WriteResult{ID: entry.ID, Scope: entry.Scope}, nil
 }
 
-func (s *Service) Bundle(ctx context.Context, branchName, sessionID string) (*Bundle, error) {
+func (s *Service) Bundle(ctx context.Context, workspaceID, branchName, sessionID string) (*Bundle, error) {
 	branchName = strings.TrimSpace(branchName)
 	sessionID = strings.TrimSpace(sessionID)
-	entries, err := s.store.Bundle(ctx, branchName, sessionID)
+	entries, err := s.store.Bundle(ctx, workspaceID, branchName, sessionID)
 	if err != nil {
 		return nil, err
 	}

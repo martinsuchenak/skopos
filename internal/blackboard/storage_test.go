@@ -48,7 +48,7 @@ func TestStorageWriteAndBundle(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	entries, err := s.Bundle(ctx, "feat-auth", "")
+	entries, err := s.Bundle(ctx, "", "feat-auth", "")
 	if err != nil {
 		t.Fatalf("bundle: %v", err)
 	}
@@ -68,7 +68,6 @@ func TestStorageBundleFloatingTypesAlwaysIncluded(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 
-	// Bug on feat-auth branch
 	if err := s.Write(ctx, Entry{
 		ID: "bug-1", Scope: ScopeBranch, BranchName: "feat-auth",
 		EntryType: TypeBug, Title: "Critical bug", AuthorAgentID: "a",
@@ -77,8 +76,7 @@ func TestStorageBundleFloatingTypesAlwaysIncluded(t *testing.T) {
 		t.Fatalf("write bug: %v", err)
 	}
 
-	// Query from a different branch — bug should still appear
-	entries, err := s.Bundle(ctx, "main", "")
+	entries, err := s.Bundle(ctx, "", "main", "")
 	if err != nil {
 		t.Fatalf("bundle: %v", err)
 	}
@@ -112,8 +110,7 @@ func TestStorageBundleSessionScope(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	// Session entry visible with matching session_id
-	entries, err := s.Bundle(ctx, "", "sess-1")
+	entries, err := s.Bundle(ctx, "", "", "sess-1")
 	if err != nil {
 		t.Fatalf("bundle: %v", err)
 	}
@@ -121,8 +118,7 @@ func TestStorageBundleSessionScope(t *testing.T) {
 		t.Fatalf("expected 1 entry with session, got %d", len(entries))
 	}
 
-	// Not visible for a different session
-	entries, err = s.Bundle(ctx, "", "sess-other")
+	entries, err = s.Bundle(ctx, "", "", "sess-other")
 	if err != nil {
 		t.Fatalf("bundle other: %v", err)
 	}
@@ -155,7 +151,12 @@ func TestStorageOnDeleteCascadeRemovesSessionEntries(t *testing.T) {
 		t.Fatalf("delete session: %v", err)
 	}
 
-	entries, err := s.Bundle(ctx, "", "sess-del")
+	err = s.DeleteBySession(ctx, "sess-del")
+	if err != nil {
+		t.Fatalf("delete by session: %v", err)
+	}
+
+	entries, err := s.Bundle(ctx, "", "", "sess-del")
 	if err != nil {
 		t.Fatalf("bundle: %v", err)
 	}
@@ -235,5 +236,59 @@ func TestStorageDelete(t *testing.T) {
 	_, err := s.Get(ctx, "del-1")
 	if err == nil {
 		t.Fatal("expected ErrNotFound after delete")
+	}
+}
+
+func TestStorageBundleWorkspaceFiltering(t *testing.T) {
+	s := testStorage(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	if err := s.Write(ctx, Entry{
+		ID: "ws-global", Scope: ScopeProject, EntryType: TypeFinding,
+		Title: "Global finding", AuthorAgentID: "a", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("write global: %v", err)
+	}
+	if err := s.Write(ctx, Entry{
+		ID: "ws-a", Scope: ScopeProject, EntryType: TypeFinding, WorkspaceID: "ws-a",
+		Title: "Workspace A finding", AuthorAgentID: "a", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("write ws-a: %v", err)
+	}
+	if err := s.Write(ctx, Entry{
+		ID: "ws-b", Scope: ScopeProject, EntryType: TypeFinding, WorkspaceID: "ws-b",
+		Title: "Workspace B finding", AuthorAgentID: "a", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("write ws-b: %v", err)
+	}
+
+	entries, err := s.Bundle(ctx, "ws-a", "", "")
+	if err != nil {
+		t.Fatalf("bundle ws-a: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries (global + ws-a), got %d", len(entries))
+	}
+	titles := map[string]bool{}
+	for _, e := range entries {
+		titles[e.Title] = true
+	}
+	if !titles["Global finding"] {
+		t.Error("expected global finding in ws-a results")
+	}
+	if !titles["Workspace A finding"] {
+		t.Error("expected workspace A finding in ws-a results")
+	}
+	if titles["Workspace B finding"] {
+		t.Error("did not expect workspace B finding in ws-a results")
+	}
+
+	all, err := s.Bundle(ctx, "", "", "")
+	if err != nil {
+		t.Fatalf("bundle all: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("expected 3 entries with no workspace filter, got %d", len(all))
 	}
 }
