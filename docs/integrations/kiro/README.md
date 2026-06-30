@@ -2,9 +2,11 @@
 
 ## Prerequisites
 
-- Skopos server running: `skopos serve` (REST on :8080, MCP on :9000)
+- Skopos server running: `skopos serve` (HTTP on :8080, MCP at /mcp)
 - `skopos` binary in PATH
 - Kiro installed
+
+> **Quick install:** `skopos install --agent kiro [--url ...] [--api-key "$SKOPOS_API_KEY"]` does this for you — it merges the MCP config and writes `.kiro/steering/skopos.md` (idempotent, backs up existing config). Add `--scope project` to target `.kiro/` in the current directory. The manual steps below are the fallback.
 
 ## Step 1: Apply MCP config (global)
 
@@ -12,11 +14,16 @@ Add the `skopos` entry from `mcp.json` into `~/.kiro/settings/mcp.json`:
 
 ```json
 "skopos": {
-  "url": "http://localhost:9000/mcp"
+  "url": "http://localhost:8080/mcp",
+  "headers": {
+    "Authorization": "Bearer ${SKOPOS_API_KEY}"
+  }
 }
 ```
 
 Or for project-level, add to `.kiro/settings/mcp.json` in your workspace.
+
+> **Auth:** The `Authorization` header is only required when `auth.api_key` is set on the server. If Kiro doesn't expand `${SKOPOS_API_KEY}` in your version, paste the literal key.
 
 ## Step 2: Wire lifecycle hooks via steering document
 
@@ -47,7 +54,7 @@ Add `"blackboard_read"` and `"blackboard_write"` to the `autoApprove` list in `m
 
 ```json
 "skopos": {
-  "url": "http://localhost:9000/mcp",
+  "url": "http://localhost:8080/mcp",
   "autoApprove": ["report_status", "blackboard_read", "blackboard_write", "plan_create", "plan_read", "plan_add_item", "plan_update_item"]
 }
 ```

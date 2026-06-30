@@ -80,3 +80,6 @@ func (s *noopPlansStore) PlanExists(_ context.Context, _ string) (bool, error) {
 func (s *noopPlansStore) AllItemsDone(_ context.Context, _ string) (bool, error) {
 	return false, nil
 }
+func (s *noopPlansStore) RunInTx(_ context.Context, fn func(plans.Store) error) error {
+	return fn(s)
+}

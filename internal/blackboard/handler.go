@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/rest"
 )
 
@@ -17,14 +18,7 @@ func NewHandler(service *Service, apiKey string) *Handler {
 }
 
 func (h *Handler) authorized(r *http.Request) bool {
-	if h.apiKey == "" {
-		return true
-	}
-	key := r.Header.Get("X-API-Key")
-	if key == "" {
-		key = r.URL.Query().Get("api_key")
-	}
-	return key == h.apiKey
+	return auth.Authorize(r, h.apiKey)
 }
 
 // WriteEntry handles POST /api/blackboard/entries.
@@ -35,7 +29,7 @@ func (h *Handler) WriteEntry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var input WriteInput
-	if err := rest.DecodeJSON(r, &input); err != nil {
+	if err := rest.DecodeJSON(w, r, &input); err != nil {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -46,7 +40,7 @@ func (h *Handler) WriteEntry(w http.ResponseWriter, r *http.Request) {
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		rest.RespondError(w, http.StatusInternalServerError, err.Error())
+		rest.InternalError(w, err)
 		return
 	}
 	rest.RespondJSON(w, http.StatusCreated, result)
@@ -60,7 +54,7 @@ func (h *Handler) ReadBundle(w http.ResponseWriter, r *http.Request) {
 
 	bundle, err := h.service.Bundle(r.Context(), workspaceID, branchName, sessionID)
 	if err != nil {
-		rest.RespondError(w, http.StatusInternalServerError, err.Error())
+		rest.InternalError(w, err)
 		return
 	}
 	rest.RespondJSON(w, http.StatusOK, bundle)
@@ -83,7 +77,7 @@ func (h *Handler) Promote(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
 		default:
-			rest.RespondError(w, http.StatusInternalServerError, err.Error())
+			rest.InternalError(w, err)
 		}
 		return
 	}
@@ -105,7 +99,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
 		default:
-			rest.RespondError(w, http.StatusInternalServerError, err.Error())
+			rest.InternalError(w, err)
 		}
 		return
 	}

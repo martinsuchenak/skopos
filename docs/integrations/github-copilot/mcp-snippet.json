@@ -1,9 +1,12 @@
 {
-  "_comment": "Add the 'skopos' entry under 'servers' in ~/Library/Application Support/Code/User/mcp.json (global) or .vscode/mcp.json (workspace-level)",
+  "_comment": "Add the 'skopos' entry under 'servers' in ~/Library/Application Support/Code/User/mcp.json (global) or .vscode/mcp.json (workspace-level). The Authorization header is only required when auth.api_key is set on the server; if VS Code does not expand ${SKOPOS_API_KEY} in your version, paste the literal key value.",
   "servers": {
     "skopos": {
       "type": "http",
-      "url": "http://localhost:9000/mcp"
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer ${SKOPOS_API_KEY}"
+      }
     }
   }
 }

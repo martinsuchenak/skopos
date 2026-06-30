@@ -200,6 +200,10 @@ func (f *fakeStore) AddPlanDependency(_ context.Context, planID, dependsOnPlanID
 	return nil
 }
 
+func (f *fakeStore) RunInTx(_ context.Context, fn func(Store) error) error {
+	return fn(f)
+}
+
 func (f *fakeStore) RemovePlanDependency(_ context.Context, planID, dependsOnPlanID string) error {
 	deps := f.planDeps[planID]
 	for i, d := range deps {

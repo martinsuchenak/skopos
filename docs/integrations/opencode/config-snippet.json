@@ -1,9 +1,12 @@
 {
-  "_comment": "Add the 'skopos' entry under the 'mcp' key in ~/.config/opencode/opencode.json",
+  "_comment": "Add the 'skopos' entry under the 'mcp' key in ~/.config/opencode/opencode.json. The Authorization header is only required when auth.api_key is set on the server; OpenCode expands ${SKOPOS_API_KEY} from your environment.",
   "mcp": {
     "skopos": {
       "type": "remote",
-      "url": "http://localhost:9000/mcp"
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer ${SKOPOS_API_KEY}"
+      }
     }
   }
 }

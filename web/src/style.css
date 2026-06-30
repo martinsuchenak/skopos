@@ -1,1 +1,21 @@
 @import "tailwindcss";
+
+[x-cloak] { display: none !important; }
+
+@layer components {
+  .fld {
+    @apply mt-1 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-cyan-500;
+  }
+  .lbl {
+    @apply text-xs text-zinc-500;
+  }
+  .btn {
+    @apply rounded border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:border-zinc-500 hover:text-white transition;
+  }
+  .btn-primary {
+    @apply rounded bg-cyan-600 px-3 py-1.5 text-sm text-white hover:bg-cyan-500 transition;
+  }
+  .panel {
+    @apply rounded border border-zinc-700 bg-zinc-900 p-4;
+  }
+}

@@ -74,7 +74,8 @@ CREATE TABLE IF NOT EXISTS blackboard_entries (
     code_ref        TEXT,
     author_agent_id TEXT NOT NULL,
     created_at      TEXT NOT NULL,
-    updated_at      TEXT NOT NULL
+    updated_at      TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_blackboard_workspace ON blackboard_entries(workspace_id, scope, branch_name);

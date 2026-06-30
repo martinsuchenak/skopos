@@ -4,9 +4,11 @@ Two layers: MCP (rich voluntary reporting) + hooks (automatic lifecycle reportin
 
 ## Prerequisites
 
-- Skopos server running: `skopos serve` (REST on :8080, MCP on :9000)
+- Skopos server running: `skopos serve` (HTTP on :8080, MCP at /mcp)
 - `skopos` binary in PATH: `sudo ln -sf $(pwd)/bin/skopos /usr/local/bin/skopos`
 - `jq` installed: `brew install jq`
+
+> **Quick install:** `skopos install --agent claude-code [--url ...] [--api-key "$SKOPOS_API_KEY"]` does Step 1 for you — it merges the MCP config into `~/.claude/settings.json` and installs the skill (idempotent, backs up existing config). Add `--scope project` to write into `.claude/` instead. The manual steps below are the fallback.
 
 ## Step 1: Apply MCP + hooks config
 
@@ -19,6 +21,8 @@ echo "$(pwd)/docs/integrations/claude-code/hooks.sh"
 Open `~/.claude/settings.json` (create it if it doesn't exist) and merge in the contents of `settings-snippet.json`, replacing `SKOPOS_HOOKS_PATH` with the path above.
 
 If you already have `mcpServers` or `hooks` sections, add the `skopos` entries to the existing objects — do not replace the whole file.
+
+> **Auth:** The snippet's `skopos` MCP server sends `Authorization: Bearer ${SKOPOS_API_KEY}`. This header is only required when `auth.api_key` is set on the server; Claude Code expands the env var automatically.
 
 Set your API key in the environment (add to `~/.zshrc` or `~/.bashrc`):
 

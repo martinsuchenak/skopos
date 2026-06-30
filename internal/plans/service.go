@@ -64,15 +64,16 @@ func (s *Service) UpdatePlan(ctx context.Context, id string, input UpdatePlanInp
 	if input.Status != "" && !validPlanStatus(input.Status) {
 		return fmt.Errorf("%w: invalid status %q", ErrInvalidInput, input.Status)
 	}
-	if err := s.store.UpdatePlan(ctx, id, input); err != nil {
-		return err
-	}
-	if input.Status == PlanCompleted {
-		if err := s.autoUnblockPlanDependents(ctx, id); err != nil {
+	err := s.store.RunInTx(ctx, func(tx Store) error {
+		if err := tx.UpdatePlan(ctx, id, input); err != nil {
 			return err
 		}
-	}
-	return nil
+		if input.Status == PlanCompleted {
+			return autoUnblockPlanDependents(ctx, tx, id)
+		}
+		return nil
+	})
+	return err
 }
 
 func (s *Service) DeletePlan(ctx context.Context, id string) error {
@@ -93,66 +94,73 @@ func (s *Service) AddItem(ctx context.Context, planID string, input CreateItemIn
 		return nil, fmt.Errorf("%w: title is required", ErrInvalidInput)
 	}
 
-	var pos int
-	if input.Position != nil {
-		pos = *input.Position
-		if err := s.store.ShiftPositions(ctx, planID, pos); err != nil {
-			return nil, err
-		}
-	} else {
-		plan, err := s.store.GetPlan(ctx, planID)
-		if err != nil {
-			return nil, err
-		}
-		pos = len(plan.Items)
-	}
-
-	status := ItemPending
-	var deps []string
-	if len(input.DependsOn) > 0 {
-		for _, depID := range input.DependsOn {
-			depID = strings.TrimSpace(depID)
-			if depID == "" {
-				continue
+	var item Item
+	err := s.store.RunInTx(ctx, func(tx Store) error {
+		var pos int
+		if input.Position != nil {
+			pos = *input.Position
+			if err := tx.ShiftPositions(ctx, planID, pos); err != nil {
+				return err
 			}
-			exists, err := s.store.ItemExistsInPlan(ctx, planID, depID)
+		} else {
+			plan, err := tx.GetPlan(ctx, planID)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			if !exists {
-				return nil, fmt.Errorf("%w: dependency item %s not found in plan", ErrInvalidInput, depID)
-			}
-			depStatus, err := s.store.ItemStatus(ctx, depID)
-			if err != nil {
-				return nil, err
-			}
-			if depStatus != ItemDone {
-				status = ItemBlocked
-			}
-			deps = append(deps, depID)
+			pos = len(plan.Items)
 		}
-	}
 
-	now := time.Now().UTC()
-	item := Item{
-		ID:          generateID(),
-		PlanID:      planID,
-		Title:       input.Title,
-		Description: strings.TrimSpace(input.Description),
-		Phase:       strings.TrimSpace(input.Phase),
-		Status:      status,
-		Position:    pos,
-		DependsOn:   deps,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}
-	if err := s.store.AddItem(ctx, item); err != nil {
+		status := ItemPending
+		var deps []string
+		if len(input.DependsOn) > 0 {
+			for _, depID := range input.DependsOn {
+				depID = strings.TrimSpace(depID)
+				if depID == "" {
+					continue
+				}
+				exists, err := tx.ItemExistsInPlan(ctx, planID, depID)
+				if err != nil {
+					return err
+				}
+				if !exists {
+					return fmt.Errorf("%w: dependency item %s not found in plan", ErrInvalidInput, depID)
+				}
+				depStatus, err := tx.ItemStatus(ctx, depID)
+				if err != nil {
+					return err
+				}
+				if depStatus != ItemDone {
+					status = ItemBlocked
+				}
+				deps = append(deps, depID)
+			}
+		}
+
+		now := time.Now().UTC()
+		item = Item{
+			ID:          generateID(),
+			PlanID:      planID,
+			Title:       input.Title,
+			Description: strings.TrimSpace(input.Description),
+			Phase:       strings.TrimSpace(input.Phase),
+			Status:      status,
+			Position:    pos,
+			DependsOn:   deps,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}
+		if err := tx.AddItem(ctx, item); err != nil {
+			return err
+		}
+		for _, depID := range deps {
+			if err := tx.AddDependency(ctx, item.ID, depID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
-	}
-	for _, depID := range deps {
-		if err := s.store.AddDependency(ctx, item.ID, depID); err != nil {
-			return nil, err
-		}
 	}
 	return &item, nil
 }
@@ -170,16 +178,22 @@ func (s *Service) UpdateItem(ctx context.Context, planID, itemID string, input U
 		return nil, fmt.Errorf("%w: invalid status %q", ErrInvalidInput, input.Status)
 	}
 
-	if err := s.store.UpdateItem(ctx, planID, itemID, input); err != nil {
+	err := s.store.RunInTx(ctx, func(tx Store) error {
+		if err := tx.UpdateItem(ctx, planID, itemID, input); err != nil {
+			return err
+		}
+		if input.Status == ItemDone {
+			if err := autoUnblockDependents(ctx, tx, itemID); err != nil {
+				return err
+			}
+			if err := tryAutoCompletePlan(ctx, tx, planID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
-	}
-	if input.Status == ItemDone {
-		if err := s.autoUnblockDependents(ctx, itemID); err != nil {
-			return nil, err
-		}
-		if err := s.tryAutoCompletePlan(ctx, planID); err != nil {
-			return nil, err
-		}
 	}
 	return s.store.GetItem(ctx, planID, itemID)
 }
@@ -194,36 +208,38 @@ func (s *Service) AddDependency(ctx context.Context, planID, itemID, dependsOnID
 	if itemID == dependsOnID {
 		return fmt.Errorf("%w: item cannot depend on itself", ErrInvalidInput)
 	}
-	exists, err := s.store.ItemExistsInPlan(ctx, planID, itemID)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("%w: item %s not found in plan", ErrNotFound, itemID)
-	}
-	depExists, err := s.store.ItemExistsInPlan(ctx, planID, dependsOnID)
-	if err != nil {
-		return err
-	}
-	if !depExists {
-		return fmt.Errorf("%w: dependency item %s not found in plan", ErrNotFound, dependsOnID)
-	}
-	if err := s.detectCycle(ctx, itemID, dependsOnID); err != nil {
-		return err
-	}
-	if err := s.store.AddDependency(ctx, itemID, dependsOnID); err != nil {
-		return err
-	}
-	depStatus, err := s.store.ItemStatus(ctx, dependsOnID)
-	if err != nil {
-		return err
-	}
-	if depStatus != ItemDone {
-		if err := s.store.SetItemStatus(ctx, itemID, ItemBlocked); err != nil {
+	return s.store.RunInTx(ctx, func(tx Store) error {
+		exists, err := tx.ItemExistsInPlan(ctx, planID, itemID)
+		if err != nil {
 			return err
 		}
-	}
-	return nil
+		if !exists {
+			return fmt.Errorf("%w: item %s not found in plan", ErrNotFound, itemID)
+		}
+		depExists, err := tx.ItemExistsInPlan(ctx, planID, dependsOnID)
+		if err != nil {
+			return err
+		}
+		if !depExists {
+			return fmt.Errorf("%w: dependency item %s not found in plan", ErrNotFound, dependsOnID)
+		}
+		if err := detectCycle(ctx, tx, itemID, dependsOnID); err != nil {
+			return err
+		}
+		if err := tx.AddDependency(ctx, itemID, dependsOnID); err != nil {
+			return err
+		}
+		depStatus, err := tx.ItemStatus(ctx, dependsOnID)
+		if err != nil {
+			return err
+		}
+		if depStatus != ItemDone {
+			if err := tx.SetItemStatus(ctx, itemID, ItemBlocked); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s *Service) RemoveDependency(ctx context.Context, planID, itemID, dependsOnID string) error {
@@ -233,10 +249,12 @@ func (s *Service) RemoveDependency(ctx context.Context, planID, itemID, dependsO
 	if planID == "" || itemID == "" || dependsOnID == "" {
 		return fmt.Errorf("%w: plan_id, item_id, and depends_on_id are required", ErrInvalidInput)
 	}
-	if err := s.store.RemoveDependency(ctx, itemID, dependsOnID); err != nil {
-		return err
-	}
-	return s.recheckItemBlocked(ctx, itemID)
+	return s.store.RunInTx(ctx, func(tx Store) error {
+		if err := tx.RemoveDependency(ctx, itemID, dependsOnID); err != nil {
+			return err
+		}
+		return recheckItemBlocked(ctx, tx, itemID)
+	})
 }
 
 func (s *Service) DeleteItem(ctx context.Context, planID, itemID string) error {
@@ -260,36 +278,38 @@ func (s *Service) AddPlanDependency(ctx context.Context, planID, dependsOnPlanID
 	if planID == dependsOnPlanID {
 		return fmt.Errorf("%w: plan cannot depend on itself", ErrInvalidInput)
 	}
-	exists, err := s.store.PlanExists(ctx, planID)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("%w: plan %s", ErrNotFound, planID)
-	}
-	depExists, err := s.store.PlanExists(ctx, dependsOnPlanID)
-	if err != nil {
-		return err
-	}
-	if !depExists {
-		return fmt.Errorf("%w: dependency plan %s", ErrNotFound, dependsOnPlanID)
-	}
-	if err := s.detectPlanCycle(ctx, planID, dependsOnPlanID); err != nil {
-		return err
-	}
-	if err := s.store.AddPlanDependency(ctx, planID, dependsOnPlanID); err != nil {
-		return err
-	}
-	depStatus, err := s.store.PlanStatus(ctx, dependsOnPlanID)
-	if err != nil {
-		return err
-	}
-	if depStatus != PlanCompleted {
-		if err := s.store.SetPlanStatus(ctx, planID, PlanBlocked); err != nil {
+	return s.store.RunInTx(ctx, func(tx Store) error {
+		exists, err := tx.PlanExists(ctx, planID)
+		if err != nil {
 			return err
 		}
-	}
-	return nil
+		if !exists {
+			return fmt.Errorf("%w: plan %s", ErrNotFound, planID)
+		}
+		depExists, err := tx.PlanExists(ctx, dependsOnPlanID)
+		if err != nil {
+			return err
+		}
+		if !depExists {
+			return fmt.Errorf("%w: dependency plan %s", ErrNotFound, dependsOnPlanID)
+		}
+		if err := detectPlanCycle(ctx, tx, planID, dependsOnPlanID); err != nil {
+			return err
+		}
+		if err := tx.AddPlanDependency(ctx, planID, dependsOnPlanID); err != nil {
+			return err
+		}
+		depStatus, err := tx.PlanStatus(ctx, dependsOnPlanID)
+		if err != nil {
+			return err
+		}
+		if depStatus != PlanCompleted {
+			if err := tx.SetPlanStatus(ctx, planID, PlanBlocked); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s *Service) RemovePlanDependency(ctx context.Context, planID, dependsOnPlanID string) error {
@@ -298,81 +318,83 @@ func (s *Service) RemovePlanDependency(ctx context.Context, planID, dependsOnPla
 	if planID == "" || dependsOnPlanID == "" {
 		return fmt.Errorf("%w: plan_id and depends_on_plan_id are required", ErrInvalidInput)
 	}
-	if err := s.store.RemovePlanDependency(ctx, planID, dependsOnPlanID); err != nil {
-		return err
-	}
-	return s.recheckPlanBlocked(ctx, planID)
+	return s.store.RunInTx(ctx, func(tx Store) error {
+		if err := tx.RemovePlanDependency(ctx, planID, dependsOnPlanID); err != nil {
+			return err
+		}
+		return recheckPlanBlocked(ctx, tx, planID)
+	})
 }
 
-func (s *Service) autoUnblockDependents(ctx context.Context, doneItemID string) error {
-	dependentIDs, err := s.store.ListDependents(ctx, doneItemID)
+func autoUnblockDependents(ctx context.Context, store Store, doneItemID string) error {
+	dependentIDs, err := store.ListDependents(ctx, doneItemID)
 	if err != nil {
 		return err
 	}
 	for _, depID := range dependentIDs {
-		if err := s.recheckItemBlocked(ctx, depID); err != nil {
+		if err := recheckItemBlocked(ctx, store, depID); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Service) tryAutoCompletePlan(ctx context.Context, planID string) error {
-	allDone, err := s.store.AllItemsDone(ctx, planID)
+func tryAutoCompletePlan(ctx context.Context, store Store, planID string) error {
+	allDone, err := store.AllItemsDone(ctx, planID)
 	if err != nil {
 		return err
 	}
 	if !allDone {
 		return nil
 	}
-	status, err := s.store.PlanStatus(ctx, planID)
+	status, err := store.PlanStatus(ctx, planID)
 	if err != nil {
 		return err
 	}
 	if status != PlanActive && status != PlanBlocked {
 		return nil
 	}
-	if err := s.store.SetPlanStatus(ctx, planID, PlanCompleted); err != nil {
+	if err := store.SetPlanStatus(ctx, planID, PlanCompleted); err != nil {
 		return err
 	}
-	return s.autoUnblockPlanDependents(ctx, planID)
+	return autoUnblockPlanDependents(ctx, store, planID)
 }
 
-func (s *Service) recheckItemBlocked(ctx context.Context, itemID string) error {
-	deps, err := s.store.ListDependencies(ctx, itemID)
+func recheckItemBlocked(ctx context.Context, store Store, itemID string) error {
+	deps, err := store.ListDependencies(ctx, itemID)
 	if err != nil {
 		return err
 	}
 	if len(deps) == 0 {
-		current, err := s.store.ItemStatus(ctx, itemID)
+		current, err := store.ItemStatus(ctx, itemID)
 		if err != nil {
 			return err
 		}
 		if current == ItemBlocked {
-			return s.store.SetItemStatus(ctx, itemID, ItemPending)
+			return store.SetItemStatus(ctx, itemID, ItemPending)
 		}
 		return nil
 	}
 	for _, depID := range deps {
-		status, err := s.store.ItemStatus(ctx, depID)
+		status, err := store.ItemStatus(ctx, depID)
 		if err != nil {
 			return err
 		}
 		if status != ItemDone {
-			return s.store.SetItemStatus(ctx, itemID, ItemBlocked)
+			return store.SetItemStatus(ctx, itemID, ItemBlocked)
 		}
 	}
-	current, err := s.store.ItemStatus(ctx, itemID)
+	current, err := store.ItemStatus(ctx, itemID)
 	if err != nil {
 		return err
 	}
 	if current == ItemBlocked {
-		return s.store.SetItemStatus(ctx, itemID, ItemPending)
+		return store.SetItemStatus(ctx, itemID, ItemPending)
 	}
 	return nil
 }
 
-func (s *Service) detectCycle(ctx context.Context, itemID, newDepID string) error {
+func detectCycle(ctx context.Context, store Store, itemID, newDepID string) error {
 	visited := map[string]bool{itemID: true}
 	queue := []string{newDepID}
 	for len(queue) > 0 {
@@ -382,7 +404,7 @@ func (s *Service) detectCycle(ctx context.Context, itemID, newDepID string) erro
 			return fmt.Errorf("%w: adding this dependency would create a cycle", ErrCycleDetected)
 		}
 		visited[cur] = true
-		deps, err := s.store.ListDependencies(ctx, cur)
+		deps, err := store.ListDependencies(ctx, cur)
 		if err != nil {
 			return err
 		}
@@ -391,54 +413,54 @@ func (s *Service) detectCycle(ctx context.Context, itemID, newDepID string) erro
 	return nil
 }
 
-func (s *Service) autoUnblockPlanDependents(ctx context.Context, completedPlanID string) error {
-	dependentIDs, err := s.store.ListPlanDependents(ctx, completedPlanID)
+func autoUnblockPlanDependents(ctx context.Context, store Store, completedPlanID string) error {
+	dependentIDs, err := store.ListPlanDependents(ctx, completedPlanID)
 	if err != nil {
 		return err
 	}
 	for _, depID := range dependentIDs {
-		if err := s.recheckPlanBlocked(ctx, depID); err != nil {
+		if err := recheckPlanBlocked(ctx, store, depID); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Service) recheckPlanBlocked(ctx context.Context, planID string) error {
-	deps, err := s.store.ListPlanDependencies(ctx, planID)
+func recheckPlanBlocked(ctx context.Context, store Store, planID string) error {
+	deps, err := store.ListPlanDependencies(ctx, planID)
 	if err != nil {
 		return err
 	}
 	if len(deps) == 0 {
-		current, err := s.store.PlanStatus(ctx, planID)
+		current, err := store.PlanStatus(ctx, planID)
 		if err != nil {
 			return err
 		}
 		if current == PlanBlocked {
-			return s.store.SetPlanStatus(ctx, planID, PlanActive)
+			return store.SetPlanStatus(ctx, planID, PlanActive)
 		}
 		return nil
 	}
 	for _, depID := range deps {
-		status, err := s.store.PlanStatus(ctx, depID)
+		status, err := store.PlanStatus(ctx, depID)
 		if err != nil {
 			return err
 		}
 		if status != PlanCompleted {
-			return s.store.SetPlanStatus(ctx, planID, PlanBlocked)
+			return store.SetPlanStatus(ctx, planID, PlanBlocked)
 		}
 	}
-	current, err := s.store.PlanStatus(ctx, planID)
+	current, err := store.PlanStatus(ctx, planID)
 	if err != nil {
 		return err
 	}
 	if current == PlanBlocked {
-		return s.store.SetPlanStatus(ctx, planID, PlanActive)
+		return store.SetPlanStatus(ctx, planID, PlanActive)
 	}
 	return nil
 }
 
-func (s *Service) detectPlanCycle(ctx context.Context, planID, newDepID string) error {
+func detectPlanCycle(ctx context.Context, store Store, planID, newDepID string) error {
 	visited := map[string]bool{planID: true}
 	queue := []string{newDepID}
 	for len(queue) > 0 {
@@ -448,7 +470,7 @@ func (s *Service) detectPlanCycle(ctx context.Context, planID, newDepID string) 
 			return fmt.Errorf("%w: adding this plan dependency would create a cycle", ErrCycleDetected)
 		}
 		visited[cur] = true
-		deps, err := s.store.ListPlanDependencies(ctx, cur)
+		deps, err := store.ListPlanDependencies(ctx, cur)
 		if err != nil {
 			return err
 		}

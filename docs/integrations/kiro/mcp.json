@@ -1,8 +1,11 @@
 {
-  "_comment": "Add the 'skopos' entry into the 'mcpServers' object in ~/.kiro/settings/mcp.json (global) or .kiro/settings/mcp.json (project-level)",
+  "_comment": "Add the 'skopos' entry into the 'mcpServers' object in ~/.kiro/settings/mcp.json (global) or .kiro/settings/mcp.json (project-level). The Authorization header is only required when auth.api_key is set on the server; if Kiro does not expand ${SKOPOS_API_KEY} in your version, paste the literal key value.",
   "mcpServers": {
     "skopos": {
-      "url": "http://localhost:9000/mcp"
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer ${SKOPOS_API_KEY}"
+      }
     }
   }
 }

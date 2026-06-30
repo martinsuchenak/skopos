@@ -19,4 +19,8 @@ password = ""
 
 [health]
 stuck_threshold_minutes = 15
+
+[cleanup]
+# Days to retain data before automatic cleanup (0 disables the cleanup worker).
+retention_days = 30
 # go-scaffolder:config-sections

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/rest"
 )
 
@@ -17,14 +18,7 @@ func NewHandler(service *Service, apiKey string) *Handler {
 }
 
 func (h *Handler) authorized(r *http.Request) bool {
-	if h.apiKey == "" {
-		return true
-	}
-	key := r.Header.Get("X-API-Key")
-	if key == "" {
-		key = r.URL.Query().Get("api_key")
-	}
-	return key == h.apiKey
+	return auth.Authorize(r, h.apiKey)
 }
 
 func (h *Handler) CreatePlan(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +27,7 @@ func (h *Handler) CreatePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input CreatePlanInput
-	if err := rest.DecodeJSON(r, &input); err != nil {
+	if err := rest.DecodeJSON(w, r, &input); err != nil {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -43,7 +37,7 @@ func (h *Handler) CreatePlan(w http.ResponseWriter, r *http.Request) {
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		rest.RespondError(w, http.StatusInternalServerError, err.Error())
+		rest.InternalError(w, err)
 		return
 	}
 	rest.RespondJSON(w, http.StatusCreated, plan)
@@ -54,7 +48,7 @@ func (h *Handler) ListPlans(w http.ResponseWriter, r *http.Request) {
 	branch := r.URL.Query().Get("branch")
 	plans, err := h.service.ListPlans(r.Context(), workspace, branch)
 	if err != nil {
-		rest.RespondError(w, http.StatusInternalServerError, err.Error())
+		rest.InternalError(w, err)
 		return
 	}
 	if plans == nil {
@@ -71,7 +65,7 @@ func (h *Handler) GetPlan(w http.ResponseWriter, r *http.Request) {
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 			return
 		}
-		rest.RespondError(w, http.StatusInternalServerError, err.Error())
+		rest.InternalError(w, err)
 		return
 	}
 	rest.RespondJSON(w, http.StatusOK, plan)
@@ -84,7 +78,7 @@ func (h *Handler) UpdatePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	var input UpdatePlanInput
-	if err := rest.DecodeJSON(r, &input); err != nil {
+	if err := rest.DecodeJSON(w, r, &input); err != nil {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -95,7 +89,7 @@ func (h *Handler) UpdatePlan(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
 		default:
-			rest.RespondError(w, http.StatusInternalServerError, err.Error())
+			rest.InternalError(w, err)
 		}
 		return
 	}
@@ -113,7 +107,7 @@ func (h *Handler) DeletePlan(w http.ResponseWriter, r *http.Request) {
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 			return
 		}
-		rest.RespondError(w, http.StatusInternalServerError, err.Error())
+		rest.InternalError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -126,7 +120,7 @@ func (h *Handler) AddItem(w http.ResponseWriter, r *http.Request) {
 	}
 	planID := r.PathValue("id")
 	var input CreateItemInput
-	if err := rest.DecodeJSON(r, &input); err != nil {
+	if err := rest.DecodeJSON(w, r, &input); err != nil {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -138,7 +132,7 @@ func (h *Handler) AddItem(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
 		default:
-			rest.RespondError(w, http.StatusInternalServerError, err.Error())
+			rest.InternalError(w, err)
 		}
 		return
 	}
@@ -153,7 +147,7 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	planID := r.PathValue("id")
 	itemID := r.PathValue("item_id")
 	var input UpdateItemInput
-	if err := rest.DecodeJSON(r, &input); err != nil {
+	if err := rest.DecodeJSON(w, r, &input); err != nil {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -164,7 +158,7 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
 		default:
-			rest.RespondError(w, http.StatusInternalServerError, err.Error())
+			rest.InternalError(w, err)
 		}
 		return
 	}
@@ -183,7 +177,7 @@ func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request) {
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 			return
 		}
-		rest.RespondError(w, http.StatusInternalServerError, err.Error())
+		rest.InternalError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -199,7 +193,7 @@ func (h *Handler) AddDependency(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		DependsOnID string `json:"depends_on_item_id"`
 	}
-	if err := rest.DecodeJSON(r, &input); err != nil {
+	if err := rest.DecodeJSON(w, r, &input); err != nil {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -212,13 +206,13 @@ func (h *Handler) AddDependency(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrCycleDetected):
 			rest.RespondError(w, http.StatusConflict, err.Error())
 		default:
-			rest.RespondError(w, http.StatusInternalServerError, err.Error())
+			rest.InternalError(w, err)
 		}
 		return
 	}
 	item, err := h.service.GetPlan(r.Context(), planID)
 	if err != nil {
-		rest.RespondError(w, http.StatusInternalServerError, err.Error())
+		rest.InternalError(w, err)
 		return
 	}
 	for _, it := range item.Items {
@@ -245,7 +239,7 @@ func (h *Handler) RemoveDependency(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
 		default:
-			rest.RespondError(w, http.StatusInternalServerError, err.Error())
+			rest.InternalError(w, err)
 		}
 		return
 	}
@@ -261,7 +255,7 @@ func (h *Handler) AddPlanDependency(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		DependsOnPlanID string `json:"depends_on_plan_id"`
 	}
-	if err := rest.DecodeJSON(r, &input); err != nil {
+	if err := rest.DecodeJSON(w, r, &input); err != nil {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -274,13 +268,13 @@ func (h *Handler) AddPlanDependency(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrCycleDetected):
 			rest.RespondError(w, http.StatusConflict, err.Error())
 		default:
-			rest.RespondError(w, http.StatusInternalServerError, err.Error())
+			rest.InternalError(w, err)
 		}
 		return
 	}
 	plan, err := h.service.GetPlan(r.Context(), planID)
 	if err != nil {
-		rest.RespondError(w, http.StatusInternalServerError, err.Error())
+		rest.InternalError(w, err)
 		return
 	}
 	rest.RespondJSON(w, http.StatusOK, plan)
@@ -300,7 +294,7 @@ func (h *Handler) RemovePlanDependency(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
 		default:
-			rest.RespondError(w, http.StatusInternalServerError, err.Error())
+			rest.InternalError(w, err)
 		}
 		return
 	}

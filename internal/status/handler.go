@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/rest"
 )
 
@@ -16,6 +17,10 @@ func NewHandler(service *Service, apiKey string) *Handler {
 	return &Handler{service: service, apiKey: apiKey}
 }
 
+func (h *Handler) authorized(r *http.Request) bool {
+	return auth.Authorize(r, h.apiKey)
+}
+
 func (h *Handler) Report(w http.ResponseWriter, r *http.Request) {
 	if !h.authorized(r) {
 		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
@@ -23,7 +28,7 @@ func (h *Handler) Report(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var input ReportInput
-	if err := rest.DecodeJSON(r, &input); err != nil {
+	if err := rest.DecodeJSON(w, r, &input); err != nil {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -34,7 +39,7 @@ func (h *Handler) Report(w http.ResponseWriter, r *http.Request) {
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		rest.RespondError(w, http.StatusInternalServerError, err.Error())
+		rest.InternalError(w, err)
 		return
 	}
 	rest.RespondJSON(w, http.StatusCreated, result)
@@ -44,7 +49,7 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	workspaceID := r.URL.Query().Get("workspace")
 	sessions, err := h.service.ListSessions(r.Context(), workspaceID)
 	if err != nil {
-		rest.RespondError(w, http.StatusInternalServerError, err.Error())
+		rest.InternalError(w, err)
 		return
 	}
 	rest.RespondJSON(w, http.StatusOK, sessions)
@@ -57,7 +62,11 @@ func (h *Handler) GetSession(w http.ResponseWriter, r *http.Request) {
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 			return
 		}
-		rest.RespondError(w, http.StatusBadRequest, err.Error())
+		if errors.Is(err, ErrInvalidInput) {
+			rest.RespondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		rest.InternalError(w, err)
 		return
 	}
 	rest.RespondJSON(w, http.StatusOK, session)
@@ -70,31 +79,24 @@ func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		rest.RespondError(w, http.StatusInternalServerError, err.Error())
+		rest.InternalError(w, err)
 		return
 	}
 	rest.RespondJSON(w, http.StatusOK, events)
 }
 
 func (h *Handler) DeleteSession(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	if err := h.service.DeleteSession(r.Context(), r.PathValue("id")); err != nil {
 		if errors.Is(err, ErrInvalidInput) {
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		rest.RespondError(w, http.StatusInternalServerError, err.Error())
+		rest.InternalError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *Handler) authorized(r *http.Request) bool {
-	if h.apiKey == "" {
-		return true
-	}
-	key := r.Header.Get("X-API-Key")
-	if key == "" {
-		key = r.URL.Query().Get("api_key")
-	}
-	return key == h.apiKey
 }

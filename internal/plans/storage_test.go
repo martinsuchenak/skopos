@@ -27,6 +27,54 @@ func testStorage(t *testing.T) *Storage {
 	return NewStorage(sqlDB)
 }
 
+// TestRunInTxRollsBackOnError proves a failing multi-step operation leaves no
+// partial writes behind (the AddItem is rolled back with the failed dependency insert).
+func TestRunInTxRollsBackOnError(t *testing.T) {
+	s := testStorage(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	if err := s.CreatePlan(ctx, Plan{ID: "p1", Name: "P", Status: PlanActive, AuthorAgentID: "a", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("create plan: %v", err)
+	}
+
+	// First item succeeds inside a transaction.
+	err := s.RunInTx(ctx, func(tx Store) error {
+		return tx.AddItem(ctx, Item{ID: "i1", PlanID: "p1", Title: "First", Status: ItemPending, Position: 0, CreatedAt: now, UpdatedAt: now})
+	})
+	if err != nil {
+		t.Fatalf("first tx: %v", err)
+	}
+
+	// Second transaction adds i2 then fails -> both writes must roll back.
+	err = s.RunInTx(ctx, func(tx Store) error {
+		if err := tx.AddItem(ctx, Item{ID: "i2", PlanID: "p1", Title: "Second", Status: ItemPending, Position: 1, CreatedAt: now, UpdatedAt: now}); err != nil {
+			return err
+		}
+		return errors.New("boom")
+	})
+	if err == nil {
+		t.Fatal("expected error from failing tx")
+	}
+
+	// i2 must not have been committed.
+	exists, err := s.ItemExistsInPlan(ctx, "p1", "i2")
+	if err != nil {
+		t.Fatalf("check i2: %v", err)
+	}
+	if exists {
+		t.Fatal("i2 should have been rolled back")
+	}
+	// i1 (prior committed tx) must remain.
+	exists, err = s.ItemExistsInPlan(ctx, "p1", "i1")
+	if err != nil {
+		t.Fatalf("check i1: %v", err)
+	}
+	if !exists {
+		t.Fatal("i1 should still exist after sibling rollback")
+	}
+}
+
 func TestStorageCreateAndGetPlan(t *testing.T) {
 	s := testStorage(t)
 	ctx := context.Background()

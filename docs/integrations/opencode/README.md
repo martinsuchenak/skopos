@@ -2,9 +2,11 @@
 
 ## Prerequisites
 
-- Skopos server running: `skopos serve` (REST on :8080, MCP on :9000)
+- Skopos server running: `skopos serve` (HTTP on :8080, MCP at /mcp)
 - `skopos` binary in PATH
 - OpenCode installed
+
+> **Quick install:** `skopos install --agent opencode [--url ...] [--api-key "$SKOPOS_API_KEY"]` does this for you — it merges the MCP config into `~/.config/opencode/opencode.json` (idempotent, backs up existing config). Add `--scope project` to write into `./opencode.json`. The manual steps below are the fallback.
 
 ## Step 1: Apply MCP config
 
@@ -14,12 +16,17 @@ Add the `skopos` entry from `config-snippet.json` into the `mcp` section of `~/.
 "mcp": {
   "skopos": {
     "type": "remote",
-    "url": "http://localhost:9000/mcp"
+    "url": "http://localhost:8080/mcp",
+    "headers": {
+      "Authorization": "Bearer ${SKOPOS_API_KEY}"
+    }
   }
 }
 ```
 
-> **Note:** OpenCode MCP server format may vary by version. If `"type": "remote"` is not accepted, try omitting it (just `"url": "http://localhost:9000/mcp"`). Verify against your version's schema at `https://opencode.ai/config.json`.
+> **Auth:** The `Authorization` header is only required when `auth.api_key` is set on the server; OpenCode expands `${SKOPOS_API_KEY}` from your environment.
+
+> **Note:** OpenCode MCP server format may vary by version. If `"type": "remote"` is not accepted, try omitting it (just `"url": "http://localhost:8080/mcp"`). Verify against your version's schema at `https://opencode.ai/config.json`.
 
 ## Step 2: Wire lifecycle hooks via AGENTS.md
 

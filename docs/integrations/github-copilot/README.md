@@ -4,9 +4,11 @@ Two layers: MCP (rich voluntary reporting via Copilot Chat) + VS Code workspace 
 
 ## Prerequisites
 
-- Skopos server running: `skopos serve` (REST on :8080, MCP on :9000)
+- Skopos server running: `skopos serve` (HTTP on :8080, MCP at /mcp)
 - `skopos` binary in PATH
 - GitHub Copilot extension installed in VS Code
+
+> **Quick install:** `skopos install --agent github-copilot [--url ...] [--api-key "$SKOPOS_API_KEY"]` does this for you — it merges the MCP config into VS Code's `mcp.json` and appends `.github/copilot-instructions.md` (idempotent, backs up existing config). The manual steps below are the fallback.
 
 ## Step 1: Apply MCP config
 
@@ -17,7 +19,10 @@ Add the `skopos` entry from `mcp-snippet.json` into VS Code's global MCP config:
 ```json
 "skopos": {
   "type": "http",
-  "url": "http://localhost:9000/mcp"
+  "url": "http://localhost:8080/mcp",
+  "headers": {
+    "Authorization": "Bearer ${SKOPOS_API_KEY}"
+  }
 }
 ```
 
@@ -28,11 +33,16 @@ Add it under the existing `"servers"` object. Create the file if it doesn't exis
   "servers": {
     "skopos": {
       "type": "http",
-      "url": "http://localhost:9000/mcp"
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer ${SKOPOS_API_KEY}"
+      }
     }
   }
 }
 ```
+
+> **Auth:** The `Authorization` header is only required when `auth.api_key` is set on the server. If your VS Code version doesn't expand `${SKOPOS_API_KEY}`, paste the literal key.
 
 Alternatively, for workspace-level MCP config, add to `.vscode/mcp.json` in your project using the same format.
 

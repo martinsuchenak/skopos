@@ -9,6 +9,11 @@ HOOKS_PATH="$REPO_ROOT/docs/integrations"
 
 echo "=== Skopos Agent Integration Setup ==="
 echo ""
+echo "TIP: 'skopos install --agent <name|all>' automates the MCP config merge"
+echo "     (and steering/skill copies) for each agent below. Use --url/--api-key"
+echo "     for a remote skopos, --scope project for the current dir, --dry-run to preview."
+echo "     The per-agent steps below are the manual fallback."
+echo ""
 echo "Skopos repo: $REPO_ROOT"
 echo ""
 

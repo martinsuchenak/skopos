@@ -1,4 +1,10 @@
 # Add this block to ~/.codex/config.toml
 [mcp_servers.skopos]
 enabled = true
-url = "http://localhost:9000/mcp"
+url = "http://localhost:8080/mcp"
+
+# Required only when auth.api_key is set on the Skopos server. Codex does not
+# expand environment variables in config values, so paste your SKOPOS_API_KEY
+# here directly. Remove this table if the server has no API key configured.
+[mcp_servers.skopos.headers]
+Authorization = "Bearer your-api-key-here"

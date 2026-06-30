@@ -2,7 +2,16 @@ openapi: "3.1.0"
 info:
   title: skopos
   version: "1.0.0"
-  description: API for skopos service
+  description: >
+    Skopos coordinates AI agent status, a shared blackboard, and plans across
+    sessions and branches.
+
+    REST API, dashboard, and MCP (at `/mcp`) are all served on one HTTP server
+    (default :8080).
+
+    Read endpoints are open. Write endpoints require the configured API key,
+    sent either as the `X-API-Key` header or as `Authorization: Bearer <key>`.
+    When no API key is configured, authentication is disabled.
 servers:
   - url: http://localhost:8080
     description: Local development
@@ -19,42 +28,48 @@ paths:
               schema:
                 type: object
                 properties:
-                  status:
-                    type: string
+                  status: { type: string }
   /metrics:
     get:
-      summary: Application metrics
+      summary: Runtime metrics
       operationId: getMetrics
       responses:
         "200":
-          description: Current metrics
+          description: Current metrics (goroutines, allocation)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  # ---- status / sessions ----
   /api/reports:
     post:
       summary: Report an agent status update
       operationId: reportStatus
-      security:
-        - ApiKeyAuth: []
+      security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }]
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/ReportInput"
+            schema: { $ref: "#/components/schemas/ReportInput" }
       responses:
         "201":
           description: Report accepted
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/ReportResult"
-        "400":
-          description: Invalid report
-        "401":
-          description: Unauthorized
+              schema: { $ref: "#/components/schemas/ReportResult" }
+        "400": { description: Invalid report, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "401": { description: Unauthorized }
   /api/sessions:
     get:
       summary: List sessions
       operationId: listSessions
+      parameters:
+        - name: workspace
+          in: query
+          schema: { type: string }
+          description: Filter by workspace path/id.
       responses:
         "200":
           description: Session summaries
@@ -62,168 +77,317 @@ paths:
             application/json:
               schema:
                 type: array
-                items:
-                  $ref: "#/components/schemas/SessionSummary"
+                items: { $ref: "#/components/schemas/SessionSummary" }
   /api/sessions/{id}:
     get:
-      summary: Get a session by ID
+      summary: Get a session (with agents and events)
       operationId: getSession
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+        - { $ref: "#/components/parameters/SessionId" }
       responses:
         "200":
           description: Session detail
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/SessionDetail"
-        "404":
-          description: Session not found
+              schema: { $ref: "#/components/schemas/SessionDetail" }
+        "404": { description: Session not found }
+    delete:
+      summary: Delete a session (cascades to its agents, events, and session-scoped blackboard entries)
+      operationId: deleteSession
+      security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/SessionId" }
+      responses:
+        "204": { description: Deleted }
+        "401": { description: Unauthorized }
   /api/sessions/{id}/events:
     get:
-      summary: List session events
+      summary: List events for a session
       operationId: listSessionEvents
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+        - { $ref: "#/components/parameters/SessionId" }
       responses:
         "200":
-          description: Session events
+          description: Session events (newest first)
           content:
             application/json:
               schema:
                 type: array
-                items:
-                  $ref: "#/components/schemas/Event"
+                items: { $ref: "#/components/schemas/Event" }
+
+  # ---- blackboard ----
+  /api/blackboard/entries:
+    post:
+      summary: Write a blackboard entry
+      operationId: blackboardWrite
+      security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BlackboardWriteInput" }
+      responses:
+        "201":
+          description: Entry created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlackboardWriteResult" }
+        "400": { description: Invalid input, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "401": { description: Unauthorized }
+    get:
+      summary: Read the knowledge bundle (entries + markdown)
+      operationId: blackboardRead
+      parameters:
+        - { name: workspace, in: query, schema: { type: string } }
+        - { name: branch, in: query, schema: { type: string } }
+        - { name: session_id, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Knowledge bundle
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlackboardBundle" }
+  /api/blackboard/entries/{id}/promote:
+    patch:
+      summary: Promote an entry to a wider scope (session -> branch -> project)
+      operationId: blackboardPromote
+      security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/EntryId" }
+      responses:
+        "204": { description: Promoted }
+        "401": { description: Unauthorized }
+        "404": { description: Entry not found }
+        "409": { description: Already at project scope }
+  /api/blackboard/entries/{id}:
+    delete:
+      summary: Delete a blackboard entry
+      operationId: blackboardDelete
+      security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/EntryId" }
+      responses:
+        "204": { description: Deleted }
+        "401": { description: Unauthorized }
+        "404": { description: Entry not found }
+
+  # ---- plans ----
+  /api/plans:
+    post:
+      summary: Create a plan
+      operationId: createPlan
+      security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreatePlanInput" }
+      responses:
+        "201":
+          description: Plan created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+        "400": { description: Invalid input, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "401": { description: Unauthorized }
+    get:
+      summary: List plans
+      operationId: listPlans
+      parameters:
+        - { name: workspace, in: query, schema: { type: string } }
+        - { name: branch, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Plans
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Plan" }
+  /api/plans/{id}:
+    get:
+      summary: Get a plan with all items and dependencies
+      operationId: getPlan
+      parameters: [{ $ref: "#/components/parameters/PlanId" }]
+      responses:
+        "200":
+          description: Plan detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+        "404": { description: Plan not found }
+    patch:
+      summary: Update a plan (name, description, status)
+      operationId: updatePlan
+      security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PlanId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdatePlanInput" }
+      responses:
+        "204": { description: Updated }
+        "401": { description: Unauthorized }
+        "404": { description: Plan not found }
+    delete:
+      summary: Delete a plan (cascades to items and dependencies)
+      operationId: deletePlan
+      security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PlanId" }]
+      responses:
+        "204": { description: Deleted }
+        "401": { description: Unauthorized }
+        "404": { description: Plan not found }
+  /api/plans/{id}/items:
+    post:
+      summary: Add an item to a plan
+      operationId: addPlanItem
+      security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PlanId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateItemInput" }
+      responses:
+        "201":
+          description: Item added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlanItem" }
+        "400": { description: Invalid input, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "401": { description: Unauthorized }
+        "404": { description: Plan not found }
+  /api/plans/{id}/items/{item_id}:
+    patch:
+      summary: Update an item (status, claim)
+      operationId: updatePlanItem
+      security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PlanId" }
+        - { $ref: "#/components/parameters/ItemId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateItemInput" }
+      responses:
+        "204": { description: Updated }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+    delete:
+      summary: Delete an item
+      operationId: deletePlanItem
+      security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PlanId" }
+        - { $ref: "#/components/parameters/ItemId" }
+      responses:
+        "204": { description: Deleted }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+  /api/plans/{id}/items/{item_id}/dependencies:
+    post:
+      summary: Add a dependency between items (auto-blocks the dependent item)
+      operationId: addItemDependency
+      security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PlanId" }
+        - { $ref: "#/components/parameters/ItemId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [depends_on_item_id]
+              properties:
+                depends_on_item_id: { type: string }
+      responses:
+        "200":
+          description: Updated dependent item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlanItem" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+        "409": { description: Dependency cycle detected }
+  /api/plans/{id}/items/{item_id}/dependencies/{depends_on_id}:
+    delete:
+      summary: Remove an item dependency (re-evaluates blocked state)
+      operationId: removeItemDependency
+      security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PlanId" }
+        - { $ref: "#/components/parameters/ItemId" }
+        - { name: depends_on_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Removed }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+  /api/plans/{id}/dependencies:
+    post:
+      summary: Add a plan-to-plan dependency (auto-blocks the dependent plan)
+      operationId: addPlanDependency
+      security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PlanId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [depends_on_plan_id]
+              properties:
+                depends_on_plan_id: { type: string }
+      responses:
+        "200":
+          description: Updated dependent plan
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+        "409": { description: Dependency cycle detected }
+  /api/plans/{id}/dependencies/{depends_on_id}:
+    delete:
+      summary: Remove a plan-to-plan dependency
+      operationId: removePlanDependency
+      security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PlanId" }
+        - { name: depends_on_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Removed }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+
 components:
+  parameters:
+    SessionId:  { name: id, in: path, required: true, schema: { type: string } }
+    EntryId:    { name: id, in: path, required: true, schema: { type: string } }
+    PlanId:     { name: id, in: path, required: true, schema: { type: string } }
+    ItemId:     { name: item_id, in: path, required: true, schema: { type: string } }
   securitySchemes:
     ApiKeyAuth:
       type: apiKey
       in: header
       name: X-API-Key
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Send the API key as the bearer token.
   schemas:
-    ReportInput:
-      type: object
-      required:
-        - agent_id
-        - agent_type
-        - workspace
-        - status
-      properties:
-        session_id:
-          type: string
-        agent_id:
-          type: string
-        agent_type:
-          type: string
-        workspace:
-          type: string
-        status:
-          $ref: "#/components/schemas/Status"
-        progress:
-          type: integer
-          minimum: 0
-          maximum: 100
-        step_current:
-          type: integer
-          minimum: 0
-        step_total:
-          type: integer
-          minimum: 0
-        message:
-          type: string
-        snippet:
-          type: string
-        metadata:
-          type: object
-          additionalProperties: true
-    ReportResult:
+    Error:
       type: object
       properties:
-        session_id:
-          type: string
-        event_id:
-          type: string
-    SessionSummary:
-      type: object
-      properties:
-        id:
-          type: string
-        title:
-          type: string
-        workspace:
-          type: string
-        status:
-          $ref: "#/components/schemas/Status"
-        agent_count:
-          type: integer
-        started_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-        agents:
-          type: array
-          items:
-            $ref: "#/components/schemas/AgentState"
-    SessionDetail:
-      allOf:
-        - $ref: "#/components/schemas/SessionSummary"
-        - type: object
-          properties:
-            events:
-              type: array
-              items:
-                $ref: "#/components/schemas/Event"
-    AgentState:
-      type: object
-      properties:
-        session_id:
-          type: string
-        agent_id:
-          type: string
-        agent_type:
-          type: string
-        workspace:
-          type: string
-        status:
-          $ref: "#/components/schemas/Status"
-        progress:
-          type: integer
-        step_current:
-          type: integer
-        step_total:
-          type: integer
-        message:
-          type: string
-        snippet:
-          type: string
-        metadata:
-          type: object
-          additionalProperties: true
-        updated_at:
-          type: string
-          format: date-time
-    Event:
-      allOf:
-        - $ref: "#/components/schemas/AgentState"
-        - type: object
-          properties:
-            id:
-              type: string
-            created_at:
-              type: string
-              format: date-time
+        error: { type: string }
     Status:
       type: string
+      description: >
+        Agent status. `stuck` and `orphaned` are set exclusively by the health
+        checker; agents must not self-report them.
       enum:
         - pending
         - thinking
@@ -238,3 +402,193 @@ components:
         - succeeded
         - failed
         - cancelled
+        - stuck
+        - orphaned
+    ReportInput:
+      type: object
+      required: [agent_id, agent_type, workspace, status]
+      properties:
+        session_id: { type: string }
+        agent_id: { type: string }
+        agent_type: { type: string }
+        workspace: { type: string }
+        status: { $ref: "#/components/schemas/Status" }
+        progress: { type: integer, minimum: 0, maximum: 100 }
+        step_current: { type: integer, minimum: 0 }
+        step_total: { type: integer, minimum: 0 }
+        message: { type: string }
+        snippet: { type: string }
+        metadata: { type: object, additionalProperties: true }
+        git_branch: { type: string }
+    ReportResult:
+      type: object
+      properties:
+        session_id: { type: string }
+        event_id: { type: string }
+    AgentState:
+      type: object
+      properties:
+        session_id: { type: string }
+        agent_id: { type: string }
+        agent_type: { type: string }
+        workspace: { type: string }
+        status: { $ref: "#/components/schemas/Status" }
+        progress: { type: integer }
+        step_current: { type: integer }
+        step_total: { type: integer }
+        message: { type: string }
+        snippet: { type: string }
+        metadata: { type: object, additionalProperties: true }
+        updated_at: { type: string, format: date-time }
+        original_status: { $ref: "#/components/schemas/Status" }
+        stuck_at: { type: string, format: date-time }
+        git_branch: { type: string }
+    Event:
+      allOf:
+        - $ref: "#/components/schemas/AgentState"
+        - type: object
+          properties:
+            id: { type: string }
+            created_at: { type: string, format: date-time }
+    SessionSummary:
+      type: object
+      properties:
+        id: { type: string }
+        title: { type: string }
+        workspace: { type: string }
+        status: { $ref: "#/components/schemas/Status" }
+        agent_count: { type: integer }
+        started_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    SessionDetail:
+      allOf:
+        - $ref: "#/components/schemas/SessionSummary"
+        - type: object
+          properties:
+            agents:
+              type: array
+              items: { $ref: "#/components/schemas/AgentState" }
+            events:
+              type: array
+              items: { $ref: "#/components/schemas/Event" }
+    BlackboardScope:
+      type: string
+      enum: [session, branch, project]
+    BlackboardEntryType:
+      type: string
+      enum: [finding, decision, bug, debt, warning, context]
+      description: "`bug` and `debt` are floating (always visible across branches)."
+    BlackboardEntry:
+      type: object
+      properties:
+        id: { type: string }
+        scope: { $ref: "#/components/schemas/BlackboardScope" }
+        workspace_id: { type: string }
+        branch_name: { type: string }
+        session_id: { type: string }
+        entry_type: { $ref: "#/components/schemas/BlackboardEntryType" }
+        title: { type: string }
+        content: { type: string }
+        code_ref: { type: string }
+        author_agent_id: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    BlackboardWriteInput:
+      type: object
+      required: [scope, entry_type, title, author_agent_id]
+      properties:
+        scope: { $ref: "#/components/schemas/BlackboardScope" }
+        workspace_id: { type: string }
+        branch_name: { type: string, description: Required when scope is branch. }
+        session_id: { type: string, description: Required when scope is session. }
+        entry_type: { $ref: "#/components/schemas/BlackboardEntryType" }
+        title: { type: string }
+        content: { type: string }
+        code_ref: { type: string }
+        author_agent_id: { type: string }
+    BlackboardWriteResult:
+      type: object
+      properties:
+        id: { type: string }
+        scope: { $ref: "#/components/schemas/BlackboardScope" }
+    BlackboardBundle:
+      type: object
+      properties:
+        entries:
+          type: array
+          items: { $ref: "#/components/schemas/BlackboardEntry" }
+        markdown_bundle: { type: string }
+    PlanStatus:
+      type: string
+      enum: [active, completed, archived, blocked]
+    ItemStatus:
+      type: string
+      enum: [pending, in_progress, done, blocked]
+    PlanItem:
+      type: object
+      properties:
+        id: { type: string }
+        plan_id: { type: string }
+        title: { type: string }
+        description: { type: string }
+        phase: { type: string }
+        status: { $ref: "#/components/schemas/ItemStatus" }
+        position: { type: integer }
+        claimed_by_agent_id: { type: string }
+        depends_on:
+          type: array
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    Plan:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        branch_name: { type: string }
+        workspace_id: { type: string }
+        description: { type: string }
+        status: { $ref: "#/components/schemas/PlanStatus" }
+        author_agent_id: { type: string }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PlanItem" }
+        depends_on:
+          type: array
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreatePlanInput:
+      type: object
+      required: [name, author_agent_id]
+      properties:
+        name: { type: string }
+        branch_name: { type: string }
+        workspace_id: { type: string }
+        description: { type: string }
+        author_agent_id: { type: string }
+    UpdatePlanInput:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        status: { $ref: "#/components/schemas/PlanStatus" }
+    CreateItemInput:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string }
+        description: { type: string }
+        phase: { type: string }
+        position: { type: integer, description: Omit to append at the end. }
+        depends_on:
+          type: array
+          items: { type: string }
+    UpdateItemInput:
+      type: object
+      properties:
+        status: { $ref: "#/components/schemas/ItemStatus" }
+        claimed_by_agent_id:
+          type: string
+          nullable: true
+          description: "null = leave unchanged, empty = release claim, set = claim."

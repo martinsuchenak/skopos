@@ -2,9 +2,11 @@
 
 ## Prerequisites
 
-- Skopos server running: `skopos serve` (REST on :8080, MCP on :9000)
+- Skopos server running: `skopos serve` (HTTP on :8080, MCP at /mcp)
 - `skopos` binary in PATH
 - Gemini CLI installed (`gem install gemini-cli` or via your package manager)
+
+> **Quick install:** `skopos install --agent gemini-cli [--url ...] [--api-key "$SKOPOS_API_KEY"]` does this for you — it merges the MCP config into `~/.gemini/settings.json` (idempotent, backs up existing config). Add `--scope project` to write into `.gemini/`. The manual steps below are the fallback.
 
 ## Step 1: Apply MCP config
 
@@ -12,13 +14,18 @@ Add the `skopos` entry from `settings-snippet.json` into the `mcpServers` sectio
 
 ```json
 "skopos": {
-  "url": "http://localhost:9000/mcp",
+  "url": "http://localhost:8080/mcp",
   "type": "http",
-  "trust": true
+  "trust": true,
+  "headers": {
+    "Authorization": "Bearer ${SKOPOS_API_KEY}"
+  }
 }
 ```
 
 Do not replace the whole file — add only the `skopos` key to your existing `mcpServers` object.
+
+> **Auth:** The `Authorization` header is only required when `auth.api_key` is set on the server; Gemini CLI expands `${SKOPOS_API_KEY}` from your environment. If your version doesn't expand it, paste the literal key.
 
 ## Step 2: Wire lifecycle hooks via a wrapper script
 

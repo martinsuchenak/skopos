@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end smoke test for Skopos integrations.
-# Requires: skopos server running on localhost:8080 (MCP on :9000)
+# Requires: skopos server running on localhost:8080 (MCP at /mcp)
 # Usage: SKOPOS_API_KEY=your-key bash docs/integrations/shared/test-smoke.sh
 
 set -euo pipefail

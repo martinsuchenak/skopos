@@ -2,15 +2,20 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/paularlott/cli"
 	logslog "github.com/paularlott/logger/slog"
 
+	"github.com/martinsuchenak/skopos/cmd/mcp"
 	"github.com/martinsuchenak/skopos/cmd/routes"
+	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/cleanup"
 	"github.com/martinsuchenak/skopos/internal/db"
@@ -18,7 +23,6 @@ import (
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/status"
 
-	mcpserver "github.com/martinsuchenak/skopos/cmd/mcp"
 	// go-scaffolder:serve-imports
 )
 
@@ -41,7 +45,7 @@ func serveCmd() *cli.Command {
 			&cli.IntFlag{
 				Name:         "server-port",
 				DefaultValue: 8080,
-				Usage:        "Server listen port",
+				Usage:        "Server listen port (HTTP, REST, dashboard, and MCP at /mcp)",
 				ConfigPath:   []string{"server.port"},
 				EnvVars:      []string{"SERVER_PORT"},
 			},
@@ -54,7 +58,7 @@ func serveCmd() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:       "api-key",
-				Usage:      "API key required for write endpoints",
+				Usage:      "API key required for write endpoints and MCP",
 				ConfigPath: []string{"auth.api_key"},
 				EnvVars:    []string{"SKOPOS_API_KEY"},
 			},
@@ -82,43 +86,86 @@ func serveCmd() *cli.Command {
 			})
 			log.Info("starting skopos service")
 
-			conn, err := db.Connect(log, "localhost:0", "", "", cmd.GetString("database-path"))
+			apiKey := cmd.GetString("api-key")
+			if apiKey == "" {
+				log.Warn("no api_key configured: authentication is disabled (all endpoints are open)")
+			}
+
+			sqlDB, err := db.Connect(log, cmd.GetString("database-path"))
 			if err != nil {
 				return err
 			}
-			defer conn.SQL.Close()
-			if err := db.RunMigrations(conn.SQL); err != nil {
+			defer sqlDB.Close()
+			if err := db.RunMigrations(sqlDB); err != nil {
 				return err
 			}
 
-			statusService := status.NewService(status.NewStorage(conn.SQL))
-			statusHandler := status.NewHandler(statusService, cmd.GetString("api-key"))
+			statusService := status.NewService(status.NewStorage(sqlDB))
+			statusHandler := status.NewHandler(statusService, apiKey)
 
-			blackboardService := blackboard.NewService(blackboard.NewStorage(conn.SQL))
-			blackboardHandler := blackboard.NewHandler(blackboardService, cmd.GetString("api-key"))
+			blackboardService := blackboard.NewService(blackboard.NewStorage(sqlDB))
+			blackboardHandler := blackboard.NewHandler(blackboardService, apiKey)
 
-			plansStorage := plans.NewStorage(conn.SQL)
+			plansStorage := plans.NewStorage(sqlDB)
 			plansService := plans.NewService(plansStorage)
-			plansHandler := plans.NewHandler(plansService, cmd.GetString("api-key"))
+			plansHandler := plans.NewHandler(plansService, apiKey)
 
-			mcpserver.StartMCPServer(log, statusService, blackboardService, plansService)
+			// Cancel background work and initiate graceful shutdown on SIGINT/SIGTERM.
+			ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+			defer stop()
 
 			threshold := time.Duration(cmd.GetInt("health-stuck-threshold")) * time.Minute
-			health.NewChecker(conn.SQL, threshold, log).Start(ctx)
+			health.NewChecker(sqlDB, threshold, log).Start(ctx)
 			retentionDays := cmd.GetInt("cleanup-retention-days")
 			if retentionDays > 0 {
 				cleanupRetention := time.Duration(retentionDays) * 24 * time.Hour
-				cleanup.NewCleaner(conn.SQL, cleanupRetention, log).Start(ctx)
+				cleanup.NewCleaner(sqlDB, cleanupRetention, log).Start(ctx)
 			}
 			// go-scaffolder:serve-init
 
 			mux := http.NewServeMux()
 			routes.RegisterRoutes(mux, statusHandler, blackboardHandler, plansHandler)
 
-			addr := fmt.Sprintf("%s:%d", cmd.GetString("server-host"), cmd.GetInt("server-port"))
-			log.Info("starting HTTP server", "addr", addr)
-			// go-scaffolder:serve-start
-			return http.ListenAndServe(addr, mux)
+			// MCP endpoint, mounted on the same server/port as everything else.
+			mcpHandler := mcp.NewMCPHandler(statusService, blackboardService, plansService)
+			if apiKey != "" {
+				mcpHandler = auth.APIKeyMiddleware(apiKey)(mcpHandler)
+			}
+			for _, m := range []string{http.MethodPost, http.MethodGet, http.MethodDelete, http.MethodOptions} {
+				mux.Handle(m+" /mcp", mcpHandler)
+			}
+
+			httpServer := &http.Server{
+				Addr:              fmt.Sprintf("%s:%d", cmd.GetString("server-host"), cmd.GetInt("server-port")),
+				Handler:           mux,
+				ReadHeaderTimeout: 10 * time.Second,
+				ReadTimeout:       30 * time.Second,
+				WriteTimeout:      30 * time.Second,
+				IdleTimeout:       120 * time.Second,
+			}
+
+			httpErr := make(chan error, 1)
+			go func() {
+				log.Info("starting HTTP server", "addr", httpServer.Addr, "mcp", "/mcp")
+				if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					httpErr <- err
+				}
+			}()
+
+			select {
+			case <-ctx.Done():
+				log.Info("shutdown signal received")
+			case err := <-httpErr:
+				stop()
+				return fmt.Errorf("http server: %w", err)
+			}
+
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := httpServer.Shutdown(shutdownCtx); err != nil {
+				log.Error("http shutdown error", "error", err)
+			}
+			return nil
 		},
 	}
 }

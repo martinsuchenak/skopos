@@ -38,5 +38,8 @@ skopos.db
 skopos.db-shm
 skopos.db-wal
 
+# Configuration (runtime; copy from skopos-config.example.toml)
+skopos-config.toml
+
 # Skopos session ID files (auto-generated per workspace)
 .skopos-session

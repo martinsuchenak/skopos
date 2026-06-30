@@ -1,9 +1,12 @@
 {
-  "_comment": "Merge this into ~/.claude/settings.json or .claude/settings.json. Replace SKOPOS_HOOKS_PATH with the absolute path to docs/integrations/claude-code/hooks.sh",
+  "_comment": "Merge this into ~/.claude/settings.json or .claude/settings.json. Replace SKOPOS_HOOKS_PATH with the absolute path to docs/integrations/claude-code/hooks.sh. The Authorization header is only required when auth.api_key is set on the server; Claude Code expands ${SKOPOS_API_KEY} from your environment.",
   "mcpServers": {
     "skopos": {
       "type": "http",
-      "url": "http://localhost:9000/mcp"
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer ${SKOPOS_API_KEY}"
+      }
     }
   },
   "hooks": {

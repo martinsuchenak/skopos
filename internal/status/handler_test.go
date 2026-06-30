@@ -86,6 +86,19 @@ func TestHandlerReportRejectsInvalidPayload(t *testing.T) {
 	}
 }
 
+func TestHandlerDeleteSessionRequiresAPIKey(t *testing.T) {
+	handler := testHandler(t, "secret")
+	req := httptest.NewRequest("DELETE", "/api/sessions/s1", nil)
+	req.SetPathValue("id", "s1")
+	w := httptest.NewRecorder()
+
+	handler.DeleteSession(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected %d, got %d", http.StatusUnauthorized, w.Code)
+	}
+}
+
 func TestHandlerListSessionsFiltersByWorkspace(t *testing.T) {
 	handler := testHandler(t, "secret")
 

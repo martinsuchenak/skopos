@@ -18,7 +18,7 @@ task frontend-build   # bun install && bun run build in web/
 
 Running a single test package: `go test ./internal/status/... -v -count=1`
 
-The server must be running for MCP/REST integration testing: `go run . serve` (REST on :8080, MCP on :9000).
+The server must be running for MCP/REST integration testing: `go run . serve` (HTTP on :8080, MCP at /mcp).
 
 ## Architecture
 
@@ -39,7 +39,7 @@ internal/
 web/              Alpine.js + Tailwind CSS, embedded via go:embed, Bun build
 ```
 
-Every domain package follows `handler → service → storage` layering. Storage uses raw `*sql.DB` (not xdal for the main tables). Services are interface-based for testability.
+Every domain package follows `handler → service → storage` layering. Storage uses raw `*sql.DB`. Services are interface-based for testability.
 
 ## Key Patterns
 
@@ -48,13 +48,13 @@ Every domain package follows `handler → service → storage` layering. Storage
 - `go-scaffolder:` comments are patch markers — do not remove them.
 - Add new CLI commands, API endpoints, or MCP tools with `go-scaffolder add` where possible.
 - All IDs are UUIDv7 (text, time-sortable).
-- Config: TOML (`skopos-config.toml`) + env var overrides (`SERVER_PORT`, `SKOPOS_API_KEY`, etc.).
+- Config: TOML (`skopos-config.toml`, gitignored — copy from `skopos-config.example.toml`; optional, falls back to flag defaults + env) + env var overrides (`SERVER_PORT`, `SKOPOS_API_KEY`, etc.).
 - Frontend assets are embedded in the binary via `web/embed.go`. Run `task frontend-build` before `task build` (the build task depends on it automatically).
 - `task lint` sets `GOCACHE` to a local directory — don't run bare `golangci-lint`.
 
 ## Blackboard
 
-Three scopes: `session` (requires `session_id`, cascade-deleted with session), `branch` (requires `branch_name`), `project` (global).
+Three scopes: `session` (requires `session_id`, cascade-deleted with session via the `blackboard_entries.session_id` foreign key), `branch` (requires `branch_name`), `project` (global).
 Six entry types: `finding`, `decision`, `warning`, `context`, `bug`, `debt`.
 `bug` and `debt` are "floating" — always included in reads regardless of branch filter.
 Read returns both structured `entries` array and a `markdown_bundle` text block.

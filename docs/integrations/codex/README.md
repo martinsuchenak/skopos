@@ -2,9 +2,11 @@
 
 ## Prerequisites
 
-- Skopos server running: `skopos serve` (REST on :8080, MCP on :9000)
+- Skopos server running: `skopos serve` (HTTP on :8080, MCP at /mcp)
 - `skopos` binary in PATH
 - Codex CLI installed
+
+> **Quick install:** `skopos install --agent codex [--url ...] [--api-key "$SKOPOS_API_KEY"]` does this for you — it merges the `[mcp_servers.skopos]` block into `~/.codex/config.toml` and appends the AGENTS.md block (idempotent, backs up existing config). The manual steps below are the fallback.
 
 ## Step 1: Apply MCP config
 
@@ -13,8 +15,15 @@ Add the `skopos` entry from `config-snippet.toml` to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.skopos]
 enabled = true
-url = "http://localhost:9000/mcp"
+url = "http://localhost:8080/mcp"
+
+# Only required when auth.api_key is set on the server. Codex does not expand
+# env vars here, so paste your SKOPOS_API_KEY value directly.
+[mcp_servers.skopos.headers]
+Authorization = "Bearer your-api-key-here"
 ```
+
+> **Auth:** If the server has `auth.api_key` set, the MCP tools require it as a Bearer token. Codex doesn't expand env vars in config, so put the literal key in the `headers` table above (or omit it entirely if no key is configured).
 
 ## Step 2: Wire lifecycle hooks via AGENTS.md
 

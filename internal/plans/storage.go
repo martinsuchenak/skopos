@@ -35,14 +35,50 @@ type Store interface {
 	SetPlanStatus(ctx context.Context, planID string, status PlanStatus) error
 	PlanExists(ctx context.Context, planID string) (bool, error)
 	AllItemsDone(ctx context.Context, planID string) (bool, error)
+	// RunInTx executes fn inside a single SQL transaction. The Store passed to
+	// fn is bound to the transaction, so all operations are atomic. If fn is
+	// called on a store already inside a transaction, fn runs inline (no nesting).
+	RunInTx(ctx context.Context, fn func(Store) error) error
+}
+
+// DBTX is the minimal subset of *sql.DB / *sql.Tx used by Storage queries.
+type DBTX interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 type Storage struct {
-	db *sql.DB
+	db DBTX
 }
 
 func NewStorage(db *sql.DB) *Storage {
 	return &Storage{db: db}
+}
+
+// RunInTx implements Store.RunInTx.
+func (s *Storage) RunInTx(ctx context.Context, fn func(Store) error) error {
+	// Already inside a transaction: run inline without nesting.
+	if _, ok := s.db.(*sql.Tx); ok {
+		return fn(s)
+	}
+	sqlDB, ok := s.db.(*sql.DB)
+	if !ok {
+		return fmt.Errorf("RunInTx: cannot begin transaction from %T", s.db)
+	}
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	txStore := &Storage{db: tx}
+	if err := fn(txStore); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+	return nil
 }
 
 func (s *Storage) CreatePlan(ctx context.Context, plan Plan) error {
@@ -317,7 +353,7 @@ func (s *Storage) ShiftPositions(ctx context.Context, planID string, fromPositio
 
 func (s *Storage) AddDependency(ctx context.Context, itemID, dependsOnItemID string) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO plan_item_dependencies (item_id, depends_on_item_id) VALUES (?, ?)`,
+		`INSERT OR IGNORE INTO plan_item_dependencies (item_id, depends_on_item_id) VALUES (?, ?)`,
 		itemID, dependsOnItemID)
 	if err != nil {
 		return fmt.Errorf("adding dependency: %w", err)
@@ -400,7 +436,7 @@ func (s *Storage) SetItemStatus(ctx context.Context, itemID string, status ItemS
 
 func (s *Storage) AddPlanDependency(ctx context.Context, planID, dependsOnPlanID string) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO plan_dependencies (plan_id, depends_on_plan_id) VALUES (?, ?)`,
+		`INSERT OR IGNORE INTO plan_dependencies (plan_id, depends_on_plan_id) VALUES (?, ?)`,
 		planID, dependsOnPlanID)
 	if err != nil {
 		return fmt.Errorf("adding plan dependency: %w", err)
