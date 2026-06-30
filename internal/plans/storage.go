@@ -171,11 +171,11 @@ func (s *Storage) ListPlans(ctx context.Context, workspaceID, branchName string)
 	)
 	if workspaceID != "" && branchName != "" {
 		query = `SELECT id, name, branch_name, workspace_id, description, status, author_agent_id, created_at, updated_at
-		         FROM plans WHERE (workspace_id = ? OR workspace_id IS NULL) AND (branch_name = ? OR branch_name IS NULL) ORDER BY created_at DESC`
+		         FROM plans WHERE workspace_id = ? AND (branch_name = ? OR branch_name IS NULL) ORDER BY created_at DESC`
 		args = []any{workspaceID, branchName}
 	} else if workspaceID != "" {
 		query = `SELECT id, name, branch_name, workspace_id, description, status, author_agent_id, created_at, updated_at
-		         FROM plans WHERE workspace_id = ? OR workspace_id IS NULL ORDER BY created_at DESC`
+		         FROM plans WHERE workspace_id = ? ORDER BY created_at DESC`
 		args = []any{workspaceID}
 	} else if branchName != "" {
 		query = `SELECT id, name, branch_name, workspace_id, description, status, author_agent_id, created_at, updated_at

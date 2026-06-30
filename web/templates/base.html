@@ -1,383 +1,540 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2306b6d4'/%3E%3Ctext x='16' y='23' font-family='ui-monospace,monospace' font-size='20' font-weight='700' text-anchor='middle' fill='%2309090b'%3Es%3C/text%3E%3C/svg%3E">
     <title>{{.Title}} - skopos</title>
+    <script>
+      // Apply the saved theme before first paint to avoid a flash.
+      (function () {
+        try {
+          var t = localStorage.getItem('skopos:theme') || 'system';
+          var dark = t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          var el = document.documentElement;
+          el.classList.toggle('dark', dark);
+          el.classList.toggle('light', !dark);
+        } catch (e) { }
+      })();
+    </script>
     <link rel="stylesheet" href="/static/style.css">
 </head>
-<body x-data="app()" x-init="init()" class="min-h-screen bg-zinc-950 text-zinc-100">
-    <nav class="border-b border-zinc-800 bg-zinc-950/95">
-        <div class="flex items-center justify-between px-6 py-3">
-            <div>
-                <h1 class="text-xl font-semibold">skopos</h1>
-                <p class="text-sm text-zinc-400">Agent status dashboard</p>
-            </div>
-            <div class="flex items-center gap-3">
-                <div class="flex items-center gap-2 rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5" x-show="workspaces.length > 0">
-                    <span class="text-xs text-zinc-500">workspace:</span>
-                    <select x-model="activeWorkspace" @change="setWorkspace(activeWorkspace)" class="appearance-none bg-transparent text-sm text-zinc-200 outline-none cursor-pointer">
-                        <option value="" class="bg-zinc-900">All</option>
-                        <template x-for="ws in workspaces" :key="ws">
-                            <option :value="ws" x-text="ws" class="bg-zinc-900"></option>
-                        </template>
-                    </select>
-                </div>
-                <div class="flex rounded border border-zinc-700 text-sm">
-                    <button type="button" @click="switchTab('sessions')" class="px-3 py-1.5 transition" :class="activeTab === 'sessions' ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-white'">Sessions</button>
-                    <button type="button" @click="switchTab('blackboard')" class="px-3 py-1.5 transition" :class="activeTab === 'blackboard' ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-white'">Blackboard</button>
-                    <button type="button" @click="switchTab('plans')" class="px-3 py-1.5 transition" :class="activeTab === 'plans' ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-white'">Plans</button>
-                </div>
-                <div class="relative">
-                    <button type="button" @click="openKeyPanel()" class="flex items-center gap-1.5 rounded border px-3 py-2 text-sm transition" :class="apiKey ? 'border-emerald-700 text-emerald-300' : 'border-amber-700 text-amber-300'">
-                        <span x-text="apiKey ? '●' : '○'"></span>
-                        <span x-text="apiKey ? 'Key set' : 'Set key'"></span>
-                    </button>
-                    <div x-show="showKeyPanel" x-cloak @click.outside="showKeyPanel = false" x-transition class="absolute right-0 z-20 mt-2 w-72 rounded border border-zinc-700 bg-zinc-900 p-3 shadow-xl">
-                        <span class="lbl">API key (sent as X-API-Key)</span>
-                        <input type="password" x-model="keyDraft" @keydown.enter="saveKey()" placeholder="sk-..." class="fld" />
-                        <div class="mt-2 flex items-center justify-between">
-                            <button type="button" @click="clearKey()" class="text-xs text-zinc-500 hover:text-rose-400">Clear</button>
-                            <button type="button" @click="saveKey()" class="btn-primary">Save</button>
-                        </div>
-                    </div>
-                </div>
-                <button type="button" @click="refresh()" class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-200 hover:border-cyan-500 hover:text-white">Refresh</button>
-            </div>
+<body x-data="app()" x-init="init()" :class="{ 'modal-open': anyModalOpen() }" class="min-h-screen bg-zinc-950 text-zinc-100">
+    <a href="#main-content" class="skip-link btn btn-sm">Skip to main content</a>
+
+    <!-- Sidebar -->
+    <aside id="main-nav" class="fixed inset-y-0 left-0 z-40 flex w-64 flex-col transform border-r border-zinc-800 bg-zinc-950 transition-transform md:translate-x-0" :class="{ '-translate-x-full': !sidebarOpen }" role="navigation" aria-label="Primary">
+        <div class="flex h-16 items-center gap-2 border-b border-zinc-800 px-6">
+            <span class="text-xl font-semibold tracking-tight"><span class="text-cyan-400">sko</span>pos</span>
+            <span class="h-2 w-2 rounded-full transition-colors" :class="streamConnected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'" :title="streamConnected ? 'Connected' : 'Reconnecting…'" role="status" :aria-label="streamConnected ? 'Connected' : 'Reconnecting'"></span>
         </div>
-    </nav>
-
-    <!-- Sessions tab -->
-    <main x-show="activeTab === 'sessions'" class="grid gap-6 px-6 py-6 lg:grid-cols-[360px_1fr]">
-        <section class="min-h-[480px] border-r border-zinc-800 pr-0 lg:pr-6">
-            <div class="mb-4 flex items-center justify-between">
-                <h2 class="text-sm font-semibold uppercase tracking-wide text-zinc-400">Sessions</h2>
-                <span class="text-sm text-zinc-500" x-text="sessions.length"></span>
+        <nav class="flex-1 space-y-1 overflow-y-auto p-4" aria-label="Sections">
+            <button type="button" @click="switchView('sessions')" class="nav-item" :aria-current="activeView === 'sessions' ? 'page' : null">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                Sessions
+            </button>
+            <button type="button" @click="switchView('blackboard')" class="nav-item" :aria-current="activeView === 'blackboard' ? 'page' : null">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+                Blackboard
+            </button>
+            <button type="button" @click="switchView('plans')" class="nav-item" :aria-current="activeView === 'plans' ? 'page' : null">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
+                Plans
+            </button>
+        </nav>
+        <div class="border-t border-zinc-800 p-4">
+            <div class="mb-1.5 flex items-center justify-between">
+                <label class="text-xs font-medium text-zinc-500" for="workspace-select">Workspace</label>
+                <button type="button" @click="openWorkspaceModal()" class="btn btn-sm !min-h-0 px-2 py-0.5 text-xs" aria-label="Create workspace" title="Create workspace">
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                    New
+                </button>
             </div>
-            <div class="space-y-2">
-                <template x-for="session in sessions" :key="session.id">
-                    <div class="group relative w-full rounded border p-3 text-left transition" :class="selectedSessionId === session.id ? 'border-cyan-500 bg-cyan-950/40' : 'border-zinc-800 bg-zinc-900 hover:border-zinc-700'">
-                        <button type="button" @click="selectSession(session.id)" class="w-full text-left">
-                            <div class="flex items-center justify-between gap-3">
-                                <span class="truncate text-sm font-medium" x-text="session.title"></span>
-                                <span class="shrink-0 rounded px-2 py-1 text-xs" :class="statusClass(session.status)" x-text="session.status"></span>
-                            </div>
-                            <div class="mt-2 flex items-center justify-between text-xs text-zinc-500">
-                                <span class="truncate" x-text="session.workspace"></span>
-                                <span x-text="`${session.agent_count} agents`"></span>
-                            </div>
-                        </button>
-                        <button type="button" @click.stop="deleteSession(session.id)" class="absolute right-2 top-2 rounded p-1 text-xs text-zinc-600 opacity-0 transition hover:bg-rose-500/20 hover:text-rose-400 group-hover:opacity-100" title="Delete session">&times;</button>
-                    </div>
+            <select id="workspace-select" x-model="activeWorkspace" @change="setWorkspace($event.target.value)" class="fld-sm w-full" aria-label="Filter by workspace">
+                <option value="">All workspaces</option>
+                <template x-for="o in workspaceOptions()" :key="o.id">
+                    <option :value="o.id" x-text="o.label"></option>
                 </template>
-            </div>
-            <p x-show="!loading && sessions.length === 0" class="rounded border border-zinc-800 bg-zinc-900 p-4 text-sm text-zinc-400">No reports yet.</p>
-        </section>
+            </select>
+        </div>
+    </aside>
 
-        <section class="min-w-0">
-            <div class="mb-5 flex flex-wrap items-start justify-between gap-3">
+    <!-- Mobile sidebar backdrop -->
+    <div x-show="sidebarOpen" x-cloak @click="sidebarOpen = false" class="fixed inset-0 z-30 bg-black/60 md:hidden" aria-hidden="true"></div>
+
+    <div class="md:ml-64">
+        <!-- Header -->
+        <header class="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-zinc-800 bg-zinc-950/95 px-4 backdrop-blur">
+            <button type="button" @click="sidebarOpen = !sidebarOpen" class="btn btn-ghost p-2 md:hidden" aria-label="Toggle navigation" :aria-expanded="sidebarOpen">
+                <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+            </button>
+            <h1 class="text-base font-semibold capitalize" x-text="activeView"></h1>
+
+            <div class="ml-auto flex items-center gap-2">
+                <button type="button" @click="openKeyModal()" class="btn btn-sm" :class="apiKey ? 'border-emerald-700 text-emerald-300' : 'border-amber-700 text-amber-300'" :aria-label="apiKey ? 'API key set — edit' : 'Set API key'">
+                    <span aria-hidden="true" x-text="apiKey ? '●' : '○'"></span>
+                    <span class="hidden sm:inline" x-text="apiKey ? 'Key set' : 'Set key'"></span>
+                </button>
+                <button type="button" @click="refresh()" class="btn btn-sm btn-ghost" aria-label="Refresh data">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                    <span class="hidden sm:inline">Refresh</span>
+                </button>
+                <button type="button" @click="cycleTheme()" class="btn btn-sm btn-ghost" :aria-label="'Theme: ' + theme + '. Click to change.'" title="Toggle theme">
+                    <svg x-show="theme === 'dark'" x-cloak class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z"/></svg>
+                    <svg x-show="theme === 'light'" x-cloak class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z"/></svg>
+                    <svg x-show="theme === 'system'" x-cloak class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0V12a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 12V5.25"/></svg>
+                </button>
+            </div>
+        </header>
+
+        <main id="main-content" class="p-6" role="main">
+
+            <!-- ===================== SESSIONS ===================== -->
+            <section x-show="activeView === 'sessions'" class="grid gap-6 lg:grid-cols-[360px_1fr]">
                 <div>
-                    <h2 class="text-2xl font-semibold" x-text="selectedSession?.title || 'No session selected'"></h2>
-                    <p class="mt-1 text-sm text-zinc-400" x-text="selectedSession?.workspace || 'Reports will appear here as agents check in.'"></p>
+                    <div class="mb-3 flex items-center justify-between">
+                        <h2 class="text-sm font-semibold uppercase tracking-wide text-zinc-400">Sessions</h2>
+                        <span class="text-sm text-zinc-500" x-text="sessions.length"></span>
+                    </div>
+                    <p x-show="!loading && sessions.length === 0" class="card p-4 text-sm text-zinc-400">No reports yet.</p>
+                    <ul class="space-y-2" aria-label="Sessions list">
+                        <template x-for="session in sessions" :key="session.id">
+                            <li class="card" :class="selectedSessionId === session.id ? 'border-cyan-500' : ''">
+                                <div class="flex items-start gap-2 p-3">
+                                    <button type="button" @click="selectSession(session.id)" class="min-w-0 flex-1 rounded text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" :aria-current="selectedSessionId === session.id ? 'true' : null">
+                                        <div class="flex items-center justify-between gap-3">
+                                            <span class="truncate text-sm font-medium" x-text="session.title"></span>
+                                            <span class="badge shrink-0" :class="statusClass(session.status)" x-text="session.status"></span>
+                                        </div>
+                                        <div class="mt-2 flex items-center justify-between text-xs text-zinc-500">
+                                            <span class="truncate" x-text="session.workspace"></span>
+                                            <span x-text="`${session.agent_count} agents`"></span>
+                                        </div>
+                                    </button>
+                                    <button type="button" @click.stop="requestDelete('session', session.id, session.title)" class="btn btn-sm btn-ghost shrink-0 self-start text-rose-400" :aria-label="'Delete session ' + session.title">Delete</button>
+                                </div>
+                            </li>
+                        </template>
+                    </ul>
                 </div>
-                <span x-show="selectedSession" class="rounded px-2 py-1 text-xs" :class="statusClass(selectedSession?.status)" x-text="selectedSession?.status"></span>
-            </div>
 
-            <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                <template x-for="agent in selectedSession?.agents || []" :key="agent.agent_id">
-                    <article class="rounded border border-zinc-800 bg-zinc-900 p-4">
-                        <div class="flex items-start justify-between gap-3">
-                            <div class="min-w-0">
-                                <h3 class="truncate text-sm font-semibold" x-text="agent.agent_id"></h3>
-                                <p class="text-xs text-zinc-500" x-text="agent.agent_type"></p>
-                            </div>
-                            <span class="rounded px-2 py-1 text-xs" :class="statusClass(agent.status)" x-text="agent.status"></span>
+                <div class="min-w-0">
+                    <div class="mb-5 flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                            <h2 class="text-2xl font-semibold" x-text="selectedSession?.title || 'No session selected'"></h2>
+                            <p class="mt-1 text-sm text-zinc-400" x-text="selectedSession?.workspace || 'Reports appear here as agents check in.'"></p>
                         </div>
-                        <div class="mt-4 h-2 overflow-hidden rounded bg-zinc-800">
-                            <div class="h-full bg-cyan-400" :style="`width: ${agent.progress ?? 0}%`"></div>
-                        </div>
-                        <p class="mt-3 line-clamp-2 text-sm text-zinc-300" x-text="agent.message || 'No message'"></p>
-                        <pre x-show="agent.snippet" class="mt-3 max-h-24 overflow-auto rounded bg-zinc-950 p-3 text-xs text-zinc-400" x-text="agent.snippet"></pre>
-                    </article>
-                </template>
-            </div>
+                        <span x-show="selectedSession" class="badge" :class="statusClass(selectedSession?.status)" x-text="selectedSession?.status"></span>
+                    </div>
 
-            <div class="mt-8">
-                <h3 class="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">Events</h3>
-                <div class="space-y-2">
-                    <template x-for="event in selectedSession?.events || []" :key="event.id">
-                        <article class="rounded border border-zinc-800 bg-zinc-900 p-3">
-                            <div class="flex flex-wrap items-center gap-2 text-sm">
-                                <span class="font-medium" x-text="event.agent_id"></span>
-                                <span class="rounded px-2 py-1 text-xs" :class="statusClass(event.status)" x-text="event.status"></span>
-                                <span class="text-xs text-zinc-500" x-text="formatTime(event.created_at)"></span>
+                    <p x-show="!selectedSession" class="card p-6 text-sm text-zinc-400">Select a session on the left to see its agents and events.</p>
+
+                    <template x-if="selectedSession">
+                        <div>
+                            <h3 class="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">Agents</h3>
+                            <p x-show="!selectedSession.agents || selectedSession.agents.length === 0" class="card p-4 text-sm text-zinc-500">No agents have reported for this session.</p>
+                            <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                                <template x-for="agent in selectedSession.agents || []" :key="agent.agent_id">
+                                    <article class="card p-4">
+                                        <div class="flex items-start justify-between gap-3">
+                                            <div class="min-w-0">
+                                                <h3 class="truncate text-sm font-semibold" x-text="agent.agent_id"></h3>
+                                                <p class="text-xs text-zinc-500" x-text="agent.agent_type"></p>
+                                            </div>
+                                            <span class="badge" :class="statusClass(agent.status)" x-text="agent.status"></span>
+                                        </div>
+                                        <div class="mt-4 h-2 overflow-hidden rounded bg-zinc-800" role="progressbar" :aria-valuenow="agent.progress ?? 0" aria-valuemin="0" aria-valuemax="100" :aria-label="'Progress for ' + agent.agent_id">
+                                            <div class="h-full bg-cyan-400 transition-all" :style="`width: ${agent.progress ?? 0}%`"></div>
+                                        </div>
+                                        <p class="mt-3 line-clamp-2 text-sm text-zinc-300" x-text="agent.message || 'No message'"></p>
+                                        <pre x-show="agent.snippet" class="mt-3 max-h-24 overflow-auto rounded bg-zinc-950 p-3 text-xs text-zinc-400" x-text="agent.snippet"></pre>
+                                    </article>
+                                </template>
                             </div>
-                            <p class="mt-2 text-sm text-zinc-300" x-text="event.message"></p>
-                        </article>
+
+                            <div class="mt-8">
+                                <h3 class="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">Events</h3>
+                                <p x-show="!selectedSession.events || selectedSession.events.length === 0" class="card p-4 text-sm text-zinc-500">No events yet.</p>
+                                <ul class="space-y-2" aria-label="Events">
+                                    <template x-for="event in selectedSession.events || []" :key="event.id">
+                                        <li class="card p-3">
+                                            <div class="flex flex-wrap items-center gap-2 text-sm">
+                                                <span class="font-medium" x-text="event.agent_id"></span>
+                                                <span class="badge" :class="statusClass(event.status)" x-text="event.status"></span>
+                                                <span class="text-xs text-zinc-500" x-text="formatTime(event.created_at)"></span>
+                                            </div>
+                                            <p class="mt-2 text-sm text-zinc-300" x-text="event.message"></p>
+                                        </li>
+                                    </template>
+                                </ul>
+                            </div>
+                        </div>
                     </template>
                 </div>
-            </div>
-        </section>
-    </main>
+            </section>
 
-    <!-- Blackboard tab -->
-    <main x-show="activeTab === 'blackboard'" class="px-6 py-6">
-        <div class="mb-6 flex flex-wrap items-center gap-3">
-            <h2 class="text-sm font-semibold uppercase tracking-wide text-zinc-400">Knowledge Bundle</h2>
-            <div class="flex items-center gap-2 rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5">
-                <span class="text-xs text-zinc-500">branch:</span>
-                <input type="text" x-model="blackboardBranch" @input.debounce.300ms="fetchBundle()" placeholder="all" class="w-36 bg-transparent text-sm text-zinc-200 outline-none placeholder-zinc-600" />
-            </div>
-            <span x-show="blackboardLoading" class="text-xs text-zinc-500">Loading…</span>
-            <span x-show="!blackboardLoading" class="text-xs text-zinc-500" x-text="`${entries.length} entries`"></span>
-            <button type="button" @click="toggleEntryForm()" class="btn-primary" x-text="showEntryForm ? 'Close' : '+ Write entry'"></button>
-        </div>
-
-        <div x-show="showEntryForm" x-cloak x-transition class="panel mb-6">
-            <div class="grid gap-3 sm:grid-cols-2">
-                <label class="block">
-                    <span class="lbl">Type</span>
-                    <select x-model="entryForm.entry_type" class="fld">
-                        <option value="bug">bug</option>
-                        <option value="debt">debt</option>
-                        <option value="warning">warning</option>
-                        <option value="finding">finding</option>
-                        <option value="decision">decision</option>
-                        <option value="context">context</option>
-                    </select>
-                </label>
-                <label class="block">
-                    <span class="lbl">Scope</span>
-                    <select x-model="entryForm.scope" class="fld">
-                        <option value="project">project</option>
-                        <option value="branch">branch</option>
-                        <option value="session">session</option>
-                    </select>
-                </label>
-                <label class="block sm:col-span-2">
-                    <span class="lbl">Title</span>
-                    <input type="text" x-model="entryForm.title" class="fld" />
-                </label>
-                <label x-show="entryForm.scope === 'branch'" x-cloak class="block">
-                    <span class="lbl">Branch name</span>
-                    <input type="text" x-model="entryForm.branch_name" class="fld" />
-                </label>
-                <label x-show="entryForm.scope === 'session'" x-cloak class="block">
-                    <span class="lbl">Session ID</span>
-                    <input type="text" x-model="entryForm.session_id" class="fld" />
-                </label>
-                <label class="block sm:col-span-2">
-                    <span class="lbl">Code ref (optional)</span>
-                    <input type="text" x-model="entryForm.code_ref" class="fld" placeholder="src/auth.go:42" />
-                </label>
-                <label class="block sm:col-span-2">
-                    <span class="lbl">Content</span>
-                    <textarea x-model="entryForm.content" rows="3" class="fld"></textarea>
-                </label>
-            </div>
-            <div class="mt-3 flex justify-end gap-2">
-                <button type="button" @click="showEntryForm = false" class="btn">Cancel</button>
-                <button type="button" @click="writeEntry()" class="btn-primary">Write</button>
-            </div>
-        </div>
-
-        <!-- empty state -->
-        <p x-show="!blackboardLoading && entries.length === 0" class="rounded border border-zinc-800 bg-zinc-900 p-6 text-sm text-zinc-400">
-            No blackboard entries yet. Agents write entries via the MCP <code class="text-zinc-300">blackboard_write</code> tool or <code class="text-zinc-300">POST /api/blackboard/entries</code>.
-        </p>
-
-        <!-- entries grouped by type -->
-        <div class="space-y-8">
-            <template x-for="group in entriesByType()" :key="group.type">
-                <section>
-                    <h3 class="mb-3 text-sm font-semibold" :class="group.colorClass" x-text="group.label"></h3>
-                    <div class="space-y-2">
-                        <template x-for="entry in group.items" :key="entry.id">
-                            <article class="group relative rounded border border-zinc-800 bg-zinc-900 p-4">
-                                <div class="flex flex-wrap items-start justify-between gap-2">
-                                    <div class="flex flex-wrap items-center gap-2">
-                                        <span class="rounded px-2 py-0.5 text-xs" :class="entryTypeClass(entry.entry_type)" x-text="entry.entry_type"></span>
-                                        <span class="rounded px-2 py-0.5 text-xs" :class="scopeClass(entry.scope)" x-text="entry.scope"></span>
-                                        <span x-show="entry.branch_name" class="text-xs text-zinc-500" x-text="`@ ${entry.branch_name}`"></span>
-                                    </div>
-                                    <div class="flex items-center gap-2">
-                                        <span class="text-xs text-zinc-600" x-text="formatTime(entry.created_at)"></span>
-                                        <button type="button" @click.stop="promoteEntry(entry.id)" x-show="entry.scope !== 'project'" class="rounded p-1 text-xs text-zinc-600 opacity-0 transition hover:bg-cyan-500/20 hover:text-cyan-400 group-hover:opacity-100" title="Promote to wider scope">&uparrow;</button>
-                                        <button type="button" @click.stop="deleteEntry(entry.id)" class="rounded p-1 text-xs text-zinc-600 opacity-0 transition hover:bg-rose-500/20 hover:text-rose-400 group-hover:opacity-100" title="Delete entry">&times;</button>
-                                    </div>
-                                </div>
-                                <p class="mt-2 text-sm font-medium text-zinc-100" x-text="entry.title"></p>
-                                <p x-show="entry.content" class="mt-1 text-sm text-zinc-400" x-text="entry.content"></p>
-                                <div class="mt-2 flex flex-wrap items-center gap-3 text-xs text-zinc-600">
-                                    <code x-show="entry.code_ref" class="text-zinc-400" x-text="entry.code_ref"></code>
-                                    <span x-text="`— ${entry.author_agent_id}`"></span>
-                                </div>
-                            </article>
-                        </template>
+            <!-- ===================== BLACKBOARD ===================== -->
+            <section x-show="activeView === 'blackboard'">
+                <div class="mb-6 flex flex-wrap items-center gap-3">
+                    <div class="flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2">
+                        <label class="text-xs text-zinc-500" for="bb-branch">Branch</label>
+                        <input id="bb-branch" type="text" x-model="blackboardBranch" @input.debounce.300ms="fetchBundle()" placeholder="all" class="w-36 bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600" />
                     </div>
-                </section>
-            </template>
-        </div>
-    </main>
-
-    <!-- Plans tab -->
-    <main x-show="activeTab === 'plans'" class="px-6 py-6">
-        <div class="mb-6 flex flex-wrap items-center gap-3">
-            <h2 class="text-sm font-semibold uppercase tracking-wide text-zinc-400">Plans</h2>
-            <div class="flex items-center gap-2 rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5">
-                <span class="text-xs text-zinc-500">branch:</span>
-                <input type="text" x-model="plansBranch" @input.debounce.300ms="fetchPlans()" placeholder="all" class="w-36 bg-transparent text-sm text-zinc-200 outline-none placeholder-zinc-600" />
-            </div>
-            <span x-show="plansLoading" class="text-xs text-zinc-500">Loading…</span>
-            <span x-show="!plansLoading" class="text-xs text-zinc-500" x-text="`${plans.length} plans`"></span>
-            <button type="button" @click="togglePlanForm()" class="btn-primary" x-text="showPlanForm ? 'Close' : '+ New plan'"></button>
-        </div>
-
-        <div x-show="showPlanForm" x-cloak x-transition class="panel mb-6">
-            <div class="grid gap-3 sm:grid-cols-2">
-                <label class="block sm:col-span-2">
-                    <span class="lbl">Name</span>
-                    <input type="text" x-model="planForm.name" class="fld" />
-                </label>
-                <label class="block">
-                    <span class="lbl">Branch (optional)</span>
-                    <input type="text" x-model="planForm.branch_name" class="fld" />
-                </label>
-                <label class="block sm:col-span-2">
-                    <span class="lbl">Description</span>
-                    <textarea x-model="planForm.description" rows="2" class="fld"></textarea>
-                </label>
-            </div>
-            <div class="mt-3 flex justify-end gap-2">
-                <button type="button" @click="showPlanForm = false" class="btn">Cancel</button>
-                <button type="button" @click="createPlan()" class="btn-primary">Create</button>
-            </div>
-        </div>
-
-        <p x-show="!plansLoading && plans.length === 0" class="rounded border border-zinc-800 bg-zinc-900 p-6 text-sm text-zinc-400">
-            No plans yet. Agents create plans via the <code class="text-zinc-300">plan_create</code> MCP tool or <code class="text-zinc-300">POST /api/plans</code>.
-        </p>
-
-        <div class="space-y-3">
-            <template x-for="plan in plans" :key="plan.id">
-                <article class="group relative rounded border border-zinc-800 bg-zinc-900">
-                    <button type="button" @click="togglePlan(plan)" class="w-full p-4 text-left">
-                        <div class="flex flex-wrap items-center justify-between gap-2">
-                            <div class="flex flex-wrap items-center gap-2">
-                                <span class="font-medium text-zinc-100" x-text="plan.name"></span>
-                                <span x-show="plan.branch_name" class="rounded bg-violet-500/15 px-2 py-0.5 text-xs text-violet-300" x-text="plan.branch_name"></span>
-                                <span x-show="!plan.branch_name" class="rounded bg-indigo-500/15 px-2 py-0.5 text-xs text-indigo-300">project-wide</span>
-                            </div>
-                            <div class="flex items-center gap-2">
-                                <span class="rounded px-2 py-0.5 text-xs" :class="planStatusClass(plan.status)" x-text="plan.status"></span>
-                                <span class="text-xs text-zinc-600" x-text="formatTime(plan.created_at)"></span>
-                            </div>
-                        </div>
-                        <p x-show="plan.description" class="mt-1 text-sm text-zinc-400" x-text="plan.description"></p>
-                        <p x-show="plan.depends_on && plan.depends_on.length > 0" class="mt-1 inline-flex items-center gap-1 text-xs text-zinc-500">
-                            <span class="text-rose-400">↻</span>
-                            <span>depends on</span>
-                            <span class="text-amber-400" x-text="planDepNames(plan)"></span>
-                        </p>
+                    <span x-show="blackboardLoading" class="text-xs text-zinc-500" role="status" aria-live="polite">Loading…</span>
+                    <span x-show="!blackboardLoading" class="text-xs text-zinc-500" x-text="`${entries.length} entries`"></span>
+                    <button type="button" @click="openEntryModal()" class="btn btn-primary btn-sm ml-auto">
+                        <span aria-hidden="true">+</span> Write entry
                     </button>
-                    <div class="absolute right-3 top-3 flex items-center gap-2 opacity-0 transition group-hover:opacity-100">
-                        <select @change="updatePlanStatus(plan.id, $event.target.value); $event.target.value=''" class="appearance-none rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-xs text-zinc-400 outline-none hover:border-cyan-500 hover:text-zinc-100" title="Set plan status">
-                            <option value="">status…</option>
-                            <option value="active">active</option>
-                            <option value="completed">completed</option>
-                            <option value="archived">archived</option>
-                        </select>
-                        <button type="button" @click.stop="deletePlan(plan.id)" class="rounded p-1 text-xs text-zinc-600 transition hover:bg-rose-500/20 hover:text-rose-400" title="Delete plan">&times;</button>
-                    </div>
+                </div>
 
-                    <!-- Expanded item list -->
-                    <div x-show="expandedPlan?.id === plan.id" class="border-t border-zinc-800 px-4 pb-4">
-                        <p x-show="!expandedPlan?.items || expandedPlan.items.length === 0" class="pt-4 text-sm text-zinc-500">No items.</p>
-                        <div class="mt-3 space-y-4">
-                            <template x-for="group in itemsGroupedByPhase(expandedPlan?.id === plan.id ? expandedPlan?.items ?? [] : [])" :key="group.phase">
-                                <div>
-                                    <h4 x-show="group.phase" class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500" x-text="group.phase"></h4>
-                                    <div class="space-y-2">
-                                        <template x-for="item in group.items" :key="item.id">
-                                            <div class="group/item relative flex flex-wrap items-start gap-2 rounded border border-zinc-800 bg-zinc-950 p-3">
-                                                <span class="mt-0.5 rounded bg-zinc-800 px-1.5 py-0.5 text-xs font-mono text-zinc-400" x-text="`#${item.position}`"></span>
-                                                <span class="mt-0.5 rounded px-2 py-0.5 text-xs" :class="itemStatusClass(item.status)" x-text="item.status"></span>
-                                                <div class="min-w-0 flex-1">
-                                                    <p class="text-sm text-zinc-200" x-text="item.title"></p>
-                                                    <p x-show="item.description" class="mt-0.5 text-xs text-zinc-500" x-text="item.description"></p>
-                                                    <div class="mt-1 flex flex-wrap items-center gap-2">
-                                                        <span x-show="item.depends_on && item.depends_on.length > 0" class="inline-flex items-center gap-1 text-xs text-zinc-500">
-                                                            <span class="text-rose-400">↻</span>
-                                                            <span>depends on</span>
-                                                            <span class="font-mono text-amber-400" x-text="depLabel(item)"></span>
-                                                        </span>
-                                                        <span x-show="item.claimed_by_agent_id" class="text-xs text-zinc-600" x-text="`claimed by ${item.claimed_by_agent_id}`"></span>
-                                                    </div>
-                                                    <div class="mt-2 flex flex-wrap items-center gap-2">
-                                                        <select @change="updateItemStatus(plan.id, item.id, $event.target.value); $event.target.value=''" class="appearance-none rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-xs text-zinc-400 outline-none hover:border-cyan-500 hover:text-zinc-100" title="Set item status">
-                                                            <option value="">status…</option>
-                                                            <option value="pending">pending</option>
-                                                            <option value="in_progress">in_progress</option>
-                                                            <option value="done">done</option>
-                                                            <option value="blocked">blocked</option>
-                                                        </select>
-                                                        <select x-show="otherItems(item).length > 0" @change="addPlanDependency(plan.id, item.id, $event.target.value); $event.target.value=''" class="appearance-none rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-xs text-zinc-400 outline-none hover:border-cyan-500 hover:text-zinc-100" title="Add dependency">
-                                                            <option value="">+ depends on…</option>
-                                                            <template x-for="dep in otherItems(item)" :key="dep.id">
-                                                                <option :value="dep.id" x-text="`#${dep.position} ${dep.title}`"></option>
-                                                            </template>
-                                                        </select>
-                                                    </div>
-                                                </div>
-                                                <button type="button" @click.stop="deletePlanItem(plan.id, item.id)" class="rounded p-1 text-xs text-zinc-600 opacity-0 transition hover:bg-rose-500/20 hover:text-rose-400 group-hover/item:opacity-100" title="Delete item">&times;</button>
+                <p x-show="!blackboardLoading && entries.length === 0" class="card p-6 text-sm text-zinc-400">
+                    No blackboard entries yet. Agents write entries via the MCP <code class="text-zinc-300">blackboard_write</code> tool or <code class="text-zinc-300">POST /api/blackboard/entries</code>.
+                </p>
+
+                <div class="space-y-8">
+                    <template x-for="group in entriesByType()" :key="group.type">
+                        <section>
+                            <h3 class="mb-3 text-sm font-semibold" :class="group.colorClass" x-text="group.label"></h3>
+                            <ul class="space-y-2">
+                                <template x-for="entry in group.items" :key="entry.id">
+                                    <li class="card p-4">
+                                        <div class="flex flex-wrap items-start justify-between gap-2">
+                                            <div class="flex flex-wrap items-center gap-2">
+                                                <span class="badge" :class="entryTypeClass(entry.entry_type)" x-text="entry.entry_type"></span>
+                                                <span class="badge" :class="scopeClass(entry.scope)" x-text="entry.scope"></span>
+                                                <span x-show="entry.branch_name" class="text-xs text-zinc-500" x-text="`@ ${entry.branch_name}`"></span>
+                                                <span x-show="!activeWorkspace && entry.workspace_id" class="badge max-w-[12rem] truncate bg-sky-500/15 text-sky-300" :title="entry.workspace_id" x-text="workspaceLabel(entry.workspace_id)"></span>
+                                                <span x-show="!activeWorkspace && !entry.workspace_id" class="badge bg-zinc-700 text-zinc-400" title="Not assigned to any workspace">no workspace</span>
                                             </div>
-                                        </template>
-                                    </div>
-                                </div>
-                            </template>
-                        </div>
+                                            <div class="flex items-center gap-1">
+                                                <span class="text-xs text-zinc-600" x-text="formatTime(entry.created_at)"></span>
+                                                <button x-show="entry.scope !== 'project'" type="button" @click.stop="promoteEntry(entry.id)" class="btn btn-sm btn-ghost" aria-label="Promote entry to wider scope">Promote</button>
+                                                <button type="button" @click.stop="requestDelete('entry', entry.id, entry.title)" class="btn btn-sm btn-ghost text-rose-400" :aria-label="'Delete entry ' + entry.title">Delete</button>
+                                            </div>
+                                        </div>
+                                        <p class="mt-2 text-sm font-medium text-zinc-100" x-text="entry.title"></p>
+                                        <p x-show="entry.content" class="mt-1 text-sm text-zinc-400" x-text="entry.content"></p>
+                                        <div class="mt-2 flex flex-wrap items-center gap-3 text-xs text-zinc-600">
+                                            <code x-show="entry.code_ref" class="text-zinc-400" x-text="entry.code_ref"></code>
+                                            <span x-text="`— ${entry.author_agent_id}`"></span>
+                                        </div>
+                                    </li>
+                                </template>
+                            </ul>
+                        </section>
+                    </template>
+                </div>
+            </section>
 
-                        <div class="mt-4 border-t border-zinc-800 pt-4">
-                            <button type="button" @click="toggleItemForm()" class="btn text-xs" x-text="showItemForm ? 'Close' : '+ Add item'"></button>
-                            <div x-show="showItemForm" x-cloak x-transition class="mt-3 grid gap-2 sm:grid-cols-2">
-                                <label class="block sm:col-span-2">
-                                    <span class="lbl">Title</span>
-                                    <input type="text" x-model="itemForm.title" class="fld" />
-                                </label>
-                                <label class="block">
-                                    <span class="lbl">Phase (optional)</span>
-                                    <input type="text" x-model="itemForm.phase" class="fld" />
-                                </label>
-                                <label class="block">
-                                    <span class="lbl">Depends on (optional)</span>
-                                    <select x-model="itemForm.depends_on" class="fld">
-                                        <option value="">—</option>
-                                        <template x-for="dep in expandedPlan?.items ?? []" :key="dep.id">
-                                            <option :value="dep.id" x-text="`#${dep.position} ${dep.title}`"></option>
-                                        </template>
-                                    </select>
-                                </label>
-                                <label class="block sm:col-span-2">
-                                    <span class="lbl">Description</span>
-                                    <textarea x-model="itemForm.description" rows="2" class="fld"></textarea>
-                                </label>
-                                <div class="sm:col-span-2 flex justify-end gap-2">
-                                    <button type="button" @click="showItemForm = false" class="btn">Cancel</button>
-                                    <button type="button" @click="addPlanItem()" class="btn-primary">Add</button>
+            <!-- ===================== PLANS ===================== -->
+            <section x-show="activeView === 'plans'">
+                <div class="mb-6 flex flex-wrap items-center gap-3">
+                    <div class="flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2">
+                        <label class="text-xs text-zinc-500" for="pl-branch">Branch</label>
+                        <input id="pl-branch" type="text" x-model="plansBranch" @input.debounce.300ms="fetchPlans()" placeholder="all" class="w-36 bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600" />
+                    </div>
+                    <span x-show="plansLoading" class="text-xs text-zinc-500" role="status" aria-live="polite">Loading…</span>
+                    <span x-show="!plansLoading" class="text-xs text-zinc-500" x-text="`${plans.length} plans`"></span>
+                    <button type="button" @click="openPlanModal()" class="btn btn-primary btn-sm ml-auto">
+                        <span aria-hidden="true">+</span> New plan
+                    </button>
+                </div>
+
+                <p x-show="!plansLoading && plans.length === 0" class="card p-6 text-sm text-zinc-400">
+                    No plans yet. Agents create plans via the <code class="text-zinc-300">plan_create</code> MCP tool or <code class="text-zinc-300">POST /api/plans</code>.
+                </p>
+
+                <ul class="space-y-3">
+                    <template x-for="plan in plans" :key="plan.id">
+                        <li class="card">
+                            <div class="flex items-center justify-between gap-2 p-4">
+                                <button type="button" @click="togglePlan(plan)" class="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 rounded">
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <span class="font-medium text-zinc-100" x-text="plan.name"></span>
+                                        <span class="badge" :class="planStatusClass(plan.status)" x-text="plan.status"></span>
+                                        <span x-show="plan.branch_name" class="badge bg-violet-500/15 text-violet-300" x-text="plan.branch_name"></span>
+                                        <span x-show="!plan.branch_name" class="badge bg-indigo-500/15 text-indigo-300">project</span>
+                                        <span x-show="!activeWorkspace && plan.workspace_id" class="badge max-w-[12rem] truncate bg-sky-500/15 text-sky-300" :title="plan.workspace_id" x-text="workspaceLabel(plan.workspace_id)"></span>
+                                        <span x-show="!activeWorkspace && !plan.workspace_id" class="badge bg-zinc-700 text-zinc-400" title="Not assigned to any workspace">no workspace</span>
+                                        <span x-show="plan.depends_on && plan.depends_on.length > 0" class="text-xs text-zinc-500">depends on <span class="text-amber-400" x-text="planDepNames(plan)"></span></span>
+                                    </div>
+                                    <p x-show="plan.description" class="mt-1 text-sm text-zinc-400" x-text="plan.description"></p>
+                                </button>
+                                <div class="flex items-center gap-1">
+                                    <button type="button" x-show="plan.status !== 'archived'" @click.stop="archivePlan(plan.id)" class="btn btn-sm btn-ghost" aria-label="Archive plan">Archive</button>
+                                    <button type="button" @click.stop="requestDelete('plan', plan.id, plan.name)" class="btn btn-sm btn-ghost text-rose-400" :aria-label="'Delete plan ' + plan.name">Delete</button>
                                 </div>
                             </div>
+
+                            <div x-show="expandedPlan?.id === plan.id" x-cloak class="border-t border-zinc-800 px-4 pb-4">
+                                <p x-show="!expandedPlan?.items || expandedPlan.items.length === 0" class="pt-4 text-sm text-zinc-500">No items.</p>
+                                <div class="mt-3 space-y-4">
+                                    <template x-for="grp in itemsGroupedByPhase(expandedPlan?.items ?? [])" :key="grp.phase">
+                                        <div>
+                                            <h4 x-show="grp.phase" class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500" x-text="grp.label"></h4>
+                                            <ul class="space-y-2">
+                                                <template x-for="item in grp.items" :key="item.id">
+                                                    <li class="flex flex-wrap items-start gap-2 rounded-md border border-zinc-800 bg-zinc-950 p-3">
+                                                        <div class="flex w-32 shrink-0 items-center gap-2">
+                                                            <span class="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-xs text-zinc-400" x-text="`#${item.position}`"></span>
+                                                            <span class="badge" :class="itemStatusClass(item.status)" x-text="item.status"></span>
+                                                        </div>
+                                                        <div class="min-w-0 flex-1">
+                                                            <p class="text-sm text-zinc-200" x-text="item.title"></p>
+                                                            <p x-show="item.description" class="mt-0.5 text-xs text-zinc-500" x-text="item.description"></p>
+                                                            <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                                                                <span x-show="item.depends_on && item.depends_on.length > 0">depends on <span class="font-mono text-amber-400" x-text="depLabel(item)"></span></span>
+                                                                <span x-show="item.claimed_by_agent_id" x-text="`claimed by ${item.claimed_by_agent_id}`"></span>
+                                                            </div>
+                                                            <div class="mt-2 flex flex-wrap items-center gap-2">
+                                                                <label class="sr-only" :for="'item-status-' + item.id">Item status</label>
+                                                                <select :id="'item-status-' + item.id" @change="updateItemStatus(plan.id, item.id, $event.target.value); $event.target.value=''" class="fld-sm w-36" aria-label="Set item status">
+                                                                    <option value="">status…</option>
+                                                                    <option value="pending">pending</option>
+                                                                    <option value="in_progress">in_progress</option>
+                                                                    <option value="done">done</option>
+                                                                    <option value="blocked">blocked</option>
+                                                                </select>
+                                                                <label class="sr-only" :for="'item-dep-' + item.id">Add dependency</label>
+                                                                <select x-show="otherItems(item).length > 0" :id="'item-dep-' + item.id" @change="addPlanDependency(plan.id, item.id, $event.target.value); $event.target.value=''" class="fld-sm w-48" aria-label="Add dependency">
+                                                                    <option value="">+ depends on…</option>
+                                                                    <template x-for="dep in otherItems(item)" :key="dep.id">
+                                                                        <option :value="dep.id" x-text="`#${dep.position} ${dep.title}`"></option>
+                                                                    </template>
+                                                                </select>
+                                                            </div>
+                                                        </div>
+                                                        <button type="button" @click.stop="requestDelete('item', plan.id + '|' + item.id, item.title)" class="btn btn-sm btn-ghost self-start text-rose-400" :aria-label="'Delete item ' + item.title">Delete</button>
+                                                    </li>
+                                                </template>
+                                            </ul>
+                                        </div>
+                                    </template>
+                                </div>
+                                <button type="button" @click="openItemModal()" class="btn btn-sm mt-4">
+                                    <span aria-hidden="true">+</span> Add item
+                                </button>
+                            </div>
+                        </li>
+                    </template>
+                </ul>
+            </section>
+        </main>
+    </div>
+
+    <!-- ===================== API KEY MODAL ===================== -->
+    <div x-show="showKeyModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="key-modal-title" @keydown.escape.window="closeKeyModal()" @keydown.tab="trapFocus($event)">
+        <div class="fixed inset-0 bg-black/60" @click="closeKeyModal()" aria-hidden="true"></div>
+        <div class="card relative w-full max-w-md p-6 shadow-2xl">
+            <button type="button" @click="closeKeyModal()" class="absolute right-4 top-4 rounded-full p-2 text-zinc-400 hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" aria-label="Close dialog">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+            <h2 id="key-modal-title" class="mb-4 text-lg font-semibold">API key</h2>
+            <p class="mb-4 text-sm text-zinc-400">Sent as <code class="text-zinc-300">Authorization: Bearer</code> on every request. Leave empty to disable auth.</p>
+            <label class="lbl" for="api-key-input">API key</label>
+            <input id="api-key-input" type="password" x-model="keyDraft" @keydown.enter="saveKey()" class="fld" placeholder="sk-..." autocomplete="off" />
+            <div class="mt-6 flex items-center justify-between">
+                <button type="button" @click="clearKey()" class="btn btn-ghost btn-sm text-rose-400">Clear</button>
+                <button type="button" @click="saveKey()" class="btn btn-primary">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================== CREATE WORKSPACE MODAL ===================== -->
+    <div x-show="showWorkspaceModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="ws-modal-title" @keydown.escape.window="closeWorkspaceModal()" @keydown.tab="trapFocus($event)">
+        <div class="fixed inset-0 bg-black/60" @click="closeWorkspaceModal()" aria-hidden="true"></div>
+        <div class="card relative w-full max-w-md p-6 shadow-2xl">
+            <button type="button" @click="closeWorkspaceModal()" class="absolute right-4 top-4 rounded-full p-2 text-zinc-400 hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" aria-label="Close dialog">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+            <h2 id="ws-modal-title" class="mb-2 text-lg font-semibold">Create workspace</h2>
+            <p class="mb-4 text-sm text-zinc-400">A workspace groups sessions, blackboard entries, and plans. Use the same id agents report (e.g. a repo path or normalized git URL).</p>
+            <form @submit.prevent="submitWorkspace()">
+                <div class="space-y-3">
+                    <div>
+                        <label class="lbl" for="ws-id">ID <span aria-hidden="true">*</span></label>
+                        <input id="ws-id" type="text" x-model="workspaceForm.id" class="fld" :aria-invalid="!!workspaceErrors.id" placeholder="github.com/you/repo" autocomplete="off" />
+                        <p x-show="workspaceErrors.id" class="field-error" role="alert" x-text="workspaceErrors.id"></p>
+                    </div>
+                    <div>
+                        <label class="lbl" for="ws-name">Display name (optional)</label>
+                        <input id="ws-name" type="text" x-model="workspaceForm.name" class="fld" placeholder="My Repo" autocomplete="off" />
+                    </div>
+                </div>
+                <div class="mt-6 flex justify-end gap-3">
+                    <button type="button" @click="closeWorkspaceModal()" class="btn">Cancel</button>
+                    <button type="submit" class="btn btn-primary" :disabled="workspaceSaving">
+                        <span x-show="!workspaceSaving">Create</span>
+                        <span x-show="workspaceSaving">Creating…</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ===================== WRITE ENTRY MODAL ===================== -->
+    <div x-show="showEntryModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="entry-modal-title" @keydown.escape.window="closeEntryModal()" @keydown.tab="trapFocus($event)">
+        <div class="fixed inset-0 bg-black/60" @click="closeEntryModal()" aria-hidden="true"></div>
+        <div class="card relative w-full max-w-lg p-6 shadow-2xl">
+            <button type="button" @click="closeEntryModal()" class="absolute right-4 top-4 rounded-full p-2 text-zinc-400 hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" aria-label="Close dialog">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+            <h2 id="entry-modal-title" class="mb-4 text-lg font-semibold">Write blackboard entry</h2>
+            <form @submit.prevent="submitEntry()">
+                <div class="grid gap-3 sm:grid-cols-2">
+                    <div>
+                        <label class="lbl" for="e-type">Type <span aria-hidden="true">*</span></label>
+                        <select id="e-type" x-model="entryForm.entry_type" class="fld">
+                            <option value="bug">bug</option><option value="debt">debt</option><option value="warning">warning</option>
+                            <option value="finding">finding</option><option value="decision">decision</option><option value="context">context</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="lbl" for="e-scope">Scope <span aria-hidden="true">*</span></label>
+                        <select id="e-scope" x-model="entryForm.scope" class="fld">
+                            <option value="project">project</option><option value="branch">branch</option><option value="session">session</option>
+                        </select>
+                    </div>
+                    <div class="sm:col-span-2">
+                        <label class="lbl" for="e-title">Title <span aria-hidden="true">*</span></label>
+                        <input id="e-title" type="text" x-model="entryForm.title" class="fld" :aria-invalid="!!entryErrors.title" autocomplete="off" />
+                        <p x-show="entryErrors.title" class="field-error" role="alert" x-text="entryErrors.title"></p>
+                    </div>
+                    <div x-show="entryForm.scope === 'branch'">
+                        <label class="lbl" for="e-branch">Branch <span aria-hidden="true">*</span></label>
+                        <input id="e-branch" type="text" x-model="entryForm.branch_name" class="fld" :aria-invalid="!!entryErrors.branch_name" autocomplete="off" />
+                        <p x-show="entryErrors.branch_name" class="field-error" role="alert" x-text="entryErrors.branch_name"></p>
+                    </div>
+                    <div x-show="entryForm.scope === 'session'">
+                        <label class="lbl" for="e-session">Session ID <span aria-hidden="true">*</span></label>
+                        <input id="e-session" type="text" x-model="entryForm.session_id" class="fld" :aria-invalid="!!entryErrors.session_id" autocomplete="off" />
+                        <p x-show="entryErrors.session_id" class="field-error" role="alert" x-text="entryErrors.session_id"></p>
+                    </div>
+                    <div class="sm:col-span-2">
+                        <label class="lbl" for="e-ref">Code reference (optional)</label>
+                        <input id="e-ref" type="text" x-model="entryForm.code_ref" class="fld" placeholder="src/auth.go:42" autocomplete="off" />
+                    </div>
+                    <div class="sm:col-span-2">
+                        <label class="lbl" for="e-content">Content (optional)</label>
+                        <textarea id="e-content" x-model="entryForm.content" rows="3" class="fld"></textarea>
+                    </div>
+                </div>
+                <div class="mt-6 flex justify-end gap-3">
+                    <button type="button" @click="closeEntryModal()" class="btn">Cancel</button>
+                    <button type="submit" class="btn btn-primary" :disabled="entrySaving">
+                        <span x-show="!entrySaving">Write</span>
+                        <span x-show="entrySaving">Writing…</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ===================== CREATE PLAN MODAL ===================== -->
+    <div x-show="showPlanModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="plan-modal-title" @keydown.escape.window="closePlanModal()" @keydown.tab="trapFocus($event)">
+        <div class="fixed inset-0 bg-black/60" @click="closePlanModal()" aria-hidden="true"></div>
+        <div class="card relative w-full max-w-lg p-6 shadow-2xl">
+            <button type="button" @click="closePlanModal()" class="absolute right-4 top-4 rounded-full p-2 text-zinc-400 hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" aria-label="Close dialog">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+            <h2 id="plan-modal-title" class="mb-4 text-lg font-semibold">New plan</h2>
+            <form @submit.prevent="submitPlan()">
+                <div class="space-y-3">
+                    <div>
+                        <label class="lbl" for="p-name">Name <span aria-hidden="true">*</span></label>
+                        <input id="p-name" type="text" x-model="planForm.name" class="fld" :aria-invalid="!!planErrors.name" autocomplete="off" />
+                        <p x-show="planErrors.name" class="field-error" role="alert" x-text="planErrors.name"></p>
+                    </div>
+                    <div>
+                        <label class="lbl" for="p-branch">Branch (optional)</label>
+                        <input id="p-branch" type="text" x-model="planForm.branch_name" class="fld" autocomplete="off" />
+                    </div>
+                    <div>
+                        <label class="lbl" for="p-desc">Description (optional)</label>
+                        <textarea id="p-desc" x-model="planForm.description" rows="2" class="fld"></textarea>
+                    </div>
+                </div>
+                <div class="mt-6 flex justify-end gap-3">
+                    <button type="button" @click="closePlanModal()" class="btn">Cancel</button>
+                    <button type="submit" class="btn btn-primary" :disabled="planSaving">
+                        <span x-show="!planSaving">Create</span>
+                        <span x-show="planSaving">Creating…</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ===================== ADD ITEM MODAL ===================== -->
+    <div x-show="showItemModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="item-modal-title" @keydown.escape.window="closeItemModal()" @keydown.tab="trapFocus($event)">
+        <div class="fixed inset-0 bg-black/60" @click="closeItemModal()" aria-hidden="true"></div>
+        <div class="card relative w-full max-w-lg p-6 shadow-2xl">
+            <button type="button" @click="closeItemModal()" class="absolute right-4 top-4 rounded-full p-2 text-zinc-400 hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" aria-label="Close dialog">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+            <h2 id="item-modal-title" class="mb-4 text-lg font-semibold">Add item</h2>
+            <form @submit.prevent="submitItem()">
+                <div class="space-y-3">
+                    <div>
+                        <label class="lbl" for="i-title">Title <span aria-hidden="true">*</span></label>
+                        <input id="i-title" type="text" x-model="itemForm.title" class="fld" :aria-invalid="!!itemErrors.title" autocomplete="off" />
+                        <p x-show="itemErrors.title" class="field-error" role="alert" x-text="itemErrors.title"></p>
+                    </div>
+                    <div class="grid gap-3 sm:grid-cols-2">
+                        <div>
+                            <label class="lbl" for="i-phase">Phase (optional)</label>
+                            <input id="i-phase" type="text" x-model="itemForm.phase" class="fld" autocomplete="off" />
+                        </div>
+                        <div>
+                            <label class="lbl" for="i-dep">Depends on (optional)</label>
+                            <select id="i-dep" x-model="itemForm.depends_on" class="fld">
+                                <option value="">—</option>
+                                <template x-for="dep in expandedPlan?.items ?? []" :key="dep.id">
+                                    <option :value="dep.id" x-text="`#${dep.position} ${dep.title}`"></option>
+                                </template>
+                            </select>
                         </div>
                     </div>
-                </article>
-            </template>
+                    <div>
+                        <label class="lbl" for="i-desc">Description (optional)</label>
+                        <textarea id="i-desc" x-model="itemForm.description" rows="2" class="fld"></textarea>
+                    </div>
+                </div>
+                <div class="mt-6 flex justify-end gap-3">
+                    <button type="button" @click="closeItemModal()" class="btn">Cancel</button>
+                    <button type="submit" class="btn btn-primary" :disabled="itemSaving">
+                        <span x-show="!itemSaving">Add</span>
+                        <span x-show="itemSaving">Adding…</span>
+                    </button>
+                </div>
+            </form>
         </div>
-    </main>
+    </div>
 
-    <div class="fixed bottom-4 right-4 z-50 flex w-80 flex-col gap-2">
+    <!-- ===================== DELETE CONFIRM MODAL ===================== -->
+    <div x-show="confirm.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-desc" @keydown.escape.window="cancelDelete()" @keydown.tab="trapFocus($event)">
+        <div class="fixed inset-0 bg-black/60" @click="cancelDelete()" aria-hidden="true"></div>
+        <div class="card relative w-full max-w-md p-6 shadow-2xl">
+            <h2 id="confirm-title" class="mb-3 text-lg font-semibold" x-text="confirm.title"></h2>
+            <p id="confirm-desc" class="text-sm text-zinc-300" x-text="confirm.message"></p>
+            <div class="mt-6 flex justify-end gap-3">
+                <button type="button" @click="cancelDelete()" class="btn">Cancel</button>
+                <button type="button" @click="confirmDelete()" class="btn btn-danger" :disabled="confirm.busy">
+                    <span x-show="!confirm.busy">Delete</span>
+                    <span x-show="confirm.busy">Deleting…</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================== TOASTS (top-right) ===================== -->
+    <div class="fixed right-4 top-4 z-[100] flex w-80 flex-col gap-2">
         <template x-for="toast in toasts" :key="toast.id">
-            <div x-transition class="flex items-start justify-between gap-3 rounded border px-3 py-2 text-sm shadow-lg" :class="toastClass(toast.type)">
-                <span x-text="toast.message"></span>
-                <button type="button" @click="dismissToast(toast.id)" class="text-current opacity-60 hover:opacity-100">&times;</button>
+            <div x-transition class="flex items-start gap-3 rounded-lg border p-4 shadow-lg" :class="toastClass(toast.type)" role="alert" :aria-live="toast.type === 'error' ? 'assertive' : 'polite'">
+                <p class="flex-1 text-sm font-medium" x-text="toast.message"></p>
+                <button type="button" @click="dismissToast(toast.id)" class="shrink-0 rounded p-1 hover:bg-black/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" aria-label="Dismiss notification">
+                    <svg class="h-4 w-4 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
             </div>
         </template>
     </div>

@@ -19,9 +19,11 @@ import (
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/cleanup"
 	"github.com/martinsuchenak/skopos/internal/db"
+	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/martinsuchenak/skopos/internal/health"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/status"
+	"github.com/martinsuchenak/skopos/internal/workspaces"
 
 	// go-scaffolder:serve-imports
 )
@@ -110,6 +112,9 @@ func serveCmd() *cli.Command {
 			plansService := plans.NewService(plansStorage)
 			plansHandler := plans.NewHandler(plansService, apiKey)
 
+			workspacesService := workspaces.NewService(workspaces.NewStorage(sqlDB))
+			workspacesHandler := workspaces.NewHandler(workspacesService, apiKey)
+
 			// Cancel background work and initiate graceful shutdown on SIGINT/SIGTERM.
 			ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
@@ -123,8 +128,11 @@ func serveCmd() *cli.Command {
 			}
 			// go-scaffolder:serve-init
 
+			hub := events.NewHub()
+
 			mux := http.NewServeMux()
-			routes.RegisterRoutes(mux, statusHandler, blackboardHandler, plansHandler)
+			routes.RegisterRoutes(mux, statusHandler, blackboardHandler, plansHandler, workspacesHandler)
+			mux.HandleFunc("GET /api/events/stream", events.StreamHandler(hub))
 
 			// MCP endpoint, mounted on the same server/port as everything else.
 			mcpHandler := mcp.NewMCPHandler(statusService, blackboardService, plansService)
@@ -137,10 +145,10 @@ func serveCmd() *cli.Command {
 
 			httpServer := &http.Server{
 				Addr:              fmt.Sprintf("%s:%d", cmd.GetString("server-host"), cmd.GetInt("server-port")),
-				Handler:           mux,
+				Handler:           events.Middleware(hub, mux),
 				ReadHeaderTimeout: 10 * time.Second,
 				ReadTimeout:       30 * time.Second,
-				WriteTimeout:      30 * time.Second,
+				WriteTimeout:      30 * time.Second, // SSE handler clears this per-request
 				IdleTimeout:       120 * time.Second,
 			}
 

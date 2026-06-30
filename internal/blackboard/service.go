@@ -73,6 +73,9 @@ func (s *Service) Bundle(ctx context.Context, workspaceID, branchName, sessionID
 	if err != nil {
 		return nil, err
 	}
+	if entries == nil {
+		entries = []Entry{}
+	}
 	return &Bundle{
 		Entries:        entries,
 		MarkdownBundle: formatMarkdown(branchName, entries),

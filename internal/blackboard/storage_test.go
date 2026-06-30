@@ -267,15 +267,15 @@ func TestStorageBundleWorkspaceFiltering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bundle ws-a: %v", err)
 	}
-	if len(entries) != 2 {
-		t.Fatalf("expected 2 entries (global + ws-a), got %d", len(entries))
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry (ws-a only), got %d", len(entries))
 	}
 	titles := map[string]bool{}
 	for _, e := range entries {
 		titles[e.Title] = true
 	}
-	if !titles["Global finding"] {
-		t.Error("expected global finding in ws-a results")
+	if titles["Global finding"] {
+		t.Error("did not expect global (unscoped) finding in ws-a results")
 	}
 	if !titles["Workspace A finding"] {
 		t.Error("expected workspace A finding in ws-a results")
@@ -290,5 +290,39 @@ func TestStorageBundleWorkspaceFiltering(t *testing.T) {
 	}
 	if len(all) != 3 {
 		t.Fatalf("expected 3 entries with no workspace filter, got %d", len(all))
+	}
+}
+
+func TestStorageBundleEmptyBranchReturnsAllBranchEntries(t *testing.T) {
+	s := testStorage(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	for _, e := range []Entry{
+		{ID: "b1", Scope: ScopeBranch, BranchName: "feat-a", EntryType: TypeFinding, Title: "A", AuthorAgentID: "x", CreatedAt: now, UpdatedAt: now},
+		{ID: "b2", Scope: ScopeBranch, BranchName: "feat-b", EntryType: TypeFinding, Title: "B", AuthorAgentID: "x", CreatedAt: now, UpdatedAt: now},
+		{ID: "p1", Scope: ScopeProject, EntryType: TypeDecision, Title: "P", AuthorAgentID: "x", CreatedAt: now, UpdatedAt: now},
+	} {
+		if err := s.Write(ctx, e); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+
+	// No branch filter: all branch entries + project.
+	all, err := s.Bundle(ctx, "", "", "")
+	if err != nil {
+		t.Fatalf("bundle all: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("expected 3 entries with empty branch filter, got %d", len(all))
+	}
+
+	// Branch filter narrows to that branch + project.
+	featA, err := s.Bundle(ctx, "", "feat-a", "")
+	if err != nil {
+		t.Fatalf("bundle feat-a: %v", err)
+	}
+	if len(featA) != 2 {
+		t.Fatalf("expected 2 entries (feat-a + project), got %d", len(featA))
 	}
 }

@@ -362,23 +362,26 @@ func TestStorageListPlansWorkspaceFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list plans: %v", err)
 	}
-	if len(plans) != 2 {
-		t.Fatalf("expected 2 plans (ws1 + global), got %d", len(plans))
+	if len(plans) != 1 {
+		t.Fatalf("expected 1 plan (ws1 only), got %d", len(plans))
 	}
 	ids := map[string]bool{}
 	for _, p := range plans {
 		ids[p.ID] = true
 	}
-	if !ids["global"] || !ids["ws1-plan"] {
-		t.Errorf("expected global+ws1-plan, got %v", ids)
+	if !ids["ws1-plan"] {
+		t.Errorf("expected ws1-plan, got %v", ids)
+	}
+	if ids["global"] {
+		t.Errorf("did not expect global (unscoped) plan in ws-1 results, got %v", ids)
 	}
 
 	ws2Plans, err := s.ListPlans(ctx, "ws-2", "")
 	if err != nil {
 		t.Fatalf("list ws2 plans: %v", err)
 	}
-	if len(ws2Plans) != 2 {
-		t.Fatalf("expected 2 plans (ws2 + global), got %d", len(ws2Plans))
+	if len(ws2Plans) != 1 {
+		t.Fatalf("expected 1 plan (ws2 only), got %d", len(ws2Plans))
 	}
 
 	all, err := s.ListPlans(ctx, "", "")

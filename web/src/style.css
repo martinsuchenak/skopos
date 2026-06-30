@@ -2,20 +2,163 @@
 
 [x-cloak] { display: none !important; }
 
+/* Everything clickable shows a pointer cursor */
+@layer base {
+  button:not(:disabled):not([disabled]),
+  [role="button"]:not([aria-disabled="true"]),
+  [role="tab"],
+  [role="menuitem"],
+  [role="treeitem"],
+  summary,
+  .nav-item,
+  .clickable { cursor: pointer; }
+}
+
+/* Body scroll lock when a modal is open */
+body.modal-open { overflow: hidden; }
+
+/* Skip link — WCAG 2.4.1 */
+.skip-link {
+  position: absolute;
+  left: 0.5rem;
+  top: -3rem;
+  z-index: 200;
+  transition: top 0.15s ease-in-out;
+}
+.skip-link:focus { top: 0.5rem; }
+
 @layer components {
-  .fld {
-    @apply mt-1 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-cyan-500;
-  }
-  .lbl {
-    @apply text-xs text-zinc-500;
-  }
+  /* Buttons — consistent shape, 44px min target (WCAG 2.5.5/2.5.8) */
   .btn {
-    @apply rounded border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:border-zinc-500 hover:text-white transition;
+    @apply inline-flex items-center justify-center gap-2 rounded-md border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 transition cursor-pointer;
+    @apply hover:border-zinc-500 hover:text-white;
+    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500;
+    @apply disabled:opacity-50 disabled:cursor-not-allowed;
+    min-height: 44px;
   }
-  .btn-primary {
-    @apply rounded bg-cyan-600 px-3 py-1.5 text-sm text-white hover:bg-cyan-500 transition;
+  .btn-primary { @apply border-transparent bg-cyan-600 text-white hover:bg-cyan-500; }
+  .btn-danger  { @apply border-transparent bg-rose-600 text-white hover:bg-rose-500; }
+  .btn-ghost   { @apply border-transparent text-zinc-300 hover:bg-zinc-800 hover:text-white; }
+  .btn-sm      { @apply px-3 py-1.5 text-xs; min-height: 36px; }
+
+  /* Form fields — WCAG-compliant focus + 44px target */
+  .fld {
+    @apply mt-1 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100;
+    @apply placeholder:text-zinc-500;
+    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 focus-visible:border-cyan-500;
+    min-height: 44px;
   }
-  .panel {
-    @apply rounded border border-zinc-700 bg-zinc-900 p-4;
+  .fld[aria-invalid="true"] {
+    @apply border-rose-500 focus-visible:ring-rose-500;
+  }
+  .lbl { @apply block text-sm font-medium text-zinc-300; }
+  .field-error { @apply mt-1 text-sm text-rose-400; }
+  /* Compact select for inline toolbar controls */
+  .fld-sm {
+    @apply rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-100;
+    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500;
+    min-height: 36px;
+  }
+  /* Custom chevron for selects (replaces the OS arrow that looks off on dark) */
+  select.fld,
+  select.fld-sm {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2371717a'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
+    background-size: 1.1rem 1.1rem;
+    padding-right: 2rem;
+    line-height: 1.5;
+  }
+
+  .card { @apply rounded-lg border border-zinc-800 bg-zinc-900; }
+  .badge { @apply inline-flex items-center rounded px-2 py-0.5 text-xs font-medium; }
+
+  /* Sidebar nav items */
+  .nav-item {
+    @apply flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-zinc-400 transition cursor-pointer;
+    @apply hover:bg-zinc-800 hover:text-zinc-100;
+    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500;
+    min-height: 44px;
+  }
+  .nav-item[aria-current="page"] {
+    @apply bg-cyan-600/15 text-cyan-300;
   }
 }
+
+/* Visible focus indicators — WCAG 2.4.7 / 2.4.11 (AA) */
+a:focus-visible,
+button:focus-visible,
+[role="button"]:focus-visible,
+[role="tab"]:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid rgb(6 182 212);       /* cyan-500 */
+  outline-offset: 2px;
+  border-radius: 0.25rem;
+}
+/* inputs/selects/textarea handled via .fld focus-visible ring */
+
+/* Reduced motion — WCAG 2.3.3 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---- Themes ----
+   Dark is the default (utility classes are dark). .light recolors the neutral
+   palette and accent text so the existing markup renders a proper light theme.
+   These are unlayered so they outrank Tailwind's @layer utilities. */
+html.dark { color-scheme: dark; }
+html.light { color-scheme: light; }
+
+.light .bg-zinc-950 { background-color: #f4f4f5; }
+.light .bg-zinc-950\/95 { background-color: rgba(244, 244, 245, 0.95); }
+.light .bg-zinc-900 { background-color: #ffffff; }
+.light .bg-zinc-900\/90 { background-color: rgba(255, 255, 255, 0.92); }
+.light .bg-zinc-800 { background-color: #e4e4e7; }
+.light .bg-zinc-700 { background-color: #e4e4e7; }
+.light .text-zinc-100, .light .text-zinc-200 { color: #18181b; }
+.light .text-zinc-300, .light .text-zinc-400 { color: #52525b; }
+.light .text-zinc-500, .light .text-zinc-600 { color: #71717a; }
+.light .border-zinc-800 { border-color: #e4e4e7; }
+.light .border-zinc-700 { border-color: #d4d4d8; }
+
+/* component classes bake in dark colors via @apply; re-skin them for light */
+.light .card { background-color: #ffffff; border-color: #e4e4e7; }
+.light .fld { background-color: #f4f4f5; border-color: #d4d4d8; color: #18181b; }
+.light .fld-sm { background-color: #ffffff; border-color: #d4d4d8; color: #18181b; }
+.light .fld::placeholder { color: #a1a1aa; }
+.light .fld-sm::placeholder { color: #a1a1aa; }
+
+/* Recess inputs slightly from the card surface in dark too */
+.dark .fld { background-color: #09090b; }
+.light .lbl { color: #52525b; }
+.light .btn { border-color: #d4d4d8; color: #18181b; }
+.light .btn:hover { background-color: #f4f4f5; }
+.light .btn-ghost { color: #52525b; }
+.light .btn-ghost:hover { background-color: #f4f4f5; color: #18181b; }
+.light .nav-item { color: #52525b; }
+.light .nav-item:hover { background-color: #f4f4f5; color: #18181b; }
+.light .nav-item[aria-current="page"] { background-color: rgba(6, 182, 212, 0.15); color: #0e7490; }
+
+/* accent text: darker shades for AA contrast on light surfaces */
+.light .text-cyan-300, .light .text-cyan-400 { color: #0e7490; }
+.light .text-emerald-300, .light .text-emerald-400, .light .text-emerald-200 { color: #047857; }
+.light .text-rose-300, .light .text-rose-400 { color: #be123c; }
+.light .text-rose-200 { color: #9f1239; }
+.light .text-amber-300, .light .text-amber-400 { color: #b45309; }
+.light .text-violet-300 { color: #6d28d9; }
+.light .text-indigo-300 { color: #4338ca; }
+.light .text-sky-300 { color: #0369a1; }
+
+/* toast surfaces on light */
+.light .bg-emerald-950\/80 { background-color: #ecfdf5; }
+.light .bg-rose-950\/80 { background-color: #fef2f2; }
+.light .border-emerald-700 { border-color: #6ee7b7; }
+.light .border-rose-700 { border-color: #fda4af; }

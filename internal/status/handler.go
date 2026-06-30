@@ -52,6 +52,9 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		rest.InternalError(w, err)
 		return
 	}
+	if sessions == nil {
+		sessions = []SessionSummary{}
+	}
 	rest.RespondJSON(w, http.StatusOK, sessions)
 }
 

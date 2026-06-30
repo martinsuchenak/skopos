@@ -132,3 +132,9 @@ CREATE INDEX IF NOT EXISTS idx_item_deps_item  ON plan_item_dependencies(item_id
 CREATE INDEX IF NOT EXISTS idx_item_deps_dep   ON plan_item_dependencies(depends_on_item_id);
 CREATE INDEX IF NOT EXISTS idx_plan_deps_plan  ON plan_dependencies(plan_id);
 CREATE INDEX IF NOT EXISTS idx_plan_deps_dep   ON plan_dependencies(depends_on_plan_id);
+
+CREATE TABLE IF NOT EXISTS workspaces (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);

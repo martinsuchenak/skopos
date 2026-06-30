@@ -182,14 +182,14 @@ func TestHandlerReadBundleWorkspaceFilter(t *testing.T) {
 	if err := json.NewDecoder(wFilter.Body).Decode(&bundle); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(bundle.Entries) != 2 {
-		t.Fatalf("expected 2 entries (global + scoped), got %d", len(bundle.Entries))
+	if len(bundle.Entries) != 1 {
+		t.Fatalf("expected 1 entry (scoped only), got %d", len(bundle.Entries))
 	}
 	titles := map[string]bool{}
 	for _, e := range bundle.Entries {
 		titles[e.Title] = true
 	}
-	if !titles["Scoped entry"] || !titles["Global entry"] {
-		t.Errorf("expected both scoped and global entries, got titles: %v", titles)
+	if !titles["Scoped entry"] || titles["Global entry"] {
+		t.Errorf("expected only scoped entry, got titles: %v", titles)
 	}
 }

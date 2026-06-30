@@ -56,13 +56,13 @@ func (s *Storage) Bundle(ctx context.Context, workspaceID, branchName, sessionID
 		       author_agent_id, created_at, updated_at
 		FROM blackboard_entries
 		WHERE (scope = 'project'
-		   OR (scope = 'branch' AND branch_name = ?)
-		   OR (scope = 'session' AND session_id = ?)
-		   OR entry_type IN ('bug', 'debt'))
+		   OR entry_type IN ('bug', 'debt')
+		   OR (scope = 'branch' AND (? = '' OR branch_name = ?))
+		   OR (scope = 'session' AND (? = '' OR session_id = ?)))
 	`
-	args := []any{branchName, sessionID}
+	args := []any{branchName, branchName, sessionID, sessionID}
 	if workspaceID != "" {
-		query += ` AND (workspace_id = ? OR workspace_id IS NULL)`
+		query += ` AND workspace_id = ?`
 		args = append(args, workspaceID)
 	}
 	query += ` ORDER BY entry_type, created_at ASC`

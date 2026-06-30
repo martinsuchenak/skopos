@@ -115,6 +115,66 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Event" }
 
+  # ---- workspaces ----
+  /api/events/stream:
+    get:
+      summary: Server-Sent Events stream (live UI updates)
+      operationId: eventStream
+      description: >
+        Returns a persistent text/event-stream. The server publishes named
+        events (sessions, blackboard, plans, workspaces, change) whenever a
+        successful mutation occurs. Clients use EventSource to subscribe and
+        re-fetch the affected view on each event.
+      responses:
+        "200":
+          description: SSE stream of change events
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: "Lines of event: <type> / data: <json> / blank"
+
+  /api/workspaces:
+    post:
+      summary: Register a workspace (upserts the display name)
+      operationId: createWorkspace
+      security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkspaceCreateInput" }
+      responses:
+        "201":
+          description: Workspace registered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workspace" }
+        "400": { description: Invalid input, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "401": { description: Unauthorized }
+    get:
+      summary: List registered workspaces
+      operationId: listWorkspaces
+      responses:
+        "200":
+          description: Workspaces
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Workspace" }
+  /api/workspaces/{id}:
+    delete:
+      summary: Unregister a workspace (does not delete its sessions/entries/plans)
+      operationId: deleteWorkspace
+      security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Removed }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+
   # ---- blackboard ----
   /api/blackboard/entries:
     post:
@@ -383,6 +443,18 @@ components:
       type: object
       properties:
         error: { type: string }
+    Workspace:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        created_at: { type: string, format: date-time }
+    WorkspaceCreateInput:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string, description: "Same value agents use for workspace/workspace_id." }
+        name: { type: string, description: Optional display name. }
     Status:
       type: string
       description: >

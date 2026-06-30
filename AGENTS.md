@@ -31,11 +31,14 @@ internal/
   ├── status/     handler → service → storage   (agent status, sessions, events)
   ├── blackboard/ handler → service → storage   (scoped knowledge entries)
   ├── plans/      handler → service → storage   (plans, items, dependencies)
-  ├── auth/       API key middleware (X-API-Key header, write-only)
+  ├── workspaces/ handler → service → storage   (workspace registry, auto-register)
+  ├── events/     in-process SSE hub + middleware (publishes named events on mutations)
+  ├── install/    skopos install — wires MCP config into AI agent configs
+  ├── auth/       API key auth (X-API-Key or Authorization: Bearer, write-only)
   ├── health/     background goroutine: stuck-agent detection
   ├── cleanup/    background goroutine: data retention cleanup
   ├── db/         SQLite connection + schema.sql migrations
-  └── valkey/     Valkey client (SRV DNS support)
+  └── valkey/     Valkey client (SRV DNS support, not wired in by default)
 web/              Alpine.js + Tailwind CSS, embedded via go:embed, Bun build
 ```
 
@@ -51,6 +54,8 @@ Every domain package follows `handler → service → storage` layering. Storage
 - Config: TOML (`skopos-config.toml`, gitignored — copy from `skopos-config.example.toml`; optional, falls back to flag defaults + env) + env var overrides (`SERVER_PORT`, `SKOPOS_API_KEY`, etc.).
 - Frontend assets are embedded in the binary via `web/embed.go`. Run `task frontend-build` before `task build` (the build task depends on it automatically).
 - `task lint` sets `GOCACHE` to a local directory — don't run bare `golangci-lint`.
+- The dashboard subscribes to `/api/events/stream` (SSE) for real-time updates; the `events` package's middleware publishes named events on successful mutations.
+- Workspaces are strict-scoped: blackboard entries and plans require an exact `workspace_id` match when filtered. Session-derived workspaces are auto-registered so they persist.
 
 ## Blackboard
 

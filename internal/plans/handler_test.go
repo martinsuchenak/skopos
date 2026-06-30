@@ -208,8 +208,8 @@ func TestHandlerListPlansWorkspaceFilter(t *testing.T) {
 	if err := json.NewDecoder(w3.Body).Decode(&plans); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(plans) != 2 {
-		t.Fatalf("expected 2 plans (ws-1 + global), got %d", len(plans))
+	if len(plans) != 1 {
+		t.Fatalf("expected 1 plan (ws-1 only), got %d", len(plans))
 	}
 }
 
