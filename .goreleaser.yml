@@ -5,8 +5,8 @@ project_name: skopos
 before:
   hooks:
     - go mod tidy
-    - go test ./...
     - bash -c 'cd web && bun install && bun run build'
+    - go test ./...
 
 builds:
   - id: skopos

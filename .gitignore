@@ -1,5 +1,6 @@
 # Binaries
 bin/
+dist/
 *.exe
 *.exe~
 *.dll
@@ -29,9 +30,10 @@ go.work.sum
 .DS_Store
 Thumbs.db
 
-# Frontend
+# Frontend (built assets — .gitkeep is tracked so the embed dir always exists)
 web/node_modules/
-web/dist/
+web/dist/*
+!web/dist/.gitkeep
 
 # Database (runtime)
 skopos.db
@@ -43,3 +45,4 @@ skopos-config.toml
 
 # Skopos session ID files (auto-generated per workspace)
 .skopos-session
+
