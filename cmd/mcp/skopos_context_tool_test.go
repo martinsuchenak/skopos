@@ -85,10 +85,46 @@ func TestBuildSnapshot(t *testing.T) {
 	if len(p["blocked_items"].([]string)) != 1 {
 		t.Errorf("expected 1 blocked item title, got %v", p["blocked_items"])
 	}
+	if p["next_ready"] != "A (#0)" {
+		t.Errorf("expected next_ready 'A (#0)', got %v", p["next_ready"])
+	}
 
 	sessions, ok := snap["sessions"].([]map[string]any)
 	if !ok || len(sessions) != 1 {
 		t.Fatalf("expected 1 in-flight session, got %v", snap["sessions"])
+	}
+}
+
+func TestBuildSnapshotNextReadyEmptyWhenAllClaimed(t *testing.T) {
+	ctx := context.Background()
+	statusSvc, bbSvc, plansSvc := testSnapshotServices(t)
+
+	plan, err := plansSvc.CreatePlan(ctx, plans.CreatePlanInput{Name: "P", AuthorAgentID: "a"})
+	if err != nil {
+		t.Fatalf("create plan: %v", err)
+	}
+	claimed := "agent-x"
+	_, err = plansSvc.AddItem(ctx, plan.ID, plans.CreateItemInput{Title: "Taken"})
+	if err != nil {
+		t.Fatalf("add item: %v", err)
+	}
+	// Claim the item so next_ready should skip it
+	if _, err := plansSvc.UpdateItem(ctx, plan.ID, "fake-id", plans.UpdateItemInput{ClaimedByAgentID: &claimed}); err != nil {
+		// UpdateItem with fake id will 404 — we need the real id. Get the plan.
+	}
+	gotPlan, err := plansSvc.GetPlan(ctx, plan.ID)
+	if err != nil {
+		t.Fatalf("get plan: %v", err)
+	}
+	itemID := gotPlan.Items[0].ID
+	if _, err := plansSvc.UpdateItem(ctx, plan.ID, itemID, plans.UpdateItemInput{ClaimedByAgentID: &claimed}); err != nil {
+		t.Fatalf("claim item: %v", err)
+	}
+
+	snap := buildSnapshot(ctx, statusSvc, bbSvc, plansSvc, "", "", "")
+	plansList := snap["plans"].([]map[string]any)
+	if plansList[0]["next_ready"] != "" {
+		t.Errorf("expected empty next_ready when only item is claimed, got %v", plansList[0]["next_ready"])
 	}
 }
 

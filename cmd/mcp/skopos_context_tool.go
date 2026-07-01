@@ -98,6 +98,15 @@ func buildSnapshot(
 					}
 				}
 				entry["blocked_items"] = blocked
+				// Find the first unclaimed pending item (ready to work on).
+				nextReady := ""
+				for _, it := range detail.Items {
+					if it.Status == plans.ItemPending && it.ClaimedByAgentID == "" {
+						nextReady = fmt.Sprintf("%s (#%d)", it.Title, it.Position)
+						break
+					}
+				}
+				entry["next_ready"] = nextReady
 			}
 			out = append(out, entry)
 			if len(out) >= 10 {
