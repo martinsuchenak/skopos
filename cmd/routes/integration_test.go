@@ -191,7 +191,7 @@ func TestIntegrationAuthEnforced(t *testing.T) {
 	// POST with key → 201
 	req, _ := http.NewRequest("POST", ts.URL+"/api/reports", strings.NewReader(`{"agent_id":"a","agent_type":"codex","workspace":"/r","status":"running"}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-API-Key", "secret")
+	req.Header.Set("Authorization", "Bearer secret")
 	resp, _ = http.DefaultClient.Do(req)
 	if resp.StatusCode != 201 {
 		t.Fatalf("expected 201 with key, got %d", resp.StatusCode)

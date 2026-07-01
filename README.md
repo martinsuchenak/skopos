@@ -12,7 +12,7 @@ A coordination dashboard for AI coding agents — shared memory (blackboard), pl
 | Dashboard | ✅ Dark/light/system theme, sidebar nav, modals, SSE live updates |
 | Real-time | ✅ SSE at `/api/events/stream` |
 | Database | ✅ SQLite (WAL, FK-enforced, transactional) |
-| Auth | ✅ API key (X-API-Key or Bearer), write-only |
+| Auth | ✅ API key (Bearer), write-only |
 | Agent integration | ✅ `skopos install` for Claude Code, Codex, Gemini, Copilot, Kiro, opencode |
 | Docker | ✅ |
 | Nomad | ✅ |

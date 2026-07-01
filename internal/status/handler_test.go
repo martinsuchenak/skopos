@@ -49,7 +49,7 @@ func TestHandlerReportCreatesReport(t *testing.T) {
 		"message":"working"
 	}`)
 	req := httptest.NewRequest("POST", "/api/reports", body)
-	req.Header.Set("X-API-Key", "secret")
+	req.Header.Set("Authorization", "Bearer secret")
 	w := httptest.NewRecorder()
 
 	handler.Report(w, req)
@@ -110,7 +110,7 @@ func TestHandlerListSessionsFiltersByWorkspace(t *testing.T) {
 			"status":"running"
 		}`)
 		req := httptest.NewRequest("POST", "/api/reports", body)
-		req.Header.Set("X-API-Key", "secret")
+		req.Header.Set("Authorization", "Bearer secret")
 		w := httptest.NewRecorder()
 		handler.Report(w, req)
 		if w.Code != http.StatusCreated {

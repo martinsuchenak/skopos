@@ -12,7 +12,7 @@ func TestAPIKeyMiddleware(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest("GET", "/", nil)
-	req.Header.Set("X-API-Key", "test-key")
+	req.Header.Set("Authorization", "Bearer test-key")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 

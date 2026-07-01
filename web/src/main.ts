@@ -160,7 +160,7 @@ window.app = () => ({
   async authFetch(url: string, opts: RequestInit = {}): Promise<Response> {
     const headers = new Headers(opts.headers || {});
     if (opts.body) headers.set('Content-Type', 'application/json');
-    if (this.apiKey) headers.set('X-API-Key', this.apiKey);
+    if (this.apiKey) headers.set('Authorization', 'Bearer ' + this.apiKey);
     return fetch(url, { ...opts, headers });
   },
   async extractError(res: Response): Promise<string> {

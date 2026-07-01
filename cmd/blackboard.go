@@ -189,7 +189,7 @@ func blackboardPostEntry(ctx context.Context, serverURL, apiKey string, input bl
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if apiKey != "" {
-		req.Header.Set("X-API-Key", apiKey)
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -248,7 +248,7 @@ func blackboardPatchPromote(ctx context.Context, serverURL, apiKey, id string) e
 		return fmt.Errorf("creating request: %w", err)
 	}
 	if apiKey != "" {
-		req.Header.Set("X-API-Key", apiKey)
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -269,7 +269,7 @@ func blackboardDoDelete(ctx context.Context, serverURL, apiKey, id string) error
 		return fmt.Errorf("creating request: %w", err)
 	}
 	if apiKey != "" {
-		req.Header.Set("X-API-Key", apiKey)
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
