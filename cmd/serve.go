@@ -22,9 +22,9 @@ import (
 	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/martinsuchenak/skopos/internal/health"
 	"github.com/martinsuchenak/skopos/internal/plans"
+	"github.com/martinsuchenak/skopos/internal/rest"
 	"github.com/martinsuchenak/skopos/internal/status"
 	"github.com/martinsuchenak/skopos/internal/workspaces"
-
 	// go-scaffolder:serve-imports
 )
 
@@ -93,6 +93,8 @@ func serveCmd() *cli.Command {
 				log.Warn("no api_key configured: authentication is disabled (all endpoints are open)")
 			}
 
+			rest.SetLogger(log)
+
 			sqlDB, err := db.Connect(log, cmd.GetString("database-path"))
 			if err != nil {
 				return err
@@ -145,7 +147,7 @@ func serveCmd() *cli.Command {
 
 			httpServer := &http.Server{
 				Addr:              fmt.Sprintf("%s:%d", cmd.GetString("server-host"), cmd.GetInt("server-port")),
-				Handler:           events.Middleware(hub, mux),
+				Handler:           events.Middleware(hub, log, mux),
 				ReadHeaderTimeout: 10 * time.Second,
 				ReadTimeout:       30 * time.Second,
 				WriteTimeout:      30 * time.Second, // SSE handler clears this per-request

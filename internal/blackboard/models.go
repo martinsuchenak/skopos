@@ -65,3 +65,11 @@ type Bundle struct {
 	Entries        []Entry `json:"entries"`
 	MarkdownBundle string  `json:"markdown_bundle"`
 }
+
+type SearchFilters struct {
+	WorkspaceID   string
+	BranchName    string
+	EntryType     string
+	AuthorAgentID string
+	Query         string
+}

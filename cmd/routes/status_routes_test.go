@@ -33,6 +33,9 @@ func (s *noopStore) ListEvents(ctx context.Context, sessionID string) ([]status.
 }
 
 func (s *noopStore) DeleteSession(_ context.Context, _ string) error { return nil }
+func (s *noopStore) ListActiveAgents(_ context.Context) ([]status.ActiveAgent, error) {
+	return nil, nil
+}
 func (s *noopStore) DeleteOldEvents(_ context.Context, _ time.Time) (int64, error) {
 	return 0, nil
 }

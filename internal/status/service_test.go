@@ -37,6 +37,7 @@ func (s *fakeStore) DeleteOldEvents(_ context.Context, _ time.Time) (int64, erro
 func (s *fakeStore) DeleteOrphanedSessions(_ context.Context, _ time.Time) (int64, error) {
 	return 0, nil
 }
+func (s *fakeStore) ListActiveAgents(_ context.Context) ([]ActiveAgent, error) { return nil, nil }
 
 func TestServiceReportCreatesImplicitSession(t *testing.T) {
 	store := &fakeStore{}

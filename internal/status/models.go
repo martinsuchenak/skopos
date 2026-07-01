@@ -103,3 +103,11 @@ type Event struct {
 	// GitBranch is carried through the event to populate agent_states only; not persisted in the events table.
 	GitBranch string `json:"git_branch,omitempty"`
 }
+
+type ActiveAgent struct {
+	AgentID   string    `json:"agent_id"`
+	AgentType string    `json:"agent_type"`
+	Workspace string    `json:"workspace"`
+	Status    Status    `json:"status"`
+	UpdatedAt time.Time `json:"updated_at"`
+}

@@ -8,7 +8,6 @@ require (
 	github.com/paularlott/cli v0.8.5
 	github.com/paularlott/logger v0.3.0
 	github.com/paularlott/mcp v0.19.0
-	github.com/valkey-io/valkey-go v1.0.76
 	modernc.org/sqlite v1.53.0
 )
 
@@ -16,6 +15,8 @@ require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
+	github.com/google/go-cmp v0.7.0 // indirect
+	github.com/google/pprof v0.0.0-20260402051712-545e8a4df936 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/miekg/dns v1.1.72 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect

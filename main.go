@@ -5,8 +5,8 @@ import (
 	"os"
 
 	"github.com/paularlott/cli"
-	cli_toml "github.com/paularlott/cli/toml"
 	"github.com/paularlott/cli/env"
+	cli_toml "github.com/paularlott/cli/toml"
 	logslog "github.com/paularlott/logger/slog"
 
 	"github.com/martinsuchenak/skopos/build"
@@ -25,9 +25,9 @@ func main() {
 	_ = env.Load()
 
 	app := &cli.Command{
-		Name:    "skopos",
-		Usage:   "skopos service",
-		Version: build.Version + " (" + build.Date + ")",
+		Name:       "skopos",
+		Usage:      "skopos service",
+		Version:    build.Version + " (" + build.Date + ")",
 		ConfigFile: cli_toml.NewConfigFile(&configFile, nil),
 		Flags: []cli.Flag{
 			&cli.StringFlag{

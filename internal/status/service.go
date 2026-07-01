@@ -23,6 +23,7 @@ type Store interface {
 	DeleteSession(ctx context.Context, id string) error
 	DeleteOldEvents(ctx context.Context, olderThan time.Time) (int64, error)
 	DeleteOrphanedSessions(ctx context.Context, olderThan time.Time) (int64, error)
+	ListActiveAgents(ctx context.Context) ([]ActiveAgent, error)
 }
 
 type Service struct {
@@ -93,6 +94,9 @@ func (s *Service) ListEvents(ctx context.Context, sessionID string) ([]Event, er
 	return s.store.ListEvents(ctx, sessionID)
 }
 
+func (s *Service) ListActiveAgents(ctx context.Context) ([]ActiveAgent, error) {
+	return s.store.ListActiveAgents(ctx)
+}
 func (s *Service) DeleteSession(ctx context.Context, id string) error {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -120,7 +124,7 @@ func normalizeReport(input ReportInput) (ReportInput, error) {
 		return input, fmt.Errorf("%w: workspace is required", ErrInvalidInput)
 	}
 	if !validStatus(input.Status) {
-		return input, fmt.Errorf("%w: unsupported status %q", ErrInvalidInput, input.Status)
+		return input, fmt.Errorf("%w: unsupported status %q. Valid statuses: pending, thinking, planning, running, editing, testing, waiting, blocked, paused, handoff, succeeded, failed, cancelled", ErrInvalidInput, input.Status)
 	}
 	if input.Progress != nil && (*input.Progress < 0 || *input.Progress > 100) {
 		return input, fmt.Errorf("%w: progress must be between 0 and 100", ErrInvalidInput)

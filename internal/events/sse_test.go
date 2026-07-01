@@ -14,7 +14,7 @@ func TestMiddlewarePublishesOnSuccess(t *testing.T) {
 	ch, unsub := h.Subscribe()
 	defer unsub()
 
-	mw := Middleware(h, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	mw := Middleware(h, nil, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 	}))
 	req := httptest.NewRequest(http.MethodPost, "/api/reports", nil)
@@ -35,7 +35,7 @@ func TestMiddlewareSkipsReadsAndFailures(t *testing.T) {
 	ch, unsub := h.Subscribe()
 	defer unsub()
 
-	mw := Middleware(h, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	mw := Middleware(h, nil, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 	}))
 	mw.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/reports", nil))
@@ -50,12 +50,12 @@ func TestMiddlewareSkipsReadsAndFailures(t *testing.T) {
 
 func TestTypeForPath(t *testing.T) {
 	cases := map[string]string{
-		"/api/reports":           "sessions",
-		"/api/sessions/abc":      "sessions",
+		"/api/reports":            "sessions",
+		"/api/sessions/abc":       "sessions",
 		"/api/blackboard/entries": "blackboard",
-		"/api/plans/x/items":    "plans",
-		"/api/workspaces":        "workspaces",
-		"/health":                "change",
+		"/api/plans/x/items":      "plans",
+		"/api/workspaces":         "workspaces",
+		"/health":                 "change",
 	}
 	for p, want := range cases {
 		if got := typeForPath(p); got != want {

@@ -44,17 +44,17 @@ func cleanupCmd() *cli.Command {
 				Writer: os.Stdout,
 			})
 
-		sqlDB, err := db.Connect(log, cmd.GetString("database-path"))
-		if err != nil {
-			return err
-		}
-		defer sqlDB.Close()
-		if err := db.RunMigrations(sqlDB); err != nil {
-			return err
-		}
+			sqlDB, err := db.Connect(log, cmd.GetString("database-path"))
+			if err != nil {
+				return err
+			}
+			defer sqlDB.Close()
+			if err := db.RunMigrations(sqlDB); err != nil {
+				return err
+			}
 
-		retention := time.Duration(cmd.GetInt("retention-days")) * 24 * time.Hour
-		cleaner := cleanup.NewCleaner(sqlDB, retention, log)
+			retention := time.Duration(cmd.GetInt("retention-days")) * 24 * time.Hour
+			cleaner := cleanup.NewCleaner(sqlDB, retention, log)
 			fmt.Printf("Cleaning up data older than %d days...\n", cmd.GetInt("retention-days"))
 			if err := cleaner.RunOnce(ctx); err != nil {
 				return err

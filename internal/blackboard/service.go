@@ -82,6 +82,9 @@ func (s *Service) Bundle(ctx context.Context, workspaceID, branchName, sessionID
 	}, nil
 }
 
+func (s *Service) Search(ctx context.Context, f SearchFilters) ([]Entry, error) {
+	return s.store.Search(ctx, f)
+}
 func (s *Service) Promote(ctx context.Context, id string) error {
 	id = strings.TrimSpace(id)
 	if id == "" {

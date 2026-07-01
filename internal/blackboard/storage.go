@@ -14,6 +14,7 @@ type Store interface {
 	Promote(ctx context.Context, id string) error
 	Delete(ctx context.Context, id string) error
 	DeleteBySession(ctx context.Context, sessionID string) error
+	Search(ctx context.Context, filters SearchFilters) ([]Entry, error)
 	Get(ctx context.Context, id string) (*Entry, error)
 }
 
@@ -224,4 +225,44 @@ func parseTime(raw string) time.Time {
 		return time.Time{}
 	}
 	return t
+}
+
+func (s *Storage) Search(ctx context.Context, f SearchFilters) ([]Entry, error) {
+	query := `SELECT id, scope, workspace_id, branch_name, session_id, entry_type, title, content, code_ref, author_agent_id, created_at, updated_at FROM blackboard_entries WHERE 1=1`
+	var args []any
+	if f.WorkspaceID != "" {
+		query += " AND workspace_id = ?"
+		args = append(args, f.WorkspaceID)
+	}
+	if f.BranchName != "" {
+		query += " AND branch_name = ?"
+		args = append(args, f.BranchName)
+	}
+	if f.EntryType != "" {
+		query += " AND entry_type = ?"
+		args = append(args, f.EntryType)
+	}
+	if f.AuthorAgentID != "" {
+		query += " AND author_agent_id = ?"
+		args = append(args, f.AuthorAgentID)
+	}
+	if f.Query != "" {
+		query += " AND (title LIKE ? OR content LIKE ?)"
+		args = append(args, "%"+f.Query+"%", "%"+f.Query+"%")
+	}
+	query += " ORDER BY created_at DESC LIMIT 100"
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("searching blackboard: %w", err)
+	}
+	defer rows.Close()
+	var out []Entry
+	for rows.Next() {
+		e, err := scanEntry(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }

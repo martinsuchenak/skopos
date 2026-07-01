@@ -38,7 +38,6 @@ internal/
   ├── health/     background goroutine: stuck-agent detection
   ├── cleanup/    background goroutine: data retention cleanup
   ├── db/         SQLite connection + schema.sql migrations
-  └── valkey/     Valkey client (SRV DNS support, not wired in by default)
 web/              Alpine.js + Tailwind CSS, embedded via go:embed, Bun build
 ```
 

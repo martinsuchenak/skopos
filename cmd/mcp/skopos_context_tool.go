@@ -131,6 +131,24 @@ func buildSnapshot(
 		snapshot["sessions"] = out
 	}
 
+	// --- active agents ---
+	agents, err := statusSvc.ListActiveAgents(ctx)
+	if err != nil {
+		snapshot["agents"] = map[string]any{"error": err.Error()}
+	} else {
+		out := make([]map[string]any, 0, len(agents))
+		for _, a := range agents {
+			out = append(out, map[string]any{
+				"agent_id":   a.AgentID,
+				"agent_type": a.AgentType,
+				"workspace":  a.Workspace,
+				"status":     string(a.Status),
+				"updated_at": a.UpdatedAt,
+			})
+		}
+		snapshot["agents"] = out
+	}
+
 	return snapshot
 }
 

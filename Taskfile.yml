@@ -24,6 +24,13 @@ tasks:
       - CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "{{.LDFLAGS}}" -o bin/{{.APP_NAME}}-darwin-amd64 .
       - CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "{{.LDFLAGS}}" -o bin/{{.APP_NAME}}-darwin-arm64 .
 
+  frontend-build:
+    desc: Build frontend assets
+    dir: web
+    cmds:
+      - bun install
+      - bun run build
+
   build-local:
     desc: Build for local platform
     deps: [frontend-build]
@@ -34,6 +41,11 @@ tasks:
     desc: Run tests
     cmds:
       - go test ./... -v -count=1
+
+  test:race:
+    desc: Run tests with race detector
+    cmds:
+      - go test ./... -v -count=1 -race
 
   clean:
     desc: Clean build artifacts
@@ -46,10 +58,33 @@ tasks:
     cmds:
       - GOCACHE={{.GO_CACHE_DIR}}/.cache/go-build golangci-lint run .
 
-  frontend-build:
-    desc: Build frontend assets
-    dir: web
+  vet:
+    desc: Run go vet
     cmds:
-      - bun install
-      - bun run build
-  # go-scaffolder:taskfile-tasks
+      - go vet ./...
+
+  tidy:
+    desc: Tidy and verify go modules
+    cmds:
+      - go mod tidy
+      - go mod verify
+
+  check:
+    desc: Full CI gate — vet + lint + unit tests with race detector
+    cmds:
+      - task: vet
+      - task: lint
+      - task: test:race
+
+  release:
+    desc: 'Create a version tag and push it (usage: task release -- v0.1.0)'
+    deps: [check, build]
+    preconditions:
+      - sh: 'test -n "{{.CLI_ARGS}}"'
+        msg: 'version tag required (e.g. task release -- v0.1.0)'
+      - sh: 'git diff --quiet'
+        msg: 'working tree has uncommitted changes'
+    cmds:
+      - git tag {{.CLI_ARGS}}
+      - git push origin {{.CLI_ARGS}}
+      - echo "Tagged and pushed {{.CLI_ARGS}}"

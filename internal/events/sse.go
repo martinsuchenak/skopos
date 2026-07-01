@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/paularlott/logger"
 )
 
 // StreamHandler serves an SSE feed of hub events. Mount at GET /api/events/stream.
@@ -55,12 +57,16 @@ func StreamHandler(hub *Hub) http.HandlerFunc {
 // Middleware wraps next and publishes an event to hub on successful mutating
 // requests (POST/PATCH/PUT/DELETE with a 2xx response), inferring the event
 // type from the request path. Reads and failures publish nothing.
-func Middleware(hub *Hub, next http.Handler) http.Handler {
+func Middleware(hub *Hub, log logger.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
 		if isMutation(r.Method) && rec.status >= 200 && rec.status < 300 {
 			hub.Publish(Event{Type: typeForPath(r.URL.Path)})
+		}
+		if log != nil {
+			log.Debug("http request", "method", r.Method, "path", r.URL.Path, "status", rec.status, "duration", time.Since(start).String())
 		}
 	})
 }
@@ -104,4 +110,11 @@ func (s *statusRecorder) Flush() {
 	if f, ok := s.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Unwrap lets http.NewResponseController (SetWriteDeadline etc.) reach the real
+// connection through this wrapper — required so the SSE handler can clear the
+// server's WriteTimeout for the long-lived stream.
+func (s *statusRecorder) Unwrap() http.ResponseWriter {
+	return s.ResponseWriter
 }

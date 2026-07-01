@@ -27,7 +27,7 @@ func (s *noopPlansStore) ListPlans(_ context.Context, _, _ string) ([]plans.Plan
 func (s *noopPlansStore) UpdatePlan(_ context.Context, _ string, _ plans.UpdatePlanInput) error {
 	return nil
 }
-func (s *noopPlansStore) DeletePlan(_ context.Context, _ string) error { return nil }
+func (s *noopPlansStore) DeletePlan(_ context.Context, _ string) error  { return nil }
 func (s *noopPlansStore) AddItem(_ context.Context, _ plans.Item) error { return nil }
 func (s *noopPlansStore) UpdateItem(_ context.Context, _, _ string, _ plans.UpdateItemInput) error {
 	return nil

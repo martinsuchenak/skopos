@@ -333,3 +333,32 @@ func parseTime(raw string) time.Time {
 	}
 	return parsed
 }
+
+func (s *Storage) ListActiveAgents(ctx context.Context) ([]ActiveAgent, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT agent_id, agent_type, workspace, status, updated_at
+		FROM agent_states
+		WHERE status NOT IN ('succeeded', 'failed', 'cancelled', 'stuck', 'orphaned')
+		ORDER BY updated_at DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("listing active agents: %w", err)
+	}
+	defer rows.Close()
+	var out []ActiveAgent
+	seen := map[string]bool{}
+	for rows.Next() {
+		var a ActiveAgent
+		var updated string
+		if err := rows.Scan(&a.AgentID, &a.AgentType, &a.Workspace, &a.Status, &updated); err != nil {
+			return nil, fmt.Errorf("scanning active agent: %w", err)
+		}
+		if seen[a.AgentID] {
+			continue
+		}
+		seen[a.AgentID] = true
+		a.UpdatedAt = parseTime(updated)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}

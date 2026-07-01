@@ -3,10 +3,18 @@ package db
 import (
 	"context"
 	"database/sql"
+	"io"
+	"strings"
 	"testing"
 
+	"github.com/paularlott/logger"
+	logslog "github.com/paularlott/logger/slog"
 	_ "modernc.org/sqlite"
 )
+
+func testLogger() logger.Logger {
+	return logslog.New(logslog.Config{Level: "error", Writer: io.Discard})
+}
 
 func TestSchemaFSExists(t *testing.T) {
 	data, err := schemaFS.ReadFile("schema.sql")
@@ -18,9 +26,44 @@ func TestSchemaFSExists(t *testing.T) {
 	}
 }
 
-// TestSessionDeleteCascadesBlackboard proves that foreign-key enforcement is
-// active (via the DSN pragma) and that deleting a session cascades to its
-// session-scoped blackboard entries.
+func TestSQLiteDSN(t *testing.T) {
+	dsn := sqliteDSN(":memory:")
+	for _, pragma := range []string{"busy_timeout(5000)", "journal_mode(WAL)", "foreign_keys(on)"} {
+		if !strings.Contains(dsn, pragma) {
+			t.Errorf("DSN missing pragma %q: %s", pragma, dsn)
+		}
+	}
+}
+
+func TestConnect(t *testing.T) {
+	db, err := Connect(testLogger(), ":memory:")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer db.Close()
+	if err := db.Ping(); err != nil {
+		t.Fatalf("Ping: %v", err)
+	}
+}
+
+func TestRunMigrationsCreatesAllTables(t *testing.T) {
+	db, _ := sql.Open("sqlite", sqliteDSN(":memory:"))
+	defer db.Close()
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("first migration: %v", err)
+	}
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("second migration (idempotent): %v", err)
+	}
+	for _, table := range []string{"sessions", "agents", "agent_states", "events", "blackboard_entries", "plans", "plan_items", "plan_item_dependencies", "plan_dependencies", "workspaces"} {
+		var name string
+		err := db.QueryRowContext(context.Background(), "SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name)
+		if err != nil {
+			t.Errorf("table %s missing after migration: %v", table, err)
+		}
+	}
+}
+
 func TestSessionDeleteCascadesBlackboard(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, err := sql.Open("sqlite", sqliteDSN(":memory:"))
@@ -52,5 +95,22 @@ func TestSessionDeleteCascadesBlackboard(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("expected blackboard entry to cascade-delete with session, still found %d", n)
+	}
+}
+
+func TestResolveHostDirect(t *testing.T) {
+	addr, err := ResolveHost(testLogger(), "localhost:5432")
+	if err != nil {
+		t.Fatalf("ResolveHost: %v", err)
+	}
+	if addr.Host != "localhost" || addr.Port != 5432 {
+		t.Errorf("got host=%s port=%d", addr.Host, addr.Port)
+	}
+}
+
+func TestResolveHostInvalid(t *testing.T) {
+	_, err := ResolveHost(testLogger(), "no-port-here")
+	if err == nil {
+		t.Error("expected error for invalid host:port")
 	}
 }

@@ -8,11 +8,11 @@ import (
 )
 
 type fakeStore struct {
-	plans       map[string]*Plan
-	items       map[string]*Item
-	deps        map[string][]string
-	planDeps    map[string][]string
-	createErr   error
+	plans     map[string]*Plan
+	items     map[string]*Item
+	deps      map[string][]string
+	planDeps  map[string][]string
+	createErr error
 }
 
 func newFakeStore() *fakeStore {

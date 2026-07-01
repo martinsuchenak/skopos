@@ -2,12 +2,21 @@ package rest
 
 import (
 	"encoding/json"
-	"log/slog"
 	"net/http"
+
+	"github.com/paularlott/logger"
 )
 
 // maxBodyBytes caps the size of a decoded JSON request body (1 MiB).
 const maxBodyBytes = 1 << 20
+
+var appLogger logger.Logger
+
+// SetLogger configures the package-level logger so InternalError uses the same
+// logger (and format) as the rest of the application.
+func SetLogger(l logger.Logger) {
+	appLogger = l
+}
 
 func RespondJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
@@ -24,7 +33,9 @@ func RespondError(w http.ResponseWriter, status int, message string) {
 // InternalError logs the unexpected error and responds with a generic 500 message
 // so that internal details are not leaked to clients.
 func InternalError(w http.ResponseWriter, err error) {
-	slog.Error("internal error", "error", err)
+	if appLogger != nil {
+		appLogger.Error("internal error", "error", err)
+	}
 	RespondError(w, http.StatusInternalServerError, "internal server error")
 }
 

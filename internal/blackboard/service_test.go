@@ -22,9 +22,10 @@ func (f *fakeStore) Write(_ context.Context, e Entry) error {
 func (f *fakeStore) Bundle(_ context.Context, _, _, _ string) ([]Entry, error) {
 	return f.entries, nil
 }
-func (f *fakeStore) Promote(_ context.Context, _ string) error { return nil }
-func (f *fakeStore) Delete(_ context.Context, _ string) error  { return nil }
-func (f *fakeStore) DeleteBySession(_ context.Context, _ string) error { return nil }
+func (f *fakeStore) Promote(_ context.Context, _ string) error                  { return nil }
+func (f *fakeStore) Delete(_ context.Context, _ string) error                   { return nil }
+func (f *fakeStore) Search(_ context.Context, _ SearchFilters) ([]Entry, error) { return nil, nil }
+func (f *fakeStore) DeleteBySession(_ context.Context, _ string) error          { return nil }
 func (f *fakeStore) Get(_ context.Context, _ string) (*Entry, error) {
 	return nil, ErrNotFound
 }
