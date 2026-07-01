@@ -1,0 +1,69 @@
+version: 2
+
+project_name: skopos
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+    - bash -c 'cd web && bun install && bun run build'
+
+builds:
+  - id: skopos
+    main: .
+    binary: skopos
+    ldflags:
+      - -s -w -X github.com/martinsuchenak/skopos/build.Version={{.Version}} -X github.com/martinsuchenak/skopos/build.Date={{.Date}}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+# Homebrew formula — `brews` is deprecated in current GoReleaser.
+# To add Homebrew tap support, check the latest GoReleaser docs for the
+# replacement syntax, or use `homebrew_casks` if packaging as a cask.
+
+homebrew_casks:
+  - name: skopos
+    repository:
+      owner: martinsuchenak
+      name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: https://github.com/martinsuchenak/skopos
+    description: AI agent coordination dashboard — shared memory, plans, and real-time status
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/skopos"]
+          end
