@@ -25,6 +25,7 @@ func (s *Service) Write(ctx context.Context, input WriteInput) (*WriteResult, er
 	input.AuthorAgentID = strings.TrimSpace(input.AuthorAgentID)
 	input.BranchName = strings.TrimSpace(input.BranchName)
 	input.SessionID = strings.TrimSpace(input.SessionID)
+	input.WorkspaceID = strings.TrimSpace(input.WorkspaceID)
 
 	if input.Title == "" {
 		return nil, fmt.Errorf("%w: title is required", ErrInvalidInput)
@@ -33,16 +34,22 @@ func (s *Service) Write(ctx context.Context, input WriteInput) (*WriteResult, er
 		return nil, fmt.Errorf("%w: author_agent_id is required", ErrInvalidInput)
 	}
 	if !validScope(input.Scope) {
-		return nil, fmt.Errorf("%w: invalid scope %q", ErrInvalidInput, input.Scope)
+		return nil, fmt.Errorf("%w: invalid scope %q. Use: project, branch, or session", ErrInvalidInput, input.Scope)
 	}
 	if !validEntryType(input.EntryType) {
-		return nil, fmt.Errorf("%w: invalid entry_type %q", ErrInvalidInput, input.EntryType)
+		return nil, fmt.Errorf("%w: invalid entry_type %q. Use: finding, decision, bug, debt, warning, or context", ErrInvalidInput, input.EntryType)
 	}
 	if input.Scope == ScopeBranch && input.BranchName == "" {
-		return nil, fmt.Errorf("%w: branch_name is required for branch scope", ErrInvalidInput)
+		return nil, fmt.Errorf("%w: branch_name is required when scope=branch", ErrInvalidInput)
 	}
 	if input.Scope == ScopeSession && input.SessionID == "" {
-		return nil, fmt.Errorf("%w: session_id is required for session scope", ErrInvalidInput)
+		return nil, fmt.Errorf("%w: session_id is required when scope=session", ErrInvalidInput)
+	}
+	// Validate session_id references an existing session before the INSERT hits the FK.
+	if input.SessionID != "" {
+		if exists, err := s.store.SessionExists(ctx, input.SessionID); err == nil && !exists {
+			return nil, fmt.Errorf("%w: session_id %q does not exist. Call report_status first to create a session, or use scope=branch/project instead", ErrInvalidInput, input.SessionID)
+		}
 	}
 
 	now := s.now().UTC()

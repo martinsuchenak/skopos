@@ -16,6 +16,7 @@ type Store interface {
 	DeleteBySession(ctx context.Context, sessionID string) error
 	Search(ctx context.Context, filters SearchFilters) ([]Entry, error)
 	Get(ctx context.Context, id string) (*Entry, error)
+	SessionExists(ctx context.Context, sessionID string) (bool, error)
 }
 
 type Storage struct {
@@ -265,4 +266,13 @@ func (s *Storage) Search(ctx context.Context, f SearchFilters) ([]Entry, error) 
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+func (s *Storage) SessionExists(ctx context.Context, sessionID string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT true FROM sessions WHERE id = ?`, sessionID).Scan(&exists)
+	if err != nil {
+		return false, nil // treat ErrNoRows as "doesn't exist"
+	}
+	return exists, nil
 }

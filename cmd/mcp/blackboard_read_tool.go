@@ -15,7 +15,6 @@ func registerBlackboardReadTool(server *mcplib.Server, service *blackboard.Servi
 	server.RegisterTool(
 		mcplib.NewTool("blackboard_read", "Read the Skopos blackboard Knowledge Bundle",
 			mcplib.String("workspace_id", "Workspace ID to filter entries by"),
-			mcplib.String("workspace", "Workspace ID to filter entries by (alias for workspace_id)"),
 			mcplib.String("branch", "Branch name to filter branch-scoped entries"),
 			mcplib.String("entry_type", "Filter by type: finding, decision, bug, debt, warning, context"),
 			mcplib.String("author", "Filter by author agent ID"),
@@ -29,7 +28,7 @@ func registerBlackboardReadTool(server *mcplib.Server, service *blackboard.Servi
 			// When search filters are present, use Search; otherwise return the full Bundle.
 			if entryType != "" || author != "" || query != "" {
 				entries, err := service.Search(ctx, blackboard.SearchFilters{
-					WorkspaceID:   req.StringOr("workspace_id", req.StringOr("workspace", "")),
+					WorkspaceID:   req.StringOr("workspace_id", ""),
 					BranchName:    req.StringOr("branch", ""),
 					EntryType:     entryType,
 					AuthorAgentID: author,
@@ -40,7 +39,7 @@ func registerBlackboardReadTool(server *mcplib.Server, service *blackboard.Servi
 				}
 				return mcplib.NewToolResponseJSON(map[string]any{"entries": entries, "total": len(entries)}), nil
 			}
-			workspaceID := req.StringOr("workspace_id", req.StringOr("workspace", ""))
+			workspaceID := req.StringOr("workspace_id", "")
 			bundle, err := service.Bundle(ctx, workspaceID, req.StringOr("branch", ""), req.StringOr("session_id", ""))
 			if err != nil {
 				return nil, mcplib.NewToolErrorInternal(err.Error())

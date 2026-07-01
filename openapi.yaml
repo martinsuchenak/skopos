@@ -66,7 +66,7 @@ paths:
       summary: List sessions
       operationId: listSessions
       parameters:
-        - name: workspace
+        - name: workspace_id
           in: query
           schema: { type: string }
           description: Filter by workspace path/id.
@@ -198,7 +198,7 @@ paths:
       summary: Read the knowledge bundle (entries + markdown)
       operationId: blackboardRead
       parameters:
-        - { name: workspace, in: query, schema: { type: string } }
+        - { name: workspace_id, in: query, schema: { type: string } }
         - { name: branch, in: query, schema: { type: string } }
         - { name: session_id, in: query, schema: { type: string } }
       responses:
@@ -254,7 +254,7 @@ paths:
       summary: List plans
       operationId: listPlans
       parameters:
-        - { name: workspace, in: query, schema: { type: string } }
+        - { name: workspace_id, in: query, schema: { type: string } }
         - { name: branch, in: query, schema: { type: string } }
       responses:
         "200":

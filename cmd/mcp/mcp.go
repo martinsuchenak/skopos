@@ -39,8 +39,8 @@ const instructions = `You are connected to **skopos**, a shared memory and coord
 2. Plans & items — shared to-do lists with dependencies. Item statuses: pending, in_progress, done, blocked. Adding a dependency auto-blocks the dependent item; finishing a dependency auto-unblocks; finishing every item auto-completes the plan.
 3. Status — agent status reports powering the dashboard.
 
-At the start of every task, call ` + "`skopos_context`" + ` once (pass ` + "`branch`" + `) to load the relevant blackboard, active plans/blocked items, and in-flight sessions. Then:
-- recall prior notes -> ` + "`blackboard_read`" + ` (pass ` + "`branch`" + `).
+At the start of every task, call ` + "`skopos_context`" + ` once (pass ` + "`workspace_id`" + ` and ` + "`branch`" + `) to load the relevant blackboard, active plans/blocked items, and in-flight sessions. Then:
+- recall prior notes -> ` + "`blackboard_read`" + ` (pass ` + "`workspace_id`" + ` and ` + "`branch`" + `).
 - record something worth keeping -> ` + "`blackboard_write`" + ` (scope ` + "`branch`" + ` by default, ` + "`project`" + ` for repo-wide; type ` + "`bug`" + `/` + "`debt`" + ` for issues that must be seen across branches). Always set ` + "`author_agent_id`" + `.
 - multi-step work -> ` + "`plan_create`" + ` + ` + "`plan_add_item`" + `; mark items ` + "`done`" + ` as you finish. Sequence work with ` + "`plan_add_item_dependency`" + ` / ` + "`plan_add_plan_dependency`" + `. If an item was blocked, check if it is ready with ` + "`plan_read`" + ` (pass ` + "`item_id`" + ` for a single-item check).
 - checkpoint progress -> ` + "`report_status`" + ` (status, progress, message). Never report ` + "`stuck`" + ` or ` + "`orphaned`" + ` — those are server-set.

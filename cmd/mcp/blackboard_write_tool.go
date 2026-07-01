@@ -14,15 +14,15 @@ func init() {
 func registerBlackboardWriteTool(server *mcplib.Server, service *blackboard.Service) {
 	server.RegisterTool(
 		mcplib.NewTool("blackboard_write", "Write an entry to the Skopos blackboard memory",
-			mcplib.String("workspace_id", "Workspace ID to scope the entry to"),
-			mcplib.String("scope", "Memory scope: session, branch, or project", mcplib.Required()),
-			mcplib.String("entry_type", "Entry type: finding, decision, bug, debt, warning, or context", mcplib.Required()),
-			mcplib.String("title", "Short descriptive title", mcplib.Required()),
-			mcplib.String("author_agent_id", "Identifier of the writing agent", mcplib.Required()),
-			mcplib.String("branch_name", "Branch name (required when scope=branch)"),
-			mcplib.String("session_id", "Session ID (required when scope=session)"),
-			mcplib.String("content", "Detailed content"),
-			mcplib.String("code_ref", "Optional code reference, e.g. auth/jwt.go:45"),
+			mcplib.String("scope", "Required. Entry scope: project (visible to all agents), branch (shared on a git branch), or session (this session only)", mcplib.Required()),
+			mcplib.String("entry_type", "Required. Entry type: finding, decision, bug, debt, warning, or context. Bug and debt are floating (always visible regardless of branch filter).", mcplib.Required()),
+			mcplib.String("title", "Required. Short descriptive title", mcplib.Required()),
+			mcplib.String("author_agent_id", "Required. Stable agent identifier, e.g. codex-macbook", mcplib.Required()),
+			mcplib.String("workspace_id", "Required for project and branch scope. The workspace this entry belongs to."),
+			mcplib.String("branch_name", "Required when scope=branch. The git branch name."),
+			mcplib.String("session_id", "Required when scope=session. Must be a valid session ID (call report_status first to create a session)."),
+			mcplib.String("content", "Optional. Detailed content/body of the entry"),
+			mcplib.String("code_ref", "Optional. Code reference, e.g. auth/jwt.go:45"),
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 			input := blackboard.WriteInput{

@@ -36,11 +36,9 @@ With `debug`, every HTTP request is logged (method, path, status, duration) thro
 
 ## Authentication
 
-When `api_key` is set, all write endpoints (POST/PATCH/DELETE) and the MCP endpoint require the key:
+When `api_key` is set, all write endpoints (POST/PATCH/DELETE) and the MCP endpoint require the key via:
 
 ```
-
-# or
 Authorization: Bearer mysecret
 ```
 

@@ -8,7 +8,7 @@ Agents call `report_status` (MCP) or `POST /api/reports` (REST) with:
 
 - `agent_id` (required) — stable identifier (e.g. `codex-macbook`)
 - `agent_type` (required) — `codex`, `claude-code`, `gemini`, `opencode`, `kiro`, etc.
-- `workspace` (required) — workspace path or ID
+- `workspace_id` (required) — workspace ID or repository path
 - `status` (required) — one of the valid statuses below
 - `session_id` (optional) — share a session across agents; auto-generated if omitted
 - `progress`, `step_current`, `step_total` (optional) — progress tracking
