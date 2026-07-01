@@ -16,6 +16,15 @@ var kiroSteering string
 //go:embed assets/claude-skill.md
 var claudeSkill string
 
+//go:embed assets/claude-claude.md
+var claudeClaude string
+
+//go:embed assets/gemini-instructions.md
+var geminiInstructions string
+
+//go:embed assets/opencode-agents.md
+var opencodeAgents string
+
 //go:embed assets/codex-agents.md
 var codexAgents string
 
@@ -91,14 +100,21 @@ func installAgent(name string, o Options) (Result, error) {
 		if err := writeFileAction(skill, claudeSkill, o, &r.Actions); err != nil {
 			return r, err
 		}
+		// Always-on behavioral instructions in the global CLAUDE.md.
+		claudeMd := scopePath(o.Scope, filepath.Join(homeOrErr(), ".claude", "CLAUDE.md"), "CLAUDE.md")
+		if err := appendBlockAction(claudeMd, claudeClaude, o, &r.Actions); err != nil {
+			return r, err
+		}
 
 	case "codex":
-		// Codex config is global only; project scope writes behavioral files in cwd.
+		// Codex config is global only.
 		cfg := filepath.Join(homeOrErr(), ".codex", "config.toml")
 		if err := mergeCodexTOML(cfg, o, &r.Actions); err != nil {
 			return r, err
 		}
-		if err := appendBlockAction("AGENTS.md", codexAgents, o, &r.Actions); err != nil {
+		// Always-on behavioral instructions in the global ~/AGENTS.md.
+		agentsMd := scopePath(o.Scope, filepath.Join(homeOrErr(), "AGENTS.md"), "AGENTS.md")
+		if err := appendBlockAction(agentsMd, codexAgents, o, &r.Actions); err != nil {
 			return r, err
 		}
 
@@ -107,7 +123,11 @@ func installAgent(name string, o Options) (Result, error) {
 		if err := mergeJSONFile(cfg, []string{"mcpServers", "skopos"}, entry, o, &r.Actions); err != nil {
 			return r, err
 		}
-		r.Actions = append(r.Actions, "note: Gemini lifecycle reporting needs a ~/bin/gemini-skopos wrapper (see docs/integrations/gemini-cli/README.md)")
+		// Always-on behavioral instructions in the global GEMINI.md.
+		geminiMd := scopePath(o.Scope, filepath.Join(homeOrErr(), ".gemini", "GEMINI.md"), "GEMINI.md")
+		if err := appendBlockAction(geminiMd, geminiInstructions, o, &r.Actions); err != nil {
+			return r, err
+		}
 
 	case "github-copilot":
 		cfg := scopePath(o.Scope, copilotGlobalMCP(), filepath.Join(".vscode", "mcp.json"))
@@ -133,7 +153,11 @@ func installAgent(name string, o Options) (Result, error) {
 		if err := mergeJSONFile(cfg, []string{"mcp", "skopos"}, entry, o, &r.Actions); err != nil {
 			return r, err
 		}
-		r.Actions = append(r.Actions, "note: OpenCode behavioral instructions go in your project's AGENTS.md (see docs/integrations/opencode/README.md)")
+		// Write behavioral instructions to the global AGENTS.md.
+		agentsPath := scopePath(o.Scope, filepath.Join(homeOrErr(), ".config", "opencode", "AGENTS.md"), "AGENTS.md")
+		if err := appendBlockAction(agentsPath, opencodeAgents, o, &r.Actions); err != nil {
+			return r, err
+		}
 	}
 	return r, nil
 }
@@ -181,10 +205,30 @@ func homeOrErr() string {
 // ---- JSON merge ----
 
 func mergeJSONFile(path string, keyPath []string, entry map[string]any, o Options, actions *[]string) error {
+	// Detect merge-conflict markers or other corruption before touching the file.
+	raw, err := os.ReadFile(path)
+	if err == nil && strings.Contains(string(raw), "<<<<<<<") {
+		return fmt.Errorf("%s has merge conflict markers — resolve them first, then re-run install", path)
+	}
+
 	data, existed, err := readJSONMap(path)
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", path, err)
 	}
+
+	// If the skopos entry already exists with the same URL, skip (idempotent).
+	if existing := getNested(data, keyPath); existing != nil {
+		if existingURL, ok := existing["url"].(string); ok && existingURL == entry["url"].(string) {
+			if existingHeaders, ok2 := existing["headers"].(map[string]any); ok2 {
+				entryHeaders, _ := entry["headers"].(map[string]any)
+				if fmt.Sprint(existingHeaders) == fmt.Sprint(entryHeaders) {
+					*actions = append(*actions, fmt.Sprintf("skopos entry already up-to-date in %s", path))
+					return nil
+				}
+			}
+		}
+	}
+
 	setNested(data, keyPath, entry)
 
 	if o.DryRun {
@@ -248,6 +292,22 @@ func setNested(root map[string]any, path []string, val any) {
 		cur = next
 	}
 	cur[path[len(path)-1]] = val
+}
+
+func getNested(root map[string]any, path []string) map[string]any {
+	cur := root
+	for i := 0; i < len(path)-1; i++ {
+		next, ok := cur[path[i]].(map[string]any)
+		if !ok {
+			return nil
+		}
+		cur = next
+	}
+	result, ok := cur[path[len(path)-1]].(map[string]any)
+	if !ok {
+		return nil
+	}
+	return result
 }
 
 // ---- Codex TOML (section replace) ----

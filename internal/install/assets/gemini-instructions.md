@@ -15,4 +15,4 @@ You have access to Skopos MCP tools for shared memory, plans, and status reporti
 
 **Planning work** — call `plan_create`, then `plan_add_item` for each task. Update item status with `plan_update_item` as you progress. Check blocked items with `plan_read` (pass `item_id` for a single-item check).
 
-**Status reporting** — call `report_status` with your `agent_id`, `agent_type` ("codex"), `workspace_id`, and `status` (one of: pending, thinking, planning, running, editing, testing, waiting, blocked, paused, handoff, succeeded, failed, cancelled). Never report "stuck" or "orphaned".
+**Status reporting** — call `report_status` with your `agent_id`, `agent_type` ("gemini"), `workspace_id`, and `status` (one of: pending, thinking, planning, running, editing, testing, waiting, blocked, paused, handoff, succeeded, failed, cancelled). Never report "stuck" or "orphaned".
