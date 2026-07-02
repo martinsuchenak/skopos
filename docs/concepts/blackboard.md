@@ -53,6 +53,10 @@ Per-scope requirements:
 
 Promote an entry to a wider scope: `session → branch → project`. Done via `PATCH /api/blackboard/entries/{id}/promote` or the dashboard's "Promote" button.
 
+## Deletion
+
+Permanently remove an entry with the `blackboard_delete` MCP tool (param: `id`) or `DELETE /api/blackboard/entries/{id}`. This is a **hard delete** — the row is removed immediately, and there is no archive/soft-delete for entries. Session-scoped entries are also removed automatically when their session is deleted (foreign-key cascade).
+
 ## Workspace scoping
 
 When a workspace is selected, only entries with that exact `workspace_id` are returned. Entries with no `workspace_id` (global/unscoped) appear only under "All workspaces". See [Workspaces](workspaces.md).

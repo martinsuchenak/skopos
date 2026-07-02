@@ -49,6 +49,13 @@ All multi-step plan operations (add item with deps, add/remove dependency + re-c
 | `plan_read` | Get a plan with all items and dependencies |
 | `plan_add_item` | Add an item (optionally with deps) |
 | `plan_update_item` | Update status / claim |
+| `plan_archive` | Soft-delete a plan (set status to `archived`) |
+| `plan_add_dependency` | Add an item dependency |
+| `plan_remove_dependency` | Remove an item dependency |
+| `plan_add_plan_dependency` | Add a plan-to-plan dependency |
+| `plan_remove_plan_dependency` | Remove a plan-to-plan dependency |
+
+Hard delete (plan and items) is REST/UI only — there is no hard-delete MCP tool. Use `plan_archive` from agents instead.
 
 ## REST endpoints
 

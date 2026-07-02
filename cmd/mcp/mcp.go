@@ -41,8 +41,8 @@ const instructions = `You are connected to **skopos**, a shared memory and coord
 
 At the start of every task, call ` + "`skopos_context`" + ` once (pass ` + "`workspace_id`" + ` and ` + "`branch`" + `) to load the relevant blackboard, active plans/blocked items, and in-flight sessions. Then:
 - recall prior notes -> ` + "`blackboard_read`" + ` (pass ` + "`workspace_id`" + ` and ` + "`branch`" + `).
-- record something worth keeping -> ` + "`blackboard_write`" + ` (scope ` + "`branch`" + ` by default, ` + "`project`" + ` for repo-wide; type ` + "`bug`" + `/` + "`debt`" + ` for issues that must be seen across branches). Always set ` + "`author_agent_id`" + `.
-- multi-step work -> ` + "`plan_create`" + ` + ` + "`plan_add_item`" + `; mark items ` + "`done`" + ` as you finish. Sequence work with ` + "`plan_add_item_dependency`" + ` / ` + "`plan_add_plan_dependency`" + `. If an item was blocked, check if it is ready with ` + "`plan_read`" + ` (pass ` + "`item_id`" + ` for a single-item check).
+- record something worth keeping -> ` + "`blackboard_write`" + ` (scope ` + "`branch`" + ` by default, ` + "`project`" + ` for repo-wide; type ` + "`bug`" + `/` + "`debt`" + ` for issues that must be seen across branches). Always set ` + "`author_agent_id`" + `. Remove an obsolete entry with ` + "`blackboard_delete`" + `.
+- multi-step work -> ` + "`plan_create`" + ` + ` + "`plan_add_item`" + `; mark items ` + "`done`" + ` as you finish. Sequence work with ` + "`plan_add_item_dependency`" + ` / ` + "`plan_add_plan_dependency`" + `. If an item was blocked, check if it is ready with ` + "`plan_read`" + ` (pass ` + "`item_id`" + ` for a single-item check). When a plan is done or abandoned, archive it with ` + "`plan_archive`" + `.
 - checkpoint progress -> ` + "`report_status`" + ` (status, progress, message). Never report ` + "`stuck`" + ` or ` + "`orphaned`" + ` — those are server-set.
 
 Keep entries concise, prefer the narrowest scope, and pass a stable ` + "`author_agent_id`" + ` (e.g. "<tool>-<hostname>").`

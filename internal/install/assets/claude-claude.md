@@ -11,8 +11,8 @@ You have access to Skopos MCP tools for shared memory, plans, and status reporti
 - `entry_type`: "finding", "decision", "bug", "debt", "warning", or "context"
 - `title`, `content`, `author_agent_id`
 
-**Recalling knowledge** — call `blackboard_read` with `workspace_id` and `branch`.
+**Recalling knowledge** — call `blackboard_read` with `workspace_id` and `branch`. Permanently remove an obsolete entry with `blackboard_delete` (pass the entry `id`).
 
-**Planning work** — call `plan_create`, then `plan_add_item` for each task. Update item status with `plan_update_item` as you progress. Check blocked items with `plan_read` (pass `item_id` for a single-item check).
+**Planning work** — call `plan_create`, then `plan_add_item` for each task. Update item status with `plan_update_item` as you progress. Check blocked items with `plan_read` (pass `item_id` for a single-item check). When a plan is done or abandoned, archive it with `plan_archive`.
 
 **Status reporting** — call `report_status` with your `agent_id`, `agent_type` ("claude-code"), `workspace_id`, and `status` (one of: pending, thinking, planning, running, editing, testing, waiting, blocked, paused, handoff, succeeded, failed, cancelled). Never report "stuck" or "orphaned".
