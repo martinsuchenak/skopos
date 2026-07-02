@@ -350,6 +350,8 @@ window.app = () => ({
       if (!res.ok) { this.plans = []; return; }
       this.plans = (await res.json()) ?? [];
     } catch { this.plans = []; } finally { this.plansLoading = false; }
+    // Keep the open plan's items in sync when the list is refreshed (e.g. via SSE).
+    if (this.expandedPlan) await this.reloadPlan(this.expandedPlan.id);
   },
   async togglePlan(plan: Plan) {
     if (this.expandedPlan?.id === plan.id) { this.expandedPlan = null; return; }
