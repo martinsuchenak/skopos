@@ -14,5 +14,8 @@
     "tailwindcss": "^4.3.2",
     "typescript": "^6.0.3",
     "alpinejs": "^3.15.12"
+  },
+  "dependencies": {
+    "@alpinejs/focus": "^3.15.12"
   }
 }

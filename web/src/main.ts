@@ -1,4 +1,5 @@
 import Alpine from 'alpinejs';
+import focus from '@alpinejs/focus';
 
 type SessionSummary = { id: string; title: string; workspace: string; status: string; agent_count: number };
 type SessionDetail = SessionSummary & { agents?: AgentState[]; events?: Event[] };
@@ -145,17 +146,6 @@ window.app = () => ({
     this.applyTheme();
   },
 
-  // Keep Tab focus within the open modal (WCAG 2.1.2).
-  trapFocus(e: KeyboardEvent) {
-    const dialog = (e.currentTarget as HTMLElement);
-    const focusable = dialog.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
-    if (focusable.length === 0) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-  },
-
   // ---- networking ----
   async authFetch(url: string, opts: RequestInit = {}): Promise<Response> {
     const headers = new Headers(opts.headers || {});
@@ -166,18 +156,6 @@ window.app = () => ({
   async extractError(res: Response): Promise<string> {
     try { const j = (await res.json()) as { error?: string }; return j.error || res.statusText || 'request failed'; }
     catch { return res.statusText || 'request failed'; }
-  },
-  focusIn() {
-    this.$nextTick(() => {
-      const dialogs = document.querySelectorAll('[role="dialog"], [role="alertdialog"]');
-      for (const d of dialogs) {
-        const el = d as HTMLElement;
-        if (getComputedStyle(el).display === 'none') continue;
-        const target = (el.querySelector('input:not([type="hidden"]), select, textarea') ?? el.querySelector('button')) as HTMLElement | null;
-        target?.focus();
-        return;
-      }
-    });
   },
 
   // ---- toasts ----
@@ -196,7 +174,7 @@ window.app = () => ({
   },
 
   // ---- api key modal ----
-  openKeyModal() { this.keyDraft = this.apiKey; this.showKeyModal = true; this.focusIn(); },
+  openKeyModal() { this.keyDraft = this.apiKey; this.showKeyModal = true; },
   closeKeyModal() { this.showKeyModal = false; },
   saveKey() {
     this.apiKey = this.keyDraft.trim();
@@ -247,7 +225,7 @@ window.app = () => ({
   },
   openWorkspaceModal() {
     this.workspaceForm = { id: '', name: '' }; this.workspaceErrors = {};
-    this.showWorkspaceModal = true; this.focusIn();
+    this.showWorkspaceModal = true;
   },
   closeWorkspaceModal() { this.showWorkspaceModal = false; },
   async submitWorkspace() {
@@ -311,7 +289,7 @@ window.app = () => ({
   },
   openEntryModal() {
     this.entryForm = emptyEntryForm(this.blackboardBranch); this.entryErrors = {};
-    this.showEntryModal = true; this.focusIn();
+    this.showEntryModal = true;
   },
   closeEntryModal() { this.showEntryModal = false; },
   async submitEntry() {
@@ -389,7 +367,7 @@ window.app = () => ({
   },
   openPlanModal() {
     this.planForm = emptyPlanForm(this.plansBranch); this.planErrors = {};
-    this.showPlanModal = true; this.focusIn();
+    this.showPlanModal = true;
   },
   closePlanModal() { this.showPlanModal = false; },
   async submitPlan() {
@@ -409,7 +387,7 @@ window.app = () => ({
   },
   openItemModal() {
     this.itemForm = emptyItemForm(); this.itemErrors = {};
-    this.showItemModal = true; this.focusIn();
+    this.showItemModal = true;
   },
   closeItemModal() { this.showItemModal = false; },
   async submitItem() {
@@ -510,5 +488,6 @@ function emptyEntryForm(branch = ''): EntryForm { return { scope: 'branch', entr
 function emptyPlanForm(branch = ''): PlanForm { return { name: '', description: '', branch_name: branch }; }
 function emptyItemForm(): ItemForm { return { title: '', description: '', phase: '', depends_on: '' }; }
 
+Alpine.plugin(focus);
 window.Alpine = Alpine;
 Alpine.start();

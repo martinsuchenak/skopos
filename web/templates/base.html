@@ -324,7 +324,7 @@
     </div>
 
     <!-- ===================== API KEY MODAL ===================== -->
-    <div x-show="showKeyModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="key-modal-title" @keydown.escape.window="closeKeyModal()" @keydown.tab="trapFocus($event)">
+    <div x-show="showKeyModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4"         role="dialog" aria-modal="true" aria-labelledby="key-modal-title" @keydown.escape.window="closeKeyModal()" x-trap="showKeyModal">
         <div class="fixed inset-0 bg-black/60" @click="closeKeyModal()" aria-hidden="true"></div>
         <div class="card relative w-full max-w-md p-6 shadow-2xl">
             <button type="button" @click="closeKeyModal()" class="absolute right-4 top-4 rounded-full p-2 text-zinc-400 hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" aria-label="Close dialog">
@@ -333,7 +333,7 @@
             <h2 id="key-modal-title" class="mb-4 text-lg font-semibold">API key</h2>
             <p class="mb-4 text-sm text-zinc-400">Sent as <code class="text-zinc-300">Authorization: Bearer</code> on every request. Leave empty to disable auth.</p>
             <label class="lbl" for="api-key-input">API key</label>
-            <input id="api-key-input" type="password" x-model="keyDraft" @keydown.enter="saveKey()" class="fld" placeholder="sk-..." autocomplete="off" />
+            <input id="api-key-input" type="password" x-model="keyDraft" @keydown.enter="saveKey()" class="fld" placeholder="sk-..." autocomplete="off" autofocus />
             <div class="mt-6 flex items-center justify-between">
                 <button type="button" @click="clearKey()" class="btn btn-ghost btn-sm text-rose-400">Clear</button>
                 <button type="button" @click="saveKey()" class="btn btn-primary">Save</button>
@@ -342,7 +342,7 @@
     </div>
 
     <!-- ===================== CREATE WORKSPACE MODAL ===================== -->
-    <div x-show="showWorkspaceModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="ws-modal-title" @keydown.escape.window="closeWorkspaceModal()" @keydown.tab="trapFocus($event)">
+    <div x-show="showWorkspaceModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4"         role="dialog" aria-modal="true" aria-labelledby="ws-modal-title" @keydown.escape.window="closeWorkspaceModal()" x-trap="showWorkspaceModal">
         <div class="fixed inset-0 bg-black/60" @click="closeWorkspaceModal()" aria-hidden="true"></div>
         <div class="card relative w-full max-w-md p-6 shadow-2xl">
             <button type="button" @click="closeWorkspaceModal()" class="absolute right-4 top-4 rounded-full p-2 text-zinc-400 hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" aria-label="Close dialog">
@@ -354,7 +354,7 @@
                 <div class="space-y-3">
                     <div>
                         <label class="lbl" for="ws-id">ID <span aria-hidden="true">*</span></label>
-                        <input id="ws-id" type="text" x-model="workspaceForm.id" class="fld" :aria-invalid="!!workspaceErrors.id" placeholder="github.com/you/repo" autocomplete="off" />
+                        <input id="ws-id" type="text" x-model="workspaceForm.id" class="fld" :aria-invalid="!!workspaceErrors.id" placeholder="github.com/you/repo" autocomplete="off" autofocus />
                         <p x-show="workspaceErrors.id" class="field-error" role="alert" x-text="workspaceErrors.id"></p>
                     </div>
                     <div>
@@ -374,7 +374,7 @@
     </div>
 
     <!-- ===================== WRITE ENTRY MODAL ===================== -->
-    <div x-show="showEntryModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="entry-modal-title" @keydown.escape.window="closeEntryModal()" @keydown.tab="trapFocus($event)">
+    <div x-show="showEntryModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4"         role="dialog" aria-modal="true" aria-labelledby="entry-modal-title" @keydown.escape.window="closeEntryModal()" x-trap="showEntryModal">
         <div class="fixed inset-0 bg-black/60" @click="closeEntryModal()" aria-hidden="true"></div>
         <div class="card relative w-full max-w-lg p-6 shadow-2xl">
             <button type="button" @click="closeEntryModal()" class="absolute right-4 top-4 rounded-full p-2 text-zinc-400 hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" aria-label="Close dialog">
@@ -385,7 +385,7 @@
                 <div class="grid gap-3 sm:grid-cols-2">
                     <div>
                         <label class="lbl" for="e-type">Type <span aria-hidden="true">*</span></label>
-                        <select id="e-type" x-model="entryForm.entry_type" class="fld">
+                        <select id="e-type" x-model="entryForm.entry_type" class="fld" autofocus>
                             <option value="bug">bug</option><option value="debt">debt</option><option value="warning">warning</option>
                             <option value="finding">finding</option><option value="decision">decision</option><option value="context">context</option>
                         </select>
@@ -432,7 +432,7 @@
     </div>
 
     <!-- ===================== CREATE PLAN MODAL ===================== -->
-    <div x-show="showPlanModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="plan-modal-title" @keydown.escape.window="closePlanModal()" @keydown.tab="trapFocus($event)">
+    <div x-show="showPlanModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4"         role="dialog" aria-modal="true" aria-labelledby="plan-modal-title" @keydown.escape.window="closePlanModal()" x-trap="showPlanModal">
         <div class="fixed inset-0 bg-black/60" @click="closePlanModal()" aria-hidden="true"></div>
         <div class="card relative w-full max-w-lg p-6 shadow-2xl">
             <button type="button" @click="closePlanModal()" class="absolute right-4 top-4 rounded-full p-2 text-zinc-400 hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" aria-label="Close dialog">
@@ -443,7 +443,7 @@
                 <div class="space-y-3">
                     <div>
                         <label class="lbl" for="p-name">Name <span aria-hidden="true">*</span></label>
-                        <input id="p-name" type="text" x-model="planForm.name" class="fld" :aria-invalid="!!planErrors.name" autocomplete="off" />
+                        <input id="p-name" type="text" x-model="planForm.name" class="fld" :aria-invalid="!!planErrors.name" autocomplete="off" autofocus />
                         <p x-show="planErrors.name" class="field-error" role="alert" x-text="planErrors.name"></p>
                     </div>
                     <div>
@@ -467,7 +467,7 @@
     </div>
 
     <!-- ===================== ADD ITEM MODAL ===================== -->
-    <div x-show="showItemModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="item-modal-title" @keydown.escape.window="closeItemModal()" @keydown.tab="trapFocus($event)">
+    <div x-show="showItemModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4"         role="dialog" aria-modal="true" aria-labelledby="item-modal-title" @keydown.escape.window="closeItemModal()" x-trap="showItemModal">
         <div class="fixed inset-0 bg-black/60" @click="closeItemModal()" aria-hidden="true"></div>
         <div class="card relative w-full max-w-lg p-6 shadow-2xl">
             <button type="button" @click="closeItemModal()" class="absolute right-4 top-4 rounded-full p-2 text-zinc-400 hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" aria-label="Close dialog">
@@ -478,7 +478,7 @@
                 <div class="space-y-3">
                     <div>
                         <label class="lbl" for="i-title">Title <span aria-hidden="true">*</span></label>
-                        <input id="i-title" type="text" x-model="itemForm.title" class="fld" :aria-invalid="!!itemErrors.title" autocomplete="off" />
+                        <input id="i-title" type="text" x-model="itemForm.title" class="fld" :aria-invalid="!!itemErrors.title" autocomplete="off" autofocus />
                         <p x-show="itemErrors.title" class="field-error" role="alert" x-text="itemErrors.title"></p>
                     </div>
                     <div class="grid gap-3 sm:grid-cols-2">
@@ -513,7 +513,7 @@
     </div>
 
     <!-- ===================== DELETE CONFIRM MODAL ===================== -->
-    <div x-show="confirm.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-desc" @keydown.escape.window="cancelDelete()" @keydown.tab="trapFocus($event)">
+    <div x-show="confirm.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4"         role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-desc" @keydown.escape.window="cancelDelete()" x-trap="confirm.open">
         <div class="fixed inset-0 bg-black/60" @click="cancelDelete()" aria-hidden="true"></div>
         <div class="card relative w-full max-w-md p-6 shadow-2xl">
             <h2 id="confirm-title" class="mb-3 text-lg font-semibold" x-text="confirm.title"></h2>
