@@ -20,6 +20,9 @@ func SetLogger(l logger.Logger) {
 
 func RespondJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
+	// API responses are never cacheable: a permanently cached redirect or error
+	// (e.g. a proxy-issued 308) can wedge the dashboard until the cache is cleared.
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	if data != nil {
 		_ = json.NewEncoder(w).Encode(data)

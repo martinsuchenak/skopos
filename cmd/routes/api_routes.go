@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"runtime"
 
+	"github.com/martinsuchenak/skopos/build"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/status"
@@ -85,6 +86,10 @@ func registerWebRoutes(mux *http.ServeMux) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		templates.ExecuteTemplate(w, "base.html", map[string]any{"Title": "Dashboard"})
+		version := build.Version
+		if build.Date != "unknown" {
+			version += " · " + build.Date
+		}
+		templates.ExecuteTemplate(w, "base.html", map[string]any{"Title": "Dashboard", "Version": version})
 	})
 }

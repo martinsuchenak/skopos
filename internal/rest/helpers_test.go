@@ -21,6 +21,9 @@ func TestRespondJSON(t *testing.T) {
 	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
 		t.Errorf("expected Content-Type application/json, got %q", ct)
 	}
+	if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("expected Cache-Control no-store, got %q", cc)
+	}
 }
 
 func TestRespondJSONNil(t *testing.T) {
