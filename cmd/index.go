@@ -147,6 +147,18 @@ func indexPushCmd() *cli.Command {
 	}
 }
 
+// isUnreachable reports whether an error looks like a network-level failure
+// to reach the server (as opposed to an HTTP error response).
+func isUnreachable(err error) bool {
+	msg := err.Error()
+	for _, marker := range []string{"connection refused", "no such host", "i/o timeout", "dial tcp", "network is unreachable"} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // PushToServer builds a checkout and pushes its branch index through the
 // three-step protocol: manifest (which blobs does the server need), blobs
 // (ndjson upload of just the missing ones), commit (atomic branch pointer).
@@ -169,6 +181,9 @@ func PushToServer(ctx context.Context, serverURL, apiKey, workspace, branch, roo
 	}](ctx, serverURL, apiKey, "POST", fmt.Sprintf("/api/codeindex/%s/manifest", url.PathEscape(workspace)),
 		map[string]any{"files": entries}, "application/json")
 	if err != nil {
+		if isUnreachable(err) {
+			return 0, 0, fmt.Errorf("manifest: %w\n  is skopos running at %s? (for a server-less local index use: skopos index build)", err, strings.TrimRight(serverURL, "/"))
+		}
 		return 0, 0, fmt.Errorf("manifest: %w", err)
 	}
 

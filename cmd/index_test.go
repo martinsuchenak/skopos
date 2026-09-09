@@ -113,3 +113,15 @@ func TestBuildRelativizesPaths(t *testing.T) {
 		t.Fatalf("expected empty head outside a git repo, got %q", head)
 	}
 }
+
+func TestPushToServerUnreachableHint(t *testing.T) {
+	// Nothing listens on this port.
+	_, _, err := PushToServer(context.Background(), "http://127.0.0.1:1", "", "ws", "main", cliRepo(t))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "skopos index build") {
+		t.Fatalf("error should hint at the local-only alternative: %v", msg)
+	}
+}
