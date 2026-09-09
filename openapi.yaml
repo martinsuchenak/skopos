@@ -195,15 +195,18 @@ paths:
         "400": { description: Invalid input, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { description: Unauthorized }
     get:
-      summary: Read the knowledge bundle (entries + markdown)
+      summary: Read the knowledge bundle (entries + markdown), or search when q/entry_type/author is present
       operationId: blackboardRead
       parameters:
         - { name: workspace_id, in: query, schema: { type: string } }
         - { name: branch, in: query, schema: { type: string } }
         - { name: session_id, in: query, schema: { type: string } }
+        - { name: q, in: query, description: "Text search (matches title or content); presence of this, entry_type, or author switches to search mode", schema: { type: string } }
+        - { name: entry_type, in: query, description: "Filter by type: finding, decision, bug, debt, warning, context", schema: { type: string } }
+        - { name: author, in: query, description: Filter by author agent ID, schema: { type: string } }
       responses:
         "200":
-          description: Knowledge bundle
+          description: Knowledge bundle, or `{ entries, total }` search results when a search filter is present
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BlackboardBundle" }

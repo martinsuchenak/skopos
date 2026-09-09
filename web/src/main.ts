@@ -61,6 +61,7 @@ window.app = () => ({
   streamRetryDelay: 2000,
   streamRetryTimer: null as ReturnType<typeof setTimeout> | null,
   pollTimer: null as ReturnType<typeof setInterval> | null,
+  pollInterval: 0,
 
   // modal: write entry
   showEntryModal: false, entrySaving: false,
@@ -94,8 +95,11 @@ window.app = () => ({
 
   // SSE with polling fallback. On error the EventSource is closed (not left to
   // auto-reconnect every 3s), polling takes over, and SSE retries with backoff.
+  // While connected, a slow reconciliation poll keeps running: the server drops
+  // events when a subscriber's buffer is full, so this bounds how stale the UI
+  // can get from a missed event.
   openEventStream() {
-    if (typeof EventSource === 'undefined') { this.startPolling(); return; }
+    if (typeof EventSource === 'undefined') { this.startPolling(5000); return; }
     this.connectSSE();
   },
   connectSSE() {
@@ -104,14 +108,14 @@ window.app = () => ({
     es.onopen = () => {
       this.streamConnected = true;
       this.streamRetryDelay = 2000; // reset backoff
-      this.stopPolling();
+      this.startPolling(30000); // slow reconciliation while connected
       this.refresh();
     };
     es.onerror = () => {
       this.streamConnected = false;
       es.close(); // prevent the browser's 3s auto-reconnect spam
       this.es = null;
-      this.startPolling(); // keep data fresh while SSE is down
+      this.startPolling(5000); // fast poll while SSE is down
       this.streamRetryDelay = Math.min((this.streamRetryDelay ?? 2000) * 2, 60000);
       clearTimeout(this.streamRetryTimer ?? undefined);
       this.streamRetryTimer = setTimeout(() => this.connectSSE(), this.streamRetryDelay);
@@ -122,12 +126,15 @@ window.app = () => ({
     es.addEventListener('workspaces', () => this.fetchWorkspaces());
     es.addEventListener('change', () => this.refresh());
   },
-  startPolling() {
-    if (this.pollTimer) return;
-    this.pollTimer = setInterval(() => this.refresh(), 5000);
+  startPolling(interval: number) {
+    if (this.pollTimer && this.pollInterval === interval) return;
+    this.stopPolling();
+    this.pollInterval = interval;
+    this.pollTimer = setInterval(() => this.refresh(), interval);
   },
   stopPolling() {
     if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
+    this.pollInterval = 0;
   },
 
   anyModalOpen() {

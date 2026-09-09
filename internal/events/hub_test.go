@@ -40,3 +40,38 @@ func TestHubPublishDoesNotBlockWhenFull(t *testing.T) {
 		h.Publish(Event{Type: "x"})
 	}
 }
+
+func TestHubCloseClosesSubscribers(t *testing.T) {
+	h := NewHub()
+	ch, unsub := h.Subscribe()
+	defer unsub()
+
+	h.Close()
+	if ev, ok := <-ch; ok {
+		t.Fatalf("expected channel to be closed, got %v", ev)
+	}
+}
+
+func TestHubPublishAfterCloseIsNoop(t *testing.T) {
+	h := NewHub()
+	ch, unsub := h.Subscribe()
+	defer unsub()
+	h.Close()
+	// Drain the closed-channel marker, if any.
+	for range ch {
+	}
+
+	h.Publish(Event{Type: "x"}) // must not panic
+	h.Close()                   // second close is a no-op
+}
+
+func TestHubSubscribeAfterClose(t *testing.T) {
+	h := NewHub()
+	h.Close()
+
+	ch, unsub := h.Subscribe()
+	defer unsub()
+	if ev, ok := <-ch; ok {
+		t.Fatalf("expected already-closed channel, got %v", ev)
+	}
+}

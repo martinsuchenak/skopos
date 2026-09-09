@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/db"
+	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/paularlott/logger"
 	_ "modernc.org/sqlite"
 )
@@ -50,9 +51,37 @@ func seedAgentState(t *testing.T, sqlDB *sql.DB, sessionID, agentID, agentType, 
 }
 
 func checkerAt(sqlDB *sql.DB, now time.Time) *Checker {
-	c := NewChecker(sqlDB, time.Minute, logger.NewNullLogger())
+	c := NewChecker(sqlDB, time.Minute, logger.NewNullLogger(), nil)
 	c.now = func() time.Time { return now }
 	return c
+}
+
+// TestCheckerPublishesEventOnStuckAgent verifies out-of-band stuck/orphaned
+// transitions notify SSE clients.
+func TestCheckerPublishesEventOnStuckAgent(t *testing.T) {
+	sqlDB := testDB(t)
+	now := time.Date(2026, 5, 12, 10, 0, 0, 0, time.UTC)
+	stale := now.Add(-10 * time.Minute).Format(time.RFC3339Nano)
+	seedAgentState(t, sqlDB, "s1", "a1", "codex", "running", "running", stale)
+
+	hub := events.NewHub()
+	ch, unsub := hub.Subscribe()
+	defer unsub()
+
+	c := NewChecker(sqlDB, time.Minute, logger.NewNullLogger(), hub)
+	c.now = func() time.Time { return now }
+	if err := c.check(context.Background()); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+
+	select {
+	case ev := <-ch:
+		if ev.Type != "sessions" {
+			t.Fatalf("expected sessions event, got %q", ev.Type)
+		}
+	default:
+		t.Fatal("expected a sessions event after marking an agent stuck")
+	}
 }
 
 func TestCheckerMarksStaleActiveAgentStuck(t *testing.T) {

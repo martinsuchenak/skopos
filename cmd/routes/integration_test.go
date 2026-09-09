@@ -93,6 +93,13 @@ func TestIntegrationReportAndBlackboard(t *testing.T) {
 	}
 	resp.Body.Close()
 
+	// write a second, distinct entry so search filters can discriminate
+	resp, _ = http.Post(ts.URL+"/api/blackboard/entries", "application/json", strings.NewReader(`{"scope":"project","entry_type":"decision","title":"use sqlite","author_agent_id":"a1"}`))
+	if resp.StatusCode != 201 {
+		t.Fatalf("blackboard write 2: expected 201, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
 	// read blackboard
 	resp, _ = http.Get(ts.URL + "/api/blackboard/entries")
 	if resp.StatusCode != 200 {
@@ -101,19 +108,36 @@ func TestIntegrationReportAndBlackboard(t *testing.T) {
 	var bundle blackboard.Bundle
 	json.NewDecoder(resp.Body).Decode(&bundle)
 	resp.Body.Close()
-	if len(bundle.Entries) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(bundle.Entries))
+	if len(bundle.Entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(bundle.Entries))
 	}
 
-	// search blackboard
-	resp, _ = http.Get(ts.URL + "/api/blackboard/entries?q=finding")
-	if resp.StatusCode != 200 {
-		t.Fatalf("blackboard search: expected 200, got %d", resp.StatusCode)
+	// search blackboard: q/entry_type/author switch the endpoint into search mode
+	searchCases := []struct {
+		query string
+		want  int
+	}{
+		{"q=finding", 1},
+		{"q=nomatch", 0},
+		{"entry_type=decision", 1},
+		{"author=a1", 2},
 	}
-	json.NewDecoder(resp.Body).Decode(&bundle)
-	resp.Body.Close()
-	if len(bundle.Entries) != 1 {
-		t.Fatalf("search 'finding': expected 1, got %d", len(bundle.Entries))
+	for _, tc := range searchCases {
+		resp, _ = http.Get(ts.URL + "/api/blackboard/entries?" + tc.query)
+		if resp.StatusCode != 200 {
+			t.Fatalf("search %s: expected 200, got %d", tc.query, resp.StatusCode)
+		}
+		var result struct {
+			Entries []blackboard.Entry `json:"entries"`
+			Total   int                `json:"total"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			t.Fatalf("search %s: decode: %v", tc.query, err)
+		}
+		resp.Body.Close()
+		if len(result.Entries) != tc.want || result.Total != tc.want {
+			t.Fatalf("search %s: expected %d entries, got %d (total %d)", tc.query, tc.want, len(result.Entries), result.Total)
+		}
 	}
 }
 

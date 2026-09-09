@@ -125,18 +125,20 @@ func serveCmd() *cli.Command {
 			ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 
+			// Created before the background workers so they can publish events
+			// for their out-of-band mutations.
+			hub := events.NewHub()
+
 			stuckThreshold := cmd.GetInt("health-stuck-threshold")
 			if stuckThreshold > 0 {
-				health.NewChecker(sqlDB, time.Duration(stuckThreshold)*time.Minute, log).Start(ctx)
+				health.NewChecker(sqlDB, time.Duration(stuckThreshold)*time.Minute, log, hub).Start(ctx)
 			}
 			retentionDays := cmd.GetInt("cleanup-retention-days")
 			if retentionDays > 0 {
 				cleanupRetention := time.Duration(retentionDays) * 24 * time.Hour
-				cleanup.NewCleaner(sqlDB, cleanupRetention, log).Start(ctx)
+				cleanup.NewCleaner(sqlDB, cleanupRetention, log, hub).Start(ctx)
 			}
 			// go-scaffolder:serve-init
-
-			hub := events.NewHub()
 
 			mux := http.NewServeMux()
 			routes.RegisterRoutes(mux, statusHandler, blackboardHandler, plansHandler, workspacesHandler)
@@ -166,6 +168,9 @@ func serveCmd() *cli.Command {
 				WriteTimeout:      30 * time.Second, // SSE handler clears this per-request
 				IdleTimeout:       120 * time.Second,
 			}
+			// Closing the hub ends open SSE streams, so Shutdown() can complete
+			// promptly instead of waiting out its timeout on live connections.
+			httpServer.RegisterOnShutdown(hub.Close)
 
 			httpErr := make(chan error, 1)
 			go func() {

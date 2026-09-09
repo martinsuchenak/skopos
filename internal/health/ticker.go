@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/paularlott/logger"
+
+	"github.com/martinsuchenak/skopos/internal/events"
 )
 
 type Checker struct {
@@ -16,15 +18,17 @@ type Checker struct {
 	interval  time.Duration
 	now       func() time.Time
 	log       logger.Logger
+	hub       *events.Hub
 }
 
-func NewChecker(db *sql.DB, threshold time.Duration, log logger.Logger) *Checker {
+func NewChecker(db *sql.DB, threshold time.Duration, log logger.Logger, hub *events.Hub) *Checker {
 	return &Checker{
 		db:        db,
 		threshold: threshold,
 		interval:  60 * time.Second,
 		now:       time.Now,
 		log:       log,
+		hub:       hub,
 	}
 }
 
@@ -103,7 +107,7 @@ func (c *Checker) check(ctx context.Context) error {
 		}
 	}
 
-	if _, err := tx.ExecContext(ctx, `
+	orphaned, err := tx.ExecContext(ctx, `
 		UPDATE sessions
 		SET status = 'orphaned', updated_at = ?
 		WHERE status NOT IN ('succeeded', 'failed', 'cancelled', 'orphaned')
@@ -115,11 +119,26 @@ func (c *Checker) check(ctx context.Context) error {
 			WHERE agent_states.session_id = sessions.id
 			AND agent_states.status NOT IN ('stuck', 'succeeded', 'failed', 'cancelled', 'handoff')
 		)
-	`, now); err != nil {
+	`, now)
+	if err != nil {
 		return fmt.Errorf("marking orphaned sessions: %w", err)
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// These are mutations the request-scoped middleware never sees: let SSE
+	// clients know the sessions view changed.
+	if (len(stale) > 0 || affected(orphaned)) && c.hub != nil {
+		c.hub.Publish(events.Event{Type: "sessions"})
+	}
+	return nil
+}
+
+func affected(res sql.Result) bool {
+	n, err := res.RowsAffected()
+	return err == nil && n > 0
 }
 
 func formatTime(t time.Time) string {

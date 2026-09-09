@@ -54,7 +54,7 @@ func cleanupCmd() *cli.Command {
 			}
 
 			retention := time.Duration(cmd.GetInt("retention-days")) * 24 * time.Hour
-			cleaner := cleanup.NewCleaner(sqlDB, retention, log)
+			cleaner := cleanup.NewCleaner(sqlDB, retention, log, nil) // one-shot CLI run: no SSE clients to notify
 			fmt.Printf("Cleaning up data older than %d days...\n", cmd.GetInt("retention-days"))
 			if err := cleaner.RunOnce(ctx); err != nil {
 				return err

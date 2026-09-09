@@ -95,3 +95,35 @@ func TestStreamHandlerEmitsEvents(t *testing.T) {
 		t.Errorf("expected text/event-stream content-type, got %q", ct)
 	}
 }
+
+// TestServerShutdownClosesStreams mirrors the cmd.serve wiring — an HTTP server
+// with RegisterOnShutdown(hub.Close) must be able to shut down promptly while an
+// SSE client is connected, because closing the hub ends the stream handler.
+func TestServerShutdownClosesStreams(t *testing.T) {
+	h := NewHub()
+	ts := httptest.NewServer(StreamHandler(h))
+	ts.Config.RegisterOnShutdown(h.Close)
+	defer ts.Close()
+
+	resp, err := ts.Client().Get(ts.URL)
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// The server's Shutdown only returns once the stream handler exits; without
+	// the hub close it would block until the shutdown context deadline.
+	shutdownDone := make(chan error, 1)
+	go func() {
+		shutdownDone <- ts.Config.Shutdown(context.Background())
+	}()
+
+	select {
+	case err := <-shutdownDone:
+		if err != nil {
+			t.Fatalf("shutdown: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Shutdown blocked on the open SSE stream — hub close was not registered or did not end it")
+	}
+}

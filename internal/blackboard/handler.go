@@ -46,11 +46,35 @@ func (h *Handler) WriteEntry(w http.ResponseWriter, r *http.Request) {
 	rest.RespondJSON(w, http.StatusCreated, result)
 }
 
-// ReadBundle handles GET /api/blackboard/entries.
+// ReadBundle handles GET /api/blackboard/entries. Without search filters it
+// returns the knowledge bundle; with q, entry_type, or author present it
+// searches instead, mirroring the blackboard_read MCP tool.
 func (h *Handler) ReadBundle(w http.ResponseWriter, r *http.Request) {
 	workspaceID := rest.QueryAlias(r, "workspace_id", "workspace")
 	branchName := r.URL.Query().Get("branch")
 	sessionID := r.URL.Query().Get("session_id")
+	entryType := r.URL.Query().Get("entry_type")
+	author := r.URL.Query().Get("author")
+	query := r.URL.Query().Get("q")
+
+	if entryType != "" || author != "" || query != "" {
+		entries, err := h.service.Search(r.Context(), SearchFilters{
+			WorkspaceID:   workspaceID,
+			BranchName:    branchName,
+			EntryType:     entryType,
+			AuthorAgentID: author,
+			Query:         query,
+		})
+		if err != nil {
+			rest.InternalError(w, err)
+			return
+		}
+		if entries == nil {
+			entries = []Entry{}
+		}
+		rest.RespondJSON(w, http.StatusOK, map[string]any{"entries": entries, "total": len(entries)})
+		return
+	}
 
 	bundle, err := h.service.Bundle(r.Context(), workspaceID, branchName, sessionID)
 	if err != nil {

@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/paularlott/logger"
+
+	"github.com/martinsuchenak/skopos/internal/events"
 )
 
 type Cleaner struct {
@@ -14,14 +16,16 @@ type Cleaner struct {
 	retention time.Duration
 	interval  time.Duration
 	log       logger.Logger
+	hub       *events.Hub
 }
 
-func NewCleaner(db *sql.DB, retention time.Duration, log logger.Logger) *Cleaner {
+func NewCleaner(db *sql.DB, retention time.Duration, log logger.Logger, hub *events.Hub) *Cleaner {
 	return &Cleaner{
 		db:        db,
 		retention: retention,
 		interval:  10 * time.Minute,
 		log:       log,
+		hub:       hub,
 	}
 }
 
@@ -91,6 +95,20 @@ func (c *Cleaner) clean(ctx context.Context) error {
 			"plans", plansDeleted,
 			"agents", agentsDeleted,
 		)
+	}
+
+	// These deletions bypass the request-scoped middleware; tell SSE clients
+	// which views changed.
+	if c.hub != nil {
+		if eventsDeleted > 0 || sessionsDeleted > 0 || agentsDeleted > 0 {
+			c.hub.Publish(events.Event{Type: "sessions"})
+		}
+		if bbDeleted > 0 {
+			c.hub.Publish(events.Event{Type: "blackboard"})
+		}
+		if plansDeleted > 0 {
+			c.hub.Publish(events.Event{Type: "plans"})
+		}
 	}
 
 	return nil

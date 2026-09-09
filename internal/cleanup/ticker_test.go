@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/db"
+	"github.com/martinsuchenak/skopos/internal/events"
 	_ "modernc.org/sqlite"
 )
 
@@ -53,7 +54,7 @@ func TestCleanerRunOnce(t *testing.T) {
 		t.Fatalf("insert event: %v", err)
 	}
 
-	cleaner := NewCleaner(db, 24*time.Hour, nil)
+	cleaner := NewCleaner(db, 24*time.Hour, nil, nil)
 	if err := cleaner.RunOnce(ctx); err != nil {
 		t.Fatalf("clean: %v", err)
 	}
@@ -70,5 +71,44 @@ func TestCleanerRunOnce(t *testing.T) {
 	db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents`).Scan(&count)
 	if count != 0 {
 		t.Errorf("expected 0 agents, got %d", count)
+	}
+}
+
+// TestCleanerPublishesEvents verifies out-of-band deletions notify SSE clients
+// for the views they affect.
+func TestCleanerPublishesEvents(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	old := time.Now().UTC().Add(-48 * time.Hour).Format(time.RFC3339Nano)
+
+	if _, err := db.ExecContext(ctx, `INSERT INTO sessions (id, title, workspace, status, started_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		"s1", "Test", "/repo", "orphaned", old, old); err != nil {
+		t.Fatalf("insert session: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO agents (id, type, workspace, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, ?)`,
+		"a1", "test", "/repo", old, old); err != nil {
+		t.Fatalf("insert agent: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO events (id, session_id, agent_id, agent_type, workspace, status, message, snippet, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"e1", "s1", "a1", "test", "/repo", "running", "msg", "", "{}", old); err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+
+	hub := events.NewHub()
+	ch, unsub := hub.Subscribe()
+	defer unsub()
+
+	cleaner := NewCleaner(db, 24*time.Hour, nil, hub)
+	if err := cleaner.RunOnce(ctx); err != nil {
+		t.Fatalf("clean: %v", err)
+	}
+
+	select {
+	case ev := <-ch:
+		if ev.Type != "sessions" {
+			t.Fatalf("expected sessions event, got %q", ev.Type)
+		}
+	default:
+		t.Fatal("expected a sessions event after deleting old sessions/events")
 	}
 }
