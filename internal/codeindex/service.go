@@ -259,21 +259,33 @@ func (s *Service) DropWorkspace(ctx context.Context, workspace string) error {
 // Build parses every supported file under root, returning the file results
 // and the git HEAD sha of that checkout ("" when git is unavailable).
 func Build(ctx context.Context, ex *parse.Extractor, root, branch string) ([]*parse.FileResult, string, error) {
+	return BuildWithProgress(ctx, ex, root, branch, nil)
+}
+
+// BuildWithProgress is Build with a progress callback: report is invoked
+// after each file parses, carrying files done / total found.
+func BuildWithProgress(ctx context.Context, ex *parse.Extractor, root, branch string, report func(done, total int)) ([]*parse.FileResult, string, error) {
 	files, err := parse.Walk(root)
 	if err != nil {
 		return nil, "", err
 	}
+	if report != nil {
+		report(0, len(files))
+	}
 	out := make([]*parse.FileResult, 0, len(files))
 	for _, f := range files {
-		res, err := ex.ParseFile(f)
-		if err != nil {
+		res, perr := ex.ParseFile(f)
+		if perr != nil {
 			continue // unreadable file: skip, keep going
 		}
 		// Store paths relative to the indexed root so the index is portable.
-		if rel, err := filepath.Rel(root, res.Path); err == nil {
+		if rel, rerr := filepath.Rel(root, res.Path); rerr == nil {
 			res.Path = rel
 		}
 		out = append(out, res)
+		if report != nil {
+			report(len(out), len(files))
+		}
 	}
 	head := gitHead(root)
 	return out, head, nil

@@ -251,3 +251,24 @@ func TestManifestNegotiation(t *testing.T) {
 		t.Fatalf("expected the changed hash missing, got %v", missing)
 	}
 }
+
+func TestBuildWithProgressReports(t *testing.T) {
+	root := writeRepo(t)
+	var calls int
+	var lastDone, lastTotal int
+	results, _, err := BuildWithProgress(context.Background(), parse.NewExtractor(), root, "main",
+		func(done, total int) { calls++; lastDone, lastTotal = done, total })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 {
+		t.Fatal("no results")
+	}
+	// Initial call (0/total) plus one per file; the final call is done==total.
+	if calls < len(results)+1 {
+		t.Fatalf("calls=%d, want >= %d", calls, len(results)+1)
+	}
+	if lastDone != lastTotal || lastTotal != len(results) {
+		t.Fatalf("final progress %d/%d, results %d", lastDone, lastTotal, len(results))
+	}
+}

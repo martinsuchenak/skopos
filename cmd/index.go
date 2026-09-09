@@ -89,7 +89,8 @@ func indexBuildCmd() *cli.Command {
 			}
 			defer store.Close()
 
-			results, head, err := codeindex.Build(ctx, parse.NewExtractor(), root, branch)
+			buildReport, _ := progressPrinter(200)
+			results, head, err := codeindex.BuildWithProgress(ctx, parse.NewExtractor(), root, branch, buildReport)
 			if err != nil {
 				return err
 			}
@@ -159,12 +160,53 @@ func isUnreachable(err error) bool {
 	return false
 }
 
+// progressPrinter returns a progress callback that renders an inline
+// single-line update on terminals (\r overwrite) and sparse plain lines when
+// redirected, staying quiet for small repos. It finishes with a newline.
+func progressPrinter(quietBelow int) (func(done, total int), func()) {
+	if !isTerminal(os.Stderr) {
+		// Non-interactive: print a line every 1000 files so logs show life.
+		return func(done, total int) {
+			if done > 0 && done%1000 == 0 {
+				fmt.Fprintf(os.Stderr, "indexed %d/%d files\n", done, total)
+			}
+		}, func() {}
+	}
+	start := time.Now()
+	var last time.Time
+	report := func(done, total int) {
+		if total > 0 && total <= quietBelow {
+			return
+		}
+		now := time.Now()
+		if done != total && now.Sub(last) < 100*time.Millisecond && done%(total/50+1) != 0 {
+			return // throttle redraws
+		}
+		last = now
+		elapsed := now.Sub(start).Round(time.Millisecond)
+		fmt.Fprintf(os.Stderr, "\rindexed %d/%d files (%.1fs)", done, total, elapsed.Seconds())
+		if done == total {
+			fmt.Fprintln(os.Stderr)
+		}
+	}
+	return report, func() {}
+}
+
+func isTerminal(f *os.File) bool {
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}
+
 // PushToServer builds a checkout and pushes its branch index through the
 // three-step protocol: manifest (which blobs does the server need), blobs
 // (ndjson upload of just the missing ones), commit (atomic branch pointer).
 // Returns (uploaded, total).
 func PushToServer(ctx context.Context, serverURL, apiKey, workspace, branch, root string) (int, int, error) {
-	results, head, err := codeindex.Build(ctx, parse.NewExtractor(), root, branch)
+	pushReport, _ := progressPrinter(200)
+	results, head, err := codeindex.BuildWithProgress(ctx, parse.NewExtractor(), root, branch, pushReport)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -358,6 +400,7 @@ func indexRefreshCmd() *cli.Command {
 			if !cmd.GetBool("wait") {
 				return nil
 			}
+			var lastProgress string
 			for {
 				state, err := getJSON[codeindex.RefreshState](ctx, serverURL, apiKey,
 					fmt.Sprintf("/api/codeindex/%s/refresh", url.PathEscape(workspace)))
@@ -370,6 +413,10 @@ func indexRefreshCmd() *cli.Command {
 					}
 					fmt.Println("refresh complete")
 					return nil
+				}
+				if state.Progress != "" && state.Progress != lastProgress {
+					fmt.Printf("\rrefreshing: %s", state.Progress)
+					lastProgress = state.Progress
 				}
 				select {
 				case <-ctx.Done():

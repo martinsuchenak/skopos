@@ -8,18 +8,21 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/codeindex/parse"
 )
 
 // RefreshState tracks the asynchronous server-side build for one workspace.
+// Progress is written atomically while Building (files done/total).
 type RefreshState struct {
 	Building     bool   `json:"building"`
 	Branch       string `json:"branch,omitempty"`
 	LastError    string `json:"last_error,omitempty"`
 	LastStarted  string `json:"last_started,omitempty"`
 	LastFinished string `json:"last_finished,omitempty"`
+	Progress     string `json:"progress,omitempty"` // "1234/5678 files"
 }
 
 // Refresher builds workspace indexes server-side by cloning/pulling the
@@ -107,7 +110,7 @@ func (r *Refresher) Start(ctx context.Context, workspace, branch string) error {
 		return fmt.Errorf("%w: a refresh is already running for %s", ErrInvalidInput, workspace)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	r.states[workspace] = &RefreshState{Building: true, Branch: branch, LastStarted: now}
+	r.states[workspace] = &RefreshState{Building: true, Branch: branch, LastStarted: now, Progress: "cloning"}
 	r.mu.Unlock()
 
 	go func() {
@@ -121,14 +124,31 @@ func (r *Refresher) Start(ctx context.Context, workspace, branch string) error {
 
 func (r *Refresher) run(ctx context.Context, workspace, branch, gitURL string) RefreshState {
 	s := RefreshState{Branch: branch, LastStarted: time.Now().UTC().Format(time.RFC3339)}
-	defer func() { s.LastFinished = time.Now().UTC().Format(time.RFC3339) }()
+	var progress atomic.Value // string
+	setProgress := func(txt string) {
+		progress.Store(txt)
+		r.mu.Lock()
+		if cur, ok := r.states[workspace]; ok && cur.Building {
+			cur.Progress = txt
+		}
+		r.mu.Unlock()
+	}
+	defer func() {
+		s.LastFinished = time.Now().UTC().Format(time.RFC3339)
+		if p, ok := progress.Load().(string); ok {
+			s.Progress = p
+		}
+	}()
 
 	checkout, err := r.syncCheckout(gitURL, branch)
 	if err != nil {
 		s.LastError = err.Error()
 		return s
 	}
-	results, head, err := Build(ctx, parse.NewExtractor(), checkout, branch)
+	setProgress("0/? files")
+	results, head, err := BuildWithProgress(ctx, parse.NewExtractor(), checkout, branch, func(done, total int) {
+		setProgress(fmt.Sprintf("%d/%d files", done, total))
+	})
 	if err != nil {
 		s.LastError = err.Error()
 		return s
