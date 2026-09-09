@@ -52,7 +52,7 @@ func runSetup(ctx context.Context, in *bufio.Reader, configDir string) error {
 ============
 This configures how the code index commands talk to skopos.
 
-  1) Local only   — index into ./indexes in this repo, no server needed
+  1) Local only   — index into .skopos/indexes in this repo, no server needed
   2) Remote       — push to and query a central skopos server (URL + API key)
 
 `)
