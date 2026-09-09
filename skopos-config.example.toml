@@ -33,7 +33,7 @@ retention_days = 30
 [codeindex]
 # Directory for per-workspace code index databases. Server-side refresh
 # checkouts live under <dir>/checkouts/.
-dir = "indexes"
+dir = ".skopos/indexes"
 
 [codeindex.embeddings]
 # Semantic code search — optional, disabled by default.

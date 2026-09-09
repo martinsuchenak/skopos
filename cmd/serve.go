@@ -81,7 +81,7 @@ func serveCmd() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:         "index-dir",
-				DefaultValue: "indexes",
+				DefaultValue: ".skopos/indexes",
 				Usage:        "Directory for per-workspace code index databases",
 				ConfigPath:   []string{"codeindex.dir"},
 				EnvVars:      []string{"SKOPOS_INDEX_DIR"},

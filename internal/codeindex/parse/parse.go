@@ -296,6 +296,7 @@ var DefaultExcludes = map[string]bool{
 	"bin": true, "build": true, "out": true, "target": true, ".cache": true,
 	"__pycache__": true, ".venv": true, "venv": true, ".idea": true, ".vscode": true,
 	".yarn": true, ".next": true, ".nuxt": true, "coverage": true, "__snapshots__": true,
+	".skopos": true,
 }
 
 // MaxFileSize skips files larger than this (bundled/minified artifacts like

@@ -12,7 +12,7 @@ skopos setup
 ```
 
 Choose **1) Local only**. The wizard detects the workspace ID from your git
-remote (or asks), indexes the repo into `./indexes`, and prints example
+remote (or asks), indexes the repo into `.skopos/indexes`, and prints
 commands.
 
 Prefer to do it by hand? The whole local setup is one command:
@@ -23,7 +23,7 @@ skopos index build            # or: skopos index build /path/to/repo
 
 ## 2. Daily use
 
-All query commands run from the repo root and read `./indexes` automatically:
+All query commands run from the repo root and read `.skopos/indexes` automatically:
 
 ```sh
 skopos search loadconfig        # symbol search; camelCase is split, so
@@ -40,7 +40,7 @@ skopos cycles                   # cycles in the call graph
 
 Options every query accepts: `--workspace <id>` (default: the git remote),
 `--branch <name>` (default: the default branch), `--index-dir <dir>`
-(default: `./indexes`).
+(default: `.skopos/indexes`).
 
 ## 3. Keeping the index fresh
 
@@ -68,7 +68,7 @@ skopos index import bundle.ndjson       # restore elsewhere
 skopos index drop-workspace             # delete the workspace's whole index
 ```
 
-`./indexes` is plain SQLite — commit it, copy it, or delete it freely. It is
+`.skopos/indexes` is plain SQLite — copy it or delete it freely. It is
 a derived artifact: deleting it never loses source data, just re-run
 `skopos index build`.
 

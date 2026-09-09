@@ -80,7 +80,7 @@ func setupLocal(ctx context.Context, in *bufio.Reader) error {
 		}
 	}
 
-	dir := prompt(in, "Local index directory", "indexes")
+	dir := prompt(in, "Local index directory", ".skopos/indexes")
 	store, err := codeindex.NewStore(dir)
 	if err != nil {
 		return err
@@ -104,7 +104,11 @@ func setupLocal(ctx context.Context, in *bufio.Reader) error {
 	for _, r := range results {
 		symbols += len(r.Symbols)
 	}
-	setupPrint("\nDone. Indexed %d files (%d symbols) into %s for %s@%s.\n\n", len(results), symbols, dir, workspace, branch)
+	setupPrint("\nDone. Indexed %d files (%d symbols) into %s for %s@%s.\n", len(results), symbols, dir, workspace, branch)
+	if _, err := os.Stat(".git"); err == nil {
+		setupPrint("Tip: add %s to .gitignore — it is a rebuildable local artifact.\n", dir)
+	}
+	setupPrint("\n")
 	printLocalExamples()
 	return nil
 }

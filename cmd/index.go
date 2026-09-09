@@ -63,7 +63,7 @@ func indexBuildCmd() *cli.Command {
 		Usage:   "Parse a checkout and build/refresh its branch index locally",
 		MaxArgs: 1,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "index-dir", DefaultValue: "indexes", ConfigPath: []string{"codeindex.dir"}, Usage: "Local index directory"},
+			&cli.StringFlag{Name: "index-dir", DefaultValue: ".skopos/indexes", ConfigPath: []string{"codeindex.dir"}, Usage: "Local index directory"},
 			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID (default: git remote of the checkout)"},
 			&cli.StringFlag{Name: "branch", Usage: "Branch (default: current git branch)"},
 		},
@@ -224,7 +224,7 @@ func indexStatusCmd() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "server-url", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}, Usage: "Remote skopos (omit for local index-dir)"},
 			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
-			&cli.StringFlag{Name: "index-dir", DefaultValue: "indexes", ConfigPath: []string{"codeindex.dir"}, Usage: "Local index directory (when no server-url)"},
+			&cli.StringFlag{Name: "index-dir", DefaultValue: ".skopos/indexes", ConfigPath: []string{"codeindex.dir"}, Usage: "Local index directory (when no server-url)"},
 			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
@@ -273,7 +273,7 @@ func indexDropCmd() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "server-url", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}, Usage: "Remote skopos (omit for local index-dir)"},
 			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
-			&cli.StringFlag{Name: "index-dir", DefaultValue: "indexes", ConfigPath: []string{"codeindex.dir"}, Usage: "Local index directory (when no server-url)"},
+			&cli.StringFlag{Name: "index-dir", DefaultValue: ".skopos/indexes", ConfigPath: []string{"codeindex.dir"}, Usage: "Local index directory (when no server-url)"},
 			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID"},
 			&cli.StringFlag{Name: "branch", Usage: "Branch to drop"},
 		},
@@ -386,7 +386,7 @@ func indexExportCmd() *cli.Command {
 		Name:  "export",
 		Usage: "Export a workspace's index (or one branch) as a portable ndjson bundle",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "index-dir", DefaultValue: "indexes", ConfigPath: []string{"codeindex.dir"}, Usage: "Local index directory"},
+			&cli.StringFlag{Name: "index-dir", DefaultValue: ".skopos/indexes", ConfigPath: []string{"codeindex.dir"}, Usage: "Local index directory"},
 			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID"},
 			&cli.StringFlag{Name: "branch", Usage: "Export only this branch (default: all)"},
 			&cli.StringFlag{Name: "out", Usage: "Output file (default: stdout)"},
@@ -425,7 +425,7 @@ func indexImportCmd() *cli.Command {
 		Usage:   "Import an ndjson index bundle into a local index",
 		MinArgs: 1, MaxArgs: 1,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "index-dir", DefaultValue: "indexes", ConfigPath: []string{"codeindex.dir"}, Usage: "Local index directory"},
+			&cli.StringFlag{Name: "index-dir", DefaultValue: ".skopos/indexes", ConfigPath: []string{"codeindex.dir"}, Usage: "Local index directory"},
 			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID to import as"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
@@ -463,7 +463,7 @@ func indexDropWorkspaceCmd() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "server-url", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}, Usage: "Remote skopos (omit for local index-dir)"},
 			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
-			&cli.StringFlag{Name: "index-dir", DefaultValue: "indexes", ConfigPath: []string{"codeindex.dir"}, Usage: "Local index directory (when no server-url)"},
+			&cli.StringFlag{Name: "index-dir", DefaultValue: ".skopos/indexes", ConfigPath: []string{"codeindex.dir"}, Usage: "Local index directory (when no server-url)"},
 			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
