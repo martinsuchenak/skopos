@@ -161,11 +161,21 @@ behind the API key when one is configured.
 
 ## Analysis notes
 
+Symbols nested in a type use **qualified names** (`Class::method`) in graph
+results, so same-named methods of different classes are distinct nodes; a
+bare name in a query (`who-calls validate`) matches every class's method and
+each result says which class it belongs to. Graph results always include the
+`file:line` of the call site, and `impact` entries carry the definition
+location of each affected symbol.
+
 Call edges are **name-based**: the indexer records which names each
-definition references, without resolving types. Calls through interfaces,
-dynamic dispatch, callbacks, and reflection are therefore invisible to the
-graph. The tools are accurate about what they can see and honest about the
-rest — treat `dead-code` and `cycles` as leads to verify, not verdicts.
+definition references, without resolving types. Calls through `$this`/`self`/
+`static` are qualified with the enclosing class; calls on other objects keep
+the bare method name (the receiver's type is not knowable syntactically), and
+calls through interfaces, dynamic dispatch, callbacks, and reflection are
+invisible to the graph. The tools are accurate about what they can see and
+honest about the rest — treat `dead-code` and `cycles` as leads to verify,
+not verdicts.
 
 ## Semantic search (optional, off by default)
 

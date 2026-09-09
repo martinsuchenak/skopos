@@ -117,13 +117,33 @@ class Button implements Widget {
 			t.Fatalf("missing symbol %q in %+v", want, res.Symbols)
 		}
 	}
-	// Call edges: render calls $this->escape (method_call_expression).
+	// Call edges are class-qualified: $this->escape -> Button::escape and
+	// Registry::log keeps its explicit class prefix. Same-named methods of
+	// different classes stay distinct graph nodes.
 	called := map[string]bool{}
+	qualifiedCallers := map[string]bool{}
 	for _, e := range res.Edges {
 		called[e.Callee] = true
+		qualifiedCallers[e.Caller] = true
 	}
-	if !called["escape"] {
-		t.Fatalf("PHP method call edge to escape missing: %+v", res.Edges)
+	if !called["Button::escape"] {
+		t.Fatalf("qualified $this->edge missing: %+v", res.Edges)
+	}
+	if !called["Registry::log"] {
+		t.Fatalf("scoped Class::method edge missing: %+v", res.Edges)
+	}
+	if !qualifiedCallers["Button::render"] {
+		t.Fatalf("qualified caller missing: %+v", res.Edges)
+	}
+	// Symbols carry both names.
+	qual := map[string]string{}
+	for _, sym := range res.Symbols {
+		if sym.Qual != "" {
+			qual[sym.Name] = sym.Qual
+		}
+	}
+	if qual["render"] != "Button::render" || qual["escape"] != "Button::escape" {
+		t.Fatalf("symbol qualification: %+v", qual)
 	}
 }
 

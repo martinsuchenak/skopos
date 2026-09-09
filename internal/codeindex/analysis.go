@@ -67,6 +67,10 @@ func (s *Service) Dead(ctx context.Context, workspace, branch string, limit int)
 }
 
 func isDeadExcluded(name, kind string) bool {
+	// Check the short name (after Class:: qualification).
+	if i := strings.LastIndex(name, "::"); i >= 0 {
+		name = name[i+2:]
+	}
 	for _, p := range deadExcludedPrefixes {
 		if strings.HasPrefix(name, p) {
 			return true

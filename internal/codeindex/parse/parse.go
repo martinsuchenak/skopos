@@ -21,9 +21,12 @@ import (
 // case was an 11s heredoc-heavy PHP file).
 const DefaultTimeout = 2 * time.Second
 
-// Symbol is a definition extracted from one file.
+// Symbol is a definition extracted from one file. Qual carries the
+// type-qualified name ("Class::method") for definitions nested in a type;
+// empty when the definition is top-level.
 type Symbol struct {
 	Name      string `json:"name"`
+	Qual      string `json:"qual,omitempty"`
 	Kind      string `json:"kind"` // func, method, class, interface, struct, type, enum, trait
 	Line      int    `json:"line"` // 1-based
 	StartByte int    `json:"start_byte"`
@@ -70,6 +73,13 @@ var defKinds = map[string]string{
 	"trait_item": "trait", "impl_item": "impl",
 }
 
+// containerKinds are defKinds values that open a type scope: definitions
+// nested inside them get qualified names (Class::method).
+var containerKinds = map[string]bool{
+	"class": true, "struct": true, "interface": true, "trait": true,
+	"enum": true, "impl": true, "module": true,
+}
+
 // identifierTypes are node types whose text is a symbol name.
 var identifierTypes = map[string]bool{
 	"identifier":           true,
@@ -99,7 +109,7 @@ var callTypes = map[string]bool{
 
 // ExtractorVersion changes whenever extraction logic changes; it is mixed
 // into the content hash so already-indexed files re-extract after upgrades.
-const ExtractorVersion = "2"
+const ExtractorVersion = "3"
 
 // Extractor parses files with a shared parser per language.
 type Extractor struct {
@@ -166,10 +176,11 @@ func (e *Extractor) ParseBytes(path string, src []byte) (*FileResult, error) {
 	res.Err = root.HasErrorOrMissing()
 
 	type frame struct {
-		node   *gts.Node
-		caller string
+		node     *gts.Node
+		caller   string // enclosing definition (qualified when nested in a type)
+		typeName string // enclosing type name, if any
 	}
-	stack := []frame{{root, ""}}
+	stack := []frame{{root, "", ""}}
 	for len(stack) > 0 {
 		f := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
@@ -180,6 +191,7 @@ func (e *Extractor) ParseBytes(path string, src []byte) (*FileResult, error) {
 		nt := n.Type(lang)
 
 		caller := f.caller
+		typeName := f.typeName
 		if kind, ok := defKinds[nt]; ok {
 			if kind == "type" {
 				// refine Go-style type specs: type X struct{...} / interface{...}
@@ -190,17 +202,28 @@ func (e *Extractor) ParseBytes(path string, src []byte) (*FileResult, error) {
 				}
 			}
 			if name, ok := childName(n, lang, src); ok && name != "_" {
+				qual := ""
+				if typeName != "" {
+					qual = typeName + "::" + name
+				}
 				sig := signature(src, int(n.StartByte()), int(n.EndByte()))
 				res.Symbols = append(res.Symbols, Symbol{
-					Name: name, Kind: kind,
+					Name: name, Qual: qual, Kind: kind,
 					Line:      int(n.StartPoint().Row) + 1,
 					StartByte: int(n.StartByte()), EndByte: int(n.EndByte()),
 					Signature: sig, Lang: res.Lang,
 				})
-				caller = name
+				if qual != "" {
+					caller = qual
+				} else {
+					caller = name
+				}
+				if containerKinds[kind] {
+					typeName = name // nested defs now qualify against this type
+				}
 			}
 		} else if callTypes[nt] {
-			if callee, ok := calleeName(n, lang, src); ok && callee != "" {
+			if callee, ok := calleeName(n, lang, src, typeName); ok && callee != "" {
 				res.Edges = append(res.Edges, Edge{
 					Caller: f.caller, Callee: callee, Kind: "call",
 					Line: int(n.StartPoint().Row) + 1,
@@ -211,7 +234,7 @@ func (e *Extractor) ParseBytes(path string, src []byte) (*FileResult, error) {
 		// push children in reverse so traversal is source order
 		k := n.ChildCount()
 		for i := k - 1; i >= 0; i-- {
-			stack = append(stack, frame{n.Child(i), caller})
+			stack = append(stack, frame{n.Child(i), caller, typeName})
 		}
 	}
 	return res, nil
@@ -250,31 +273,55 @@ func hasChildOfType(n *gts.Node, lang *gts.Language, typ string) bool {
 }
 
 // calleeName extracts the callee of a call node: prefer field "function",
-// else first identifier-ish descendant (bounded depth).
-func calleeName(n *gts.Node, lang *gts.Language, src []byte) (string, bool) {
-	// Method calls are (operand . name) under the "function" field: the
-	// rightmost identifier is the callee name (db.Ping -> Ping), so search
-	// named children from the right.
+// else first identifier-ish descendant (bounded depth). Calls through
+// $this/self/static/this are qualified with the enclosing type, and explicit
+// Class::method calls keep their class prefix, so same-named methods of
+// different types stay distinct graph nodes.
+func calleeName(n *gts.Node, lang *gts.Language, src []byte, typeName string) (string, bool) {
 	f := n
 	if fn := n.ChildByFieldName("function", lang); fn != nil {
 		f = fn
 	}
-	var last string
+	var last, first string
 	found := false
 	for i := 0; i < f.NamedChildCount(); i++ {
 		c := f.NamedChild(i)
-		if c != nil && identifierTypes[c.Type(lang)] {
+		if c == nil {
+			continue
+		}
+		ct := c.Type(lang)
+		if ct == "arguments" {
+			continue
+		}
+		// Object of a member/scoped access (variable_name, name, this...).
+		if !found && first == "" {
+			first = strings.TrimSpace(string(src[c.StartByte():c.EndByte()]))
+		}
+		if identifierTypes[ct] {
 			last = string(src[c.StartByte():c.EndByte()])
 			found = true
 		}
 	}
-	if found {
+	if !found {
+		if f != n && identifierTypes[f.Type(lang)] {
+			return string(src[f.StartByte():f.EndByte()]), true
+		}
+		return "", false
+	}
+	// Implicit dispatch on the current instance: qualify with the type.
+	switch strings.TrimPrefix(first, "$") {
+	case "this", "self", "static":
+		if typeName != "" {
+			return typeName + "::" + last, true
+		}
 		return last, true
 	}
-	if f != n && identifierTypes[f.Type(lang)] {
-		return string(src[f.StartByte():f.EndByte()]), true
+	// Explicit receiver that is itself a plain identifier (Class::method in
+	// PHP / Namespace.method elsewhere): keep the receiver as a prefix.
+	if first != "" && strings.Contains(string(src[n.StartByte():n.EndByte()]), first+"::"+last) {
+		return first + "::" + last, true
 	}
-	return "", false
+	return last, true
 }
 
 // signature returns the first source line of a definition, capped.

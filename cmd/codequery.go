@@ -317,7 +317,11 @@ func codeImpactCmd() *cli.Command {
 				return nil
 			}
 			for _, a := range res.Affected {
-				fmt.Printf("  depth %d  %s\n", a.Depth, a.Name)
+				if a.Path != "" {
+					fmt.Printf("  depth %d  %-44s %s:%d\n", a.Depth, a.Name, a.Path, a.Line)
+				} else {
+					fmt.Printf("  depth %d  %s\n", a.Depth, a.Name)
+				}
 			}
 			return nil
 		},

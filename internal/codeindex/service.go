@@ -180,13 +180,44 @@ func (s *Service) Impact(ctx context.Context, workspace, branch, name string, ma
 		return nil, err
 	}
 
-	visited := map[string]int{name: 0}
-	frontier := []string{name}
+	// Roots: the exact name plus, when the input is a bare method name, every
+	// qualified match (Class::name) — each is an independent traversal node.
+	db, err := s.store.DB(workspace)
+	if err != nil {
+		return nil, err
+	}
+	rootRows, err := db.Query(`
+		SELECT DISTINCT COALESCE(NULLIF(qual_name, ''), name)
+		FROM symbols
+		WHERE name = ? COLLATE NOCASE OR qual_name = ? COLLATE NOCASE`, name, name)
+	if err != nil {
+		return nil, err
+	}
+	var roots []string
+	for rootRows.Next() {
+		var r string
+		if err := rootRows.Scan(&r); err != nil {
+			rootRows.Close()
+			return nil, err
+		}
+		roots = append(roots, r)
+	}
+	rootRows.Close()
+	if len(roots) == 0 {
+		roots = []string{name}
+	}
+
+	visited := map[string]int{}
+	var frontier []string
+	for _, r := range roots {
+		visited[r] = 0
+		frontier = append(frontier, r)
+	}
 	var affected []ImpactNode
 	for depth := 1; depth <= maxDepth && len(frontier) > 0; depth++ {
 		var next []string
 		for _, cur := range frontier {
-			edges, err := s.store.Callers(workspace, resolved, cur, 200)
+			edges, err := s.store.exactCallers(db, resolved, cur, 200)
 			if err != nil {
 				return nil, err
 			}
@@ -204,6 +235,21 @@ func (s *Service) Impact(ctx context.Context, workspace, branch, name string, ma
 		}
 		frontier = next
 	}
+	// Attach each affected symbol's definition location (path:line).
+	if len(affected) > 0 {
+		names := make([]string, len(affected))
+		for i, a := range affected {
+			names[i] = a.Name
+		}
+		locs, err := s.definitionLocations(workspace, resolved, names)
+		if err == nil {
+			for i := range affected {
+				if loc, ok := locs[affected[i].Name]; ok {
+					affected[i].Path, affected[i].Line = loc.path, loc.line
+				}
+			}
+		}
+	}
 	sort.Slice(affected, func(i, j int) bool {
 		if affected[i].Depth != affected[j].Depth {
 			return affected[i].Depth < affected[j].Depth
@@ -216,10 +262,66 @@ func (s *Service) Impact(ctx context.Context, workspace, branch, name string, ma
 	}, nil
 }
 
-// ImpactNode is one transitively-affected symbol.
+type defLoc struct {
+	path string
+	line int
+}
+
+// definitionLocations batch-resolves name -> first definition (path, line)
+// on a branch; names without a match are absent from the result.
+func (s *Service) definitionLocations(workspace, branch string, names []string) (map[string]defLoc, error) {
+	db, err := s.store.DB(workspace)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]defLoc{}
+	const chunk = 100
+	for start := 0; start < len(names); start += chunk {
+		end := start + chunk
+		if end > len(names) {
+			end = len(names)
+		}
+		qmarks := make([]string, end-start)
+		args := make([]any, 0, end-start+1)
+		args = append(args, branch)
+		for i, n := range names[start:end] {
+			qmarks[i] = "?"
+			args = append(args, n)
+		}
+		rows, err := db.Query(`
+			SELECT COALESCE(NULLIF(s.qual_name,''), s.name), bf.path, s.line
+			FROM symbols s
+			JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
+			WHERE s.name IN (`+strings.Join(qmarks, ",")+`) OR s.qual_name IN (`+strings.Join(qmarks, ",")+`)
+			GROUP BY 1`, append(args, args[1:]...)...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var n, p string
+			var l int
+			if err := rows.Scan(&n, &p, &l); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			if _, seen := out[n]; !seen {
+				out[n] = defLoc{p, l}
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// ImpactNode is one transitively-affected symbol, with where it is defined.
 type ImpactNode struct {
 	Name  string `json:"name"`
 	Depth int    `json:"depth"`
+	Path  string `json:"path,omitempty"`
+	Line  int    `json:"line,omitempty"`
 }
 
 // ImpactResults is the transitive-caller set for a symbol.

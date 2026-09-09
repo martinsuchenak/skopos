@@ -176,3 +176,71 @@ func TestExportImportRoundTrip(t *testing.T) {
 		t.Fatalf("imported search: %+v", res.Hits)
 	}
 }
+
+func TestQualifiedNamesDisambiguateGraph(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "a.php"), []byte(`<?php
+class Alpha {
+  public function validate(): bool { return $this->check(); }
+  public function check(): bool { return true; }
+}
+`), 0o644)
+	os.WriteFile(filepath.Join(root, "b.php"), []byte(`<?php
+class Beta {
+  public function validate(): bool { return true; }
+  public function run(): void { $this->validate(); }
+}
+`), 0o644)
+	store := newTestStore(t)
+	buildInto(t, store, root, "main")
+	svc := NewService(store)
+	ctx := context.Background()
+
+	// who-calls validate: both classes' call sites, qualified per class.
+	res, err := svc.Callers(ctx, "ws", "main", "validate", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, e := range res.Edges {
+		seen[e.Caller+"/"+e.Callee] = true
+	}
+	if !seen["Beta::run/Beta::validate"] {
+		t.Fatalf("Beta::run -> Beta::validate missing: %+v", res.Edges)
+	}
+	// No caller of Alpha::validate exists (it is only called via $this? no —
+	// nothing calls Alpha::validate), so it must NOT appear as an impact root
+	// with callers, while Beta::validate has run.
+	impact, err := svc.Impact(ctx, "ws", "main", "validate", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, a := range impact.Affected {
+		names[a.Name] = true
+		if a.Path == "" {
+			t.Fatalf("impact node without definition location: %+v", a)
+		}
+	}
+	if !names["Beta::run"] {
+		t.Fatalf("impact missed Beta::run: %+v", impact.Affected)
+	}
+
+	// Fully-qualified lookup is precise: Alpha::validate only.
+	impactA, err := svc.Impact(ctx, "ws", "main", "Alpha::validate", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(impactA.Affected) != 0 {
+		t.Fatalf("Alpha::validate has no callers: %+v", impactA.Affected)
+	}
+
+	// Symbol lookup accepts the qualified name.
+	sym, err := svc.Symbol(ctx, "ws", "main", "Alpha::validate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sym.Hits) != 1 || sym.Hits[0].Qualified != "Alpha::validate" {
+		t.Fatalf("qualified symbol lookup: %+v", sym.Hits)
+	}
+}

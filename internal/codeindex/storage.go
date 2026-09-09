@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS symbols (
   id         INTEGER PRIMARY KEY,
   hash       TEXT NOT NULL,
   name       TEXT NOT NULL,
+  qual_name  TEXT NOT NULL DEFAULT '',
   kind       TEXT NOT NULL,
   line       INTEGER NOT NULL,
   start_byte INTEGER NOT NULL,
@@ -146,6 +147,30 @@ func dbPath(dir, workspace string) string {
 	return filepath.Join(dir, slugOf(workspace)+".db")
 }
 
+// ensureColumn adds a column (no-op when present) for additive schema changes
+// to existing index DBs.
+func ensureColumn(db *sql.DB, table, column, decl string) error {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notNull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, decl))
+	return err
+}
+
 func (st *Store) DB(workspace string) (*sql.DB, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -162,6 +187,10 @@ func (st *Store) DB(workspace string) (*sql.DB, error) {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrating index db for %q: %w", workspace, err)
+	}
+	if err := ensureColumn(db, "symbols", "qual_name", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, err
 	}
 	st.dbs[workspace] = db
 	return db, nil
@@ -246,10 +275,10 @@ func (st *Store) AddBlob(workspace string, res *parse.FileResult) error {
 			continue
 		}
 		if _, err := tx.Exec(`
-			INSERT OR IGNORE INTO symbols (hash, name, kind, line, start_byte, end_byte, signature, lang, name_parts)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			res.Hash, sym.Name, sym.Kind, sym.Line, sym.StartByte, sym.EndByte, sym.Signature, sym.Lang,
-			parse.SplitIdentifier(sym.Name)); err != nil {
+			INSERT OR IGNORE INTO symbols (hash, name, qual_name, kind, line, start_byte, end_byte, signature, lang, name_parts)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			res.Hash, sym.Name, sym.Qual, sym.Kind, sym.Line, sym.StartByte, sym.EndByte, sym.Signature, sym.Lang,
+			parse.SplitIdentifier(namePartsInput(sym))); err != nil {
 			return fmt.Errorf("inserting symbol %q: %w", sym.Name, err)
 		}
 	}
@@ -323,6 +352,7 @@ func (st *Store) DropBranch(workspace, branch string) error {
 // SymbolHit is a query result row.
 type SymbolHit struct {
 	Name      string `json:"name"`
+	Qualified string `json:"qualified,omitempty"` // Class::method when nested in a type
 	Kind      string `json:"kind"`
 	Path      string `json:"path"`
 	Line      int    `json:"line"`
@@ -347,7 +377,7 @@ func (st *Store) Search(workspace, branch, query string, limit int) ([]SymbolHit
 		q = q + "*"
 	}
 	rows, err := db.Query(`
-		SELECT s.name, s.kind, bf.path, s.line, s.signature, s.lang
+		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang
 		FROM symbols_fts f
 		JOIN symbols s ON s.id = f.rowid
 		JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
@@ -357,7 +387,7 @@ func (st *Store) Search(workspace, branch, query string, limit int) ([]SymbolHit
 	if err != nil {
 		// Bad FTS syntax: retry as a plain quoted prefix query.
 		rows, err = db.Query(`
-			SELECT s.name, s.kind, bf.path, s.line, s.signature, s.lang
+			SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang
 			FROM symbols_fts f
 			JOIN symbols s ON s.id = f.rowid
 			JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
@@ -380,12 +410,12 @@ func (st *Store) Symbol(workspace, branch, name string, limit int) ([]SymbolHit,
 	}
 	limit = clampLimit(limit, 50, 500)
 	rows, err := db.Query(`
-		SELECT s.name, s.kind, bf.path, s.line, s.signature, s.lang
+		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang
 		FROM symbols s
 		JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
-		WHERE s.name = ? COLLATE NOCASE
+		WHERE s.name = ? COLLATE NOCASE OR s.qual_name = ? COLLATE NOCASE
 		ORDER BY bf.path, s.line
-		LIMIT ?`, branch, name, limit)
+		LIMIT ?`, branch, name, name, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -400,7 +430,7 @@ func (st *Store) Outline(workspace, branch, path string) ([]SymbolHit, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`
-		SELECT s.name, s.kind, bf.path, s.line, s.signature, s.lang
+		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang
 		FROM symbols s
 		JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
 		WHERE bf.path = ?
@@ -431,9 +461,9 @@ func (st *Store) Callers(workspace, branch, name string, limit int) ([]EdgeHit, 
 		SELECT e.caller, e.callee, bf.path, e.line
 		FROM edges e
 		JOIN branch_files bf ON bf.hash = e.hash AND bf.branch = ?
-		WHERE e.callee = ? COLLATE NOCASE
+		WHERE (e.callee = ? COLLATE NOCASE OR e.callee LIKE '%::' || ? ESCAPE '\')
 		ORDER BY bf.path, e.line
-		LIMIT ?`, branch, name, limit)
+		LIMIT ?`, branch, name, likeEscape(name), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -452,9 +482,9 @@ func (st *Store) Callees(workspace, branch, name string, limit int) ([]EdgeHit, 
 		SELECT e.caller, e.callee, bf.path, e.line
 		FROM edges e
 		JOIN branch_files bf ON bf.hash = e.hash AND bf.branch = ?
-		WHERE e.caller = ? COLLATE NOCASE
+		WHERE (e.caller = ? COLLATE NOCASE OR e.caller LIKE '%::' || ? ESCAPE '\')
 		ORDER BY bf.path, e.line
-		LIMIT ?`, branch, name, limit)
+		LIMIT ?`, branch, name, likeEscape(name), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -528,6 +558,28 @@ func (st *Store) DefaultBranch(workspace string) string {
 	return "main"
 }
 
+// likeEscape escapes LIKE wildcards in user input.
+func likeEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+// exactCallers returns edges whose callee equals name exactly (no suffix
+// fallback) — used for graph traversal so nodes never merge across types.
+func (st *Store) exactCallers(db *sql.DB, branch, name string, limit int) ([]EdgeHit, error) {
+	rows, err := db.Query(`
+		SELECT e.caller, e.callee, bf.path, e.line
+		FROM edges e
+		JOIN branch_files bf ON bf.hash = e.hash AND bf.branch = ?
+		WHERE e.callee = ? COLLATE NOCASE
+		ORDER BY bf.path, e.line
+		LIMIT ?`, branch, name, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanEdges(rows)
+}
+
 // clampLimit bounds query limits to a sane default and ceiling.
 func clampLimit(limit, def, max int) int {
 	if limit <= 0 {
@@ -577,11 +629,21 @@ func (st *Store) CachePut(ctx context.Context, path string, mtime, size int64, h
 	return err
 }
 
+// namePartsInput picks the text to tokenize for FTS: the qualified name when
+// present (its tokens include the short name's tokens) so "newuser validate"
+// and bare "validate" both match.
+func namePartsInput(sym parse.Symbol) string {
+	if sym.Qual != "" {
+		return sym.Qual
+	}
+	return sym.Name
+}
+
 func scanHits(rows *sql.Rows) ([]SymbolHit, error) {
 	var out []SymbolHit
 	for rows.Next() {
 		var h SymbolHit
-		if err := rows.Scan(&h.Name, &h.Kind, &h.Path, &h.Line, &h.Signature, &h.Lang); err != nil {
+		if err := rows.Scan(&h.Name, &h.Qualified, &h.Kind, &h.Path, &h.Line, &h.Signature, &h.Lang); err != nil {
 			return nil, err
 		}
 		out = append(out, h)
