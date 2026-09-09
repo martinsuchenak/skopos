@@ -46,12 +46,19 @@ func InternalError(w http.ResponseWriter, err error) {
 
 // DecodeJSON reads a JSON request body (capped at maxBodyBytes) into v.
 func DecodeJSON(w http.ResponseWriter, r *http.Request, v interface{}) error {
+	return DecodeJSONLimit(w, r, v, maxBodyBytes)
+}
+
+// DecodeJSONLimit is DecodeJSON with an explicit body cap, for endpoints
+// whose legitimate payloads are larger than the general API default (e.g.
+// index commits carrying one entry per indexed file).
+func DecodeJSONLimit(w http.ResponseWriter, r *http.Request, v interface{}, limit int64) error {
 	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
 	if !strings.HasPrefix(contentType, "application/json") {
 		return fmt.Errorf("content type must be application/json, got %q", contentType)
 	}
 	defer r.Body.Close()
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	return json.NewDecoder(r.Body).Decode(v)
 }
 

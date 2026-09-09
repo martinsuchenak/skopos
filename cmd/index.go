@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -239,21 +238,42 @@ func PushToServer(ctx context.Context, serverURL, apiKey, workspace, branch, roo
 		return 0, 0, fmt.Errorf("manifest: %w", err)
 	}
 
-	// 2. upload only the missing blobs as ndjson.
-	if len(manifest.Missing) > 0 {
-		var buf bytes.Buffer
-		w := bufio.NewWriter(&buf)
-		enc := json.NewEncoder(w)
-		for _, h := range manifest.Missing {
-			if r, ok := byHash[h]; ok {
-				enc.Encode(r)
+	// 2. upload only the missing blobs as ndjson, in bounded chunks: large
+	// repos must not build one giant request (server caps each at 256 MiB
+	// anyway) — chunking also keeps client memory flat regardless of size.
+	uploaded := 0
+	chunkCount := 0
+	const chunkBlobs = 512
+	var buf bytes.Buffer
+	flush := func() error {
+		if buf.Len() == 0 {
+			return nil
+		}
+		if _, err := postJSON[map[string]any](ctx, serverURL, apiKey, "POST",
+			fmt.Sprintf("/api/codeindex/%s/blobs", url.PathEscape(workspace)), append([]byte(nil), buf.Bytes()...), "application/x-ndjson"); err != nil {
+			return fmt.Errorf("blobs: %w", err)
+		}
+		uploaded += chunkCount
+		chunkCount = 0
+		buf.Reset()
+		return nil
+	}
+	enc := json.NewEncoder(&buf)
+	for _, h := range manifest.Missing {
+		if r, ok := byHash[h]; ok {
+			if err := enc.Encode(r); err != nil {
+				return 0, 0, err
+			}
+			chunkCount++
+			if chunkCount >= chunkBlobs || buf.Len() >= 32<<20 {
+				if err := flush(); err != nil {
+					return 0, 0, err
+				}
 			}
 		}
-		w.Flush()
-		if _, err := postJSON[map[string]any](ctx, serverURL, apiKey, "POST",
-			fmt.Sprintf("/api/codeindex/%s/blobs", url.PathEscape(workspace)), buf.Bytes(), "application/x-ndjson"); err != nil {
-			return 0, 0, fmt.Errorf("blobs: %w", err)
-		}
+	}
+	if err := flush(); err != nil {
+		return 0, 0, err
 	}
 
 	// 3. commit the branch.
@@ -266,7 +286,7 @@ func PushToServer(ctx context.Context, serverURL, apiKey, workspace, branch, roo
 		}, "application/json"); err != nil {
 		return 0, 0, fmt.Errorf("commit: %w", err)
 	}
-	return len(manifest.Missing), len(entries), nil
+	return uploaded, len(entries), nil
 }
 
 func indexStatusCmd() *cli.Command {

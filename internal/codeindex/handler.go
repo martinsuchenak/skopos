@@ -13,6 +13,10 @@ import (
 	"github.com/martinsuchenak/skopos/internal/rest"
 )
 
+// commitBodyLimit caps commit requests; entries are ~80 bytes each, so this
+// covers repos into the hundreds of thousands of files.
+const commitBodyLimit = 64 << 20
+
 type Handler struct {
 	service    *Service
 	apiKey     string
@@ -156,7 +160,9 @@ func (h *Handler) Commit(w http.ResponseWriter, r *http.Request) {
 		Source  string      `json:"source"`
 		Files   []FileEntry `json:"files"`
 	}
-	if err := rest.DecodeJSON(w, r, &req); err != nil {
+	// One entry per indexed file: large repos legitimately exceed the 1 MiB
+	// API default (20k files ~ 2MB), so this endpoint allows more.
+	if err := rest.DecodeJSONLimit(w, r, &req, commitBodyLimit); err != nil {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}

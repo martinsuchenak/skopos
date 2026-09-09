@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,14 +14,15 @@ import (
 
 func testStorage(t *testing.T) *Storage {
 	t.Helper()
-	sqlDB, err := sql.Open("sqlite", ":memory:")
+	// A file DB (not :memory:): pooled connections must share one database,
+	// which :memory: does not guarantee once transactions grab extra conns.
+	dsn := filepath.Join(t.TempDir(), "test.db") + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)"
+	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	t.Cleanup(func() { sqlDB.Close() })
-	if _, err := sqlDB.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		t.Fatalf("enable foreign keys: %v", err)
-	}
+
 	if err := db.RunMigrations(sqlDB); err != nil {
 		t.Fatalf("run migrations: %v", err)
 	}

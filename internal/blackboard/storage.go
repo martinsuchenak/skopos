@@ -124,10 +124,44 @@ func (s *Storage) Get(ctx context.Context, id string) (*Entry, error) {
 }
 
 func (s *Storage) Promote(ctx context.Context, id string) error {
-	entry, err := s.Get(ctx, id)
+	// Read and update in one transaction so a concurrent promote cannot
+	// interleave (e.g. one request reading "session" while another already
+	// promoted to "project" would otherwise downgrade the entry).
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("begin transaction: %w", err)
 	}
+	defer tx.Rollback()
+
+	var entry Entry
+	var workspaceID, branchName, sessionID, codeRef sql.NullString
+	var createdAt, updatedAt string
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, scope, workspace_id, branch_name, session_id, entry_type, title, content, code_ref,
+		       author_agent_id, created_at, updated_at
+		FROM blackboard_entries WHERE id = ?`, id).
+		Scan(&entry.ID, &entry.Scope, &workspaceID, &branchName, &sessionID, &entry.EntryType,
+			&entry.Title, &entry.Content, &codeRef, &entry.AuthorAgentID, &createdAt, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: entry %s", ErrNotFound, id)
+	}
+	if err != nil {
+		return fmt.Errorf("getting entry: %w", err)
+	}
+	if workspaceID.Valid {
+		entry.WorkspaceID = workspaceID.String
+	}
+	if branchName.Valid {
+		entry.BranchName = branchName.String
+	}
+	if sessionID.Valid {
+		entry.SessionID = sessionID.String
+	}
+	if codeRef.Valid {
+		entry.CodeRef = codeRef.String
+	}
+	entry.CreatedAt = parseTime(createdAt)
+	entry.UpdatedAt = parseTime(updatedAt)
 
 	var newScope Scope
 	var newBranch any
