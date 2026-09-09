@@ -18,7 +18,7 @@ func registerBlackboardWriteTool(server *mcplib.Server, service *blackboard.Serv
 			mcplib.String("entry_type", "Required. Entry type: finding, decision, bug, debt, warning, or context. Bug and debt are floating (always visible regardless of branch filter).", mcplib.Required()),
 			mcplib.String("title", "Required. Short descriptive title", mcplib.Required()),
 			mcplib.String("author_agent_id", "Required. Stable agent identifier, e.g. codex-macbook", mcplib.Required()),
-			mcplib.String("workspace_id", "Required for project and branch scope. The workspace this entry belongs to."),
+			mcplib.String("workspace_id", "Recommended for project and branch scope. The workspace this entry belongs to (omitting it makes the entry visible in every workspace)."),
 			mcplib.String("branch_name", "Required when scope=branch. The git branch name."),
 			mcplib.String("session_id", "Required when scope=session. Must be a valid session ID (call report_status first to create a session)."),
 			mcplib.String("content", "Optional. Detailed content/body of the entry"),
@@ -38,7 +38,7 @@ func registerBlackboardWriteTool(server *mcplib.Server, service *blackboard.Serv
 			}
 			result, err := service.Write(ctx, input)
 			if err != nil {
-				return nil, mcplib.NewToolErrorInvalidParams(err.Error())
+				return nil, toolError(err)
 			}
 			return mcplib.NewToolResponseJSON(result), nil
 		},

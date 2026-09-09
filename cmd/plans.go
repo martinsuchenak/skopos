@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/martinsuchenak/skopos/internal/plans"
-	"github.com/martinsuchenak/skopos/internal/workspace"
 	"github.com/paularlott/cli"
 )
 
@@ -27,6 +26,7 @@ func planCmd() *cli.Command {
 			planListCmd(),
 			planShowCmd(),
 			planDoneCmd(),
+			planArchiveCmd(),
 			planItemCmd(),
 		},
 	}
@@ -47,11 +47,7 @@ func planCreateCmd() *cli.Command {
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			ws := cmd.GetString("workspace")
-			if ws == "" {
-				if id, err := workspace.Resolve("."); err == nil {
-					ws = id
-				}
-			}
+			ws = workspaceOrDefault(ws)
 			plan, err := plansPost(ctx, cmd.GetString("server-url"), cmd.GetString("api-key"), plans.CreatePlanInput{
 				Name:          cmd.GetString("name"),
 				BranchName:    cmd.GetString("branch"),
@@ -79,11 +75,7 @@ func planListCmd() *cli.Command {
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			ws := cmd.GetString("workspace")
-			if ws == "" {
-				if id, err := workspace.Resolve("."); err == nil {
-					ws = id
-				}
-			}
+			ws = workspaceOrDefault(ws)
 			ps, err := plansGetList(ctx, cmd.GetString("server-url"), cmd.GetString("branch"), ws)
 			if err != nil {
 				return err
@@ -154,6 +146,26 @@ func planDoneCmd() *cli.Command {
 			}
 			return plansPatch(ctx, cmd.GetString("server-url"), cmd.GetString("api-key"), id,
 				plans.UpdatePlanInput{Status: plans.PlanCompleted})
+		},
+	}
+}
+
+func planArchiveCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "archive",
+		Usage: "Archive a plan (done or abandoned)",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}},
+			&cli.StringFlag{Name: "id", Usage: "Plan ID"},
+		},
+		Run: func(ctx context.Context, cmd *cli.Command) error {
+			id := strings.TrimSpace(cmd.GetString("id"))
+			if id == "" {
+				return fmt.Errorf("--id is required")
+			}
+			return plansPatch(ctx, cmd.GetString("server-url"), cmd.GetString("api-key"), id,
+				plans.UpdatePlanInput{Status: plans.PlanArchived})
 		},
 	}
 }
@@ -318,7 +330,7 @@ func plansPost(ctx context.Context, serverURL, apiKey string, input plans.Create
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("posting plan: unexpected status %s", resp.Status)
+		return nil, fmt.Errorf("%s", apiErrorMessage("posting plan", resp))
 	}
 	var plan plans.Plan
 	if err := json.NewDecoder(resp.Body).Decode(&plan); err != nil {
@@ -350,7 +362,7 @@ func plansGetList(ctx context.Context, serverURL, branch, workspaceID string) ([
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("listing plans: unexpected status %s", resp.Status)
+		return nil, fmt.Errorf("%s", apiErrorMessage("listing plans", resp))
 	}
 	var result []plans.Plan
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -371,7 +383,7 @@ func plansGetOne(ctx context.Context, serverURL, id string) (*plans.Plan, error)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("getting plan: unexpected status %s", resp.Status)
+		return nil, fmt.Errorf("%s", apiErrorMessage("getting plan", resp))
 	}
 	var plan plans.Plan
 	if err := json.NewDecoder(resp.Body).Decode(&plan); err != nil {
@@ -400,7 +412,7 @@ func plansPatch(ctx context.Context, serverURL, apiKey, id string, input plans.U
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("patching plan: unexpected status %s", resp.Status)
+		return fmt.Errorf("%s", apiErrorMessage("patching plan", resp))
 	}
 	return nil
 }
@@ -425,7 +437,7 @@ func plansItemPost(ctx context.Context, serverURL, apiKey, planID string, input 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("adding item: unexpected status %s", resp.Status)
+		return nil, fmt.Errorf("%s", apiErrorMessage("adding item", resp))
 	}
 	var item plans.Item
 	if err := json.NewDecoder(resp.Body).Decode(&item); err != nil {
@@ -455,7 +467,7 @@ func plansItemPatch(ctx context.Context, serverURL, apiKey, planID, itemID strin
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("%s item: unexpected status %s", action, resp.Status)
+		return fmt.Errorf("%s", apiErrorMessage(action+" item", resp))
 	}
 	return nil
 }

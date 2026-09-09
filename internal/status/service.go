@@ -4,10 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/martinsuchenak/skopos/internal/ids"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 var (
@@ -21,8 +20,6 @@ type Store interface {
 	GetSession(ctx context.Context, id string) (*SessionDetail, error)
 	ListEvents(ctx context.Context, sessionID string) ([]Event, error)
 	DeleteSession(ctx context.Context, id string) error
-	DeleteOldEvents(ctx context.Context, olderThan time.Time) (int64, error)
-	DeleteOrphanedSessions(ctx context.Context, olderThan time.Time) (int64, error)
 	ListActiveAgents(ctx context.Context) ([]ActiveAgent, error)
 }
 
@@ -45,10 +42,10 @@ func (s *Service) Report(ctx context.Context, input ReportInput) (*ReportResult,
 	}
 
 	if normalized.SessionID == "" {
-		normalized.SessionID = generateID()
+		normalized.SessionID = ids.New()
 	}
 
-	eventID := generateID()
+	eventID := ids.New()
 	now := s.now().UTC()
 	event := Event{
 		ID:          eventID,
@@ -159,12 +156,4 @@ func sessionTitle(input ReportInput) string {
 		return input.Workspace
 	}
 	return input.SessionID
-}
-
-func generateID() string {
-	id, err := uuid.NewV7()
-	if err != nil {
-		return uuid.NewString()
-	}
-	return id.String()
 }

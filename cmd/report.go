@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/martinsuchenak/skopos/internal/status"
-	"github.com/martinsuchenak/skopos/internal/workspace"
 	"github.com/paularlott/cli"
 )
 
@@ -78,11 +77,7 @@ func reportInputFromCommand(cmd *cli.Command) (status.ReportInput, error) {
 			return input, fmt.Errorf("invalid metadata JSON: %w", err)
 		}
 	}
-	if input.Workspace == "" {
-		if ws, err := workspace.Resolve("."); err == nil {
-			input.Workspace = ws
-		}
-	}
+	input.Workspace = workspaceOrDefault(input.Workspace)
 	return input, nil
 }
 
@@ -107,7 +102,7 @@ func postReport(ctx context.Context, serverURL, apiKey string, input status.Repo
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("posting report: unexpected status %s", resp.Status)
+		return nil, fmt.Errorf("%s", apiErrorMessage("posting report", resp))
 	}
 
 	var result status.ReportResult

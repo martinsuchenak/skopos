@@ -61,6 +61,7 @@ func (h *Handler) ReadBundle(w http.ResponseWriter, r *http.Request) {
 		entries, err := h.service.Search(r.Context(), SearchFilters{
 			WorkspaceID:   workspaceID,
 			BranchName:    branchName,
+			SessionID:     sessionID,
 			EntryType:     entryType,
 			AuthorAgentID: author,
 			Query:         query,

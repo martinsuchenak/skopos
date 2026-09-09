@@ -32,7 +32,7 @@ func registerPlanUpdateItemTool(server *mcplib.Server, service *plans.Service) {
 				input,
 			)
 			if err != nil {
-				return nil, mcplib.NewToolErrorInvalidParams(err.Error())
+				return nil, toolError(err)
 			}
 			return mcplib.NewToolResponseJSON(item), nil
 		},

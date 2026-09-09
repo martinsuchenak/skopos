@@ -3,18 +3,18 @@ package plans
 import (
 	"context"
 	"fmt"
+	"github.com/martinsuchenak/skopos/internal/ids"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 type Service struct {
 	store Store
+	now   func() time.Time
 }
 
 func NewService(store Store) *Service {
-	return &Service{store: store}
+	return &Service{store: store, now: time.Now}
 }
 
 func (s *Service) CreatePlan(ctx context.Context, input CreatePlanInput) (*Plan, error) {
@@ -26,9 +26,9 @@ func (s *Service) CreatePlan(ctx context.Context, input CreatePlanInput) (*Plan,
 	if input.AuthorAgentID == "" {
 		return nil, fmt.Errorf("%w: author_agent_id is required", ErrInvalidInput)
 	}
-	now := time.Now().UTC()
+	now := s.now().UTC()
 	plan := Plan{
-		ID:            generateID(),
+		ID:            ids.New(),
 		Name:          input.Name,
 		BranchName:    strings.TrimSpace(input.BranchName),
 		WorkspaceID:   strings.TrimSpace(input.WorkspaceID),
@@ -136,9 +136,9 @@ func (s *Service) AddItem(ctx context.Context, planID string, input CreateItemIn
 			}
 		}
 
-		now := time.Now().UTC()
+		now := s.now().UTC()
 		item = Item{
-			ID:          generateID(),
+			ID:          ids.New(),
 			PlanID:      planID,
 			Title:       input.Title,
 			Description: strings.TrimSpace(input.Description),
@@ -493,12 +493,4 @@ func validItemStatus(s ItemStatus) bool {
 		return true
 	}
 	return false
-}
-
-func generateID() string {
-	id, err := uuid.NewV7()
-	if err != nil {
-		return uuid.NewString()
-	}
-	return id.String()
 }

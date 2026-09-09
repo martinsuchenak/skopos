@@ -14,17 +14,18 @@ type Service struct {
 
 func NewService(store Store) *Service { return &Service{store: store, now: time.Now} }
 
-func (s *Service) Create(ctx context.Context, input CreateInput) (*Workspace, error) {
+func (s *Service) Create(ctx context.Context, input CreateInput) (*Workspace, bool, error) {
 	input.ID = strings.TrimSpace(input.ID)
 	input.Name = strings.TrimSpace(input.Name)
 	if input.ID == "" {
-		return nil, fmt.Errorf("%w: id is required", ErrInvalidInput)
+		return nil, false, fmt.Errorf("%w: id is required", ErrInvalidInput)
 	}
 	ws := Workspace{ID: input.ID, Name: input.Name, CreatedAt: s.now().UTC()}
-	if err := s.store.Create(ctx, ws); err != nil {
-		return nil, err
+	created, err := s.store.Create(ctx, ws)
+	if err != nil {
+		return nil, false, err
 	}
-	return &ws, nil
+	return &ws, created, nil
 }
 
 func (s *Service) List(ctx context.Context) ([]Workspace, error) { return s.store.List(ctx) }

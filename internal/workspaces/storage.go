@@ -3,12 +3,13 @@ package workspaces
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
 
 type Store interface {
-	Create(ctx context.Context, ws Workspace) error
+	Create(ctx context.Context, ws Workspace) (created bool, err error)
 	List(ctx context.Context) ([]Workspace, error)
 	Delete(ctx context.Context, id string) error
 }
@@ -19,19 +20,30 @@ type Storage struct {
 
 func NewStorage(db *sql.DB) *Storage { return &Storage{db: db} }
 
-func (s *Storage) Create(ctx context.Context, ws Workspace) error {
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO workspaces (id, name, created_at) VALUES (?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET name = excluded.name
-	`, ws.ID, ws.Name, formatTime(ws.CreatedAt))
-	if err != nil {
-		return fmt.Errorf("upserting workspace: %w", err)
+// Create upserts the workspace display name and reports whether a new row was
+// inserted (false when an existing workspace was renamed).
+func (s *Storage) Create(ctx context.Context, ws Workspace) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT true FROM workspaces WHERE id = ?`, ws.ID).Scan(&exists)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, fmt.Errorf("checking workspace existence: %w", err)
 	}
-	return nil
+	if exists {
+		if _, err := s.db.ExecContext(ctx, `UPDATE workspaces SET name = ? WHERE id = ?`, ws.Name, ws.ID); err != nil {
+			return false, fmt.Errorf("updating workspace: %w", err)
+		}
+		return false, nil
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO workspaces (id, name, created_at) VALUES (?, ?, ?)`,
+		ws.ID, ws.Name, formatTime(ws.CreatedAt)); err != nil {
+		return false, fmt.Errorf("inserting workspace: %w", err)
+	}
+	return true, nil
 }
 
 func (s *Storage) List(ctx context.Context) ([]Workspace, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, created_at FROM workspaces ORDER BY created_at ASC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, created_at FROM workspaces ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("listing workspaces: %w", err)
 	}
@@ -63,13 +75,6 @@ func (s *Storage) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("%w: workspace %s", ErrNotFound, id)
 	}
 	return nil
-}
-
-func nullableString(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 func formatTime(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }

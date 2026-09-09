@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/martinsuchenak/skopos/internal/ids"
 	"github.com/paularlott/logger"
 
 	"github.com/martinsuchenak/skopos/internal/events"
@@ -95,14 +95,10 @@ func (c *Checker) check(ctx context.Context) error {
 			return fmt.Errorf("marking agent stuck: %w", err)
 		}
 
-		id, err := uuid.NewV7()
-		if err != nil {
-			id = uuid.New()
-		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO events (id, session_id, agent_id, agent_type, workspace, status, message, snippet, metadata, created_at)
 			VALUES (?, ?, ?, ?, ?, 'stuck', 'agent not responding', '', '{}', ?)
-		`, id.String(), a.sessionID, a.agentID, a.agentType, a.workspace, now); err != nil {
+		`, ids.New(), a.sessionID, a.agentID, a.agentType, a.workspace, now); err != nil {
 			return fmt.Errorf("inserting stuck event: %w", err)
 		}
 	}

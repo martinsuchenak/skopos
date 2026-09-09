@@ -45,8 +45,8 @@ When any search filter is present, the tool returns matching entries (capped at 
 `blackboard_write` MCP tool or `POST /api/blackboard/entries`. Required: `scope`, `entry_type`, `title`, `author_agent_id`.
 
 Per-scope requirements:
-- `scope=project` → `workspace_id` required
-- `scope=branch` → `workspace_id` + `branch_name` required
+- `scope=project` → `workspace_id` recommended (omitting it makes the entry visible in every workspace)
+- `scope=branch` → `branch_name` required; `workspace_id` recommended
 - `scope=session` → `session_id` required (must reference an existing session — call `report_status` first)
 
 ## Promotion

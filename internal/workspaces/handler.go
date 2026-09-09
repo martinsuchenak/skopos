@@ -30,7 +30,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	ws, err := h.service.Create(r.Context(), input)
+	ws, created, err := h.service.Create(r.Context(), input)
 	if err != nil {
 		if errors.Is(err, ErrInvalidInput) {
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
@@ -39,7 +39,12 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		rest.InternalError(w, err)
 		return
 	}
-	rest.RespondJSON(w, http.StatusCreated, ws)
+	// 201 for a new registration, 200 when an existing workspace was renamed.
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	rest.RespondJSON(w, status, ws)
 }
 
 // List handles GET /api/workspaces.

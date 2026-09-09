@@ -151,11 +151,6 @@ func TestStorageOnDeleteCascadeRemovesSessionEntries(t *testing.T) {
 		t.Fatalf("delete session: %v", err)
 	}
 
-	err = s.DeleteBySession(ctx, "sess-del")
-	if err != nil {
-		t.Fatalf("delete by session: %v", err)
-	}
-
 	entries, err := s.Bundle(ctx, "", "", "sess-del")
 	if err != nil {
 		t.Fatalf("bundle: %v", err)

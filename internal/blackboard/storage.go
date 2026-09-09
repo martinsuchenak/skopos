@@ -13,7 +13,6 @@ type Store interface {
 	Bundle(ctx context.Context, workspaceID, branchName, sessionID string) ([]Entry, error)
 	Promote(ctx context.Context, id string) error
 	Delete(ctx context.Context, id string) error
-	DeleteBySession(ctx context.Context, sessionID string) error
 	Search(ctx context.Context, filters SearchFilters) ([]Entry, error)
 	Get(ctx context.Context, id string) (*Entry, error)
 	SessionExists(ctx context.Context, sessionID string) (bool, error)
@@ -170,14 +169,6 @@ func (s *Storage) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-func (s *Storage) DeleteBySession(ctx context.Context, sessionID string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM blackboard_entries WHERE session_id = ?`, sessionID)
-	if err != nil {
-		return fmt.Errorf("deleting entries by session: %w", err)
-	}
-	return nil
-}
-
 type rowScanner interface {
 	Scan(dest ...any) error
 }
@@ -238,6 +229,10 @@ func (s *Storage) Search(ctx context.Context, f SearchFilters) ([]Entry, error) 
 	if f.BranchName != "" {
 		query += " AND branch_name = ?"
 		args = append(args, f.BranchName)
+	}
+	if f.SessionID != "" {
+		query += " AND session_id = ?"
+		args = append(args, f.SessionID)
 	}
 	if f.EntryType != "" {
 		query += " AND entry_type = ?"

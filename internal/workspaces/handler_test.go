@@ -70,11 +70,11 @@ func TestHandlerCreateRejectsEmptyID(t *testing.T) {
 func TestHandlerCreateUpsertsName(t *testing.T) {
 	h := testHandler(t, "")
 	ctx := context.Background()
-	if _, err := h.service.Create(ctx, CreateInput{ID: "ws1", Name: "old"}); err != nil {
-		t.Fatal(err)
+	if _, created, err := h.service.Create(ctx, CreateInput{ID: "ws1", Name: "old"}); err != nil || !created {
+		t.Fatalf("first create: created=%v err=%v", created, err)
 	}
-	if _, err := h.service.Create(ctx, CreateInput{ID: "ws1", Name: "new"}); err != nil {
-		t.Fatal(err)
+	if _, created, err := h.service.Create(ctx, CreateInput{ID: "ws1", Name: "new"}); err != nil || created {
+		t.Fatalf("second create should update, not insert: created=%v err=%v", created, err)
 	}
 	list, err := h.service.List(ctx)
 	if err != nil {

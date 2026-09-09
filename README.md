@@ -6,7 +6,7 @@ A coordination dashboard for AI coding agents — shared memory (blackboard), pl
 
 | Feature | Status |
 |---------|--------|
-| CLI | ✅ `serve`, `report`, `blackboard`, `plan`, `workspace`, `install`, `cleanup` |
+| CLI | ✅ `serve`, `report`, `blackboard`, `plan`, `workspace`, `install`, `cleanup`, `init`, `completion` |
 | REST API | ✅ Sessions, blackboard, plans, workspaces |
 | MCP | ✅ 12 tools at `/mcp` (same port as HTTP) |
 | Dashboard | ✅ Dark/light/system theme, sidebar nav, modals, SSE live updates |

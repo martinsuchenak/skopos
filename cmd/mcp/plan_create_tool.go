@@ -29,7 +29,7 @@ func registerPlanCreateTool(server *mcplib.Server, service *plans.Service) {
 				Description:   req.StringOr("description", ""),
 			})
 			if err != nil {
-				return nil, mcplib.NewToolErrorInvalidParams(err.Error())
+				return nil, toolError(err)
 			}
 			return mcplib.NewToolResponseJSON(map[string]string{"id": plan.ID, "name": plan.Name}), nil
 		},

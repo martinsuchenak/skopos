@@ -150,6 +150,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Workspace" }
+        "200":
+          description: Existing workspace renamed (upsert)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workspace" }
         "400": { description: Invalid input, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { description: Unauthorized }
     get:

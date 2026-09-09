@@ -154,11 +154,21 @@ window.app = () => ({
   },
 
   // ---- networking ----
+  // authFetch never rejects: a network failure becomes a synthetic 503 response
+  // so every caller's handleBad/res.ok path shows a toast instead of an
+  // unhandled rejection.
   async authFetch(url: string, opts: RequestInit = {}): Promise<Response> {
     const headers = new Headers(opts.headers || {});
     if (opts.body) headers.set('Content-Type', 'application/json');
     if (this.apiKey) headers.set('Authorization', 'Bearer ' + this.apiKey);
-    return fetch(url, { ...opts, headers });
+    try {
+      return await fetch(url, { ...opts, headers });
+    } catch {
+      return new Response(JSON.stringify({ error: 'network error: server unreachable' }), {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
   },
   async extractError(res: Response): Promise<string> {
     try { const j = (await res.json()) as { error?: string }; return j.error || res.statusText || 'request failed'; }

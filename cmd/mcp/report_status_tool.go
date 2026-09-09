@@ -57,7 +57,7 @@ func registerReportStatusTool(server *mcplib.Server, service *status.Service) {
 
 			result, err := service.Report(ctx, input)
 			if err != nil {
-				return nil, mcplib.NewToolErrorInvalidParams(err.Error())
+				return nil, toolError(err)
 			}
 			return mcplib.NewToolResponseJSON(result), nil
 		},

@@ -69,6 +69,7 @@ type Bundle struct {
 type SearchFilters struct {
 	WorkspaceID   string
 	BranchName    string
+	SessionID     string
 	EntryType     string
 	AuthorAgentID string
 	Query         string

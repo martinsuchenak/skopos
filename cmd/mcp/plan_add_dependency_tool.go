@@ -25,7 +25,7 @@ func registerPlanAddDependencyTool(server *mcplib.Server, service *plans.Service
 				req.StringOr("depends_on_item_id", ""),
 			)
 			if err != nil {
-				return nil, mcplib.NewToolErrorInvalidParams(err.Error())
+				return nil, toolError(err)
 			}
 			return mcplib.NewToolResponseJSON(map[string]string{"status": "dependency_added"}), nil
 		},

@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/martinsuchenak/skopos/internal/blackboard"
-	"github.com/martinsuchenak/skopos/internal/workspace"
 	"github.com/paularlott/cli"
 )
 
@@ -51,11 +50,7 @@ func blackboardWriteCmd() *cli.Command {
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			ws := cmd.GetString("workspace")
-			if ws == "" {
-				if id, err := workspace.Resolve("."); err == nil {
-					ws = id
-				}
-			}
+			ws = workspaceOrDefault(ws)
 			input := blackboard.WriteInput{
 				Scope:         blackboard.Scope(cmd.GetString("scope")),
 				BranchName:    cmd.GetString("branch"),
@@ -89,11 +84,7 @@ func blackboardReadCmd() *cli.Command {
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			ws := cmd.GetString("workspace")
-			if ws == "" {
-				if id, err := workspace.Resolve("."); err == nil {
-					ws = id
-				}
-			}
+			ws = workspaceOrDefault(ws)
 			bundle, err := blackboardGetBundle(ctx, cmd.GetString("server-url"), cmd.GetString("branch"), cmd.GetString("session-id"), ws)
 			if err != nil {
 				return err
@@ -116,11 +107,7 @@ func blackboardListCmd() *cli.Command {
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			ws := cmd.GetString("workspace")
-			if ws == "" {
-				if id, err := workspace.Resolve("."); err == nil {
-					ws = id
-				}
-			}
+			ws = workspaceOrDefault(ws)
 			bundle, err := blackboardGetBundle(ctx, cmd.GetString("server-url"), cmd.GetString("branch"), cmd.GetString("session-id"), ws)
 			if err != nil {
 				return err
@@ -197,7 +184,7 @@ func blackboardPostEntry(ctx context.Context, serverURL, apiKey string, input bl
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("posting entry: unexpected status %s", resp.Status)
+		return nil, fmt.Errorf("%s", apiErrorMessage("posting entry", resp))
 	}
 	var result blackboard.WriteResult
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -232,7 +219,7 @@ func blackboardGetBundle(ctx context.Context, serverURL, branch, sessionID, work
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetching bundle: unexpected status %s", resp.Status)
+		return nil, fmt.Errorf("%s", apiErrorMessage("fetching bundle", resp))
 	}
 	var bundle blackboard.Bundle
 	if err := json.NewDecoder(resp.Body).Decode(&bundle); err != nil {
@@ -256,7 +243,7 @@ func blackboardPatchPromote(ctx context.Context, serverURL, apiKey, id string) e
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("promoting entry: unexpected status %s", resp.Status)
+		return fmt.Errorf("%s", apiErrorMessage("promoting entry", resp))
 	}
 	fmt.Printf("promoted %s\n", id)
 	return nil
@@ -277,7 +264,7 @@ func blackboardDoDelete(ctx context.Context, serverURL, apiKey, id string) error
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("deleting entry: unexpected status %s", resp.Status)
+		return fmt.Errorf("%s", apiErrorMessage("deleting entry", resp))
 	}
 	fmt.Printf("deleted %s\n", id)
 	return nil

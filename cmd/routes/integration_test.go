@@ -1,11 +1,11 @@
 package routes
 
 import (
-	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -22,19 +22,20 @@ import (
 
 func integrationSetup(t *testing.T, apiKey string) *http.ServeMux {
 	t.Helper()
-	sqlDB, err := sql.Open("sqlite", ":memory:")
+	// A temp-file DB through db.Connect gets the production DSN pragmas
+	// (WAL, busy_timeout, foreign_keys on every pooled connection) — a bare
+	// :memory: handle would configure only whichever connection ran the
+	// pragmas and share nothing else with the rest of the pool.
+	log := logslog.New(logslog.Config{Level: "error", Writer: io.Discard})
+	sqlDB, err := db.Connect(log, filepath.Join(t.TempDir(), "integration.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { sqlDB.Close() })
-	if _, err := sqlDB.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		t.Fatalf("fk: %v", err)
-	}
 	if err := db.RunMigrations(sqlDB); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	log := logslog.New(logslog.Config{Level: "error", Writer: io.Discard})
 	rest.SetLogger(log)
 
 	st := status.NewHandler(status.NewService(status.NewStorage(sqlDB)), apiKey)

@@ -19,7 +19,7 @@ func registerPlanArchiveTool(server *mcplib.Server, service *plans.Service) {
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 			planID := req.StringOr("plan_id", "")
 			if err := service.UpdatePlan(ctx, planID, plans.UpdatePlanInput{Status: plans.PlanArchived}); err != nil {
-				return nil, mcplib.NewToolErrorInvalidParams(err.Error())
+				return nil, toolError(err)
 			}
 			return mcplib.NewToolResponseJSON(map[string]string{"id": planID, "status": "archived"}), nil
 		},

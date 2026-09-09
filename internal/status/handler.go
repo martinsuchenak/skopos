@@ -85,6 +85,9 @@ func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 		rest.InternalError(w, err)
 		return
 	}
+	if events == nil {
+		events = []Event{}
+	}
 	rest.RespondJSON(w, http.StatusOK, events)
 }
 

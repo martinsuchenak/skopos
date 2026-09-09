@@ -232,22 +232,6 @@ func (s *Storage) DeleteSession(ctx context.Context, id string) error {
 	return nil
 }
 
-func (s *Storage) DeleteOldEvents(ctx context.Context, olderThan time.Time) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM events WHERE created_at < ?`, formatTime(olderThan))
-	if err != nil {
-		return 0, fmt.Errorf("deleting old events: %w", err)
-	}
-	return result.RowsAffected()
-}
-
-func (s *Storage) DeleteOrphanedSessions(ctx context.Context, olderThan time.Time) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE status = 'orphaned' AND updated_at < ?`, formatTime(olderThan))
-	if err != nil {
-		return 0, fmt.Errorf("deleting orphaned sessions: %w", err)
-	}
-	return result.RowsAffected()
-}
-
 type rowScanner interface {
 	Scan(dest ...any) error
 }

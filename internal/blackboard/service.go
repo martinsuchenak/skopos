@@ -3,10 +3,9 @@ package blackboard
 import (
 	"context"
 	"fmt"
+	"github.com/martinsuchenak/skopos/internal/ids"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 type Service struct {
@@ -58,7 +57,7 @@ func (s *Service) Write(ctx context.Context, input WriteInput) (*WriteResult, er
 
 	now := s.now().UTC()
 	entry := Entry{
-		ID:            generateID(),
+		ID:            ids.New(),
 		Scope:         input.Scope,
 		WorkspaceID:   strings.TrimSpace(input.WorkspaceID),
 		BranchName:    input.BranchName,
@@ -177,12 +176,4 @@ func formatMarkdown(branchName string, entries []Entry) string {
 		sb.WriteString("\n")
 	}
 	return sb.String()
-}
-
-func generateID() string {
-	id, err := uuid.NewV7()
-	if err != nil {
-		return uuid.NewString()
-	}
-	return id.String()
 }

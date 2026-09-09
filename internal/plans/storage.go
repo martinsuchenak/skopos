@@ -429,10 +429,20 @@ func (s *Storage) ItemStatus(ctx context.Context, itemID string) (ItemStatus, er
 }
 
 func (s *Storage) SetItemStatus(ctx context.Context, itemID string, status ItemStatus) error {
-	_, err := s.db.ExecContext(ctx,
+	result, err := s.db.ExecContext(ctx,
 		`UPDATE plan_items SET status = ?, updated_at = ? WHERE id = ?`,
 		string(status), formatTime(time.Now().UTC()), itemID)
-	return err
+	if err != nil {
+		return fmt.Errorf("setting item status: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking item status update: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: item %s", ErrNotFound, itemID)
+	}
+	return nil
 }
 
 func (s *Storage) AddPlanDependency(ctx context.Context, planID, dependsOnPlanID string) error {
@@ -502,10 +512,20 @@ func (s *Storage) PlanStatus(ctx context.Context, planID string) (PlanStatus, er
 }
 
 func (s *Storage) SetPlanStatus(ctx context.Context, planID string, status PlanStatus) error {
-	_, err := s.db.ExecContext(ctx,
+	result, err := s.db.ExecContext(ctx,
 		`UPDATE plans SET status = ?, updated_at = ? WHERE id = ?`,
 		string(status), formatTime(time.Now().UTC()), planID)
-	return err
+	if err != nil {
+		return fmt.Errorf("setting plan status: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking plan status update: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: plan %s", ErrNotFound, planID)
+	}
+	return nil
 }
 
 func (s *Storage) PlanExists(ctx context.Context, planID string) (bool, error) {

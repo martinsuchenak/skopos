@@ -26,7 +26,6 @@ func (s *noopBlackboardStore) Delete(_ context.Context, _ string) error  { retur
 func (s *noopBlackboardStore) Search(_ context.Context, _ blackboard.SearchFilters) ([]blackboard.Entry, error) {
 	return nil, nil
 }
-func (s *noopBlackboardStore) DeleteBySession(_ context.Context, _ string) error { return nil }
 func (s *noopBlackboardStore) SessionExists(_ context.Context, _ string) (bool, error) {
 	return false, nil
 }

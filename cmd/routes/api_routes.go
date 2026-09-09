@@ -1,7 +1,6 @@
 package routes
 
 import (
-	"encoding/json"
 	"html/template"
 	"io/fs"
 	"net/http"
@@ -10,6 +9,7 @@ import (
 	"github.com/martinsuchenak/skopos/build"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/plans"
+	"github.com/martinsuchenak/skopos/internal/rest"
 	"github.com/martinsuchenak/skopos/internal/status"
 	"github.com/martinsuchenak/skopos/internal/workspaces"
 	appweb "github.com/martinsuchenak/skopos/web"
@@ -20,7 +20,9 @@ var blackboardRegistrations []func(*http.ServeMux, *blackboard.Handler)
 var plansRegistrations []func(*http.ServeMux, *plans.Handler)
 var workspacesRegistrations []func(*http.ServeMux, *workspaces.Handler)
 
-func Register(fn func(*http.ServeMux, *status.Handler)) {
+// RegisterStatus registers status/session routes. (Named for symmetry with
+// RegisterBlackboard/RegisterPlans/RegisterWorkspaces.)
+func RegisterStatus(fn func(*http.ServeMux, *status.Handler)) {
 	registrations = append(registrations, fn)
 }
 
@@ -58,19 +60,16 @@ func RegisterRoutes(mux *http.ServeMux, statusHandler *status.Handler, blackboar
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	rest.RespondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // MetricsHandler serves basic runtime metrics (goroutines, allocation). It is
 // mounted in cmd.serve behind the API-key middleware so it is not exposed when
 // auth is enabled.
 func MetricsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	rest.RespondJSON(w, http.StatusOK, map[string]interface{}{
 		"goroutines": runtime.NumGoroutine(),
 		"alloc_mb":   m.Alloc / 1024 / 1024,
 	})

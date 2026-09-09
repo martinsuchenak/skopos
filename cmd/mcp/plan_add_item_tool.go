@@ -34,7 +34,7 @@ func registerPlanAddItemTool(server *mcplib.Server, service *plans.Service) {
 				DependsOn:   req.StringSliceOr("depends_on", nil),
 			})
 			if err != nil {
-				return nil, mcplib.NewToolErrorInvalidParams(err.Error())
+				return nil, toolError(err)
 			}
 			return mcplib.NewToolResponseJSON(item), nil
 		},

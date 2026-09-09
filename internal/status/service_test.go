@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 )
 
 type fakeStore struct {
@@ -30,13 +29,7 @@ func (s *fakeStore) ListEvents(ctx context.Context, sessionID string) ([]Event, 
 	return nil, nil
 }
 
-func (s *fakeStore) DeleteSession(_ context.Context, _ string) error { return nil }
-func (s *fakeStore) DeleteOldEvents(_ context.Context, _ time.Time) (int64, error) {
-	return 0, nil
-}
-func (s *fakeStore) DeleteOrphanedSessions(_ context.Context, _ time.Time) (int64, error) {
-	return 0, nil
-}
+func (s *fakeStore) DeleteSession(_ context.Context, _ string) error           { return nil }
 func (s *fakeStore) ListActiveAgents(_ context.Context) ([]ActiveAgent, error) { return nil, nil }
 
 func TestServiceReportCreatesImplicitSession(t *testing.T) {

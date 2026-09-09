@@ -23,7 +23,7 @@ func registerPlanRemovePlanDependencyTool(server *mcplib.Server, service *plans.
 				req.StringOr("depends_on_plan_id", ""),
 			)
 			if err != nil {
-				return nil, mcplib.NewToolErrorInvalidParams(err.Error())
+				return nil, toolError(err)
 			}
 			return mcplib.NewToolResponseJSON(map[string]string{"status": "plan_dependency_removed"}), nil
 		},

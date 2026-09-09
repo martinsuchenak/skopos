@@ -7,7 +7,7 @@ import (
 )
 
 func init() {
-	Register(registerStatusRoutes)
+	RegisterStatus(registerStatusRoutes)
 }
 
 func registerStatusRoutes(mux *http.ServeMux, statusHandler *status.Handler) {
