@@ -8,8 +8,10 @@ import (
 )
 
 type fakeStore struct {
-	entries  []Entry
-	writeErr error
+	entries          []Entry
+	writeErr         error
+	sessionExists    bool
+	sessionExistsErr error
 }
 
 func (f *fakeStore) Write(_ context.Context, e Entry) error {
@@ -26,7 +28,9 @@ func (f *fakeStore) Promote(_ context.Context, _ string) error                  
 func (f *fakeStore) Delete(_ context.Context, _ string) error                   { return nil }
 func (f *fakeStore) Search(_ context.Context, _ SearchFilters) ([]Entry, error) { return nil, nil }
 func (f *fakeStore) DeleteBySession(_ context.Context, _ string) error          { return nil }
-func (f *fakeStore) SessionExists(_ context.Context, _ string) (bool, error) { return false, nil }
+func (f *fakeStore) SessionExists(_ context.Context, _ string) (bool, error) {
+	return f.sessionExists, f.sessionExistsErr
+}
 func (f *fakeStore) Get(_ context.Context, _ string) (*Entry, error) {
 	return nil, ErrNotFound
 }
@@ -170,5 +174,26 @@ func TestServiceWriteStoreError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error from store, got nil")
+	}
+}
+
+func TestServiceWriteSessionExistsErrorPropagates(t *testing.T) {
+	dbErr := errors.New("db unavailable")
+	svc := NewService(&fakeStore{sessionExistsErr: dbErr})
+	_, err := svc.Write(context.Background(), WriteInput{
+		Scope:         ScopeSession,
+		EntryType:     TypeContext,
+		Title:         "T",
+		AuthorAgentID: "a",
+		SessionID:     "session-1",
+	})
+	if err == nil {
+		t.Fatal("expected error from SessionExists, got nil")
+	}
+	if !errors.Is(err, dbErr) {
+		t.Fatalf("expected underlying db error, got %v", err)
+	}
+	if errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("internal failure must not surface as ErrInvalidInput, got %v", err)
 	}
 }

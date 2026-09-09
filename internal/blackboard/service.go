@@ -47,7 +47,11 @@ func (s *Service) Write(ctx context.Context, input WriteInput) (*WriteResult, er
 	}
 	// Validate session_id references an existing session before the INSERT hits the FK.
 	if input.SessionID != "" {
-		if exists, err := s.store.SessionExists(ctx, input.SessionID); err == nil && !exists {
+		exists, err := s.store.SessionExists(ctx, input.SessionID)
+		if err != nil {
+			return nil, fmt.Errorf("validating session_id %q: %w", input.SessionID, err)
+		}
+		if !exists {
 			return nil, fmt.Errorf("%w: session_id %q does not exist. Call report_status first to create a session, or use scope=branch/project instead", ErrInvalidInput, input.SessionID)
 		}
 	}

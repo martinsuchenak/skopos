@@ -271,8 +271,11 @@ func (s *Storage) Search(ctx context.Context, f SearchFilters) ([]Entry, error) 
 func (s *Storage) SessionExists(ctx context.Context, sessionID string) (bool, error) {
 	var exists bool
 	err := s.db.QueryRowContext(ctx, `SELECT true FROM sessions WHERE id = ?`, sessionID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
-		return false, nil // treat ErrNoRows as "doesn't exist"
+		return false, fmt.Errorf("checking session existence: %w", err)
 	}
 	return exists, nil
 }

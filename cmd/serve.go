@@ -67,7 +67,7 @@ func serveCmd() *cli.Command {
 			&cli.IntFlag{
 				Name:         "health-stuck-threshold",
 				DefaultValue: 15,
-				Usage:        "Minutes before an active agent is marked stuck",
+				Usage:        "Minutes before an active agent is marked stuck (0 to disable)",
 				ConfigPath:   []string{"health.stuck_threshold_minutes"},
 				EnvVars:      []string{"HEALTH_STUCK_THRESHOLD"},
 			},
@@ -121,8 +121,10 @@ func serveCmd() *cli.Command {
 			ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 
-			threshold := time.Duration(cmd.GetInt("health-stuck-threshold")) * time.Minute
-			health.NewChecker(sqlDB, threshold, log).Start(ctx)
+			stuckThreshold := cmd.GetInt("health-stuck-threshold")
+			if stuckThreshold > 0 {
+				health.NewChecker(sqlDB, time.Duration(stuckThreshold)*time.Minute, log).Start(ctx)
+			}
 			retentionDays := cmd.GetInt("cleanup-retention-days")
 			if retentionDays > 0 {
 				cleanupRetention := time.Duration(retentionDays) * 24 * time.Hour

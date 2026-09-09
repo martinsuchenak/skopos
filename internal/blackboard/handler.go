@@ -48,7 +48,7 @@ func (h *Handler) WriteEntry(w http.ResponseWriter, r *http.Request) {
 
 // ReadBundle handles GET /api/blackboard/entries.
 func (h *Handler) ReadBundle(w http.ResponseWriter, r *http.Request) {
-	workspaceID := r.URL.Query().Get("workspace")
+	workspaceID := rest.QueryAlias(r, "workspace_id", "workspace")
 	branchName := r.URL.Query().Get("branch")
 	sessionID := r.URL.Query().Get("session_id")
 

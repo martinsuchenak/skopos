@@ -46,7 +46,7 @@ func (h *Handler) Report(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
-	workspaceID := r.URL.Query().Get("workspace")
+	workspaceID := rest.QueryAlias(r, "workspace_id", "workspace")
 	sessions, err := h.service.ListSessions(r.Context(), workspaceID)
 	if err != nil {
 		rest.InternalError(w, err)
@@ -94,6 +94,10 @@ func (h *Handler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.service.DeleteSession(r.Context(), r.PathValue("id")); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			rest.RespondError(w, http.StatusNotFound, err.Error())
+			return
+		}
 		if errors.Is(err, ErrInvalidInput) {
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
 			return

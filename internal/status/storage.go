@@ -218,9 +218,16 @@ func (s *Storage) listAgentStates(ctx context.Context, sessionID string) ([]Agen
 }
 
 func (s *Storage) DeleteSession(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, id)
+	result, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("deleting session: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking delete result: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: session %s", ErrNotFound, id)
 	}
 	return nil
 }

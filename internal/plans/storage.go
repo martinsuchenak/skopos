@@ -373,7 +373,8 @@ func (s *Storage) RemoveDependency(ctx context.Context, itemID, dependsOnItemID 
 
 func (s *Storage) ListDependencies(ctx context.Context, itemID string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT depends_on_item_id FROM plan_item_dependencies WHERE item_id = ?`, itemID)
+		// IDs are UUIDv7 (time-sortable), so ordering by ID keeps a stable creation order.
+		`SELECT depends_on_item_id FROM plan_item_dependencies WHERE item_id = ? ORDER BY depends_on_item_id`, itemID)
 	if err != nil {
 		return nil, fmt.Errorf("listing dependencies: %w", err)
 	}
@@ -391,7 +392,7 @@ func (s *Storage) ListDependencies(ctx context.Context, itemID string) ([]string
 
 func (s *Storage) ListDependents(ctx context.Context, itemID string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT item_id FROM plan_item_dependencies WHERE depends_on_item_id = ?`, itemID)
+		`SELECT item_id FROM plan_item_dependencies WHERE depends_on_item_id = ? ORDER BY item_id`, itemID)
 	if err != nil {
 		return nil, fmt.Errorf("listing dependents: %w", err)
 	}
@@ -456,7 +457,7 @@ func (s *Storage) RemovePlanDependency(ctx context.Context, planID, dependsOnPla
 
 func (s *Storage) ListPlanDependencies(ctx context.Context, planID string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT depends_on_plan_id FROM plan_dependencies WHERE plan_id = ?`, planID)
+		`SELECT depends_on_plan_id FROM plan_dependencies WHERE plan_id = ? ORDER BY depends_on_plan_id`, planID)
 	if err != nil {
 		return nil, fmt.Errorf("listing plan dependencies: %w", err)
 	}
@@ -474,7 +475,7 @@ func (s *Storage) ListPlanDependencies(ctx context.Context, planID string) ([]st
 
 func (s *Storage) ListPlanDependents(ctx context.Context, planID string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT plan_id FROM plan_dependencies WHERE depends_on_plan_id = ?`, planID)
+		`SELECT plan_id FROM plan_dependencies WHERE depends_on_plan_id = ? ORDER BY plan_id`, planID)
 	if err != nil {
 		return nil, fmt.Errorf("listing plan dependents: %w", err)
 	}

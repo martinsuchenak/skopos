@@ -48,3 +48,16 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, v interface{}) error {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	return json.NewDecoder(r.Body).Decode(v)
 }
+
+// QueryAlias returns the first non-empty value among the named query
+// parameters, so a canonical name (e.g. workspace_id) can be accepted while an
+// older spelling stays as a working alias.
+func QueryAlias(r *http.Request, names ...string) string {
+	q := r.URL.Query()
+	for _, name := range names {
+		if v := q.Get(name); v != "" {
+			return v
+		}
+	}
+	return ""
+}

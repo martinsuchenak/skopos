@@ -104,3 +104,25 @@ func TestDecodeJSONOversized(t *testing.T) {
 		t.Error("expected error for body exceeding 1 MiB limit")
 	}
 }
+
+func TestQueryAlias(t *testing.T) {
+	r := httptest.NewRequest("GET", "/?workspace_id=ws-1&branch=main", nil)
+	if got := QueryAlias(r, "workspace_id", "workspace"); got != "ws-1" {
+		t.Errorf("canonical name: expected ws-1, got %q", got)
+	}
+
+	r = httptest.NewRequest("GET", "/?workspace=ws-legacy", nil)
+	if got := QueryAlias(r, "workspace_id", "workspace"); got != "ws-legacy" {
+		t.Errorf("legacy alias: expected ws-legacy, got %q", got)
+	}
+
+	r = httptest.NewRequest("GET", "/", nil)
+	if got := QueryAlias(r, "workspace_id", "workspace"); got != "" {
+		t.Errorf("no params: expected empty, got %q", got)
+	}
+
+	r = httptest.NewRequest("GET", "/?workspace_id=&workspace=ws-legacy", nil)
+	if got := QueryAlias(r, "workspace_id", "workspace"); got != "ws-legacy" {
+		t.Errorf("empty canonical falls through: expected ws-legacy, got %q", got)
+	}
+}

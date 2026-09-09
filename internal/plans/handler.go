@@ -44,7 +44,7 @@ func (h *Handler) CreatePlan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListPlans(w http.ResponseWriter, r *http.Request) {
-	workspace := r.URL.Query().Get("workspace")
+	workspace := rest.QueryAlias(r, "workspace_id", "workspace")
 	branch := r.URL.Query().Get("branch")
 	plans, err := h.service.ListPlans(r.Context(), workspace, branch)
 	if err != nil {

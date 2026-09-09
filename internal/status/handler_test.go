@@ -99,6 +99,20 @@ func TestHandlerDeleteSessionRequiresAPIKey(t *testing.T) {
 	}
 }
 
+func TestHandlerDeleteSessionMissingReturns404(t *testing.T) {
+	handler := testHandler(t, "secret")
+	req := httptest.NewRequest("DELETE", "/api/sessions/nope", nil)
+	req.SetPathValue("id", "nope")
+	req.Header.Set("Authorization", "Bearer secret")
+	w := httptest.NewRecorder()
+
+	handler.DeleteSession(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected %d, got %d", http.StatusNotFound, w.Code)
+	}
+}
+
 func TestHandlerListSessionsFiltersByWorkspace(t *testing.T) {
 	handler := testHandler(t, "secret")
 
@@ -149,5 +163,44 @@ func TestHandlerListSessionsFiltersByWorkspace(t *testing.T) {
 	}
 	if len(all) != 3 {
 		t.Fatalf("expected 3 sessions total, got %d", len(all))
+	}
+}
+
+func TestHandlerListSessionsWorkspaceIDParam(t *testing.T) {
+	handler := testHandler(t, "secret")
+
+	for _, ws := range []string{"/repo-a", "/repo-b"} {
+		body := bytes.NewBufferString(`{
+			"agent_id":"agent-1",
+			"agent_type":"codex",
+			"workspace":"` + ws + `",
+			"status":"running"
+		}`)
+		req := httptest.NewRequest("POST", "/api/reports", body)
+		req.Header.Set("Authorization", "Bearer secret")
+		w := httptest.NewRecorder()
+		handler.Report(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("create report: expected %d, got %d", http.StatusCreated, w.Code)
+		}
+	}
+
+	// The OpenAPI-documented name must filter; the legacy `workspace` alias must
+	// still work.
+	for _, param := range []string{"workspace_id", "workspace"} {
+		req := httptest.NewRequest("GET", "/api/sessions?"+param+"=/repo-a", nil)
+		w := httptest.NewRecorder()
+		handler.ListSessions(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: expected %d, got %d", param, http.StatusOK, w.Code)
+		}
+		var sessions []SessionSummary
+		if err := json.NewDecoder(w.Body).Decode(&sessions); err != nil {
+			t.Fatalf("%s: decode response: %v", param, err)
+		}
+		if len(sessions) != 1 || sessions[0].Workspace != "/repo-a" {
+			t.Fatalf("%s: expected 1 session for /repo-a, got %d (first workspace %q)", param, len(sessions), sessions[0].Workspace)
+		}
 	}
 }
