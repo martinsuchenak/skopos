@@ -5,7 +5,9 @@
 package codeindex
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -87,23 +89,32 @@ func NewStore(dir string) (*Store, error) {
 }
 
 // slugOf derives a stable, filesystem-safe slug from a workspace id (or any
-// identifier such as a git URL).
+// identifier such as a git URL). When sanitization changed the input (or
+// truncated it), a short digest is appended so distinct ids cannot collide
+// onto the same index file or vector collection ("foo/bar" vs "foo-bar").
 func slugOf(workspace string) string {
 	safe := make([]rune, 0, len(workspace))
+	changed := false
 	for _, r := range strings.ToLower(workspace) {
 		switch {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
 			safe = append(safe, r)
 		default:
 			safe = append(safe, '-')
+			changed = true
 		}
 	}
 	s := strings.Trim(strings.Join(strings.Fields(string(safe)), "-"), "-")
 	if len(s) > 80 {
 		s = s[:80]
+		changed = true
 	}
 	if s == "" {
-		s = "default"
+		return "default"
+	}
+	if changed {
+		sum := sha256.Sum256([]byte(workspace))
+		s += "-" + hex.EncodeToString(sum[:4])
 	}
 	return s
 }
@@ -345,9 +356,7 @@ func (st *Store) Symbol(workspace, branch, name string, limit int) ([]SymbolHit,
 	if err != nil {
 		return nil, err
 	}
-	if limit <= 0 {
-		limit = 50
-	}
+	limit = clampLimit(limit, 50, 500)
 	rows, err := db.Query(`
 		SELECT s.name, s.kind, bf.path, s.line, s.signature, s.lang
 		FROM symbols s
@@ -395,9 +404,7 @@ func (st *Store) Callers(workspace, branch, name string, limit int) ([]EdgeHit, 
 	if err != nil {
 		return nil, err
 	}
-	if limit <= 0 {
-		limit = 100
-	}
+	limit = clampLimit(limit, 100, 500)
 	rows, err := db.Query(`
 		SELECT e.caller, e.callee, bf.path, e.line
 		FROM edges e
@@ -418,9 +425,7 @@ func (st *Store) Callees(workspace, branch, name string, limit int) ([]EdgeHit, 
 	if err != nil {
 		return nil, err
 	}
-	if limit <= 0 {
-		limit = 100
-	}
+	limit = clampLimit(limit, 100, 500)
 	rows, err := db.Query(`
 		SELECT e.caller, e.callee, bf.path, e.line
 		FROM edges e
@@ -499,6 +504,17 @@ func (st *Store) DefaultBranch(workspace string) string {
 		return branch
 	}
 	return "main"
+}
+
+// clampLimit bounds query limits to a sane default and ceiling.
+func clampLimit(limit, def, max int) int {
+	if limit <= 0 {
+		limit = def
+	}
+	if limit > max {
+		limit = max
+	}
+	return limit
 }
 
 func scanHits(rows *sql.Rows) ([]SymbolHit, error) {

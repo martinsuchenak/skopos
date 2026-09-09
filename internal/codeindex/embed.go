@@ -65,6 +65,9 @@ func (e *OpenAIEmbedder) Embed(ctx context.Context, texts []string) ([][]float32
 	}
 	vecs := make([][]float32, len(texts))
 	for _, d := range out.Data {
+		if d.Index < 0 || d.Index >= len(vecs) {
+			return nil, fmt.Errorf("embedding endpoint returned out-of-range index %d", d.Index)
+		}
 		vecs[d.Index] = normalize(d.Embedding)
 	}
 	return vecs, nil
@@ -126,7 +129,7 @@ func (s *Service) EmbedPending(ctx context.Context, workspace string, embedder E
 	var toEmbedIDs []int64
 	cursor := int64(0)
 	for len(toEmbedIDs) < perPass {
-		rows, err := db.Query(`
+		rows, err := db.QueryContext(ctx, `
 			SELECT s.id, s.kind FROM symbols s
 			WHERE s.id > ? AND s.name != ''
 			ORDER BY s.id
@@ -165,7 +168,7 @@ func (s *Service) EmbedPending(ctx context.Context, workspace string, embedder E
 		if len(pageIDs) == 0 && cursor > 0 {
 			// keep scanning: page had only non-embeddable kinds
 			var maxID int64
-			if err := db.QueryRow(`SELECT COALESCE(MAX(id),0) FROM symbols`).Scan(&maxID); err != nil {
+			if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id),0) FROM symbols`).Scan(&maxID); err != nil {
 				return 0, err
 			}
 			if cursor >= maxID {
@@ -193,7 +196,7 @@ func (s *Service) EmbedPending(ctx context.Context, workspace string, embedder E
 			qmarks[i] = "?"
 			args = append(args, id)
 		}
-		rows, err := db.Query(`
+		rows, err := db.QueryContext(ctx, `
 			SELECT s.id, s.name, s.signature FROM symbols s
 			WHERE s.id IN (`+strings.Join(qmarks, ",")+`)`, args...)
 		if err != nil {
@@ -327,6 +330,7 @@ func (s *Service) SemanticSearch(ctx context.Context, workspace, branch, query s
 		keys = append(keys, k)
 	}
 	sort.Slice(keys, func(i, j int) bool { return score[keys[i]] > score[keys[j]] })
+	limit = clampLimit(limit, 50, 200)
 	if len(keys) > limit {
 		keys = keys[:limit]
 	}

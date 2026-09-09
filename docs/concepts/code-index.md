@@ -5,6 +5,98 @@ definitions, files, and heuristic call/reference edges, stored per workspace
 and per branch. Agents query it through MCP tools, the REST API, or the CLI —
 instead of grepping raw files.
 
+## Getting started
+
+Quick walkthrough with real commands. Everything below works against a
+running skopos server (`skopos serve`); CLI examples add `--server-url` /
+`--api-key` (or set `SKOPOS_SERVER_URL` / `SKOPOS_API_KEY`).
+
+### 1. Push a repo's index (from any checkout)
+
+```sh
+cd ~/code/myproject
+skopos index push
+# -> pushed 1995 files (1995 uploaded) for github.com/me/myproject@main
+# workspace defaults to the git remote, branch to the current branch
+```
+
+Repeat pushes upload only what changed:
+
+```sh
+skopos index push          # -> pushed 1995 files (0 uploaded)
+```
+
+### 2. Query it
+
+```sh
+skopos search loadconfig            # symbol search, camelCase-aware
+# LoadConfig    func    app/auth.go:42
+
+skopos symbol Handler               # exact-name definitions
+skopos outline app/auth.go          # a file's definitions in order
+skopos who-calls Handler            # call sites
+skopos call-tree main --depth 4     # what main calls, recursively
+skopos call-tree main --mermaid     # same, as a Mermaid diagram
+skopos impact Handler               # what breaks if Handler changes
+```
+
+### 3. Branches
+
+Each branch has its own index state. From a feature branch:
+
+```sh
+git checkout -b feat/search
+skopos index push                   # only feat/search files upload
+skopos branch-diff feat/search      # symbol deltas vs the default branch
+skopos index drop --branch feat/search   # clean up when merged
+```
+
+Queries on an unindexed branch fall back to the default branch and say so.
+
+### 4. Server-side indexing (no local checkout needed)
+
+Register the workspace with a git URL, then let the server index itself:
+
+```sh
+curl -X POST $SKOPOS/api/workspaces   -H 'Authorization: Bearer $SKOPOS_API_KEY'   -d '{"id":"github.com/me/myproject","git_url":"git@github.com:me/myproject.git"}'
+
+skopos index refresh --workspace github.com/me/myproject --wait
+skopos index status --workspace github.com/me/myproject
+# main   1995 files   6971 symbols  2026-09-09T07:11:59Z  (server-build)
+```
+
+### 5. Semantic search (optional)
+
+Enable an OpenAI-compatible embeddings endpoint (local Ollama keeps
+everything on-host) and push again — vectors build in the background:
+
+```sh
+skopos serve --embeddings-url http://localhost:11434/v1              --embeddings-model nomic-embed-text
+skopos index push
+
+curl "$SKOPOS/api/codeindex/github.com%2Fme%2Fmyproject/search?q=send+a+test+email&semantic=true"
+```
+
+Keyword search misses that query entirely; semantic returns
+`it_sends_a_test_email`, `sendEmailVerificationNotification`, …
+For monorepo scale switch the vector backend:
+`--vector-store qdrant --qdrant-url https://qdrant.example.com`.
+
+### 6. Agents (MCP)
+
+The same queries are MCP tools — agents connected through `skopos install`
+already have them: `code_search`, `code_symbol`, `code_outline`,
+`code_callers`, `code_callees`, `code_impact`, `code_call_tree`,
+`code_dead`, `code_cycles`, `code_branch_diff`, `code_index_status`.
+
+### 7. Portability and cleanup
+
+```sh
+skopos index export --workspace github.com/me/myproject --out bundle.ndjson
+skopos index import bundle.ndjson --workspace github.com/me/myproject
+skopos index drop-workspace --workspace github.com/me/myproject
+```
+
 ## Model
 
 - **Workspace-scoped**: each workspace has its own index database (under

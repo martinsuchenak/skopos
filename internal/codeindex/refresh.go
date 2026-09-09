@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -52,6 +53,37 @@ func (r *Refresher) State(workspace string) RefreshState {
 	return RefreshState{}
 }
 
+// validBranch enforces git-refname safety: no leading dash (option
+// injection into git fetch/clone), no control chars, whitespace, or
+// ref-meta characters.
+func validBranch(branch string) bool {
+	if branch == "" || strings.HasPrefix(branch, "-") {
+		return false
+	}
+	if len(branch) > 200 || strings.ContainsAny(branch, " \t\r\n~^:?*[\\\x00") || strings.Contains(branch, "..") {
+		return false
+	}
+	return true
+}
+
+// safeGitURL blocks git remote-helper transports (ext::, fd::, and any
+// scheme with "::") that can execute local commands during clone/fetch,
+// and non-git schemes (SSRF surface). Allowed: http(s)://, git://, ssh://,
+// file://, plain paths, and scp-like user@host:path.
+func safeGitURL(u string) bool {
+	if u == "" || strings.Contains(u, "::") {
+		return false
+	}
+	if i := strings.Index(u, "://"); i > 0 {
+		switch strings.ToLower(u[:i]) {
+		case "http", "https", "git", "ssh", "file":
+			return true
+		}
+		return false
+	}
+	return true // no scheme: local path or scp-like syntax — no helper transport
+}
+
 // Start kicks an asynchronous refresh; it returns immediately. Only one build
 // per workspace runs at a time.
 func (r *Refresher) Start(ctx context.Context, workspace, branch string) error {
@@ -61,6 +93,12 @@ func (r *Refresher) Start(ctx context.Context, workspace, branch string) error {
 	}
 	if url == "" {
 		return fmt.Errorf("%w: workspace %s has no git_url registered (POST /api/workspaces with git_url first)", ErrInvalidInput, workspace)
+	}
+	if !safeGitURL(url) {
+		return fmt.Errorf("%w: workspace %s has an unsafe git_url (allowed: http(s), git, ssh, file, or a plain path)", ErrInvalidInput, workspace)
+	}
+	if branch != "" && !validBranch(branch) {
+		return fmt.Errorf("%w: invalid branch name %q", ErrInvalidInput, branch)
 	}
 
 	r.mu.Lock()
@@ -164,6 +202,12 @@ func lastLine(out string) string {
 	}
 	if len(out) > 120 {
 		out = out[:117] + "..."
+	}
+	// git errors can echo the remote URL; strip any embedded credentials.
+	if i := strings.Index(out, "://"); i > 0 {
+		if j := strings.Index(out[i+3:], "@"); j >= 0 {
+			out = out[:i+3] + "***@" + out[i+3+j+1:]
+		}
 	}
 	return out
 }

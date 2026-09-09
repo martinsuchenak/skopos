@@ -28,12 +28,13 @@ type QdrantVectorStore struct {
 // NewQdrantVectorStore accepts a base URL like https://qdrant.example.com or
 // http://localhost:6333, plus an optional API key.
 func NewQdrantVectorStore(baseURL, apiKey string) (*QdrantVectorStore, error) {
-	u, err := url.Parse(strings.TrimRight(baseURL, "/"))
+	trimmed := strings.TrimRight(baseURL, "/")
+	if !strings.Contains(trimmed, "://") {
+		trimmed = "http://" + trimmed // bare host:port
+	}
+	u, err := url.Parse(trimmed)
 	if err != nil || u.Host == "" {
 		return nil, fmt.Errorf("parsing qdrant url %q", baseURL)
-	}
-	if u.Scheme == "" {
-		u.Scheme = "http"
 	}
 	return &QdrantVectorStore{
 		baseURL: u.String(),

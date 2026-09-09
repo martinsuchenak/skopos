@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/martinsuchenak/skopos/internal/auth"
@@ -310,8 +310,7 @@ func (h *Handler) Impact(w http.ResponseWriter, r *http.Request) {
 	}
 	depth := 0
 	if d := r.URL.Query().Get("depth"); d != "" {
-		var n int
-		if _, err := fmt.Sscanf(d, "%d", &n); err == nil {
+		if n, err := strconv.Atoi(d); err == nil {
 			depth = n
 		}
 	}
@@ -368,8 +367,7 @@ func (h *Handler) respondServiceError(w http.ResponseWriter, err error) {
 
 func queryLimit(r *http.Request) int {
 	if s := r.URL.Query().Get("limit"); s != "" {
-		var n int
-		if _, err := fmt.Sscanf(s, "%d", &n); err == nil {
+		if n, err := strconv.Atoi(s); err == nil {
 			return n
 		}
 	}
@@ -472,8 +470,7 @@ func (h *Handler) CallTree(w http.ResponseWriter, r *http.Request) {
 	}
 	depth := 0
 	if d := r.URL.Query().Get("depth"); d != "" {
-		var n int
-		if _, err := fmt.Sscanf(d, "%d", &n); err == nil {
+		if n, err := strconv.Atoi(d); err == nil {
 			depth = n
 		}
 	}
