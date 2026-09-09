@@ -2,13 +2,18 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/martinsuchenak/skopos/internal/blackboard"
+	"github.com/martinsuchenak/skopos/internal/codeindex"
+	"github.com/martinsuchenak/skopos/internal/codeindex/parse"
 	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/status"
@@ -39,6 +44,7 @@ func toolsE2E(t *testing.T) http.Handler {
 		status.NewService(status.NewStorage(sqlDB)),
 		blackboard.NewService(blackboard.NewStorage(sqlDB)),
 		plans.NewService(plans.NewStorage(sqlDB)),
+		codeIndexServiceForTest(t, sqlDB),
 	)
 }
 
@@ -126,6 +132,15 @@ func callToolExpectError(t *testing.T, h http.Handler, sessionID string, id int,
 		Code    int
 		Message string
 	}{res.Error.Code, res.Error.Message}
+}
+
+func codeIndexServiceForTest(t *testing.T, sqlDB *sql.DB) *codeindex.Service {
+	store, err := codeindex.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("index store: %v", err)
+	}
+	t.Cleanup(store.Close)
+	return codeindex.NewService(store)
 }
 
 func initialize(t *testing.T, h http.Handler) string {
@@ -279,5 +294,74 @@ func TestMCPReadToolsAcceptAliases(t *testing.T) {
 	}
 	if !bytes.Contains([]byte(found), []byte("agent-x")) {
 		t.Fatalf("expected author in search result: %s", found)
+	}
+}
+
+func mustOpenDB(t *testing.T) *sql.DB {
+	t.Helper()
+	sqlDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { sqlDB.Close() })
+	if err := db.RunMigrations(sqlDB); err != nil {
+		t.Fatal(err)
+	}
+	return sqlDB
+}
+
+func TestMCPCodeIndexToolsEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	repo := dir + "/repo"
+	os.MkdirAll(repo, 0o755)
+	os.WriteFile(repo+"/main.go", []byte(`package main
+
+func LoadConfig() int { return helper() }
+
+func helper() int { return 42 }
+`), 0o644)
+
+	store, err := codeindex.NewStore(dir + "/idx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	svc := codeindex.NewService(store)
+	h := NewMCPHandler(
+		status.NewService(status.NewStorage(mustOpenDB(t))),
+		blackboard.NewService(blackboard.NewStorage(mustOpenDB(t))),
+		plans.NewService(plans.NewStorage(mustOpenDB(t))),
+		svc,
+	)
+	sessionID := initialize(t, h)
+
+	// Build a local index for workspace "e2e-ws" and commit it.
+	results, head, err := codeindex.Build(context.Background(), parse.NewExtractor(), repo, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := codeindex.CommitLocal(store, "e2e-ws", "main", "test", results, head); err != nil {
+		t.Fatal(err)
+	}
+
+	// code_search finds LoadConfig via split-token query.
+	got := callText(t, h, sessionID, 1, "code_search", map[string]any{"workspace_id": "e2e-ws", "q": "loadconfig"})
+	if !strings.Contains(got, "LoadConfig") {
+		t.Fatalf("code_search: %s", got)
+	}
+	// code_symbol returns the file:line.
+	got = callText(t, h, sessionID, 2, "code_symbol", map[string]any{"workspace_id": "e2e-ws", "name": "helper"})
+	if !strings.Contains(got, "main.go") {
+		t.Fatalf("code_symbol: %s", got)
+	}
+	// code_callers: helper is called by LoadConfig.
+	got = callText(t, h, sessionID, 3, "code_callers", map[string]any{"workspace_id": "e2e-ws", "name": "helper"})
+	if !strings.Contains(got, "LoadConfig") {
+		t.Fatalf("code_callers: %s", got)
+	}
+	// code_index_status lists the branch.
+	got = callText(t, h, sessionID, 4, "code_index_status", map[string]any{"workspace_id": "e2e-ws"})
+	if !strings.Contains(got, "main") {
+		t.Fatalf("code_index_status: %s", got)
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/cleanup"
+	"github.com/martinsuchenak/skopos/internal/codeindex"
 	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/martinsuchenak/skopos/internal/health"
@@ -78,6 +79,13 @@ func serveCmd() *cli.Command {
 				ConfigPath:   []string{"health.stuck_threshold_minutes"},
 				EnvVars:      []string{"HEALTH_STUCK_THRESHOLD"},
 			},
+			&cli.StringFlag{
+				Name:         "index-dir",
+				DefaultValue: "indexes",
+				Usage:        "Directory for per-workspace code index databases",
+				ConfigPath:   []string{"codeindex.dir"},
+				EnvVars:      []string{"SKOPOS_INDEX_DIR"},
+			},
 			&cli.IntFlag{
 				Name:         "cleanup-retention-days",
 				DefaultValue: 30,
@@ -127,6 +135,19 @@ func serveCmd() *cli.Command {
 			workspacesService := workspaces.NewService(workspaces.NewStorage(sqlDB))
 			workspacesHandler := workspaces.NewHandler(workspacesService, apiKey)
 
+			// Code index: one SQLite DB per workspace under --index-dir.
+			codeIndexStore, err := codeindex.NewStore(cmd.GetString("index-dir"))
+			if err != nil {
+				return err
+			}
+			defer codeIndexStore.Close()
+			codeIndexService := codeindex.NewService(codeIndexStore)
+			codeIndexHandler := codeindex.NewHandler(codeIndexService, apiKey)
+			codeIndexHandler.SetWorkspaceRegistrar(func(id string) {
+				// First push registers the workspace so it persists in the registry.
+				_, _, _ = workspacesService.Create(context.Background(), workspaces.CreateInput{ID: id})
+			})
+
 			// Cancel background work and initiate graceful shutdown on SIGINT/SIGTERM.
 			ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
@@ -147,7 +168,7 @@ func serveCmd() *cli.Command {
 			// go-scaffolder:serve-init
 
 			mux := http.NewServeMux()
-			routes.RegisterRoutes(mux, statusHandler, blackboardHandler, plansHandler, workspacesHandler)
+			routes.RegisterRoutes(mux, statusHandler, blackboardHandler, plansHandler, workspacesHandler, codeIndexHandler)
 			mux.Handle("GET /api/events/stream", auth.APIKeyMiddleware(apiKey)(events.StreamHandler(hub)))
 
 			// Runtime metrics are not part of the product API: require the API key
@@ -157,7 +178,7 @@ func serveCmd() *cli.Command {
 			// MCP endpoint, mounted on the same server/port as everything else. Body
 			// is capped like the REST API (rest.DecodeJSON applies its cap only to
 			// handlers that decode via it).
-			mcpHandler := mcp.NewMCPHandler(statusService, blackboardService, plansService)
+			mcpHandler := mcp.NewMCPHandler(statusService, blackboardService, plansService, codeIndexService)
 			mcpHandler = rest.BodyLimit(noBrowserOrigin(mcpHandler))
 			if apiKey != "" {
 				mcpHandler = auth.APIKeyMiddleware(apiKey)(mcpHandler)

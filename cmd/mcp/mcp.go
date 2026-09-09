@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/martinsuchenak/skopos/internal/blackboard"
+	"github.com/martinsuchenak/skopos/internal/codeindex"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/status"
 	mcplib "github.com/paularlott/mcp"
@@ -13,6 +14,7 @@ var toolRegistrations []func(*mcplib.Server, *status.Service)
 var blackboardToolRegistrations []func(*mcplib.Server, *blackboard.Service)
 var plansToolRegistrations []func(*mcplib.Server, *plans.Service)
 var contextToolRegistrations []func(*mcplib.Server, *status.Service, *blackboard.Service, *plans.Service)
+var codeIndexToolRegistrations []func(*mcplib.Server, *codeindex.Service)
 
 func RegisterTool(fn func(*mcplib.Server, *status.Service)) {
 	toolRegistrations = append(toolRegistrations, fn)
@@ -28,6 +30,12 @@ func RegisterPlansTool(fn func(*mcplib.Server, *plans.Service)) {
 
 func RegisterContextTool(fn func(*mcplib.Server, *status.Service, *blackboard.Service, *plans.Service)) {
 	contextToolRegistrations = append(contextToolRegistrations, fn)
+}
+
+// RegisterCodeIndexTool registers a code-index MCP tool. The service may be
+// nil (feature disabled); registrations skip themselves in that case.
+func RegisterCodeIndexTool(fn func(*mcplib.Server, *codeindex.Service)) {
+	codeIndexToolRegistrations = append(codeIndexToolRegistrations, fn)
 }
 
 // instructions is returned to MCP clients on initialize. Clients surface it as
@@ -50,7 +58,7 @@ Keep entries concise, prefer the narrowest scope, and pass a stable ` + "`author
 // NewMCPHandler builds the MCP server with all registered tools and returns
 // the http.Handler that serves the MCP protocol. The caller mounts it at /mcp
 // (see cmd.serve). Authentication and lifecycle are the caller's responsibility.
-func NewMCPHandler(statusService *status.Service, blackboardService *blackboard.Service, plansService *plans.Service) http.Handler {
+func NewMCPHandler(statusService *status.Service, blackboardService *blackboard.Service, plansService *plans.Service, codeIndexService *codeindex.Service) http.Handler {
 	server := mcplib.NewServer("skopos-mcp", "1.0.0")
 	server.SetInstructions(instructions)
 
@@ -65,6 +73,11 @@ func NewMCPHandler(statusService *status.Service, blackboardService *blackboard.
 	}
 	for _, fn := range contextToolRegistrations {
 		fn(server, statusService, blackboardService, plansService)
+	}
+	for _, fn := range codeIndexToolRegistrations {
+		if codeIndexService != nil {
+			fn(server, codeIndexService)
+		}
 	}
 
 	return http.HandlerFunc(server.HandleRequest)

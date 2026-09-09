@@ -5,6 +5,7 @@ go 1.26.4
 require (
 	github.com/fortix/go-libs v0.0.1
 	github.com/google/uuid v1.6.0
+	github.com/odvcencio/gotreesitter v0.52.0
 	github.com/paularlott/cli v0.9.0
 	github.com/paularlott/logger v0.3.0
 	github.com/paularlott/mcp v0.25.0
