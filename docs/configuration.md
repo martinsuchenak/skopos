@@ -17,7 +17,7 @@ Optional — if absent, skopos runs on defaults. The file is gitignored (may con
 | `--config` | `CONFIG_FILE` | — | `skopos-config.toml` | Path to config file |
 | `--log-level` | `LOG_LEVEL` | `log.level` | `info` | `trace`, `debug`, `info`, `warn`, `error` |
 | `--log-format` | `LOG_FORMAT` | `log.format` | `text` | `text` or `json` |
-| `--server-host` | `SERVER_HOST` | `server.host` | `0.0.0.0` | HTTP listen host |
+| `--server-host` | `SERVER_HOST` | `server.host` | `127.0.0.1` | HTTP listen host (set `0.0.0.0` to listen on all interfaces) |
 | `--server-port` | `SERVER_PORT` | `server.port` | `8080` | HTTP listen port (REST, MCP at `/mcp`, dashboard, SSE) |
 | `--database-path` | `DATABASE_PATH` | `database.path` | `skopos.db` | SQLite database file path |
 | `--api-key` | `SKOPOS_API_KEY` | `auth.api_key` | (empty = open) | API key for write endpoints + MCP |

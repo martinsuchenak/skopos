@@ -85,6 +85,45 @@ func TestMergeJSONFilePreservesAndBacksUp(t *testing.T) {
 	if _, err := os.Stat(path + ".skopos.bak"); err != nil {
 		t.Error("backup file should exist")
 	}
+
+	// Config files can embed the API key: both the file and its backup must be
+	// owner-only, including when the file already existed with wider perms.
+	for _, p := range []string{path, path + ".skopos.bak"} {
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Errorf("%s: expected mode 0600, got %o", p, info.Mode().Perm())
+		}
+	}
+}
+
+func TestMergeCodexTOMLEscapesAPIKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+
+	var actions []string
+	o := Options{URL: "http://localhost:8080/mcp", APIKey: `ab"cd`}
+	if err := mergeCodexTOML(path, o, &actions); err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A key containing a double quote must be escaped so the TOML stays parseable.
+	if !strings.Contains(string(out), `Authorization = "Bearer ab\"cd"`) {
+		t.Errorf("expected escaped Authorization header, got:\n%s", out)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("expected mode 0600, got %o", info.Mode().Perm())
+	}
 }
 
 func TestAppendBlockActionIdempotent(t *testing.T) {

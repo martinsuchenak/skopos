@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -39,8 +40,8 @@ func serveCmd() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:         "server-host",
-				DefaultValue: "0.0.0.0",
-				Usage:        "Server listen host",
+				DefaultValue: "127.0.0.1",
+				Usage:        "Server listen host (set 0.0.0.0 to listen on all interfaces)",
 				ConfigPath:   []string{"server.host"},
 				EnvVars:      []string{"SERVER_HOST"},
 			},
@@ -91,6 +92,9 @@ func serveCmd() *cli.Command {
 			apiKey := cmd.GetString("api-key")
 			if apiKey == "" {
 				log.Warn("no api_key configured: authentication is disabled (all endpoints are open)")
+				if !isLoopbackHost(cmd.GetString("server-host")) {
+					log.Warn("binding a non-loopback interface without an api_key exposes all endpoints to the network")
+				}
 			}
 
 			rest.SetLogger(log)
@@ -138,8 +142,15 @@ func serveCmd() *cli.Command {
 			routes.RegisterRoutes(mux, statusHandler, blackboardHandler, plansHandler, workspacesHandler)
 			mux.HandleFunc("GET /api/events/stream", events.StreamHandler(hub))
 
-			// MCP endpoint, mounted on the same server/port as everything else.
+			// Runtime metrics are not part of the product API: require the API key
+			// when auth is enabled (the middleware is a no-op otherwise).
+			mux.Handle("GET /metrics", auth.APIKeyMiddleware(apiKey)(http.HandlerFunc(routes.MetricsHandler)))
+
+			// MCP endpoint, mounted on the same server/port as everything else. Body
+			// is capped like the REST API (rest.DecodeJSON applies its cap only to
+			// handlers that decode via it).
 			mcpHandler := mcp.NewMCPHandler(statusService, blackboardService, plansService)
+			mcpHandler = rest.BodyLimit(mcpHandler)
 			if apiKey != "" {
 				mcpHandler = auth.APIKeyMiddleware(apiKey)(mcpHandler)
 			}
@@ -180,4 +191,14 @@ func serveCmd() *cli.Command {
 			return nil
 		},
 	}
+}
+
+// isLoopbackHost reports whether host is "localhost" or a loopback IP, i.e.
+// the server is not reachable from other machines.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

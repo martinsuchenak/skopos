@@ -19,7 +19,7 @@ func TestHealthHandler(t *testing.T) {
 func TestMetricsHandler(t *testing.T) {
 	req := httptest.NewRequest("GET", "/metrics", nil)
 	w := httptest.NewRecorder()
-	metricsHandler(w, req)
+	MetricsHandler(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)

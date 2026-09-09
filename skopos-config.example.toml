@@ -3,7 +3,9 @@ level = "info"
 format = "text"
 
 [server]
-host = "0.0.0.0"
+# Loopback by default. Set "0.0.0.0" to expose the server on all interfaces
+# (make sure to set an auth.api_key when doing so).
+host = "127.0.0.1"
 port = 8080
 
 [database]

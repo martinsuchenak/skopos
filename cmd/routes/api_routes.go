@@ -38,7 +38,6 @@ func RegisterWorkspaces(fn func(*http.ServeMux, *workspaces.Handler)) {
 
 func RegisterRoutes(mux *http.ServeMux, statusHandler *status.Handler, blackboardHandler *blackboard.Handler, plansHandler *plans.Handler, workspacesHandler *workspaces.Handler) {
 	mux.HandleFunc("GET /health", healthHandler)
-	mux.HandleFunc("GET /metrics", metricsHandler)
 	registerWebRoutes(mux)
 
 	for _, fn := range registrations {
@@ -64,7 +63,10 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-func metricsHandler(w http.ResponseWriter, r *http.Request) {
+// MetricsHandler serves basic runtime metrics (goroutines, allocation). It is
+// mounted in cmd.serve behind the API-key middleware so it is not exposed when
+// auth is enabled.
+func MetricsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)

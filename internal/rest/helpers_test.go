@@ -126,3 +126,21 @@ func TestQueryAlias(t *testing.T) {
 		t.Errorf("empty canonical falls through: expected ws-legacy, got %q", got)
 	}
 }
+
+func TestBodyLimit(t *testing.T) {
+	var readErr error
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, readErr = io.Copy(io.Discard, r.Body)
+	})
+	h := BodyLimit(inner)
+
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/", strings.NewReader("hello")))
+	if readErr != nil {
+		t.Fatalf("small body should read cleanly, got %v", readErr)
+	}
+
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/", strings.NewReader(strings.Repeat("x", 2<<20))))
+	if readErr == nil {
+		t.Fatal("expected read error for body exceeding 1 MiB limit")
+	}
+}

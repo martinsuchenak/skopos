@@ -278,7 +278,18 @@ func writeJSON(path string, data map[string]any) error {
 		return err
 	}
 	out = append(out, '\n')
-	return os.WriteFile(path, out, 0o644)
+	return writeFilePrivate(path, out)
+}
+
+// writeFilePrivate writes data with owner-only permissions. Config files
+// written by the installer embed the API key, so they must not be
+// world-readable. Chmod also tightens files that already exist with looser
+// permissions — os.WriteFile alone does not change an existing file's mode.
+func writeFilePrivate(path string, data []byte) error {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }
 
 func setNested(root map[string]any, path []string, val any) {
@@ -322,9 +333,10 @@ func mergeCodexTOML(path string, o Options, actions *[]string) error {
 		return fmt.Errorf("reading %s: %w", path, err)
 	}
 
+	// %q escaping keeps quotes/backslashes in the key from breaking the TOML.
 	block := fmt.Sprintf("[mcp_servers.skopos]\nenabled = true\nurl = %q\n", o.URL)
 	if o.APIKey != "" {
-		block += fmt.Sprintf("\n[mcp_servers.skopos.headers]\nAuthorization = \"Bearer %s\"\n", o.APIKey)
+		block += fmt.Sprintf("\n[mcp_servers.skopos.headers]\nAuthorization = %q\n", "Bearer "+o.APIKey)
 	}
 	updated := setTOMLSection(content, block)
 
@@ -344,7 +356,7 @@ func mergeCodexTOML(path string, o Options, actions *[]string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+	if err := writeFilePrivate(path, []byte(updated)); err != nil {
 		return fmt.Errorf("writing %s: %w", path, err)
 	}
 	*actions = append(*actions, fmt.Sprintf("merged skopos MCP block into %s", path))
@@ -476,5 +488,5 @@ func backup(path string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path+".skopos.bak", raw, 0o644)
+	return writeFilePrivate(path+".skopos.bak", raw)
 }

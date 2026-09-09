@@ -61,3 +61,12 @@ func QueryAlias(r *http.Request, names ...string) string {
 	}
 	return ""
 }
+
+// BodyLimit returns middleware that caps request bodies at maxBodyBytes, for
+// handlers that read the body themselves rather than via DecodeJSON.
+func BodyLimit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		next.ServeHTTP(w, r)
+	})
+}
