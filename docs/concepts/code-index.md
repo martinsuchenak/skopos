@@ -102,7 +102,7 @@ skopos index drop-workspace --workspace github.com/me/myproject
 ## Model
 
 - **Workspace-scoped**: each workspace has its own index database (under
-  `--index-dir`, default `indexes/`), separate from `skopos.db`.
+  `--index-dir`, default `.skopos/indexes/`), separate from `skopos.db`.
 - **Branch-aware**: every branch has its own index state. Queries accept a
   `branch`; an unindexed branch falls back to the workspace's default branch,
   **labeled as a fallback** in the response — never silently wrong.

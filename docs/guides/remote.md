@@ -107,7 +107,7 @@ skopos index export --out bundle.ndjson   # portable snapshot from the server
 - Everything is behind the API key when one is set: REST, MCP, SSE, and the
   index endpoints alike.
 - Index data lives in per-workspace SQLite files under the server's
-  `--index-dir` (default `indexes/`), separate from `skopos.db`.
+  `--index-dir` (default `.skopos/indexes/`), separate from `skopos.db`.
 - Push vs refresh: push sends your **working copy** from any machine; refresh
   builds the **committed state** on the server. Both can coexist — the last
   write per branch wins and the source is recorded in `skopos index status`.

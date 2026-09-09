@@ -77,6 +77,6 @@ a derived artifact: deleting it never loses source data, just re-run
 - No server, no API key, nothing listens on any port.
 - Agents can still use the index indirectly through you; for agents to query
   it themselves, run a server (see [remote.md](remote.md)) — you can point it
-  at the same `indexes/` directory.
+  at the same `.skopos/indexes/` directory.
 - Language support: 206 grammars are built in; detection is by file
   extension, `vendor/`-style directories and files over 1 MiB are skipped.
