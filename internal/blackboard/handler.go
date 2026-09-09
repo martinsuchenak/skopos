@@ -50,6 +50,10 @@ func (h *Handler) WriteEntry(w http.ResponseWriter, r *http.Request) {
 // returns the knowledge bundle; with q, entry_type, or author present it
 // searches instead, mirroring the blackboard_read MCP tool.
 func (h *Handler) ReadBundle(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	workspaceID := rest.QueryAlias(r, "workspace_id", "workspace")
 	branchName := r.URL.Query().Get("branch")
 	sessionID := r.URL.Query().Get("session_id")

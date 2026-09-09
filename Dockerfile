@@ -23,7 +23,10 @@ FROM alpine:latest
 RUN apk --no-cache add ca-certificates wget
 WORKDIR /app
 COPY --from=builder /app/bin/skopos .
-COPY --from=builder /app/skopos-config.example.toml ./skopos-config.toml
+# Ship the example config as reference only: with no live skopos-config.toml the
+# server runs from flags/env, and serve refuses to start keyless on a non-loopback
+# bind unless SKOPOS_INSECURE_NO_API_KEY is explicitly set.
+COPY --from=builder /app/skopos-config.example.toml ./skopos-config.example.toml
 RUN adduser -D -h /app skopos && chown -R skopos:skopos /app
 USER skopos
 EXPOSE 8080

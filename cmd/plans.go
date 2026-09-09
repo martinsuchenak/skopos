@@ -70,13 +70,14 @@ func planListCmd() *cli.Command {
 		Usage: "List plans",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}},
 			&cli.StringFlag{Name: "branch", Usage: "Filter by branch name"},
 			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			ws := cmd.GetString("workspace")
 			ws = workspaceOrDefault(ws)
-			ps, err := plansGetList(ctx, cmd.GetString("server-url"), cmd.GetString("branch"), ws)
+			ps, err := plansGetList(ctx, cmd.GetString("server-url"), cmd.GetString("api-key"), cmd.GetString("branch"), ws)
 			if err != nil {
 				return err
 			}
@@ -99,6 +100,7 @@ func planShowCmd() *cli.Command {
 		Usage: "Show a plan with its items",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}},
 			&cli.StringFlag{Name: "id", Usage: "Plan ID"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
@@ -106,7 +108,7 @@ func planShowCmd() *cli.Command {
 			if id == "" {
 				return fmt.Errorf("--id is required")
 			}
-			plan, err := plansGetOne(ctx, cmd.GetString("server-url"), id)
+			plan, err := plansGetOne(ctx, cmd.GetString("server-url"), cmd.GetString("api-key"), id)
 			if err != nil {
 				return err
 			}
@@ -339,7 +341,7 @@ func plansPost(ctx context.Context, serverURL, apiKey string, input plans.Create
 	return &plan, nil
 }
 
-func plansGetList(ctx context.Context, serverURL, branch, workspaceID string) ([]plans.Plan, error) {
+func plansGetList(ctx context.Context, serverURL, apiKey, branch, workspaceID string) ([]plans.Plan, error) {
 	base := strings.TrimRight(serverURL, "/") + "/api/plans"
 	q := url.Values{}
 	if branch != "" {
@@ -356,6 +358,9 @@ func plansGetList(ctx context.Context, serverURL, branch, workspaceID string) ([
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("listing plans: %w", err)
@@ -371,11 +376,14 @@ func plansGetList(ctx context.Context, serverURL, branch, workspaceID string) ([
 	return result, nil
 }
 
-func plansGetOne(ctx context.Context, serverURL, id string) (*plans.Plan, error) {
+func plansGetOne(ctx context.Context, serverURL, apiKey, id string) (*plans.Plan, error) {
 	u := strings.TrimRight(serverURL, "/") + "/api/plans/" + url.PathEscape(id)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

@@ -78,6 +78,7 @@ func TestInternalErrorWithLogger(t *testing.T) {
 func TestDecodeJSONValid(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/", strings.NewReader(`{"key":"value"}`))
+	r.Header.Set("Content-Type", "application/json")
 	var v map[string]string
 	if err := DecodeJSON(w, r, &v); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -90,6 +91,7 @@ func TestDecodeJSONValid(t *testing.T) {
 func TestDecodeJSONInvalid(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/", strings.NewReader(`{bad json`))
+	r.Header.Set("Content-Type", "application/json")
 	var v map[string]string
 	if err := DecodeJSON(w, r, &v); err == nil {
 		t.Error("expected error for invalid JSON")
@@ -99,9 +101,32 @@ func TestDecodeJSONInvalid(t *testing.T) {
 func TestDecodeJSONOversized(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/", strings.NewReader(strings.Repeat("x", 2<<20)))
+	r.Header.Set("Content-Type", "application/json")
 	var v map[string]string
 	if err := DecodeJSON(w, r, &v); err == nil {
 		t.Error("expected error for body exceeding 1 MiB limit")
+	}
+}
+
+func TestDecodeJSONWrongContentType(t *testing.T) {
+	for _, contentType := range []string{"text/plain", "application/x-www-form-urlencoded", ""} {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/", strings.NewReader(`{"key":"value"}`))
+		if contentType != "" {
+			r.Header.Set("Content-Type", contentType)
+		}
+		var v map[string]string
+		if err := DecodeJSON(w, r, &v); err == nil {
+			t.Errorf("expected error for content type %q", contentType)
+		}
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/", strings.NewReader(`{"key":"value"}`))
+	r.Header.Set("Content-Type", "application/json; charset=utf-8")
+	var v map[string]string
+	if err := DecodeJSON(w, r, &v); err != nil {
+		t.Fatalf("unexpected error for application/json with charset: %v", err)
 	}
 }
 

@@ -34,6 +34,7 @@ func TestHandlerWriteRequiresAPIKey(t *testing.T) {
 		"scope":"project","entry_type":"finding","title":"T","author_agent_id":"a"
 	}`)
 	req := httptest.NewRequest("POST", "/api/blackboard/entries", body)
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.WriteEntry(w, req)
 	if w.Code != http.StatusUnauthorized {
@@ -48,6 +49,7 @@ func TestHandlerWriteAndReadBundle(t *testing.T) {
 		"content":"Details.","author_agent_id":"agent-1"
 	}`)
 	req := httptest.NewRequest("POST", "/api/blackboard/entries", body)
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.WriteEntry(w, req)
 	if w.Code != http.StatusCreated {
@@ -83,6 +85,7 @@ func TestHandlerWriteRejectsInvalidPayload(t *testing.T) {
 	h := testHandler(t, "")
 	body := bytes.NewBufferString(`{"scope":"project","entry_type":"finding"}`)
 	req := httptest.NewRequest("POST", "/api/blackboard/entries", body)
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.WriteEntry(w, req)
 	if w.Code != http.StatusBadRequest {
@@ -96,6 +99,7 @@ func TestHandlerWriteRejectsInvalidScope(t *testing.T) {
 		"scope":"global","entry_type":"finding","title":"T","author_agent_id":"a"
 	}`)
 	req := httptest.NewRequest("POST", "/api/blackboard/entries", body)
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.WriteEntry(w, req)
 	if w.Code != http.StatusBadRequest {
@@ -106,6 +110,7 @@ func TestHandlerWriteRejectsInvalidScope(t *testing.T) {
 func TestHandlerPromoteNotFound(t *testing.T) {
 	h := testHandler(t, "")
 	req := httptest.NewRequest("PATCH", "/api/blackboard/entries/missing/promote", nil)
+	req.Header.Set("Content-Type", "application/json")
 	req.SetPathValue("id", "missing")
 	w := httptest.NewRecorder()
 	h.Promote(w, req)
@@ -131,6 +136,7 @@ func TestHandlerPromoteAlreadyAtTopScope(t *testing.T) {
 		"scope":"project","entry_type":"finding","title":"T","author_agent_id":"a"
 	}`)
 	req := httptest.NewRequest("POST", "/api/blackboard/entries", body)
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.WriteEntry(w, req)
 	if w.Code != http.StatusCreated {
@@ -140,6 +146,7 @@ func TestHandlerPromoteAlreadyAtTopScope(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&result)
 
 	req2 := httptest.NewRequest("PATCH", "/api/blackboard/entries/"+result.ID+"/promote", nil)
+	req2.Header.Set("Content-Type", "application/json")
 	req2.SetPathValue("id", result.ID)
 	w2 := httptest.NewRecorder()
 	h.Promote(w2, req2)
@@ -155,6 +162,7 @@ func TestHandlerReadBundleWorkspaceFilter(t *testing.T) {
 		"author_agent_id":"a","workspace_id":"ws-1"
 	}`)
 	req := httptest.NewRequest("POST", "/api/blackboard/entries", body)
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.WriteEntry(w, req)
 	if w.Code != http.StatusCreated {
@@ -166,6 +174,7 @@ func TestHandlerReadBundleWorkspaceFilter(t *testing.T) {
 		"author_agent_id":"a"
 	}`)
 	req2 := httptest.NewRequest("POST", "/api/blackboard/entries", body2)
+	req2.Header.Set("Content-Type", "application/json")
 	w2 := httptest.NewRecorder()
 	h.WriteEntry(w2, req2)
 	if w2.Code != http.StatusCreated {

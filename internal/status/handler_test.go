@@ -30,6 +30,7 @@ func testHandler(t *testing.T, apiKey string) *Handler {
 func TestHandlerReportRequiresAPIKey(t *testing.T) {
 	handler := testHandler(t, "secret")
 	req := httptest.NewRequest("POST", "/api/reports", bytes.NewBufferString(`{}`))
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
 	handler.Report(w, req)
@@ -49,6 +50,7 @@ func TestHandlerReportCreatesReport(t *testing.T) {
 		"message":"working"
 	}`)
 	req := httptest.NewRequest("POST", "/api/reports", body)
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer secret")
 	w := httptest.NewRecorder()
 
@@ -77,6 +79,7 @@ func TestHandlerReportCreatesReport(t *testing.T) {
 func TestHandlerReportRejectsInvalidPayload(t *testing.T) {
 	handler := testHandler(t, "")
 	req := httptest.NewRequest("POST", "/api/reports", bytes.NewBufferString(`{"status":"running"}`))
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
 	handler.Report(w, req)
@@ -124,6 +127,7 @@ func TestHandlerListSessionsFiltersByWorkspace(t *testing.T) {
 			"status":"running"
 		}`)
 		req := httptest.NewRequest("POST", "/api/reports", body)
+		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer secret")
 		w := httptest.NewRecorder()
 		handler.Report(w, req)
@@ -133,6 +137,7 @@ func TestHandlerListSessionsFiltersByWorkspace(t *testing.T) {
 	}
 
 	req := httptest.NewRequest("GET", "/api/sessions?workspace=/repo-a", nil)
+	req.Header.Set("Authorization", "Bearer secret")
 	w := httptest.NewRecorder()
 	handler.ListSessions(w, req)
 
@@ -151,6 +156,7 @@ func TestHandlerListSessionsFiltersByWorkspace(t *testing.T) {
 	}
 
 	req = httptest.NewRequest("GET", "/api/sessions", nil)
+	req.Header.Set("Authorization", "Bearer secret")
 	w = httptest.NewRecorder()
 	handler.ListSessions(w, req)
 
@@ -177,6 +183,7 @@ func TestHandlerListSessionsWorkspaceIDParam(t *testing.T) {
 			"status":"running"
 		}`)
 		req := httptest.NewRequest("POST", "/api/reports", body)
+		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer secret")
 		w := httptest.NewRecorder()
 		handler.Report(w, req)
@@ -189,6 +196,7 @@ func TestHandlerListSessionsWorkspaceIDParam(t *testing.T) {
 	// still work.
 	for _, param := range []string{"workspace_id", "workspace"} {
 		req := httptest.NewRequest("GET", "/api/sessions?"+param+"=/repo-a", nil)
+		req.Header.Set("Authorization", "Bearer secret")
 		w := httptest.NewRecorder()
 		handler.ListSessions(w, req)
 

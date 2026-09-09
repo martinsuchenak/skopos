@@ -12,6 +12,9 @@ port = 8080
 path = "skopos.db"
 
 [auth]
+# API key; when set, required by every endpoint (REST, MCP, SSE). Empty disables
+# authentication and is only allowed on loopback binds unless the server is
+# started with --insecure-no-api-key.
 api_key = ""
 
 [health]

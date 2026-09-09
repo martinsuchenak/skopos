@@ -69,8 +69,13 @@ retention_days = 30
 level = "info"
 format = "text"
 `
-			if err := os.WriteFile(configPath, []byte(defaultConfig), 0644); err != nil {
+			// The operator will paste a real auth.api_key into this file, so it
+			// must be owner-only from creation (matching install.writeFilePrivate).
+			if err := os.WriteFile(configPath, []byte(defaultConfig), 0o600); err != nil {
 				return fmt.Errorf("writing config file: %w", err)
+			}
+			if err := os.Chmod(configPath, 0o600); err != nil {
+				return fmt.Errorf("setting config file permissions: %w", err)
 			}
 
 			log.Info("config file created", "path", configPath)

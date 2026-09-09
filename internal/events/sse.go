@@ -11,7 +11,8 @@ import (
 )
 
 // StreamHandler serves an SSE feed of hub events. Mount at GET /api/events/stream.
-// It is a read endpoint and follows the same (open) access as the other GET /api list endpoints.
+// It is a read endpoint and follows the same access rules as the other GET /api
+// endpoints: it requires the API key when one is configured.
 func StreamHandler(hub *Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Clear the server's write deadline for this long-lived stream.

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -61,9 +62,14 @@ func serveCmd() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:       "api-key",
-				Usage:      "API key required for write endpoints and MCP",
+				Usage:      "API key required for all API endpoints (reads, writes, MCP, SSE); empty disables auth (loopback binds only, unless --insecure-no-api-key)",
 				ConfigPath: []string{"auth.api_key"},
 				EnvVars:    []string{"SKOPOS_API_KEY"},
+			},
+			&cli.BoolFlag{
+				Name:    "insecure-no-api-key",
+				Usage:   "Allow starting without an api_key on a non-loopback interface (every endpoint is open to the network)",
+				EnvVars: []string{"SKOPOS_INSECURE_NO_API_KEY"},
 			},
 			&cli.IntFlag{
 				Name:         "health-stuck-threshold",
@@ -91,10 +97,10 @@ func serveCmd() *cli.Command {
 
 			apiKey := cmd.GetString("api-key")
 			if apiKey == "" {
-				log.Warn("no api_key configured: authentication is disabled (all endpoints are open)")
-				if !isLoopbackHost(cmd.GetString("server-host")) {
-					log.Warn("binding a non-loopback interface without an api_key exposes all endpoints to the network")
+				if !isLoopbackHost(cmd.GetString("server-host")) && !cmd.GetBool("insecure-no-api-key") {
+					return fmt.Errorf("refusing to start without an api_key on a non-loopback interface: set --api-key / SKOPOS_API_KEY, or pass --insecure-no-api-key to explicitly accept that every endpoint is open to the network")
 				}
+				log.Warn("no api_key configured: authentication is disabled (all endpoints are open)")
 			}
 
 			rest.SetLogger(log)
@@ -142,7 +148,7 @@ func serveCmd() *cli.Command {
 
 			mux := http.NewServeMux()
 			routes.RegisterRoutes(mux, statusHandler, blackboardHandler, plansHandler, workspacesHandler)
-			mux.HandleFunc("GET /api/events/stream", events.StreamHandler(hub))
+			mux.Handle("GET /api/events/stream", auth.APIKeyMiddleware(apiKey)(events.StreamHandler(hub)))
 
 			// Runtime metrics are not part of the product API: require the API key
 			// when auth is enabled (the middleware is a no-op otherwise).
@@ -152,7 +158,7 @@ func serveCmd() *cli.Command {
 			// is capped like the REST API (rest.DecodeJSON applies its cap only to
 			// handlers that decode via it).
 			mcpHandler := mcp.NewMCPHandler(statusService, blackboardService, plansService)
-			mcpHandler = rest.BodyLimit(mcpHandler)
+			mcpHandler = rest.BodyLimit(noBrowserOrigin(mcpHandler))
 			if apiKey != "" {
 				mcpHandler = auth.APIKeyMiddleware(apiKey)(mcpHandler)
 			}
@@ -162,7 +168,7 @@ func serveCmd() *cli.Command {
 
 			httpServer := &http.Server{
 				Addr:              fmt.Sprintf("%s:%d", cmd.GetString("server-host"), cmd.GetInt("server-port")),
-				Handler:           events.Middleware(hub, log, mux),
+				Handler:           hostAllowed(cmd.GetString("server-host"))(events.Middleware(hub, log, mux)),
 				ReadHeaderTimeout: 10 * time.Second,
 				ReadTimeout:       30 * time.Second,
 				WriteTimeout:      30 * time.Second, // SSE handler clears this per-request
@@ -198,6 +204,22 @@ func serveCmd() *cli.Command {
 	}
 }
 
+// noBrowserOrigin rejects cross-origin MCP requests: real MCP clients never
+// send an Origin header, while browsers always do. Without this, the MCP
+// handler's unconditional "Access-Control-Allow-Origin: *" turns any website
+// in the victim's browser into an MCP client against unauthenticated local
+// instances. Preflight OPTIONS requests are denied as well, so the browser
+// blocks the call before it reaches the MCP handler.
+func noBrowserOrigin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Origin") != "" {
+			http.Error(w, "cross-origin MCP requests are not permitted", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // isLoopbackHost reports whether host is "localhost" or a loopback IP, i.e.
 // the server is not reachable from other machines.
 func isLoopbackHost(host string) bool {
@@ -206,4 +228,29 @@ func isLoopbackHost(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// hostAllowed returns middleware that validates the Host header of every
+// request when the server is bound to a loopback address. Browsers treat a
+// DNS name that resolves to 127.0.0.1 as same-origin with a loopback service
+// (DNS rebinding), so without this check any visited website could read all
+// API responses through such a name. Non-loopback binds are not restricted:
+// clients legitimately reach those by arbitrary hostnames or IPs.
+func hostAllowed(serverHost string) func(http.Handler) http.Handler {
+	enforce := isLoopbackHost(serverHost)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if enforce {
+				host := strings.ToLower(r.Host)
+				if h, _, err := net.SplitHostPort(host); err == nil {
+					host = h
+				}
+				if !isLoopbackHost(host) {
+					http.Error(w, "host not allowed", http.StatusForbidden)
+					return
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }

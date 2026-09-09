@@ -2,7 +2,9 @@ package rest
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/paularlott/logger"
 )
@@ -44,6 +46,10 @@ func InternalError(w http.ResponseWriter, err error) {
 
 // DecodeJSON reads a JSON request body (capped at maxBodyBytes) into v.
 func DecodeJSON(w http.ResponseWriter, r *http.Request, v interface{}) error {
+	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
+	if !strings.HasPrefix(contentType, "application/json") {
+		return fmt.Errorf("content type must be application/json, got %q", contentType)
+	}
 	defer r.Body.Close()
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	return json.NewDecoder(r.Body).Decode(v)

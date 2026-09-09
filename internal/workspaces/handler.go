@@ -49,6 +49,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 // List handles GET /api/workspaces.
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	list, err := h.service.List(r.Context())
 	if err != nil {
 		rest.InternalError(w, err)

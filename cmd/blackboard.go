@@ -78,6 +78,7 @@ func blackboardReadCmd() *cli.Command {
 		Usage: "Print the Knowledge Bundle markdown to stdout",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}},
 			&cli.StringFlag{Name: "branch", Usage: "Branch name"},
 			&cli.StringFlag{Name: "session-id", Usage: "Session ID"},
 			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID"},
@@ -85,7 +86,7 @@ func blackboardReadCmd() *cli.Command {
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			ws := cmd.GetString("workspace")
 			ws = workspaceOrDefault(ws)
-			bundle, err := blackboardGetBundle(ctx, cmd.GetString("server-url"), cmd.GetString("branch"), cmd.GetString("session-id"), ws)
+			bundle, err := blackboardGetBundle(ctx, cmd.GetString("server-url"), cmd.GetString("api-key"), cmd.GetString("branch"), cmd.GetString("session-id"), ws)
 			if err != nil {
 				return err
 			}
@@ -101,6 +102,7 @@ func blackboardListCmd() *cli.Command {
 		Usage: "List blackboard entries in tabular form",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}},
 			&cli.StringFlag{Name: "branch", Usage: "Branch name"},
 			&cli.StringFlag{Name: "session-id", Usage: "Session ID"},
 			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID"},
@@ -108,7 +110,7 @@ func blackboardListCmd() *cli.Command {
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			ws := cmd.GetString("workspace")
 			ws = workspaceOrDefault(ws)
-			bundle, err := blackboardGetBundle(ctx, cmd.GetString("server-url"), cmd.GetString("branch"), cmd.GetString("session-id"), ws)
+			bundle, err := blackboardGetBundle(ctx, cmd.GetString("server-url"), cmd.GetString("api-key"), cmd.GetString("branch"), cmd.GetString("session-id"), ws)
 			if err != nil {
 				return err
 			}
@@ -193,7 +195,7 @@ func blackboardPostEntry(ctx context.Context, serverURL, apiKey string, input bl
 	return &result, nil
 }
 
-func blackboardGetBundle(ctx context.Context, serverURL, branch, sessionID, workspaceID string) (*blackboard.Bundle, error) {
+func blackboardGetBundle(ctx context.Context, serverURL, apiKey, branch, sessionID, workspaceID string) (*blackboard.Bundle, error) {
 	base := strings.TrimRight(serverURL, "/") + "/api/blackboard/entries"
 	q := url.Values{}
 	if branch != "" {
@@ -212,6 +214,9 @@ func blackboardGetBundle(ctx context.Context, serverURL, branch, sessionID, work
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

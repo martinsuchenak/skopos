@@ -44,6 +44,10 @@ func (h *Handler) CreatePlan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListPlans(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	workspace := rest.QueryAlias(r, "workspace_id", "workspace")
 	branch := r.URL.Query().Get("branch")
 	plans, err := h.service.ListPlans(r.Context(), workspace, branch)
@@ -58,6 +62,10 @@ func (h *Handler) ListPlans(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetPlan(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	id := r.PathValue("id")
 	plan, err := h.service.GetPlan(r.Context(), id)
 	if err != nil {

@@ -20,7 +20,7 @@ Optional — if absent, skopos runs on defaults. The file is gitignored (may con
 | `--server-host` | `SERVER_HOST` | `server.host` | `127.0.0.1` | HTTP listen host (set `0.0.0.0` to listen on all interfaces) |
 | `--server-port` | `SERVER_PORT` | `server.port` | `8080` | HTTP listen port (REST, MCP at `/mcp`, dashboard, SSE) |
 | `--database-path` | `DATABASE_PATH` | `database.path` | `skopos.db` | SQLite database file path |
-| `--api-key` | `SKOPOS_API_KEY` | `auth.api_key` | (empty = open) | API key for write endpoints + MCP |
+| `--api-key` | `SKOPOS_API_KEY` | `auth.api_key` | (empty = auth disabled, loopback only) | API key; when set, required by every endpoint (REST, MCP, SSE) |
 | `--health-stuck-threshold` | `HEALTH_STUCK_THRESHOLD` | `health.stuck_threshold_minutes` | `15` | Minutes before an active agent is marked stuck |
 | `--cleanup-retention-days` | `CLEANUP_RETENTION_DAYS` | `cleanup.retention_days` | `30` | Days to retain data (0 disables cleanup) |
 
@@ -36,7 +36,7 @@ With `debug`, every HTTP request is logged (method, path, status, duration) thro
 
 ## Authentication
 
-When `api_key` is set, all write endpoints (POST/PATCH/DELETE) and the MCP endpoint require the key via:
+When `api_key` is set, every endpoint (reads, writes, MCP, SSE) requires the key via:
 
 ```
 Authorization: Bearer mysecret

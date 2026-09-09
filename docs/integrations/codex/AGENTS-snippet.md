@@ -46,7 +46,7 @@ Use `--scope project` to share a finding with all agents on all branches.
 
 Environment:
 - `SKOPOS_SERVER_URL` — Skopos server URL (default: `http://localhost:8080`)
-- `SKOPOS_API_KEY` — API key for write endpoints
+- `SKOPOS_API_KEY` — API key (required by all endpoints when set)
 - `SKOPOS_SESSION_ID` — optional; set to share a session across agents in the same workspace
 
 ## Skopos Plans

@@ -96,17 +96,20 @@ func (s *Service) AddItem(ctx context.Context, planID string, input CreateItemIn
 
 	var item Item
 	err := s.store.RunInTx(ctx, func(tx Store) error {
+		plan, err := tx.GetPlan(ctx, planID)
+		if err != nil {
+			return err
+		}
 		var pos int
 		if input.Position != nil {
 			pos = *input.Position
+			if pos < 0 || pos > len(plan.Items) {
+				return fmt.Errorf("%w: position %d out of range [0, %d]", ErrInvalidInput, pos, len(plan.Items))
+			}
 			if err := tx.ShiftPositions(ctx, planID, pos); err != nil {
 				return err
 			}
 		} else {
-			plan, err := tx.GetPlan(ctx, planID)
-			if err != nil {
-				return err
-			}
 			pos = len(plan.Items)
 		}
 

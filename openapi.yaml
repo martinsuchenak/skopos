@@ -65,6 +65,7 @@ paths:
     get:
       summary: List sessions
       operationId: listSessions
+      security: [{ BearerAuth: [] }]
       parameters:
         - name: workspace_id
           in: query
@@ -82,6 +83,7 @@ paths:
     get:
       summary: Get a session (with agents and events)
       operationId: getSession
+      security: [{ BearerAuth: [] }]
       parameters:
         - { $ref: "#/components/parameters/SessionId" }
       responses:
@@ -104,6 +106,7 @@ paths:
     get:
       summary: List events for a session
       operationId: listSessionEvents
+      security: [{ BearerAuth: [] }]
       parameters:
         - { $ref: "#/components/parameters/SessionId" }
       responses:
@@ -120,6 +123,7 @@ paths:
     get:
       summary: Server-Sent Events stream (live UI updates)
       operationId: eventStream
+      security: [{ BearerAuth: [] }]
       description: >
         Returns a persistent text/event-stream. The server publishes named
         events (sessions, blackboard, plans, workspaces, change) whenever a
@@ -160,6 +164,7 @@ paths:
     get:
       summary: List registered workspaces
       operationId: listWorkspaces
+      security: [{ BearerAuth: [] }]
       responses:
         "200":
           description: Workspaces
@@ -202,6 +207,7 @@ paths:
     get:
       summary: Read the knowledge bundle (entries + markdown), or search when q/entry_type/author is present
       operationId: blackboardRead
+      security: [{ BearerAuth: [] }]
       parameters:
         - { name: workspace_id, in: query, schema: { type: string } }
         - { name: branch, in: query, schema: { type: string } }
@@ -261,6 +267,7 @@ paths:
     get:
       summary: List plans
       operationId: listPlans
+      security: [{ BearerAuth: [] }]
       parameters:
         - { name: workspace_id, in: query, schema: { type: string } }
         - { name: branch, in: query, schema: { type: string } }
@@ -276,6 +283,7 @@ paths:
     get:
       summary: Get a plan with all items and dependencies
       operationId: getPlan
+      security: [{ BearerAuth: [] }]
       parameters: [{ $ref: "#/components/parameters/PlanId" }]
       responses:
         "200":

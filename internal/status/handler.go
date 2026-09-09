@@ -46,6 +46,10 @@ func (h *Handler) Report(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	workspaceID := rest.QueryAlias(r, "workspace_id", "workspace")
 	sessions, err := h.service.ListSessions(r.Context(), workspaceID)
 	if err != nil {
@@ -59,6 +63,10 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetSession(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	session, err := h.service.GetSession(r.Context(), r.PathValue("id"))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -76,6 +84,10 @@ func (h *Handler) GetSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	events, err := h.service.ListEvents(r.Context(), r.PathValue("id"))
 	if err != nil {
 		if errors.Is(err, ErrInvalidInput) {

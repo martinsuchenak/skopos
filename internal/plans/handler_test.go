@@ -33,6 +33,7 @@ func TestHandlerCreatePlanRequiresAuth(t *testing.T) {
 	h := testHandler(t, "secret")
 	body := bytes.NewBufferString(`{"name":"Plan","author_agent_id":"a"}`)
 	req := httptest.NewRequest("POST", "/api/plans", body)
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreatePlan(w, req)
 	if w.Code != http.StatusUnauthorized {
@@ -44,6 +45,7 @@ func TestHandlerCreateAndGetPlan(t *testing.T) {
 	h := testHandler(t, "")
 	body := bytes.NewBufferString(`{"name":"Auth refactor","branch_name":"feat-auth","author_agent_id":"agent-1"}`)
 	req := httptest.NewRequest("POST", "/api/plans", body)
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreatePlan(w, req)
 	if w.Code != http.StatusCreated {
@@ -78,6 +80,7 @@ func TestHandlerListPlans(t *testing.T) {
 	h := testHandler(t, "")
 	body := bytes.NewBufferString(`{"name":"P1","author_agent_id":"a"}`)
 	req := httptest.NewRequest("POST", "/api/plans", body)
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreatePlan(w, req)
 	if w.Code != http.StatusCreated {
@@ -104,6 +107,7 @@ func TestHandlerAddItemAndPatchStatus(t *testing.T) {
 
 	body := bytes.NewBufferString(`{"name":"P","author_agent_id":"a"}`)
 	req := httptest.NewRequest("POST", "/api/plans", body)
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreatePlan(w, req)
 	var plan Plan
@@ -111,6 +115,7 @@ func TestHandlerAddItemAndPatchStatus(t *testing.T) {
 
 	itemBody := bytes.NewBufferString(`{"title":"Fix auth bug"}`)
 	req2 := httptest.NewRequest("POST", "/api/plans/"+plan.ID+"/items", itemBody)
+	req2.Header.Set("Content-Type", "application/json")
 	req2.SetPathValue("id", plan.ID)
 	w2 := httptest.NewRecorder()
 	h.AddItem(w2, req2)
@@ -122,6 +127,7 @@ func TestHandlerAddItemAndPatchStatus(t *testing.T) {
 
 	patchBody := bytes.NewBufferString(`{"status":"done"}`)
 	req3 := httptest.NewRequest("PATCH", "/api/plans/"+plan.ID+"/items/"+item.ID, patchBody)
+	req3.Header.Set("Content-Type", "application/json")
 	req3.SetPathValue("id", plan.ID)
 	req3.SetPathValue("item_id", item.ID)
 	w3 := httptest.NewRecorder()
@@ -146,6 +152,7 @@ func TestHandlerDeletePlanCascades(t *testing.T) {
 
 	body := bytes.NewBufferString(`{"name":"P","author_agent_id":"a"}`)
 	req := httptest.NewRequest("POST", "/api/plans", body)
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreatePlan(w, req)
 	var plan Plan
@@ -184,6 +191,7 @@ func TestHandlerListPlansWorkspaceFilter(t *testing.T) {
 
 	body1 := bytes.NewBufferString(`{"name":"Global","author_agent_id":"a"}`)
 	req1 := httptest.NewRequest("POST", "/api/plans", body1)
+	req1.Header.Set("Content-Type", "application/json")
 	w1 := httptest.NewRecorder()
 	h.CreatePlan(w1, req1)
 	if w1.Code != http.StatusCreated {
@@ -192,6 +200,7 @@ func TestHandlerListPlansWorkspaceFilter(t *testing.T) {
 
 	body2 := bytes.NewBufferString(`{"name":"WS Plan","author_agent_id":"a","workspace_id":"ws-1"}`)
 	req2 := httptest.NewRequest("POST", "/api/plans", body2)
+	req2.Header.Set("Content-Type", "application/json")
 	w2 := httptest.NewRecorder()
 	h.CreatePlan(w2, req2)
 	if w2.Code != http.StatusCreated {
@@ -217,6 +226,7 @@ func TestHandlerCreatePlanWithWorkspaceID(t *testing.T) {
 	h := testHandler(t, "")
 	body := bytes.NewBufferString(`{"name":"WS Plan","author_agent_id":"a","workspace_id":"ws-42"}`)
 	req := httptest.NewRequest("POST", "/api/plans", body)
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreatePlan(w, req)
 	if w.Code != http.StatusCreated {
@@ -236,6 +246,7 @@ func TestHandlerAddDependencyAndAutoBlock(t *testing.T) {
 
 	body := bytes.NewBufferString(`{"name":"P","author_agent_id":"a"}`)
 	req := httptest.NewRequest("POST", "/api/plans", body)
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreatePlan(w, req)
 	var plan Plan
@@ -244,6 +255,7 @@ func TestHandlerAddDependencyAndAutoBlock(t *testing.T) {
 	for _, title := range []string{"First", "Second"} {
 		itemBody := bytes.NewBufferString(fmt.Sprintf(`{"title":"%s"}`, title))
 		req := httptest.NewRequest("POST", "/api/plans/"+plan.ID+"/items", itemBody)
+		req.Header.Set("Content-Type", "application/json")
 		req.SetPathValue("id", plan.ID)
 		w := httptest.NewRecorder()
 		h.AddItem(w, req)
@@ -261,6 +273,7 @@ func TestHandlerAddDependencyAndAutoBlock(t *testing.T) {
 
 	depBody := bytes.NewBufferString(fmt.Sprintf(`{"depends_on_item_id":"%s"}`, fullPlan.Items[0].ID))
 	depReq := httptest.NewRequest("POST", fmt.Sprintf("/api/plans/%s/items/%s/dependencies", plan.ID, fullPlan.Items[1].ID), depBody)
+	depReq.Header.Set("Content-Type", "application/json")
 	depReq.SetPathValue("id", plan.ID)
 	depReq.SetPathValue("item_id", fullPlan.Items[1].ID)
 	depW := httptest.NewRecorder()
@@ -281,6 +294,7 @@ func TestHandlerRemoveDependency(t *testing.T) {
 
 	body := bytes.NewBufferString(`{"name":"P","author_agent_id":"a"}`)
 	req := httptest.NewRequest("POST", "/api/plans", body)
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreatePlan(w, req)
 	var plan Plan
@@ -289,6 +303,7 @@ func TestHandlerRemoveDependency(t *testing.T) {
 	for _, title := range []string{"A", "B"} {
 		itemBody := bytes.NewBufferString(fmt.Sprintf(`{"title":"%s"}`, title))
 		req := httptest.NewRequest("POST", "/api/plans/"+plan.ID+"/items", itemBody)
+		req.Header.Set("Content-Type", "application/json")
 		req.SetPathValue("id", plan.ID)
 		w := httptest.NewRecorder()
 		h.AddItem(w, req)
@@ -303,12 +318,14 @@ func TestHandlerRemoveDependency(t *testing.T) {
 
 	depBody := bytes.NewBufferString(fmt.Sprintf(`{"depends_on_item_id":"%s"}`, fullPlan.Items[0].ID))
 	depReq := httptest.NewRequest("POST", fmt.Sprintf("/api/plans/%s/items/%s/dependencies", plan.ID, fullPlan.Items[1].ID), depBody)
+	depReq.Header.Set("Content-Type", "application/json")
 	depReq.SetPathValue("id", plan.ID)
 	depReq.SetPathValue("item_id", fullPlan.Items[1].ID)
 	h.AddDependency(httptest.NewRecorder(), depReq)
 
 	doneBody := bytes.NewBufferString(`{"status":"done"}`)
 	doneReq := httptest.NewRequest("PATCH", fmt.Sprintf("/api/plans/%s/items/%s", plan.ID, fullPlan.Items[0].ID), doneBody)
+	doneReq.Header.Set("Content-Type", "application/json")
 	doneReq.SetPathValue("id", plan.ID)
 	doneReq.SetPathValue("item_id", fullPlan.Items[0].ID)
 	doneW := httptest.NewRecorder()
@@ -333,6 +350,7 @@ func TestHandlerAddItemWithPosition(t *testing.T) {
 
 	body := bytes.NewBufferString(`{"name":"P","author_agent_id":"a"}`)
 	req := httptest.NewRequest("POST", "/api/plans", body)
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreatePlan(w, req)
 	var plan Plan
@@ -340,6 +358,7 @@ func TestHandlerAddItemWithPosition(t *testing.T) {
 
 	itemBody := bytes.NewBufferString(`{"title":"First","position":0}`)
 	req1 := httptest.NewRequest("POST", "/api/plans/"+plan.ID+"/items", itemBody)
+	req1.Header.Set("Content-Type", "application/json")
 	req1.SetPathValue("id", plan.ID)
 	w1 := httptest.NewRecorder()
 	h.AddItem(w1, req1)
@@ -349,6 +368,7 @@ func TestHandlerAddItemWithPosition(t *testing.T) {
 
 	insertBody := bytes.NewBufferString(`{"title":"Inserted","position":0}`)
 	req2 := httptest.NewRequest("POST", "/api/plans/"+plan.ID+"/items", insertBody)
+	req2.Header.Set("Content-Type", "application/json")
 	req2.SetPathValue("id", plan.ID)
 	w2 := httptest.NewRecorder()
 	h.AddItem(w2, req2)
