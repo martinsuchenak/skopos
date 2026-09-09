@@ -5,18 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2306b6d4'/%3E%3Ctext x='16' y='23' font-family='ui-monospace,monospace' font-size='20' font-weight='700' text-anchor='middle' fill='%2309090b'%3Es%3C/text%3E%3C/svg%3E">
     <title>{{.Title}} - skopos</title>
-    <script>
-      // Apply the saved theme before first paint to avoid a flash.
-      (function () {
-        try {
-          var t = localStorage.getItem('skopos:theme') || 'system';
-          var dark = t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-          var el = document.documentElement;
-          el.classList.toggle('dark', dark);
-          el.classList.toggle('light', !dark);
-        } catch (e) { }
-      })();
-    </script>
+    <script src="/static/theme.js"></script>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body x-data="app()" x-init="init()" :class="{ 'modal-open': anyModalOpen() }" class="min-h-screen bg-zinc-950 text-zinc-100">

@@ -86,6 +86,17 @@ func registerWebRoutes(mux *http.ServeMux) {
 			http.NotFound(w, r)
 			return
 		}
+		// The dashboard renders agent-authored content (via escaped text
+		// interpolation only). CSP is the backstop keeping a future HTML-rendering
+		// change from becoming stored XSS: scripts/styles/statics are same-origin,
+		// data: for the favicon, and framing is denied (the UI has destructive
+		// buttons — clickjacking). Notes: 'unsafe-eval' is required by Alpine's
+		// expression evaluator (its CSP build would need a full template rewrite);
+		// 'unsafe-inline' for styles only (Alpine's :style writes style attributes).
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		version := build.Version
 		if build.Date != "unknown" {

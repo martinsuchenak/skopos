@@ -56,7 +56,7 @@ window.app = () => ({
   toasts: [] as Toast[],
 
   // live updates
-  es: null as EventSource | null,
+  sseAbort: null as AbortController | null,
   streamConnected: false,
   streamRetryDelay: 2000,
   streamRetryTimer: null as ReturnType<typeof setTimeout> | null,
@@ -93,38 +93,70 @@ window.app = () => ({
     this.openEventStream();
   },
 
-  // SSE with polling fallback. On error the EventSource is closed (not left to
-  // auto-reconnect every 3s), polling takes over, and SSE retries with backoff.
-  // While connected, a slow reconciliation poll keeps running: the server drops
-  // events when a subscriber's buffer is full, so this bounds how stale the UI
-  // can get from a missed event.
+  // SSE over fetch with polling fallback. fetch (unlike EventSource) can send
+  // the Authorization header, so live updates keep working when an API key is
+  // configured. On stream end/error, polling takes over and SSE retries with
+  // backoff. While connected, a slow reconciliation poll keeps running: the
+  // server drops events when a subscriber's buffer is full, so this bounds how
+  // stale the UI can get from a missed event.
   openEventStream() {
-    if (typeof EventSource === 'undefined') { this.startPolling(5000); return; }
     this.connectSSE();
   },
-  connectSSE() {
-    const es = new EventSource('/api/events/stream');
-    this.es = es;
-    es.onopen = () => {
+  closeSSE() {
+    if (this.sseAbort) { this.sseAbort.abort(); this.sseAbort = null; }
+  },
+  async connectSSE() {
+    this.closeSSE(); // never leave a previous stream running
+    const controller = new AbortController();
+    this.sseAbort = controller;
+    try {
+      const res = await this.authFetch('/api/events/stream', {
+        headers: { Accept: 'text/event-stream' },
+        signal: controller.signal,
+      });
+      if (!res.ok || !res.body) throw new Error(`stream status ${res.status}`);
+
       this.streamConnected = true;
       this.streamRetryDelay = 2000; // reset backoff
       this.startPolling(30000); // slow reconciliation while connected
       this.refresh();
-    };
-    es.onerror = () => {
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        // Parse complete frames (blank-line separated); comment lines (": ping") are ignored.
+        let sep: number;
+        while ((sep = buf.indexOf('\n\n')) >= 0) {
+          const frame = buf.slice(0, sep);
+          buf = buf.slice(sep + 2);
+          this.handleStreamFrame(frame);
+        }
+      }
+    } catch { /* stream ended, aborted, or failed to open */ }
+
+    if (this.sseAbort === controller) { // not superseded by a newer attempt
+      this.sseAbort = null;
       this.streamConnected = false;
-      es.close(); // prevent the browser's 3s auto-reconnect spam
-      this.es = null;
       this.startPolling(5000); // fast poll while SSE is down
       this.streamRetryDelay = Math.min((this.streamRetryDelay ?? 2000) * 2, 60000);
       clearTimeout(this.streamRetryTimer ?? undefined);
       this.streamRetryTimer = setTimeout(() => this.connectSSE(), this.streamRetryDelay);
-    };
-    es.addEventListener('sessions', () => this.refresh());
-    es.addEventListener('blackboard', () => { if (this.activeView === 'blackboard') this.fetchBundle(); });
-    es.addEventListener('plans', () => { if (this.activeView === 'plans') this.fetchPlans(); });
-    es.addEventListener('workspaces', () => this.fetchWorkspaces());
-    es.addEventListener('change', () => this.refresh());
+    }
+  },
+  handleStreamFrame(frame: string) {
+    let type = 'message';
+    for (const line of frame.split('\n')) {
+      if (line.startsWith('event:')) type = line.slice(6).trim();
+    }
+    if (type === 'sessions') this.refresh();
+    else if (type === 'blackboard') { if (this.activeView === 'blackboard') this.fetchBundle(); }
+    else if (type === 'plans') { if (this.activeView === 'plans') this.fetchPlans(); }
+    else if (type === 'workspaces') this.fetchWorkspaces();
+    else if (type === 'change') this.refresh();
   },
   startPolling(interval: number) {
     if (this.pollTimer && this.pollInterval === interval) return;
