@@ -23,10 +23,25 @@ var ErrInvalidInput = fmt.Errorf("invalid code index input")
 
 // Service adds branch-fallback and graph semantics on top of Store.
 type Service struct {
-	store *Store
+	store   *Store
+	vectors VectorStore
 }
 
-func NewService(store *Store) *Service { return &Service{store: store} }
+func NewService(store *Store) *Service {
+	return &Service{store: store, vectors: NewSQLiteVectorStore(store)}
+}
+
+// SetVectorStore swaps the vector backend (default: SQLite brute force;
+// QdrantVectorStore for monorepo scale). Must be called before any
+// embedding/search activity.
+func (s *Service) SetVectorStore(vs VectorStore) {
+	if vs != nil {
+		s.vectors = vs
+	}
+}
+
+// VectorStoreName reports the active vector backend (for status/logging).
+func (s *Service) VectorStoreName() string { return s.vectors.Name() }
 
 func (s *Service) Store() *Store { return s.store }
 
@@ -225,6 +240,18 @@ func (s *Service) DropBranch(ctx context.Context, workspace, branch string) erro
 		return fmt.Errorf("%w: branch is required", ErrInvalidInput)
 	}
 	return s.store.DropBranch(workspace, branch)
+}
+
+// DropWorkspace tears down a workspace's entire index: vectors (any
+// backend, including external stores) and the index database itself.
+func (s *Service) DropWorkspace(ctx context.Context, workspace string) error {
+	if strings.TrimSpace(workspace) == "" {
+		return fmt.Errorf("%w: workspace is required", ErrInvalidInput)
+	}
+	if err := s.vectors.DropWorkspace(ctx, workspace); err != nil {
+		return err
+	}
+	return s.store.DeleteWorkspace(workspace)
 }
 
 // ---- ingest (shared by CLI and REST push) ----

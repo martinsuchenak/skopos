@@ -323,6 +323,24 @@ func (h *Handler) Impact(w http.ResponseWriter, r *http.Request) {
 	rest.RespondJSON(w, http.StatusOK, res)
 }
 
+// DropWorkspace handles DELETE /api/codeindex/{workspace}: tear down the
+// whole workspace index (index DB + vectors in any backend).
+func (h *Handler) DropWorkspace(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	ws, ok := h.requireWorkspace(w, r)
+	if !ok {
+		return
+	}
+	if err := h.service.DropWorkspace(r.Context(), ws); err != nil {
+		h.respondServiceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // DropBranch handles DELETE /api/codeindex/{workspace}/branch/{branch}.
 func (h *Handler) DropBranch(w http.ResponseWriter, r *http.Request) {
 	if !h.authorized(r) {

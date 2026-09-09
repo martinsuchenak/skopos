@@ -29,6 +29,7 @@ func registerCodeIndexRoutes(mux *http.ServeMux, h *codeindex.Handler) {
 	mux.HandleFunc("GET /api/codeindex/{workspace}/call-tree", h.CallTree)
 	mux.HandleFunc("GET /api/codeindex/{workspace}/branch-diff", h.BranchDiff)
 	mux.HandleFunc("DELETE /api/codeindex/{workspace}/branch/{branch}", h.DropBranch)
+	mux.HandleFunc("DELETE /api/codeindex/{workspace}", h.DropWorkspace)
 	mux.HandleFunc("POST /api/codeindex/{workspace}/refresh", h.RefreshStart)
 	mux.HandleFunc("GET /api/codeindex/{workspace}/refresh", h.RefreshStatus)
 }

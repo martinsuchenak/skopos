@@ -104,6 +104,25 @@ func serveCmd() *cli.Command {
 				ConfigPath: []string{"codeindex.embeddings.api_key"},
 				EnvVars:    []string{"SKOPOS_EMBEDDINGS_API_KEY"},
 			},
+			&cli.StringFlag{
+				Name:         "vector-store",
+				DefaultValue: "sqlite",
+				Usage:        "Vector backend for embeddings: sqlite (embedded, brute force) or qdrant (external, monorepo scale)",
+				ConfigPath:   []string{"codeindex.embeddings.vector_store"},
+				EnvVars:      []string{"SKOPOS_VECTOR_STORE"},
+			},
+			&cli.StringFlag{
+				Name:       "qdrant-url",
+				Usage:      "Qdrant REST address (e.g. http://localhost:6333 or https://qdrant.example.com) when --vector-store=qdrant",
+				ConfigPath: []string{"codeindex.embeddings.qdrant_url"},
+				EnvVars:    []string{"SKOPOS_QDRANT_URL"},
+			},
+			&cli.StringFlag{
+				Name:       "qdrant-api-key",
+				Usage:      "Qdrant API key (when required)",
+				ConfigPath: []string{"codeindex.embeddings.qdrant_api_key"},
+				EnvVars:    []string{"SKOPOS_QDRANT_API_KEY"},
+			},
 			&cli.IntFlag{
 				Name:         "cleanup-retention-days",
 				DefaultValue: 30,
@@ -180,6 +199,18 @@ func serveCmd() *cli.Command {
 
 			// Optional semantic embeddings: any OpenAI-compatible endpoint
 			// (local Ollama keeps everything on-host). Disabled by default.
+			// Optional external vector backend (default: embedded SQLite).
+			if vs := cmd.GetString("vector-store"); vs == "qdrant" {
+				if cmd.GetString("qdrant-url") == "" {
+					return fmt.Errorf("--qdrant-url is required when --vector-store=qdrant")
+				}
+				qd, err := codeindex.NewQdrantVectorStore(cmd.GetString("qdrant-url"), cmd.GetString("qdrant-api-key"))
+				if err != nil {
+					return err
+				}
+				codeIndexService.SetVectorStore(qd)
+				log.Info("vector store: qdrant", "url", cmd.GetString("qdrant-url"))
+			}
 			if embURL := cmd.GetString("embeddings-url"); embURL != "" && cmd.GetString("embeddings-model") != "" {
 				embedder := &codeindex.OpenAIEmbedder{
 					BaseURL:   embURL,
@@ -187,7 +218,7 @@ func serveCmd() *cli.Command {
 					APIKey:    cmd.GetString("embeddings-api-key"),
 				}
 				codeIndexHandler.SetEmbeddingManager(codeindex.NewEmbeddingManager(codeIndexService, embedder))
-				log.Info("semantic code search enabled", "model", embedder.ModelName, "url", embURL)
+				log.Info("semantic code search enabled", "model", embedder.ModelName, "url", embURL, "vectors", codeIndexService.VectorStoreName())
 			}
 
 			// Cancel background work and initiate graceful shutdown on SIGINT/SIGTERM.

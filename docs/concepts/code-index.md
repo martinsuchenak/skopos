@@ -86,9 +86,29 @@ model = "nomic-embed-text"
 
 Embeddings are computed in the background after each push. `code_search` and
 `/search?semantic=true` then fuse full-text and vector results with Reciprocal
-Rank Fusion. Storage is brute-force cosine over SQLite BLOBs (measured:
-~120ms at 68k symbols, comfortable to ~300k per workspace); vectors sit
-behind a `VectorStore` interface if a monorepo ever outgrows that.
+Rank Fusion.
+
+Vector storage is pluggable (`VectorStore` interface):
+
+- **`sqlite` (default)** — brute-force cosine over BLOBs in the per-workspace
+  index DB. Measured: ~120ms at 68k symbols; comfortable to ~300k per
+  workspace. Zero moving parts.
+- **`qdrant`** — external vector database over its REST API (works behind any
+  HTTP proxy; no gRPC). One collection per workspace (`skopos-<slug>`),
+  recreated automatically if the embedding model's dimensions change.
+  For monorepo scale (millions of LOC):
+
+```toml
+[codeindex.embeddings]
+url = "https://llm-router.example.com/v1"
+model = "text-embedding-nomic-embed-text-v1.5"
+vector_store = "qdrant"
+qdrant_url = "https://qdrant.example.com"
+# qdrant_api_key = ""
+```
+
+`skopos index drop-workspace` tears a workspace's index down completely —
+the index DB and vectors in any backend, including the external collection.
 
 ## Languages
 

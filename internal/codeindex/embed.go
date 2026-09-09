@@ -110,124 +110,138 @@ func blobToVec(b []byte) []float32 {
 	return v
 }
 
-// EmbedPending embeds symbols of a workspace that lack vectors (bounded per
-// run). Called asynchronously after commits and directly by tests.
+// EmbedPending embeds symbols of a workspace that lack vectors. Each pass
+// walks all candidate symbol ids in cursor pages (checking the vector store
+// for gaps) and embeds up to embedBatchPerPass of them; the embedding
+// manager loops until a pass makes no progress. This stays correct for any
+// vector backend (SQLite or external) and any corpus size.
 func (s *Service) EmbedPending(ctx context.Context, workspace string, embedder Embedder) (int, error) {
 	db, err := s.store.DB(workspace)
 	if err != nil {
 		return 0, err
 	}
-	rows, err := db.Query(`
-		SELECT s.id, s.name, s.kind, s.signature FROM symbols s
-		LEFT JOIN embeddings e ON e.symbol_id = s.id
-		WHERE e.symbol_id IS NULL AND s.name != ''
-		LIMIT 256`)
-	if err != nil {
-		return 0, err
-	}
-	type pending struct {
-		id   int
-		text string
-	}
-	var batch []pending
-	for rows.Next() {
-		var p pending
-		var name, kind, sig string
-		if err := rows.Scan(&p.id, &name, &kind, &sig); err != nil {
-			rows.Close()
+	const page = 512
+	const perPass = 1024
+
+	var toEmbedIDs []int64
+	cursor := int64(0)
+	for len(toEmbedIDs) < perPass {
+		rows, err := db.Query(`
+			SELECT s.id, s.kind FROM symbols s
+			WHERE s.id > ? AND s.name != ''
+			ORDER BY s.id
+			LIMIT ?`, cursor, page)
+		if err != nil {
 			return 0, err
 		}
-		if !embeddableKinds[kind] {
-			continue
+		var pageIDs []int64
+		for rows.Next() {
+			var id int64
+			var kind string
+			if err := rows.Scan(&id, &kind); err != nil {
+				rows.Close()
+				return 0, err
+			}
+			cursor = id
+			if embeddableKinds[kind] {
+				pageIDs = append(pageIDs, id)
+			}
 		}
-		text := name
-		if sig != "" {
-			text += "\n" + sig
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return 0, err
 		}
-		p.text = text
-		batch = append(batch, p)
+		if len(pageIDs) > 0 {
+			missing, err := s.vectors.Missing(ctx, workspace, pageIDs)
+			if err != nil {
+				return 0, err
+			}
+			toEmbedIDs = append(toEmbedIDs, missing...)
+		}
+		if cursor == 0 || len(toEmbedIDs) >= perPass {
+			break
+		}
+		// detect end of table: a page smaller than the cursor page means done
+		if len(pageIDs) == 0 && cursor > 0 {
+			// keep scanning: page had only non-embeddable kinds
+			var maxID int64
+			if err := db.QueryRow(`SELECT COALESCE(MAX(id),0) FROM symbols`).Scan(&maxID); err != nil {
+				return 0, err
+			}
+			if cursor >= maxID {
+				break
+			}
+		}
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-	if len(batch) == 0 {
+	if len(toEmbedIDs) == 0 {
 		return 0, nil
 	}
+	if len(toEmbedIDs) > perPass {
+		toEmbedIDs = toEmbedIDs[:perPass]
+	}
 
-	texts := make([]string, len(batch))
-	for i, p := range batch {
-		texts[i] = p.text
-	}
-	vecs, err := embedder.Embed(ctx, texts)
-	if err != nil {
-		return 0, err
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
-	for i, p := range batch {
-		if len(vecs[i]) == 0 {
-			continue
+	// Fetch the text for the missing ids.
+	texts := make([]string, len(toEmbedIDs))
+	for start := 0; start < len(toEmbedIDs); start += page {
+		end := start + page
+		if end > len(toEmbedIDs) {
+			end = len(toEmbedIDs)
 		}
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO embeddings (symbol_id, vec) VALUES (?, ?)`, p.id, vecToBlob(vecs[i])); err != nil {
+		qmarks := make([]string, end-start)
+		args := make([]any, 0, end-start+1)
+		for i, id := range toEmbedIDs[start:end] {
+			qmarks[i] = "?"
+			args = append(args, id)
+		}
+		rows, err := db.Query(`
+			SELECT s.id, s.name, s.signature FROM symbols s
+			WHERE s.id IN (`+strings.Join(qmarks, ",")+`)`, args...)
+		if err != nil {
 			return 0, err
 		}
+		byID := map[int64]string{}
+		for rows.Next() {
+			var id int64
+			var name, sig string
+			if err := rows.Scan(&id, &name, &sig); err != nil {
+				rows.Close()
+				return 0, err
+			}
+			text := name
+			if sig != "" {
+				text += "\n" + sig
+			}
+			byID[id] = text
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		for i, id := range toEmbedIDs[start:end] {
+			texts[start+i] = byID[id]
+		}
 	}
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
-	return len(batch), nil
-}
 
-// VectorSearch returns top-k symbol ids (and cosine scores) closest to the
-// query vector. Brute force over the workspace's stored vectors.
-func (s *Service) VectorSearch(ctx context.Context, workspace string, query []float32, k int) ([]int, error) {
-	db, err := s.store.DB(workspace)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := db.Query(`SELECT symbol_id, vec FROM embeddings`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	query = normalize(query)
-	type scored struct {
-		id int
-		s  float32
-	}
-	var hits []scored
-	for rows.Next() {
-		var id int
-		var blob []byte
-		if err := rows.Scan(&id, &blob); err != nil {
-			return nil, err
+	const batch = 64
+	done := 0
+	for start := 0; start < len(texts); start += batch {
+		end := start + batch
+		if end > len(texts) {
+			end = len(texts)
 		}
-		v := blobToVec(blob)
-		if len(v) != len(query) {
-			continue // different embedding model dimensions: skip stale rows
+		vecs, err := embedder.Embed(ctx, texts[start:end])
+		if err != nil {
+			if done > 0 {
+				return done, nil // partial progress; the next pass continues
+			}
+			return 0, err
 		}
-		var dot float32
-		for i := range v {
-			dot += v[i] * query[i]
+		if err := s.vectors.Add(ctx, workspace, toEmbedIDs[start:end], vecs); err != nil {
+			return done, err
 		}
-		hits = append(hits, scored{id, dot})
+		done += end - start
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	sort.Slice(hits, func(i, j int) bool { return hits[i].s > hits[j].s })
-	if len(hits) > k {
-		hits = hits[:k]
-	}
-	ids := make([]int, len(hits))
-	for i, h := range hits {
-		ids[i] = h.id
-	}
-	return ids, nil
+	return done, nil
 }
 
 // SemanticSearch fuses FTS and vector results with Reciprocal Rank Fusion.
@@ -251,7 +265,7 @@ func (s *Service) SemanticSearch(ctx context.Context, workspace, branch, query s
 		// resolveBranch labeled the fallback; recompute the resolved name.
 		resolved = s.store.DefaultBranch(workspace)
 	}
-	ids, err := s.VectorSearch(ctx, workspace, vecs[0], 50)
+	ids, err := s.vectors.Search(ctx, workspace, vecs[0], 50)
 	if err != nil || len(ids) == 0 {
 		return base, nil
 	}
@@ -273,13 +287,13 @@ func (s *Service) SemanticSearch(ctx context.Context, workspace, branch, query s
 		return base, nil
 	}
 	defer rows.Close()
-	var vecHits []SymbolHit
-	idOrder := map[int]int{}
+	idOrder := map[int64]int{}
 	for i, id := range ids {
 		idOrder[id] = i
 	}
+	var vecHits []SymbolHit
 	for rows.Next() {
-		var id int
+		var id int64
 		var h SymbolHit
 		if err := rows.Scan(&id, &h.Name, &h.Kind, &h.Path, &h.Line, &h.Signature, &h.Lang); err != nil {
 			return base, nil
@@ -287,6 +301,10 @@ func (s *Service) SemanticSearch(ctx context.Context, workspace, branch, query s
 		h.rank = idOrder[id]
 		vecHits = append(vecHits, h)
 	}
+	rows.Close()
+	// The join returns rows in path order; RRF must credit vector rank, so
+	// restore the vector-store ranking before fusing.
+	sort.Slice(vecHits, func(i, j int) bool { return vecHits[i].rank < vecHits[j].rank })
 
 	// RRF fusion (k=60) over FTS and vector rankings.
 	const rrfK = 60

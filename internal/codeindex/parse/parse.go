@@ -295,7 +295,12 @@ var DefaultExcludes = map[string]bool{
 	".git": true, "node_modules": true, "vendor": true, "dist": true,
 	"bin": true, "build": true, "out": true, "target": true, ".cache": true,
 	"__pycache__": true, ".venv": true, "venv": true, ".idea": true, ".vscode": true,
+	".yarn": true, ".next": true, ".nuxt": true, "coverage": true, "__snapshots__": true,
 }
+
+// MaxFileSize skips files larger than this (bundled/minified artifacts like
+// yarn releases would otherwise flood the index with junk symbols).
+const MaxFileSize = 1 << 20 // 1 MiB
 
 // Walk returns candidate source files under root (DetectLanguage != "").
 func Walk(root string) ([]string, error) {
@@ -310,9 +315,13 @@ func Walk(root string) ([]string, error) {
 			}
 			return nil
 		}
-		if Detect(p) != "" {
-			files = append(files, p)
+		if Detect(p) == "" {
+			return nil
 		}
+		if info, err := d.Info(); err == nil && info.Size() > MaxFileSize {
+			return nil
+		}
+		files = append(files, p)
 		return nil
 	})
 	if err != nil {

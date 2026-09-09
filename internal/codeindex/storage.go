@@ -134,6 +134,24 @@ func (st *Store) DB(workspace string) (*sql.DB, error) {
 	return db, nil
 }
 
+// DeleteWorkspace removes a workspace's entire index database. The caller
+// is responsible for dropping external vector stores first (Service).
+func (st *Store) DeleteWorkspace(workspace string) error {
+	path := dbPath(st.dir, workspace)
+	st.mu.Lock()
+	if db, ok := st.dbs[workspace]; ok {
+		db.Close()
+		delete(st.dbs, workspace)
+	}
+	st.mu.Unlock()
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if err := os.Remove(path + suffix); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
 func (st *Store) Close() {
 	st.mu.Lock()
 	defer st.mu.Unlock()

@@ -34,6 +34,7 @@ func indexCmd() *cli.Command {
 			indexRefreshCmd(),
 			indexExportCmd(),
 			indexImportCmd(),
+			indexDropWorkspaceCmd(),
 		},
 	}
 }
@@ -427,6 +428,58 @@ func indexImportCmd() *cli.Command {
 				return err
 			}
 			fmt.Printf("imported %d branches into %s: %v\n", len(branches), workspace, branches)
+			return nil
+		},
+	}
+}
+
+func indexDropWorkspaceCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "drop-workspace",
+		Usage: "Tear down a workspace's entire index (index DB + vectors, including external stores)",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "server-url", EnvVars: []string{"SKOPOS_SERVER_URL"}, Usage: "Remote skopos (omit for local index-dir)"},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}},
+			&cli.StringFlag{Name: "index-dir", DefaultValue: "indexes", Usage: "Local index directory (when no server-url)"},
+			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID"},
+		},
+		Run: func(ctx context.Context, cmd *cli.Command) error {
+			workspace := cmd.GetString("workspace")
+			if workspace == "" {
+				workspace = workspaceOrDefault("")
+			}
+			if workspace == "" {
+				return fmt.Errorf("--workspace is required")
+			}
+			if cmd.GetString("server-url") != "" {
+				base := strings.TrimRight(cmd.GetString("server-url"), "/")
+				req, err := http.NewRequestWithContext(ctx, http.MethodDelete,
+					base+fmt.Sprintf("/api/codeindex/%s", url.PathEscape(workspace)), nil)
+				if err != nil {
+					return err
+				}
+				if k := cmd.GetString("api-key"); k != "" {
+					req.Header.Set("Authorization", "Bearer "+k)
+				}
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					return err
+				}
+				defer resp.Body.Close()
+				if resp.StatusCode != http.StatusNoContent {
+					return fmt.Errorf("%s", apiErrorMessage("dropping workspace", resp))
+				}
+			} else {
+				store, err := codeindex.NewStore(cmd.GetString("index-dir"))
+				if err != nil {
+					return err
+				}
+				defer store.Close()
+				if err := codeindex.NewService(store).DropWorkspace(ctx, workspace); err != nil {
+					return err
+				}
+			}
+			fmt.Printf("dropped index for %s\n", workspace)
 			return nil
 		},
 	}
