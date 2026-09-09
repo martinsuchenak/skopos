@@ -298,6 +298,7 @@ func indexStatusCmd() *cli.Command {
 			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "index-dir", DefaultValue: ".skopos/indexes", ConfigPath: []string{"codeindex.dir"}, Usage: "Local index directory (when no server-url)"},
 			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID"},
+			&cli.BoolFlag{Name: "json", Usage: "Output raw JSON (same shape as the REST API and MCP tools)"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			workspace := cmd.GetString("workspace")
@@ -325,6 +326,9 @@ func indexStatusCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
+			}
+			if cmd.GetBool("json") {
+				return printJSON(status)
 			}
 			if len(status) == 0 {
 				fmt.Println("no indexed branches")

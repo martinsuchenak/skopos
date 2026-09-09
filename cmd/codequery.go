@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -98,7 +99,16 @@ func queryFlags() []cli.Flag {
 		&cli.StringFlag{Name: "index-dir", DefaultValue: ".skopos/indexes", ConfigPath: []string{"codeindex.dir"}, Usage: "Local index directory (when no server-url)"},
 		&cli.StringFlag{Name: "workspace", Usage: "Workspace ID"},
 		&cli.StringFlag{Name: "branch", Usage: "Branch (default: the workspace's default branch)"},
+		&cli.BoolFlag{Name: "json", Usage: "Output raw JSON (same shape as the REST API and MCP tools)"},
 	}
+}
+
+// printJSON emits a result in the canonical JSON shape shared with the REST
+// API and MCP tools — one format, two transports.
+func printJSON(v any) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
 }
 
 func resolveQueryWorkspace(cmd *cli.Command) string {
@@ -186,6 +196,9 @@ func codeSearchCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			if cmd.GetBool("json") {
+				return printJSON(res)
+			}
 			printHits(res)
 			return nil
 		},
@@ -214,6 +227,9 @@ func codeSymbolCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			if cmd.GetBool("json") {
+				return printJSON(res)
+			}
 			printHits(res)
 			return nil
 		},
@@ -241,6 +257,9 @@ func codeWhoCallsCmd() *cli.Command {
 				})
 			if err != nil {
 				return err
+			}
+			if cmd.GetBool("json") {
+				return printJSON(res)
 			}
 			if res.Note != "" {
 				fmt.Println("note:", res.Note)
@@ -282,6 +301,9 @@ func codeOutlineCmd() *cli.Command {
 				})
 			if err != nil {
 				return err
+			}
+			if cmd.GetBool("json") {
+				return printJSON(res)
 			}
 			if res.Note != "" {
 				fmt.Println("note:", res.Note)
@@ -348,6 +370,9 @@ func codeImpactCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			if cmd.GetBool("json") {
+				return printJSON(res)
+			}
 			if len(res.Affected) == 0 {
 				fmt.Println("no affected symbols found")
 				return nil
@@ -385,6 +410,9 @@ func codeDeadCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			if cmd.GetBool("json") {
+				return printJSON(res)
+			}
 			if res.Note != "" {
 				fmt.Println("note:", res.Note)
 			}
@@ -419,6 +447,9 @@ func codeCyclesCmd() *cli.Command {
 				})
 			if err != nil {
 				return err
+			}
+			if cmd.GetBool("json") {
+				return printJSON(res)
 			}
 			if len(res.Cycles) == 0 {
 				fmt.Println("no cycles found")
@@ -466,6 +497,9 @@ func codeCallTreeCmd() *cli.Command {
 				})
 			if err != nil {
 				return err
+			}
+			if cmd.GetBool("json") {
+				return printJSON(res)
 			}
 			if res.Note != "" {
 				fmt.Println("note:", res.Note)
@@ -536,6 +570,9 @@ func codeBranchDiffCmd() *cli.Command {
 				})
 			if err != nil {
 				return err
+			}
+			if cmd.GetBool("json") {
+				return printJSON(res)
 			}
 			fmt.Printf("branch %s vs %s\n", res.Branch, res.Base)
 			for _, f := range res.Files {

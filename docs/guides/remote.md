@@ -102,6 +102,16 @@ skopos index drop-workspace              # remove a workspace's whole index
 skopos index export --out bundle.ndjson   # portable snapshot from the server
 ```
 
+## Scripted / agent use
+
+Every query command (and `skopos index status`) accepts `--json`, emitting
+the exact shape served by the REST API and MCP tools — same fields, no
+parsing ambiguity between surfaces:
+
+```sh
+skopos impact Handler --json | jq '.affected[].path'
+```
+
 ## Notes
 
 - Everything is behind the API key when one is set: REST, MCP, SSE, and the

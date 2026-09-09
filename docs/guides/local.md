@@ -72,6 +72,16 @@ skopos index drop-workspace             # delete the workspace's whole index
 a derived artifact: deleting it never loses source data, just re-run
 `skopos index build`.
 
+## Scripted / agent use
+
+Every query command (and `skopos index status`) accepts `--json`, emitting
+the exact shape served by the REST API and MCP tools — same fields, no
+parsing ambiguity between surfaces:
+
+```sh
+skopos impact Handler --json | jq '.affected[].path'
+```
+
 ## Notes
 
 - No server, no API key, nothing listens on any port.
