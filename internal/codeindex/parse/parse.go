@@ -83,13 +83,23 @@ var identifierTypes = map[string]bool{
 	"namespace_identifier": true,
 }
 
-// callTypes: node types considered call expressions (callee = first
-// identifier-ish descendant).
+// callTypes: node types considered call expressions (callee = rightmost
+// identifier-ish descendant under the "function" field).
 var callTypes = map[string]bool{
-	"call_expression": true, "call": true, "function_call": true,
-	"method_invocation": true, " invocation_expression": true,
-	"invocation_expression": true, "call_expression_function": false,
+	"call_expression":          true, // go, js, ts, c, ...
+	"call":                     true, // ruby, python
+	"function_call":            true, // elixir-ish
+	"function_call_expression": true, // php: foo()
+	"method_call_expression":   true, // php8-style
+	"member_call_expression":   true, // php: $obj->method()
+	"scoped_call_expression":   true, // php: Class::method()
+	"method_invocation":        true, // java
+	"invocation_expression":    true, // c#
 }
+
+// ExtractorVersion changes whenever extraction logic changes; it is mixed
+// into the content hash so already-indexed files re-extract after upgrades.
+const ExtractorVersion = "2"
 
 // Extractor parses files with a shared parser per language.
 type Extractor struct {
@@ -123,10 +133,12 @@ func (e *Extractor) ParseFile(path string) (*FileResult, error) {
 
 // ParseBytes parses in-memory content.
 func (e *Extractor) ParseBytes(path string, src []byte) (*FileResult, error) {
-	sum := sha256.Sum256(src)
+	sum := sha256.New()
+	sum.Write([]byte("skopos-extractor:" + ExtractorVersion + "\x00"))
+	sum.Write(src)
 	res := &FileResult{
 		Path: path,
-		Hash: hex.EncodeToString(sum[:]),
+		Hash: hex.EncodeToString(sum.Sum(nil)),
 		Lang: Detect(path),
 	}
 	if res.Lang == "" {

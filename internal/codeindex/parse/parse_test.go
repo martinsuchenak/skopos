@@ -97,8 +97,10 @@ namespace App;
 interface Widget { public function render(); }
 
 class Button implements Widget {
+  public function escape(string $s): string { return $s; }
   public function render() {
-    return $this->escape($this->label);
+    Registry::log($this->escape($this->label));
+    return $this->escape("x");
   }
 }
 `)
@@ -114,6 +116,14 @@ class Button implements Widget {
 		if !names[want] {
 			t.Fatalf("missing symbol %q in %+v", want, res.Symbols)
 		}
+	}
+	// Call edges: render calls $this->escape (method_call_expression).
+	called := map[string]bool{}
+	for _, e := range res.Edges {
+		called[e.Callee] = true
+	}
+	if !called["escape"] {
+		t.Fatalf("PHP method call edge to escape missing: %+v", res.Edges)
 	}
 }
 

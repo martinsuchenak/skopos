@@ -282,10 +282,46 @@ func codeOutlineCmd() *cli.Command {
 var _ = io.Discard // keep io imported for future streaming helpers
 
 func init() {
+	Register(codeImpactCmd())
 	Register(codeDeadCmd())
 	Register(codeCyclesCmd())
 	Register(codeCallTreeCmd())
 	Register(codeBranchDiffCmd())
+}
+
+func codeImpactCmd() *cli.Command {
+	return &cli.Command{
+		Name:    "impact",
+		Usage:   "Show what is transitively affected by changing a symbol",
+		Flags:   queryFlags(),
+		MinArgs: 1, MaxArgs: 1,
+		Run: func(ctx context.Context, cmd *cli.Command) error {
+			name := cmd.GetArgs()[0]
+			depth := 3
+			res, err := queryTarget(ctx, cmd,
+				func(ws, branch string) string {
+					return fmt.Sprintf("/api/codeindex/%s/impact?name=%s&branch=%s&depth=%d", url.PathEscape(ws), url.QueryEscape(name), url.QueryEscape(branch), depth)
+				},
+				func(svc *codeindex.Service, ws, branch string) (codeindex.ImpactResults, error) {
+					r, err := svc.Impact(ctx, ws, branch, name, depth)
+					if err != nil {
+						return codeindex.ImpactResults{}, err
+					}
+					return *r, nil
+				})
+			if err != nil {
+				return err
+			}
+			if len(res.Affected) == 0 {
+				fmt.Println("no affected symbols found")
+				return nil
+			}
+			for _, a := range res.Affected {
+				fmt.Printf("  depth %d  %s\n", a.Depth, a.Name)
+			}
+			return nil
+		},
+	}
 }
 
 func codeDeadCmd() *cli.Command {
