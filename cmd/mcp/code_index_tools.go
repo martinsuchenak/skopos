@@ -20,6 +20,7 @@ func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 			mcplib.String("q", "Search query (prefix match)", mcplib.Required()),
 			mcplib.String("branch", "Branch to scope the search to"),
 			mcplib.Integer("limit", "Max results (default 50)"),
+			mcplib.Boolean("semantic", "Fuse full-text with semantic vector search (when the server has embeddings configured)"),
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 			limit := 0
@@ -130,6 +131,79 @@ func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 			res, err := svc.Status(ctx, req.StringOr("workspace_id", ""))
+			if err != nil {
+				return nil, toolError(err)
+			}
+			return mcplib.NewToolResponseJSON(res), nil
+		},
+	)
+}
+
+func init() {
+	RegisterCodeIndexTool(registerCodeAnalysisTools)
+}
+
+func registerCodeAnalysisTools(server *mcplib.Server, svc *codeindex.Service) {
+	server.RegisterTool(
+		mcplib.NewTool("code_dead", "List symbols with no incoming call references (dead-code candidates; dynamic dispatch can hide usage — verify before deleting). "+codeIndexDesc,
+			mcplib.String("workspace_id", "Workspace ID", mcplib.Required()),
+			mcplib.String("branch", "Branch"),
+			mcplib.Integer("limit", "Max results (default 100)"),
+		),
+		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
+			limit := 0
+			if n, err := req.Int("limit"); err == nil {
+				limit = n
+			}
+			res, err := svc.Dead(ctx, req.StringOr("workspace_id", ""), req.StringOr("branch", ""), limit)
+			if err != nil {
+				return nil, toolError(err)
+			}
+			return mcplib.NewToolResponseJSON(res), nil
+		},
+	)
+
+	server.RegisterTool(
+		mcplib.NewTool("code_cycles", "Find cycles in the call graph (up to length 6). "+codeIndexDesc,
+			mcplib.String("workspace_id", "Workspace ID", mcplib.Required()),
+			mcplib.String("branch", "Branch"),
+		),
+		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
+			res, err := svc.Cycles(ctx, req.StringOr("workspace_id", ""), req.StringOr("branch", ""))
+			if err != nil {
+				return nil, toolError(err)
+			}
+			return mcplib.NewToolResponseJSON(res), nil
+		},
+	)
+
+	server.RegisterTool(
+		mcplib.NewTool("code_call_tree", "Expand what a symbol calls, recursively (tree, depth default 3). "+codeIndexDesc,
+			mcplib.String("workspace_id", "Workspace ID", mcplib.Required()),
+			mcplib.String("name", "Symbol name", mcplib.Required()),
+			mcplib.String("branch", "Branch"),
+			mcplib.Integer("depth", "Max depth (default 3, max 10)"),
+		),
+		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
+			depth := 0
+			if n, err := req.Int("depth"); err == nil {
+				depth = n
+			}
+			res, err := svc.CallTree(ctx, req.StringOr("workspace_id", ""), req.StringOr("branch", ""), req.StringOr("name", ""), depth)
+			if err != nil {
+				return nil, toolError(err)
+			}
+			return mcplib.NewToolResponseJSON(res), nil
+		},
+	)
+
+	server.RegisterTool(
+		mcplib.NewTool("code_branch_diff", "Compare a feature branch's indexed symbols against the default branch — merge-prep intelligence (what changed, what the other side added). "+codeIndexDesc,
+			mcplib.String("workspace_id", "Workspace ID", mcplib.Required()),
+			mcplib.String("branch", "Feature branch to compare", mcplib.Required()),
+		),
+		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
+			res, err := svc.BranchDiff(ctx, req.StringOr("workspace_id", ""), req.StringOr("branch", ""))
 			if err != nil {
 				return nil, toolError(err)
 			}

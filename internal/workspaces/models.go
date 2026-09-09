@@ -15,10 +15,12 @@ var (
 type Workspace struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name,omitempty"`
+	GitURL    string    `json:"git_url,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
 type CreateInput struct {
-	ID   string `json:"id"`
-	Name string `json:"name,omitempty"`
+	ID     string `json:"id"`
+	Name   string `json:"name,omitempty"`
+	GitURL string `json:"git_url,omitempty"`
 }

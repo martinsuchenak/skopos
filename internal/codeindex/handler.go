@@ -17,6 +17,8 @@ type Handler struct {
 	service    *Service
 	apiKey     string
 	registerWS func(id string)
+	refresher  *Refresher
+	embeddings *EmbeddingManager
 }
 
 func NewHandler(service *Service, apiKey string) *Handler {
@@ -26,6 +28,20 @@ func NewHandler(service *Service, apiKey string) *Handler {
 // SetWorkspaceRegistrar installs a callback invoked when a commit names a
 // workspace the registry has not seen (keeps pushed workspaces persistent).
 func (h *Handler) SetWorkspaceRegistrar(fn func(id string)) { h.registerWS = fn }
+
+// SetRefresher enables server-side indexing endpoints.
+func (h *Handler) SetRefresher(r *Refresher) { h.refresher = r }
+
+// SetEmbeddingManager enables asynchronous semantic embeddings.
+func (h *Handler) SetEmbeddingManager(m *EmbeddingManager) { h.embeddings = m }
+
+// SemanticSearcher exposes semantic search to the handler when configured.
+func (h *Handler) semanticSearcher() Embedder {
+	if h.embeddings == nil {
+		return nil
+	}
+	return h.embeddings.embedder
+}
 
 func (h *Handler) maybeRegisterWorkspace(ws string) {
 	if h.registerWS != nil {
@@ -157,6 +173,9 @@ func (h *Handler) Commit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.maybeRegisterWorkspace(ws)
+	if h.embeddings != nil {
+		h.embeddings.Enqueue(ws)
+	}
 	rest.RespondJSON(w, http.StatusOK, map[string]any{
 		"workspace": ws, "branch": req.Branch, "files": len(req.Files),
 	})
@@ -193,7 +212,13 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res, err := h.service.Search(r.Context(), ws, r.URL.Query().Get("branch"), r.URL.Query().Get("q"), queryLimit(r))
+	var res *SearchResults
+	var err error
+	if r.URL.Query().Get("semantic") == "true" {
+		res, err = h.service.SemanticSearch(r.Context(), ws, r.URL.Query().Get("branch"), r.URL.Query().Get("q"), queryLimit(r), h.semanticSearcher())
+	} else {
+		res, err = h.service.Search(r.Context(), ws, r.URL.Query().Get("branch"), r.URL.Query().Get("q"), queryLimit(r))
+	}
 	if err != nil {
 		h.respondServiceError(w, err)
 		return
@@ -331,4 +356,131 @@ func queryLimit(r *http.Request) int {
 		}
 	}
 	return 0
+}
+
+// RefreshStart handles POST /api/codeindex/{workspace}/refresh: kick an
+// asynchronous server-side clone/pull + rebuild from the workspace's git_url.
+func (h *Handler) RefreshStart(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	ws, ok := h.requireWorkspace(w, r)
+	if !ok {
+		return
+	}
+	if h.refresher == nil {
+		rest.RespondError(w, http.StatusServiceUnavailable, "server-side indexing is not configured")
+		return
+	}
+	var req struct {
+		Branch string `json:"branch"`
+	}
+	if r.ContentLength > 0 {
+		if err := rest.DecodeJSON(w, r, &req); err != nil {
+			rest.RespondError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+	}
+	if err := h.refresher.Start(r.Context(), ws, req.Branch); err != nil {
+		h.respondServiceError(w, err)
+		return
+	}
+	rest.RespondJSON(w, http.StatusAccepted, map[string]any{"workspace": ws, "refreshing": true})
+}
+
+// RefreshStatus handles GET /api/codeindex/{workspace}/refresh.
+func (h *Handler) RefreshStatus(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	ws, ok := h.requireWorkspace(w, r)
+	if !ok {
+		return
+	}
+	if h.refresher == nil {
+		rest.RespondError(w, http.StatusServiceUnavailable, "server-side indexing is not configured")
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, h.refresher.State(ws))
+}
+
+// Dead handles GET /api/codeindex/{workspace}/dead.
+func (h *Handler) Dead(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	ws, ok := h.requireWorkspace(w, r)
+	if !ok {
+		return
+	}
+	res, err := h.service.Dead(r.Context(), ws, r.URL.Query().Get("branch"), queryLimit(r))
+	if err != nil {
+		h.respondServiceError(w, err)
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, res)
+}
+
+// Cycles handles GET /api/codeindex/{workspace}/cycles.
+func (h *Handler) Cycles(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	ws, ok := h.requireWorkspace(w, r)
+	if !ok {
+		return
+	}
+	res, err := h.service.Cycles(r.Context(), ws, r.URL.Query().Get("branch"))
+	if err != nil {
+		h.respondServiceError(w, err)
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, res)
+}
+
+// CallTree handles GET /api/codeindex/{workspace}/call-tree.
+func (h *Handler) CallTree(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	ws, ok := h.requireWorkspace(w, r)
+	if !ok {
+		return
+	}
+	depth := 0
+	if d := r.URL.Query().Get("depth"); d != "" {
+		var n int
+		if _, err := fmt.Sscanf(d, "%d", &n); err == nil {
+			depth = n
+		}
+	}
+	res, err := h.service.CallTree(r.Context(), ws, r.URL.Query().Get("branch"), r.URL.Query().Get("name"), depth)
+	if err != nil {
+		h.respondServiceError(w, err)
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, res)
+}
+
+// BranchDiff handles GET /api/codeindex/{workspace}/branch-diff.
+func (h *Handler) BranchDiff(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	ws, ok := h.requireWorkspace(w, r)
+	if !ok {
+		return
+	}
+	res, err := h.service.BranchDiff(r.Context(), ws, r.URL.Query().Get("branch"))
+	if err != nil {
+		h.respondServiceError(w, err)
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, res)
 }

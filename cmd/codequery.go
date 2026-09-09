@@ -280,3 +280,172 @@ func codeOutlineCmd() *cli.Command {
 }
 
 var _ = io.Discard // keep io imported for future streaming helpers
+
+func init() {
+	Register(codeDeadCmd())
+	Register(codeCyclesCmd())
+	Register(codeCallTreeCmd())
+	Register(codeBranchDiffCmd())
+}
+
+func codeDeadCmd() *cli.Command {
+	return &cli.Command{
+		Name:    "dead-code",
+		Usage:   "List symbols with no incoming call references (verify before deleting)",
+		Flags:   queryFlags(),
+		MinArgs: 0, MaxArgs: 0,
+		Run: func(ctx context.Context, cmd *cli.Command) error {
+			res, err := queryTarget(ctx, cmd,
+				func(ws, branch string) string {
+					return fmt.Sprintf("/api/codeindex/%s/dead?branch=%s", url.PathEscape(ws), url.QueryEscape(branch))
+				},
+				func(svc *codeindex.Service, ws, branch string) (codeindex.DeadResult, error) {
+					r, err := svc.Dead(ctx, ws, branch, 0)
+					if err != nil {
+						return codeindex.DeadResult{}, err
+					}
+					return *r, nil
+				})
+			if err != nil {
+				return err
+			}
+			if res.Note != "" {
+				fmt.Println("note:", res.Note)
+			}
+			if len(res.Symbols) == 0 {
+				fmt.Println("no dead-code candidates")
+				return nil
+			}
+			for _, s := range res.Symbols {
+				fmt.Printf("%-40s %-9s %s:%d\n", s.Name, s.Kind, s.Path, s.Line)
+			}
+			return nil
+		},
+	}
+}
+
+func codeCyclesCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "cycles",
+		Usage: "Find cycles in the call graph",
+		Flags: queryFlags(),
+		Run: func(ctx context.Context, cmd *cli.Command) error {
+			res, err := queryTarget(ctx, cmd,
+				func(ws, branch string) string {
+					return fmt.Sprintf("/api/codeindex/%s/cycles?branch=%s", url.PathEscape(ws), url.QueryEscape(branch))
+				},
+				func(svc *codeindex.Service, ws, branch string) (codeindex.CyclesResult, error) {
+					r, err := svc.Cycles(ctx, ws, branch)
+					if err != nil {
+						return codeindex.CyclesResult{}, err
+					}
+					return *r, nil
+				})
+			if err != nil {
+				return err
+			}
+			if len(res.Cycles) == 0 {
+				fmt.Println("no cycles found")
+				return nil
+			}
+			for _, c := range res.Cycles {
+				fmt.Println(strings.Join(c.Names, " -> ") + " -> " + c.Names[0])
+			}
+			return nil
+		},
+	}
+}
+
+func codeCallTreeCmd() *cli.Command {
+	return &cli.Command{
+		Name:    "call-tree",
+		Usage:   "Expand what a symbol calls, recursively",
+		Flags:   append(queryFlags(), &cli.BoolFlag{Name: "mermaid", Usage: "Emit a Mermaid flowchart instead of ASCII"}),
+		MinArgs: 1, MaxArgs: 1,
+		Run: func(ctx context.Context, cmd *cli.Command) error {
+			name := cmd.GetArgs()[0]
+			depth := 3
+			res, err := queryTarget(ctx, cmd,
+				func(ws, branch string) string {
+					return fmt.Sprintf("/api/codeindex/%s/call-tree?name=%s&branch=%s&depth=%d", url.PathEscape(ws), url.QueryEscape(name), url.QueryEscape(branch), depth)
+				},
+				func(svc *codeindex.Service, ws, branch string) (codeindex.CallTreeResult, error) {
+					r, err := svc.CallTree(ctx, ws, branch, name, depth)
+					if err != nil {
+						return codeindex.CallTreeResult{}, err
+					}
+					return *r, nil
+				})
+			if err != nil {
+				return err
+			}
+			if res.Note != "" {
+				fmt.Println("note:", res.Note)
+			}
+			if cmd.GetBool("mermaid") {
+				fmt.Println("flowchart TD")
+				mermaidNodes(res.Tree)
+				return nil
+			}
+			printTree(res.Tree, 0)
+			return nil
+		},
+	}
+}
+
+func printTree(n codeindex.CallTreeNode, depth int) {
+	fmt.Printf("%s%s\n", strings.Repeat("  ", depth), n.Name)
+	for _, c := range n.Children {
+		printTree(c, depth+1)
+	}
+}
+
+func mermaidNodes(n codeindex.CallTreeNode) {
+	var walk func(node codeindex.CallTreeNode)
+	seen := map[string]bool{}
+	walk = func(node codeindex.CallTreeNode) {
+		if seen[node.Name] {
+			return
+		}
+		seen[node.Name] = true
+		for _, c := range node.Children {
+			fmt.Printf("  %q --> %q\n", node.Name, c.Name)
+			walk(c)
+		}
+	}
+	walk(n)
+}
+
+func codeBranchDiffCmd() *cli.Command {
+	return &cli.Command{
+		Name:    "branch-diff",
+		Usage:   "Compare a feature branch's indexed symbols against the default branch",
+		Flags:   queryFlags(),
+		MinArgs: 1, MaxArgs: 1,
+		Run: func(ctx context.Context, cmd *cli.Command) error {
+			branch := cmd.GetArgs()[0]
+			res, err := queryTarget(ctx, cmd,
+				func(ws, _ string) string {
+					return fmt.Sprintf("/api/codeindex/%s/branch-diff?branch=%s", url.PathEscape(ws), url.QueryEscape(branch))
+				},
+				func(svc *codeindex.Service, ws, _ string) (codeindex.BranchDiffResult, error) {
+					r, err := svc.BranchDiff(ctx, ws, branch)
+					if err != nil {
+						return codeindex.BranchDiffResult{}, err
+					}
+					return *r, nil
+				})
+			if err != nil {
+				return err
+			}
+			fmt.Printf("branch %s vs %s\n", res.Branch, res.Base)
+			for _, f := range res.Files {
+				fmt.Printf("  %-8s %s\n", f.Change, f.Path)
+			}
+			for _, s := range res.Symbols {
+				fmt.Printf("  %-8s %-9s %-32s %s\n", s.Change, s.Kind, s.Name, s.Path)
+			}
+			return nil
+		},
+	}
+}

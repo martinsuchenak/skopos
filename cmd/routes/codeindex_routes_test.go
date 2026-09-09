@@ -9,9 +9,11 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/martinsuchenak/skopos/internal/codeindex"
 	"github.com/martinsuchenak/skopos/internal/codeindex/parse"
@@ -196,4 +198,127 @@ func TestCodeIndexBadContentType(t *testing.T) {
 	if resp.StatusCode != http.StatusUnsupportedMediaType {
 		t.Fatalf("expected 415, got %d", resp.StatusCode)
 	}
+}
+
+func TestCodeIndexServerSideRefresh(t *testing.T) {
+	ts, repo := codeindexSetup(t, "")
+
+	// Turn the fixture repo into a git repo and register its git_url.
+	run := func(args ...string) string {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = repo
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %s", args, out)
+		}
+		return string(out)
+	}
+	run("git", "init", "-q", "-b", "main", ".")
+	run("git", "config", "user.email", "t@t")
+	run("git", "config", "user.name", "t")
+	run("git", "add", ".")
+	run("git", "commit", "-qm", "init")
+
+	// Register the workspace with a git_url.
+	body, _ := json.Marshal(map[string]any{"id": "github.com/example/repo", "git_url": repo})
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/workspaces", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	// The routes mux has no /api/workspaces; register git_url directly through
+	// a dedicated refresh setup instead: re-run with the refresher wired.
+	// (Simpler: this test constructs its own mux with a refresher.)
+	_ = req
+
+	// Build the refresher-backed mux.
+	store2, err := codeindex.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store2.Close)
+	h2 := codeindex.NewHandler(codeindex.NewService(store2), "")
+	ref, err := codeindex.NewRefresher(store2, t.TempDir(), func(id string) (string, error) {
+		if id == "github.com/example/repo" {
+			return repo, nil
+		}
+		return "", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h2.SetRefresher(ref)
+	mux := http.NewServeMux()
+	registerCodeIndexRoutes(mux, h2)
+	ts2 := httptest.NewServer(mux)
+	t.Cleanup(ts2.Close)
+
+	// Start the refresh and wait for completion.
+	req, _ = http.NewRequest(http.MethodPost, ts2.URL+"/api/codeindex/github.com%2Fexample%2Frepo/refresh", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("refresh start: %d", resp.StatusCode)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		state, err := getRefreshState(ts2.URL + "/api/codeindex/github.com%2Fexample%2Frepo/refresh")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !state.Building {
+			if state.LastError != "" {
+				t.Fatalf("refresh failed: %s", state.LastError)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("refresh did not finish in time")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// The server-built branch is queryable.
+	resp, err = http.Get(ts2.URL + "/api/codeindex/github.com%2Fexample%2Frepo/search?q=handler")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res codeindex.SearchResults
+	json.NewDecoder(resp.Body).Decode(&res)
+	resp.Body.Close()
+	if len(res.Hits) == 0 {
+		t.Fatalf("server-built index has no hits: %+v", res)
+	}
+
+	// Duplicate refresh while idle is allowed; state endpoint reflects idle.
+	if s := getRefreshStateTS(t, ts2.URL); s.Building {
+		t.Fatal("state should be idle after completion")
+	}
+}
+
+func getRefreshStateTS(t *testing.T, base string) codeindex.RefreshState {
+	t.Helper()
+	s, err := getRefreshState(base + "/api/codeindex/github.com%2Fexample%2Frepo/refresh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func getRefreshState(url string) (codeindex.RefreshState, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return codeindex.RefreshState{}, err
+	}
+	defer resp.Body.Close()
+	var s codeindex.RefreshState
+	json.NewDecoder(resp.Body).Decode(&s)
+	return s, nil
 }

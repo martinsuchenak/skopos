@@ -6,14 +6,15 @@ A coordination dashboard for AI coding agents — shared memory (blackboard), pl
 
 | Feature | Status |
 |---------|--------|
-| CLI | ✅ `serve`, `report`, `blackboard`, `plan`, `workspace`, `install`, `cleanup`, `init`, `completion` |
+| CLI | ✅ `serve`, `report`, `blackboard`, `plan`, `workspace`, `index`, `search`, `symbol`, `who-calls`, `call-tree`, `impact`, `outline`, `dead-code`, `cycles`, `branch-diff`, `install`, `cleanup`, `init`, `completion` |
 | REST API | ✅ Sessions, blackboard, plans, workspaces |
-| MCP | ✅ 12 tools at `/mcp` (same port as HTTP) |
+| MCP | ✅ 23 tools at `/mcp` (same port as HTTP), incl. code-index queries |
 | Dashboard | ✅ Dark/light/system theme, sidebar nav, modals, SSE live updates |
 | Real-time | ✅ SSE at `/api/events/stream` |
 | Database | ✅ SQLite (WAL, FK-enforced, transactional) |
 | Auth | ✅ API key (Bearer); when set it gates every endpoint (REST reads/writes, MCP, SSE) |
 | Agent integration | ✅ `skopos install` for Claude Code, Codex, Gemini, Copilot, Kiro, opencode |
+| Code index | ✅ Central, branch-aware symbol/call-graph index (all languages, optional semantic search) |
 | Docker | ✅ |
 | Nomad | ✅ |
 
@@ -42,6 +43,7 @@ See [Agent integration](docs/getting-started.md#connecting-an-agent) and [Integr
 | Getting started (install, first run, tour) | [docs/getting-started.md](docs/getting-started.md) |
 | Configuration (flags, env vars, log levels) | [docs/configuration.md](docs/configuration.md) |
 | Blackboard (memory, scopes, search) | [docs/concepts/blackboard.md](docs/concepts/blackboard.md) |
+| Code index (symbols, call graph, impact) | [docs/concepts/code-index.md](docs/concepts/code-index.md) |
 | Plans (items, dependencies, auto-block) | [docs/concepts/plans.md](docs/concepts/plans.md) |
 | Status (reporting, health checker) | [docs/concepts/status.md](docs/concepts/status.md) |
 | Workspaces (scoping, registry) | [docs/concepts/workspaces.md](docs/concepts/workspaces.md) |

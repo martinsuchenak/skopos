@@ -6,10 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/martinsuchenak/skopos/internal/codeindex"
 	"github.com/martinsuchenak/skopos/internal/codeindex/parse"
@@ -29,6 +31,9 @@ func indexCmd() *cli.Command {
 			indexPushCmd(),
 			indexStatusCmd(),
 			indexDropCmd(),
+			indexRefreshCmd(),
+			indexExportCmd(),
+			indexImportCmd(),
 		},
 	}
 }
@@ -296,4 +301,133 @@ func sourceSuffix(source string) string {
 		return ""
 	}
 	return "  (" + source + ")"
+}
+
+func indexRefreshCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "refresh",
+		Usage: "Ask a skopos server to clone/pull a workspace's git_url and rebuild its index",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}},
+			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID (must have a git_url registered)"},
+			&cli.StringFlag{Name: "branch", Usage: "Branch to build (default: the repo's default branch)"},
+			&cli.BoolFlag{Name: "wait", Usage: "Poll until the refresh finishes"},
+		},
+		Run: func(ctx context.Context, cmd *cli.Command) error {
+			workspace := cmd.GetString("workspace")
+			if workspace == "" {
+				workspace = workspaceOrDefault("")
+			}
+			if workspace == "" {
+				return fmt.Errorf("--workspace is required")
+			}
+			serverURL := cmd.GetString("server-url")
+			apiKey := cmd.GetString("api-key")
+			_, err := postJSON[map[string]any](ctx, serverURL, apiKey, "POST",
+				fmt.Sprintf("/api/codeindex/%s/refresh", url.PathEscape(workspace)),
+				map[string]any{"branch": cmd.GetString("branch")}, "application/json")
+			if err != nil {
+				return err
+			}
+			fmt.Printf("refresh started for %s\n", workspace)
+			if !cmd.GetBool("wait") {
+				return nil
+			}
+			for {
+				state, err := getJSON[codeindex.RefreshState](ctx, serverURL, apiKey,
+					fmt.Sprintf("/api/codeindex/%s/refresh", url.PathEscape(workspace)))
+				if err != nil {
+					return err
+				}
+				if !state.Building {
+					if state.LastError != "" {
+						return fmt.Errorf("refresh failed: %s", state.LastError)
+					}
+					fmt.Println("refresh complete")
+					return nil
+				}
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(time.Second):
+				}
+			}
+		},
+	}
+}
+
+func indexExportCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "export",
+		Usage: "Export a workspace's index (or one branch) as a portable ndjson bundle",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "index-dir", DefaultValue: "indexes", Usage: "Local index directory"},
+			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID"},
+			&cli.StringFlag{Name: "branch", Usage: "Export only this branch (default: all)"},
+			&cli.StringFlag{Name: "out", Usage: "Output file (default: stdout)"},
+		},
+		Run: func(ctx context.Context, cmd *cli.Command) error {
+			workspace := cmd.GetString("workspace")
+			if workspace == "" {
+				workspace = workspaceOrDefault("")
+			}
+			if workspace == "" {
+				return fmt.Errorf("--workspace is required")
+			}
+			store, err := codeindex.NewStore(cmd.GetString("index-dir"))
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+
+			var w io.Writer = os.Stdout
+			if out := cmd.GetString("out"); out != "" && out != "-" {
+				f, err := os.Create(out)
+				if err != nil {
+					return err
+				}
+				defer f.Close()
+				w = f
+			}
+			return codeindex.NewService(store).ExportNDJSON(workspace, cmd.GetString("branch"), w)
+		},
+	}
+}
+
+func indexImportCmd() *cli.Command {
+	return &cli.Command{
+		Name:    "import",
+		Usage:   "Import an ndjson index bundle into a local index",
+		MinArgs: 1, MaxArgs: 1,
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "index-dir", DefaultValue: "indexes", Usage: "Local index directory"},
+			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID to import as"},
+		},
+		Run: func(ctx context.Context, cmd *cli.Command) error {
+			workspace := cmd.GetString("workspace")
+			if workspace == "" {
+				workspace = workspaceOrDefault("")
+			}
+			if workspace == "" {
+				return fmt.Errorf("--workspace is required (bundles do not carry the workspace id)")
+			}
+			f, err := os.Open(cmd.GetArgs()[0])
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			store, err := codeindex.NewStore(cmd.GetString("index-dir"))
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			branches, err := codeindex.NewService(store).ImportNDJSON(workspace, f)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("imported %d branches into %s: %v\n", len(branches), workspace, branches)
+			return nil
+		},
+	}
 }

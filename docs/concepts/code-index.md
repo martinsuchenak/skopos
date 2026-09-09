@@ -1,0 +1,98 @@
+# Code Index
+
+skopos maintains a **central, queryable symbol index** of your repositories:
+definitions, files, and heuristic call/reference edges, stored per workspace
+and per branch. Agents query it through MCP tools, the REST API, or the CLI —
+instead of grepping raw files.
+
+## Model
+
+- **Workspace-scoped**: each workspace has its own index database (under
+  `--index-dir`, default `indexes/`), separate from `skopos.db`.
+- **Branch-aware**: every branch has its own index state. Queries accept a
+  `branch`; an unindexed branch falls back to the workspace's default branch,
+  **labeled as a fallback** in the response — never silently wrong.
+- **Content-addressed**: symbols and edges are keyed by file content hash.
+  Identical files are shared across branches; incremental pushes upload only
+  genuinely changed files (manifest negotiation).
+- **Freshness is visible**: every branch records the git HEAD it was built
+  from, a timestamp, and the source (`push:<host>` or `server-build`).
+
+## Getting an index in
+
+**Local push** (primary): from any checkout, one machine pushes the branch:
+
+```sh
+skopos index push --server-url https://skopos.internal --workspace github.com/org/repo
+# workspace defaults to the git remote, branch to the current git branch
+```
+
+**Server-side** (opt-in): register the workspace with a `git_url` and ask the
+server to clone/pull and index itself:
+
+```sh
+curl -X POST $SKOPOS/api/workspaces -d '{"id":"github.com/org/repo","git_url":"git@github.com:org/repo.git"}'
+skopos index refresh --workspace github.com/org/repo --server-url ... --wait
+```
+
+**Local only**: `skopos index build <path>` writes to a local index directory;
+the query commands (`skopos search` etc.) work against it without a server.
+
+**Portability**: `skopos index export -o bundle.ndjson [--branch]` and
+`skopos index import bundle.ndjson`.
+
+## Querying
+
+CLI (add `--server-url` for remote, or omit for the local index dir):
+
+```sh
+skopos search loadconfig     # FTS over symbols; camelCase is split-tokenized
+skopos symbol Handler        # exact-name definitions with file:line
+skopos outline pkg/util.go   # a file's definitions in source order
+skopos who-calls Handler     # call sites
+skopos call-tree main        # recursive callees (--mermaid for a diagram)
+skopos impact Handler        # transitive "what breaks if I change this"
+skopos dead-code             # unreferenced symbols (heuristic — verify)
+skopos cycles                # cycles in the call graph
+skopos branch-diff feat/x    # symbols changed vs the default branch
+```
+
+MCP tools: `code_search`, `code_symbol`, `code_outline`, `code_callers`,
+`code_callees`, `code_impact`, `code_call_tree`, `code_dead`, `code_cycles`,
+`code_branch_diff`, `code_index_status` — all take `workspace_id` and an
+optional `branch`.
+
+REST: everything under `/api/codeindex/{workspace}/…` (see `openapi.yaml`),
+behind the API key when one is configured.
+
+## Analysis notes
+
+Call edges are **name-based heuristics** (tree-sitter is syntactic — no type
+resolution). They are right most of the time and honestly wrong sometimes
+(dynamic dispatch, interface implementations, reflection). Treat `dead-code`
+and `cycles` as leads to verify, not verdicts.
+
+## Semantic search (optional, off by default)
+
+Configure any OpenAI-compatible embeddings endpoint — including a local
+Ollama, which keeps everything on your machine:
+
+```toml
+[codeindex.embeddings]
+url = "http://localhost:11434/v1"
+model = "nomic-embed-text"
+# api_key = ""   # not needed for local servers
+```
+
+Embeddings are computed in the background after each push. `code_search` and
+`/search?semantic=true` then fuse full-text and vector results with Reciprocal
+Rank Fusion. Storage is brute-force cosine over SQLite BLOBs (measured:
+~120ms at 68k symbols, comfortable to ~300k per workspace); vectors sit
+behind a `VectorStore` interface if a monorepo ever outgrows that.
+
+## Languages
+
+All 206 tree-sitter grammars are embedded (the binary grows by ~25MB).
+Language detection is extension-based (linguist-style); mixed-language files
+are handled per language. Unparseable or pathological files are indexed via
+error recovery under a 2s per-file budget.

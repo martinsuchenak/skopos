@@ -88,7 +88,9 @@ func Connect(log logger.Logger, path string) (*sql.DB, error) {
 }
 
 // RunMigrations executes the embedded schema. Statements use CREATE ... IF NOT
-// EXISTS, so this is safe to run on every start.
+// EXISTS, so this is safe to run on every start. Additive column changes to
+// existing tables cannot be expressed there, so ensureColumns applies them
+// explicitly (no-op when the column already exists).
 func RunMigrations(db *sql.DB) error {
 	schema, err := schemaFS.ReadFile("schema.sql")
 	if err != nil {
@@ -96,6 +98,34 @@ func RunMigrations(db *sql.DB) error {
 	}
 	if _, err := db.Exec(string(schema)); err != nil {
 		return fmt.Errorf("executing schema: %w", err)
+	}
+	if err := ensureColumn(db, "workspaces", "git_url", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureColumn(db *sql.DB, table, column, decl string) error {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return fmt.Errorf("inspecting %s: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notNull int
+		var dfltValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, decl)); err != nil {
+		return fmt.Errorf("adding %s.%s: %w", table, column, err)
 	}
 	return nil
 }

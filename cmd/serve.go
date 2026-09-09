@@ -86,6 +86,24 @@ func serveCmd() *cli.Command {
 				ConfigPath:   []string{"codeindex.dir"},
 				EnvVars:      []string{"SKOPOS_INDEX_DIR"},
 			},
+			&cli.StringFlag{
+				Name:       "embeddings-url",
+				Usage:      "OpenAI-compatible /v1 embeddings endpoint for semantic code search (empty disables; local Ollama e.g. http://localhost:11434/v1)",
+				ConfigPath: []string{"codeindex.embeddings.url"},
+				EnvVars:    []string{"SKOPOS_EMBEDDINGS_URL"},
+			},
+			&cli.StringFlag{
+				Name:       "embeddings-model",
+				Usage:      "Embedding model name (required with --embeddings-url)",
+				ConfigPath: []string{"codeindex.embeddings.model"},
+				EnvVars:    []string{"SKOPOS_EMBEDDINGS_MODEL"},
+			},
+			&cli.StringFlag{
+				Name:       "embeddings-api-key",
+				Usage:      "API key for the embeddings endpoint (not needed for local servers)",
+				ConfigPath: []string{"codeindex.embeddings.api_key"},
+				EnvVars:    []string{"SKOPOS_EMBEDDINGS_API_KEY"},
+			},
 			&cli.IntFlag{
 				Name:         "cleanup-retention-days",
 				DefaultValue: 30,
@@ -147,6 +165,30 @@ func serveCmd() *cli.Command {
 				// First push registers the workspace so it persists in the registry.
 				_, _, _ = workspacesService.Create(context.Background(), workspaces.CreateInput{ID: id})
 			})
+			// Server-side indexing: clone/pull the registered git_url and rebuild.
+			refresher, err := codeindex.NewRefresher(codeIndexStore, cmd.GetString("index-dir"), func(id string) (string, error) {
+				ws, err := workspacesService.Get(context.Background(), id)
+				if err != nil {
+					return "", err
+				}
+				return ws.GitURL, nil
+			})
+			if err != nil {
+				return err
+			}
+			codeIndexHandler.SetRefresher(refresher)
+
+			// Optional semantic embeddings: any OpenAI-compatible endpoint
+			// (local Ollama keeps everything on-host). Disabled by default.
+			if embURL := cmd.GetString("embeddings-url"); embURL != "" && cmd.GetString("embeddings-model") != "" {
+				embedder := &codeindex.OpenAIEmbedder{
+					BaseURL:   embURL,
+					ModelName: cmd.GetString("embeddings-model"),
+					APIKey:    cmd.GetString("embeddings-api-key"),
+				}
+				codeIndexHandler.SetEmbeddingManager(codeindex.NewEmbeddingManager(codeIndexService, embedder))
+				log.Info("semantic code search enabled", "model", embedder.ModelName, "url", embURL)
+			}
 
 			// Cancel background work and initiate graceful shutdown on SIGINT/SIGTERM.
 			ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)

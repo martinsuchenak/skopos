@@ -10,6 +10,7 @@ import (
 
 type Store interface {
 	Create(ctx context.Context, ws Workspace) (created bool, err error)
+	Get(ctx context.Context, id string) (*Workspace, error)
 	List(ctx context.Context) ([]Workspace, error)
 	Delete(ctx context.Context, id string) error
 }
@@ -29,21 +30,21 @@ func (s *Storage) Create(ctx context.Context, ws Workspace) (bool, error) {
 		return false, fmt.Errorf("checking workspace existence: %w", err)
 	}
 	if exists {
-		if _, err := s.db.ExecContext(ctx, `UPDATE workspaces SET name = ? WHERE id = ?`, ws.Name, ws.ID); err != nil {
+		if _, err := s.db.ExecContext(ctx, `UPDATE workspaces SET name = ?, git_url = COALESCE(NULLIF(?, ''), git_url) WHERE id = ?`, ws.Name, ws.GitURL, ws.ID); err != nil {
 			return false, fmt.Errorf("updating workspace: %w", err)
 		}
 		return false, nil
 	}
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO workspaces (id, name, created_at) VALUES (?, ?, ?)`,
-		ws.ID, ws.Name, formatTime(ws.CreatedAt)); err != nil {
+		`INSERT INTO workspaces (id, name, git_url, created_at) VALUES (?, ?, ?, ?)`,
+		ws.ID, ws.Name, ws.GitURL, formatTime(ws.CreatedAt)); err != nil {
 		return false, fmt.Errorf("inserting workspace: %w", err)
 	}
 	return true, nil
 }
 
 func (s *Storage) List(ctx context.Context) ([]Workspace, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, created_at FROM workspaces ORDER BY created_at DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, git_url, created_at FROM workspaces ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("listing workspaces: %w", err)
 	}
@@ -53,7 +54,7 @@ func (s *Storage) List(ctx context.Context) ([]Workspace, error) {
 		var ws Workspace
 		var name sql.NullString
 		var created string
-		if err := rows.Scan(&ws.ID, &name, &created); err != nil {
+		if err := rows.Scan(&ws.ID, &name, &ws.GitURL, &created); err != nil {
 			return nil, fmt.Errorf("scanning workspace: %w", err)
 		}
 		if name.Valid {
@@ -63,6 +64,29 @@ func (s *Storage) List(ctx context.Context) ([]Workspace, error) {
 		out = append(out, ws)
 	}
 	return out, rows.Err()
+}
+
+func (s *Storage) Get(ctx context.Context, id string) (*Workspace, error) {
+	var ws Workspace
+	var name, gitURL sql.NullString
+	var created string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, name, git_url, created_at FROM workspaces WHERE id = ?`, id).
+		Scan(&ws.ID, &name, &gitURL, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: workspace %s", ErrNotFound, id)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting workspace: %w", err)
+	}
+	if name.Valid {
+		ws.Name = name.String
+	}
+	if gitURL.Valid {
+		ws.GitURL = gitURL.String
+	}
+	ws.CreatedAt = parseTime(created)
+	return &ws, nil
 }
 
 func (s *Storage) Delete(ctx context.Context, id string) error {

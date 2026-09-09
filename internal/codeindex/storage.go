@@ -61,6 +61,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts USING fts5(
   name, name_parts, signature, kind,
   content='symbols', content_rowid='id', tokenize='porter unicode61'
 );
+CREATE TABLE IF NOT EXISTS embeddings (
+  symbol_id INTEGER PRIMARY KEY,
+  vec       BLOB NOT NULL
+);
 CREATE TRIGGER IF NOT EXISTS symbols_ai AFTER INSERT ON symbols BEGIN
   INSERT INTO symbols_fts(rowid, name, name_parts, signature, kind)
   VALUES (new.id, new.name, new.name_parts, new.signature, new.kind);
@@ -82,8 +86,9 @@ func NewStore(dir string) (*Store, error) {
 	return &Store{dir: dir, dbs: map[string]*sql.DB{}}, nil
 }
 
-// dbPath returns a stable, filesystem-safe path for a workspace id.
-func dbPath(dir, workspace string) string {
+// slugOf derives a stable, filesystem-safe slug from a workspace id (or any
+// identifier such as a git URL).
+func slugOf(workspace string) string {
 	safe := make([]rune, 0, len(workspace))
 	for _, r := range strings.ToLower(workspace) {
 		switch {
@@ -100,7 +105,12 @@ func dbPath(dir, workspace string) string {
 	if s == "" {
 		s = "default"
 	}
-	return filepath.Join(dir, s+".db")
+	return s
+}
+
+// dbPath returns the index database path for a workspace id.
+func dbPath(dir, workspace string) string {
+	return filepath.Join(dir, slugOf(workspace)+".db")
 }
 
 func (st *Store) DB(workspace string) (*sql.DB, error) {
@@ -267,6 +277,8 @@ type SymbolHit struct {
 	Line      int    `json:"line"`
 	Signature string `json:"signature,omitempty"`
 	Lang      string `json:"lang,omitempty"`
+
+	rank int // vector rank when fused (internal)
 }
 
 // Search runs a full-text query over a branch's symbols. The query is

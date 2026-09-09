@@ -52,6 +52,7 @@ type SearchResults struct {
 	Branch   string      `json:"branch"`
 	Fallback bool        `json:"fallback,omitempty"`
 	Note     string      `json:"note,omitempty"`
+	Semantic bool        `json:"semantic,omitempty"`
 	Hits     []SymbolHit `json:"hits"`
 }
 

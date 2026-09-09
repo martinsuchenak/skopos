@@ -29,6 +29,9 @@
             <button type="button" @click="switchView('plans')" class="nav-item" :aria-current="activeView === 'plans' ? 'page' : null">
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
                 Plans
+            </button><button type="button" @click="switchView('index')" class="nav-item" :aria-current="activeView === 'index' ? 'page' : null">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 1.1.9 2 2 2h9M4 7l4-4 4 4M4 7h10a2 2 0 012 2v2m4 4l-4-2v4l4-2z m0 0v0z m-4-2l4 2"/></svg>
+                Index
             </button>
         </nav>
         <div class="border-t border-zinc-800 p-4">
@@ -305,6 +308,31 @@
                                     <span aria-hidden="true">+</span> Add item
                                 </button>
                             </div>
+                        </li>
+                    </template>
+                </ul>
+            </section>
+
+            <!-- ===================== CODE INDEX ===================== -->
+            <section x-show="activeView === 'index'" x-cloak>
+                <h2 class="mb-1 text-2xl font-semibold">Code index</h2>
+                <p class="mb-6 text-sm text-zinc-500">
+                    Indexed branches for <span class="font-mono text-zinc-400" x-text="activeWorkspace || 'default'"></span>.
+                    Push with <code class="rounded bg-zinc-800 px-1">skopos index push</code> or refresh from the registered git URL.
+                </p>
+                <div x-show="indexBranches.length === 0" class="rounded-lg border border-zinc-800 bg-zinc-900/50 p-6 text-sm text-zinc-500">
+                    No indexed branches yet. Agents push indexes via the CLI; every machine then queries the same central index.
+                </div>
+                <ul class="space-y-2" x-show="indexBranches.length > 0">
+                    <template x-for="b in indexBranches" :key="b.branch">
+                        <li class="flex flex-wrap items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3">
+                            <span class="font-mono text-sm text-cyan-300" x-text="b.branch"></span>
+                            <span class="text-xs text-zinc-500">
+                                <span x-text="b.file_count"></span> files ·
+                                <span x-text="b.symbol_count"></span> symbols
+                            </span>
+                            <span class="ml-auto text-xs text-zinc-600" x-text="b.source || ''"></span>
+                            <span class="text-xs text-zinc-600" x-text="formatTime(b.built_at)"></span>
                         </li>
                     </template>
                 </ul>
