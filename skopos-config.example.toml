@@ -24,6 +24,12 @@ stuck_threshold_minutes = 15
 # Days to retain data before automatic cleanup (0 disables the cleanup worker).
 retention_days = 30
 
+[client]
+# Written by `skopos setup` when you choose the remote workflow. When set,
+# index push/query commands talk to this server without needing flags.
+# server_url = "http://localhost:8080"
+# api_key = ""
+
 [codeindex]
 # Directory for per-workspace code index databases. Server-side refresh
 # checkouts live under <dir>/checkouts/.

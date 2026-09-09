@@ -7,7 +7,9 @@ instead of grepping raw files.
 
 ## Getting started
 
-Quick walkthrough with real commands. Everything below works against a
+`skopos setup` configures everything interactively (local vs remote). The
+step-by-step guides live in [docs/guides/local.md](../guides/local.md) and
+[docs/guides/remote.md](../guides/remote.md); a quick walkthrough: Everything below works against a
 running skopos server (`skopos serve`); CLI examples add `--server-url` /
 `--api-key` (or set `SKOPOS_SERVER_URL` / `SKOPOS_API_KEY`).
 

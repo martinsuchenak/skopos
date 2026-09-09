@@ -93,9 +93,9 @@ func init() {
 // or a local index directory.
 func queryFlags() []cli.Flag {
 	return []cli.Flag{
-		&cli.StringFlag{Name: "server-url", EnvVars: []string{"SKOPOS_SERVER_URL"}, Usage: "Remote skopos (omit to query a local index-dir)"},
-		&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}},
-		&cli.StringFlag{Name: "index-dir", DefaultValue: "indexes", Usage: "Local index directory (when no server-url)"},
+		&cli.StringFlag{Name: "server-url", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}, Usage: "Remote skopos (omit to query a local index-dir)"},
+		&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
+		&cli.StringFlag{Name: "index-dir", DefaultValue: "indexes", ConfigPath: []string{"codeindex.dir"}, Usage: "Local index directory (when no server-url)"},
 		&cli.StringFlag{Name: "workspace", Usage: "Workspace ID"},
 		&cli.StringFlag{Name: "branch", Usage: "Branch (default: the workspace's default branch)"},
 	}

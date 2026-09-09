@@ -30,6 +30,7 @@ Open `http://localhost:8080`.
 ## Connect an agent
 
 ```bash
+skopos setup                               # interactive: local or remote code index
 skopos install --agent claude-code          # local
 skopos install --agent all --api-key "$SKOPOS_API_KEY"  # remote + auth
 ```
@@ -44,6 +45,8 @@ See [Agent integration](docs/getting-started.md#connecting-an-agent) and [Integr
 | Configuration (flags, env vars, log levels) | [docs/configuration.md](docs/configuration.md) |
 | Blackboard (memory, scopes, search) | [docs/concepts/blackboard.md](docs/concepts/blackboard.md) |
 | Code index (symbols, call graph, impact) | [docs/concepts/code-index.md](docs/concepts/code-index.md) |
+| Guide: local-only workflow | [docs/guides/local.md](docs/guides/local.md) |
+| Guide: remote/central workflow | [docs/guides/remote.md](docs/guides/remote.md) |
 | Plans (items, dependencies, auto-block) | [docs/concepts/plans.md](docs/concepts/plans.md) |
 | Status (reporting, health checker) | [docs/concepts/status.md](docs/concepts/status.md) |
 | Workspaces (scoping, registry) | [docs/concepts/workspaces.md](docs/concepts/workspaces.md) |

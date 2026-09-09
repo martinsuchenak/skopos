@@ -31,6 +31,17 @@ Optional — if absent, skopos runs on defaults. The file is gitignored (may con
 | `--qdrant-url` | `SKOPOS_QDRANT_URL` | `codeindex.embeddings.qdrant_url` | (empty) | Qdrant REST address when `--vector-store=qdrant` (e.g. `http://localhost:6333`) |
 | `--qdrant-api-key` | `SKOPOS_QDRANT_API_KEY` | `codeindex.embeddings.qdrant_api_key` | (empty) | Qdrant API key when required |
 
+### Client (written by `skopos setup`)
+
+The `[client]` section configures CLI commands (`index push`, queries) to
+talk to a remote server without passing flags. `skopos setup` writes it
+automatically; flags and `SKOPOS_SERVER_URL`/`SKOPOS_API_KEY` override it.
+
+| Config path | Env var | Default | Description |
+|-------------|---------|---------|-------------|
+| `client.server_url` | `SKOPOS_SERVER_URL` | (empty = local index) | Remote skopos URL for index/query commands |
+| `client.api_key` | `SKOPOS_API_KEY` | (empty) | API key for the remote server |
+
 ## Log levels
 
 ```bash
