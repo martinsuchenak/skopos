@@ -138,7 +138,11 @@ func printHits(res codeindex.SearchResults) {
 		return
 	}
 	for _, h := range res.Hits {
-		fmt.Printf("%-40s %-9s %s:%d\n", h.Name, h.Kind, h.Path, h.Line)
+		display := h.Name
+		if h.Qualified != "" {
+			display = h.Qualified
+		}
+		fmt.Printf("%-44s %-9s %s:%d\n", display, h.Kind, h.Path, h.Line)
 		if h.Signature != "" {
 			fmt.Printf("    %s\n", h.Signature)
 		}
@@ -271,8 +275,25 @@ func codeOutlineCmd() *cli.Command {
 				fmt.Println("no indexed definitions in that file")
 				return nil
 			}
+			// IDE-outline style: types at top level, members indented beneath
+			// their class (qualified names carry the nesting).
+			lastContainer := ""
 			for _, h := range res.Hits {
-				fmt.Printf("%5d  %-9s %s\n", h.Line, h.Kind, h.Name)
+				indent := ""
+				if h.Qualified != "" {
+					container := strings.SplitN(h.Qualified, "::", 2)[0]
+					if container != lastContainer {
+						// container header already printed as its own hit row
+						lastContainer = container
+					}
+					indent = "    "
+				} else if lastContainer != "" {
+					lastContainer = "" // back to top level
+				}
+				fmt.Printf("%5d  %s%-9s %s\n", h.Line, indent, h.Kind, h.Name)
+				if h.Signature != "" && h.Qualified != "" {
+					fmt.Printf("       %s  %s\n", indent, clipSignature(h.Signature))
+				}
 			}
 			return nil
 		},
@@ -488,4 +509,12 @@ func codeBranchDiffCmd() *cli.Command {
 			return nil
 		},
 	}
+}
+
+// clipSignature keeps outline hover lines readable.
+func clipSignature(sig string) string {
+	if len(sig) > 100 {
+		return sig[:97] + "..."
+	}
+	return sig
 }

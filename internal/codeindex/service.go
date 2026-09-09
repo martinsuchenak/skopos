@@ -203,8 +203,18 @@ func (s *Service) Impact(ctx context.Context, workspace, branch, name string, ma
 		roots = append(roots, r)
 	}
 	rootRows.Close()
-	if len(roots) == 0 {
-		roots = []string{name}
+	// The input name itself is always a root: a symbol row carries both name
+	// and qual_name, so the query above yields only the qualified form and a
+	// bare-name root (whose edges store the bare callee) would be lost.
+	found := false
+	for _, r := range roots {
+		if strings.EqualFold(r, name) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		roots = append(roots, name)
 	}
 
 	visited := map[string]int{}
