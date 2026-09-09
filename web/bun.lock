@@ -5,6 +5,7 @@
     "": {
       "name": "skopos-frontend",
       "dependencies": {
+        "@alpinejs/csp": "3.17.2",
         "@alpinejs/focus": "^3.17.2",
       },
       "devDependencies": {
@@ -17,6 +18,8 @@
     },
   },
   "packages": {
+    "@alpinejs/csp": ["@alpinejs/csp@3.17.2", "", { "dependencies": { "@vue/reactivity": "~3.5.40" } }, "sha512-jJXIzBaplTu1xVuhtNXEYDQDbQrdVJbXHYSVeF22fz4Vzm+g0X2XMb4pY1ywEpYLsFRx7ZcBE5gMyyuJpKPfHg=="],
+
     "@alpinejs/focus": ["@alpinejs/focus@3.17.2", "", { "dependencies": { "focus-trap": "^8.0.0", "tabbable": "^6.4.0" } }, "sha512-ZYER+iuYu9IHT2ihAaP04alQLzLzH5nEMmFwVDe7Yu6bzeub+yJISYjR2hH+DlQTcmAZc7xnFMb6zscCVI091Q=="],
 
     "@jridgewell/gen-mapping": ["@jridgewell/gen-mapping@0.3.13", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.0", "@jridgewell/trace-mapping": "^0.3.24" } }, "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA=="],

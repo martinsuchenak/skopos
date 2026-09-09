@@ -1,4 +1,9 @@
-import Alpine from 'alpinejs';
+// The CSP build of Alpine evaluates expressions without eval/new Function,
+// letting the dashboard ship a strict Content-Security-Policy (no
+// 'unsafe-eval'). It supports property access, operators, ternaries, and
+// method calls — but not template literals or optional chaining, hence the
+// expression style in base.html.
+import Alpine from '@alpinejs/csp';
 import focus from '@alpinejs/focus';
 
 type SessionSummary = { id: string; title: string; workspace: string; status: string; agent_count: number };
@@ -19,7 +24,7 @@ type View = 'sessions' | 'blackboard' | 'plans';
 
 declare global { interface Window { Alpine: typeof Alpine; app: () => object } }
 
-window.app = () => ({
+const appState = () => ({
   // navigation + layout
   activeView: (localStorage.getItem('skopos:view') || 'sessions') as View,
   sidebarOpen: false,
@@ -538,5 +543,10 @@ function emptyPlanForm(branch = ''): PlanForm { return { name: '', description: 
 function emptyItemForm(): ItemForm { return { title: '', description: '', phase: '', depends_on: '' }; }
 
 Alpine.plugin(focus);
+// Register as a named component: the CSP Alpine build cannot resolve globals
+// from expressions, so x-data="app()" (window.app) would evaluate empty —
+// x-data="app" resolves through this registry instead.
+Alpine.data('app', appState);
 window.Alpine = Alpine;
+window.app = appState; // exposed for tests/debugging
 Alpine.start();
