@@ -233,3 +233,31 @@ func TestDetect(t *testing.T) {
 		}
 	}
 }
+
+func TestParsePHPClassLiteralReceiver(t *testing.T) {
+	e := NewExtractor()
+	p := writeTemp(t, "handler.php", `<?php
+class Handler {
+  public function run(): void {
+    app(Repo::class)->save();
+    Container::make(Mailer::class)->send();
+    $this->local();
+  }
+}
+`)
+	res, err := e.ParseFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := map[string]bool{}
+	for _, e := range res.Edges {
+		called[e.Callee] = true
+	}
+	// The SomeClass::class literal names the receiver type: qualify.
+	if !called["Repo::save"] || !called["Mailer::send"] {
+		t.Fatalf("::class receiver edges missing: %+v", res.Edges)
+	}
+	if !called["Handler::local"] {
+		t.Fatalf("$this edge missing: %+v", res.Edges)
+	}
+}

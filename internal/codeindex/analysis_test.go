@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/martinsuchenak/skopos/internal/codeindex/parse"
@@ -242,5 +243,48 @@ class Beta {
 	}
 	if len(sym.Hits) != 1 || sym.Hits[0].Qualified != "Alpha::validate" {
 		t.Fatalf("qualified symbol lookup: %+v", sym.Hits)
+	}
+}
+
+func TestCallTreeResolvesUniqueBareNames(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "svc.php"), []byte(`<?php
+class Svc {
+  public function outer(): void { $this->helper(); }
+  public function helper(): void { $this->inner(); }
+  public function inner(): void { leafWork(); }
+}
+function leafWork() {}
+`), 0o644)
+	os.WriteFile(filepath.Join(root, "other.php"), []byte(`<?php
+class Other {
+  public function helper(): void {} // same short name: helper is ambiguous
+}
+`), 0o644)
+	store := newTestStore(t)
+	buildInto(t, store, root, "main")
+	svc := NewService(store)
+
+	// helper is ambiguous (Svc::helper + Other::helper) -> stays bare in the tree.
+	res, err := svc.CallTree(context.Background(), "ws", "main", "Svc::outer", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	var walk func(n CallTreeNode)
+	walk = func(n CallTreeNode) {
+		names = append(names, n.Name)
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(res.Tree)
+	joined := strings.Join(names, ",")
+	if strings.Contains(joined, "helper::") {
+		t.Fatalf("ambiguous helper must stay bare: %v", names)
+	}
+	// leafWork is a unique top-level function: stays bare (correctly).
+	if !strings.Contains(joined, "leafWork") {
+		t.Fatalf("leafWork missing: %v", names)
 	}
 }

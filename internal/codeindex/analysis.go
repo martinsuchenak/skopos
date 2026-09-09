@@ -185,6 +185,49 @@ func (s *Service) Cycles(ctx context.Context, workspace, branch string) (*Cycles
 	return out, nil
 }
 
+// uniqueNameResolver returns a function mapping a bare method name to its
+// fully-qualified form when exactly one symbol with that short name exists
+// on the branch (and no top-level symbol shadows it); otherwise the name
+// passes through unchanged.
+func (s *Service) uniqueNameResolver(workspace, branch string) func(string) string {
+	db, err := s.store.DB(workspace)
+	if err != nil {
+		return func(n string) string { return n }
+	}
+	rows, err := db.Query(`
+		SELECT s.name,
+		       COUNT(DISTINCT COALESCE(NULLIF(s.qual_name,''), s.name)) AS variants,
+		       MIN(COALESCE(NULLIF(s.qual_name,''), s.name))             AS pick,
+		       SUM(CASE WHEN s.qual_name = '' THEN 1 ELSE 0 END)         AS toplevel
+		FROM symbols s
+		JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
+		GROUP BY s.name`, branch)
+	if err != nil {
+		return func(n string) string { return n }
+	}
+	defer rows.Close()
+	m := map[string]string{}
+	for rows.Next() {
+		var name, pick string
+		var variants, toplevel int
+		if err := rows.Scan(&name, &variants, &pick, &toplevel); err != nil {
+			return func(n string) string { return n }
+		}
+		if variants == 1 && toplevel == 0 && pick != name {
+			m[name] = pick
+		}
+	}
+	return func(n string) string {
+		if strings.Contains(n, "::") {
+			return n
+		}
+		if q, ok := m[n]; ok {
+			return q
+		}
+		return n
+	}
+}
+
 // branchGraph loads the distinct caller->callee adjacency for a branch.
 func (s *Service) branchGraph(workspace, branch string) (map[string][]string, error) {
 	db, err := s.store.DB(workspace)
@@ -257,6 +300,13 @@ func (s *Service) CallTree(ctx context.Context, workspace, branch, name string, 
 	const maxNodes = 400
 	budget := maxNodes
 	seen := map[string]bool{}
+
+	// Bare callees (calls on non-$this receivers) merge every same-named
+	// method into one node. When exactly one symbol on the branch carries
+	// that short name, resolve the display name to its FQN — ambiguous or
+	// unknown names stay bare rather than guessing.
+	resolve := s.uniqueNameResolver(workspace, resolved)
+
 	var expand func(n string, d int) CallTreeNode
 	expand = func(n string, d int) CallTreeNode {
 		node := CallTreeNode{Name: n}
@@ -272,7 +322,7 @@ func (s *Service) CallTree(ctx context.Context, workspace, branch, name string, 
 			}
 			seen[callee] = true
 			budget--
-			node.Children = append(node.Children, expand(callee, d+1))
+			node.Children = append(node.Children, expand(resolve(callee), d+1))
 		}
 		return node
 	}

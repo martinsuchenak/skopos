@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -80,6 +81,10 @@ var containerKinds = map[string]bool{
 	"enum": true, "impl": true, "module": true,
 }
 
+// classLiteralRe matches `SomeClass::class` inside a receiver expression
+// (PHP container idiom; harmless elsewhere).
+var classLiteralRe = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)::class\b`)
+
 // identifierTypes are node types whose text is a symbol name.
 var identifierTypes = map[string]bool{
 	"identifier":           true,
@@ -109,7 +114,7 @@ var callTypes = map[string]bool{
 
 // ExtractorVersion changes whenever extraction logic changes; it is mixed
 // into the content hash so already-indexed files re-extract after upgrades.
-const ExtractorVersion = "3"
+const ExtractorVersion = "4"
 
 // Extractor parses files with a shared parser per language.
 type Extractor struct {
@@ -283,6 +288,7 @@ func calleeName(n *gts.Node, lang *gts.Language, src []byte, typeName string) (s
 		f = fn
 	}
 	var last, first string
+	var receiverText string
 	found := false
 	for i := 0; i < f.NamedChildCount(); i++ {
 		c := f.NamedChild(i)
@@ -293,9 +299,10 @@ func calleeName(n *gts.Node, lang *gts.Language, src []byte, typeName string) (s
 		if ct == "arguments" {
 			continue
 		}
-		// Object of a member/scoped access (variable_name, name, this...).
+		// Object of a member/scoped access (variable_name, name, call...).
 		if !found && first == "" {
 			first = strings.TrimSpace(string(src[c.StartByte():c.EndByte()]))
+			receiverText = first
 		}
 		if identifierTypes[ct] {
 			last = string(src[c.StartByte():c.EndByte()])
@@ -315,6 +322,12 @@ func calleeName(n *gts.Node, lang *gts.Language, src []byte, typeName string) (s
 			return typeName + "::" + last, true
 		}
 		return last, true
+	}
+	// Container/factory idiom: the receiver expression names the type via a
+	// `SomeClass::class` literal (e.g. app(UserRepo::class)->save()). The
+	// literal is authoritative, so qualify the callee with it.
+	if m := classLiteralRe.FindStringSubmatch(receiverText); m != nil {
+		return m[1] + "::" + last, true
 	}
 	// Explicit receiver that is itself a plain identifier (Class::method in
 	// PHP / Namespace.method elsewhere): keep the receiver as a prefix.
