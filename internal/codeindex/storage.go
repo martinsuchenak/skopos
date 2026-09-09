@@ -5,6 +5,7 @@
 package codeindex
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -63,6 +64,13 @@ CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts USING fts5(
   name, name_parts, signature, kind,
   content='symbols', content_rowid='id', tokenize='porter unicode61'
 );
+CREATE TABLE IF NOT EXISTS file_cache (
+  path      TEXT PRIMARY KEY,
+  mtime     INTEGER NOT NULL,
+  size      INTEGER NOT NULL,
+  hash      TEXT NOT NULL,
+  extractor TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS embeddings (
   symbol_id INTEGER PRIMARY KEY,
   vec       BLOB NOT NULL
@@ -77,8 +85,9 @@ END;
 type Store struct {
 	dir string
 
-	mu  sync.Mutex
-	dbs map[string]*sql.DB
+	mu             sync.Mutex
+	dbs            map[string]*sql.DB
+	cacheWorkspace string
 }
 
 func NewStore(dir string) (*Store, error) {
@@ -86,6 +95,19 @@ func NewStore(dir string) (*Store, error) {
 		return nil, fmt.Errorf("creating index dir: %w", err)
 	}
 	return &Store{dir: dir, dbs: map[string]*sql.DB{}}, nil
+}
+
+// AsBuildCache turns the store into a parse cache rooted at one workspace's
+// DB (typically the one being built into; the cache table is per-DB).
+func (st *Store) AsBuildCache(workspace string) *Store {
+	st.cacheWorkspace = workspace
+	return st
+}
+
+// parseCacheVersion keys cache entries to the extractor: a bump invalidates
+// every cached parse without a migration.
+func parseCacheVersion() string {
+	return "v" + parse.ExtractorVersion
 }
 
 // slugOf derives a stable, filesystem-safe slug from a workspace id (or any
@@ -515,6 +537,44 @@ func clampLimit(limit, def, max int) int {
 		limit = max
 	}
 	return limit
+}
+
+// BuildCacher short-circuits re-parsing files whose (mtime, size, extractor)
+// triple is unchanged — the parsed result is already in the blob store,
+// keyed by content hash. Implemented by Store; any DB with the schema works.
+type BuildCacher interface {
+	CacheLookup(ctx context.Context, path string, mtime, size int64) (hash string, ok bool)
+	CachePut(ctx context.Context, path string, mtime, size int64, hash string) error
+}
+
+// CacheLookup reports a cached parse for an unchanged file.
+func (st *Store) CacheLookup(ctx context.Context, path string, mtime, size int64) (string, bool) {
+	db, err := st.DB(st.cacheWorkspace)
+	if err != nil {
+		return "", false
+	}
+	var hash string
+	err = db.QueryRowContext(ctx,
+		`SELECT hash FROM file_cache WHERE path = ? AND mtime = ? AND size = ? AND extractor = ?`,
+		path, mtime, size, parseCacheVersion()).Scan(&hash)
+	if err != nil {
+		return "", false
+	}
+	return hash, true
+}
+
+// CachePut records a file's parse under its current stat + extractor version.
+func (st *Store) CachePut(ctx context.Context, path string, mtime, size int64, hash string) error {
+	db, err := st.DB(st.cacheWorkspace)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO file_cache (path, mtime, size, hash, extractor) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, size=excluded.size,
+		  hash=excluded.hash, extractor=excluded.extractor`,
+		path, mtime, size, hash, parseCacheVersion())
+	return err
 }
 
 func scanHits(rows *sql.Rows) ([]SymbolHit, error) {

@@ -88,7 +88,7 @@ func setupLocal(ctx context.Context, in *bufio.Reader) error {
 	defer store.Close()
 
 	setupPrint("Indexing current directory...\n")
-	results, head, err := codeindex.Build(ctx, parse.NewExtractor(), ".", "")
+	results, head, err := codeindex.BuildWithCache(ctx, parse.NewExtractor(), ".", "", nil, store.AsBuildCache(workspace))
 	if err != nil {
 		return err
 	}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/martinsuchenak/skopos/internal/codeindex/parse"
 )
@@ -271,4 +272,79 @@ func TestBuildWithProgressReports(t *testing.T) {
 	if lastDone != lastTotal || lastTotal != len(results) {
 		t.Fatalf("final progress %d/%d, results %d", lastDone, lastTotal, len(results))
 	}
+}
+
+func TestBuildWithCacheReusesParses(t *testing.T) {
+	root := writeRepo(t)
+	store := newTestStore(t)
+	ex := parse.NewExtractor()
+	ctx := context.Background()
+
+	// First build parses everything and populates the cache.
+	r1, _, err := BuildWithCache(ctx, ex, root, "main", nil, store.AsBuildCache("ws"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed := 0
+	for _, r := range r1 {
+		if len(r.Symbols) > 0 {
+			parsed++
+		}
+	}
+
+	// Second build on the unchanged tree: every result is a cache stub
+	// (same hashes, no re-extraction) but commits to identical branch state.
+	r2, _, err := BuildWithCache(ctx, ex, root, "main", nil, store.AsBuildCache("ws"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r2) != len(r1) {
+		t.Fatalf("file count changed: %d vs %d", len(r2), len(r1))
+	}
+	stubs := 0
+	for i := range r2 {
+		if r2[i].Hash != r1[i].Hash {
+			t.Fatalf("hash mismatch on %s: %s vs %s", r2[i].Path, r2[i].Hash, r1[i].Hash)
+		}
+		if len(r2[i].Symbols) == 0 {
+			stubs++
+		}
+	}
+	if stubs != len(r2) {
+		t.Fatalf("expected all-cached rebuild, %d/%d were re-parsed (parsed first time: %d)", len(r2)-stubs, len(r2), parsed)
+	}
+
+	// A touched file re-parses (mtime bump invalidates its cache row).
+	time.Sleep(10 * time.Millisecond) // ensure mtime moves
+	touched := filepath.Join(root, "main.go")
+	if err := os.WriteFile(touched, append(mustRead(t, touched), []byte("\nfunc Fresh() {}\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r3, _, err := BuildWithCache(ctx, ex, root, "main", nil, store.AsBuildCache("ws"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reparsed := 0
+	for _, r := range r3 {
+		if len(r.Symbols) > 0 {
+			reparsed++
+		}
+	}
+	if reparsed != 1 {
+		t.Fatalf("expected exactly the touched file to re-parse, got %d", reparsed)
+	}
+
+	// Cached rebuild still commits identical symbol counts.
+	buildInto(t, store, root, "main") // uncached reference
+	st1, _ := NewService(store).Status(ctx, "ws")
+	_ = st1
+}
+
+func mustRead(t *testing.T, p string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }

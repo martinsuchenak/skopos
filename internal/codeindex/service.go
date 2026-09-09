@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -265,6 +266,14 @@ func Build(ctx context.Context, ex *parse.Extractor, root, branch string) ([]*pa
 // BuildWithProgress is Build with a progress callback: report is invoked
 // after each file parses, carrying files done / total found.
 func BuildWithProgress(ctx context.Context, ex *parse.Extractor, root, branch string, report func(done, total int)) ([]*parse.FileResult, string, error) {
+	return BuildWithCache(ctx, ex, root, branch, report, nil)
+}
+
+// BuildWithCache adds a parse cache: files whose (mtime, size, extractor)
+// are unchanged skip reading/parsing entirely — the stored blob for their
+// content hash is reused at commit time. Cache hits yield stub results
+// (hash + language, no symbols/edges) which is all Commit needs.
+func BuildWithCache(ctx context.Context, ex *parse.Extractor, root, branch string, report func(done, total int), cacher BuildCacher) ([]*parse.FileResult, string, error) {
 	files, err := parse.Walk(root)
 	if err != nil {
 		return nil, "", err
@@ -274,14 +283,34 @@ func BuildWithProgress(ctx context.Context, ex *parse.Extractor, root, branch st
 	}
 	out := make([]*parse.FileResult, 0, len(files))
 	for _, f := range files {
-		res, perr := ex.ParseFile(f)
-		if perr != nil {
-			continue // unreadable file: skip, keep going
+		var res *parse.FileResult
+		if cacher != nil {
+			if info, serr := os.Stat(f); serr == nil {
+				if hash, ok := cacher.CacheLookup(ctx, f, info.ModTime().UnixNano(), info.Size()); ok {
+					if rel, rerr := filepath.Rel(root, f); rerr == nil {
+						res = &parse.FileResult{Path: rel, Hash: hash, Lang: parse.Detect(f)}
+					}
+				}
+			}
 		}
-		// Store paths relative to the indexed root so the index is portable.
-		if rel, rerr := filepath.Rel(root, res.Path); rerr == nil {
-			res.Path = rel
+		parsed := res == nil
+		if parsed {
+			var perr error
+			res, perr = ex.ParseFile(f)
+			if perr != nil {
+				continue // unreadable file: skip, keep going
+			}
+			// Store paths relative to the indexed root so the index is portable.
+			if rel, rerr := filepath.Rel(root, res.Path); rerr == nil {
+				res.Path = rel
+			}
+			if cacher != nil {
+				if info, serr := os.Stat(f); serr == nil {
+					_ = cacher.CachePut(ctx, f, info.ModTime().UnixNano(), info.Size(), res.Hash)
+				}
+			}
 		}
+		_ = parsed
 		out = append(out, res)
 		if report != nil {
 			report(len(out), len(files))

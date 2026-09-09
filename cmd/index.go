@@ -90,7 +90,7 @@ func indexBuildCmd() *cli.Command {
 			defer store.Close()
 
 			buildReport, _ := progressPrinter(200)
-			results, head, err := codeindex.BuildWithProgress(ctx, parse.NewExtractor(), root, branch, buildReport)
+			results, head, err := codeindex.BuildWithCache(ctx, parse.NewExtractor(), root, branch, buildReport, store.AsBuildCache(workspace))
 			if err != nil {
 				return err
 			}
@@ -206,7 +206,17 @@ func isTerminal(f *os.File) bool {
 // Returns (uploaded, total).
 func PushToServer(ctx context.Context, serverURL, apiKey, workspace, branch, root string) (int, int, error) {
 	pushReport, _ := progressPrinter(200)
-	results, head, err := codeindex.BuildWithProgress(ctx, parse.NewExtractor(), root, branch, pushReport)
+	// Local parse cache (per machine) so unchanged files skip parsing on
+	// repeated pushes; the server dedupes uploads independently.
+	cacheStore, err := codeindex.NewStore(".skopos")
+	if err == nil {
+		defer cacheStore.Close()
+	}
+	var cacher codeindex.BuildCacher
+	if err == nil {
+		cacher = cacheStore.AsBuildCache("cache")
+	}
+	results, head, err := codeindex.BuildWithCache(ctx, parse.NewExtractor(), root, branch, pushReport, cacher)
 	if err != nil {
 		return 0, 0, err
 	}

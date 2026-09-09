@@ -146,9 +146,9 @@ func (r *Refresher) run(ctx context.Context, workspace, branch, gitURL string) R
 		return s
 	}
 	setProgress("0/? files")
-	results, head, err := BuildWithProgress(ctx, parse.NewExtractor(), checkout, branch, func(done, total int) {
+	results, head, err := BuildWithCache(ctx, parse.NewExtractor(), checkout, branch, func(done, total int) {
 		setProgress(fmt.Sprintf("%d/%d files", done, total))
-	})
+	}, r.store.AsBuildCache(workspace))
 	if err != nil {
 		s.LastError = err.Error()
 		return s
