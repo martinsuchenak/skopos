@@ -322,3 +322,104 @@ func getRefreshState(url string) (codeindex.RefreshState, error) {
 	json.NewDecoder(resp.Body).Decode(&s)
 	return s, nil
 }
+
+func TestCodeIndexAnalysisEndpoints(t *testing.T) {
+	ts, repo := codeindexSetup(t, "")
+	pushRepo(t, ts, "", repo, "github.com/example/repo", "main")
+
+	// Feature branch for the diff.
+	other := repo + "-feat"
+	os.MkdirAll(other, 0o755)
+	os.WriteFile(filepath.Join(other, "main.go"), []byte(`package main
+
+func Handler() string { return helper() }
+
+func helper() string { return "x" }
+
+func Added() {}
+`), 0o644)
+	pushRepo(t, ts, "", other, "github.com/example/repo", "feat/x")
+
+	get := func(path string) map[string]any {
+		resp, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var m map[string]any
+		json.NewDecoder(resp.Body).Decode(&m)
+		return m
+	}
+
+	// outline
+	out := get("/api/codeindex/github.com%2Fexample%2Frepo/outline?path=main.go")
+	if _, ok := out["hits"]; !ok {
+		t.Fatalf("outline: %v", out)
+	}
+	// dead
+	dead := get("/api/codeindex/github.com%2Fexample%2Frepo/dead?branch=main")
+	if _, ok := dead["symbols"]; !ok {
+		t.Fatalf("dead: %v", dead)
+	}
+	// cycles (fixture has none: expect empty slice)
+	cycles := get("/api/codeindex/github.com%2Fexample%2Frepo/cycles?branch=main")
+	if _, ok := cycles["cycles"]; !ok {
+		t.Fatalf("cycles: %v", cycles)
+	}
+	// call-tree
+	tree := get("/api/codeindex/github.com%2Fexample%2Frepo/call-tree?name=Handler&branch=main")
+	if _, ok := tree["tree"]; !ok {
+		t.Fatalf("call-tree: %v", tree)
+	}
+	// branch-diff sees Added on feat/x
+	diff := get("/api/codeindex/github.com%2Fexample%2Frepo/branch-diff?branch=feat/x")
+	syms, _ := json.Marshal(diff["symbols"])
+	if !strings.Contains(string(syms), "Added") {
+		t.Fatalf("branch-diff missing Added: %s", syms)
+	}
+	// impact
+	impact := get("/api/codeindex/github.com%2Fexample%2Frepo/impact?name=helper&branch=main")
+	if _, ok := impact["affected"]; !ok {
+		t.Fatalf("impact: %v", impact)
+	}
+	// semantic=true without embeddings configured degrades to plain search.
+	sem := get("/api/codeindex/github.com%2Fexample%2Frepo/search?q=handler&semantic=true")
+	if sem["semantic"] == true {
+		t.Fatalf("semantic must be false when no embeddings: %v", sem)
+	}
+	hits, _ := json.Marshal(sem["hits"])
+	if !strings.Contains(string(hits), "Handler") {
+		t.Fatalf("semantic-degraded search lost hits: %s", hits)
+	}
+	// negative limit must not panic and behaves as default.
+	neg := get("/api/codeindex/github.com%2Fexample%2Frepo/search?q=handler&limit=-5")
+	if _, ok := neg["hits"]; !ok {
+		t.Fatalf("negative limit broke search: %v", neg)
+	}
+}
+
+func TestCodeIndexDropWorkspace(t *testing.T) {
+	ts, repo := codeindexSetup(t, "")
+	pushRepo(t, ts, "", repo, "github.com/example/repo", "main")
+
+	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/codeindex/github.com%2Fexample%2Frepo", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("drop workspace: %d", resp.StatusCode)
+	}
+	// Status on the dropped workspace starts empty.
+	resp, err = http.Get(ts.URL + "/api/codeindex/github.com%2Fexample%2Frepo/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var status []codeindex.BranchStatus
+	json.NewDecoder(resp.Body).Decode(&status)
+	if len(status) != 0 {
+		t.Fatalf("status after drop: %+v", status)
+	}
+}

@@ -137,61 +137,69 @@ func indexPushCmd() *cli.Command {
 			if branch == "" {
 				return fmt.Errorf("--branch is required (or run inside a git repo)")
 			}
-			serverURL := strings.TrimRight(cmd.GetString("server-url"), "/")
-			apiKey := cmd.GetString("api-key")
-
-			results, head, err := codeindex.Build(ctx, parse.NewExtractor(), root, branch)
+			uploaded, total, err := PushToServer(ctx, cmd.GetString("server-url"), cmd.GetString("api-key"), workspace, branch, root)
 			if err != nil {
 				return err
 			}
-
-			entries := make([]codeindex.FileEntry, 0, len(results))
-			byHash := map[string]*parse.FileResult{}
-			for _, r := range results {
-				entries = append(entries, codeindex.FileEntry{Path: r.Path, Hash: r.Hash})
-				byHash[r.Hash] = r
-			}
-
-			// 1. manifest: which blobs does the server need?
-			manifest, err := postJSON[struct {
-				Missing []string `json:"missing"`
-			}](ctx, serverURL, apiKey, "POST", fmt.Sprintf("/api/codeindex/%s/manifest", url.PathEscape(workspace)),
-				map[string]any{"files": entries}, "application/json")
-			if err != nil {
-				return fmt.Errorf("manifest: %w", err)
-			}
-
-			// 2. upload only the missing blobs as ndjson.
-			if len(manifest.Missing) > 0 {
-				var buf bytes.Buffer
-				w := bufio.NewWriter(&buf)
-				enc := json.NewEncoder(w)
-				for _, h := range manifest.Missing {
-					if r, ok := byHash[h]; ok {
-						enc.Encode(r)
-					}
-				}
-				w.Flush()
-				if _, err := postJSON[map[string]any](ctx, serverURL, apiKey, "POST",
-					fmt.Sprintf("/api/codeindex/%s/blobs", url.PathEscape(workspace)), buf.Bytes(), "application/x-ndjson"); err != nil {
-					return fmt.Errorf("blobs: %w", err)
-				}
-			}
-
-			// 3. commit the branch.
-			host, _ := os.Hostname()
-			if _, err := postJSON[map[string]any](ctx, serverURL, apiKey, "POST",
-				fmt.Sprintf("/api/codeindex/%s/commit", url.PathEscape(workspace)),
-				map[string]any{
-					"branch": branch, "head_sha": head,
-					"source": "push:" + host, "files": entries,
-				}, "application/json"); err != nil {
-				return fmt.Errorf("commit: %w", err)
-			}
-			fmt.Printf("pushed %d files (%d uploaded) for %s@%s\n", len(entries), len(manifest.Missing), workspace, branch)
+			fmt.Printf("pushed %d files (%d uploaded) for %s@%s\n", total, uploaded, workspace, branch)
 			return nil
 		},
 	}
+}
+
+// PushToServer builds a checkout and pushes its branch index through the
+// three-step protocol: manifest (which blobs does the server need), blobs
+// (ndjson upload of just the missing ones), commit (atomic branch pointer).
+// Returns (uploaded, total).
+func PushToServer(ctx context.Context, serverURL, apiKey, workspace, branch, root string) (int, int, error) {
+	results, head, err := codeindex.Build(ctx, parse.NewExtractor(), root, branch)
+	if err != nil {
+		return 0, 0, err
+	}
+	entries := make([]codeindex.FileEntry, 0, len(results))
+	byHash := map[string]*parse.FileResult{}
+	for _, r := range results {
+		entries = append(entries, codeindex.FileEntry{Path: r.Path, Hash: r.Hash})
+		byHash[r.Hash] = r
+	}
+
+	// 1. manifest: which blobs does the server need?
+	manifest, err := postJSON[struct {
+		Missing []string `json:"missing"`
+	}](ctx, serverURL, apiKey, "POST", fmt.Sprintf("/api/codeindex/%s/manifest", url.PathEscape(workspace)),
+		map[string]any{"files": entries}, "application/json")
+	if err != nil {
+		return 0, 0, fmt.Errorf("manifest: %w", err)
+	}
+
+	// 2. upload only the missing blobs as ndjson.
+	if len(manifest.Missing) > 0 {
+		var buf bytes.Buffer
+		w := bufio.NewWriter(&buf)
+		enc := json.NewEncoder(w)
+		for _, h := range manifest.Missing {
+			if r, ok := byHash[h]; ok {
+				enc.Encode(r)
+			}
+		}
+		w.Flush()
+		if _, err := postJSON[map[string]any](ctx, serverURL, apiKey, "POST",
+			fmt.Sprintf("/api/codeindex/%s/blobs", url.PathEscape(workspace)), buf.Bytes(), "application/x-ndjson"); err != nil {
+			return 0, 0, fmt.Errorf("blobs: %w", err)
+		}
+	}
+
+	// 3. commit the branch.
+	host, _ := os.Hostname()
+	if _, err := postJSON[map[string]any](ctx, serverURL, apiKey, "POST",
+		fmt.Sprintf("/api/codeindex/%s/commit", url.PathEscape(workspace)),
+		map[string]any{
+			"branch": branch, "head_sha": head,
+			"source": "push:" + host, "files": entries,
+		}, "application/json"); err != nil {
+		return 0, 0, fmt.Errorf("commit: %w", err)
+	}
+	return len(manifest.Missing), len(entries), nil
 }
 
 func indexStatusCmd() *cli.Command {

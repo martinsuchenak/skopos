@@ -365,3 +365,94 @@ func helper() int { return 42 }
 		t.Fatalf("code_index_status: %s", got)
 	}
 }
+
+func TestMCPCodeAnalysisToolsEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	repo := dir + "/repo"
+	os.MkdirAll(repo, 0o755)
+	os.WriteFile(repo+"/app.go", []byte(`package main
+
+func Root() { mid(); }
+
+func mid() { leafA(); leafB() }
+
+func leafA() { cyc1() }
+func leafB() {}
+func cyc1() { cyc2() }
+func cyc2() { cyc1() }
+func deadSym() {}
+`), 0o644)
+
+	store, err := codeindex.NewStore(dir + "/idx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	svc := codeindex.NewService(store)
+	h := NewMCPHandler(
+		status.NewService(status.NewStorage(mustOpenDB(t))),
+		blackboard.NewService(blackboard.NewStorage(mustOpenDB(t))),
+		plans.NewService(plans.NewStorage(mustOpenDB(t))),
+		svc,
+	)
+	sessionID := initialize(t, h)
+
+	// Index main, then a feature branch that adds a symbol.
+	buildCommit := func(branch string) {
+		results, head, err := codeindex.Build(context.Background(), parse.NewExtractor(), repo, branch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := codeindex.CommitLocal(store, "an-ws", branch, "test", results, head); err != nil {
+			t.Fatal(err)
+		}
+	}
+	buildCommit("main")
+	os.WriteFile(repo+"/extra.go", []byte("package main\n\nfunc Extra() {}\n"), 0o644)
+	buildCommit("feat/x")
+
+	id := 1
+	next := func() int { id++; return id }
+
+	// outline lists a file's definitions in order.
+	got := callText(t, h, sessionID, next(), "code_outline", map[string]any{"workspace_id": "an-ws", "path": "app.go"})
+	if !strings.Contains(got, "Root") || !strings.Contains(got, "leafB") {
+		t.Fatalf("outline: %s", got)
+	}
+
+	// callees from mid: leafA and leafB.
+	got = callText(t, h, sessionID, next(), "code_callees", map[string]any{"workspace_id": "an-ws", "name": "mid"})
+	if !strings.Contains(got, "leafA") || !strings.Contains(got, "leafB") {
+		t.Fatalf("callees: %s", got)
+	}
+
+	// impact of leafA reaches mid then Root (depth 2).
+	got = callText(t, h, sessionID, next(), "code_impact", map[string]any{"workspace_id": "an-ws", "name": "leafA", "depth": 3})
+	if !strings.Contains(got, "mid") || !strings.Contains(got, "Root") {
+		t.Fatalf("impact: %s", got)
+	}
+
+	// dead-code finds deadSym (no callers, not an entry-point prefix).
+	got = callText(t, h, sessionID, next(), "code_dead", map[string]any{"workspace_id": "an-ws"})
+	if !strings.Contains(got, "deadSym") {
+		t.Fatalf("dead: %s", got)
+	}
+
+	// cycles finds cyc1 <-> cyc2.
+	got = callText(t, h, sessionID, next(), "code_cycles", map[string]any{"workspace_id": "an-ws"})
+	if !strings.Contains(got, "cyc1") || !strings.Contains(got, "cyc2") {
+		t.Fatalf("cycles: %s", got)
+	}
+
+	// branch diff: feat/x adds extra.go / Extra vs main.
+	got = callText(t, h, sessionID, next(), "code_branch_diff", map[string]any{"workspace_id": "an-ws", "branch": "feat/x"})
+	if !strings.Contains(got, "Extra") || !strings.Contains(got, "extra.go") {
+		t.Fatalf("branch diff: %s", got)
+	}
+
+	// call_tree from Root expands two levels.
+	got = callText(t, h, sessionID, next(), "code_call_tree", map[string]any{"workspace_id": "an-ws", "name": "Root", "depth": 2})
+	if !strings.Contains(got, "leafA") {
+		t.Fatalf("call tree: %s", got)
+	}
+}

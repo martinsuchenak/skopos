@@ -159,10 +159,11 @@ behind the API key when one is configured.
 
 ## Analysis notes
 
-Call edges are **name-based heuristics** (tree-sitter is syntactic — no type
-resolution). They are right most of the time and honestly wrong sometimes
-(dynamic dispatch, interface implementations, reflection). Treat `dead-code`
-and `cycles` as leads to verify, not verdicts.
+Call edges are **name-based**: the indexer records which names each
+definition references, without resolving types. Calls through interfaces,
+dynamic dispatch, callbacks, and reflection are therefore invisible to the
+graph. The tools are accurate about what they can see and honest about the
+rest — treat `dead-code` and `cycles` as leads to verify, not verdicts.
 
 ## Semantic search (optional, off by default)
 

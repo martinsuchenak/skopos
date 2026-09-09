@@ -6,14 +6,14 @@ Status: proposed (plan agreed in principle; implementation not started)
 
 Give skopos a central, queryable **code index** — symbols, references, and call
 graphs for indexed repositories — exposed over MCP tools, REST, and CLI, so AI
-agents explore code structure instead of grepping raw files. Inspired by
-GraphMind, but **central**: skopos is the shared knowledge server, so one index
-serves every machine and every agent working on a project.
+agents explore code structure instead of grepping raw files. The index is
+**central**: skopos is the shared knowledge server, so one index serves every
+machine and every agent working on a project.
 
 ## Non-goals (v1)
 
-- Type-accurate cross-references (needs a compiler; tree-sitter is syntactic —
-  name-resolution heuristics only, same trade-off as GraphMind).
+- Type-accurate cross-references (would require a per-language compiler
+  toolchain in the server; the indexer resolves references by name only).
 - Code embeddings are **optional** and off by default (see below).
 - Live file watching on the server for arbitrary directories.
 
@@ -170,7 +170,7 @@ Branch deletion: TTL cleanup in the existing cleanup worker, plus explicit
      int8 is a config switch. Documented ceiling: comfortable to ~300k
      vectors per workspace; beyond that, swap in `coder/hnsw` (pure-Go HNSW)
      as another `VectorStore` implementation without touching the index core.
-   - **RRF fusion** (k=60) of FTS + vector + graph expansion, GraphMind-style.
+   - **RRF fusion** (k=60) of FTS + vector + graph expansion.
    - Embedding runs wherever indexing runs (push client or server).
 
 ### API (REST, behind the existing API key when set)
@@ -220,7 +220,7 @@ skopos outline  <file>
 CLI query commands default to a local `skopos.db` when present, else require
 `--server-url` — consistent with existing `report`/`blackboard`/`plan`
 commands. `skopos install` snippets teach agents to push after checkout;
-optional git `post-checkout`/`post-commit` hooks (GraphMind-style).
+optional git `post-checkout`/`post-commit` hooks.
 
 ## Indexing modes: both local and server-side
 
@@ -267,8 +267,9 @@ Core value (Phases 0–4) ≈ **6.5 days**; full scope ≈ **2 weeks**.
   isolated behind one package so a fallback (CGO bindings or external blobs)
   stays possible.
 - Call/reference heuristics per language (incl. `$obj->method()`, `Foo::bar()`,
-  dynamic calls) will be imperfect — same class of imprecision as GraphMind;
-  tools should label confidence, not pretend certainty.
+  dynamic calls) will be imperfect — interfaces, dynamic dispatch, and
+  reflection are invisible to name resolution; tools should label confidence,
+  not pretend certainty.
 - Binary +17MB accepted (32MB total) — revisit via build tags if it hurts.
 - FTS ranking quality across languages with different naming conventions —
   tune tokenizers per field if needed.
