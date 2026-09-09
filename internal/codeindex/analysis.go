@@ -34,13 +34,13 @@ func (s *Service) Dead(ctx context.Context, workspace, branch string, limit int)
 		return nil, err
 	}
 	rows, err := db.Query(`
-		SELECT s.name, s.kind, bf.path, s.line, s.signature, s.lang
+		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang
 		FROM symbols s
 		JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
 		WHERE NOT EXISTS (
 			SELECT 1 FROM edges e
 			JOIN branch_files bf2 ON bf2.hash = e.hash AND bf2.branch = ?
-			WHERE e.callee = s.name
+			WHERE e.callee = s.name OR e.callee = s.qual_name
 		)
 		ORDER BY bf.path, s.line
 		LIMIT ?`, resolved, resolved, limit)
@@ -54,16 +54,24 @@ func (s *Service) Dead(ctx context.Context, workspace, branch string, limit int)
 	}
 	for rows.Next() {
 		var h SymbolHit
-		if err := rows.Scan(&h.Name, &h.Kind, &h.Path, &h.Line, &h.Signature, &h.Lang); err != nil {
+		if err := rows.Scan(&h.Name, &h.Qualified, &h.Kind, &h.Path, &h.Line, &h.Signature, &h.Lang); err != nil {
 			return nil, err
 		}
-		if isDeadExcluded(h.Name, h.Kind) {
+		if isDeadExcluded(displayOf(h), h.Kind) {
 			continue
 		}
 		out.Symbols = append(out.Symbols, h)
 	}
 	out.Notes = []string{"Heuristic: dynamic dispatch (interfaces, reflection, callbacks) can hide real usage — verify before deleting."}
 	return out, rows.Err()
+}
+
+// displayOf returns the qualified form for exclusion checks and display.
+func displayOf(h SymbolHit) string {
+	if h.Qualified != "" {
+		return h.Qualified
+	}
+	return h.Name
 }
 
 func isDeadExcluded(name, kind string) bool {
@@ -79,9 +87,11 @@ func isDeadExcluded(name, kind string) bool {
 	return false
 }
 
-// Cycle is one call-graph cycle (names in call order, rotating canonically).
+// Cycle is one call-graph cycle (names in call order, rotating canonically),
+// with each node's definition location when resolvable.
 type Cycle struct {
-	Names []string `json:"names"`
+	Names     []string          `json:"names"`
+	Locations map[string]string `json:"locations,omitempty"` // name -> "path:line"
 }
 
 // CyclesResult reports call cycles found on a branch.
@@ -154,6 +164,24 @@ func (s *Service) Cycles(ctx context.Context, workspace, branch string) (*Cycles
 			}
 		}
 	}
+
+	// Attach definition locations to cycle nodes (agents open files, not names).
+	if len(out.Cycles) > 0 {
+		var names []string
+		for _, c := range out.Cycles {
+			names = append(names, c.Names...)
+		}
+		if locs, err := s.definitionLocations(workspace, resolved, names); err == nil {
+			for i := range out.Cycles {
+				out.Cycles[i].Locations = map[string]string{}
+				for _, n := range out.Cycles[i].Names {
+					if loc, ok := locs[n]; ok {
+						out.Cycles[i].Locations[n] = fmt.Sprintf("%s:%d", loc.path, loc.line)
+					}
+				}
+			}
+		}
+	}
 	return out, nil
 }
 
@@ -198,9 +226,13 @@ func (s *Service) branchGraph(workspace, branch string) (map[string][]string, er
 	return out, nil
 }
 
-// CallTreeNode is one node of a recursive callee tree.
+// CallTreeNode is one node of a recursive callee tree, with the node's
+// definition location when resolvable (top-level: names alone are not
+// enough to open a file).
 type CallTreeNode struct {
 	Name     string         `json:"name"`
+	Path     string         `json:"path,omitempty"`
+	Line     int            `json:"line,omitempty"`
 	Children []CallTreeNode `json:"children,omitempty"`
 }
 
@@ -246,6 +278,29 @@ func (s *Service) CallTree(ctx context.Context, workspace, branch, name string, 
 	}
 	seen[name] = true
 	tree := expand(name, 0)
+
+	// Attach definition locations to every node (agents open files, not names).
+	var collect func(n CallTreeNode, out *[]string)
+	collect = func(n CallTreeNode, out *[]string) {
+		*out = append(*out, n.Name)
+		for _, c := range n.Children {
+			collect(c, out)
+		}
+	}
+	var names []string
+	collect(tree, &names)
+	if locs, err := s.definitionLocations(workspace, resolved, names); err == nil {
+		var attach func(n *CallTreeNode)
+		attach = func(n *CallTreeNode) {
+			if loc, ok := locs[n.Name]; ok {
+				n.Path, n.Line = loc.path, loc.line
+			}
+			for i := range n.Children {
+				attach(&n.Children[i])
+			}
+		}
+		attach(&tree)
+	}
 	return &CallTreeResult{Branch: label, Fallback: fallback, Tree: tree}, nil
 }
 

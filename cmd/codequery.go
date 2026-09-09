@@ -129,6 +129,28 @@ func queryTarget[T any](ctx context.Context, cmd *cli.Command, remotePath func(w
 	return local(codeindex.NewService(store), workspace, branch)
 }
 
+// displayName returns the fully-qualified form when one exists.
+func displayName(name, qualified string) string {
+	if qualified != "" {
+		return qualified
+	}
+	return name
+}
+
+// printHit is the canonical symbol line used by every command:
+//
+//	{FQN}  {kind}  {path}:{line}
+//	    {declaration}
+//
+// prefix carries command-specific leading columns (depth, tree indent);
+// continuation lines align under the symbol.
+func printHit(prefix, indent, name, qualified, kind, path string, line int, signature string) {
+	fmt.Printf("%s%-44s %-9s %s:%d\n", prefix, displayName(name, qualified), kind, path, line)
+	if signature != "" {
+		fmt.Printf("%s    %s\n", indent, signature)
+	}
+}
+
 func printHits(res codeindex.SearchResults) {
 	if res.Note != "" {
 		fmt.Println("note:", res.Note)
@@ -138,14 +160,7 @@ func printHits(res codeindex.SearchResults) {
 		return
 	}
 	for _, h := range res.Hits {
-		display := h.Name
-		if h.Qualified != "" {
-			display = h.Qualified
-		}
-		fmt.Printf("%-44s %-9s %s:%d\n", display, h.Kind, h.Path, h.Line)
-		if h.Signature != "" {
-			fmt.Printf("    %s\n", h.Signature)
-		}
+		printHit("", "", h.Name, h.Qualified, h.Kind, h.Path, h.Line, h.Signature)
 	}
 }
 
@@ -378,7 +393,7 @@ func codeDeadCmd() *cli.Command {
 				return nil
 			}
 			for _, s := range res.Symbols {
-				fmt.Printf("%-40s %-9s %s:%d\n", s.Name, s.Kind, s.Path, s.Line)
+				printHit("", "", s.Name, s.Qualified, s.Kind, s.Path, s.Line, s.Signature)
 			}
 			return nil
 		},
@@ -410,7 +425,19 @@ func codeCyclesCmd() *cli.Command {
 				return nil
 			}
 			for _, c := range res.Cycles {
-				fmt.Println(strings.Join(c.Names, " -> ") + " -> " + c.Names[0])
+				parts := make([]string, 0, len(c.Names)+1)
+				for _, n := range c.Names {
+					if loc, ok := c.Locations[n]; ok {
+						parts = append(parts, fmt.Sprintf("%s (%s)", n, loc))
+					} else {
+						parts = append(parts, n)
+					}
+				}
+				first := c.Names[0]
+				if loc, ok := c.Locations[first]; ok {
+					first = fmt.Sprintf("%s (%s)", first, loc)
+				}
+				fmt.Println(strings.Join(parts, " -> ") + " -> " + first)
 			}
 			return nil
 		},
@@ -455,7 +482,12 @@ func codeCallTreeCmd() *cli.Command {
 }
 
 func printTree(n codeindex.CallTreeNode, depth int) {
-	fmt.Printf("%s%s\n", strings.Repeat("  ", depth), n.Name)
+	indent := strings.Repeat("  ", depth)
+	loc := ""
+	if n.Path != "" {
+		loc = fmt.Sprintf("  %s:%d", n.Path, n.Line)
+	}
+	fmt.Printf("%s%s%s\n", indent, n.Name, loc)
 	for _, c := range n.Children {
 		printTree(c, depth+1)
 	}
@@ -464,13 +496,19 @@ func printTree(n codeindex.CallTreeNode, depth int) {
 func mermaidNodes(n codeindex.CallTreeNode) {
 	var walk func(node codeindex.CallTreeNode)
 	seen := map[string]bool{}
+	label := func(n codeindex.CallTreeNode) string {
+		if n.Path != "" {
+			return fmt.Sprintf("%s (%s:%d)", n.Name, n.Path, n.Line)
+		}
+		return n.Name
+	}
 	walk = func(node codeindex.CallTreeNode) {
 		if seen[node.Name] {
 			return
 		}
 		seen[node.Name] = true
 		for _, c := range node.Children {
-			fmt.Printf("  %q --> %q\n", node.Name, c.Name)
+			fmt.Printf("  %q --> %q\n", label(node), label(c))
 			walk(c)
 		}
 	}

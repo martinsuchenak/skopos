@@ -291,19 +291,24 @@ func (s *Service) definitionLocations(workspace, branch string, names []string) 
 		if end > len(names) {
 			end = len(names)
 		}
-		qmarks := make([]string, end-start)
-		args := make([]any, 0, end-start+1)
-		args = append(args, branch)
-		for i, n := range names[start:end] {
-			qmarks[i] = "?"
-			args = append(args, n)
+		qmarks := strings.Repeat("?,", end-start)
+		qmarks = strings.TrimSuffix(qmarks, ",")
+		// Names appear in both IN lists; build the argument slice explicitly —
+		// append(args, args[1:]...) would alias and corrupt the slice.
+		queryArgs := make([]any, 0, 2*(end-start)+1)
+		queryArgs = append(queryArgs, branch)
+		for _, n := range names[start:end] {
+			queryArgs = append(queryArgs, n)
+		}
+		for _, n := range names[start:end] {
+			queryArgs = append(queryArgs, n)
 		}
 		rows, err := db.Query(`
 			SELECT COALESCE(NULLIF(s.qual_name,''), s.name), bf.path, s.line
 			FROM symbols s
 			JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
-			WHERE s.name IN (`+strings.Join(qmarks, ",")+`) OR s.qual_name IN (`+strings.Join(qmarks, ",")+`)
-			GROUP BY 1`, append(args, args[1:]...)...)
+			WHERE s.name IN (`+qmarks+`) OR s.qual_name IN (`+qmarks+`)
+			GROUP BY 1`, queryArgs...)
 		if err != nil {
 			return nil, err
 		}
