@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -277,8 +278,9 @@ func (s *Storage) Search(ctx context.Context, f SearchFilters) ([]Entry, error) 
 		args = append(args, f.AuthorAgentID)
 	}
 	if f.Query != "" {
-		query += " AND (title LIKE ? OR content LIKE ?)"
-		args = append(args, "%"+f.Query+"%", "%"+f.Query+"%")
+		query += " AND (title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')"
+		escaped := "%" + likeEscape(f.Query) + "%"
+		args = append(args, escaped, escaped)
 	}
 	query += " ORDER BY created_at DESC LIMIT 100"
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -295,6 +297,12 @@ func (s *Storage) Search(ctx context.Context, f SearchFilters) ([]Entry, error) 
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// likeEscape escapes LIKE wildcards in user input so search terms match
+// literally instead of acting as pattern metacharacters.
+func likeEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
 func (s *Storage) SessionExists(ctx context.Context, sessionID string) (bool, error) {

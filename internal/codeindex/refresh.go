@@ -72,19 +72,30 @@ func validBranch(branch string) bool {
 // safeGitURL blocks git remote-helper transports (ext::, fd::, and any
 // scheme with "::") that can execute local commands during clone/fetch,
 // and non-git schemes (SSRF surface). Allowed: http(s)://, git://, ssh://,
-// file://, plain paths, and scp-like user@host:path.
+// and scp-like user@host:path. Scheme-less values are treated as local
+// paths and must be relative with no ".." segment and no leading "~"
+// (git expands ~ and ~user to home directories), so the server only
+// clones repositories inside its own working tree.
 func safeGitURL(u string) bool {
 	if u == "" || strings.Contains(u, "::") {
 		return false
 	}
 	if i := strings.Index(u, "://"); i > 0 {
 		switch strings.ToLower(u[:i]) {
-		case "http", "https", "git", "ssh", "file":
+		case "http", "https", "git", "ssh":
 			return true
 		}
 		return false
 	}
-	return true // no scheme: local path or scp-like syntax — no helper transport
+	if filepath.IsAbs(u) || strings.HasPrefix(u, "~") {
+		return false
+	}
+	for _, seg := range strings.Split(filepath.ToSlash(u), "/") {
+		if seg == ".." {
+			return false
+		}
+	}
+	return true // relative local path or scp-like syntax — no helper transport, no escape
 }
 
 // Start kicks an asynchronous refresh; it returns immediately. Only one build
@@ -98,7 +109,7 @@ func (r *Refresher) Start(ctx context.Context, workspace, branch string) error {
 		return fmt.Errorf("%w: workspace %s has no git_url registered (POST /api/workspaces with git_url first)", ErrInvalidInput, workspace)
 	}
 	if !safeGitURL(url) {
-		return fmt.Errorf("%w: workspace %s has an unsafe git_url (allowed: http(s), git, ssh, file, or a plain path)", ErrInvalidInput, workspace)
+		return fmt.Errorf("%w: workspace %s has an unsafe git_url (allowed: http(s), git, ssh, or a relative path)", ErrInvalidInput, workspace)
 	}
 	if branch != "" && !validBranch(branch) {
 		return fmt.Errorf("%w: invalid branch name %q", ErrInvalidInput, branch)
@@ -172,6 +183,9 @@ func branchName(branch, head string) string {
 
 func (r *Refresher) syncCheckout(gitURL, branch string) (string, error) {
 	dir := filepath.Join(r.checkoutsDir, slugOf(gitURL))
+	if rel, err := filepath.Rel(r.checkoutsDir, dir); err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("git_url %q resolves outside the checkouts directory", gitURL)
+	}
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
 		if branch == "" {
 			if out, err := git(dir, "pull", "--ff-only"); err != nil {

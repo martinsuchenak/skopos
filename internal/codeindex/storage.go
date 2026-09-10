@@ -91,11 +91,14 @@ END;
 `
 
 // Store manages one SQLite database per workspace under dir.
+const maxOpenIndexDBs = 64
+
 type Store struct {
 	dir string
 
 	mu             sync.Mutex
 	dbs            map[string]*sql.DB
+	lru            []string // most recently used last; bounds open handles
 	cacheWorkspace string
 }
 
@@ -143,6 +146,12 @@ func slugOf(workspace string) string {
 	if s == "" {
 		return "default"
 	}
+	if s == "." || s == ".." {
+		// Dot-only slugs make filepath.Join traverse out of the index
+		// directory; replace them with a digest-derived safe name.
+		sum := sha256.Sum256([]byte(workspace))
+		return "ws-" + hex.EncodeToString(sum[:4])
+	}
 	if changed {
 		sum := sha256.Sum256([]byte(workspace))
 		s += "-" + hex.EncodeToString(sum[:4])
@@ -183,6 +192,7 @@ func (st *Store) DB(workspace string) (*sql.DB, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	if db, ok := st.dbs[workspace]; ok {
+		st.markUsed(workspace)
 		return db, nil
 	}
 	// Same DSN pragmas as the coordination DB: WAL, busy timeout, and
@@ -201,7 +211,50 @@ func (st *Store) DB(workspace string) (*sql.DB, error) {
 		return nil, err
 	}
 	st.dbs[workspace] = db
+	st.markUsed(workspace)
+	st.evictDBs()
 	return db, nil
+}
+
+// markUsed records a workspace as most recently used.
+func (st *Store) markUsed(workspace string) {
+	st.forgetDB(workspace)
+	st.lru = append(st.lru, workspace)
+}
+
+// forgetDB drops a workspace from the LRU list.
+func (st *Store) forgetDB(workspace string) {
+	kept := st.lru[:0]
+	for _, ws := range st.lru {
+		if ws != workspace {
+			kept = append(kept, ws)
+		}
+	}
+	st.lru = kept
+}
+
+// evictDBs closes least-recently-used handles beyond maxOpenIndexDBs so a
+// client touching arbitrarily many workspace ids cannot exhaust the process
+// file-descriptor limit. The build-cache workspace is kept where possible.
+func (st *Store) evictDBs() {
+	for len(st.dbs) > maxOpenIndexDBs {
+		victimIdx := -1
+		for i := len(st.lru) - 1; i >= 0; i-- {
+			if st.lru[i] != st.cacheWorkspace {
+				victimIdx = i
+				break
+			}
+		}
+		if victimIdx < 0 {
+			return
+		}
+		victim := st.lru[victimIdx]
+		st.lru = append(st.lru[:victimIdx], st.lru[victimIdx+1:]...)
+		if db, ok := st.dbs[victim]; ok {
+			db.Close()
+			delete(st.dbs, victim)
+		}
+	}
 }
 
 // DeleteWorkspace removes a workspace's entire index database. The caller
@@ -212,6 +265,7 @@ func (st *Store) DeleteWorkspace(workspace string) error {
 	if db, ok := st.dbs[workspace]; ok {
 		db.Close()
 		delete(st.dbs, workspace)
+		st.forgetDB(workspace)
 	}
 	st.mu.Unlock()
 	for _, suffix := range []string{"", "-wal", "-shm"} {
@@ -229,6 +283,7 @@ func (st *Store) Close() {
 		db.Close()
 	}
 	st.dbs = map[string]*sql.DB{}
+	st.lru = nil
 }
 
 // FileEntry is one file of a branch's index state.
@@ -372,7 +427,7 @@ type SymbolHit struct {
 
 // Search runs a full-text query over a branch's symbols. The query is
 // prefix-expanded when it has no FTS operators.
-func (st *Store) Search(workspace, branch, query string, limit int) ([]SymbolHit, error) {
+func (st *Store) Search(ctx context.Context, workspace, branch, query string, limit int) ([]SymbolHit, error) {
 	db, err := st.DB(workspace)
 	if err != nil {
 		return nil, err
@@ -385,7 +440,7 @@ func (st *Store) Search(workspace, branch, query string, limit int) ([]SymbolHit
 	// [class, method] which matches neither the one-token short name nor
 	// the fully-split name_parts column.
 	if strings.Contains(query, "::") {
-		rows, err := db.Query(`
+		rows, err := db.QueryContext(ctx, `
 			SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang
 			FROM symbols s
 			JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
@@ -402,7 +457,7 @@ func (st *Store) Search(workspace, branch, query string, limit int) ([]SymbolHit
 	if !strings.ContainsAny(q, `:*"^()`) {
 		q = q + "*"
 	}
-	rows, err := db.Query(`
+	rows, err := db.QueryContext(ctx, `
 		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang
 		FROM symbols_fts f
 		JOIN symbols s ON s.id = f.rowid
@@ -412,7 +467,7 @@ func (st *Store) Search(workspace, branch, query string, limit int) ([]SymbolHit
 		LIMIT ?`, branch, q, limit)
 	if err != nil {
 		// Bad FTS syntax: retry as a plain quoted prefix query.
-		rows, err = db.Query(`
+		rows, err = db.QueryContext(ctx, `
 			SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang
 			FROM symbols_fts f
 			JOIN symbols s ON s.id = f.rowid

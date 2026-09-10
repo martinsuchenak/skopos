@@ -73,14 +73,18 @@ type SearchResults struct {
 }
 
 func (s *Service) Search(ctx context.Context, workspace, branch, query string, limit int) (*SearchResults, error) {
+	const maxQueryBytes = 256
 	if strings.TrimSpace(query) == "" {
 		return nil, fmt.Errorf("%w: query is required", ErrInvalidInput)
+	}
+	if len(query) > maxQueryBytes {
+		return nil, fmt.Errorf("%w: query too long (max %d bytes)", ErrInvalidInput, maxQueryBytes)
 	}
 	resolved, label, fallback, err := s.resolveBranch(workspace, branch)
 	if err != nil {
 		return nil, err
 	}
-	hits, err := s.store.Search(workspace, resolved, query, limit)
+	hits, err := s.store.Search(ctx, workspace, resolved, query, limit)
 	if err != nil {
 		return nil, err
 	}

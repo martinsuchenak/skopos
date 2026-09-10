@@ -2,8 +2,10 @@ package codeindex
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -394,5 +396,46 @@ class Invoice {
 	}
 	if len(bare.Hits) != 1 {
 		t.Fatalf("bare search via split tokens: %+v", bare.Hits)
+	}
+}
+
+func TestStoreDBHandleBound(t *testing.T) {
+	store := newTestStore(t)
+	store.AsBuildCache("ws-cache-keep")
+	if _, err := store.DB("ws-cache-keep"); err != nil {
+		t.Fatal(err)
+	}
+	// Touching many distinct workspace ids must not accumulate open SQLite
+	// handles: unbounded growth exhausts the process fd limit.
+	const n = maxOpenIndexDBs + 40
+	for i := 0; i < n; i++ {
+		if _, err := store.DB(fmt.Sprintf("ws-%04d", i)); err != nil {
+			t.Fatalf("DB(%d): %v", i, err)
+		}
+	}
+	store.mu.Lock()
+	open := len(store.dbs)
+	_, cacheOpen := store.dbs["ws-cache-keep"]
+	store.mu.Unlock()
+	if open > maxOpenIndexDBs {
+		t.Errorf("open handles %d exceed bound %d", open, maxOpenIndexDBs)
+	}
+	if !cacheOpen {
+		t.Error("build-cache workspace should be retained under eviction")
+	}
+	// A handle is usable again after eviction (reopened transparently).
+	if _, err := store.DB("ws-0000"); err != nil {
+		t.Fatalf("reopen after eviction: %v", err)
+	}
+}
+
+func TestSearchQueryLengthCap(t *testing.T) {
+	store := newTestStore(t)
+	svc := NewService(store)
+	if _, err := svc.Search(context.Background(), "ws", "main", strings.Repeat("a", 257), 10); err == nil {
+		t.Fatal("oversized query accepted (FTS5 CPU DoS surface)")
+	}
+	if _, err := svc.Search(context.Background(), "ws", "main", strings.Repeat("a", 256), 10); err != nil {
+		t.Fatalf("max-length query rejected: %v", err)
 	}
 }

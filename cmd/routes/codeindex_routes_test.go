@@ -201,7 +201,7 @@ func TestCodeIndexBadContentType(t *testing.T) {
 }
 
 func TestCodeIndexServerSideRefresh(t *testing.T) {
-	ts, repo := codeindexSetup(t, "")
+	_, repo := codeindexSetup(t, "")
 
 	// Turn the fixture repo into a git repo and register its git_url.
 	run := func(args ...string) string {
@@ -219,20 +219,12 @@ func TestCodeIndexServerSideRefresh(t *testing.T) {
 	run("git", "add", ".")
 	run("git", "commit", "-qm", "init")
 
-	// Register the workspace with a git_url.
-	body, _ := json.Marshal(map[string]any{"id": "github.com/example/repo", "git_url": repo})
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/workspaces", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-
-	// The routes mux has no /api/workspaces; register git_url directly through
-	// a dedicated refresh setup instead: re-run with the refresher wired.
-	// (Simpler: this test constructs its own mux with a refresher.)
-	_ = req
+	// Server-side clones accept remote URLs or paths relative to the server's
+	// working directory (absolute paths and file:// are rejected as
+	// arbitrary-local-repo reads), so run the "server" from the fixture's
+	// parent and register a relative git_url.
+	t.Chdir(filepath.Dir(repo))
+	const gitURL = "repo"
 
 	// Build the refresher-backed mux.
 	store2, err := codeindex.NewStore(t.TempDir())
@@ -243,7 +235,7 @@ func TestCodeIndexServerSideRefresh(t *testing.T) {
 	h2 := codeindex.NewHandler(codeindex.NewService(store2), "")
 	ref, err := codeindex.NewRefresher(store2, t.TempDir(), func(id string) (string, error) {
 		if id == "github.com/example/repo" {
-			return repo, nil
+			return gitURL, nil
 		}
 		return "", nil
 	})
@@ -257,9 +249,9 @@ func TestCodeIndexServerSideRefresh(t *testing.T) {
 	t.Cleanup(ts2.Close)
 
 	// Start the refresh and wait for completion.
-	req, _ = http.NewRequest(http.MethodPost, ts2.URL+"/api/codeindex/github.com%2Fexample%2Frepo/refresh", strings.NewReader(`{}`))
+	req, _ := http.NewRequest(http.MethodPost, ts2.URL+"/api/codeindex/github.com%2Fexample%2Frepo/refresh", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err = http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
