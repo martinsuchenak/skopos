@@ -50,20 +50,95 @@ func setupPrint(format string, args ...any) {
 func runSetup(ctx context.Context, in *bufio.Reader, configDir string) error {
 	setupPrint(`skopos setup
 ============
-This configures how the code index commands talk to skopos.
+This configures skopos for how you work: code index access, and optionally
+running the server (dashboard + MCP for agents).
 
-  1) Local only   — index into .skopos/indexes in this repo, no server needed
-  2) Remote       — push to and query a central skopos server (URL + API key)
+  1) Local only    — index into .skopos/indexes in this repo, no server needed
+                     (CLI queries only: no MCP, no semantic search)
+  2) Remote        — push to and query a skopos server (URL + API key)
+  3) Run server    — write an annotated skopos-config.toml for running
+                     'skopos serve' here (dashboard, REST, and MCP for agents)
 
 `)
 
-	mode := prompt(in, "Choose a workflow [1-2]", "1")
+	mode := prompt(in, "Choose a workflow [1-3]", "1")
 	switch strings.TrimSpace(mode) {
 	case "2":
 		return setupRemote(ctx, in, configDir)
+	case "3":
+		return setupServer(in, configDir)
 	default:
 		return setupLocal(ctx, in)
 	}
+}
+
+// setupServer writes an annotated full config template for running
+// 'skopos serve' on this machine (absorbed from the former 'skopos init').
+func setupServer(in *bufio.Reader, configDir string) error {
+	cfgPath := configFileName
+	if configDir != "" {
+		cfgPath = filepath.Join(configDir, configFileName)
+	}
+	if _, err := os.Stat(cfgPath); err == nil {
+		setupPrint("skopos-config.toml already exists — leaving it untouched (%s)\n", cfgPath)
+		setupPrint("Edit it directly, or review the annotated template in skopos-config.example.toml.\n")
+		return nil
+	}
+
+	wsID := workspaceOrDefault("")
+	if wsID != "" {
+		setupPrint("Workspace for this directory: %s (pass --workspace to CLI commands)\n", wsID)
+	}
+
+	// Mirrors skopos-config.example.toml: every flag with a ConfigPath is
+	// represented so the generated file is a complete starting point.
+	defaultConfig := `# skopos configuration. All keys are optional; flags and env vars
+# (SERVER_HOST, SERVER_PORT, DATABASE_PATH, SKOPOS_API_KEY, ...) override them.
+
+[server]
+# Loopback by default. Set "0.0.0.0" to expose the server on all interfaces
+# (make sure to set an auth.api_key when doing so).
+host = "127.0.0.1"
+port = 8080
+
+[database]
+path = "skopos.db"
+
+[auth]
+# API key; when set, required by every endpoint (REST, MCP, SSE). Empty disables
+# authentication and is only allowed on loopback binds unless the server is
+# started with --insecure-no-api-key.
+api_key = ""
+
+[health]
+# Minutes before an active agent is marked stuck (0 disables the checker).
+stuck_threshold_minutes = 15
+
+[cleanup]
+# Days to retain data before automatic cleanup (0 disables the cleanup worker).
+retention_days = 30
+
+[codeindex]
+# Directory for per-workspace code index databases.
+dir = ".skopos/indexes"
+
+[log]
+level = "info"
+format = "text"
+`
+	// The operator may paste a real auth.api_key into this file, so it must
+	// be owner-only from creation.
+	if err := os.WriteFile(cfgPath, []byte(defaultConfig), 0o600); err != nil {
+		return fmt.Errorf("writing config file: %w", err)
+	}
+	if err := os.Chmod(cfgPath, 0o600); err != nil {
+		return fmt.Errorf("setting config file permissions: %w", err)
+	}
+	setupPrint("Wrote %s (0600) — edit auth.api_key, then start the server:\n", cfgPath)
+	setupPrint("  skopos serve\n")
+	setupPrint("\nAgents connect via MCP: skopos install --url http://127.0.0.1:8080/mcp\n")
+	setupPrint("Dashboard: http://127.0.0.1:8080\n")
+	return nil
 }
 
 func setupLocal(ctx context.Context, in *bufio.Reader) error {

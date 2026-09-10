@@ -51,7 +51,7 @@ func TestCompletionScripts(t *testing.T) {
 func TestCompletionDynamicCommands(t *testing.T) {
 	bin := buildBinary(t)
 	out := runCompletion(t, bin, "completion", "bash", "--command=skopos")
-	for _, want := range []string{"serve", "report", "blackboard", "plan", "workspace", "index", "search", "symbol", "who-calls", "call-tree", "impact", "outline", "dead-code", "cycles", "branch-diff", "setup", "install", "cleanup", "init"} {
+	for _, want := range []string{"serve", "report", "blackboard", "plan", "workspace", "index", "search", "symbol", "who-calls", "call-tree", "impact", "outline", "dead-code", "cycles", "branch-diff", "setup", "install", "cleanup"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dynamic command completion missing %q (got: %q)", want, out)
 		}

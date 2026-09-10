@@ -150,3 +150,42 @@ func TestWriteClientConfigMergesSections(t *testing.T) {
 		}
 	}
 }
+
+func TestSetupServerWritesConfigTemplate(t *testing.T) {
+	out := setupCapture(t)
+	dir := t.TempDir()
+
+	// Mode 3, no existing config.
+	in := bufio.NewReader(strings.NewReader("3\n"))
+	if err := runSetup(context.Background(), in, dir); err != nil {
+		t.Fatalf("setup: %v\noutput:\n%s", err, out.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "skopos-config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(raw)
+	for _, section := range []string{"[server]", "[database]", "[auth]", "[health]", "[cleanup]", "[codeindex]", "[log]"} {
+		if !strings.Contains(content, section) {
+			t.Fatalf("template missing %s:\n%s", section, content)
+		}
+	}
+	info, _ := os.Stat(filepath.Join(dir, "skopos-config.toml"))
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("template perms: %v", info.Mode().Perm())
+	}
+	if !strings.Contains(out.String(), "skopos serve") {
+		t.Fatalf("missing start hint:\n%s", out.String())
+	}
+
+	// Re-running leaves the existing file untouched.
+	before := content
+	in = bufio.NewReader(strings.NewReader("3\n"))
+	if err := runSetup(context.Background(), in, dir); err != nil {
+		t.Fatalf("second setup: %v", err)
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, "skopos-config.toml"))
+	if string(after) != before {
+		t.Fatal("second run must not rewrite an existing config")
+	}
+}
