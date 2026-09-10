@@ -47,6 +47,25 @@ See [Agent integration](docs/getting-started.md#connecting-an-agent) and [Integr
 | Code index (symbols, call graph, impact) | [docs/concepts/code-index.md](docs/concepts/code-index.md) |
 | Guide: local-only workflow | [docs/guides/local.md](docs/guides/local.md) |
 | Guide: remote/central workflow | [docs/guides/remote.md](docs/guides/remote.md) |
+
+## Shell completion
+
+`skopos completion <shell>` emits a completion script covering all commands,
+subcommands, and flags. Install once:
+
+```sh
+# bash — add to ~/.bashrc
+eval "$(skopos completion bash)"
+
+# zsh — add to ~/.zshrc
+eval "$(skopos completion zsh)"
+
+# fish
+skopos completion fish | source
+
+# PowerShell
+Invoke-Expression (skopos completion powershell | Out-String)
+```
 | Plans (items, dependencies, auto-block) | [docs/concepts/plans.md](docs/concepts/plans.md) |
 | Status (reporting, health checker) | [docs/concepts/status.md](docs/concepts/status.md) |
 | Workspaces (scoping, registry) | [docs/concepts/workspaces.md](docs/concepts/workspaces.md) |

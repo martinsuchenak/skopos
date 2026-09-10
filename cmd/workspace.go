@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/martinsuchenak/skopos/internal/workspace"
 	"github.com/paularlott/cli"
@@ -20,8 +19,7 @@ func workspaceCmd() *cli.Command {
 		Run: func(_ context.Context, _ *cli.Command) error {
 			id, err := workspace.Resolve(".")
 			if err != nil {
-				fmt.Fprintln(os.Stderr, err.Error())
-				os.Exit(1)
+				return err
 			}
 			fmt.Println(id)
 			return nil
