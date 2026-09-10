@@ -144,3 +144,71 @@ func TestProfileJava(t *testing.T) {
 		t.Fatalf("java qualification: %+v", res.Edges)
 	}
 }
+
+// TestProfileJS covers arrow/function consts as symbols, uppercase static
+// receivers, and module-scope instance bindings.
+func TestProfileJS(t *testing.T) {
+	res := parseStr(t, "app.js", `const handler = () => { save(); };
+const makeThing = function() { return 1; };
+class Widget {
+  init() { load(); }
+  static create() { return new Widget(); }
+}
+Widget.create();
+const u = new Widget();
+u.init();
+export function exported() {}
+`)
+	syms := symbolsByQual(res)
+	for _, want := range []string{"handler", "makeThing", "exported", "Widget::init", "Widget::create"} {
+		if _, ok := syms[want]; !ok {
+			t.Fatalf("missing symbol %q: %+v", want, res.Symbols)
+		}
+	}
+	c := callees(res)
+	if !c["Widget::create"] {
+		t.Fatalf("Widget.create() should qualify statically: %+v", res.Edges)
+	}
+	if !c["Widget::init"] {
+		t.Fatalf("module-scope const u = new Widget(); u.init() should resolve: %+v", res.Edges)
+	}
+	if c["init"] {
+		t.Fatalf("bare init leaked: %+v", res.Edges)
+	}
+}
+
+// TestProfileTSStatic mirrors JS on the TS grammar; lowercase receivers
+// (console) must stay bare.
+func TestProfileTSStatic(t *testing.T) {
+	res := parseStr(t, "app.ts", `export class Service {
+  get(r: User): string { return this.helper(r.id); }
+  helper(s: string): string { return s; }
+}
+Service.get(null);
+console.log("x");
+`)
+	c := callees(res)
+	if !c["Service::helper"] || !c["Service::get"] {
+		t.Fatalf("TS qualification: %+v", res.Edges)
+	}
+	if !c["log"] {
+		t.Fatalf("console.log must stay bare (lowercase receiver): %+v", res.Edges)
+	}
+}
+
+// TestProfileCSS: selectors are the stylesheet's definitions.
+func TestProfileCSS(t *testing.T) {
+	res := parseStr(t, "style.css", `.card { color: red; }
+#main .card:hover { margin: 0; }
+@media (max-width: 600px) { .card { padding: 2px; } }
+`)
+	syms := symbolsByQual(res)
+	for _, want := range []string{"card", "main"} {
+		if _, ok := syms[want]; !ok {
+			t.Fatalf("missing selector symbol %q: %+v", want, res.Symbols)
+		}
+	}
+	if syms["card"].Kind != "class" || syms["main"].Kind != "id" {
+		t.Fatalf("selector kinds: %+v", res.Symbols)
+	}
+}

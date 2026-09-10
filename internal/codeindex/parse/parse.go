@@ -18,7 +18,7 @@ import (
 
 // ExtractorVersion changes whenever extraction logic changes; it is mixed
 // into the content hash so already-indexed files re-extract after upgrades.
-const ExtractorVersion = "6"
+const ExtractorVersion = "7"
 
 // DefaultTimeout is the per-file parse budget. Files that exceed it are still
 // parsed via tree-sitter error recovery and flagged (the measured pathological
@@ -129,7 +129,13 @@ func (e *Extractor) ParseBytes(path string, src []byte) (*FileResult, error) {
 		typeName string      // enclosing type name, if any
 		vars     varBindings // local variable -> class bindings, offset-indexed
 	}
-	stack := []frame{{root, "", "", nil}}
+	// Module-scope variable bindings (JS/TS top-level `const u = new Widget()`)
+	// are visible inside every function, matching the languages' semantics.
+	fileVars := prof.collectVarBindings(root, lang, src)
+	if len(fileVars) == 0 {
+		fileVars = nil
+	}
+	stack := []frame{{root, "", "", fileVars}}
 	for len(stack) > 0 {
 		f := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
@@ -142,7 +148,15 @@ func (e *Extractor) ParseBytes(path string, src []byte) (*FileResult, error) {
 		caller := f.caller
 		typeName := f.typeName
 		vars := f.vars
-		if kind, ok := prof.defs[nt]; ok && n != root {
+		kind, isDef := prof.defs[nt]
+		if !isDef && prof.conditionalDefs != nil && n != root {
+			if cf, ok := prof.conditionalDefs[nt]; ok {
+				if k, emit := cf(n, lang); emit {
+					kind, isDef = k, true
+				}
+			}
+		}
+		if isDef && n != root {
 			// Function/method bodies get a fresh variable-type scope: declared
 			// parameter types plus local `var = new Klass()` bindings, recorded
 			// with byte offsets so each call resolves the binding that precedes

@@ -46,6 +46,11 @@ type langProfile struct {
 	// variable bindings. Optional.
 	methodScope func(def *gts.Node, lang *gts.Language, src []byte) (typeName string, vars map[string]string)
 
+	// conditionalDefs lets a profile emit definitions for node types that
+	// only sometimes define (JS `const f = () => {}`): the func inspects the
+	// node and returns the kind to emit, or ("", false).
+	conditionalDefs map[string]func(n *gts.Node, lang *gts.Language) (string, bool)
+
 	// qualifyCallee is an extra hook after generic resolution: it may
 	// qualify a callee the generic rules left bare (PHP's `Klass::method`
 	// static syntax and `X::class` container idiom). Optional.
@@ -135,6 +140,8 @@ var identifierTypes = map[string]bool{
 	"name":                 true, // java/php class names
 	"package_identifier":   true,
 	"namespace_identifier": true,
+	// css selectors
+	"class_name": true, "id_name": true, "tag_name": true,
 }
 
 // typeNodeClasses returns the class of a parameter/`new` type node, "" when
