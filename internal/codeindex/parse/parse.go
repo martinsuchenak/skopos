@@ -18,7 +18,7 @@ import (
 
 // ExtractorVersion changes whenever extraction logic changes; it is mixed
 // into the content hash so already-indexed files re-extract after upgrades.
-const ExtractorVersion = "9"
+const ExtractorVersion = "10"
 
 // DefaultTimeout is the per-file parse budget. Files that exceed it are still
 // parsed via tree-sitter error recovery and flagged (the measured pathological
@@ -244,7 +244,13 @@ func walkTree(prof *langProfile, root *gts.Node, lang *gts.Language, src []byte,
 					kind = "interface"
 				}
 			}
-			if name, ok := childName(prof, n, lang, src); ok && name != "_" {
+			name, hasName := childName(prof, n, lang, src)
+			if prof.defName != nil {
+				if dn, ok := prof.defName(n, lang, src); ok {
+					name, hasName = dn, true
+				}
+			}
+			if hasName && name != "_" {
 				qual := ""
 				if typeName != "" {
 					qual = typeName + "::" + name
@@ -356,10 +362,15 @@ func calleeName(p *langProfile, n *gts.Node, lang *gts.Language, src []byte, typ
 		scanParts(f.NamedChild(i))
 	}
 	if !found {
+		// Leaf function node (C# wraps the callee identifier): treat it as
+		// both receiver and method so the implicit-this rules apply.
 		if f != n && p.isName(f.Type(lang)) {
-			return string(src[f.StartByte():f.EndByte()]), true
+			last = string(src[f.StartByte():f.EndByte()])
+			receiverText = last
+			found = true
+		} else {
+			return "", false
 		}
-		return "", false
 	}
 	// Implicit dispatch on the current instance: qualify with the type.
 	if p.selfReceivers[strings.TrimPrefix(receiverText, "$")] {
@@ -367,6 +378,11 @@ func calleeName(p *langProfile, n *gts.Node, lang *gts.Language, src []byte, typ
 			return typeName + "::" + last, true
 		}
 		return last, true
+	}
+	// Bare identifier call inside a type in languages with implicit-this
+	// semantics (C#): receiver text is the callee itself.
+	if p.implicitSelfCalls && typeName != "" && receiverText == last {
+		return typeName + "::" + last, true
 	}
 	// Locally-typed variable: binding is syntactic (assignment or signature).
 	if vars != nil && receiverText != "" {

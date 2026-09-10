@@ -46,6 +46,22 @@ type langProfile struct {
 	// variable bindings. Optional.
 	methodScope func(def *gts.Node, lang *gts.Language, src []byte) (typeName string, vars map[string]string)
 
+	// implicitSelfCalls: bare identifier calls inside a type are implicit
+	// this-calls in this language (C#); qualify them with the enclosing type.
+	// Top-level free calls don't exist there, so this is safe modulo local
+	// functions.
+	implicitSelfCalls bool
+
+	// defName overrides how a definition's name is read from its node
+	// ( grammars that place the return type before the name, like C#).
+	// Optional; childName is the default.
+	defName func(n *gts.Node, lang *gts.Language, src []byte) (string, bool)
+
+	// paramTypes overrides parameter variable->class extraction for
+	// grammars whose parameter shape the generic scanner cannot read
+	// (C# type-identifier + name-identifier pairs). Optional.
+	paramTypes func(def *gts.Node, lang *gts.Language, src []byte) map[string]string
+
 	// nameNodes are leaf node types whose text is a symbol name in this
 	// grammar, beyond the shared identifierTypes (e.g. twig names the macro
 	// identifier node "method"). Optional.
@@ -185,6 +201,9 @@ func typeNodeClasses(n *gts.Node, lang *gts.Language, src []byte) string {
 // formalParamTypes extracts variable -> class bindings from a definition's
 // parameter list, using the profile's parameter-list node names.
 func (p *langProfile) formalParamTypes(def *gts.Node, lang *gts.Language, src []byte) map[string]string {
+	if p.paramTypes != nil {
+		return p.paramTypes(def, lang, src)
+	}
 	var params *gts.Node
 	for i := 0; i < def.ChildCount(); i++ {
 		c := def.Child(i)

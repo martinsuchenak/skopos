@@ -320,3 +320,44 @@ func TestProfileBlade(t *testing.T) {
 		}
 	}
 }
+
+// TestProfileCSharp: return-type-before-name grammar needs the last-
+// identifier name rule; typed parameters bind; PascalCase static receivers
+// qualify; properties extract.
+func TestProfileCSharp(t *testing.T) {
+	res := parseStr(t, "Service.cs", `public class UserService : IUserRepo
+{
+    public User Find(int id)
+    {
+        return Load(id);
+    }
+    private User Load(int id) => new User();
+    public static UserService Create()
+    {
+        UserService svc = new UserService();
+        svc.Find(1);
+        UserService.Create();
+        return svc;
+    }
+    public string Description { get; set; }
+}
+public record User(string Name);
+public enum Role { Admin, User }
+`)
+	syms := symbolsByQual(res)
+	for _, want := range []string{"UserService", "UserService::Find", "UserService::Load", "UserService::Create", "UserService::Description", "User", "Role"} {
+		if _, ok := syms[want]; !ok {
+			t.Fatalf("missing %q: %+v", want, res.Symbols)
+		}
+	}
+	if syms["UserService::Description"].Kind != "property" {
+		t.Fatalf("property kind: %+v", syms["UserService::Description"])
+	}
+	c := callees(res)
+	if !c["UserService::Load"] {
+		t.Fatalf("Load call edge: %+v", res.Edges)
+	}
+	if !c["UserService::Find"] {
+		t.Fatalf("local `svc.Find` and static `UserService.Create` should reach Find: %+v", res.Edges)
+	}
+}
