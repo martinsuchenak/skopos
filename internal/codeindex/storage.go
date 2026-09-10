@@ -372,6 +372,24 @@ func (st *Store) Search(workspace, branch, query string, limit int) ([]SymbolHit
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
+	// FQN queries ("Class::method") go through an exact/prefix qualified
+	// lookup: the FTS phrase for such a query tokenizes as
+	// [class, method] which matches neither the one-token short name nor
+	// the fully-split name_parts column.
+	if strings.Contains(query, "::") {
+		rows, err := db.Query(`
+			SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang
+			FROM symbols s
+			JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
+			WHERE s.qual_name = ? COLLATE NOCASE OR s.qual_name LIKE ? COLLATE NOCASE ESCAPE '\'
+			ORDER BY (s.qual_name = ? COLLATE NOCASE) DESC, bf.path, s.line
+			LIMIT ?`, branch, query, likeEscape(query)+"%", query, limit)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		return scanHits(rows)
+	}
 	q := query
 	if !strings.ContainsAny(q, `:*"^()`) {
 		q = q + "*"

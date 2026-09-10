@@ -348,3 +348,51 @@ func mustRead(t *testing.T, p string) []byte {
 	}
 	return b
 }
+
+func TestSearchByQualifiedName(t *testing.T) {
+	store := newTestStore(t)
+	buildInto(t, store, writeRepo(t), "main")
+
+	// Exact FQN.
+	res, err := NewService(store).Search(context.Background(), "ws", "main", "LoadConfig", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Hits) == 0 {
+		t.Fatal("bare search setup failed")
+	}
+	// Go fixture has no classes; qualify via the PHP-shaped fixture instead.
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "a.php"), []byte(`<?php
+class Invoice {
+  public function updateStatus(): void { $this->notify(); }
+  public function notify(): void {}
+}
+`), 0o644)
+	store2 := newTestStore(t)
+	buildInto(t, store2, root, "main")
+	svc := NewService(store2)
+
+	exact, err := svc.Search(context.Background(), "ws", "main", "Invoice::updateStatus", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(exact.Hits) != 1 || exact.Hits[0].Qualified != "Invoice::updateStatus" {
+		t.Fatalf("exact FQN search: %+v", exact.Hits)
+	}
+	prefix, err := svc.Search(context.Background(), "ws", "main", "Invoice::up", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prefix.Hits) != 1 {
+		t.Fatalf("FQN prefix search: %+v", prefix.Hits)
+	}
+	// Bare search unchanged.
+	bare, err := svc.Search(context.Background(), "ws", "main", "updatestatus", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bare.Hits) != 1 {
+		t.Fatalf("bare search via split tokens: %+v", bare.Hits)
+	}
+}
