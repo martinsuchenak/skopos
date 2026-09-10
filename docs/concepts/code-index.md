@@ -9,9 +9,9 @@ instead of grepping raw files.
 
 `skopos setup` configures everything interactively (local vs remote). The
 step-by-step guides live in [docs/guides/local.md](../guides/local.md) and
-[docs/guides/remote.md](../guides/remote.md); a quick walkthrough: Everything below works against a
-running skopos server (`skopos serve`); CLI examples add `--server-url` /
-`--api-key` (or set `SKOPOS_SERVER_URL` / `SKOPOS_API_KEY`).
+[docs/guides/remote.md](../guides/remote.md). The examples below assume a
+running skopos server (`skopos serve`); add `--server-url` / `--api-key` for
+a remote one (or set `SKOPOS_SERVER_URL` / `SKOPOS_API_KEY`).
 
 ### 1. Push a repo's index (from any checkout)
 
@@ -219,5 +219,8 @@ the index DB and vectors in any backend, including the external collection.
 
 All 206 tree-sitter grammars are embedded (the binary grows by ~25MB).
 Language detection is extension-based (linguist-style); mixed-language files
-are handled per language. Unparseable or pathological files are indexed via
-error recovery under a 2s per-file budget.
+are handled per language (embedded scripts in Vue/Svelte/HTML templates,
+Blade/PHP templates). Dependency and build-output directories (`vendor/`,
+`node_modules/`, `dist/`, `bin/`, …) and files over 1 MiB are skipped;
+unparseable or pathological files are indexed via error recovery under a 2s
+per-file budget.

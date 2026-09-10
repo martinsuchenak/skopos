@@ -21,6 +21,7 @@ Optional — if absent, skopos runs on defaults. The file is gitignored (may con
 | `--server-port` | `SERVER_PORT` | `server.port` | `8080` | HTTP listen port (REST, MCP at `/mcp`, dashboard, SSE) |
 | `--database-path` | `DATABASE_PATH` | `database.path` | `skopos.db` | SQLite database file path |
 | `--api-key` | `SKOPOS_API_KEY` | `auth.api_key` | (empty = auth disabled, loopback only) | API key; when set, required by every endpoint (REST, MCP, SSE) |
+| `--insecure-no-api-key` | `SKOPOS_INSECURE_NO_API_KEY` | — | `false` | Allow running without an API key on a non-loopback bind (authentication stays disabled — know what you are exposing) |
 | `--health-stuck-threshold` | `HEALTH_STUCK_THRESHOLD` | `health.stuck_threshold_minutes` | `15` | Minutes before an active agent is marked stuck (0 disables) |
 | `--cleanup-retention-days` | `CLEANUP_RETENTION_DAYS` | `cleanup.retention_days` | `30` | Days to retain data (0 disables cleanup) |
 | `--index-dir` | `SKOPOS_INDEX_DIR` | `codeindex.dir` | `.skopos/indexes` | Directory for per-workspace code index databases |
@@ -41,6 +42,16 @@ automatically; flags and `SKOPOS_SERVER_URL`/`SKOPOS_API_KEY` override it.
 |-------------|---------|---------|-------------|
 | `client.server_url` | `SKOPOS_SERVER_URL` | (empty = local index) | Remote skopos URL for index/query commands |
 | `client.api_key` | `SKOPOS_API_KEY` | (empty) | API key for the remote server |
+
+## Agent identity (all surfaces)
+
+These environment variables affect how agents identify themselves — to the
+server (MCP/REST) and to CLI commands:
+
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `SKOPOS_SESSION_ID` | auto-derived (per workspace per day, or `.skopos-session` file in the workspace root) | Share one session across multiple agents working on the same task |
+| `SKOPOS_AGENT_ID` | `<command>-<hostname>` | Stable agent id for `skopos report` and hook scripts |
 
 ## Log levels
 

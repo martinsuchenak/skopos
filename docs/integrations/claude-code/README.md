@@ -34,6 +34,11 @@ For hooks, find the absolute path to the hooks script:
 echo "$(pwd)/docs/integrations/claude-code/hooks.sh"
 ```
 
+> **Don't mix with `skopos install`.** This manual `hooks.sh` (status
+> reporting only) and the hook suite installed by `skopos install`
+> (session briefings, code pre-fetch, mode-aware guidance) register on the
+> same events — pick one, or hooks will double-fire.
+
 Open `~/.claude/settings.json` (create it if it doesn't exist) and merge in the `hooks` section of `settings-snippet.json`, replacing `SKOPOS_HOOKS_PATH` with the path above. If you already have `hooks`, add the `skopos` entries to the existing object — do not replace the whole file.
 
 > **Auth:** The `Authorization` header is only required when `auth.api_key` is set on the server; in `.mcp.json` Claude Code expands `${SKOPOS_API_KEY}` from your environment automatically.
@@ -45,16 +50,18 @@ export SKOPOS_API_KEY=your-key-here
 export SKOPOS_SERVER_URL=http://localhost:8080
 ```
 
-## Step 2: Install the slash command (optional, for manual reporting)
+## Step 2: Install the slash commands (optional, for manual reporting)
 
-Copy `skopos-skill.md` to the Claude Code commands directory:
+Copy the command files to the Claude Code commands directory:
 
 ```bash
 mkdir -p ~/.claude/commands
 cp docs/integrations/claude-code/skopos-skill.md ~/.claude/commands/skopos-report.md
 ```
 
-Then use `/skopos-report` in any Claude Code session to report rich status.
+`/skopos-report` reports rich status. (`skopos install` additionally writes a
+`/skopos` exploration command that queries the code index; there is no manual
+copy of it — the installer is the source.)
 
 ## Step 3: Verify
 

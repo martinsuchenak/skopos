@@ -12,6 +12,11 @@ Workspaces can be explicitly registered (`POST /api/workspaces`) with an optiona
 
 **Auto-registration**: any workspace seen in session data is automatically registered so it persists in the database even if all sessions are later deleted. This prevents workspaces from vanishing from the picker when their data is cleaned up.
 
+A registered workspace can also carry a `git_url` — that's what enables
+server-side indexing: `skopos index refresh --workspace <id>` makes the server
+clone/pull that URL and index it itself (see
+[Code index](code-index.md#getting-an-index-in)).
+
 ## Strict scoping
 
 When a workspace filter is active (a workspace is selected in the picker or passed as a query parameter), blackboard entries and plans require an **exact** `workspace_id` match:

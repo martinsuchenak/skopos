@@ -57,6 +57,21 @@ Promote an entry to a wider scope: `session → branch → project`. Done via `P
 
 Permanently remove an entry with the `blackboard_delete` MCP tool (param: `id`) or `DELETE /api/blackboard/entries/{id}`. This is a **hard delete** — the row is removed immediately, and there is no archive/soft-delete for entries. Session-scoped entries are also removed automatically when their session is deleted (foreign-key cascade).
 
+## CLI
+
+The same operations from the terminal (add `--server-url`/`--api-key` for a
+remote server, or set `SKOPOS_SERVER_URL`/`SKOPOS_API_KEY`):
+
+```sh
+skopos blackboard write --scope branch --branch feat/auth \
+  --type decision --title "JWT refresh uses rotating tokens" \
+  --content "Refresh tokens rotate on every use; reuse revokes the family."
+skopos blackboard read --branch feat/auth     # the markdown bundle
+skopos blackboard list --branch feat/auth     # tabular listing with entry IDs
+skopos blackboard promote --id <entry-id>     # widen the entry's scope
+skopos blackboard delete --id <entry-id>
+```
+
 ## Workspace scoping
 
 When a workspace is selected, only entries with that exact `workspace_id` are returned. Entries with no `workspace_id` (global/unscoped) appear only under "All workspaces". See [Workspaces](workspaces.md).

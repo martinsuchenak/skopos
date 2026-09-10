@@ -84,6 +84,10 @@ skopos impact Handler --json | jq '.affected[].path'
 
 ## Notes
 
+- Semantic search needs a skopos server (the embeddings worker runs there);
+  the local workflow is keyword-only. Point a server at the same
+  `.skopos/indexes/` directory (see [remote.md](remote.md)) to get vectors.
+
 - Agent hooks installed by `skopos install` detect local mode automatically
   (`skopos mode` reads the client config) and route agents to the CLI via
   Bash rather than naming MCP tools that don't exist without a server.

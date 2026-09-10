@@ -9,8 +9,8 @@ info:
     REST API, dashboard, and MCP (at `/mcp`) are all served on one HTTP server
     (default :8080).
 
-    Read endpoints are open. Write endpoints require the configured API key,
-    sent as `Authorization: Bearer <key>`.
+    When an API key is configured, every endpoint (reads, writes, MCP, SSE)
+    requires it, sent as `Authorization: Bearer <key>`.
     When no API key is configured, authentication is disabled.
 servers:
   - url: http://localhost:8080
@@ -33,6 +33,7 @@ paths:
     get:
       summary: Runtime metrics
       operationId: getMetrics
+      security: [{ BearerAuth: [] }]
       responses:
         "200":
           description: Current metrics (goroutines, allocation)
@@ -352,6 +353,17 @@ paths:
       parameters: [{ name: workspace, in: path, required: true, schema: { type: string } }]
       responses:
         "200": { description: Refresh state }
+  /api/codeindex/{workspace}:
+    delete:
+      summary: Drop a workspace's entire index (index DB and vectors in any backend)
+      operationId: codeIndexDropWorkspace
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: workspace, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Dropped }
+        "401": { description: Unauthorized }
+        "404": { description: Unknown workspace }
   /api/codeindex/{workspace}/branch/{branch}:
     delete:
       summary: Drop a branch's index state

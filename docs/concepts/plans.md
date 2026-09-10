@@ -41,6 +41,22 @@ Items can be claimed by an agent (`claimed_by_agent_id`) to prevent duplicate wo
 
 All multi-step plan operations (add item with deps, add/remove dependency + re-check, update item status + cascade unblock + auto-complete plan) are wrapped in `Store.RunInTx` — a single SQLite transaction. If any step fails, the entire operation rolls back.
 
+## CLI
+
+Plan management from the terminal (add `--server-url`/`--api-key` for a
+remote server, or set `SKOPOS_SERVER_URL`/`SKOPOS_API_KEY`):
+
+```sh
+skopos plan create --name "Auth refactor" --branch feat/auth
+skopos plan list
+skopos plan show --id <plan-id>
+skopos plan item add --plan-id <plan-id> --title "Audit refresh tokens"
+skopos plan item done --plan-id <plan-id> --item-id <item-id>
+skopos plan item claim --plan-id <plan-id> --item-id <item-id>   # claim to work on it
+skopos plan item block --plan-id <plan-id> --item-id <item-id>
+skopos plan archive --id <plan-id>          # done or abandoned
+```
+
 ## MCP tools
 
 | Tool | Description |

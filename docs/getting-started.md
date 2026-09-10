@@ -29,11 +29,15 @@ See [Deployment → Docker](deployment/docker.md) for details.
 ./bin/skopos serve
 ```
 
-Open `http://localhost:8080`. The dashboard has three views:
+Open `http://localhost:8080`. The dashboard has four views:
 
 - **Sessions** — live agent status (progress bars, events timeline, stuck detection).
 - **Blackboard** — shared knowledge entries grouped by type (bugs, findings, decisions, …).
 - **Plans** — to-do lists with item dependencies and auto-blocking.
+- **Index** — code index state per workspace: branches, freshness, symbol counts.
+
+A workspace filter in the sidebar scopes the views to one project; workspaces
+are registered automatically as agents and CLI commands report in.
 
 All data is stored in `skopos.db` (SQLite, WAL mode). No external database needed.
 
@@ -47,7 +51,7 @@ The config file is optional — skopos runs on flag defaults + env vars without 
 
 Key flags:
 ```bash
-skopos serve --api-key mysecret    # require API key for writes
+skopos serve --api-key mysecret    # require the key on every endpoint (REST, MCP, SSE)
 skopos serve --log-level debug     # debug logging
 ```
 

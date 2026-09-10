@@ -6,9 +6,9 @@ A coordination dashboard for AI coding agents — shared memory (blackboard), pl
 
 | Feature | Status |
 |---------|--------|
-| CLI | ✅ `serve`, `report`, `blackboard`, `plan`, `workspace`, `index`, `search`, `symbol`, `who-calls`, `call-tree`, `impact`, `outline`, `dead-code`, `cycles`, `branch-diff`, `install`, `cleanup`, `init`, `completion` |
+| CLI | ✅ `serve`, `setup`, `report`, `blackboard`, `plan`, `workspace`, `mode`, `index`, `search`, `symbol`, `who-calls`, `call-tree`, `impact`, `outline`, `dead-code`, `cycles`, `branch-diff`, `install`, `cleanup`, `completion` |
 | REST API | ✅ Sessions, blackboard, plans, workspaces |
-| MCP | ✅ 23 tools at `/mcp` (same port as HTTP), incl. code-index queries |
+| MCP | ✅ 25 tools at `/mcp` (same port as HTTP), incl. code-index queries |
 | Dashboard | ✅ Dark/light/system theme, sidebar nav, modals, SSE live updates |
 | Real-time | ✅ SSE at `/api/events/stream` |
 | Database | ✅ SQLite (WAL, FK-enforced, transactional) |
@@ -46,8 +46,15 @@ See [Agent integration](docs/getting-started.md#connecting-an-agent) and [Integr
 | Configuration (flags, env vars, log levels) | [docs/configuration.md](docs/configuration.md) |
 | Blackboard (memory, scopes, search) | [docs/concepts/blackboard.md](docs/concepts/blackboard.md) |
 | Code index (symbols, call graph, impact) | [docs/concepts/code-index.md](docs/concepts/code-index.md) |
+| Plans (items, dependencies, auto-block) | [docs/concepts/plans.md](docs/concepts/plans.md) |
+| Status (reporting, health checker) | [docs/concepts/status.md](docs/concepts/status.md) |
+| Workspaces (scoping, registry) | [docs/concepts/workspaces.md](docs/concepts/workspaces.md) |
+| Events (SSE, real-time) | [docs/concepts/events.md](docs/concepts/events.md) |
 | Guide: local-only workflow | [docs/guides/local.md](docs/guides/local.md) |
 | Guide: remote/central workflow | [docs/guides/remote.md](docs/guides/remote.md) |
+| Deployment (Docker, Nomad) | [docs/deployment/](docs/deployment/) |
+| Integration guides (6 agents) | [docs/integrations/](docs/integrations/) |
+| API spec (OpenAPI) | [openapi.yaml](openapi.yaml) |
 
 ## Shell completion
 
@@ -67,13 +74,6 @@ skopos completion fish | source
 # PowerShell
 Invoke-Expression (skopos completion powershell | Out-String)
 ```
-| Plans (items, dependencies, auto-block) | [docs/concepts/plans.md](docs/concepts/plans.md) |
-| Status (reporting, health checker) | [docs/concepts/status.md](docs/concepts/status.md) |
-| Workspaces (scoping, registry) | [docs/concepts/workspaces.md](docs/concepts/workspaces.md) |
-| Events (SSE, real-time) | [docs/concepts/events.md](docs/concepts/events.md) |
-| Deployment (Docker, Nomad) | [docs/deployment/](docs/deployment/) |
-| Integration guides (6 agents) | [docs/integrations/](docs/integrations/) |
-| API spec (OpenAPI) | [openapi.yaml](openapi.yaml) |
 
 ## License
 
