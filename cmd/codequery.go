@@ -552,11 +552,14 @@ func mermaidNodes(n codeindex.CallTreeNode) {
 func codeBranchDiffCmd() *cli.Command {
 	return &cli.Command{
 		Name:    "branch-diff",
-		Usage:   "Compare a feature branch's indexed symbols against the default branch",
+		Usage:   "Compare a feature branch's indexed symbols against the default branch (default: current git branch)",
 		Flags:   queryFlags(),
-		MinArgs: 1, MaxArgs: 1,
+		MaxArgs: 1,
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			branch := cmd.GetArgs()[0]
+			branch := gitBranch(".")
+			if args := cmd.GetArgs(); len(args) > 0 {
+				branch = args[0]
+			}
 			res, err := queryTarget(ctx, cmd,
 				func(ws, _ string) string {
 					return fmt.Sprintf("/api/codeindex/%s/branch-diff?branch=%s", url.PathEscape(ws), url.QueryEscape(branch))

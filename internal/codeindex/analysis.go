@@ -394,10 +394,26 @@ func (s *Service) BranchDiff(ctx context.Context, workspace, branch string) (*Br
 	if strings.TrimSpace(branch) == "" {
 		return nil, fmt.Errorf("%w: branch is required", ErrInvalidInput)
 	}
+	// Diffing a branch with no index state silently compares against an
+	// empty tree (everything shows as removed) — reject with the indexed
+	// branches so the next command is obvious.
+	indexed, err := s.store.Status(workspace)
+	if err != nil {
+		return nil, err
+	}
+	if len(indexed) == 0 {
+		return nil, fmt.Errorf("%w: no branches are indexed for this workspace yet — index one first (skopos index build / push)", ErrInvalidInput)
+	}
+	known := make([]string, 0, len(indexed))
+	for _, st := range indexed {
+		known = append(known, st.Branch)
+	}
+	if ok, _ := s.store.BranchIndexed(workspace, branch); !ok {
+		return nil, fmt.Errorf("%w: branch %q is not indexed (indexed: %s) — index it first, then diff it against the default", ErrInvalidInput, branch, strings.Join(known, ", "))
+	}
 	base := s.store.DefaultBranch(workspace)
 	if branch == base {
-		// Nothing to diff against itself; compare against the next best base.
-		return nil, fmt.Errorf("%w: branch %s is the default branch — diff needs a feature branch", ErrInvalidInput, branch)
+		return nil, fmt.Errorf("%w: branch %s is the default branch and the diff base — index the feature branch, then run: skopos branch-diff %s", ErrInvalidInput, branch, firstOther(known, branch))
 	}
 	db, err := s.store.DB(workspace)
 	if err != nil {
@@ -577,4 +593,14 @@ func maskName(sig, name string) string {
 		return sig[:i] + "\x00" + sig[i+len(name):]
 	}
 	return sig
+}
+
+// firstOther picks the first branch that isn't skip, for hint messages.
+func firstOther(branches []string, skip string) string {
+	for _, b := range branches {
+		if b != skip {
+			return b
+		}
+	}
+	return "<feature-branch>"
 }
