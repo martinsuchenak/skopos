@@ -1,18 +1,33 @@
-## Skopos Integration
+<!-- skopos:begin -->
+## Skopos — shared memory and code intelligence
 
-You have access to Skopos MCP tools for shared memory, plans, and status reporting.
+You have access to **skopos** MCP tools: shared memory (blackboard), plans, agent status, and a central code index (symbols, callers, impact). In any skopos-served workspace they are the fastest path to context.
 
-**At the start of every task**, call `skopos_context` with `workspace_id` and `branch` to load prior findings, active plans, and in-flight sessions.
+### Code exploration — skopos first
 
-**Recording knowledge** — call `blackboard_write` with:
-- `scope`: "branch" (shared on this branch) or "project" (all agents)
-- `branch_name`: current branch (required when scope is "branch")
-- `workspace_id`: your workspace ID
-- `entry_type`: "finding", "decision", "bug", "debt", "warning", or "context"
-- `title`, `content`, `author_agent_id`
+For code structure questions (how something works, who calls what, where a symbol lives, blast radius of a change), use skopos tools BEFORE grep/find/Glob or explore agents:
 
-**Recalling knowledge** — call `blackboard_read` with `workspace_id` and `branch`. Permanently remove an obsolete entry with `blackboard_delete` (pass the entry `id`).
+- Symbols: `code_search` (names/signatures), `code_symbol` (exact definitions with file:line)
+- Structure: `code_outline` (a file's definitions), `code_callers` / `code_callees`
+- Risk: `code_impact` (transitive "what breaks if I change this"), `code_branch_diff`
 
-**Planning work** — call `plan_create`, then `plan_add_item` for each task. Update item status with `plan_update_item` as you progress. Check blocked items with `plan_read` (pass `item_id` for a single-item check). When a plan is done or abandoned, archive it with `plan_archive`.
+Fall back to grep only for: string literals, config values, env vars, non-symbol text, or exhaustive "find ALL occurrences" listings.
 
-**Status reporting** — call `report_status` with your `agent_id`, `agent_type` ("gemini"), `workspace_id`, and `status` (one of: pending, thinking, planning, running, editing, testing, waiting, blocked, paused, handoff, succeeded, failed, cancelled). Never report "stuck" or "orphaned".
+### Shared memory — mandatory during the session
+
+Proactively record knowledge as it emerges; do not wait to be asked or for the session to end:
+
+- Decisions (why) → `blackboard_write` entry_type `decision`
+- Bugs found/fixed → `bug`; known debt → `debt` (these float across branches — always visible)
+- Conventions/patterns → `context` or `finding`
+- Scope: `branch` by default (shared on this branch), `project` for repo-wide facts
+- Obsolete entries → `blackboard_delete`
+
+Recall with `blackboard_read` (pass `workspace_id` + `branch`). Entry IDs are needed for delete.
+
+### Session cadence
+
+- Start: `skopos_context` (workspace_id + branch) — prior knowledge, active plans, in-flight sessions
+- State changes: `report_status` (agent_type "gemini-cli"; never "stuck"/"orphaned" — server-set)
+- Planning: `plan_create` / `plan_add_item` / `plan_update_item`; archive with `plan_archive` when done or abandoned
+<!-- skopos:end -->
