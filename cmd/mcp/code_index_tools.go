@@ -201,9 +201,10 @@ func registerCodeAnalysisTools(server *mcplib.Server, svc *codeindex.Service) {
 		mcplib.NewTool("code_branch_diff", "Compare a feature branch's indexed symbols against the default branch — merge-prep intelligence (what changed, what the other side added). "+codeIndexDesc,
 			mcplib.String("workspace_id", "Workspace ID", mcplib.Required()),
 			mcplib.String("branch", "Feature branch to compare", mcplib.Required()),
+			mcplib.String("base", "Explicit diff base (default: the workspace's default branch)"),
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
-			res, err := svc.BranchDiff(ctx, req.StringOr("workspace_id", ""), req.StringOr("branch", ""))
+			res, err := svc.BranchDiff(ctx, req.StringOr("workspace_id", ""), req.StringOr("branch", ""), req.StringOr("base", ""))
 			if err != nil {
 				return nil, toolError(err)
 			}

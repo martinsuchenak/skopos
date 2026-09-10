@@ -498,7 +498,7 @@ func (h *Handler) BranchDiff(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res, err := h.service.BranchDiff(r.Context(), ws, r.URL.Query().Get("branch"))
+	res, err := h.service.BranchDiff(r.Context(), ws, r.URL.Query().Get("branch"), r.URL.Query().Get("base"))
 	if err != nil {
 		h.respondServiceError(w, err)
 		return

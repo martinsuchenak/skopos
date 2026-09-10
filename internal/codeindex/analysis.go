@@ -390,7 +390,7 @@ type SymbolDelta struct {
 }
 
 // BranchDiff compares a branch against the default branch's index.
-func (s *Service) BranchDiff(ctx context.Context, workspace, branch string) (*BranchDiffResult, error) {
+func (s *Service) BranchDiff(ctx context.Context, workspace, branch, base string) (*BranchDiffResult, error) {
 	if strings.TrimSpace(branch) == "" {
 		return nil, fmt.Errorf("%w: branch is required", ErrInvalidInput)
 	}
@@ -411,9 +411,14 @@ func (s *Service) BranchDiff(ctx context.Context, workspace, branch string) (*Br
 	if ok, _ := s.store.BranchIndexed(workspace, branch); !ok {
 		return nil, fmt.Errorf("%w: branch %q is not indexed (indexed: %s) — index it first, then diff it against the default", ErrInvalidInput, branch, strings.Join(known, ", "))
 	}
-	base := s.store.DefaultBranch(workspace)
+	base = strings.TrimSpace(base)
+	if base == "" {
+		base = s.store.DefaultBranch(workspace)
+	} else if ok, _ := s.store.BranchIndexed(workspace, base); !ok {
+		return nil, fmt.Errorf("%w: base branch %q is not indexed (indexed: %s)", ErrInvalidInput, base, strings.Join(known, ", "))
+	}
 	if branch == base {
-		return nil, fmt.Errorf("%w: branch %s is the default branch and the diff base — index the feature branch, then run: skopos branch-diff %s", ErrInvalidInput, branch, firstOther(known, branch))
+		return nil, fmt.Errorf("%w: branch %s is the diff base — diff a feature branch against it (skopos branch-diff <feature> or --base <other>)", ErrInvalidInput, branch)
 	}
 	db, err := s.store.DB(workspace)
 	if err != nil {

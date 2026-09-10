@@ -53,6 +53,14 @@ CREATE TABLE IF NOT EXISTS branch_files (
   hash   TEXT NOT NULL,
   PRIMARY KEY (branch, path)
 );
+CREATE TABLE IF NOT EXISTS meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS state (
   branch       TEXT PRIMARY KEY,
   head_sha     TEXT NOT NULL DEFAULT '',
@@ -556,24 +564,56 @@ func (st *Store) BranchIndexed(workspace, branch string) (bool, error) {
 	return err == nil, err
 }
 
-// DefaultBranch returns the fallback branch: main, else master, else the most
-// recently built.
+// DefaultBranch returns the diff base: the recorded git default (meta hint
+// captured at build time — handles trunks like PROD/develop), else main,
+// else master, else the OLDEST built branch (the trunk is built before any
+// feature branch; the newest build is by construction the feature branch).
 func (st *Store) DefaultBranch(workspace string) string {
 	db, err := st.DB(workspace)
 	if err != nil {
 		return "main"
 	}
+	if v, ok := st.GetMeta(workspace, "default_branch"); ok && v != "" {
+		var one int
+		if db.QueryRow(`SELECT 1 FROM state WHERE branch = ?`, v).Scan(&one) == nil {
+			return v
+		}
+	}
 	for _, cand := range []string{"main", "master"} {
 		var one int
-		if err := db.QueryRow(`SELECT 1 FROM state WHERE branch = ?`, cand).Scan(&one); err == nil {
+		if db.QueryRow(`SELECT 1 FROM state WHERE branch = ?`, cand).Scan(&one) == nil {
 			return cand
 		}
 	}
 	var branch string
-	if err := db.QueryRow(`SELECT branch FROM state ORDER BY built_at DESC LIMIT 1`).Scan(&branch); err == nil {
+	if db.QueryRow(`SELECT branch FROM state ORDER BY built_at ASC LIMIT 1`).Scan(&branch) == nil {
 		return branch
 	}
 	return "main"
+}
+
+// GetMeta reads a per-workspace metadata value.
+func (st *Store) GetMeta(workspace, key string) (string, bool) {
+	db, err := st.DB(workspace)
+	if err != nil {
+		return "", false
+	}
+	var v string
+	if db.QueryRow(`SELECT value FROM meta WHERE key = ?`, key).Scan(&v) == nil {
+		return v, true
+	}
+	return "", false
+}
+
+// SetMeta writes a per-workspace metadata value.
+func (st *Store) SetMeta(workspace, key, value string) error {
+	db, err := st.DB(workspace)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`INSERT INTO meta (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+	return err
 }
 
 // likeEscape escapes LIKE wildcards in user input.

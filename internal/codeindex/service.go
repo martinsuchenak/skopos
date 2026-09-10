@@ -439,6 +439,17 @@ func BuildWithCache(ctx context.Context, ex *parse.Extractor, root, branch strin
 
 // CommitLocal materializes results into a workspace's index DB directly
 // (used for local builds; the remote path negotiates via Manifest/AddBlob).
+// gitDefaultBranch resolves the repo's actual default branch from
+// origin/HEAD (returns "" when undeterminable).
+func gitDefaultBranch(root string) string {
+	out, err := exec.Command("git", "-C", root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	// "origin/PROD" -> "PROD"
+	return strings.TrimPrefix(strings.TrimSpace(string(out)), "origin/")
+}
+
 func CommitLocal(store *Store, workspace, branch, source string, results []*parse.FileResult, head string) error {
 	entries := make([]FileEntry, 0, len(results))
 	for _, res := range results {
@@ -446,6 +457,13 @@ func CommitLocal(store *Store, workspace, branch, source string, results []*pars
 			return err
 		}
 		entries = append(entries, FileEntry{Path: strings.TrimPrefix(res.Path, "/"), Hash: res.Hash})
+	}
+	// Record the repo's real trunk (origin/HEAD) so diff-base resolution
+	// never guesses on non-main/master trunks (PROD, develop, ...).
+	if def := gitDefaultBranch("."); def != "" {
+		if err := store.SetMeta(workspace, "default_branch", def); err != nil {
+			return err
+		}
 	}
 	return store.Commit(workspace, branch, head, source, entries)
 }

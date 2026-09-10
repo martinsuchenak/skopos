@@ -552,20 +552,21 @@ func mermaidNodes(n codeindex.CallTreeNode) {
 func codeBranchDiffCmd() *cli.Command {
 	return &cli.Command{
 		Name:    "branch-diff",
-		Usage:   "Compare a feature branch's indexed symbols against the default branch (default: current git branch)",
-		Flags:   queryFlags(),
+		Usage:   "Compare a feature branch's indexed symbols against the default branch (branch arg defaults to the current git branch)",
+		Flags:   append(queryFlags(), &cli.StringFlag{Name: "base", Usage: "Explicit diff base branch (default: the workspace's default branch)"}),
 		MaxArgs: 1,
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			branch := gitBranch(".")
 			if args := cmd.GetArgs(); len(args) > 0 {
 				branch = args[0]
 			}
+			base := cmd.GetString("base")
 			res, err := queryTarget(ctx, cmd,
 				func(ws, _ string) string {
-					return fmt.Sprintf("/api/codeindex/%s/branch-diff?branch=%s", url.PathEscape(ws), url.QueryEscape(branch))
+					return fmt.Sprintf("/api/codeindex/%s/branch-diff?branch=%s&base=%s", url.PathEscape(ws), url.QueryEscape(branch), url.QueryEscape(base))
 				},
 				func(svc *codeindex.Service, ws, _ string) (codeindex.BranchDiffResult, error) {
-					r, err := svc.BranchDiff(ctx, ws, branch)
+					r, err := svc.BranchDiff(ctx, ws, branch, base)
 					if err != nil {
 						return codeindex.BranchDiffResult{}, err
 					}

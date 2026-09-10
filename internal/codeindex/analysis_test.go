@@ -116,7 +116,7 @@ func renamedHelper() {}
 	buildInto(t, store, root, "feat/x")
 	svc := NewService(store)
 
-	diff, err := svc.BranchDiff(context.Background(), "ws", "feat/x")
+	diff, err := svc.BranchDiff(context.Background(), "ws", "feat/x", "")
 	if err != nil {
 		t.Fatal(err)
 	}
