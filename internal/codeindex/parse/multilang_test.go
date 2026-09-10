@@ -212,3 +212,75 @@ func TestProfileCSS(t *testing.T) {
 		t.Fatalf("selector kinds: %+v", res.Symbols)
 	}
 }
+
+// TestProfileSvelte: <script>/<style> raw_text sections re-parse with the
+// JS/TS/CSS grammars, line numbers adjusted to the host file.
+func TestProfileSvelte(t *testing.T) {
+	res := parseStr(t, "App.svelte", `<script>
+import { api } from './api.js';
+export function formatUser(u) { return api(name); }
+class Store {
+  load() { internalHelper(); }
+}
+function internalHelper() { return 1; }
+const store = new Store();
+store.load();
+</script>
+<div class="card">{formatUser(user)}</div>
+<style>
+.card { color: red; }
+</style>
+`)
+	syms := symbolsByQual(res)
+	for _, want := range []string{"formatUser", "internalHelper", "Store::load", "card"} {
+		if _, ok := syms[want]; !ok {
+			t.Fatalf("missing %q: %+v", want, res.Symbols)
+		}
+	}
+	// Line numbers point into the host file: formatUser on line 3, .card on line 12.
+	if syms["formatUser"].Line != 3 {
+		t.Fatalf("formatUser line = %d, want 3 (host-relative)", syms["formatUser"].Line)
+	}
+	if syms["card"].Kind != "class" || syms["card"].Line < 10 || syms["card"].Line > 14 {
+		t.Fatalf("css selector: %+v", syms["card"])
+	}
+	c := callees(res)
+	if !c["Store::load"] {
+		t.Fatalf("module-scope store binding in section: %+v", res.Edges)
+	}
+}
+
+// TestProfileSvelteTS: lang="ts" script sections use the TypeScript grammar.
+func TestProfileSvelteTS(t *testing.T) {
+	res := parseStr(t, "App.svelte", `<script lang="ts">
+export function get(r: User): string { return this.helper(r); }
+</script>
+`)
+	syms := symbolsByQual(res)
+	if _, ok := syms["get"]; !ok {
+		t.Fatalf("ts section symbols: %+v", res.Symbols)
+	}
+}
+
+// TestProfileVue: same machinery for .vue single-file components.
+func TestProfileVue(t *testing.T) {
+	res := parseStr(t, "Widget.vue", `<template><div/></template>
+<script>
+export default {
+  methods: {
+    save() { this.load(); },
+    load() {},
+  },
+};
+</script>
+<style scoped>
+.a { margin: 0; }
+</style>
+`)
+	syms := symbolsByQual(res)
+	for _, want := range []string{"save", "load", "a"} {
+		if _, ok := syms[want]; !ok {
+			t.Fatalf("missing %q: %+v", want, res.Symbols)
+		}
+	}
+}

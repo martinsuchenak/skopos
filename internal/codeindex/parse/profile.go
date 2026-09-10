@@ -46,6 +46,11 @@ type langProfile struct {
 	// variable bindings. Optional.
 	methodScope func(def *gts.Node, lang *gts.Language, src []byte) (typeName string, vars map[string]string)
 
+	// embeddedSections extracts embedded language chunks from a host
+	// document (script/style in Svelte/Vue/HTML) for re-parsing with the
+	// matching grammar. Optional.
+	embeddedSections func(root *gts.Node, lang *gts.Language, src []byte) []section
+
 	// conditionalDefs lets a profile emit definitions for node types that
 	// only sometimes define (JS `const f = () => {}`): the func inspects the
 	// node and returns the kind to emit, or ("", false).

@@ -18,7 +18,7 @@ import (
 
 // ExtractorVersion changes whenever extraction logic changes; it is mixed
 // into the content hash so already-indexed files re-extract after upgrades.
-const ExtractorVersion = "7"
+const ExtractorVersion = "8"
 
 // DefaultTimeout is the per-file parse budget. Files that exceed it are still
 // parsed via tree-sitter error recovery and flagged (the measured pathological
@@ -70,6 +70,17 @@ func NewExtractor() *Extractor {
 
 func (e *Extractor) SetTimeout(d time.Duration) { e.timeout = d }
 
+// parserFor returns a shared, timeout-configured parser per language.
+func (e *Extractor) parserFor(name string, lang *gts.Language) *gts.Parser {
+	if p, ok := e.parsers[name]; ok {
+		return p
+	}
+	p := gts.NewParser(lang)
+	p.SetTimeoutMicros(uint64(e.timeout.Microseconds()))
+	e.parsers[name] = p
+	return p
+}
+
 // Detect returns the language name for a filename, or "" when unsupported.
 func Detect(filename string) string {
 	if entry := grammars.DetectLanguage(filename); entry != nil {
@@ -106,12 +117,7 @@ func (e *Extractor) ParseBytes(path string, src []byte) (*FileResult, error) {
 		return res, nil
 	}
 
-	parser, ok := e.parsers[res.Lang]
-	if !ok {
-		parser = gts.NewParser(entry.Language())
-		parser.SetTimeoutMicros(uint64(e.timeout.Microseconds()))
-		e.parsers[res.Lang] = parser
-	}
+	parser := e.parserFor(res.Lang, entry.Language())
 	tree, err := parser.Parse(src)
 	if err != nil || tree == nil {
 		// Not parsed: keep hash-only result; flag so callers can decide.
@@ -121,19 +127,71 @@ func (e *Extractor) ParseBytes(path string, src []byte) (*FileResult, error) {
 	root := tree.RootNode()
 	lang := entry.Language()
 	res.Err = root.HasErrorOrMissing()
-	prof := profileFor(res.Lang)
 
-	type frame struct {
-		node     *gts.Node
-		caller   string      // enclosing definition (qualified when nested in a type)
-		typeName string      // enclosing type name, if any
-		vars     varBindings // local variable -> class bindings, offset-indexed
+	walkTree(profileFor(res.Lang), root, lang, src, res)
+
+	// Host documents (Svelte/Vue/HTML) carry embedded <script>/<style>
+	// chunks as raw_text: re-parse each with its own grammar and merge with
+	// line numbers adjusted to the host file.
+	if hostProf := profileFor(res.Lang); hostProf.embeddedSections != nil {
+		for _, sec := range hostProf.embeddedSections(root, lang, src) {
+			secLang := sectionGrammar(sec.lang)
+			if secLang == nil {
+				continue
+			}
+			secRes := &FileResult{Lang: sec.lang}
+			secParser := e.parserFor(sec.lang, secLang)
+			secTree, err := secParser.Parse(sec.src)
+			if err != nil || secTree == nil {
+				continue
+			}
+			walkTree(profileFor(sec.lang), secTree.RootNode(), secLang, sec.src, secRes)
+			if secTree.RootNode().HasErrorOrMissing() {
+				res.Err = true
+			}
+			lineOff := lineOffsetAt(src, sec.start)
+			for i := range secRes.Symbols {
+				secRes.Symbols[i].Line += lineOff
+				secRes.Symbols[i].StartByte += sec.start
+				secRes.Symbols[i].EndByte += sec.start
+				secRes.Symbols[i].Lang = sec.lang
+			}
+			for i := range secRes.Edges {
+				secRes.Edges[i].Line += lineOff
+			}
+			res.Symbols = append(res.Symbols, secRes.Symbols...)
+			res.Edges = append(res.Edges, secRes.Edges...)
+		}
 	}
+	return res, nil
+}
+
+// lineOffsetAt counts newlines before byte offset at (0-based line + 1 =
+// 1-based line of at).
+func lineOffsetAt(src []byte, at int) int {
+	n := 0
+	for i := 0; i < at && i < len(src); i++ {
+		if src[i] == '\n' {
+			n++
+		}
+	}
+	return n
+}
+
+// walkTree is the language-neutral extraction pass shared by the host file
+// and every embedded section.
+func walkTree(prof *langProfile, root *gts.Node, lang *gts.Language, src []byte, res *FileResult) {
 	// Module-scope variable bindings (JS/TS top-level `const u = new Widget()`)
 	// are visible inside every function, matching the languages' semantics.
 	fileVars := prof.collectVarBindings(root, lang, src)
 	if len(fileVars) == 0 {
 		fileVars = nil
+	}
+	type frame struct {
+		node     *gts.Node
+		caller   string      // enclosing definition (qualified when nested in a type)
+		typeName string      // enclosing type name, if any
+		vars     varBindings // local variable -> class bindings, offset-indexed
 	}
 	stack := []frame{{root, "", "", fileVars}}
 	for len(stack) > 0 {
@@ -163,20 +221,19 @@ func (e *Extractor) ParseBytes(path string, src []byte) (*FileResult, error) {
 			// it in source order. Languages whose type scope lives outside the
 			// AST nesting (Go receivers) supply it via the methodScope hook.
 			if kind == "func" || kind == "method" {
-				recvType, recvVars := "", map[string]string(nil)
+				vars = prof.collectVarBindings(n, lang, src)
 				if prof.methodScope != nil {
-					recvType, recvVars = prof.methodScope(n, lang, src)
-				}
-				if recvType != "" || recvVars != nil {
-					vars = prof.collectVarBindings(n, lang, src)
-					if recvType != "" {
+					if recvType, recvVars := prof.methodScope(n, lang, src); recvType != "" {
 						typeName = recvType
+						for v, class := range recvVars {
+							vars[v] = append(vars[v], varBinding{at: 0, class: class})
+						}
 					}
-					for v, class := range recvVars {
-						vars[v] = append(vars[v], varBinding{at: 0, class: class})
+				}
+				for v, bs := range fileVars { // module scope overlays function scope
+					if _, shadowed := vars[v]; !shadowed {
+						vars[v] = bs
 					}
-				} else {
-					vars = prof.collectVarBindings(n, lang, src)
 				}
 			}
 			if kind == "type" {
@@ -223,7 +280,6 @@ func (e *Extractor) ParseBytes(path string, src []byte) (*FileResult, error) {
 			stack = append(stack, frame{n.Child(i), caller, typeName, vars})
 		}
 	}
-	return res, nil
 }
 
 // childName finds the first identifier-ish child's text.
