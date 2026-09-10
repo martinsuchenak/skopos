@@ -114,7 +114,7 @@ var callTypes = map[string]bool{
 
 // ExtractorVersion changes whenever extraction logic changes; it is mixed
 // into the content hash so already-indexed files re-extract after upgrades.
-const ExtractorVersion = "4"
+const ExtractorVersion = "5"
 
 // Extractor parses files with a shared parser per language.
 type Extractor struct {
@@ -182,10 +182,11 @@ func (e *Extractor) ParseBytes(path string, src []byte) (*FileResult, error) {
 
 	type frame struct {
 		node     *gts.Node
-		caller   string // enclosing definition (qualified when nested in a type)
-		typeName string // enclosing type name, if any
+		caller   string      // enclosing definition (qualified when nested in a type)
+		typeName string      // enclosing type name, if any
+		vars     varBindings // local variable -> class bindings, offset-indexed
 	}
-	stack := []frame{{root, "", ""}}
+	stack := []frame{{root, "", "", nil}}
 	for len(stack) > 0 {
 		f := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
@@ -197,7 +198,15 @@ func (e *Extractor) ParseBytes(path string, src []byte) (*FileResult, error) {
 
 		caller := f.caller
 		typeName := f.typeName
+		vars := f.vars
 		if kind, ok := defKinds[nt]; ok {
+			// Function/method bodies get a fresh variable-type scope: declared
+			// parameter types plus $var = new Klass() assignments, recorded
+			// with their byte offsets so each call resolves the binding that
+			// precedes it in source order.
+			if kind == "func" || kind == "method" {
+				vars = collectVarBindings(n, lang, src)
+			}
 			if kind == "type" {
 				// refine Go-style type specs: type X struct{...} / interface{...}
 				if hasChildOfType(n, lang, "struct_type") {
@@ -228,7 +237,7 @@ func (e *Extractor) ParseBytes(path string, src []byte) (*FileResult, error) {
 				}
 			}
 		} else if callTypes[nt] {
-			if callee, ok := calleeName(n, lang, src, typeName); ok && callee != "" {
+			if callee, ok := calleeName(n, lang, src, typeName, vars); ok && callee != "" {
 				res.Edges = append(res.Edges, Edge{
 					Caller: f.caller, Callee: callee, Kind: "call",
 					Line: int(n.StartPoint().Row) + 1,
@@ -239,7 +248,7 @@ func (e *Extractor) ParseBytes(path string, src []byte) (*FileResult, error) {
 		// push children in reverse so traversal is source order
 		k := n.ChildCount()
 		for i := k - 1; i >= 0; i-- {
-			stack = append(stack, frame{n.Child(i), caller, typeName})
+			stack = append(stack, frame{n.Child(i), caller, typeName, vars})
 		}
 	}
 	return res, nil
@@ -282,7 +291,7 @@ func hasChildOfType(n *gts.Node, lang *gts.Language, typ string) bool {
 // $this/self/static/this are qualified with the enclosing type, and explicit
 // Class::method calls keep their class prefix, so same-named methods of
 // different types stay distinct graph nodes.
-func calleeName(n *gts.Node, lang *gts.Language, src []byte, typeName string) (string, bool) {
+func calleeName(n *gts.Node, lang *gts.Language, src []byte, typeName string, vars varBindings) (string, bool) {
 	f := n
 	if fn := n.ChildByFieldName("function", lang); fn != nil {
 		f = fn
@@ -322,6 +331,15 @@ func calleeName(n *gts.Node, lang *gts.Language, src []byte, typeName string) (s
 			return typeName + "::" + last, true
 		}
 		return last, true
+	}
+	// Locally-typed variable: $obj = new User() or handle(Request $r) — the
+	// binding is syntactic (assignment or signature), so qualify with it.
+	if vars != nil && receiverText != "" {
+		if m := varNameRe.FindStringSubmatch(receiverText); m != nil {
+			if class, bound := vars.resolve(m[1], int(n.StartByte())); bound {
+				return class + "::" + last, true
+			}
+		}
 	}
 	// Container/factory idiom: the receiver expression names the type via a
 	// `SomeClass::class` literal (e.g. app(UserRepo::class)->save()). The
@@ -428,4 +446,159 @@ func SplitIdentifier(name string) string {
 	}
 	flush()
 	return strings.Join(parts, " ")
+}
+
+// formalParamTypes extracts variable -> class bindings from a function's
+// declared parameter types (PHP/TS shape: formal_parameters > parameter >
+// (type, variable)). Nullable types unwrap; unions/intersections and
+// primitives are skipped — only a single named type binds.
+func formalParamTypes(def *gts.Node, lang *gts.Language, src []byte) map[string]string {
+	var params *gts.Node
+	for i := 0; i < def.ChildCount(); i++ {
+		if c := def.Child(i); c != nil && c.Type(lang) == "formal_parameters" {
+			params = c
+			break
+		}
+	}
+	if params == nil {
+		return nil
+	}
+	var vars map[string]string
+	for i := 0; i < params.NamedChildCount(); i++ {
+		p := params.NamedChild(i)
+		if p == nil {
+			continue
+		}
+		class := ""
+		vname := ""
+		for j := 0; j < p.NamedChildCount(); j++ {
+			c := p.NamedChild(j)
+			if c == nil {
+				continue
+			}
+			switch c.Type(lang) {
+			case "named_type", "type_identifier", "generic_type":
+				class = identifierText(c, lang, src)
+			case "nullable_type":
+				if inner := c.NamedChild(0); inner != nil {
+					class = identifierText(inner, lang, src)
+				}
+			case "variable_name", "identifier", "property_identifier":
+				vname = strings.TrimPrefix(strings.TrimPrefix(string(src[c.StartByte():c.EndByte()]), "$"), "...")
+			}
+		}
+		if class != "" && vname != "" {
+			if vars == nil {
+				vars = map[string]string{}
+			}
+			vars[vname] = class
+		}
+	}
+	return vars
+}
+
+// identifierText reads the name text of a type-ish node.
+func identifierText(n *gts.Node, lang *gts.Language, src []byte) string {
+	for i := 0; i < n.NamedChildCount(); i++ {
+		c := n.NamedChild(i)
+		if c != nil && identifierTypes[c.Type(lang)] {
+			return string(src[c.StartByte():c.EndByte()])
+		}
+	}
+	if identifierTypes[n.Type(lang)] {
+		return string(src[n.StartByte():n.EndByte()])
+	}
+	return ""
+}
+
+// newBinding detects `$var = new Klass(...)` assignments, returning the
+// variable name (without $) and the class name. Children are scanned
+// positionally — the PHP grammar carries no left/right field names here.
+func newBinding(n *gts.Node, lang *gts.Language, src []byte) (v, class string, ok bool) {
+	var left, right *gts.Node
+	for i := 0; i < n.NamedChildCount(); i++ {
+		c := n.NamedChild(i)
+		if c == nil {
+			continue
+		}
+		switch c.Type(lang) {
+		case "variable_name":
+			if left == nil {
+				left = c
+			}
+		case "object_creation_expression":
+			right = c
+		}
+	}
+	if left == nil || right == nil {
+		return "", "", false
+	}
+	name := identifierText(right, lang, src)
+	if name == "" {
+		return "", "", false
+	}
+	v = strings.TrimPrefix(string(src[left.StartByte():left.EndByte()]), "$")
+	return v, name, v != ""
+}
+
+var varNameRe = regexp.MustCompile(`^\$?([A-Za-z_][A-Za-z0-9_]*)$`)
+
+// varBinding is one variable->class binding at a byte offset.
+type varBinding struct {
+	at    int
+	class string
+}
+
+// varBindings maps a local variable to its bindings in source order; a call
+// resolves the latest binding at or before its own offset (straight-line
+// approximation: branches are not tracked).
+type varBindings map[string][]varBinding
+
+// resolve returns the class bound to the variable at byte offset at, if any.
+func (vb varBindings) resolve(v string, at int) (string, bool) {
+	bs := vb[v]
+	class := ""
+	found := false
+	for _, b := range bs {
+		if b.at <= at {
+			class, found = b.class, true
+		} else {
+			break
+		}
+	}
+	return class, found
+}
+
+// collectVarBindings pre-scans a function body: parameter types bind at
+// offset 0, then every `$var = new Klass(...)` binds at its assignment
+// offset. Nested function definitions are skipped (own scope).
+func collectVarBindings(def *gts.Node, lang *gts.Language, src []byte) varBindings {
+	vb := varBindings{}
+	add := func(v, class string, at int) {
+		vb[v] = append(vb[v], varBinding{at, class})
+	}
+	for v, class := range formalParamTypes(def, lang, src) {
+		add(v, class, 0)
+	}
+	var scan func(n *gts.Node)
+	scan = func(n *gts.Node) {
+		if n == nil {
+			return
+		}
+		if n != def {
+			if kind, ok := defKinds[n.Type(lang)]; ok && (kind == "func" || kind == "method") {
+				return // nested definition: its own scope
+			}
+		}
+		if n.Type(lang) == "assignment_expression" {
+			if v, class, ok := newBinding(n, lang, src); ok {
+				add(v, class, int(n.StartByte()))
+			}
+		}
+		for i := 0; i < n.ChildCount(); i++ {
+			scan(n.Child(i))
+		}
+	}
+	scan(def)
+	return vb
 }

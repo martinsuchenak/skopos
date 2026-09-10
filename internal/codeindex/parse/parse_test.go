@@ -261,3 +261,49 @@ class Handler {
 		t.Fatalf("$this edge missing: %+v", res.Edges)
 	}
 }
+
+func TestParsePHPInstanceCallResolution(t *testing.T) {
+	e := NewExtractor()
+	p := writeTemp(t, "instances.php", `<?php
+class User { public function getName(): string { return "x"; } }
+class Repo { public function find(): ?User { return null; } }
+class Handler {
+  public function viaNew(): void {
+    $obj = new User();
+    $obj->getName();
+  }
+  public function viaParam(Request $r, ?User $maybe): void {
+    $r->all();
+    $maybe->getName();
+  }
+  public function rebinding(): void {
+    $o = new User();
+    $o = new Repo();
+    $o->find();
+  }
+  public function unknown($x): void {
+    $x->anything();
+  }
+}
+`)
+	res, err := e.ParseFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := map[string]bool{}
+	for _, e := range res.Edges {
+		called[e.Callee] = true
+	}
+	if !called["User::getName"] {
+		t.Fatalf("$obj = new User(); $obj->getName() should resolve: %+v", res.Edges)
+	}
+	if !called["Request::all"] {
+		t.Fatalf("typed parameter Request $r should resolve: %+v", res.Edges)
+	}
+	if !called["Repo::find"] {
+		t.Fatalf("last assignment should win ($o = new Repo()): %+v", res.Edges)
+	}
+	if !called["anything"] {
+		t.Fatalf("untyped receiver must stay bare: %+v", res.Edges)
+	}
+}
