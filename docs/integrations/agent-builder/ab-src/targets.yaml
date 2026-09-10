@@ -1,0 +1,14 @@
+# skopos is a direct MCP server (wired under the name `skopos` by
+# `skopos install`), not a tool dispatched through a router — override
+# agent-builder's llmrouter-flavored defaults per target.
+invocation:
+  claude:
+    skopos: 'call `mcp__skopos__{tool}` with {params}'
+  opencode:
+    skopos: 'call the `skopos_{tool}` tool with {params}'
+  codex:
+    skopos: 'call `{tool}` on the skopos MCP server with {params}'
+  copilot:
+    skopos: 'call `{tool}` on the skopos MCP server with {params}'
+  kiro:
+    skopos: 'call `{tool}` on the skopos MCP server with {params}'
