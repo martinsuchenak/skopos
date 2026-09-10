@@ -93,6 +93,27 @@ Agents get the `code_*` tools: `code_search`, `code_symbol`, `code_outline`,
 `code_cycles`, `code_branch_diff`, `code_index_status` — plus the blackboard,
 plans, and status tools.
 
+For Claude Code, `skopos install` also installs a hook suite that makes agents
+actually use skopos (opt out with `--no-hooks`):
+
+- **SessionStart** — project briefing: indexed branches, branch blackboard
+  entries, active plans, and the tool mandate
+- **UserPromptSubmit** — keyword extraction from the prompt; for
+  exploration-shaped questions, pre-fetches matching symbols from the index
+  (3-minute dedup cache) and injects them as context; every 10 turns a
+  checkpoint reminds the agent to record findings to the blackboard
+- **PreToolUse (Grep/Agent/Bash)** — nudges symbol-shaped greps and Explore
+  dispatches toward `code_*` tools; literal-string and exhaustive greps are
+  left alone
+- **PostToolUse (Edit/Write)** — after source edits, a throttled (5 min)
+  reminder to record the decision on the blackboard
+- **Stop** — end-of-session reminder to extract durable facts (decisions,
+  rejected approaches, contracts, conventions, bugs/debt) and archive plans
+
+The behavioral prompt (CLAUDE.md block) carries the standing rules: skopos
+tools before grep for code structure, proactive blackboard writes during the
+session, status reporting cadence.
+
 ## 6. Housekeeping
 
 ```sh

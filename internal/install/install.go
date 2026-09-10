@@ -31,6 +31,34 @@ var codexAgents string
 //go:embed assets/copilot-instructions.md
 var copilotInstructions string
 
+//go:embed assets/hooks/skopos-common.sh
+var hookCommon string
+
+//go:embed assets/hooks/skopos-session.sh
+var hookSession string
+
+//go:embed assets/hooks/skopos-prompt.sh
+var hookPrompt string
+
+//go:embed assets/hooks/skopos-pre-tool.sh
+var hookPreTool string
+
+//go:embed assets/hooks/skopos-post-tool.sh
+var hookPostTool string
+
+//go:embed assets/hooks/skopos-stop.sh
+var hookStop string
+
+// hookScripts maps file names to their embedded sources.
+var hookScripts = map[string]string{
+	"skopos-common.sh":    hookCommon,
+	"skopos-session.sh":   hookSession,
+	"skopos-prompt.sh":    hookPrompt,
+	"skopos-pre-tool.sh":  hookPreTool,
+	"skopos-post-tool.sh": hookPostTool,
+	"skopos-stop.sh":      hookStop,
+}
+
 // Agents is the set of supported install targets.
 var Agents = []string{"claude-code", "codex", "gemini-cli", "github-copilot", "kiro", "opencode"}
 
@@ -43,6 +71,9 @@ type Options struct {
 	APIKey string // sent as Authorization: Bearer; empty omits the header
 	Scope  string // "global" (default) or "project"
 	DryRun bool
+	// Hooks installs the Claude Code hook suite (session briefing, prompt
+	// pre-fetch, search nudges, edit reminders). Default on for claude-code.
+	Hooks *bool
 }
 
 // Result describes what one agent install did (or would do, when DryRun).
@@ -103,6 +134,9 @@ func installAgent(name string, o Options) (Result, error) {
 		// Always-on behavioral instructions in the global CLAUDE.md.
 		claudeMd := scopePath(o.Scope, filepath.Join(homeOrErr(), ".claude", "CLAUDE.md"), "CLAUDE.md")
 		if err := appendBlockAction(claudeMd, claudeClaude, o, &r.Actions); err != nil {
+			return r, err
+		}
+		if err := installClaudeHooks(o, &r.Actions); err != nil {
 			return r, err
 		}
 
@@ -489,4 +523,157 @@ func backup(path string) error {
 		return err
 	}
 	return writeFilePrivate(path+".skopos.bak", raw)
+}
+
+// hooksWanted defaults hooks on unless explicitly disabled.
+func hooksWanted(o Options) bool {
+	return o.Hooks == nil || *o.Hooks
+}
+
+// hookEvent wires one (event, matcher, script) triple into settings' hooks.
+type hookEvent struct {
+	event   string
+	matcher string // "" = all tools
+	script  string
+}
+
+// installClaudeHooks writes the hook scripts under ~/.claude/hooks/ and
+// registers them in settings.json. Idempotent: re-running replaces our
+// scripts and skips already-registered entries.
+func installClaudeHooks(o Options, actions *[]string) error {
+	if !hooksWanted(o) {
+		return nil
+	}
+	home := homeOrErr()
+	if home == "" {
+		return fmt.Errorf("cannot resolve home directory for hook install")
+	}
+	hooksDir := scopePath(o.Scope, filepath.Join(home, ".claude", "hooks"), filepath.Join(".claude", "hooks"))
+
+	// Write scripts (common first — the others source it).
+	names := []string{"skopos-common.sh", "skopos-session.sh", "skopos-prompt.sh", "skopos-pre-tool.sh", "skopos-post-tool.sh", "skopos-stop.sh"}
+	if !o.DryRun {
+		if err := os.MkdirAll(hooksDir, 0o755); err != nil {
+			return fmt.Errorf("creating hooks dir: %w", err)
+		}
+		for _, name := range names {
+			src, ok := hookScripts[name]
+			if !ok {
+				return fmt.Errorf("hook script %s not embedded", name)
+			}
+			path := filepath.Join(hooksDir, name)
+			if err := os.WriteFile(path, []byte(src), 0o755); err != nil {
+				return fmt.Errorf("writing hook %s: %w", path, err)
+			}
+			if err := os.Chmod(path, 0o755); err != nil {
+				return err
+			}
+		}
+	}
+	*actions = append(*actions, fmt.Sprintf("hook scripts written to %s (skopos-*.sh)", hooksDir))
+
+	events := []hookEvent{
+		{event: "SessionStart", script: "skopos-session.sh"},
+		{event: "UserPromptSubmit", script: "skopos-prompt.sh"},
+		{event: "PreToolUse", matcher: "Grep", script: "skopos-pre-tool.sh"},
+		{event: "PreToolUse", matcher: "Agent", script: "skopos-pre-tool.sh"},
+		{event: "PreToolUse", matcher: "Bash", script: "skopos-pre-tool.sh"},
+		{event: "PostToolUse", matcher: "Edit|Write", script: "skopos-post-tool.sh"},
+		{event: "Stop", script: "skopos-stop.sh"},
+	}
+	return mergeHookSettings(scopePath(o.Scope, filepath.Join(home, ".claude", "settings.json"), filepath.Join(".claude", "settings.json")), hooksDir, events, o, actions)
+}
+
+// mergeHookSettings adds the hook entries to settings.json, preserving all
+// existing hooks and other keys. Idempotent per (event, matcher, command).
+func mergeHookSettings(path, hooksDir string, events []hookEvent, o Options, actions *[]string) error {
+	data, existed, err := readJSONMap(path)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+
+	hooksAny, ok := data["hooks"]
+	var hooks map[string]any
+	if ok {
+		hooks, ok = hooksAny.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s: hooks key is not an object", path)
+		}
+	} else {
+		hooks = map[string]any{}
+		data["hooks"] = hooks
+	}
+
+	added := 0
+	for _, ev := range events {
+		command := filepath.Join(hooksDir, ev.script)
+		entryListAny, ok := hooks[ev.event].([]any)
+		if !ok {
+			entryListAny = []any{}
+		}
+		// Idempotency: skip when this exact command is already registered
+		// for this event (matcher may differ in spelling but the command is
+		// unique per script).
+		found := false
+		for _, eAny := range entryListAny {
+			e, ok := eAny.(map[string]any)
+			if !ok {
+				continue
+			}
+			hs, ok := e["hooks"].([]any)
+			if !ok {
+				continue
+			}
+			for _, hAny := range hs {
+				h, ok := hAny.(map[string]any)
+				if !ok {
+					continue
+				}
+				if c, _ := h["command"].(string); c == command {
+					found = true
+				}
+			}
+		}
+		if found {
+			continue
+		}
+		entry := map[string]any{
+			"hooks": []any{map[string]any{"type": "command", "command": command}},
+		}
+		if ev.matcher != "" {
+			entry["matcher"] = ev.matcher
+		}
+		hooks[ev.event] = append(entryListAny, entry)
+		added++
+	}
+
+	if added == 0 && existed {
+		*actions = append(*actions, "hook registrations already up-to-date in "+path)
+		return nil
+	}
+	if o.DryRun {
+		verb := "would register"
+		if !existed {
+			verb = "would create"
+		}
+		*actions = append(*actions, fmt.Sprintf("%s skopos hooks in %s (%d entries)", verb, path, added))
+		return nil
+	}
+	if existed {
+		if err := backup(path); err != nil {
+			return fmt.Errorf("backing up %s: %w", path, err)
+		}
+	}
+	out, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, append(out, '\n'), 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	*actions = append(*actions, fmt.Sprintf("registered %d skopos hook entries in %s", added, path))
+	return nil
 }

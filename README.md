@@ -14,6 +14,7 @@ A coordination dashboard for AI coding agents — shared memory (blackboard), pl
 | Database | ✅ SQLite (WAL, FK-enforced, transactional) |
 | Auth | ✅ API key (Bearer); when set it gates every endpoint (REST reads/writes, MCP, SSE) |
 | Agent integration | ✅ `skopos install` for Claude Code, Codex, Gemini, Copilot, Kiro, opencode |
+| Agent hooks | ✅ Claude Code: session briefing, prompt-time code pre-fetch, search nudges, memory reminders (`--no-hooks` to skip) |
 | Code index | ✅ Central, branch-aware symbol/call-graph index (all languages, optional semantic search) |
 | Docker | ✅ |
 | Nomad | ✅ |
