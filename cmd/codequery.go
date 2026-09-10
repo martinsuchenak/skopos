@@ -575,10 +575,40 @@ func codeBranchDiffCmd() *cli.Command {
 				return printJSON(res)
 			}
 			fmt.Printf("branch %s vs %s\n", res.Branch, res.Base)
+			// git --stat style summary: "2 files changed (+1, -0), 3 symbols (+2, -1, 1 renamed)"
+			fa, fr := 0, 0
+			sa, sr, sn := 0, 0, 0
+			for _, f := range res.Files {
+				switch f.Change {
+				case "added":
+					fa++
+				case "removed":
+					fr++
+				}
+			}
+			for _, d := range res.Symbols {
+				switch d.Change {
+				case "added":
+					sa++
+				case "removed":
+					sr++
+				case "renamed":
+					sn++
+				}
+			}
+			fmt.Printf("%d files changed (+%d, -%d), %d symbols (+%d, -%d", len(res.Files), fa, fr, len(res.Symbols), sa, sr)
+			if sn > 0 {
+				fmt.Printf(", %d renamed", sn)
+			}
+			fmt.Println(")")
 			for _, f := range res.Files {
 				fmt.Printf("  %-8s %s\n", f.Change, f.Path)
 			}
 			for _, s := range res.Symbols {
+				if s.Change == "renamed" {
+					fmt.Printf("  %-8s %-9s %s -> %s\n", s.Change, s.Kind, s.PrevName, s.Name)
+					continue
+				}
 				fmt.Printf("  %-8s %-9s %-32s %s\n", s.Change, s.Kind, s.Name, s.Path)
 			}
 			return nil

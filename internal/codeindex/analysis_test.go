@@ -131,11 +131,21 @@ func renamedHelper() {}
 	for _, s := range diff.Symbols {
 		symChanges[s.Name] = s.Change
 	}
-	if symChanges["Extra"] != "added" || symChanges["renamedHelper"] != "added" {
-		t.Fatalf("symbol deltas missing additions: %v", symChanges)
+	if symChanges["Extra"] != "added" || symChanges["renamedHelper"] != "renamed" {
+		t.Fatalf("symbol deltas: %v", symChanges)
 	}
-	if symChanges["orphan"] != "removed" {
+	// orphan (same file/kind, empty body identical after name masking) is
+	// the pairing partner; it must not also appear as a separate removal.
+	if _, dup := symChanges["orphan"]; dup {
+		t.Fatalf("orphan should be consumed by the rename: %v", symChanges)
+	}
+	if symChanges["chainA"] != "removed" || symChanges["used"] != "removed" {
 		t.Fatalf("expected removed symbols from changed app.go: %v", symChanges)
+	}
+	for _, d := range diff.Symbols {
+		if d.Change == "renamed" && d.Name == "renamedHelper" && d.PrevName != "orphan" {
+			t.Fatalf("rename prev_name: %+v", d)
+		}
 	}
 }
 

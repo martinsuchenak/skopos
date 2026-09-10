@@ -377,12 +377,16 @@ type FileChange struct {
 	Change string `json:"change"` // added | removed | changed
 }
 
-// SymbolDelta is a symbol present on only one side of the diff.
+// SymbolDelta is a symbol present on only one side of the diff, or renamed
+// (paired by same file + kind + declaration with the name masked out).
 type SymbolDelta struct {
-	Name   string `json:"name"`
-	Kind   string `json:"kind"`
-	Path   string `json:"path"`
-	Change string `json:"change"` // added | removed
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+	Path     string `json:"path"`
+	Change   string `json:"change"`              // added | removed | renamed
+	PrevName string `json:"prev_name,omitempty"` // previous name when change=renamed
+
+	Signature string `json:"-"` // declaration text, used for rename pairing
 }
 
 // BranchDiff compares a branch against the default branch's index.
@@ -425,7 +429,7 @@ func (s *Service) BranchDiff(ctx context.Context, workspace, branch string) (*Br
 	}
 	symbolsOf := func(hash string) (map[string]SymbolHit, error) {
 		rows, err := db.Query(`
-			SELECT s.name, s.kind, s.line FROM symbols s WHERE s.hash = ?`, hash)
+			SELECT s.name, s.kind, s.line, s.signature FROM symbols s WHERE s.hash = ?`, hash)
 		if err != nil {
 			return nil, err
 		}
@@ -433,7 +437,7 @@ func (s *Service) BranchDiff(ctx context.Context, workspace, branch string) (*Br
 		m := map[string]SymbolHit{}
 		for rows.Next() {
 			var h SymbolHit
-			if err := rows.Scan(&h.Name, &h.Kind, &h.Line); err != nil {
+			if err := rows.Scan(&h.Name, &h.Kind, &h.Line, &h.Signature); err != nil {
 				return nil, err
 			}
 			m[h.Name+"\x00"+h.Kind] = h
@@ -474,15 +478,16 @@ func (s *Service) BranchDiff(ctx context.Context, workspace, branch string) (*Br
 		}
 		for key, sym := range branchSyms {
 			if _, ok := baseSyms[key]; !ok {
-				out.Symbols = append(out.Symbols, SymbolDelta{Name: sym.Name, Kind: sym.Kind, Path: fc.Path, Change: "added"})
+				out.Symbols = append(out.Symbols, SymbolDelta{Name: sym.Name, Kind: sym.Kind, Path: fc.Path, Change: "added", Signature: sym.Signature})
 			}
 		}
 		for key, sym := range baseSyms {
 			if _, ok := branchSyms[key]; !ok {
-				out.Symbols = append(out.Symbols, SymbolDelta{Name: sym.Name, Kind: sym.Kind, Path: fc.Path, Change: "removed"})
+				out.Symbols = append(out.Symbols, SymbolDelta{Name: sym.Name, Kind: sym.Kind, Path: fc.Path, Change: "removed", Signature: sym.Signature})
 			}
 		}
 	}
+	pairRenames(out)
 	sort.Slice(out.Symbols, func(i, j int) bool {
 		if out.Symbols[i].Path != out.Symbols[j].Path {
 			return out.Symbols[i].Path < out.Symbols[j].Path
@@ -490,4 +495,86 @@ func (s *Service) BranchDiff(ctx context.Context, workspace, branch string) (*Br
 		return out.Symbols[i].Name < out.Symbols[j].Name
 	})
 	return out, nil
+}
+
+// pairRenames matches removed+added symbol pairs in the same file with the
+// same kind whose declarations agree once the name is masked out — the
+// `method old() {}` -> `method renamed() {}` shape — and rewrites them as a
+// single renamed delta (git's rename-detection analogue for symbols).
+func pairRenames(out *BranchDiffResult) {
+	removed := map[int]bool{} // indexes into out.Symbols
+	added := map[int]bool{}
+	for i, d := range out.Symbols {
+		if d.Change == "removed" && d.Signature != "" {
+			removed[i] = true
+		}
+		if d.Change == "added" && d.Signature != "" {
+			added[i] = true
+		}
+	}
+	// Deterministic order: best name-similarity wins when several
+	// same-signature candidates exist (an empty-bodied `func x() {}`
+	// matches everything after masking).
+	for ri := range removed {
+		r := out.Symbols[ri]
+		best, bestScore := -1, -1
+		for ai := range added {
+			a := out.Symbols[ai]
+			if r.Path != a.Path || r.Kind != a.Kind {
+				continue
+			}
+			if maskName(r.Signature, r.Name) != maskName(a.Signature, a.Name) {
+				continue
+			}
+			score := nameSimilarity(r.Name, a.Name)
+			if score > bestScore {
+				best, bestScore = ai, score
+			}
+		}
+		if best >= 0 {
+			a := out.Symbols[best]
+			out.Symbols[best] = SymbolDelta{
+				Name: a.Name, Kind: a.Kind, Path: a.Path,
+				Change: "renamed", PrevName: r.Name,
+			}
+			out.Symbols[ri].Change = "consumed" // dropped below
+			delete(added, best)
+		}
+	}
+	kept := out.Symbols[:0]
+	for _, d := range out.Symbols {
+		if d.Change != "consumed" {
+			kept = append(kept, d)
+		}
+	}
+	out.Symbols = kept
+}
+
+// nameSimilarity scores how much two names share (bigram overlap), so the
+// most plausible removed/added pair wins among same-signature candidates.
+func nameSimilarity(a, b string) int {
+	if len(a) < 2 || len(b) < 2 {
+		return 0
+	}
+	counts := map[string]int{}
+	for i := 0; i+2 <= len(a); i++ {
+		counts[a[i:i+2]]++
+	}
+	score := 0
+	for i := 0; i+2 <= len(b); i++ {
+		if bg := b[i : i+2]; counts[bg] > 0 {
+			counts[bg]--
+			score++
+		}
+	}
+	return score
+}
+
+// maskName replaces the first occurrence of name in sig with a placeholder so
+// two declarations differing only in the symbol name compare equal.
+func maskName(sig, name string) string {
+	if i := strings.Index(sig, name); i >= 0 {
+		return sig[:i] + "\x00" + sig[i+len(name):]
+	}
+	return sig
 }
