@@ -84,6 +84,10 @@ skopos impact Handler --json | jq '.affected[].path'
 
 ## Notes
 
+- Agent hooks installed by `skopos install` detect local mode automatically
+  (`skopos mode` reads the client config) and route agents to the CLI via
+  Bash rather than naming MCP tools that don't exist without a server.
+
 - No server, no API key, nothing listens on any port.
 - Agents can still use the index indirectly through you; for agents to query
   it themselves, run a server (see [remote.md](remote.md)) — you can point it

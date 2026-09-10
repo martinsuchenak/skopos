@@ -611,13 +611,16 @@ func mergeHookSettings(path, hooksDir string, events []hookEvent, o Options, act
 		if !ok {
 			entryListAny = []any{}
 		}
-		// Idempotency: skip when this exact command is already registered
-		// for this event (matcher may differ in spelling but the command is
-		// unique per script).
+		// Idempotency: skip only an identical (matcher, command) pair under
+		// this event — the same script legitimately registers under several
+		// matchers (Grep + Agent + Bash).
 		found := false
 		for _, eAny := range entryListAny {
 			e, ok := eAny.(map[string]any)
 			if !ok {
+				continue
+			}
+			if m, _ := e["matcher"].(string); m != ev.matcher {
 				continue
 			}
 			hs, ok := e["hooks"].([]any)

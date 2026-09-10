@@ -42,11 +42,15 @@ if echo "$PROMPT" | grep -qiE 'how does|where is|who calls|what does|show me|exp
       fi
     fi
     if [ -n "$HITS" ]; then
+      TAIL="Use skopos symbol/who-calls/impact (Bash) for the full picture instead of grep."
+      if skopos_hook_is_remote; then
+        TAIL="Use code_symbol/code_callers/code_impact for the full picture instead of grep."
+      fi
       MSG="${MSG:+$MSG
 
 }[skopos code] Relevant symbols for '${TERMS}':
 $HITS
-Use code_symbol/code_callers/code_impact for the full picture instead of grep."
+$TAIL"
     fi
   fi
 fi

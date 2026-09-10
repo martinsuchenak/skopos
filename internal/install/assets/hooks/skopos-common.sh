@@ -37,3 +37,14 @@ skopos_hook_throttled() {
   echo "$NOW" > "$STAMP_FILE"
   return 1
 }
+
+# skopos_hook_mode — "remote <url>" when a server is configured, "local"
+# otherwise. MCP tools exist only in remote mode; in local mode the CLI is
+# the agent's interface.
+skopos_hook_mode() {
+  skopos mode 2>/dev/null || echo "local"
+}
+
+skopos_hook_is_remote() {
+  case "$(skopos_hook_mode)" in remote*) return 0;; *) return 1;; esac
+}

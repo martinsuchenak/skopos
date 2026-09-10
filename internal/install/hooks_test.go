@@ -22,13 +22,7 @@ func newHookEnv(t *testing.T) *hookTestEnv {
 	os.MkdirAll(filepath.Join(env.home, ".claude", "hooks"), 0o755)
 	os.MkdirAll(env.binDir, 0o755)
 	// Stub skopos: index status succeeds (in-project); search returns a hit.
-	os.WriteFile(filepath.Join(env.binDir, "skopos"), []byte(`#!/bin/sh
-case "$1" in
-  index) echo "main  10 files  20 symbols"; exit 0;;
-  search) echo '{"hits":[{"name":"LoadConfig","qualified":"Auth::LoadConfig","kind":"func","path":"auth.go","line":42}]}'; exit 0;;
-  *) exit 0;;
-esac
-`), 0o755)
+	os.WriteFile(filepath.Join(env.binDir, "skopos"), []byte("#!/bin/sh\ncase \"$1\" in\n  index) echo \"main  10 files  20 symbols\"; exit 0;;\n  search) echo '{\"hits\":[{\"name\":\"LoadConfig\",\"qualified\":\"Auth::LoadConfig\",\"kind\":\"func\",\"path\":\"auth.go\",\"line\":42}]}' ; exit 0;;\n  mode) echo \"${SKOPOS_TEST_MODE:-local}\"; exit 0;;\n  *) exit 0;;\nesac\n"), 0o755)
 	os.WriteFile(filepath.Join(env.project, ".git", "HEAD"), []byte("ref: refs/heads/feat/x"), 0o644)
 	// Prepend stubs to PATH via env when invoking scripts.
 	return env
@@ -72,12 +66,26 @@ func TestHooksSyntaxValid(t *testing.T) {
 func TestHookSessionEmitsBriefing(t *testing.T) {
 	env := newHookEnv(t)
 	out := env.runHook(t, "skopos-session.sh", `{}`)
-	if !strings.Contains(out, "skopos_context") || !strings.Contains(out, "main  10 files") {
-		t.Fatalf("session briefing missing content:\n%s", out)
+	// Default stub mode is local: guidance must route to the CLI, not MCP.
+	if !strings.Contains(out, "Local code index is active") || !strings.Contains(out, "skopos search") || !strings.Contains(out, "main  10 files") {
+		t.Fatalf("session briefing missing local-mode content:\n%s", out)
 	}
 	var v map[string]any
 	if err := json.Unmarshal([]byte(out), &v); err != nil {
 		t.Fatalf("not valid JSON: %v\n%s", err, out)
+	}
+}
+
+func TestHookSessionRemoteModeRoutesToMCP(t *testing.T) {
+	env := newHookEnv(t)
+	os.Setenv("SKOPOS_TEST_MODE", "remote http://127.0.0.1:9999")
+	t.Cleanup(func() { os.Unsetenv("SKOPOS_TEST_MODE") })
+	out := env.runHook(t, "skopos-session.sh", `{}`)
+	if !strings.Contains(out, "skopos_context") || !strings.Contains(out, "code_search") {
+		t.Fatalf("remote session briefing must name MCP tools:\n%s", out)
+	}
+	if strings.Contains(out, "no MCP tools") {
+		t.Fatalf("local wording leaked into remote mode:\n%s", out)
 	}
 }
 
@@ -100,7 +108,7 @@ func TestHookPromptCheckpointEvery10Turns(t *testing.T) {
 func TestHookPreToolNudgesSymbolGrep(t *testing.T) {
 	env := newHookEnv(t)
 	out := env.runHook(t, "skopos-pre-tool.sh", `{"tool_name":"Grep","tool_input":{"pattern":"LoadConfig"}}`)
-	if !strings.Contains(out, "who-calls") {
+	if !strings.Contains(out, "who-calls") { // CLI wording in local mode
 		t.Fatalf("expected grep nudge:\n%s", out)
 	}
 	// Literal-string greps are legitimately grep's job — no nudge.
@@ -140,5 +148,58 @@ func TestHookSilentWhenSkoposUnavailable(t *testing.T) {
 	}
 	if out != "" {
 		t.Fatalf("hook must be silent when unavailable, got:\n%s", out)
+	}
+}
+
+func TestMergeHookSettingsRegistersAllMatchers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	// Pre-existing foreign hook must survive.
+	os.WriteFile(path, []byte(`{"hooks":{"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/other/hook.sh"}]}]}}`), 0o644)
+
+	var actions []string
+	events := []hookEvent{
+		{event: "PreToolUse", matcher: "Grep", script: "skopos-pre-tool.sh"},
+		{event: "PreToolUse", matcher: "Agent", script: "skopos-pre-tool.sh"},
+		{event: "PreToolUse", matcher: "Bash", script: "skopos-pre-tool.sh"},
+	}
+	if err := mergeHookSettings(path, "/h", events, Options{}, &actions); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(path)
+	var v struct {
+		Hooks map[string][]struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatal(err)
+	}
+	var ours []string
+	for _, e := range v.Hooks["PreToolUse"] {
+		for _, h := range e.Hooks {
+			if strings.Contains(h.Command, "skopos-pre-tool.sh") {
+				ours = append(ours, e.Matcher)
+			}
+		}
+	}
+	if len(ours) != 3 {
+		t.Fatalf("expected 3 matcher entries (Grep, Agent, Bash), got %v (all=%+v)", ours, v.Hooks["PreToolUse"])
+	}
+	// Foreign hook preserved.
+	if len(v.Hooks["PostToolUse"]) != 1 || v.Hooks["PostToolUse"][0].Hooks[0].Command != "/other/hook.sh" {
+		t.Fatalf("foreign hook lost: %+v", v.Hooks["PostToolUse"])
+	}
+	// Re-run is a no-op.
+	var actions2 []string
+	if err := mergeHookSettings(path, "/h", events, Options{}, &actions2); err != nil {
+		t.Fatal(err)
+	}
+	raw2, _ := os.ReadFile(path)
+	if string(raw2) != string(raw) {
+		t.Fatal("idempotent re-run must not change settings")
 	}
 }

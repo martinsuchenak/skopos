@@ -105,6 +105,13 @@ actually use skopos (opt out with `--no-hooks`):
 - **PreToolUse (Grep/Agent/Bash)** — nudges symbol-shaped greps and Explore
   dispatches toward `code_*` tools; literal-string and exhaustive greps are
   left alone
+
+The hooks are **mode-aware** (via `skopos mode`, which reads the client
+config): with a server configured they steer agents to the MCP tools; in
+local-only mode — no server, so no MCP exists — they steer agents to the
+CLI through Bash (`skopos search/symbol/who-calls/impact`) instead, and say
+so explicitly. The ready-guard also adapts: a hook stays silent whenever
+the index is unreachable in the active mode.
 - **PostToolUse (Edit/Write)** — after source edits, a throttled (5 min)
   reminder to record the decision on the blackboard
 - **Stop** — end-of-session reminder to extract durable facts (decisions,

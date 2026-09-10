@@ -17,7 +17,11 @@ case "$TOOL_NAME" in
     # Symbol-shaped patterns benefit from the graph (callers/impact); literal
     # strings legitimately belong to grep.
     if echo "$PATTERN" | grep -qE '^[A-Za-z_][A-Za-z0-9_:.-]*$'; then
-      NUDGE="[skopos] Symbol-shaped grep. skopos who-calls/impact or code_callers answer caller and blast-radius questions the search can't; try them first, fall back to grep for exhaustive listings."
+      if skopos_hook_is_remote; then
+        NUDGE="[skopos] Symbol-shaped grep. code_callers/code_impact (MCP) answer caller and blast-radius questions the search can't; try them first, fall back to grep for exhaustive listings."
+      else
+        NUDGE="[skopos] Symbol-shaped grep. 'skopos who-calls' / 'skopos impact' (Bash) answer caller and blast-radius questions the search can't; try them first, fall back to grep for exhaustive listings."
+      fi
     fi
     ;;
   Agent)
@@ -33,7 +37,11 @@ case "$TOOL_NAME" in
     if echo "$CMD" | grep -qE '^\s*(rg|grep|ag|find|fd)\b'; then
       # Exhaustive listings are legitimately grep's job — only nudge lookups.
       if ! echo "$CMD" | grep -qiE 'all (usages|occurrences|references|instances)|list all|-r'; then
-        NUDGE="[skopos] For symbol/code-structure lookups, skopos search/symbol/who-calls use the shared index — faster and it understands callers."
+        if skopos_hook_is_remote; then
+          NUDGE="[skopos] For symbol/code-structure lookups, code_search/code_symbol (MCP) use the shared index — faster and it understands callers."
+        else
+          NUDGE="[skopos] For symbol/code-structure lookups, 'skopos search/symbol' (Bash) use the shared index — faster and it understands callers."
+        fi
       fi
     fi
     ;;
