@@ -18,7 +18,7 @@ import (
 
 // ExtractorVersion changes whenever extraction logic changes; it is mixed
 // into the content hash so already-indexed files re-extract after upgrades.
-const ExtractorVersion = "8"
+const ExtractorVersion = "9"
 
 // DefaultTimeout is the per-file parse budget. Files that exceed it are still
 // parsed via tree-sitter error recovery and flagged (the measured pathological
@@ -149,7 +149,7 @@ func (e *Extractor) ParseBytes(path string, src []byte) (*FileResult, error) {
 			if secTree.RootNode().HasErrorOrMissing() {
 				res.Err = true
 			}
-			lineOff := lineOffsetAt(src, sec.start)
+			lineOff := lineOffsetAt(src, sec.start) + sec.lineAdjust
 			for i := range secRes.Symbols {
 				secRes.Symbols[i].Line += lineOff
 				secRes.Symbols[i].StartByte += sec.start
@@ -244,7 +244,7 @@ func walkTree(prof *langProfile, root *gts.Node, lang *gts.Language, src []byte,
 					kind = "interface"
 				}
 			}
-			if name, ok := childName(n, lang, src); ok && name != "_" {
+			if name, ok := childName(prof, n, lang, src); ok && name != "_" {
 				qual := ""
 				if typeName != "" {
 					qual = typeName + "::" + name
@@ -282,21 +282,22 @@ func walkTree(prof *langProfile, root *gts.Node, lang *gts.Language, src []byte,
 	}
 }
 
-// childName finds the first identifier-ish child's text.
-func childName(n *gts.Node, lang *gts.Language, src []byte) (string, bool) {
+// childName finds the first name-node child's text (identifier-ish types
+// plus the profile's extra name nodes).
+func childName(p *langProfile, n *gts.Node, lang *gts.Language, src []byte) (string, bool) {
 	for i := 0; i < n.NamedChildCount(); i++ {
 		c := n.NamedChild(i)
 		if c == nil {
 			continue
 		}
-		if identifierTypes[c.Type(lang)] {
+		if p.isName(c.Type(lang)) {
 			return string(src[c.StartByte():c.EndByte()]), true
 		}
 		// one level down covers e.g. Go's method_declaration > receiver is
 		// skipped and name found later; also (type: (type_identifier) name: ...)
 		for j := 0; j < c.NamedChildCount(); j++ {
 			g := c.NamedChild(j)
-			if g != nil && identifierTypes[g.Type(lang)] {
+			if g != nil && p.isName(g.Type(lang)) {
 				return string(src[g.StartByte():g.EndByte()]), true
 			}
 		}
@@ -346,7 +347,7 @@ func calleeName(p *langProfile, n *gts.Node, lang *gts.Language, src []byte, typ
 		if receiverText == "" {
 			receiverText = strings.TrimSpace(string(src[c.StartByte():c.EndByte()]))
 		}
-		if identifierTypes[ct] {
+		if p.isName(ct) {
 			last = string(src[c.StartByte():c.EndByte()])
 			found = true
 		}
@@ -355,7 +356,7 @@ func calleeName(p *langProfile, n *gts.Node, lang *gts.Language, src []byte, typ
 		scanParts(f.NamedChild(i))
 	}
 	if !found {
-		if f != n && identifierTypes[f.Type(lang)] {
+		if f != n && p.isName(f.Type(lang)) {
 			return string(src[f.StartByte():f.EndByte()]), true
 		}
 		return "", false

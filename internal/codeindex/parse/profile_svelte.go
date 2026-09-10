@@ -22,13 +22,23 @@ func init() {
 		base.calls = map[string]bool{}
 		registerProfile(&base)
 	}
+	// Blade: {{ expr }} chunks live in php_only nodes as raw PHP expression
+	// fragments (no <?php tag); wrap them so the PHP grammar parses cleanly.
+	base := *commonProfile
+	base.name = "blade"
+	base.embeddedSections = bladeSections
+	base.containerKinds = map[string]bool{}
+	base.defs = map[string]string{}
+	base.calls = map[string]bool{}
+	registerProfile(&base)
 }
 
 // section is one embedded language chunk inside a host document.
 type section struct {
-	lang  string // grammar name to re-parse with ("javascript", "typescript", "css")
-	start int    // byte offset in the host source
-	src   []byte
+	lang       string // grammar name to re-parse with ("javascript", "typescript", "css", "php")
+	start      int    // byte offset in the host source
+	src        []byte
+	lineAdjust int // line delta applied after host offset (e.g. -1 for injected prologues)
 }
 
 // sfcSections finds <script ...> and <style> raw_text spans in an HTML-ish
@@ -80,6 +90,31 @@ func sfcSections(root *gts.Node, lang *gts.Language, src []byte) []section {
 	return out
 }
 
+// bladeSections extracts every php_only child (the content of {{ ... }} and
+// @directive arguments) as a PHP fragment, wrapped in a <?php prologue so
+// the PHP grammar parses it as a program. The prologue is one line, so
+// section lines shift by one and are corrected by the caller via
+// section.lineAdjust.
+func bladeSections(root *gts.Node, lang *gts.Language, src []byte) []section {
+	var out []section
+	var walk func(n *gts.Node)
+	walk = func(n *gts.Node) {
+		if n == nil {
+			return
+		}
+		if n.Type(lang) == "php_only" {
+			content := src[n.StartByte():n.EndByte()]
+			wrapped := append([]byte("<?php "), content...)
+			out = append(out, section{lang: "php", start: int(n.StartByte()), src: wrapped})
+		}
+		for i := 0; i < n.ChildCount(); i++ {
+			walk(n.Child(i))
+		}
+	}
+	walk(root)
+	return out
+}
+
 // sectionGrammar resolves a section's grammar name to its language.
 func sectionGrammar(name string) *gts.Language {
 	switch name {
@@ -89,6 +124,8 @@ func sectionGrammar(name string) *gts.Language {
 		return grammars.TypescriptLanguage()
 	case "css":
 		return grammars.CssLanguage()
+	case "php":
+		return grammars.PhpLanguage()
 	}
 	return nil
 }

@@ -46,6 +46,11 @@ type langProfile struct {
 	// variable bindings. Optional.
 	methodScope func(def *gts.Node, lang *gts.Language, src []byte) (typeName string, vars map[string]string)
 
+	// nameNodes are leaf node types whose text is a symbol name in this
+	// grammar, beyond the shared identifierTypes (e.g. twig names the macro
+	// identifier node "method"). Optional.
+	nameNodes map[string]bool
+
 	// embeddedSections extracts embedded language chunks from a host
 	// document (script/style in Svelte/Vue/HTML) for re-parsing with the
 	// matching grammar. Optional.
@@ -60,6 +65,11 @@ type langProfile struct {
 	// qualify a callee the generic rules left bare (PHP's `Klass::method`
 	// static syntax and `X::class` container idiom). Optional.
 	qualifyCallee func(call *gts.Node, lang *gts.Language, src []byte, receiverText, method string) (string, bool)
+}
+
+// isName reports whether a node type is a name node for this profile.
+func (p *langProfile) isName(nodeType string) bool {
+	return identifierTypes[nodeType] || p.nameNodes[nodeType]
 }
 
 // profiles maps language names to their profile; registration happens in

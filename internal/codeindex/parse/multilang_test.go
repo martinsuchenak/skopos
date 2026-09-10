@@ -284,3 +284,39 @@ export default {
 		}
 	}
 }
+
+// TestProfileTwig: macros are definitions; {{ helper(x) }} are call edges;
+// filters (|escape) are builtins and must not be edges.
+func TestProfileTwig(t *testing.T) {
+	res := parseStr(t, "card.html.twig", `{% macro card(user) %}
+{{ helper(user) }}
+{{ user.name|escape }}
+{% endmacro %}
+{{ card(u) }}`)
+	syms := symbolsByQual(res)
+	if _, ok := syms["card"]; !ok || syms["card"].Kind != "func" {
+		t.Fatalf("macro symbol: %+v", res.Symbols)
+	}
+	c := callees(res)
+	if !c["helper"] || !c["card"] {
+		t.Fatalf("macro/helper call edges: %+v", res.Edges)
+	}
+	if c["escape"] {
+		t.Fatalf("twig builtin filter must not be an edge: %+v", res.Edges)
+	}
+}
+
+// TestProfileBlade: {{ expr }} chunks re-parse as PHP fragments with
+// host-relative line numbers.
+func TestProfileBlade(t *testing.T) {
+	res := parseStr(t, "view.blade.php", "{{ $user->name }}\n{{ formatUser($u) }}")
+	c := callees(res)
+	if !c["formatUser"] {
+		t.Fatalf("blade call edge: %+v", res.Edges)
+	}
+	for _, e := range res.Edges {
+		if e.Callee == "formatUser" && e.Line != 2 {
+			t.Fatalf("blade edge line = %d, want 2", e.Line)
+		}
+	}
+}
