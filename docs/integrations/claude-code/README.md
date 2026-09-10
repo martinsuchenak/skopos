@@ -8,21 +8,35 @@ Two layers: MCP (rich voluntary reporting) + hooks (automatic lifecycle reportin
 - `skopos` binary in PATH: `sudo ln -sf $(pwd)/bin/skopos /usr/local/bin/skopos`
 - `jq` installed: `brew install jq`
 
-> **Quick install:** `skopos install --agent claude-code [--url ...] [--api-key "$SKOPOS_API_KEY"]` does Step 1 for you — it merges the MCP config into `~/.claude/settings.json` and installs the skill (idempotent, backs up existing config). Add `--scope project` to write into `.claude/` instead. The manual steps below are the fallback.
+> **Quick install:** `skopos install --agent claude-code [--url ...] [--api-key "$SKOPOS_API_KEY"]` does Steps 1–2 for you: it merges the MCP entry into `~/.claude.json` (user scope; `--scope project` writes `.mcp.json` instead — Claude Code does not read `mcpServers` from `settings.json`), installs the hook suite into `~/.claude/hooks/` and registers it in `~/.claude/settings.json`, writes the `/skopos` (code exploration) and `/skopos-report` commands, and manages the behavioral block in `~/.claude/CLAUDE.md` between `<!-- skopos:begin -->` / `<!-- skopos:end -->` markers. Idempotent; backs up existing config. The manual steps below are the fallback.
 
 ## Step 1: Apply MCP + hooks config
 
-Find the absolute path to the hooks script:
+MCP servers go into `~/.claude.json` (top-level `mcpServers`, user scope) or `.mcp.json` in the repo root (project scope) — **not** `settings.json`, which only carries hooks and hook-adjacent settings:
+
+```json
+{
+  "mcpServers": {
+    "skopos": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp",
+      "headers": { "Authorization": "Bearer ${SKOPOS_API_KEY}" }
+    }
+  }
+}
+```
+
+> The `type` field is required: an entry with a `url` but no `type` is treated as stdio and skipped.
+
+For hooks, find the absolute path to the hooks script:
 
 ```bash
 echo "$(pwd)/docs/integrations/claude-code/hooks.sh"
 ```
 
-Open `~/.claude/settings.json` (create it if it doesn't exist) and merge in the contents of `settings-snippet.json`, replacing `SKOPOS_HOOKS_PATH` with the path above.
+Open `~/.claude/settings.json` (create it if it doesn't exist) and merge in the `hooks` section of `settings-snippet.json`, replacing `SKOPOS_HOOKS_PATH` with the path above. If you already have `hooks`, add the `skopos` entries to the existing object — do not replace the whole file.
 
-If you already have `mcpServers` or `hooks` sections, add the `skopos` entries to the existing objects — do not replace the whole file.
-
-> **Auth:** The snippet's `skopos` MCP server sends `Authorization: Bearer ${SKOPOS_API_KEY}`. This header is only required when `auth.api_key` is set on the server; Claude Code expands the env var automatically.
+> **Auth:** The `Authorization` header is only required when `auth.api_key` is set on the server; in `.mcp.json` Claude Code expands `${SKOPOS_API_KEY}` from your environment automatically.
 
 Set your API key in the environment (add to `~/.zshrc` or `~/.bashrc`):
 

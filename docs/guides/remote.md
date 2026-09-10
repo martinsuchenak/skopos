@@ -93,6 +93,28 @@ Agents get the `code_*` tools: `code_search`, `code_symbol`, `code_outline`,
 `code_cycles`, `code_branch_diff`, `code_index_status` — plus the blackboard,
 plans, and status tools.
 
+Each agent gets the integration written in its own config format and
+location (global scope shown; `--scope project` writes the repo-level
+equivalents):
+
+| Agent | MCP config | Behavioral block |
+| --- | --- | --- |
+| claude-code | `~/.claude.json` → `mcpServers.skopos` (project: `.mcp.json`) | `~/.claude/CLAUDE.md` + hooks + `/skopos`, `/skopos-report` commands |
+| codex | `~/.codex/config.toml` → `[mcp_servers.skopos]` (auth in `http_headers`) | `~/AGENTS.md` |
+| gemini-cli | `~/.gemini/settings.json` → `mcpServers.skopos` (`httpUrl` for streamable HTTP) | `~/.gemini/GEMINI.md` |
+| github-copilot | VS Code user `mcp.json` → `servers.skopos` | `~/.github/copilot-instructions.md` |
+| kiro | `~/.kiro/settings/mcp.json` → `mcpServers.skopos` | `.kiro/steering/skopos.md` (project-only, `alwaysApply` frontmatter) |
+| opencode | `~/.config/opencode/opencode.json` → `mcp.skopos` (type `remote`) | `~/.config/opencode/AGENTS.md` |
+
+Every prompt block is managed between `<!-- skopos:begin -->` /
+`<!-- skopos:end -->` markers (re-running install refreshes it in place; a
+`skopos:version` comment inside tracks the block revision). The block
+carries the standing rules in mandatory terms: skopos first for code
+exploration — no grep/find or search sub-agents until skopos has been
+tried; proactive blackboard writes during the session; status reporting
+cadence. It is also mode-aware: it tells the agent to check `skopos mode`
+once per session and use the MCP tools when remote, the CLI when local.
+
 For Claude Code, `skopos install` also installs a hook suite that makes agents
 actually use skopos (opt out with `--no-hooks`):
 
@@ -105,6 +127,10 @@ actually use skopos (opt out with `--no-hooks`):
 - **PreToolUse (Grep/Agent/Bash)** — nudges symbol-shaped greps and Explore
   dispatches toward `code_*` tools; literal-string and exhaustive greps are
   left alone
+- **PostToolUse (Edit/Write)** — after source edits, a throttled (5 min)
+  reminder to record the decision on the blackboard
+- **Stop** — end-of-session reminder to extract durable facts (decisions,
+  rejected approaches, contracts, conventions, bugs/debt) and archive plans
 
 The hooks are **mode-aware** (via `skopos mode`, which reads the client
 config): with a server configured they steer agents to the MCP tools; in
@@ -112,14 +138,6 @@ local-only mode — no server, so no MCP exists — they steer agents to the
 CLI through Bash (`skopos search/symbol/who-calls/impact`) instead, and say
 so explicitly. The ready-guard also adapts: a hook stays silent whenever
 the index is unreachable in the active mode.
-- **PostToolUse (Edit/Write)** — after source edits, a throttled (5 min)
-  reminder to record the decision on the blackboard
-- **Stop** — end-of-session reminder to extract durable facts (decisions,
-  rejected approaches, contracts, conventions, bugs/debt) and archive plans
-
-The behavioral prompt (CLAUDE.md block) carries the standing rules: skopos
-tools before grep for code structure, proactive blackboard writes during the
-session, status reporting cadence.
 
 ## 6. Housekeeping
 

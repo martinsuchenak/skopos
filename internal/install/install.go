@@ -10,26 +10,14 @@ import (
 	"strings"
 )
 
-//go:embed assets/kiro-steering.md
-var kiroSteering string
+//go:embed assets/agent-block.md
+var agentBlock string
 
 //go:embed assets/claude-skill.md
 var claudeSkill string
 
-//go:embed assets/claude-claude.md
-var claudeClaude string
-
-//go:embed assets/gemini-instructions.md
-var geminiInstructions string
-
-//go:embed assets/opencode-agents.md
-var opencodeAgents string
-
-//go:embed assets/codex-agents.md
-var codexAgents string
-
-//go:embed assets/copilot-instructions.md
-var copilotInstructions string
+//go:embed assets/claude-explore.md
+var claudeExplore string
 
 //go:embed assets/hooks/skopos-common.sh
 var hookCommon string
@@ -48,6 +36,24 @@ var hookPostTool string
 
 //go:embed assets/hooks/skopos-stop.sh
 var hookStop string
+
+// renderAgentBlock specializes the shared behavioral block for one agent:
+// the report_status agent_type everywhere, plus the exploration-skill
+// invocation line for agents that support slash-command skills.
+func renderAgentBlock(agent string) string {
+	skill := ""
+	if agent == "claude-code" {
+		// Leading/trailing newlines give the line its own paragraph.
+		skill = "\nInvoke the exploration skill directly: `Skill(skill: \"skopos\", args: \"<your query>\")`\n"
+	}
+	b := strings.ReplaceAll(agentBlock, "{{SKILL_LINE}}\n", skill)
+	b = strings.ReplaceAll(b, "{{AGENT_TYPE}}", agent)
+	if agent == "kiro" {
+		// Kiro steering documents need frontmatter to be picked up at all.
+		b = "---\ndescription: Skopos code index, shared memory (blackboard), plans, and agent status\nalwaysApply: true\n---\n\n" + b
+	}
+	return b
+}
 
 // hookScripts maps file names to their embedded sources.
 var hookScripts = map[string]string{
@@ -123,7 +129,10 @@ func installAgent(name string, o Options) (Result, error) {
 
 	switch name {
 	case "claude-code":
-		cfg := scopePath(o.Scope, filepath.Join(homeOrErr(), ".claude", "settings.json"), filepath.Join(".claude", "settings.json"))
+		// Claude Code does not read mcpServers from settings.json: user scope
+		// lives in ~/.claude.json, project scope in .mcp.json at the repo root.
+		// (Hooks, skills, and CLAUDE.md do belong where they are below.)
+		cfg := scopePath(o.Scope, filepath.Join(homeOrErr(), ".claude.json"), ".mcp.json")
 		if err := mergeJSONFile(cfg, []string{"mcpServers", "skopos"}, entry, o, &r.Actions); err != nil {
 			return r, err
 		}
@@ -131,9 +140,13 @@ func installAgent(name string, o Options) (Result, error) {
 		if err := writeFileAction(skill, claudeSkill, o, &r.Actions); err != nil {
 			return r, err
 		}
+		explore := scopePath(o.Scope, filepath.Join(homeOrErr(), ".claude", "commands", "skopos.md"), filepath.Join(".claude", "commands", "skopos.md"))
+		if err := writeFileAction(explore, claudeExplore, o, &r.Actions); err != nil {
+			return r, err
+		}
 		// Always-on behavioral instructions in the global CLAUDE.md.
 		claudeMd := scopePath(o.Scope, filepath.Join(homeOrErr(), ".claude", "CLAUDE.md"), "CLAUDE.md")
-		if err := appendBlockAction(claudeMd, claudeClaude, o, &r.Actions); err != nil {
+		if err := appendBlockAction(claudeMd, renderAgentBlock(name), o, &r.Actions); err != nil {
 			return r, err
 		}
 		if err := installClaudeHooks(o, &r.Actions); err != nil {
@@ -148,7 +161,7 @@ func installAgent(name string, o Options) (Result, error) {
 		}
 		// Always-on behavioral instructions in the global ~/AGENTS.md.
 		agentsMd := scopePath(o.Scope, filepath.Join(homeOrErr(), "AGENTS.md"), "AGENTS.md")
-		if err := appendBlockAction(agentsMd, codexAgents, o, &r.Actions); err != nil {
+		if err := appendBlockAction(agentsMd, renderAgentBlock(name), o, &r.Actions); err != nil {
 			return r, err
 		}
 
@@ -159,7 +172,7 @@ func installAgent(name string, o Options) (Result, error) {
 		}
 		// Always-on behavioral instructions in the global GEMINI.md.
 		geminiMd := scopePath(o.Scope, filepath.Join(homeOrErr(), ".gemini", "GEMINI.md"), "GEMINI.md")
-		if err := appendBlockAction(geminiMd, geminiInstructions, o, &r.Actions); err != nil {
+		if err := appendBlockAction(geminiMd, renderAgentBlock(name), o, &r.Actions); err != nil {
 			return r, err
 		}
 
@@ -168,7 +181,10 @@ func installAgent(name string, o Options) (Result, error) {
 		if err := mergeJSONFile(cfg, []string{"servers", "skopos"}, entry, o, &r.Actions); err != nil {
 			return r, err
 		}
-		if err := appendBlockAction(filepath.Join(".github", "copilot-instructions.md"), copilotInstructions, o, &r.Actions); err != nil {
+		// Global instructions are the personal file in ~/.github; project
+		// instructions live in the repo.
+		instructions := scopePath(o.Scope, filepath.Join(homeOrErr(), ".github", "copilot-instructions.md"), filepath.Join(".github", "copilot-instructions.md"))
+		if err := appendBlockAction(instructions, renderAgentBlock(name), o, &r.Actions); err != nil {
 			return r, err
 		}
 
@@ -178,7 +194,7 @@ func installAgent(name string, o Options) (Result, error) {
 			return r, err
 		}
 		// Steering is inherently project-level.
-		if err := writeFileAction(filepath.Join(".kiro", "steering", "skopos.md"), kiroSteering, o, &r.Actions); err != nil {
+		if err := writeFileAction(filepath.Join(".kiro", "steering", "skopos.md"), renderAgentBlock(name), o, &r.Actions); err != nil {
 			return r, err
 		}
 
@@ -189,24 +205,32 @@ func installAgent(name string, o Options) (Result, error) {
 		}
 		// Write behavioral instructions to the global AGENTS.md.
 		agentsPath := scopePath(o.Scope, filepath.Join(homeOrErr(), ".config", "opencode", "AGENTS.md"), "AGENTS.md")
-		if err := appendBlockAction(agentsPath, opencodeAgents, o, &r.Actions); err != nil {
+		if err := appendBlockAction(agentsPath, renderAgentBlock(name), o, &r.Actions); err != nil {
 			return r, err
 		}
 	}
 	return r, nil
 }
 
-// mcpEntry builds the MCP server entry for an agent's config format.
+// mcpEntry builds the MCP server entry for an agent's config format. The
+// shapes follow each agent's documented schema — they are not interchangeable:
+// Claude Code and VS Code want type+url, Gemini CLI marks streamable HTTP as
+// "httpUrl" ("url" would select the SSE transport), OpenCode uses type
+// "remote", and Kiro infers remote servers from "url" alone.
 func mcpEntry(agent, url, apiKey string) map[string]any {
-	e := map[string]any{"url": url}
+	e := map[string]any{}
 	switch agent {
 	case "claude-code", "github-copilot":
 		e["type"] = "http"
+		e["url"] = url
 	case "gemini-cli":
-		e["type"] = "http"
+		e["httpUrl"] = url
 		e["trust"] = true
 	case "opencode":
 		e["type"] = "remote"
+		e["url"] = url
+	default: // kiro
+		e["url"] = url
 	}
 	if apiKey != "" {
 		e["headers"] = map[string]any{"Authorization": "Bearer " + apiKey}
@@ -250,15 +274,15 @@ func mergeJSONFile(path string, keyPath []string, entry map[string]any, o Option
 		return fmt.Errorf("reading %s: %w", path, err)
 	}
 
-	// If the skopos entry already exists with the same URL, skip (idempotent).
+	// If the skopos entry already exists with the same URL and headers, skip
+	// (idempotent). The URL key differs per agent ("url" vs "httpUrl").
 	if existing := getNested(data, keyPath); existing != nil {
-		if existingURL, ok := existing["url"].(string); ok && existingURL == entry["url"].(string) {
-			if existingHeaders, ok2 := existing["headers"].(map[string]any); ok2 {
-				entryHeaders, _ := entry["headers"].(map[string]any)
-				if fmt.Sprint(existingHeaders) == fmt.Sprint(entryHeaders) {
-					*actions = append(*actions, fmt.Sprintf("skopos entry already up-to-date in %s", path))
-					return nil
-				}
+		if entryURL(existing) != "" && entryURL(existing) == entryURL(entry) {
+			existingHeaders, _ := existing["headers"].(map[string]any)
+			entryHeaders, _ := entry["headers"].(map[string]any)
+			if fmt.Sprint(existingHeaders) == fmt.Sprint(entryHeaders) {
+				*actions = append(*actions, fmt.Sprintf("skopos entry already up-to-date in %s", path))
+				return nil
 			}
 		}
 	}
@@ -283,6 +307,17 @@ func mergeJSONFile(path string, keyPath []string, entry map[string]any, o Option
 	}
 	*actions = append(*actions, fmt.Sprintf("merged skopos MCP entry into %s", path))
 	return nil
+}
+
+// entryURL returns the server URL from an MCP entry, whichever key it uses.
+func entryURL(e map[string]any) string {
+	if u, ok := e["url"].(string); ok {
+		return u
+	}
+	if u, ok := e["httpUrl"].(string); ok {
+		return u
+	}
+	return ""
 }
 
 func readJSONMap(path string) (map[string]any, bool, error) {
@@ -368,12 +403,18 @@ func mergeCodexTOML(path string, o Options, actions *[]string) error {
 	}
 
 	// %q escaping keeps quotes/backslashes in the key from breaking the TOML.
+	// Codex spells static headers "http_headers" — a plain "headers" table is
+	// silently ignored, which would drop the API key.
 	block := fmt.Sprintf("[mcp_servers.skopos]\nenabled = true\nurl = %q\n", o.URL)
 	if o.APIKey != "" {
-		block += fmt.Sprintf("\n[mcp_servers.skopos.headers]\nAuthorization = %q\n", "Bearer "+o.APIKey)
+		block += fmt.Sprintf("\n[mcp_servers.skopos.http_headers]\nAuthorization = %q\n", "Bearer "+o.APIKey)
 	}
 	updated := setTOMLSection(content, block)
 
+	if updated == content {
+		*actions = append(*actions, "skopos MCP block already up-to-date in "+path)
+		return nil
+	}
 	if o.DryRun {
 		verb := "would merge"
 		if !existed {
@@ -460,7 +501,7 @@ func writeFileAction(path, content string, o Options, actions *[]string) error {
 func appendBlockAction(path, content string, o Options, actions *[]string) error {
 	const begin = "<!-- skopos:begin -->"
 	const end = "<!-- skopos:end -->"
-	content = strings.TrimRight(content, "\n")
+	content = strings.TrimSpace(stripMarkers(strings.TrimSpace(content)))
 	inner := begin + "\n" + content + "\n" + end + "\n"
 
 	existing := ""
@@ -479,6 +520,10 @@ func appendBlockAction(path, content string, o Options, actions *[]string) error
 			existing += "\n"
 		}
 		updated = existing + inner
+	}
+	if updated == existing && hadBlock {
+		*actions = append(*actions, "skopos block already up-to-date in "+path)
+		return nil
 	}
 
 	if o.DryRun {
@@ -515,6 +560,16 @@ func replaceMarker(s, begin, end, inner string) string {
 		ei++
 	}
 	return s[:bi] + inner + s[ei:]
+}
+
+// stripMarkers removes any begin/end marker comments from content so a block
+// is never wrapped twice (nested markers would confuse the replacement pass).
+func stripMarkers(s string) string {
+	s = strings.ReplaceAll(s, "<!-- skopos:begin -->\n", "")
+	s = strings.ReplaceAll(s, "<!-- skopos:end -->\n", "")
+	s = strings.ReplaceAll(s, "<!-- skopos:begin -->", "")
+	s = strings.ReplaceAll(s, "<!-- skopos:end -->", "")
+	return s
 }
 
 func backup(path string) error {

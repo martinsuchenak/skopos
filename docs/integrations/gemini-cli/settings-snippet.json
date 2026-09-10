@@ -1,9 +1,8 @@
 {
-  "_comment": "Add the 'skopos' entry under mcpServers in ~/.gemini/settings.json. The Authorization header is only required when auth.api_key is set on the server; Gemini CLI expands ${SKOPOS_API_KEY} from your environment.",
+  "_comment": "Add the 'skopos' entry under mcpServers in ~/.gemini/settings.json. Use httpUrl (not url) — in Gemini CLI 'url' selects the SSE transport while 'httpUrl' is streamable HTTP, which is what skopos serves at /mcp. The Authorization header is only required when auth.api_key is set on the server.",
   "mcpServers": {
     "skopos": {
-      "url": "http://localhost:8080/mcp",
-      "type": "http",
+      "httpUrl": "http://localhost:8080/mcp",
       "trust": true,
       "headers": {
         "Authorization": "Bearer ${SKOPOS_API_KEY}"
