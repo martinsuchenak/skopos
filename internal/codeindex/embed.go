@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/martinsuchenak/skopos/internal/codeindex/parse"
 )
 
 // Embedder produces vectors for symbol descriptions. Any OpenAI-compatible
@@ -210,11 +212,7 @@ func (s *Service) EmbedPending(ctx context.Context, workspace string, embedder E
 				rows.Close()
 				return 0, err
 			}
-			text := name
-			if sig != "" {
-				text += "\n" + sig
-			}
-			byID[id] = text
+			byID[id] = embedText(name, sig)
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
@@ -309,16 +307,33 @@ func (s *Service) SemanticSearch(ctx context.Context, workspace, branch, query s
 	// restore the vector-store ranking before fusing.
 	sort.Slice(vecHits, func(i, j int) bool { return vecHits[i].rank < vecHits[j].rank })
 
-	// RRF fusion (k=60) over FTS and vector rankings.
+	// RRF fusion (k=60) over FTS and vector rankings. Each (name, path)
+	// key is scored once per leg at its BEST rank — repeated definitions
+	// (the same CSS selector at several lines, generated code) would
+	// otherwise pool their credit and outrank the true best match — while
+	// a hit found by both legs still earns both credits.
 	const rrfK = 60
+	dedupe := func(hits []SymbolHit) []SymbolHit {
+		seen := make(map[string]bool, len(hits))
+		out := make([]SymbolHit, 0, len(hits))
+		for _, h := range hits {
+			key := h.Name + "\x00" + h.Path
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, h)
+		}
+		return out
+	}
 	score := map[string]float64{}
 	merged := map[string]SymbolHit{}
-	for i, h := range base.Hits {
+	for i, h := range dedupe(base.Hits) {
 		key := h.Name + "\x00" + h.Path
 		score[key] += 1.0 / float64(rrfK+i+1)
 		merged[key] = h
 	}
-	for i, h := range vecHits {
+	for i, h := range dedupe(vecHits) {
 		key := h.Name + "\x00" + h.Path
 		score[key] += 1.0 / float64(rrfK+i+1)
 		if _, ok := merged[key]; !ok {
@@ -343,11 +358,28 @@ func (s *Service) SemanticSearch(ctx context.Context, workspace, branch, query s
 
 // ---- async embedding worker ----
 
+// embedText builds the text vectorized for a symbol. CamelCase identifiers
+// are opaque to embedding models ("likeEscape" never surfaces the word
+// "escape"), so the split subtokens are appended — the same trick the FTS
+// name_parts column uses. Changing this only affects newly embedded
+// symbols; rebuild the workspace index to refresh existing vectors.
+func embedText(name, sig string) string {
+	text := name
+	if parts := parse.SplitIdentifier(name); parts != strings.ToLower(name) {
+		text += " " + parts
+	}
+	if sig != "" {
+		text += "\n" + sig
+	}
+	return text
+}
+
 // EmbeddingManager runs embedding in the background after commits when an
 // embedder is configured.
 type EmbeddingManager struct {
 	service  *Service
 	embedder Embedder
+	onError  func(workspace string, err error)
 
 	mu   sync.Mutex
 	jobs map[string]bool
@@ -356,6 +388,11 @@ type EmbeddingManager struct {
 func NewEmbeddingManager(service *Service, embedder Embedder) *EmbeddingManager {
 	return &EmbeddingManager{service: service, embedder: embedder, jobs: map[string]bool{}}
 }
+
+// SetErrorHandler installs a callback for background pass failures; without
+// one, failed passes are silent (the enqueue path has no caller to surface
+// errors to).
+func (m *EmbeddingManager) SetErrorHandler(fn func(workspace string, err error)) { m.onError = fn }
 
 // Enqueue schedules an embedding pass for a workspace (deduplicated).
 func (m *EmbeddingManager) Enqueue(workspace string) {
@@ -381,7 +418,13 @@ func (m *EmbeddingManager) Enqueue(workspace string) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			n, err := m.service.EmbedPending(ctx, workspace, m.embedder)
 			cancel()
-			if err != nil || n == 0 {
+			if err != nil {
+				if m.onError != nil {
+					m.onError(workspace, err)
+				}
+				return
+			}
+			if n == 0 {
 				return
 			}
 		}

@@ -219,6 +219,9 @@ func serveCmd() *cli.Command {
 					APIKey:    cmd.GetString("embeddings-api-key"),
 				}
 				codeIndexHandler.SetEmbeddingManager(codeindex.NewEmbeddingManager(codeIndexService, embedder))
+				codeIndexHandler.Embeddings().SetErrorHandler(func(ws string, err error) {
+					log.Warn("background embedding pass failed", "workspace", ws, "error", err)
+				})
 				log.Info("semantic code search enabled", "model", embedder.ModelName, "url", embURL, "vectors", codeIndexService.VectorStoreName())
 			}
 

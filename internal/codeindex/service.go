@@ -391,9 +391,10 @@ func BuildWithProgress(ctx context.Context, ex *parse.Extractor, root, branch st
 }
 
 // BuildWithCache adds a parse cache: files whose (mtime, size, extractor)
-// are unchanged skip reading/parsing entirely — the stored blob for their
-// content hash is reused at commit time. Cache hits yield stub results
-// (hash + language, no symbols/edges) which is all Commit needs.
+// are unchanged reuse the stored blob for their content hash instead of
+// re-parsing. Hits must materialize the full stored payload — a stub would
+// upload/commit an empty entry whenever the receiving store lacks the blob
+// (fresh server, dropped workspace, second server).
 func BuildWithCache(ctx context.Context, ex *parse.Extractor, root, branch string, report func(done, total int), cacher BuildCacher) ([]*parse.FileResult, string, error) {
 	files, err := parse.Walk(root)
 	if err != nil {
@@ -408,30 +409,34 @@ func BuildWithCache(ctx context.Context, ex *parse.Extractor, root, branch strin
 		if cacher != nil {
 			if info, serr := os.Stat(f); serr == nil {
 				if hash, ok := cacher.CacheLookup(ctx, f, info.ModTime().UnixNano(), info.Size()); ok {
-					if rel, rerr := filepath.Rel(root, f); rerr == nil {
-						res = &parse.FileResult{Path: rel, Hash: hash, Lang: parse.Detect(f)}
+					if full, has := cacher.CacheBlob(hash); has {
+						full.Path = f
+						res = full
 					}
 				}
 			}
 		}
-		parsed := res == nil
-		if parsed {
+		if res == nil {
 			var perr error
 			res, perr = ex.ParseFile(f)
 			if perr != nil {
 				continue // unreadable file: skip, keep going
 			}
-			// Store paths relative to the indexed root so the index is portable.
-			if rel, rerr := filepath.Rel(root, res.Path); rerr == nil {
-				res.Path = rel
-			}
 			if cacher != nil {
 				if info, serr := os.Stat(f); serr == nil {
 					_ = cacher.CachePut(ctx, f, info.ModTime().UnixNano(), info.Size(), res.Hash)
+					// Keep the payload retrievable so future cache hits can
+					// materialize (AddBlob is insert-if-absent).
+					if st, isStore := cacher.(*Store); isStore {
+						_ = st.AddBlob(st.cacheWorkspace, res)
+					}
 				}
 			}
 		}
-		_ = parsed
+		// Store paths relative to the indexed root so the index is portable.
+		if rel, rerr := filepath.Rel(root, res.Path); rerr == nil {
+			res.Path = rel
+		}
 		out = append(out, res)
 		if report != nil {
 			report(len(out), len(files))

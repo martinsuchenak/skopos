@@ -7,9 +7,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/martinsuchenak/skopos/internal/codeindex/parse"
 )
 
 func embedRepo(t *testing.T) string {
@@ -122,5 +125,116 @@ func TestEmbeddingManagerEnqueue(t *testing.T) {
 			t.Fatal("embedding worker did not run")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestEmbedTextSplitsIdentifiers(t *testing.T) {
+	got := embedText("likeEscape", "func likeEscape(s string) string {")
+	// The word "escape" must be reachable by the embedding model — the raw
+	// camelCase token alone never surfaces it.
+	if !strings.Contains(got, "escape") {
+		t.Fatalf("split subtokens missing: %q", got)
+	}
+	if !strings.Contains(got, "likeEscape") || !strings.Contains(got, "func likeEscape") {
+		t.Fatalf("name/signature dropped: %q", got)
+	}
+	// Plain lowercase names are not duplicated.
+	if got := embedText("main", ""); got != "main" {
+		t.Fatalf("plain name changed: %q", got)
+	}
+}
+
+// linearEmbedder maps a fixed query string to a fixed vector: exact control
+// over similarities in SemanticSearch tests.
+type linearEmbedder struct{ q string; vec []float32 }
+
+func (l *linearEmbedder) Model() string { return "linear-test" }
+func (l *linearEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, len(texts))
+	for i, t := range texts {
+		if t == l.q {
+			out[i] = l.vec
+		} else {
+			out[i] = []float32{0, 1}
+		}
+	}
+	return out, nil
+}
+
+func TestSemanticSearchDuplicateKeysDoNotPoolRRF(t *testing.T) {
+	store := newTestStore(t)
+	svc := NewService(store)
+
+	// One strong match (cos ~1.0 to the query) and a weaker symbol defined
+	// four times under the same name+path. Pooled RRF credit would let the
+	// duplicates outrank the true best match.
+	root := filepath.Join(t.TempDir(), "r")
+	os.MkdirAll(root, 0o755)
+	os.WriteFile(filepath.Join(root, "a.go"), []byte(`package p
+func Best() {}
+`), 0o644)
+	// Four same-named definitions in ONE file (methods on different
+	// receivers): one blob, four symbol rows, same name+path — the shape
+	// of repeated CSS selectors.
+	os.WriteFile(filepath.Join(root, "b.go"), []byte(`package p
+type t1 struct{}
+type t2 struct{}
+type t3 struct{}
+type t4 struct{}
+func (t1) Dup() {}
+func (t2) Dup() {}
+func (t3) Dup() {}
+func (t4) Dup() {}
+`), 0o644)
+	ex := parse.NewExtractor()
+	resA, _ := ex.ParseFile(filepath.Join(root, "a.go"))
+	resB, _ := ex.ParseFile(filepath.Join(root, "b.go"))
+	resA.Path, resB.Path = "a.go", "b.go"
+	if err := store.AddBlob("ws", resA); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddBlob("ws", resB); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit("ws", "main", "", "test", []FileEntry{{Path: "a.go", Hash: resA.Hash}, {Path: "b.go", Hash: resB.Hash}}); err != nil {
+		t.Fatal(err)
+	}
+	// Vectors: Best aligns with the query; the four Dup rows are 45° off.
+	q := []float32{1, 0}
+	dup := []float32{0.70710678, 0.70710678}
+	db, _ := store.DB("ws")
+	var bestID int64
+	if err := db.QueryRow(`SELECT id FROM symbols WHERE name='Best'`).Scan(&bestID); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.Query(`SELECT id FROM symbols WHERE name='Dup'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dupIDs := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err == nil {
+			dupIDs = append(dupIDs, id)
+		}
+	}
+	rows.Close()
+	if err := svc.vectors.Add(context.Background(), "ws", []int64{bestID}, [][]float32{q}); err != nil {
+		t.Fatal(err)
+	}
+	vecs := make([][]float32, len(dupIDs))
+	for i := range vecs {
+		vecs[i] = dup
+	}
+	if err := svc.vectors.Add(context.Background(), "ws", dupIDs, vecs); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := svc.SemanticSearch(context.Background(), "ws", "main", "unique", 10, &linearEmbedder{q: "unique", vec: q})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Hits) == 0 || res.Hits[0].Name != "Best" {
+		t.Fatalf("expected Best to outrank the duplicated symbol, got %+v", res.Hits)
 	}
 }

@@ -39,6 +39,9 @@ func (h *Handler) SetRefresher(r *Refresher) { h.refresher = r }
 // SetEmbeddingManager enables asynchronous semantic embeddings.
 func (h *Handler) SetEmbeddingManager(m *EmbeddingManager) { h.embeddings = m }
 
+// Embeddings exposes the embedding manager for wiring (e.g. error logging).
+func (h *Handler) Embeddings() *EmbeddingManager { return h.embeddings }
+
 // SemanticSearcher exposes semantic search to the handler when configured.
 func (h *Handler) semanticSearcher() Embedder {
 	if h.embeddings == nil {

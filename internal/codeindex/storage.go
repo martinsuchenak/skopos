@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -710,6 +711,28 @@ func clampLimit(limit, def, max int) int {
 type BuildCacher interface {
 	CacheLookup(ctx context.Context, path string, mtime, size int64) (hash string, ok bool)
 	CachePut(ctx context.Context, path string, mtime, size int64, hash string) error
+	// CacheBlob reconstructs the full parsed result stored for a content
+	// hash. A lookup hit without a materializable payload (blob pruned, or
+	// a cache written before payloads were stored) must fall back to a
+	// fresh parse — a stub would upload/commit an empty file index.
+	CacheBlob(hash string) (*parse.FileResult, bool)
+}
+
+// CacheBlob loads a stored blob payload back into a FileResult.
+func (st *Store) CacheBlob(hash string) (*parse.FileResult, bool) {
+	db, err := st.DB(st.cacheWorkspace)
+	if err != nil {
+		return nil, false
+	}
+	var payload string
+	if err := db.QueryRow(`SELECT payload FROM blobs WHERE hash = ?`, hash).Scan(&payload); err != nil {
+		return nil, false
+	}
+	var res parse.FileResult
+	if err := json.Unmarshal([]byte(payload), &res); err != nil {
+		return nil, false
+	}
+	return &res, true
 }
 
 // CacheLookup reports a cached parse for an unchanged file.

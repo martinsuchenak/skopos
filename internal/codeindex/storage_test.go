@@ -294,8 +294,9 @@ func TestBuildWithCacheReusesParses(t *testing.T) {
 		}
 	}
 
-	// Second build on the unchanged tree: every result is a cache stub
-	// (same hashes, no re-extraction) but commits to identical branch state.
+	// Second build on the unchanged tree: every result is served from the
+	// cache and carries the full stored payload (same hashes AND symbols),
+	// never a stub — a stub would commit empty files to a fresh store.
 	r2, _, err := BuildWithCache(ctx, ex, root, "main", nil, store.AsBuildCache("ws"))
 	if err != nil {
 		t.Fatal(err)
@@ -303,20 +304,18 @@ func TestBuildWithCacheReusesParses(t *testing.T) {
 	if len(r2) != len(r1) {
 		t.Fatalf("file count changed: %d vs %d", len(r2), len(r1))
 	}
-	stubs := 0
 	for i := range r2 {
 		if r2[i].Hash != r1[i].Hash {
 			t.Fatalf("hash mismatch on %s: %s vs %s", r2[i].Path, r2[i].Hash, r1[i].Hash)
 		}
-		if len(r2[i].Symbols) == 0 {
-			stubs++
+		if len(r2[i].Symbols) != len(r1[i].Symbols) || len(r2[i].Edges) != len(r1[i].Edges) {
+			t.Fatalf("cache hit on %s lost payload: %d/%d symbols, %d/%d edges",
+				r2[i].Path, len(r2[i].Symbols), len(r1[i].Symbols), len(r2[i].Edges), len(r1[i].Edges))
 		}
 	}
-	if stubs != len(r2) {
-		t.Fatalf("expected all-cached rebuild, %d/%d were re-parsed (parsed first time: %d)", len(r2)-stubs, len(r2), parsed)
-	}
 
-	// A touched file re-parses (mtime bump invalidates its cache row).
+	// A touched file re-parses (mtime bump invalidates its cache row): the
+	// new symbol must appear; other files keep their payloads from cache.
 	time.Sleep(10 * time.Millisecond) // ensure mtime moves
 	touched := filepath.Join(root, "main.go")
 	if err := os.WriteFile(touched, append(mustRead(t, touched), []byte("\nfunc Fresh() {}\n")...), 0o644); err != nil {
@@ -326,14 +325,18 @@ func TestBuildWithCacheReusesParses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reparsed := 0
+	freshSeen := false
 	for _, r := range r3 {
-		if len(r.Symbols) > 0 {
-			reparsed++
+		if strings.HasSuffix(r.Path, "main.go") {
+			for _, s := range r.Symbols {
+				if s.Name == "Fresh" {
+					freshSeen = true
+				}
+			}
 		}
 	}
-	if reparsed != 1 {
-		t.Fatalf("expected exactly the touched file to re-parse, got %d", reparsed)
+	if !freshSeen {
+		t.Fatal("touched file's new symbol not indexed — cache served stale content")
 	}
 
 	// Cached rebuild still commits identical symbol counts.
@@ -437,5 +440,96 @@ func TestSearchQueryLengthCap(t *testing.T) {
 	}
 	if _, err := svc.Search(context.Background(), "ws", "main", strings.Repeat("a", 256), 10); err != nil {
 		t.Fatalf("max-length query rejected: %v", err)
+	}
+}
+
+func TestBuildWithCacheMaterializesForFreshTarget(t *testing.T) {
+	root := writeRepo(t)
+	ctx := context.Background()
+	ex := parse.NewExtractor()
+
+	// The push layout: a machine-wide cache store, separate from whatever
+	// store/server receives the results.
+	cacheDir := filepath.Join(t.TempDir(), "c")
+	cacheStore, err := NewStore(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(cacheStore.Close)
+	cacher := cacheStore.AsBuildCache("cache")
+
+	r1, _, err := BuildWithCache(ctx, ex, root, "main", nil, cacher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	symbols := 0
+	for _, r := range r1 {
+		symbols += len(r.Symbols)
+	}
+	if symbols == 0 {
+		t.Fatal("fixture produced no symbols")
+	}
+
+	// Re-push against an empty server: hashes are all "missing", so the
+	// cached results must carry full payloads, not stubs.
+	r2, _, err := BuildWithCache(ctx, ex, root, "main", nil, cacher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := 0
+	for i, r := range r2 {
+		if r.Hash != r1[i].Hash {
+			t.Fatalf("hash mismatch on %s", r.Path)
+		}
+		got += len(r.Symbols)
+	}
+	if got != symbols {
+		t.Fatalf("cached rebuild lost symbols: %d of %d — stubs would upload an empty index to a fresh server", got, symbols)
+	}
+}
+
+func TestBuildWithCacheLegacyRowsWithoutPayloads(t *testing.T) {
+	// Caches written before payloads were stored have file_cache rows but no
+	// blobs: lookups must fall back to a fresh parse instead of trusting the
+	// hash and emitting an empty result.
+	root := writeRepo(t)
+	ctx := context.Background()
+	ex := parse.NewExtractor()
+
+	cacheStore, err := NewStore(filepath.Join(t.TempDir(), "c"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(cacheStore.Close)
+	cacher := cacheStore.AsBuildCache("cache")
+
+	if _, _, err := BuildWithCache(ctx, ex, root, "main", nil, cacher); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the legacy state: keep file_cache, drop the blob payloads.
+	db, err := cacheStore.DB("cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM blobs`); err != nil {
+		t.Fatal(err)
+	}
+
+	r2, _, err := BuildWithCache(ctx, ex, root, "main", nil, cacher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range r2 {
+		if r.Hash == "" {
+			t.Fatalf("no result for %s", r.Path)
+		}
+	}
+	// Payloads restored: the delete-blobs pass re-parsed and re-stored them.
+	var blobs int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobs); err != nil {
+		t.Fatal(err)
+	}
+	if blobs == 0 {
+		t.Fatal("fresh parses did not repopulate blob payloads")
 	}
 }
