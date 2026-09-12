@@ -37,7 +37,9 @@ CREATE TABLE IF NOT EXISTS symbols (
   signature  TEXT NOT NULL DEFAULT '',
   lang       TEXT NOT NULL DEFAULT '',
   name_parts TEXT NOT NULL DEFAULT '',
-  doc        TEXT NOT NULL DEFAULT ''
+  doc        TEXT NOT NULL DEFAULT '',
+  modifiers  TEXT NOT NULL DEFAULT '',
+  attrs      TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_symbols_dedup ON symbols(hash, name, kind, line, start_byte);
 CREATE TABLE IF NOT EXISTS edges (
@@ -72,7 +74,7 @@ CREATE TABLE IF NOT EXISTS state (
   symbol_count INTEGER NOT NULL DEFAULT 0
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts USING fts5(
-  name, name_parts, signature, kind, doc,
+  name, name_parts, signature, kind, doc, modifiers, attrs,
   content='symbols', content_rowid='id', tokenize='porter unicode61'
 );
 CREATE TABLE IF NOT EXISTS file_cache (
@@ -87,8 +89,8 @@ CREATE TABLE IF NOT EXISTS embeddings (
   vec       BLOB NOT NULL
 );
 CREATE TRIGGER IF NOT EXISTS symbols_ai AFTER INSERT ON symbols BEGIN
-  INSERT INTO symbols_fts(rowid, name, name_parts, signature, kind, doc)
-  VALUES (new.id, new.name, new.name_parts, new.signature, new.kind, new.doc);
+  INSERT INTO symbols_fts(rowid, name, name_parts, signature, kind, doc, modifiers, attrs)
+  VALUES (new.id, new.name, new.name_parts, new.signature, new.kind, new.doc, new.modifiers, new.attrs);
 END;
 `
 
@@ -190,14 +192,15 @@ _, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, d
 	return err
 }
 
-// ensureFTSDoc upgrades FTS tables created before the doc column existed:
-// the virtual table is recreated with doc indexed and repopulated.
-func ensureFTSDoc(db *sql.DB) error {
+// ensureFTSShape upgrades FTS tables created before a column existed
+// (doc, modifiers, attrs): the virtual table is recreated with the full
+// column set and repopulated.
+func ensureFTSShape(db *sql.DB) error {
 	rows, err := db.Query(`PRAGMA table_info(symbols_fts)`)
 	if err != nil {
 		return err
 	}
-	hasDoc := false
+	have := map[string]bool{}
 	for rows.Next() {
 		var cid int
 		var name, ctype string
@@ -207,29 +210,27 @@ func ensureFTSDoc(db *sql.DB) error {
 			rows.Close()
 			return err
 		}
-		if name == "doc" {
-			hasDoc = true
-		}
+		have[name] = true
 	}
 	rows.Close()
-	if hasDoc {
+	if have["doc"] && have["modifiers"] && have["attrs"] {
 		return nil
 	}
 	for _, stmt := range []string{
 		`DROP TRIGGER IF EXISTS symbols_ai`,
 		`DROP TABLE IF EXISTS symbols_fts`,
 		`CREATE VIRTUAL TABLE symbols_fts USING fts5(
-		  name, name_parts, signature, kind, doc,
+		  name, name_parts, signature, kind, doc, modifiers, attrs,
 		  content='symbols', content_rowid='id', tokenize='porter unicode61')`,
-		`INSERT INTO symbols_fts(rowid, name, name_parts, signature, kind, doc)
-		  SELECT id, name, name_parts, signature, kind, doc FROM symbols`,
+		`INSERT INTO symbols_fts(rowid, name, name_parts, signature, kind, doc, modifiers, attrs)
+		  SELECT id, name, name_parts, signature, kind, doc, modifiers, attrs FROM symbols`,
 		`CREATE TRIGGER symbols_ai AFTER INSERT ON symbols BEGIN
-		  INSERT INTO symbols_fts(rowid, name, name_parts, signature, kind, doc)
-		  VALUES (new.id, new.name, new.name_parts, new.signature, new.kind, new.doc);
+		  INSERT INTO symbols_fts(rowid, name, name_parts, signature, kind, doc, modifiers, attrs)
+		  VALUES (new.id, new.name, new.name_parts, new.signature, new.kind, new.doc, new.modifiers, new.attrs);
 		END`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
-			return fmt.Errorf("fts doc migration: %w", err)
+			return fmt.Errorf("fts shape migration: %w", err)
 		}
 	}
 	return nil
@@ -261,7 +262,15 @@ func (st *Store) DB(workspace string) (*sql.DB, error) {
 		db.Close()
 		return nil, err
 	}
-	if err := ensureFTSDoc(db); err != nil {
+	if err := ensureColumn(db, "symbols", "modifiers", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := ensureColumn(db, "symbols", "attrs", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := ensureFTSShape(db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -393,10 +402,10 @@ func (st *Store) AddBlob(workspace string, res *parse.FileResult) error {
 			continue
 		}
 		if _, err := tx.Exec(`
-			INSERT OR IGNORE INTO symbols (hash, name, qual_name, kind, line, start_byte, end_byte, signature, lang, name_parts, doc)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			INSERT OR IGNORE INTO symbols (hash, name, qual_name, kind, line, start_byte, end_byte, signature, lang, name_parts, doc, modifiers, attrs)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			res.Hash, sym.Name, sym.Qual, sym.Kind, sym.Line, sym.StartByte, sym.EndByte, sym.Signature, sym.Lang,
-			parse.SplitIdentifier(namePartsInput(sym)), sym.Doc); err != nil {
+			parse.SplitIdentifier(namePartsInput(sym)), sym.Doc, marshalJSON(sym.Modifiers), marshalJSON(sym.Attrs)); err != nil {
 			return fmt.Errorf("inserting symbol %q: %w", sym.Name, err)
 		}
 	}
@@ -474,9 +483,11 @@ type SymbolHit struct {
 	Kind      string `json:"kind"`
 	Path      string `json:"path"`
 	Line      int    `json:"line"`
-	Signature string `json:"signature,omitempty"`
-	Doc       string `json:"doc,omitempty"` // doc comment (summary + non-signature tags)
-	Lang      string `json:"lang,omitempty"`
+	Signature string   `json:"signature,omitempty"`
+	Doc       string   `json:"doc,omitempty"`                // doc comment (summary + non-signature tags)
+	Modifiers []string `json:"modifiers,omitempty"`           // visibility/static/… from the declaration
+	Attrs     []string `json:"attrs,omitempty"`               // attributes, annotations, decorators
+	Lang      string   `json:"lang,omitempty"`
 
 	rank int // vector rank when fused (internal)
 }
@@ -497,7 +508,7 @@ func (st *Store) Search(ctx context.Context, workspace, branch, query string, li
 	// the fully-split name_parts column.
 	if strings.Contains(query, "::") {
 		rows, err := db.QueryContext(ctx, `
-			SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang
+			SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang, s.modifiers, s.attrs
 			FROM symbols s
 			JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
 			WHERE s.qual_name = ? COLLATE NOCASE OR s.qual_name LIKE ? COLLATE NOCASE ESCAPE '\'
@@ -514,7 +525,7 @@ func (st *Store) Search(ctx context.Context, workspace, branch, query string, li
 		q = q + "*"
 	}
 	rows, err := db.QueryContext(ctx, `
-		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang
+		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang, s.modifiers, s.attrs
 		FROM symbols_fts f
 		JOIN symbols s ON s.id = f.rowid
 		JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
@@ -524,7 +535,7 @@ func (st *Store) Search(ctx context.Context, workspace, branch, query string, li
 	if err != nil {
 		// Bad FTS syntax: retry as a plain quoted prefix query.
 		rows, err = db.QueryContext(ctx, `
-			SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang
+			SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang, s.modifiers, s.attrs
 			FROM symbols_fts f
 			JOIN symbols s ON s.id = f.rowid
 			JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
@@ -547,7 +558,7 @@ func (st *Store) Symbol(workspace, branch, name string, limit int) ([]SymbolHit,
 	}
 	limit = clampLimit(limit, 50, 500)
 	rows, err := db.Query(`
-		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang, s.doc
+		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang, s.doc, s.modifiers, s.attrs
 		FROM symbols s
 		JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
 		WHERE s.name = ? COLLATE NOCASE OR s.qual_name = ? COLLATE NOCASE
@@ -567,7 +578,7 @@ func (st *Store) Outline(workspace, branch, path string) ([]SymbolHit, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`
-		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang, s.doc
+		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang, s.doc, s.modifiers, s.attrs
 		FROM symbols s
 		JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
 		WHERE bf.path = ?
@@ -830,26 +841,42 @@ func namePartsInput(sym parse.Symbol) string {
 	return sym.Name
 }
 
-// scanHitsDoc scans the hit columns plus the doc text (Symbol/Outline).
-func scanHitsDoc(rows *sql.Rows) ([]SymbolHit, error) {
-	var out []SymbolHit
-	for rows.Next() {
-		var h SymbolHit
-		if err := rows.Scan(&h.Name, &h.Qualified, &h.Kind, &h.Path, &h.Line, &h.Signature, &h.Lang, &h.Doc); err != nil {
-			return nil, err
-		}
-		out = append(out, h)
+// scanHitsDoc scans the hit columns plus doc/modifiers/attrs
+// (Symbol/Outline).
+func scanHitsDoc(rows *sql.Rows) ([]SymbolHit, error) { return scanHitsN(rows, true) }
+
+func scanHits(rows *sql.Rows) ([]SymbolHit, error) { return scanHitsN(rows, false) }
+
+// unmarshalStrings decodes a stored JSON string array; empty/null yields nil.
+func unmarshalStrings(s string) []string {
+	if s == "" || s == "null" || s == "[]" {
+		return nil
 	}
-	return out, rows.Err()
+	var out []string
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return nil
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
-func scanHits(rows *sql.Rows) ([]SymbolHit, error) {
+func scanHitsN(rows *sql.Rows, withDoc bool) ([]SymbolHit, error) {
 	var out []SymbolHit
 	for rows.Next() {
 		var h SymbolHit
-		if err := rows.Scan(&h.Name, &h.Qualified, &h.Kind, &h.Path, &h.Line, &h.Signature, &h.Lang); err != nil {
+		var mods, attrs string
+		var err error
+		if withDoc {
+			err = rows.Scan(&h.Name, &h.Qualified, &h.Kind, &h.Path, &h.Line, &h.Signature, &h.Lang, &h.Doc, &mods, &attrs)
+		} else {
+			err = rows.Scan(&h.Name, &h.Qualified, &h.Kind, &h.Path, &h.Line, &h.Signature, &h.Lang, &mods, &attrs)
+		}
+		if err != nil {
 			return nil, err
 		}
+		h.Modifiers, h.Attrs = unmarshalStrings(mods), unmarshalStrings(attrs)
 		out = append(out, h)
 	}
 	return out, rows.Err()

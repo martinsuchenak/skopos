@@ -18,7 +18,7 @@ import (
 
 // ExtractorVersion changes whenever extraction logic changes; it is mixed
 // into the content hash so already-indexed files re-extract after upgrades.
-const ExtractorVersion = "11"
+const ExtractorVersion = "12"
 
 // DefaultTimeout is the per-file parse budget. Files that exceed it are still
 // parsed via tree-sitter error recovery and flagged (the measured pathological
@@ -29,15 +29,17 @@ const DefaultTimeout = 2 * time.Second
 // type-qualified name ("Class::method") for definitions nested in a type;
 // empty when the definition is top-level.
 type Symbol struct {
-	Name      string `json:"name"`
-	Qual      string `json:"qual,omitempty"`
-	Kind      string `json:"kind"` // func, method, class, interface, struct, type, enum, trait
-	Line      int    `json:"line"` // 1-based
-	StartByte int    `json:"start_byte"`
-	EndByte   int    `json:"end_byte"`
-	Signature string `json:"signature,omitempty"` // first source line of the definition, capped
-	Doc       string `json:"doc,omitempty"`       // doc comment summary + non-signature tags (declaration wins over stale doc tags)
-	Lang      string `json:"lang,omitempty"`
+	Name      string   `json:"name"`
+	Qual      string   `json:"qual,omitempty"`
+	Kind      string   `json:"kind"` // func, method, class, interface, struct, type, enum, trait
+	Line      int      `json:"line"` // 1-based
+	StartByte int      `json:"start_byte"`
+	EndByte   int      `json:"end_byte"`
+	Signature string   `json:"signature,omitempty"` // first source line of the definition, capped
+	Doc       string   `json:"doc,omitempty"`       // doc comment summary + non-signature tags (declaration wins over stale doc tags)
+	Modifiers []string `json:"modifiers,omitempty"` // visibility/static/abstract/… — read from the declaration
+	Attrs     []string `json:"attrs,omitempty"`     // attributes, annotations, decorators (declaration data)
+	Lang      string   `json:"lang,omitempty"`
 }
 
 // Edge is a heuristic reference from one symbol to a name (call or use).
@@ -257,11 +259,13 @@ func walkTree(prof *langProfile, root *gts.Node, lang *gts.Language, src []byte,
 					qual = typeName + "::" + name
 				}
 				sig := signature(src, int(n.StartByte()), int(n.EndByte()))
+				mods, attrs := declarationModifiers(n, lang, src)
 				res.Symbols = append(res.Symbols, Symbol{
 					Name: name, Qual: qual, Kind: kind,
 					Line:      int(n.StartPoint().Row) + 1,
 					StartByte: int(n.StartByte()), EndByte: int(n.EndByte()),
-					Signature: sig, Doc: docForNode(prof, n, lang, src), Lang: res.Lang,
+					Signature: sig, Doc: docForNode(prof, n, lang, src),
+					Modifiers: mods, Attrs: attrs, Lang: res.Lang,
 				})
 				if qual != "" {
 					caller = qual

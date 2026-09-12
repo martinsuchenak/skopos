@@ -434,3 +434,89 @@ export function validateResetToken(tok) {}
 		t.Errorf("stale @param kept: %q", sym.Doc)
 	}
 }
+
+func TestModifierExtraction(t *testing.T) {
+	cases := []struct {
+		name, file, src, sym string
+		wantMods []string
+		wantAttrSubstrings []string
+	}{
+		{
+			name: "php attributes and modifiers",
+			file: "t.php", sym: "handle",
+			src: "<?php\nclass A {\n  #[Route('/reset', name: 'reset')]\n  public static function handle($r): void {}\n}\n",
+			wantMods: []string{"public", "static"},
+			wantAttrSubstrings: []string{"Route('/reset', name: 'reset')"},
+		},
+		{
+			name: "php abstract protected",
+			file: "t.php", sym: "make",
+			src: "<?php\nabstract class A {\n  abstract protected function make();\n}\n",
+			wantMods: []string{"abstract", "protected"},
+		},
+		{
+			name: "typescript accessibility and keywords",
+			file: "t.ts", sym: "run",
+			src: "class A {\n  private static async run(): Promise<void> {}\n}\n",
+			wantMods: []string{"private", "static", "async"},
+		},
+		{
+			name: "csharp modifier nodes and attributes",
+			file: "t.cs", sym: "Get",
+			src: "public class A {\n  [HttpGet(\"/users\")]\n  public static async Task<int> Get() { return 1; }\n}\n",
+			wantMods: []string{"public", "static", "async"},
+			wantAttrSubstrings: []string{"HttpGet(\"/users\")"},
+		},
+		{
+			name: "python decorators",
+			file: "t.py", sym: "list_users",
+			src: "@app.route('/users', methods=['GET'])\n@cache.cached(60)\ndef list_users():\n    return []\n",
+			wantAttrSubstrings: []string{"@app.route('/users'", "@cache.cached(60)"},
+		},
+		{
+			name: "java annotations in modifiers node",
+			file: "t.java", sym: "run",
+			src: "public class A {\n  @Override\n  @SuppressWarnings(\"x\")\n  public static void run() {}\n}\n",
+			wantMods: []string{"public", "static"},
+			wantAttrSubstrings: []string{"@Override", "@SuppressWarnings(\"x\")"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := NewExtractor()
+			p := writeTemp(t, tc.file, tc.src)
+			res, err := e.ParseFile(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var sym *Symbol
+			for i, s := range res.Symbols {
+				if s.Name == tc.sym {
+					sym = &res.Symbols[i]
+				}
+			}
+			if sym == nil {
+				t.Fatalf("symbol %s not extracted: %+v", tc.sym, res.Symbols)
+			}
+			if len(sym.Modifiers) != len(tc.wantMods) {
+				t.Fatalf("modifiers = %v, want %v", sym.Modifiers, tc.wantMods)
+			}
+			for i, m := range tc.wantMods {
+				if sym.Modifiers[i] != m {
+					t.Fatalf("modifiers = %v, want %v", sym.Modifiers, tc.wantMods)
+				}
+			}
+			for _, want := range tc.wantAttrSubstrings {
+				found := false
+				for _, a := range sym.Attrs {
+					if strings.Contains(a, want) {
+						found = true
+					}
+				}
+				if !found {
+					t.Fatalf("attr %q missing in %v", want, sym.Attrs)
+				}
+			}
+		})
+	}
+}

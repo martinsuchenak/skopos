@@ -661,3 +661,82 @@ func TestIndexDBMigratesOldSchema(t *testing.T) {
 		t.Fatal("post-migration doc search failed")
 	}
 }
+
+func modifierFixture(t *testing.T, store *Store) {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "r")
+	os.MkdirAll(root, 0o755)
+	os.WriteFile(filepath.Join(root, "ctrl.php"), []byte(`<?php
+class UserController {
+  #[Route('/users', methods: ['GET'])]
+  public static function listUsers($req): void {}
+
+  private function cacheKey($id): string { return "u:$id"; }
+}
+`), 0o644)
+	res, err := parse.NewExtractor().ParseFile(filepath.Join(root, "ctrl.php"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Path = "ctrl.php"
+	if err := store.AddBlob("ws", res); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit("ws", "main", "", "test", []FileEntry{{Path: "ctrl.php", Hash: res.Hash}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHitsCarryModifiersAndAttrs(t *testing.T) {
+	store := newTestStore(t)
+	modifierFixture(t, store)
+	svc := NewService(store)
+
+	res, err := svc.Symbol(context.Background(), "ws", "main", "listUsers")
+	if err != nil || len(res.Hits) == 0 {
+		t.Fatalf("symbol lookup: %v %+v", err, res.Hits)
+	}
+	h := res.Hits[0]
+	if len(h.Modifiers) != 2 || h.Modifiers[0] != "public" || h.Modifiers[1] != "static" {
+		t.Errorf("modifiers: %v", h.Modifiers)
+	}
+	if len(h.Attrs) != 1 || !strings.Contains(h.Attrs[0], "Route('/users'") {
+		t.Errorf("attrs: %v", h.Attrs)
+	}
+
+	priv, err := svc.Symbol(context.Background(), "ws", "main", "cacheKey")
+	if err != nil || len(priv.Hits) == 0 {
+		t.Fatalf("private symbol lookup: %v", err)
+	}
+	if len(priv.Hits[0].Modifiers) != 1 || priv.Hits[0].Modifiers[0] != "private" {
+		t.Errorf("private modifiers: %v", priv.Hits[0].Modifiers)
+	}
+}
+
+func TestSearchFindsModifierAndAttrText(t *testing.T) {
+	store := newTestStore(t)
+	modifierFixture(t, store)
+	svc := NewService(store)
+	// Visibility is searchable...
+	res, err := svc.Search(context.Background(), "ws", "main", "private", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, h := range res.Hits {
+		if h.Name == "cacheKey" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("private not searchable: %+v", res.Hits)
+	}
+	// ...and so is attribute text (route paths).
+	res, err = svc.Search(context.Background(), "ws", "main", "route users", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Hits) == 0 || res.Hits[0].Name != "listUsers" {
+		t.Fatalf("attribute text not searchable: %+v", res.Hits)
+	}
+}

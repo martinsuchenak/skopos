@@ -187,6 +187,13 @@ dropped, because **the declaration always wins** — signatures, types, and
 parameters come from the code, never from docs, and doc tags are routinely
 stale.
 
+Declaration modifiers (public/private/protected, static, abstract, final,
+async, …) and attributes (PHP 8 `#[…]`, Python decorators, Java annotations,
+C# attributes) are indexed too — they are part of the declaration, so they
+can never be stale. Searching "private" finds private symbols; searching a
+route path finds the handler it routes to; embeddings include attribute
+text for the same reason.
+
 Docs surface in three places:
 
 - `skopos symbol X` / `code_symbol` — the full doc block under the definition.

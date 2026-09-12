@@ -129,7 +129,7 @@ func TestEmbeddingManagerEnqueue(t *testing.T) {
 }
 
 func TestEmbedTextSplitsIdentifiers(t *testing.T) {
-	got := embedText("likeEscape", "func likeEscape(s string) string {", "")
+	got := embedText("likeEscape", "func likeEscape(s string) string {", "", nil)
 	// The word "escape" must be reachable by the embedding model — the raw
 	// camelCase token alone never surfaces it.
 	if !strings.Contains(got, "escape") {
@@ -139,11 +139,15 @@ func TestEmbedTextSplitsIdentifiers(t *testing.T) {
 		t.Fatalf("name/signature dropped: %q", got)
 	}
 	// Plain lowercase names are not duplicated.
-	if got := embedText("main", "", ""); got != "main" {
+	if got := embedText("main", "", "", nil); got != "main" {
 		t.Fatalf("plain name changed: %q", got)
 	}
+	// Attributes join the embedding input (routing semantics).
+	if got := embedText("listUsers", "", "", []string{"@app.route('/users')"}); !strings.Contains(got, "/users") {
+		t.Fatalf("attrs missing from embedding input: %q", got)
+	}
 	// Doc summaries join the embedding input (first paragraph only).
-	withDoc := embedText("sendMail", "func sendMail(u User)", "Sends the password reset email.\n\nLonger paragraphs are cut.")
+	withDoc := embedText("sendMail", "func sendMail(u User)", "Sends the password reset email.\n\nLonger paragraphs are cut.", nil)
 	if !strings.Contains(withDoc, "Sends the password reset email.") {
 		t.Fatalf("doc summary missing: %q", withDoc)
 	}

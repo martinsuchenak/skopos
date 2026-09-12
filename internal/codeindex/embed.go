@@ -199,7 +199,7 @@ func (s *Service) EmbedPending(ctx context.Context, workspace string, embedder E
 			args = append(args, id)
 		}
 		rows, err := db.QueryContext(ctx, `
-			SELECT s.id, s.name, s.signature, s.doc FROM symbols s
+			SELECT s.id, s.name, s.signature, s.doc, s.attrs FROM symbols s
 			WHERE s.id IN (`+strings.Join(qmarks, ",")+`)`, args...)
 		if err != nil {
 			return 0, err
@@ -207,12 +207,12 @@ func (s *Service) EmbedPending(ctx context.Context, workspace string, embedder E
 		byID := map[int64]string{}
 		for rows.Next() {
 			var id int64
-			var name, sig, doc string
-			if err := rows.Scan(&id, &name, &sig, &doc); err != nil {
+			var name, sig, doc, attrsJSON string
+			if err := rows.Scan(&id, &name, &sig, &doc, &attrsJSON); err != nil {
 				rows.Close()
 				return 0, err
 			}
-			byID[id] = embedText(name, sig, doc)
+			byID[id] = embedText(name, sig, doc, unmarshalStrings(attrsJSON))
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
@@ -369,7 +369,7 @@ const embedDocChars = 400
 // are natural language, which is what the model actually understands.
 // Changing this only affects newly embedded symbols; rebuild the workspace
 // index to refresh existing vectors.
-func embedText(name, sig, doc string) string {
+func embedText(name, sig, doc string, attrs []string) string {
 	text := name
 	if parts := parse.SplitIdentifier(name); parts != strings.ToLower(name) {
 		text += " " + parts
@@ -386,6 +386,14 @@ func embedText(name, sig, doc string) string {
 			summary = summary[:embedDocChars]
 		}
 		text += "\n" + summary
+	}
+	// Attributes carry routing/DI semantics ("Route('/users')" says more
+	// than the handler name); keep them short.
+	for _, a := range attrs {
+		if len(a) > 80 {
+			a = a[:80]
+		}
+		text += "\n" + a
 	}
 	return text
 }

@@ -254,10 +254,18 @@ func codeSymbolCmd() *cli.Command {
 			}
 			for _, h := range res.Hits {
 				printHit("", "", h.Name, h.Qualified, h.Kind, h.Path, h.Line, h.Signature)
+				if len(h.Modifiers) > 0 {
+					fmt.Printf("    modifiers: %s\n", strings.Join(h.Modifiers, " "))
+				}
+				for _, a := range h.Attrs {
+					fmt.Printf("    @%s\n", strings.TrimPrefix(a, "@"))
+				}
 				if h.Doc != "" {
 					for _, l := range strings.Split(h.Doc, "\n") {
 						fmt.Printf("    // %s\n", l)
 					}
+				}
+				if h.Doc != "" || len(h.Attrs) > 0 || len(h.Modifiers) > 0 {
 					fmt.Println()
 				}
 			}
