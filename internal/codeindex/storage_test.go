@@ -2,6 +2,7 @@ package codeindex
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/codeindex/parse"
+	_ "modernc.org/sqlite"
 )
 
 // buildInto builds dir into the given store under branch.
@@ -531,5 +533,131 @@ func TestBuildWithCacheLegacyRowsWithoutPayloads(t *testing.T) {
 	}
 	if blobs == 0 {
 		t.Fatal("fresh parses did not repopulate blob payloads")
+	}
+}
+
+func docFixture(t *testing.T, store *Store) {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "r")
+	os.MkdirAll(root, 0o755)
+	os.WriteFile(filepath.Join(root, "mail.php"), []byte(`<?php
+/**
+ * Sends the password reset email to a user.
+ *
+ * @param stale $doc
+ * @throws MailException when transport fails
+ */
+function queueResetNotification($user): void {}
+`), 0o644)
+	res, err := parse.NewExtractor().ParseFile(filepath.Join(root, "mail.php"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Path = "mail.php"
+	if err := store.AddBlob("ws", res); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit("ws", "main", "", "test", []FileEntry{{Path: "mail.php", Hash: res.Hash}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSearchFindsDocText(t *testing.T) {
+	store := newTestStore(t)
+	docFixture(t, store)
+	svc := NewService(store)
+	// "password reset email" appears only in the doc comment.
+	res, err := svc.Search(context.Background(), "ws", "main", "password reset email", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Hits) == 0 || res.Hits[0].Name != "queueResetNotification" {
+		t.Fatalf("doc text not searchable: %+v", res.Hits)
+	}
+}
+
+func TestSymbolCarriesDoc(t *testing.T) {
+	store := newTestStore(t)
+	docFixture(t, store)
+	svc := NewService(store)
+	res, err := svc.Symbol(context.Background(), "ws", "main", "queueResetNotification")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Hits) == 0 {
+		t.Fatal("no definitions")
+	}
+	d := res.Hits[0].Doc
+	if !strings.Contains(d, "Sends the password reset email to a user.") ||
+		!strings.Contains(d, "@throws MailException") {
+		t.Fatalf("doc not carried to symbol lookup: %q", d)
+	}
+	if strings.Contains(d, "@param") {
+		t.Fatalf("stale signature tag kept in doc: %q", d)
+	}
+}
+
+func TestOutlineCarriesDoc(t *testing.T) {
+	store := newTestStore(t)
+	docFixture(t, store)
+	svc := NewService(store)
+	out, err := svc.Outline(context.Background(), "ws", "main", "mail.php")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Hits) == 0 || !strings.Contains(out.Hits[0].Doc, "Sends the password reset email") {
+		t.Fatalf("outline missing doc: %+v", out.Hits)
+	}
+}
+
+func TestIndexDBMigratesOldSchema(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "idx")
+	dbPath := filepath.Join(dir, "ws.db")
+	os.MkdirAll(dir, 0o755)
+	oldDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The pre-doc schema: symbols without the doc column, FTS without doc.
+	if _, err := oldDB.Exec(`CREATE TABLE symbols (
+		id INTEGER PRIMARY KEY, hash TEXT NOT NULL, name TEXT NOT NULL,
+		qual_name TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL, line INTEGER NOT NULL,
+		start_byte INTEGER NOT NULL, end_byte INTEGER NOT NULL,
+		signature TEXT NOT NULL DEFAULT '', lang TEXT NOT NULL DEFAULT '',
+		name_parts TEXT NOT NULL DEFAULT '');
+	CREATE VIRTUAL TABLE symbols_fts USING fts5(name, name_parts, signature, kind,
+		content='symbols', content_rowid='id', tokenize='porter unicode61');
+	INSERT INTO symbols (id, hash, name, kind, line, start_byte, end_byte)
+		VALUES (1, 'h1', 'Legacy', 'func', 1, 0, 10);`); err != nil {
+		t.Fatal(err)
+	}
+	oldDB.Close()
+
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	db, err := store.DB("ws") // opening runs the migration
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Old rows survive and remain searchable through the rebuilt FTS.
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM symbols_fts WHERE symbols_fts MATCH 'legacy'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("migrated FTS lost rows: %d", n)
+	}
+	// New ingests flow through with doc.
+	docFixture(t, store)
+	svc := NewService(store)
+	res, err := svc.Search(context.Background(), "ws", "main", "password reset email", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Hits) == 0 {
+		t.Fatal("post-migration doc search failed")
 	}
 }

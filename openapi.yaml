@@ -246,7 +246,7 @@ paths:
         - { name: name, in: query, required: true, schema: { type: string } }
         - { name: branch, in: query, schema: { type: string } }
       responses:
-        "200": { description: Symbol hits }
+        "200": { description: Symbol hits, including each definition's doc comment (summary + non-signature tags; declaration data always wins over stale doc tags) }
   /api/codeindex/{workspace}/outline:
     get:
       summary: A file's definitions in source order

@@ -36,7 +36,7 @@ func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 	)
 
 	server.RegisterTool(
-		mcplib.NewTool("code_symbol", "Find definitions of a symbol by exact name (returns file:line). "+codeIndexDesc,
+		mcplib.NewTool("code_symbol", "Find definitions of a symbol by exact name (returns file:line and the definition's doc comment). "+codeIndexDesc,
 			mcplib.String("workspace_id", "Workspace ID", mcplib.Required()),
 			mcplib.String("name", "Exact symbol name", mcplib.Required()),
 			mcplib.String("branch", "Branch"),

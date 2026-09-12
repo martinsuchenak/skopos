@@ -199,7 +199,7 @@ func (s *Service) EmbedPending(ctx context.Context, workspace string, embedder E
 			args = append(args, id)
 		}
 		rows, err := db.QueryContext(ctx, `
-			SELECT s.id, s.name, s.signature FROM symbols s
+			SELECT s.id, s.name, s.signature, s.doc FROM symbols s
 			WHERE s.id IN (`+strings.Join(qmarks, ",")+`)`, args...)
 		if err != nil {
 			return 0, err
@@ -207,12 +207,12 @@ func (s *Service) EmbedPending(ctx context.Context, workspace string, embedder E
 		byID := map[int64]string{}
 		for rows.Next() {
 			var id int64
-			var name, sig string
-			if err := rows.Scan(&id, &name, &sig); err != nil {
+			var name, sig, doc string
+			if err := rows.Scan(&id, &name, &sig, &doc); err != nil {
 				rows.Close()
 				return 0, err
 			}
-			byID[id] = embedText(name, sig)
+			byID[id] = embedText(name, sig, doc)
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
@@ -358,18 +358,34 @@ func (s *Service) SemanticSearch(ctx context.Context, workspace, branch, query s
 
 // ---- async embedding worker ----
 
+// embedDocChars caps how much of the doc text joins the embedding input:
+// the summary carries the semantics, the tail is usually tag noise.
+const embedDocChars = 400
+
 // embedText builds the text vectorized for a symbol. CamelCase identifiers
 // are opaque to embedding models ("likeEscape" never surfaces the word
 // "escape"), so the split subtokens are appended — the same trick the FTS
-// name_parts column uses. Changing this only affects newly embedded
-// symbols; rebuild the workspace index to refresh existing vectors.
-func embedText(name, sig string) string {
+// name_parts column uses — and the doc summary is included: doc comments
+// are natural language, which is what the model actually understands.
+// Changing this only affects newly embedded symbols; rebuild the workspace
+// index to refresh existing vectors.
+func embedText(name, sig, doc string) string {
 	text := name
 	if parts := parse.SplitIdentifier(name); parts != strings.ToLower(name) {
 		text += " " + parts
 	}
 	if sig != "" {
 		text += "\n" + sig
+	}
+	if doc != "" {
+		summary := doc
+		if i := strings.IndexByte(summary, '\n'); i > 0 {
+			summary = summary[:i] // first paragraph
+		}
+		if len(summary) > embedDocChars {
+			summary = summary[:embedDocChars]
+		}
+		text += "\n" + summary
 	}
 	return text
 }

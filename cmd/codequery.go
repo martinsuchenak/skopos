@@ -154,10 +154,13 @@ func displayName(name, qualified string) string {
 //
 // prefix carries command-specific leading columns (depth, tree indent);
 // continuation lines align under the symbol.
-func printHit(prefix, indent, name, qualified, kind, path string, line int, signature string) {
+func printHit(prefix, indent, name, qualified, kind, path string, line int, signature string, doc ...string) {
 	fmt.Printf("%s%-44s %-9s %s:%d\n", prefix, displayName(name, qualified), kind, path, line)
 	if signature != "" {
 		fmt.Printf("%s    %s\n", indent, signature)
+	}
+	if len(doc) > 0 && doc[0] != "" {
+		fmt.Printf("%s    // %s\n", indent, doc[0])
 	}
 }
 
@@ -170,8 +173,20 @@ func printHits(res codeindex.SearchResults) {
 		return
 	}
 	for _, h := range res.Hits {
-		printHit("", "", h.Name, h.Qualified, h.Kind, h.Path, h.Line, h.Signature)
+		printHit("", "", h.Name, h.Qualified, h.Kind, h.Path, h.Line, h.Signature, firstDocLine(h.Doc))
 	}
+}
+
+// firstDocLine collapses a doc block to its summary line for compact hit
+// listings (the full doc is shown by `skopos symbol`).
+func firstDocLine(doc string) string {
+	if doc == "" {
+		return ""
+	}
+	if i := strings.IndexByte(doc, '\n'); i > 0 {
+		doc = doc[:i]
+	}
+	return doc
 }
 
 func codeSearchCmd() *cli.Command {
@@ -230,7 +245,22 @@ func codeSymbolCmd() *cli.Command {
 			if cmd.GetBool("json") {
 				return printJSON(res)
 			}
-			printHits(res)
+			if res.Note != "" {
+				fmt.Println("note:", res.Note)
+			}
+			if len(res.Hits) == 0 {
+				fmt.Println("no definitions found")
+				return nil
+			}
+			for _, h := range res.Hits {
+				printHit("", "", h.Name, h.Qualified, h.Kind, h.Path, h.Line, h.Signature)
+				if h.Doc != "" {
+					for _, l := range strings.Split(h.Doc, "\n") {
+						fmt.Printf("    // %s\n", l)
+					}
+					fmt.Println()
+				}
+			}
 			return nil
 		},
 	}
@@ -328,6 +358,9 @@ func codeOutlineCmd() *cli.Command {
 					lastContainer = "" // back to top level
 				}
 				fmt.Printf("%5d  %s%-9s %s\n", h.Line, indent, h.Kind, h.Name)
+			if d := firstDocLine(h.Doc); d != "" {
+				fmt.Printf("       %s    // %s\n", indent, d)
+			}
 				if h.Signature != "" && h.Qualified != "" {
 					fmt.Printf("       %s  %s\n", indent, clipSignature(h.Signature))
 				}

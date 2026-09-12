@@ -307,3 +307,130 @@ class Handler {
 		t.Fatalf("untyped receiver must stay bare: %+v", res.Edges)
 	}
 }
+
+func TestDocExtractionPHP(t *testing.T) {
+	e := NewExtractor()
+	p := writeTemp(t, "test.php", `<?php
+/**
+ * Sends the password reset email to a user.
+ *
+ * Long-running: queues the job and returns immediately.
+ *
+ * @param int $retryAttempts attempts before giving up (stale doc)
+ * @param string $email (stale doc)
+ * @return bool (stale doc)
+ * @throws MailException when the transport fails
+ * @deprecated use Mailer::queueReset() instead
+ */
+#[Route('/reset')]
+function sendPasswordResetMail($user, $transport): void {
+    $transport->send($user);
+}
+`)
+	res, err := e.ParseFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sym *Symbol
+	for i, s := range res.Symbols {
+		if s.Name == "sendPasswordResetMail" {
+			sym = &res.Symbols[i]
+		}
+	}
+	if sym == nil {
+		t.Fatal("symbol not extracted")
+	}
+	// Declaration wins: signature comes from the code, not the doc.
+	if sym.Signature == "" || !strings.Contains(sym.Signature, "function sendPasswordResetMail") {
+		t.Fatalf("signature from declaration: %q", sym.Signature)
+	}
+	for _, want := range []string{
+		"Sends the password reset email to a user.",
+		"Long-running: queues the job and returns immediately.",
+		"@throws MailException when the transport fails",
+		"@deprecated use Mailer::queueReset() instead",
+	} {
+		if !strings.Contains(sym.Doc, want) {
+			t.Errorf("doc missing %q; got:\n%s", want, sym.Doc)
+		}
+	}
+	// Stale signature tags are dropped.
+	if strings.Contains(sym.Doc, "@param") || strings.Contains(sym.Doc, "@return") {
+		t.Errorf("doc keeps signature tags (declaration must win):\n%s", sym.Doc)
+	}
+}
+
+func TestDocExtractionGo(t *testing.T) {
+	e := NewExtractor()
+	p := writeTemp(t, "a.go", `package p
+
+// SplitIdentifier breaks camelCase identifiers into
+// lowercase subtokens.
+//
+// Returns the input unchanged when there is nothing to split.
+func SplitIdentifier(name string) string { return name }
+`)
+	res, err := e.ParseFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Symbols) == 0 {
+		t.Fatal("no symbols")
+	}
+	s := res.Symbols[0]
+	if !strings.Contains(s.Doc, "breaks camelCase identifiers") || !strings.Contains(s.Doc, "nothing to split") {
+		t.Fatalf("Go doc comment not captured: %q", s.Doc)
+	}
+}
+
+func TestDocExtractionPythonDocstring(t *testing.T) {
+	e := NewExtractor()
+	p := writeTemp(t, "a.py", `def load_config(path):
+    """Load the app configuration from a YAML file.
+
+    Returns an empty config when the file is missing.
+    """
+    return {}
+`)
+	res, err := e.ParseFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Symbols) == 0 {
+		t.Fatal("no symbols")
+	}
+	s := res.Symbols[0]
+	if !strings.Contains(s.Doc, "Load the app configuration from a YAML file.") {
+		t.Fatalf("docstring not captured: %q", s.Doc)
+	}
+}
+
+func TestDocExtractionJSDoc(t *testing.T) {
+	e := NewExtractor()
+	p := writeTemp(t, "a.js", `/**
+ * Validates a reset token before consumption.
+ * @param {string} token (stale doc)
+ * @throws {Error} on malformed token
+ */
+export function validateResetToken(tok) {}
+`)
+	res, err := e.ParseFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sym *Symbol
+	for i, s := range res.Symbols {
+		if s.Name == "validateResetToken" {
+			sym = &res.Symbols[i]
+		}
+	}
+	if sym == nil {
+		t.Fatal("symbol not extracted")
+	}
+	if !strings.Contains(sym.Doc, "Validates a reset token before consumption.") || !strings.Contains(sym.Doc, "@throws") {
+		t.Fatalf("JSDoc not captured as expected: %q", sym.Doc)
+	}
+	if strings.Contains(sym.Doc, "@param") {
+		t.Errorf("stale @param kept: %q", sym.Doc)
+	}
+}

@@ -81,6 +81,10 @@ type langProfile struct {
 	// qualify a callee the generic rules left bare (PHP's `Klass::method`
 	// static syntax and `X::class` container idiom). Optional.
 	qualifyCallee func(call *gts.Node, lang *gts.Language, src []byte, receiverText, method string) (string, bool)
+
+	// docFromBody extracts a doc that is part of the declaration itself
+	// (Python docstrings) rather than a preceding comment. Optional.
+	docFromBody func(n *gts.Node, lang *gts.Language, src []byte) string
 }
 
 // isName reports whether a node type is a name node for this profile.

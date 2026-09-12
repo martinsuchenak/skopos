@@ -177,6 +177,28 @@ invisible to the graph. The tools are accurate about what they can see and
 honest about the rest — treat `dead-code` and `cycles` as leads to verify,
 not verdicts.
 
+## Documentation in the index
+
+Doc comments are indexed alongside the code they describe — PHPDoc,
+JSDoc/TSDoc, Godoc, Python docstrings, Javadoc, C# XML docs. The summary
+and tags the declaration cannot express (`@throws`, `@deprecated`, `@see`)
+are kept; tags that restate the signature (`@param`, `@return`) are
+dropped, because **the declaration always wins** — signatures, types, and
+parameters come from the code, never from docs, and doc tags are routinely
+stale.
+
+Docs surface in three places:
+
+- `skopos symbol X` / `code_symbol` — the full doc block under the definition.
+- `skopos outline <file>` — a one-line summary per definition.
+- Search — full-text and semantic matching both cover doc text, so
+  "sends the password reset email" finds `queueResetNotification()` even
+  though no identifier says so.
+
+Re-index after upgrading (`skopos index build` / `push`) to pick up docs
+for previously indexed files; the extractor version bump handles cache
+invalidation automatically.
+
 ## Semantic search (optional, off by default)
 
 Configure any OpenAI-compatible embeddings endpoint — including a local

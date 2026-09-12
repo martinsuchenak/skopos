@@ -18,7 +18,7 @@ import (
 
 // ExtractorVersion changes whenever extraction logic changes; it is mixed
 // into the content hash so already-indexed files re-extract after upgrades.
-const ExtractorVersion = "10"
+const ExtractorVersion = "11"
 
 // DefaultTimeout is the per-file parse budget. Files that exceed it are still
 // parsed via tree-sitter error recovery and flagged (the measured pathological
@@ -36,6 +36,7 @@ type Symbol struct {
 	StartByte int    `json:"start_byte"`
 	EndByte   int    `json:"end_byte"`
 	Signature string `json:"signature,omitempty"` // first source line of the definition, capped
+	Doc       string `json:"doc,omitempty"`       // doc comment summary + non-signature tags (declaration wins over stale doc tags)
 	Lang      string `json:"lang,omitempty"`
 }
 
@@ -260,7 +261,7 @@ func walkTree(prof *langProfile, root *gts.Node, lang *gts.Language, src []byte,
 					Name: name, Qual: qual, Kind: kind,
 					Line:      int(n.StartPoint().Row) + 1,
 					StartByte: int(n.StartByte()), EndByte: int(n.EndByte()),
-					Signature: sig, Lang: res.Lang,
+					Signature: sig, Doc: docForNode(prof, n, lang, src), Lang: res.Lang,
 				})
 				if qual != "" {
 					caller = qual
@@ -409,16 +410,26 @@ var unwrapReceivers = map[string]bool{
 }
 
 // signature returns the first source line of a definition, capped.
+// Attribute/annotation lines that grammar makes part of the definition node
+// (PHP `#[Route(...)]`, C# `[Attr]`) are skipped: the signature names the
+// declaration itself.
 func signature(src []byte, start, end int) string {
-	e := start
-	for e < end && e < len(src) && src[e] != '\n' {
-		e++
+	for start < end && start < len(src) {
+		e := start
+		for e < end && e < len(src) && src[e] != '\n' {
+			e++
+		}
+		line := strings.TrimSpace(string(src[start:e]))
+		if line != "" && !strings.HasPrefix(line, "#[") && !strings.HasPrefix(line, "[") {
+			sig := line
+			if len(sig) > 120 {
+				sig = sig[:117] + "..."
+			}
+			return sig
+		}
+		start = e + 1
 	}
-	sig := strings.TrimSpace(string(src[start:e]))
-	if len(sig) > 120 {
-		sig = sig[:117] + "..."
-	}
-	return sig
+	return ""
 }
 
 // DefaultExcludes are directory names skipped while walking.

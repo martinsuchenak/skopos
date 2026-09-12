@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS symbols (
   end_byte   INTEGER NOT NULL,
   signature  TEXT NOT NULL DEFAULT '',
   lang       TEXT NOT NULL DEFAULT '',
-  name_parts TEXT NOT NULL DEFAULT ''
+  name_parts TEXT NOT NULL DEFAULT '',
+  doc        TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_symbols_dedup ON symbols(hash, name, kind, line, start_byte);
 CREATE TABLE IF NOT EXISTS edges (
@@ -71,7 +72,7 @@ CREATE TABLE IF NOT EXISTS state (
   symbol_count INTEGER NOT NULL DEFAULT 0
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts USING fts5(
-  name, name_parts, signature, kind,
+  name, name_parts, signature, kind, doc,
   content='symbols', content_rowid='id', tokenize='porter unicode61'
 );
 CREATE TABLE IF NOT EXISTS file_cache (
@@ -86,8 +87,8 @@ CREATE TABLE IF NOT EXISTS embeddings (
   vec       BLOB NOT NULL
 );
 CREATE TRIGGER IF NOT EXISTS symbols_ai AFTER INSERT ON symbols BEGIN
-  INSERT INTO symbols_fts(rowid, name, name_parts, signature, kind)
-  VALUES (new.id, new.name, new.name_parts, new.signature, new.kind);
+  INSERT INTO symbols_fts(rowid, name, name_parts, signature, kind, doc)
+  VALUES (new.id, new.name, new.name_parts, new.signature, new.kind, new.doc);
 END;
 `
 
@@ -185,8 +186,53 @@ func ensureColumn(db *sql.DB, table, column, decl string) error {
 			return nil
 		}
 	}
-	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, decl))
+_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, decl))
 	return err
+}
+
+// ensureFTSDoc upgrades FTS tables created before the doc column existed:
+// the virtual table is recreated with doc indexed and repopulated.
+func ensureFTSDoc(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(symbols_fts)`)
+	if err != nil {
+		return err
+	}
+	hasDoc := false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notNull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == "doc" {
+			hasDoc = true
+		}
+	}
+	rows.Close()
+	if hasDoc {
+		return nil
+	}
+	for _, stmt := range []string{
+		`DROP TRIGGER IF EXISTS symbols_ai`,
+		`DROP TABLE IF EXISTS symbols_fts`,
+		`CREATE VIRTUAL TABLE symbols_fts USING fts5(
+		  name, name_parts, signature, kind, doc,
+		  content='symbols', content_rowid='id', tokenize='porter unicode61')`,
+		`INSERT INTO symbols_fts(rowid, name, name_parts, signature, kind, doc)
+		  SELECT id, name, name_parts, signature, kind, doc FROM symbols`,
+		`CREATE TRIGGER symbols_ai AFTER INSERT ON symbols BEGIN
+		  INSERT INTO symbols_fts(rowid, name, name_parts, signature, kind, doc)
+		  VALUES (new.id, new.name, new.name_parts, new.signature, new.kind, new.doc);
+		END`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("fts doc migration: %w", err)
+		}
+	}
+	return nil
 }
 
 func (st *Store) DB(workspace string) (*sql.DB, error) {
@@ -208,6 +254,14 @@ func (st *Store) DB(workspace string) (*sql.DB, error) {
 		return nil, fmt.Errorf("migrating index db for %q: %w", workspace, err)
 	}
 	if err := ensureColumn(db, "symbols", "qual_name", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := ensureColumn(db, "symbols", "doc", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := ensureFTSDoc(db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -339,10 +393,10 @@ func (st *Store) AddBlob(workspace string, res *parse.FileResult) error {
 			continue
 		}
 		if _, err := tx.Exec(`
-			INSERT OR IGNORE INTO symbols (hash, name, qual_name, kind, line, start_byte, end_byte, signature, lang, name_parts)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			INSERT OR IGNORE INTO symbols (hash, name, qual_name, kind, line, start_byte, end_byte, signature, lang, name_parts, doc)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			res.Hash, sym.Name, sym.Qual, sym.Kind, sym.Line, sym.StartByte, sym.EndByte, sym.Signature, sym.Lang,
-			parse.SplitIdentifier(namePartsInput(sym))); err != nil {
+			parse.SplitIdentifier(namePartsInput(sym)), sym.Doc); err != nil {
 			return fmt.Errorf("inserting symbol %q: %w", sym.Name, err)
 		}
 	}
@@ -421,6 +475,7 @@ type SymbolHit struct {
 	Path      string `json:"path"`
 	Line      int    `json:"line"`
 	Signature string `json:"signature,omitempty"`
+	Doc       string `json:"doc,omitempty"` // doc comment (summary + non-signature tags)
 	Lang      string `json:"lang,omitempty"`
 
 	rank int // vector rank when fused (internal)
@@ -492,7 +547,7 @@ func (st *Store) Symbol(workspace, branch, name string, limit int) ([]SymbolHit,
 	}
 	limit = clampLimit(limit, 50, 500)
 	rows, err := db.Query(`
-		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang
+		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang, s.doc
 		FROM symbols s
 		JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
 		WHERE s.name = ? COLLATE NOCASE OR s.qual_name = ? COLLATE NOCASE
@@ -502,7 +557,7 @@ func (st *Store) Symbol(workspace, branch, name string, limit int) ([]SymbolHit,
 		return nil, err
 	}
 	defer rows.Close()
-	return scanHits(rows)
+	return scanHitsDoc(rows)
 }
 
 // Outline lists a file's symbols in source order.
@@ -512,7 +567,7 @@ func (st *Store) Outline(workspace, branch, path string) ([]SymbolHit, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`
-		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang
+		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang, s.doc
 		FROM symbols s
 		JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
 		WHERE bf.path = ?
@@ -521,7 +576,7 @@ func (st *Store) Outline(workspace, branch, path string) ([]SymbolHit, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanHits(rows)
+	return scanHitsDoc(rows)
 }
 
 // EdgeHit is a graph edge with the file it occurs in.
@@ -773,6 +828,19 @@ func namePartsInput(sym parse.Symbol) string {
 		return sym.Qual
 	}
 	return sym.Name
+}
+
+// scanHitsDoc scans the hit columns plus the doc text (Symbol/Outline).
+func scanHitsDoc(rows *sql.Rows) ([]SymbolHit, error) {
+	var out []SymbolHit
+	for rows.Next() {
+		var h SymbolHit
+		if err := rows.Scan(&h.Name, &h.Qualified, &h.Kind, &h.Path, &h.Line, &h.Signature, &h.Lang, &h.Doc); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
 }
 
 func scanHits(rows *sql.Rows) ([]SymbolHit, error) {
