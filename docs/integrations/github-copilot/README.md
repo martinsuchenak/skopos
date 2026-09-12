@@ -8,7 +8,7 @@ Two layers: MCP (rich voluntary reporting via Copilot Chat) + VS Code workspace 
 - `skopos` binary in PATH
 - GitHub Copilot extension installed in VS Code
 
-> **Quick install:** `skopos install --agent github-copilot [--url ...] [--api-key "$SKOPOS_API_KEY"]` does this for you — it merges the MCP config into VS Code's `mcp.json` and appends `.github/copilot-instructions.md` (idempotent, backs up existing config). The manual steps below are the fallback.
+> **Quick install:** `skopos install --agent github-copilot [--url ...] [--api-key "$SKOPOS_API_KEY"]` does this for you — it merges the MCP config into VS Code's user `mcp.json` and manages the block in your personal instructions (`~/.github/copilot-instructions.md`); with `--scope project` it writes `.vscode/mcp.json` and `.github/copilot-instructions.md` in the current repo instead. Idempotent; backs up existing config. The manual steps below are the fallback.
 
 ## Step 1: Apply MCP config
 

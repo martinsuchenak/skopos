@@ -45,11 +45,25 @@ func installCmd() *cli.Command {
 				Name:  "dry-run",
 				Usage: "Print what would change without writing anything",
 			},
+			&cli.BoolFlag{
+				Name:  "hooks",
+				Usage: "Install the Claude Code hook suite for claude-code (session briefing, search nudges, memory reminders; default on)",
+			},
+			&cli.BoolFlag{
+				Name:  "no-hooks",
+				Usage: "Skip hook installation (MCP + prompt files only)",
+			},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			agent := cmd.GetString("agent")
 			if agent == "" {
 				return fmt.Errorf("--agent is required (one of: claude-code, codex, gemini-cli, github-copilot, kiro, opencode, all)")
+			}
+			var hooks *bool
+			if cmd.GetBool("no-hooks") {
+				hooks = ptrBool(false)
+			} else if cmd.GetBool("hooks") {
+				hooks = ptrBool(true)
 			}
 			results, err := install.Install(install.Options{
 				Agent:  agent,
@@ -57,6 +71,7 @@ func installCmd() *cli.Command {
 				APIKey: cmd.GetString("api-key"),
 				Scope:  cmd.GetString("scope"),
 				DryRun: cmd.GetBool("dry-run"),
+				Hooks:  hooks,
 			})
 			if err != nil {
 				return err
@@ -71,3 +86,5 @@ func installCmd() *cli.Command {
 		},
 	}
 }
+
+func ptrBool(b bool) *bool { return &b }

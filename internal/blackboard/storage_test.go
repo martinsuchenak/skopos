@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,14 +14,15 @@ import (
 
 func testStorage(t *testing.T) *Storage {
 	t.Helper()
-	sqlDB, err := sql.Open("sqlite", ":memory:")
+	// A file DB (not :memory:): pooled connections must share one database,
+	// which :memory: does not guarantee once transactions grab extra conns.
+	dsn := filepath.Join(t.TempDir(), "test.db") + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)"
+	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	t.Cleanup(func() { sqlDB.Close() })
-	if _, err := sqlDB.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		t.Fatalf("enable foreign keys: %v", err)
-	}
+
 	if err := db.RunMigrations(sqlDB); err != nil {
 		t.Fatalf("run migrations: %v", err)
 	}
@@ -319,5 +321,62 @@ func TestStorageBundleEmptyBranchReturnsAllBranchEntries(t *testing.T) {
 	}
 	if len(featA) != 2 {
 		t.Fatalf("expected 2 entries (feat-a + project), got %d", len(featA))
+	}
+}
+
+func TestStorageSearchLikeEscaping(t *testing.T) {
+	s := testStorage(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	for _, e := range []Entry{
+		{ID: "e1", Scope: ScopeProject, EntryType: TypeFinding, Title: "rate is 100% of budget", AuthorAgentID: "a", CreatedAt: now, UpdatedAt: now},
+		{ID: "e2", Scope: ScopeProject, EntryType: TypeFinding, Title: "rate is 100X of budget", AuthorAgentID: "a", CreatedAt: now, UpdatedAt: now},
+		{ID: "e3", Scope: ScopeProject, EntryType: TypeFinding, Title: "snake_case helper", AuthorAgentID: "a", CreatedAt: now, UpdatedAt: now},
+		{ID: "e4", Scope: ScopeProject, EntryType: TypeFinding, Title: "snakeXcase helper", AuthorAgentID: "a", CreatedAt: now, UpdatedAt: now},
+	} {
+		if err := s.Write(ctx, e); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+
+	// "%" and "_" in the search term must match literally, not act as
+	// LIKE wildcards.
+	for _, tc := range []struct{ q, wantID string }{
+		{"100%", "e1"},
+		{"100X", "e2"},
+		{"snake_case", "e3"},
+		{"snakeXcase", "e4"},
+		{"100", "e1"}, // both match "100"; newest-first is ambiguous, just require a hit
+	} {
+		got, err := s.Search(ctx, SearchFilters{Query: tc.q})
+		if err != nil {
+			t.Fatalf("search %q: %v", tc.q, err)
+		}
+		if len(got) == 0 {
+			t.Fatalf("search %q: no results", tc.q)
+		}
+		if tc.wantID != "" {
+			found := false
+			for _, e := range got {
+				if e.ID == tc.wantID {
+					found = true
+				}
+			}
+			if !found {
+				ids := make([]string, len(got))
+				for i, e := range got {
+					ids[i] = e.ID
+				}
+				t.Errorf("search %q: want %s, got %v", tc.q, tc.wantID, ids)
+			}
+			// A wildcard-acting % or _ would also match the sibling entry.
+			if tc.q == "100%" && len(got) != 1 {
+				t.Errorf("search \"100%%\": expected exactly the literal match, got %d results", len(got))
+			}
+			if tc.q == "snake_case" && len(got) != 1 {
+				t.Errorf("search snake_case: expected exactly the literal match, got %d results", len(got))
+			}
+		}
 	}
 }

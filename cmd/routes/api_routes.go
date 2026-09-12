@@ -8,6 +8,7 @@ import (
 
 	"github.com/martinsuchenak/skopos/build"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
+	"github.com/martinsuchenak/skopos/internal/codeindex"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/rest"
 	"github.com/martinsuchenak/skopos/internal/status"
@@ -19,6 +20,7 @@ var registrations []func(*http.ServeMux, *status.Handler)
 var blackboardRegistrations []func(*http.ServeMux, *blackboard.Handler)
 var plansRegistrations []func(*http.ServeMux, *plans.Handler)
 var workspacesRegistrations []func(*http.ServeMux, *workspaces.Handler)
+var codeIndexRegistrations []func(*http.ServeMux, *codeindex.Handler)
 
 // RegisterStatus registers status/session routes. (Named for symmetry with
 // RegisterBlackboard/RegisterPlans/RegisterWorkspaces.)
@@ -38,7 +40,13 @@ func RegisterWorkspaces(fn func(*http.ServeMux, *workspaces.Handler)) {
 	workspacesRegistrations = append(workspacesRegistrations, fn)
 }
 
-func RegisterRoutes(mux *http.ServeMux, statusHandler *status.Handler, blackboardHandler *blackboard.Handler, plansHandler *plans.Handler, workspacesHandler *workspaces.Handler) {
+// RegisterCodeIndex registers code-index routes; the handler may be nil (the
+// feature disabled), in which case registrations skip themselves.
+func RegisterCodeIndex(fn func(*http.ServeMux, *codeindex.Handler)) {
+	codeIndexRegistrations = append(codeIndexRegistrations, fn)
+}
+
+func RegisterRoutes(mux *http.ServeMux, statusHandler *status.Handler, blackboardHandler *blackboard.Handler, plansHandler *plans.Handler, workspacesHandler *workspaces.Handler, codeIndexHandler *codeindex.Handler) {
 	mux.HandleFunc("GET /health", healthHandler)
 	registerWebRoutes(mux)
 
@@ -56,6 +64,10 @@ func RegisterRoutes(mux *http.ServeMux, statusHandler *status.Handler, blackboar
 
 	for _, fn := range workspacesRegistrations {
 		fn(mux, workspacesHandler)
+	}
+
+	for _, fn := range codeIndexRegistrations {
+		fn(mux, codeIndexHandler)
 	}
 }
 

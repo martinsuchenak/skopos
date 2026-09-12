@@ -44,7 +44,7 @@ func integrationSetup(t *testing.T, apiKey string) *http.ServeMux {
 	ws := workspaces.NewHandler(workspaces.NewService(workspaces.NewStorage(sqlDB)), apiKey)
 
 	mux := http.NewServeMux()
-	RegisterRoutes(mux, st, bb, pl, ws)
+	RegisterRoutes(mux, st, bb, pl, ws, nil)
 	hub := events.NewHub()
 	mux.HandleFunc("GET /api/events/stream", events.StreamHandler(hub))
 	return mux

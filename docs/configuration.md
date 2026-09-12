@@ -21,8 +21,37 @@ Optional — if absent, skopos runs on defaults. The file is gitignored (may con
 | `--server-port` | `SERVER_PORT` | `server.port` | `8080` | HTTP listen port (REST, MCP at `/mcp`, dashboard, SSE) |
 | `--database-path` | `DATABASE_PATH` | `database.path` | `skopos.db` | SQLite database file path |
 | `--api-key` | `SKOPOS_API_KEY` | `auth.api_key` | (empty = auth disabled, loopback only) | API key; when set, required by every endpoint (REST, MCP, SSE) |
-| `--health-stuck-threshold` | `HEALTH_STUCK_THRESHOLD` | `health.stuck_threshold_minutes` | `15` | Minutes before an active agent is marked stuck |
+| `--insecure-no-api-key` | `SKOPOS_INSECURE_NO_API_KEY` | — | `false` | Allow running without an API key on a non-loopback bind (authentication stays disabled — know what you are exposing) |
+| `--health-stuck-threshold` | `HEALTH_STUCK_THRESHOLD` | `health.stuck_threshold_minutes` | `15` | Minutes before an active agent is marked stuck (0 disables) |
 | `--cleanup-retention-days` | `CLEANUP_RETENTION_DAYS` | `cleanup.retention_days` | `30` | Days to retain data (0 disables cleanup) |
+| `--index-dir` | `SKOPOS_INDEX_DIR` | `codeindex.dir` | `.skopos/indexes` | Directory for per-workspace code index databases |
+| `--embeddings-url` | `SKOPOS_EMBEDDINGS_URL` | `codeindex.embeddings.url` | (empty = disabled) | OpenAI-compatible `/v1/embeddings` endpoint for semantic code search (local Ollama works) |
+| `--embeddings-model` | `SKOPOS_EMBEDDINGS_MODEL` | `codeindex.embeddings.model` | (empty) | Embedding model name (required with `--embeddings-url`) |
+| `--embeddings-api-key` | `SKOPOS_EMBEDDINGS_API_KEY` | `codeindex.embeddings.api_key` | (empty) | API key for the embeddings endpoint (not needed locally) |
+| `--vector-store` | `SKOPOS_VECTOR_STORE` | `codeindex.embeddings.vector_store` | `sqlite` | Vector backend: `sqlite` (embedded brute force) or `qdrant` (external, monorepo scale) |
+| `--qdrant-url` | `SKOPOS_QDRANT_URL` | `codeindex.embeddings.qdrant_url` | (empty) | Qdrant REST address when `--vector-store=qdrant` (e.g. `http://localhost:6333`) |
+| `--qdrant-api-key` | `SKOPOS_QDRANT_API_KEY` | `codeindex.embeddings.qdrant_api_key` | (empty) | Qdrant API key when required |
+
+### Client (written by `skopos setup`)
+
+The `[client]` section configures CLI commands (`index push`, queries) to
+talk to a remote server without passing flags. `skopos setup` writes it
+automatically; flags and `SKOPOS_SERVER_URL`/`SKOPOS_API_KEY` override it.
+
+| Config path | Env var | Default | Description |
+|-------------|---------|---------|-------------|
+| `client.server_url` | `SKOPOS_SERVER_URL` | (empty = local index) | Remote skopos URL for index/query commands |
+| `client.api_key` | `SKOPOS_API_KEY` | (empty) | API key for the remote server |
+
+## Agent identity (all surfaces)
+
+These environment variables affect how agents identify themselves — to the
+server (MCP/REST) and to CLI commands:
+
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `SKOPOS_SESSION_ID` | auto-derived (per workspace per day, or `.skopos-session` file in the workspace root) | Share one session across multiple agents working on the same task |
+| `SKOPOS_AGENT_ID` | `<command>-<hostname>` | Stable agent id for `skopos report` and hook scripts |
 
 ## Log levels
 

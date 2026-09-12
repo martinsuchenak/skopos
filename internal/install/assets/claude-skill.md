@@ -57,3 +57,16 @@ Call `plan_update_item` with `plan_id`, `item_id`, and:
 
 **Read a plan with all items:**
 Call `plan_read` with `id` (the plan ID).
+
+
+## Code intelligence
+
+Before grepping for code structure, query the skopos index:
+
+- `code_search` — symbol search by name/signature (camelCase-aware)
+- `code_symbol` — exact definitions with file:line
+- `code_callers` / `code_callees` — the call graph around a symbol
+- `code_impact` — what transitively breaks if a symbol changes
+- `code_outline` — a file's definitions in source order
+
+Prefer these over Grep for "how does X work", "who calls Y", or refactoring questions; grep remains right for string literals and exhaustive listings.

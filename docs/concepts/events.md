@@ -9,7 +9,8 @@ GET /api/events/stream
 Content-Type: text/event-stream
 ```
 
-Open (read-only, no auth required — same as other GET endpoints). The response is a persistent stream. The server sends a `: connected` comment on open, then named events as mutations occur, with `: ping` keep-alives every 15 seconds.
+Like every other endpoint, the stream requires the API key (as
+`Authorization: Bearer <key>`) when one is configured; with no key configured it is open. The response is a persistent stream. The server sends a `: connected` comment on open, then named events as mutations occur, with `: ping` keep-alives every 15 seconds.
 
 ## Event types
 

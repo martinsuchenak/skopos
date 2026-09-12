@@ -1,3 +1,8 @@
+---
+description: Skopos code index, shared memory (blackboard), plans, and agent status
+alwaysApply: true
+---
+
 ## Skopos Status Reporting
 
 Report your status to the Skopos dashboard when starting and completing work.

@@ -6,7 +6,7 @@
 - `skopos` binary in PATH
 - Gemini CLI installed (`gem install gemini-cli` or via your package manager)
 
-> **Quick install:** `skopos install --agent gemini-cli [--url ...] [--api-key "$SKOPOS_API_KEY"]` does this for you — it merges the MCP config into `~/.gemini/settings.json` (idempotent, backs up existing config). Add `--scope project` to write into `.gemini/`. The manual steps below are the fallback.
+> **Quick install:** `skopos install --agent gemini-cli [--url ...] [--api-key "$SKOPOS_API_KEY"]` does this for you — it merges the MCP config into `~/.gemini/settings.json` and manages the behavioral block in `~/.gemini/GEMINI.md` between `<!-- skopos:begin -->` / `<!-- skopos:end -->` markers (idempotent, backs up existing config). Add `--scope project` to write into `.gemini/`. The manual steps below are the fallback.
 
 ## Step 1: Apply MCP config
 
@@ -14,14 +14,15 @@ Add the `skopos` entry from `settings-snippet.json` into the `mcpServers` sectio
 
 ```json
 "skopos": {
-  "url": "http://localhost:8080/mcp",
-  "type": "http",
+  "httpUrl": "http://localhost:8080/mcp",
   "trust": true,
   "headers": {
     "Authorization": "Bearer ${SKOPOS_API_KEY}"
   }
 }
 ```
+
+Use `httpUrl`, not `url` — `url` selects the SSE transport in Gemini CLI, while `httpUrl` is streamable HTTP, which is what skopos serves at `/mcp`. There is no `type` key in Gemini's MCP schema.
 
 Do not replace the whole file — add only the `skopos` key to your existing `mcpServers` object.
 

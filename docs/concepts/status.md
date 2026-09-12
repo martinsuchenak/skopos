@@ -25,6 +25,19 @@ Agents call `report_status` (MCP) or `POST /api/reports` (REST) with:
 
 Invalid statuses are rejected with: `unsupported status "X". Valid statuses: pending, thinking, planning, running, ...`
 
+## CLI
+
+Report from the terminal or scripts (same effect as the MCP tool):
+
+```sh
+skopos report --agent-id claude-code-$(hostname -s) --agent-type claude-code \
+  --workspace . --status running --message "investigating the auth bug"
+```
+
+Useful companions: `skopos workspace` prints the resolved workspace ID for
+the current directory, and `skopos mode` prints the resolved workflow
+(`local`, or `remote <server-url>`) — handy in shell prompts and hooks.
+
 ## Health checker
 
 A background goroutine (every 60s) detects:
@@ -40,7 +53,11 @@ A background goroutine (every 10 min) deletes data older than `cleanup-retention
 - Completed/archived plans older than retention
 - Agents not seen since retention
 
-Set `--cleanup-retention-days 0` to disable.
+Set `--cleanup-retention-days 0` to disable. A one-off run is available too:
+
+```sh
+skopos cleanup --retention-days 14   # same rules, runs once and exits
+```
 
 ## Session lifecycle
 

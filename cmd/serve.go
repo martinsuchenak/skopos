@@ -20,6 +20,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/cleanup"
+	"github.com/martinsuchenak/skopos/internal/codeindex"
 	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/martinsuchenak/skopos/internal/health"
@@ -78,6 +79,50 @@ func serveCmd() *cli.Command {
 				ConfigPath:   []string{"health.stuck_threshold_minutes"},
 				EnvVars:      []string{"HEALTH_STUCK_THRESHOLD"},
 			},
+			&cli.StringFlag{
+				Name:         "index-dir",
+				DefaultValue: ".skopos/indexes",
+				Usage:        "Directory for per-workspace code index databases",
+				ConfigPath:   []string{"codeindex.dir"},
+				EnvVars:      []string{"SKOPOS_INDEX_DIR"},
+			},
+			&cli.StringFlag{
+				Name:       "embeddings-url",
+				Usage:      "OpenAI-compatible /v1 embeddings endpoint for semantic code search (empty disables; local Ollama e.g. http://localhost:11434/v1)",
+				ConfigPath: []string{"codeindex.embeddings.url"},
+				EnvVars:    []string{"SKOPOS_EMBEDDINGS_URL"},
+			},
+			&cli.StringFlag{
+				Name:       "embeddings-model",
+				Usage:      "Embedding model name (required with --embeddings-url)",
+				ConfigPath: []string{"codeindex.embeddings.model"},
+				EnvVars:    []string{"SKOPOS_EMBEDDINGS_MODEL"},
+			},
+			&cli.StringFlag{
+				Name:       "embeddings-api-key",
+				Usage:      "API key for the embeddings endpoint (not needed for local servers)",
+				ConfigPath: []string{"codeindex.embeddings.api_key"},
+				EnvVars:    []string{"SKOPOS_EMBEDDINGS_API_KEY"},
+			},
+			&cli.StringFlag{
+				Name:         "vector-store",
+				DefaultValue: "sqlite",
+				Usage:        "Vector backend for embeddings: sqlite (embedded, brute force) or qdrant (external, monorepo scale)",
+				ConfigPath:   []string{"codeindex.embeddings.vector_store"},
+				EnvVars:      []string{"SKOPOS_VECTOR_STORE"},
+			},
+			&cli.StringFlag{
+				Name:       "qdrant-url",
+				Usage:      "Qdrant REST address (e.g. http://localhost:6333 or https://qdrant.example.com) when --vector-store=qdrant",
+				ConfigPath: []string{"codeindex.embeddings.qdrant_url"},
+				EnvVars:    []string{"SKOPOS_QDRANT_URL"},
+			},
+			&cli.StringFlag{
+				Name:       "qdrant-api-key",
+				Usage:      "Qdrant API key (when required)",
+				ConfigPath: []string{"codeindex.embeddings.qdrant_api_key"},
+				EnvVars:    []string{"SKOPOS_QDRANT_API_KEY"},
+			},
 			&cli.IntFlag{
 				Name:         "cleanup-retention-days",
 				DefaultValue: 30,
@@ -127,6 +172,56 @@ func serveCmd() *cli.Command {
 			workspacesService := workspaces.NewService(workspaces.NewStorage(sqlDB))
 			workspacesHandler := workspaces.NewHandler(workspacesService, apiKey)
 
+			// Code index: one SQLite DB per workspace under --index-dir.
+			codeIndexStore, err := codeindex.NewStore(cmd.GetString("index-dir"))
+			if err != nil {
+				return err
+			}
+			defer codeIndexStore.Close()
+			codeIndexService := codeindex.NewService(codeIndexStore)
+			codeIndexHandler := codeindex.NewHandler(codeIndexService, apiKey)
+			codeIndexHandler.SetWorkspaceRegistrar(func(id string) {
+				// First push registers the workspace so it persists in the registry.
+				_, _, _ = workspacesService.Create(context.Background(), workspaces.CreateInput{ID: id})
+			})
+			// Server-side indexing: clone/pull the registered git_url and rebuild.
+			refresher, err := codeindex.NewRefresher(codeIndexStore, cmd.GetString("index-dir"), func(id string) (string, error) {
+				ws, err := workspacesService.Get(context.Background(), id)
+				if err != nil {
+					// Surface as 400 with guidance instead of a bare 500.
+					return "", fmt.Errorf("%w: workspace %s is not registered — POST /api/workspaces with a git_url first: %v", codeindex.ErrInvalidInput, id, err)
+				}
+				return ws.GitURL, nil
+			})
+			if err != nil {
+				return err
+			}
+			codeIndexHandler.SetRefresher(refresher)
+
+			// Optional semantic embeddings: any OpenAI-compatible endpoint
+			// (local Ollama keeps everything on-host). Disabled by default.
+			// Optional external vector backend (default: embedded SQLite).
+			if vs := cmd.GetString("vector-store"); vs == "qdrant" {
+				if cmd.GetString("qdrant-url") == "" {
+					return fmt.Errorf("--qdrant-url is required when --vector-store=qdrant")
+				}
+				qd, err := codeindex.NewQdrantVectorStore(cmd.GetString("qdrant-url"), cmd.GetString("qdrant-api-key"))
+				if err != nil {
+					return err
+				}
+				codeIndexService.SetVectorStore(qd)
+				log.Info("vector store: qdrant", "url", cmd.GetString("qdrant-url"))
+			}
+			if embURL := cmd.GetString("embeddings-url"); embURL != "" && cmd.GetString("embeddings-model") != "" {
+				embedder := &codeindex.OpenAIEmbedder{
+					BaseURL:   embURL,
+					ModelName: cmd.GetString("embeddings-model"),
+					APIKey:    cmd.GetString("embeddings-api-key"),
+				}
+				codeIndexHandler.SetEmbeddingManager(codeindex.NewEmbeddingManager(codeIndexService, embedder))
+				log.Info("semantic code search enabled", "model", embedder.ModelName, "url", embURL, "vectors", codeIndexService.VectorStoreName())
+			}
+
 			// Cancel background work and initiate graceful shutdown on SIGINT/SIGTERM.
 			ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
@@ -147,7 +242,7 @@ func serveCmd() *cli.Command {
 			// go-scaffolder:serve-init
 
 			mux := http.NewServeMux()
-			routes.RegisterRoutes(mux, statusHandler, blackboardHandler, plansHandler, workspacesHandler)
+			routes.RegisterRoutes(mux, statusHandler, blackboardHandler, plansHandler, workspacesHandler, codeIndexHandler)
 			mux.Handle("GET /api/events/stream", auth.APIKeyMiddleware(apiKey)(events.StreamHandler(hub)))
 
 			// Runtime metrics are not part of the product API: require the API key
@@ -157,7 +252,7 @@ func serveCmd() *cli.Command {
 			// MCP endpoint, mounted on the same server/port as everything else. Body
 			// is capped like the REST API (rest.DecodeJSON applies its cap only to
 			// handlers that decode via it).
-			mcpHandler := mcp.NewMCPHandler(statusService, blackboardService, plansService)
+			mcpHandler := mcp.NewMCPHandler(statusService, blackboardService, plansService, codeIndexService)
 			mcpHandler = rest.BodyLimit(noBrowserOrigin(mcpHandler))
 			if apiKey != "" {
 				mcpHandler = auth.APIKeyMiddleware(apiKey)(mcpHandler)

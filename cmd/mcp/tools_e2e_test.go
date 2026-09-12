@@ -2,13 +2,18 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/martinsuchenak/skopos/internal/blackboard"
+	"github.com/martinsuchenak/skopos/internal/codeindex"
+	"github.com/martinsuchenak/skopos/internal/codeindex/parse"
 	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/status"
@@ -39,6 +44,7 @@ func toolsE2E(t *testing.T) http.Handler {
 		status.NewService(status.NewStorage(sqlDB)),
 		blackboard.NewService(blackboard.NewStorage(sqlDB)),
 		plans.NewService(plans.NewStorage(sqlDB)),
+		codeIndexServiceForTest(t, sqlDB),
 	)
 }
 
@@ -126,6 +132,15 @@ func callToolExpectError(t *testing.T, h http.Handler, sessionID string, id int,
 		Code    int
 		Message string
 	}{res.Error.Code, res.Error.Message}
+}
+
+func codeIndexServiceForTest(t *testing.T, sqlDB *sql.DB) *codeindex.Service {
+	store, err := codeindex.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("index store: %v", err)
+	}
+	t.Cleanup(store.Close)
+	return codeindex.NewService(store)
 }
 
 func initialize(t *testing.T, h http.Handler) string {
@@ -279,5 +294,165 @@ func TestMCPReadToolsAcceptAliases(t *testing.T) {
 	}
 	if !bytes.Contains([]byte(found), []byte("agent-x")) {
 		t.Fatalf("expected author in search result: %s", found)
+	}
+}
+
+func mustOpenDB(t *testing.T) *sql.DB {
+	t.Helper()
+	sqlDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { sqlDB.Close() })
+	if err := db.RunMigrations(sqlDB); err != nil {
+		t.Fatal(err)
+	}
+	return sqlDB
+}
+
+func TestMCPCodeIndexToolsEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	repo := dir + "/repo"
+	os.MkdirAll(repo, 0o755)
+	os.WriteFile(repo+"/main.go", []byte(`package main
+
+func LoadConfig() int { return helper() }
+
+func helper() int { return 42 }
+`), 0o644)
+
+	store, err := codeindex.NewStore(dir + "/idx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	svc := codeindex.NewService(store)
+	h := NewMCPHandler(
+		status.NewService(status.NewStorage(mustOpenDB(t))),
+		blackboard.NewService(blackboard.NewStorage(mustOpenDB(t))),
+		plans.NewService(plans.NewStorage(mustOpenDB(t))),
+		svc,
+	)
+	sessionID := initialize(t, h)
+
+	// Build a local index for workspace "e2e-ws" and commit it.
+	results, head, err := codeindex.Build(context.Background(), parse.NewExtractor(), repo, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := codeindex.CommitLocal(store, "e2e-ws", "main", "test", results, head); err != nil {
+		t.Fatal(err)
+	}
+
+	// code_search finds LoadConfig via split-token query.
+	got := callText(t, h, sessionID, 1, "code_search", map[string]any{"workspace_id": "e2e-ws", "q": "loadconfig"})
+	if !strings.Contains(got, "LoadConfig") {
+		t.Fatalf("code_search: %s", got)
+	}
+	// code_symbol returns the file:line.
+	got = callText(t, h, sessionID, 2, "code_symbol", map[string]any{"workspace_id": "e2e-ws", "name": "helper"})
+	if !strings.Contains(got, "main.go") {
+		t.Fatalf("code_symbol: %s", got)
+	}
+	// code_callers: helper is called by LoadConfig.
+	got = callText(t, h, sessionID, 3, "code_callers", map[string]any{"workspace_id": "e2e-ws", "name": "helper"})
+	if !strings.Contains(got, "LoadConfig") {
+		t.Fatalf("code_callers: %s", got)
+	}
+	// code_index_status lists the branch.
+	got = callText(t, h, sessionID, 4, "code_index_status", map[string]any{"workspace_id": "e2e-ws"})
+	if !strings.Contains(got, "main") {
+		t.Fatalf("code_index_status: %s", got)
+	}
+}
+
+func TestMCPCodeAnalysisToolsEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	repo := dir + "/repo"
+	os.MkdirAll(repo, 0o755)
+	os.WriteFile(repo+"/app.go", []byte(`package main
+
+func Root() { mid(); }
+
+func mid() { leafA(); leafB() }
+
+func leafA() { cyc1() }
+func leafB() {}
+func cyc1() { cyc2() }
+func cyc2() { cyc1() }
+func deadSym() {}
+`), 0o644)
+
+	store, err := codeindex.NewStore(dir + "/idx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	svc := codeindex.NewService(store)
+	h := NewMCPHandler(
+		status.NewService(status.NewStorage(mustOpenDB(t))),
+		blackboard.NewService(blackboard.NewStorage(mustOpenDB(t))),
+		plans.NewService(plans.NewStorage(mustOpenDB(t))),
+		svc,
+	)
+	sessionID := initialize(t, h)
+
+	// Index main, then a feature branch that adds a symbol.
+	buildCommit := func(branch string) {
+		results, head, err := codeindex.Build(context.Background(), parse.NewExtractor(), repo, branch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := codeindex.CommitLocal(store, "an-ws", branch, "test", results, head); err != nil {
+			t.Fatal(err)
+		}
+	}
+	buildCommit("main")
+	os.WriteFile(repo+"/extra.go", []byte("package main\n\nfunc Extra() {}\n"), 0o644)
+	buildCommit("feat/x")
+
+	id := 1
+	next := func() int { id++; return id }
+
+	// outline lists a file's definitions in order.
+	got := callText(t, h, sessionID, next(), "code_outline", map[string]any{"workspace_id": "an-ws", "path": "app.go"})
+	if !strings.Contains(got, "Root") || !strings.Contains(got, "leafB") {
+		t.Fatalf("outline: %s", got)
+	}
+
+	// callees from mid: leafA and leafB.
+	got = callText(t, h, sessionID, next(), "code_callees", map[string]any{"workspace_id": "an-ws", "name": "mid"})
+	if !strings.Contains(got, "leafA") || !strings.Contains(got, "leafB") {
+		t.Fatalf("callees: %s", got)
+	}
+
+	// impact of leafA reaches mid then Root (depth 2).
+	got = callText(t, h, sessionID, next(), "code_impact", map[string]any{"workspace_id": "an-ws", "name": "leafA", "depth": 3})
+	if !strings.Contains(got, "mid") || !strings.Contains(got, "Root") {
+		t.Fatalf("impact: %s", got)
+	}
+
+	// dead-code finds deadSym (no callers, not an entry-point prefix).
+	got = callText(t, h, sessionID, next(), "code_dead", map[string]any{"workspace_id": "an-ws"})
+	if !strings.Contains(got, "deadSym") {
+		t.Fatalf("dead: %s", got)
+	}
+
+	// cycles finds cyc1 <-> cyc2.
+	got = callText(t, h, sessionID, next(), "code_cycles", map[string]any{"workspace_id": "an-ws"})
+	if !strings.Contains(got, "cyc1") || !strings.Contains(got, "cyc2") {
+		t.Fatalf("cycles: %s", got)
+	}
+
+	// branch diff: feat/x adds extra.go / Extra vs main.
+	got = callText(t, h, sessionID, next(), "code_branch_diff", map[string]any{"workspace_id": "an-ws", "branch": "feat/x"})
+	if !strings.Contains(got, "Extra") || !strings.Contains(got, "extra.go") {
+		t.Fatalf("branch diff: %s", got)
+	}
+
+	// call_tree from Root expands two levels.
+	got = callText(t, h, sessionID, next(), "code_call_tree", map[string]any{"workspace_id": "an-ws", "name": "Root", "depth": 2})
+	if !strings.Contains(got, "leafA") {
+		t.Fatalf("call tree: %s", got)
 	}
 }

@@ -1,16 +1,39 @@
 ---
 id: skopos
 kind: rule
-description: Always-on skopos session guidance — load context at start, record to the blackboard, track work in plans, checkpoint status.
+description: Always-on skopos session guidance — code exploration via the index before grep, load context at start, record to the blackboard during work, track work in plans, checkpoint status.
 targets: [claude, opencode, codex, copilot, kiro]
 ---
-## Skopos
+## Mandatory: Code exploration via skopos
 
-You have a skopos MCP server with shared memory, plans, and status. Use it throughout your work.
+In any project with a skopos code index, ALWAYS use skopos as the FIRST step for code exploration, architecture understanding, or symbol lookup. This applies to:
+- Answering questions about how something works
+- Finding symbols, callers, dependencies, file outlines
+- Understanding code before making changes
+- Assessing the blast radius of a change
 
-- **At the start of a task:** call `skopos_context` (with the current git branch) to load prior findings, active/blocked plan items, and in-flight sessions. Don't redo known work.
-- **When you discover something worth keeping:** call `blackboard_write`. Use `entry_type` `bug` or `debt` for issues every agent must see (they float across branches); `finding`/`decision`/`warning`/`context` otherwise. Default `scope` is `branch`; use `project` for repo-wide. Always set a stable `author_agent_id`.
-- **For multi-step work:** create a plan (`plan_create`), add items (`plan_add_item`), and update their status (`plan_update_item`) as you go. Dependencies auto-block/unblock.
-- **Checkpoint progress:** call `report_status` when you start, at milestones, and on success (`succeeded`) or failure (`failed`). Never report `stuck` or `orphaned` — those are set by the server.
+**Do NOT** use grep/find for code structure or delegate code search to sub-agents until skopos has been tried first.
 
-Keep entries concise and reuse one `author_agent_id` for the whole session.
+Check once per session which skopos surface you have (shell: `skopos mode`):
+- `remote <url>` — skopos MCP tools: `code_search` (names/signatures), `code_symbol` (exact definitions with file:line), `code_outline` (a file's definitions), `code_callers` / `code_callees` (call graph), `code_impact` (what transitively breaks), `code_branch_diff` (index diff against the default branch)
+- `local` — no MCP tools; same queries via the CLI: `skopos search`, `skopos symbol`, `skopos outline`, `skopos who-calls`, `skopos call-tree`, `skopos impact`, `skopos branch-diff` (all accept `--json`)
+
+Only fall back to grep for: string literals, config values, env vars, non-symbol text, or exhaustive "find ALL occurrences" listings.
+
+## Shared memory — mandatory behavior
+
+When a skopos server is reachable (remote mode), you MUST proactively save knowledge to the blackboard **during** the session, immediately when something is decided or discovered — do not wait to be asked or for the session to end:
+
+- Architectural decisions (the why) → `blackboard_write` entry_type `decision`
+- Bugs found or fixed → `bug`; known debt → `debt` (these float — always visible regardless of branch)
+- Conventions and patterns → `context` or `finding`
+- Scope: `branch` by default (shared with everyone on this branch), `project` for repo-wide facts
+- Obsolete entries → `blackboard_delete` (entry IDs come from `blackboard_read`)
+
+Be selective — only facts useful in a future session. Skip task details and temporary state.
+
+## Session cadence (remote mode)
+
+- Start of task: `skopos_context` — prior knowledge, active plans, in-flight sessions
+- State changes: `report_status` (never "stuck"/"orphaned" — server-set)
+- Multi-step work: `plan_create` / `plan_add_item` / `plan_update_item`; archive with `plan_archive` when done or abandoned

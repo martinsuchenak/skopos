@@ -136,5 +136,6 @@ CREATE INDEX IF NOT EXISTS idx_plan_deps_dep   ON plan_dependencies(depends_on_p
 CREATE TABLE IF NOT EXISTS workspaces (
     id         TEXT PRIMARY KEY,
     name       TEXT NOT NULL DEFAULT '',
+    git_url    TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );

@@ -20,7 +20,7 @@ type PlanForm = { name: string; description: string; branch_name: string };
 type ItemForm = { title: string; description: string; phase: string; depends_on: string };
 
 const UI_AUTHOR = 'ui';
-type View = 'sessions' | 'blackboard' | 'plans';
+type View = 'sessions' | 'blackboard' | 'plans' | 'index';
 
 declare global { interface Window { Alpine: typeof Alpine; app: () => object } }
 
@@ -46,6 +46,9 @@ const appState = () => ({
   plansBranch: '',
   plansLoading: false,
   expandedPlan: null as Plan | null,
+
+  // code index
+  indexBranches: [] as { branch: string; head_sha?: string; built_at: string; source?: string; file_count: number; symbol_count: number }[],
 
   // header
   activeWorkspace: '',
@@ -243,6 +246,7 @@ const appState = () => ({
     this.activeView = v; this.sidebarOpen = false; localStorage.setItem('skopos:view', v);
     if (v === 'blackboard') this.fetchBundle();
     if (v === 'plans') this.fetchPlans();
+    if (v === 'index') this.fetchIndexStatus();
   },
   setWorkspace(ws: string) { this.activeWorkspace = ws; this.refresh(); },
 
@@ -319,6 +323,7 @@ const appState = () => ({
     // Always reload the active view so workspace switches are reflected.
     if (this.activeView === 'blackboard') await this.fetchBundle();
     else if (this.activeView === 'plans') await this.fetchPlans();
+    else if (this.activeView === 'index') await this.fetchIndexStatus();
   },
   async selectSession(id: string) {
     this.selectedSessionId = id; localStorage.setItem('skopos:session', id);
@@ -460,6 +465,16 @@ const appState = () => ({
       if (!await this.handleBad(res, 'Item not added')) return;
       this.notify('Item added', 'success'); this.showItemModal = false; await this.reloadPlan(planId);
     } finally { this.itemSaving = false; }
+  },
+
+  // ---- code index ----
+  async fetchIndexStatus() {
+    const ws = this.activeWorkspace || 'default';
+    try {
+      const res = await this.authFetch(`/api/codeindex/${encodeURIComponent(ws)}/status`);
+      if (!res.ok) { this.indexBranches = []; return; }
+      this.indexBranches = (await res.json()) ?? [];
+    } catch { this.indexBranches = []; }
   },
 
   // ---- delete (modal-driven) ----

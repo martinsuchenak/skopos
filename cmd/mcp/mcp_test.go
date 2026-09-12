@@ -11,7 +11,7 @@ import (
 )
 
 func TestNewMCPHandlerBuildsServer(t *testing.T) {
-	handler := NewMCPHandler(&status.Service{}, &blackboard.Service{}, &plans.Service{})
+	handler := NewMCPHandler(&status.Service{}, &blackboard.Service{}, &plans.Service{}, nil)
 	if handler == nil {
 		t.Fatal("expected non-nil handler")
 	}

@@ -33,7 +33,8 @@ internal/
   ├── plans/      handler → service → storage   (plans, items, dependencies)
   ├── workspaces/ handler → service → storage   (workspace registry, auto-register)
   ├── events/     in-process SSE hub + middleware (publishes named events on mutations)
-  ├── install/    skopos install — wires MCP config into AI agent configs
+  ├── codeindex/  code index (parse → storage → service → handler; per-workspace SQLite DBs)
+  ├── install/    skopos install — wires MCP config into AI agent configs (+ Claude Code hook suite in assets/hooks/)
   ├── auth/       API key auth (Authorization: Bearer; when set it gates every endpoint)
   ├── health/     background goroutine: stuck-agent detection
   ├── cleanup/    background goroutine: data retention cleanup

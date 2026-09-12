@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"os"
 
 	"github.com/paularlott/cli"
 	"github.com/paularlott/cli/env"
 	cli_toml "github.com/paularlott/cli/toml"
-	logslog "github.com/paularlott/logger/slog"
 
 	"github.com/martinsuchenak/skopos/build"
 	"github.com/martinsuchenak/skopos/cmd"
@@ -16,12 +17,6 @@ import (
 var configFile = "skopos-config.toml"
 
 func main() {
-	log := logslog.New(logslog.Config{
-		Level:  "info",
-		Format: "console",
-		Writer: os.Stdout,
-	})
-
 	_ = env.Load()
 
 	app := &cli.Command{
@@ -59,7 +54,18 @@ func main() {
 	}
 
 	if err := app.Execute(context.Background()); err != nil {
-		log.Error("application error", "error", err)
+		printError(err)
 		os.Exit(1)
 	}
+}
+
+// printError renders a command failure for terminal use: the bare message
+// prefixed with the binary name, no timestamps or level tags — the slog
+// format is for the server's streamed logs, not for a human at a prompt.
+func printError(err error) {
+	printErrorTo(os.Stderr, err)
+}
+
+func printErrorTo(w io.Writer, err error) {
+	_, _ = fmt.Fprintln(w, "skopos:", err)
 }

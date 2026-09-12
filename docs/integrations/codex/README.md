@@ -6,7 +6,7 @@
 - `skopos` binary in PATH
 - Codex CLI installed
 
-> **Quick install:** `skopos install --agent codex [--url ...] [--api-key "$SKOPOS_API_KEY"]` does this for you — it merges the `[mcp_servers.skopos]` block into `~/.codex/config.toml` and appends the AGENTS.md block (idempotent, backs up existing config). The manual steps below are the fallback.
+> **Quick install:** `skopos install --agent codex [--url ...] [--api-key "$SKOPOS_API_KEY"]` does this for you — it merges the `[mcp_servers.skopos]` block into `~/.codex/config.toml` and manages the block in `~/AGENTS.md` between `<!-- skopos:begin -->` / `<!-- skopos:end -->` markers (idempotent, backs up existing config). The manual steps below are the fallback.
 
 ## Step 1: Apply MCP config
 
@@ -19,11 +19,11 @@ url = "http://localhost:8080/mcp"
 
 # Only required when auth.api_key is set on the server. Codex does not expand
 # env vars here, so paste your SKOPOS_API_KEY value directly.
-[mcp_servers.skopos.headers]
+[mcp_servers.skopos.http_headers]
 Authorization = "Bearer your-api-key-here"
 ```
 
-> **Auth:** If the server has `auth.api_key` set, the MCP tools require it as a Bearer token. Codex doesn't expand env vars in config, so put the literal key in the `headers` table above (or omit it entirely if no key is configured).
+> **Auth:** If the server has `auth.api_key` set, the MCP tools require it as a Bearer token. The key must be `http_headers` — Codex documents that name, and a plain `headers` table is silently ignored. Put the literal key there (or omit the table entirely if no key is configured).
 
 ## Step 2: Wire lifecycle hooks via AGENTS.md
 
