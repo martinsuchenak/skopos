@@ -188,7 +188,8 @@ func serveCmd() *cli.Command {
 			refresher, err := codeindex.NewRefresher(codeIndexStore, cmd.GetString("index-dir"), func(id string) (string, error) {
 				ws, err := workspacesService.Get(context.Background(), id)
 				if err != nil {
-					return "", err
+					// Surface as 400 with guidance instead of a bare 500.
+					return "", fmt.Errorf("%w: workspace %s is not registered — POST /api/workspaces with a git_url first: %v", codeindex.ErrInvalidInput, id, err)
 				}
 				return ws.GitURL, nil
 			})
