@@ -558,3 +558,62 @@ func TestTruncateRuneSafe(t *testing.T) {
 		t.Fatal("truncated doc is not valid UTF-8")
 	}
 }
+
+func TestNewExpressionRecordedAsEdge(t *testing.T) {
+	e := NewExtractor()
+	p := writeTemp(t, "t.php", `<?php
+use App\Services\CacheService;
+
+function makeCache() {
+    $a = new \App\Services\CacheService();
+    $a->warm();
+    return $a;
+}
+
+function plainNew() {
+    return new CacheService();
+}
+`)
+	res, err := e.ParseFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	news := map[string]bool{} // callee -> seen
+	for _, e := range res.Edges {
+		if e.Kind == "new" && e.Callee == "CacheService" {
+			news[e.Caller] = true
+		}
+	}
+	if !news["makeCache"] || !news["plainNew"] {
+		t.Fatalf("new-expression edges missing (qualified and/or bare): %+v", res.Edges)
+	}
+	// The method call through the binding still resolves to the qualified name.
+	foundWarm := false
+	for _, e := range res.Edges {
+		if e.Kind == "call" && e.Callee == "CacheService::warm" {
+			foundWarm = true
+		}
+	}
+	if !foundWarm {
+		t.Fatalf("binding-qualified call missing: %+v", res.Edges)
+	}
+}
+
+func TestNewExpressionJS(t *testing.T) {
+	e := NewExtractor()
+	p := writeTemp(t, "t.js", "function boot() {\n  const w = new Widget();\n  w.render();\n}\n")
+	res, err := e.ParseFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range res.Edges {
+		if e.Kind == "new" && e.Callee == "Widget" && e.Caller == "boot" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("JS new edge missing: %+v", res.Edges)
+	}
+}
+

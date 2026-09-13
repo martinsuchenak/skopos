@@ -28,7 +28,18 @@ func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 			if n, err := req.Int("limit"); err == nil {
 				limit = n
 			}
-			res, err := svc.Search(ctx, req.StringOr("workspace_id", ""), req.StringOr("branch", ""), req.StringOr("q", ""), req.StringOr("path", ""), limit)
+			ws := req.StringOr("workspace_id", "")
+			branch := req.StringOr("branch", "")
+			q := req.StringOr("q", "")
+			path := req.StringOr("path", "")
+			if semantic, err := req.Bool("semantic"); err == nil && semantic && semanticSearcher != nil {
+				res, err := svc.SemanticSearch(ctx, ws, branch, q, path, limit, semanticSearcher)
+				if err != nil {
+					return nil, toolError(err)
+				}
+				return mcplib.NewToolResponseJSON(res), nil
+			}
+			res, err := svc.Search(ctx, ws, branch, q, path, limit)
 			if err != nil {
 				return nil, toolError(err)
 			}

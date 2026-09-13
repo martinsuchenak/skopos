@@ -14,6 +14,8 @@ Check once per session which skopos surface you have (Bash: `skopos mode`):
 - `remote <url>` — skopos MCP tools: `code_search` (names/signatures), `code_symbol` (exact definitions with file:line), `code_outline` (a file's definitions), `code_callers` / `code_callees` (call graph), `code_impact` (what transitively breaks), `code_branch_diff` (index diff against the default branch)
 - `local` — no MCP tools; same queries via the CLI: `skopos search`, `skopos symbol`, `skopos outline`, `skopos who-calls`, `skopos call-tree`, `skopos impact`, `skopos branch-diff` (all accept `--json`)
 
+Scope queries to a subtree with `path` (CLI `--path`, MCP `path` param). Visibility, modifiers, and attributes are searchable text — e.g. `code_search q="private cache"`, or a route name to find its handler.
+
 Only fall back to grep for: string literals, config values, env vars, non-symbol text, or exhaustive "find ALL occurrences" listings.
 {{SKILL_LINE}}
 

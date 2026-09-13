@@ -1055,3 +1055,44 @@ func TestSemanticHitsCarryMatchedBy(t *testing.T) {
 		t.Fatalf("fused hit missing 'both' label: %+v", res2.Hits)
 	}
 }
+
+func TestWhoCallsFindsInstantiation(t *testing.T) {
+	store := newTestStore(t)
+	root := filepath.Join(t.TempDir(), "r")
+	os.MkdirAll(root, 0o755)
+	os.WriteFile(filepath.Join(root, "cache.php"), []byte(`<?php
+class CacheService {
+  public function warm(): void {}
+}
+
+function boot() {
+  $svc = new \App\Services\CacheService();
+  $svc->warm();
+}
+`), 0o644)
+	res, err := parse.NewExtractor().ParseFile(filepath.Join(root, "cache.php"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Path = "cache.php"
+	if err := store.AddBlob("ws", res); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit("ws", "main", "", "t", []FileEntry{{Path: "cache.php", Hash: res.Hash}}); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(store)
+	out, err := svc.Callers(context.Background(), "ws", "main", "CacheService", "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range out.Edges {
+		if e.Caller == "boot" && e.Path == "cache.php" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("instantiation not found by who-calls: %+v", out.Edges)
+	}
+}

@@ -12,7 +12,7 @@ A central code index answering structure questions faster than grep.
 - **Risk:** `code_impact` (what transitively breaks if a symbol changes), `code_branch_diff` (index-level diff against the default branch), `code_dead` / `code_cycles`
 - All take the workspace's `workspace_id`; `branch` is optional — an unindexed branch answers from the default branch with a fallback note in the response.
 - Check the surface once per session with `skopos mode` (shell): `remote <url>` → the MCP tools above; `local` → the CLI equivalents (`skopos search`, `symbol`, `outline`, `who-calls`, `call-tree`, `impact`, `branch-diff`; all accept `--json`).
-Use skopos first for "how does X work", "who calls Y", or blast-radius questions. Grep is right for string literals, config values, env vars, non-symbol text, and exhaustive "find ALL occurrences" listings.
+Use skopos first for "how does X work", "who calls Y" (instantiations included), or blast-radius questions. Scope any query to a subtree with `path` (`skopos search handler --path app/Services`); visibility, modifiers, and attributes are searchable text ("private cache", route names). Grep is right for string literals, config values, env vars, non-symbol text, and exhaustive "find ALL occurrences" listings.
 
 ## Memory (blackboard)
 Durable knowledge entries — your notebook across sessions.

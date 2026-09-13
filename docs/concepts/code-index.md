@@ -177,7 +177,9 @@ skopos search "monica:localize"      # the command behind an attribute
 ```
 
 `impact` answers blast-radius questions with visibility attached, so
-"private" vs "public" callers are distinguishable at a glance.
+"private" vs "public" callers are distinguishable at a glance. `who-calls`
+and `impact` include **instantiation** sites — `new CacheService()` counts
+as a call site of the class (PHP, TypeScript/JavaScript, C#, Java).
 
 MCP tools: `code_search`, `code_symbol`, `code_outline`, `code_callers`,
 `code_callees`, `code_impact`, `code_call_tree`, `code_dead`, `code_cycles`,

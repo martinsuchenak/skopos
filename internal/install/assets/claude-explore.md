@@ -12,9 +12,11 @@ Answer using the skopos code index, not grep: $ARGUMENTS
 
 2. Pick the query path for the request:
    - "where is X / what is X" → `code_search` or `skopos search "$ARGUMENTS" --json`
-   - "who calls X" → `code_callers` or `skopos who-calls X`
+   - "who calls X" → `code_callers` or `skopos who-calls X` (includes `new X()` instantiations)
    - "what breaks if I change X" → `code_impact` or `skopos impact X`
    - "what's in file F" → `code_outline` or `skopos outline F`
+   - "only in this area" → add `path` (CLI `--path app/Services`)
+   - "private/public helpers", route names → search them as text: `q="private cache"`
 
 3. Present hits as `fqn kind path:line`, read the source of the few most relevant hits, then answer.
 

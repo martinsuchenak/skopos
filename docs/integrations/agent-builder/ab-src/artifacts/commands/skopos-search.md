@@ -15,6 +15,7 @@ Answer from the skopos code index, not grep: `{{arg:query}}`
    - "who calls X" → {{tool code_callers@skopos workspace_id="ws" name="UserService::getFullName"}}
    - "what breaks if I change X" → {{tool code_impact@skopos workspace_id="ws" name="UserService::getFullName" depth=3}}
    - "what's in file F" → {{tool code_outline@skopos workspace_id="ws" path="app/Services/UserService.php"}}
+   - "only in this area" / visibility ("private helpers") → add path="app/Services" or query text like q="private cache"
 
    (Replace the example `workspace_id`, query, name, and path with the real values — the workspace id comes from `skopos index status` or the server dashboard.)
 

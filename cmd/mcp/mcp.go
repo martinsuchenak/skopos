@@ -55,6 +55,13 @@ At the start of every task, call ` + "`skopos_context`" + ` once (pass ` + "`wor
 
 Keep entries concise, prefer the narrowest scope, and pass a stable ` + "`author_agent_id`" + ` (e.g. "<tool>-<hostname>").`
 
+// semanticSearcher supplies vector search to code_search's semantic mode;
+// nil (the default) degrades semantic queries to plain full-text search.
+var semanticSearcher codeindex.Embedder
+
+// SetSemanticSearcher enables code_search semantic=true over MCP.
+func SetSemanticSearcher(e codeindex.Embedder) { semanticSearcher = e }
+
 // NewMCPHandler builds the MCP server with all registered tools and returns
 // the http.Handler that serves the MCP protocol. The caller mounts it at /mcp
 // (see cmd.serve). Authentication and lifecycle are the caller's responsibility.

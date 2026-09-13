@@ -264,6 +264,17 @@ var newBindingNodes = map[string]bool{
 	"new_expression":             true, // ts/js
 }
 
+// shortTypeName reduces a (possibly qualified) type reference to its last
+// segment: symbols are indexed by short name, so `new \App\Services\CacheService()`
+// must record the callee as CacheService.
+func shortTypeName(name string) string {
+	name = strings.TrimPrefix(name, "\\")
+	if i := strings.LastIndexAny(name, "\\/"); i >= 0 {
+		name = name[i+1:]
+	}
+	return name
+}
+
 // newBinding detects a variable bound to a freshly constructed instance in
 // an assignment or declaration node, returning variable and class.
 func newBinding(n *gts.Node, lang *gts.Language, src []byte) (v, class string, ok bool) {
@@ -285,7 +296,7 @@ func newBinding(n *gts.Node, lang *gts.Language, src []byte) (v, class string, o
 	if left == nil || right == nil {
 		return "", "", false
 	}
-	name := identifierText(right, lang, src)
+	name := shortTypeName(identifierText(right, lang, src))
 	if name == "" {
 		return "", "", false
 	}
@@ -362,7 +373,7 @@ func (p *langProfile) collectVarBindings(def *gts.Node, lang *gts.Language, src 
 func identifierText(n *gts.Node, lang *gts.Language, src []byte) string {
 	for i := 0; i < n.NamedChildCount(); i++ {
 		c := n.NamedChild(i)
-		if c != nil && identifierTypes[c.Type(lang)] {
+		if c != nil && (identifierTypes[c.Type(lang)] || c.Type(lang) == "qualified_name") {
 			return string(src[c.StartByte():c.EndByte()])
 		}
 	}

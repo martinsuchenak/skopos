@@ -225,7 +225,9 @@ func serveCmd() *cli.Command {
 					ModelName: cmd.GetString("embeddings-model"),
 					APIKey:    cmd.GetString("embeddings-api-key"),
 				}
-				codeIndexHandler.SetEmbeddingManager(codeindex.NewEmbeddingManager(codeIndexService, embedder))
+				embedmgr := codeindex.NewEmbeddingManager(codeIndexService, embedder)
+				codeIndexHandler.SetEmbeddingManager(embedmgr)
+				mcp.SetSemanticSearcher(embedder)
 				codeIndexHandler.Embeddings().SetErrorHandler(func(ws string, err error) {
 					log.Warn("background embedding pass failed", "workspace", ws, "error", err)
 				})
