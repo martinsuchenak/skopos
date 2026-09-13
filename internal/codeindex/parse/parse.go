@@ -18,7 +18,7 @@ import (
 
 // ExtractorVersion changes whenever extraction logic changes; it is mixed
 // into the content hash so already-indexed files re-extract after upgrades.
-const ExtractorVersion = "14"
+const ExtractorVersion = "15"
 
 // DefaultTimeout is the per-file parse budget. Files that exceed it are still
 // parsed via tree-sitter error recovery and flagged (the measured pathological
@@ -272,16 +272,48 @@ func walkTree(prof *langProfile, root *gts.Node, lang *gts.Language, src []byte,
 				} else {
 					caller = name
 				}
+				// Definitions can declare relationships themselves
+				// (Rust `impl Trait for Type`): the new symbol is the caller.
+				if relFn, hasRel := prof.relationNodes[nt]; hasRel {
+					for _, rel := range relFn(n, lang, src) {
+						if callee := shortTypeName(rel.name); callee != "" {
+							res.Edges = append(res.Edges, Edge{
+								Caller: caller, Callee: callee, Kind: rel.kind,
+								Line: int(n.StartPoint().Row) + 1,
+							})
+						}
+					}
+				}
 				if prof.containerKinds[kind] {
 					typeName = name // nested defs now qualify against this type
 				}
 			}
 		} else if prof.calls[nt] {
 			if callee, ok := calleeName(prof, n, lang, src, typeName, vars); ok && callee != "" {
+				if kind, isIncl := includeStyleCalls[strings.ToLower(callee)]; isIncl {
+					if arg := firstCallArgument(n, lang, src); arg != "" {
+						res.Edges = append(res.Edges, Edge{
+							Caller: f.caller, Callee: shortTypeName(arg), Kind: kind,
+							Line: int(n.StartPoint().Row) + 1,
+						})
+						continue
+					}
+				}
 				res.Edges = append(res.Edges, Edge{
 					Caller: f.caller, Callee: callee, Kind: "call",
 					Line: int(n.StartPoint().Row) + 1,
 				})
+			}
+		} else if refFn, hasRef := prof.typeRefNodes[nt]; hasRef {
+			// Type annotations (params, returns, fields, instanceof, catch):
+			// every type position references the type.
+			for _, name := range refFn(n, lang, src) {
+				if callee := shortTypeName(name); callee != "" && f.caller != "" {
+					res.Edges = append(res.Edges, Edge{
+						Caller: f.caller, Callee: callee, Kind: "references",
+						Line: int(n.StartPoint().Row) + 1,
+					})
+				}
 			}
 		} else if relFn, hasRel := prof.relationNodes[nt]; hasRel {
 			// Type relationships (extends/implements/uses/embeds): the
@@ -293,6 +325,14 @@ func walkTree(prof *langProfile, root *gts.Node, lang *gts.Language, src []byte,
 						Line: int(n.StartPoint().Row) + 1,
 					})
 				}
+			}
+		} else if prof.importNodes[nt] {
+			// File-scoped import edge: the file depends on the module.
+			if name := importName(n, lang, src); name != "" {
+				res.Edges = append(res.Edges, Edge{
+					Callee: name, Kind: "import",
+					Line: int(n.StartPoint().Row) + 1,
+				})
 			}
 		} else if newBindingNodes[nt] {
 			// Instantiation is the class's most important call site: record
@@ -536,4 +576,29 @@ func SplitIdentifier(name string) string {
 	}
 	flush()
 	return strings.Join(parts, " ")
+}
+
+
+// firstCallArgument returns the first identifier-ish argument of a call
+// (Ruby include/extend targets are constants).
+func firstCallArgument(n *gts.Node, lang *gts.Language, src []byte) string {
+	for i := 0; i < n.ChildCount(); i++ {
+		c := n.Child(i)
+		if c == nil {
+			continue
+		}
+		if ct := c.Type(lang); ct == "argument_list" {
+			for j := 0; j < c.ChildCount(); j++ {
+				a := c.Child(j)
+				if a == nil {
+					continue
+				}
+				at := a.Type(lang)
+				if identifierTypes[at] || at == "constant" {
+					return string(src[a.StartByte():a.EndByte()])
+				}
+			}
+		}
+	}
+	return ""
 }

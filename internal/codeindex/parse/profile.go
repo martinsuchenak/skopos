@@ -89,6 +89,25 @@ type langProfile struct {
 	// relationNodes maps clause node types to the type relationships they
 	// declare (extends/implements/uses/embeds). Optional.
 	relationNodes map[string]func(n *gts.Node, lang *gts.Language, src []byte) []typeRelation
+
+	// typeRefNodes maps type-position node types to referenced type names
+	// (params, returns, fields, instanceof, catch) — recorded as
+	// "references" edges. Optional.
+	typeRefNodes map[string]func(n *gts.Node, lang *gts.Language, src []byte) []string
+
+	// importNodes marks import/use-statement node types; each emits a
+	// file-scoped "import" edge. Optional.
+	importNodes map[string]bool
+}
+
+// cloneDefs copies the shared defs map: profiles build on commonProfile by
+// struct copy, which would otherwise alias one map across every language.
+func cloneDefs(m map[string]string) map[string]string {
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // isName reports whether a node type is a name node for this profile.

@@ -16,6 +16,7 @@ func init() {
 	base := *commonProfile
 	base.name = "c_sharp"
 	base.defs = map[string]string{
+		"field_declaration": "field",
 		"class_declaration":       "class",
 		"struct_declaration":      "struct",
 		"interface_declaration":   "interface",
@@ -31,12 +32,38 @@ func init() {
 	base.paramTypes = csParamTypes
 	base.qualifyCallee = csQualifyCallee
 	base.relationNodes = csRelations()
+	base.importNodes = map[string]bool{"using_directive": true}
 	registerProfile(&base)
 }
 
 // csDefName: the definition's name is the last direct identifier child
 // (modifiers and the return type precede it).
 func csDefName(n *gts.Node, lang *gts.Language, src []byte) (string, bool) {
+	// Fields: the name lives inside the variable declarator; the direct
+	// identifier children only hold the type.
+	if n.Type(lang) == "field_declaration" {
+		var decl *gts.Node
+		for i := 0; i < n.ChildCount(); i++ {
+			if c := n.Child(i); c != nil && c.Type(lang) == "variable_declaration" {
+				decl = c
+				break
+			}
+		}
+		if decl != nil {
+			for i := 0; i < decl.ChildCount(); i++ {
+				c := decl.Child(i)
+				if c == nil || c.Type(lang) != "variable_declarator" {
+					continue
+				}
+				for j := 0; j < c.ChildCount(); j++ {
+					if id := c.Child(j); id != nil && id.Type(lang) == "identifier" {
+						return string(src[id.StartByte():id.EndByte()]), true
+					}
+				}
+			}
+		}
+		return "", false
+	}
 	name := ""
 	for i := 0; i < n.ChildCount(); i++ {
 		c := n.Child(i)

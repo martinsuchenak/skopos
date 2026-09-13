@@ -1166,3 +1166,82 @@ class AdminController extends BaseController {}
 		}
 	}
 }
+
+func TestImpactIncludesOverrides(t *testing.T) {
+	store := newTestStore(t)
+	root := filepath.Join(t.TempDir(), "r")
+	os.MkdirAll(root, 0o755)
+	os.WriteFile(filepath.Join(root, "ctl.php"), []byte(`<?php
+class BaseController {
+  public function handle(): void {}
+}
+class HomeController extends BaseController {
+  public function handle(): void {}
+}
+`), 0o644)
+	res, err := parse.NewExtractor().ParseFile(filepath.Join(root, "ctl.php"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Path = "ctl.php"
+	if err := store.AddBlob("ws", res); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit("ws", "main", "", "t", []FileEntry{{Path: "ctl.php", Hash: res.Hash}}); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(store)
+	imp, err := svc.Impact(context.Background(), "ws", "main", "BaseController::handle", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range imp.Affected {
+		if a.Name == "HomeController::handle" {
+			if a.Relation != "override" {
+				t.Fatalf("override not labeled: %+v", a)
+			}
+			return
+		}
+	}
+	t.Fatalf("override missing from impact: %+v", imp.Affected)
+}
+
+func TestDependenciesListsImports(t *testing.T) {
+	store := newTestStore(t)
+	root := filepath.Join(t.TempDir(), "r")
+	os.MkdirAll(root, 0o755)
+	os.WriteFile(filepath.Join(root, "svc.php"), []byte("<?php\nuse App\\Other\\Mailer;\nuse App\\Cache;\nclass Svc {}\n"), 0o644)
+	os.WriteFile(filepath.Join(root, "helper.php"), []byte("<?php\nuse App\\Util\\Str;\nfunction h() {}\n"), 0o644)
+	ex := parse.NewExtractor()
+	entries := []FileEntry{}
+	for _, f := range []string{"svc.php", "helper.php"} {
+		res, err := ex.ParseFile(filepath.Join(root, f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Path = f
+		if err := store.AddBlob("ws", res); err != nil {
+			t.Fatal(err)
+		}
+		entries = append(entries, FileEntry{Path: f, Hash: res.Hash})
+	}
+	if err := store.Commit("ws", "main", "", "t", entries); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(store)
+	deps, err := svc.Dependencies(context.Background(), "ws", "main", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPath := map[string][]string{}
+	for _, d := range deps {
+		byPath[d.Path] = d.Imports
+	}
+	if len(byPath["svc.php"]) != 2 || len(byPath["helper.php"]) != 1 {
+		t.Fatalf("deps: %+v", deps)
+	}
+	scoped, err := svc.Dependencies(context.Background(), "ws", "main", "svc")
+	if err != nil || len(scoped) != 1 {
+		t.Fatalf("scoped deps: %v %+v", err, scoped)
+	}
+}

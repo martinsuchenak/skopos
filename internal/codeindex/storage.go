@@ -880,6 +880,48 @@ func (st *Store) exactCallers(db *sql.DB, branch, name string, limit int) ([]Edg
 	return scanEdges(rows)
 }
 
+// FileDeps lists one file's imports (module dependencies).
+type FileDeps struct {
+	Path    string   `json:"path"`
+	Imports []string `json:"imports"`
+}
+
+// Dependencies lists per-file import edges on a branch.
+func (st *Store) Dependencies(ctx context.Context, workspace, branch, pathPrefix string) ([]FileDeps, error) {
+	db, err := st.DB(workspace)
+	if err != nil {
+		return nil, err
+	}
+	filterCond, filterArgs := pathFilter(pathPrefix)
+	args := append([]any{branch}, filterArgs...)
+	rows, err := db.QueryContext(ctx, `
+		SELECT bf.path, e.callee
+		FROM edges e
+		JOIN branch_files bf ON bf.hash = e.hash AND bf.branch = ?`+filterCond+`
+		WHERE e.kind = 'import' AND (e.caller = '' OR e.caller IS NULL)
+		ORDER BY bf.path, e.callee`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FileDeps
+	byPath := map[string]int{}
+	for rows.Next() {
+		var path, imp string
+		if err := rows.Scan(&path, &imp); err != nil {
+			return nil, err
+		}
+		i, ok := byPath[path]
+		if !ok {
+			out = append(out, FileDeps{Path: path})
+			i = len(out) - 1
+			byPath[path] = i
+		}
+		out[i].Imports = append(out[i].Imports, imp)
+	}
+	return out, rows.Err()
+}
+
 // clampLimit bounds query limits to a sane default and ceiling.
 func clampLimit(limit, def, max int) int {
 	if limit <= 0 {

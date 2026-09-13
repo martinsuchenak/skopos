@@ -328,6 +328,17 @@ paths:
         - { name: depth, in: query, schema: { type: integer } }
       responses:
         "200": { description: Call tree }
+  /api/codeindex/{workspace}/dependencies:
+    get:
+      summary: Per-file import dependencies (module graph)
+      operationId: codeIndexDependencies
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: workspace, in: path, required: true, schema: { type: string } }
+        - { name: branch, in: query, schema: { type: string } }
+        - { name: path, in: query, schema: { type: string }, description: Path prefix filter }
+      responses:
+        "200": { description: File-to-imports mapping }
   /api/codeindex/{workspace}/branch-diff:
     get:
       summary: Symbol/file deltas of a branch vs the default branch

@@ -11,8 +11,35 @@ import (
 func init() {
 	base := *commonProfile
 	base.name = "go"
+	base.defs = cloneDefs(commonDefs)
 	base.methodScope = goMethodScope
+	base.typeRefNodes = map[string]func(n *gts.Node, lang *gts.Language, src []byte) []string{
+		"type_identifier": goTypeRef,
+	}
 	base.relationNodes = goRelations()
+	base.importNodes = map[string]bool{"import_spec": true}
+	base.defs["const_spec"] = "const"
+	if base.conditionalDefs == nil {
+		base.conditionalDefs = map[string]func(n *gts.Node, lang *gts.Language) (string, bool){}
+	}
+	base.conditionalDefs["field_declaration"] = func(n *gts.Node, lang *gts.Language) (string, bool) {
+		hasName, hasType := false, false
+		for i := 0; i < n.NamedChildCount(); i++ {
+			c := n.NamedChild(i)
+			if c == nil {
+				continue
+			}
+			if c.Type(lang) == "field_identifier" {
+				hasName = true
+			} else {
+				hasType = true
+			}
+		}
+		if hasName && hasType {
+			return "field", true
+		}
+		return "", false // embedded types are recorded as embeds relations
+	}
 	registerProfile(&base)
 }
 

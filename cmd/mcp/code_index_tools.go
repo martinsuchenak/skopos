@@ -138,6 +138,21 @@ func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 	)
 
 	server.RegisterTool(
+		mcplib.NewTool("code_dependencies", "List each file's imports (module dependency graph) on a branch. "+codeIndexDesc,
+			mcplib.String("workspace_id", "Workspace ID", mcplib.Required()),
+			mcplib.String("branch", "Branch"),
+			mcplib.String("path", "Optional path prefix filter"),
+		),
+		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
+			res, err := svc.Dependencies(ctx, req.StringOr("workspace_id", ""), req.StringOr("branch", ""), req.StringOr("path", ""))
+			if err != nil {
+				return nil, toolError(err)
+			}
+			return mcplib.NewToolResponseJSON(res), nil
+		},
+	)
+
+	server.RegisterTool(
 		mcplib.NewTool("code_index_status", "Which branches of a workspace are indexed, at which git HEAD, and how fresh.",
 			mcplib.String("workspace_id", "Workspace ID", mcplib.Required()),
 		),

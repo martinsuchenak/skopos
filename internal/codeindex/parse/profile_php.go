@@ -5,6 +5,7 @@ package parse
 
 import (
 	"regexp"
+	"strings"
 
 	gts "github.com/odvcencio/gotreesitter"
 )
@@ -12,8 +13,18 @@ import (
 func init() {
 	base := *commonProfile // copy
 	base.name = "php"
+	base.defs = cloneDefs(commonDefs)
 	base.qualifyCallee = phpQualifyCallee
+	base.typeRefNodes = map[string]func(n *gts.Node, lang *gts.Language, src []byte) []string{
+		"named_type":        typeRefFunc(false),
+		"binary_expression": phpInstanceofRef,
+	}
 	base.relationNodes = phpRelations()
+	base.importNodes = map[string]bool{"namespace_use_declaration": true}
+	base.defs["property_declaration"] = "property"
+	base.defs["const_declaration"] = "const"
+	base.defs["enum_case"] = "case"
+	base.defName = phpDefName
 	registerProfile(&base)
 }
 
@@ -38,3 +49,32 @@ func phpQualifyCallee(call *gts.Node, lang *gts.Language, src []byte, receiverTe
 
 // staticRe matches an explicit `Klass::method(` inside a call's text.
 var staticRe = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)::([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+
+// phpDefName reads names the generic childName cannot reach: property
+// elements wrap variable names, const elements wrap names.
+func phpDefName(n *gts.Node, lang *gts.Language, src []byte) (string, bool) {
+	switch n.Type(lang) {
+	case "property_declaration":
+		if el := phpDescend(n, lang, "property_element"); el != nil {
+			if v := phpDescend(el, lang, "variable_name"); v != nil {
+				return strings.TrimPrefix(string(src[v.StartByte():v.EndByte()]), "$"), true
+			}
+		}
+	case "const_declaration":
+		if el := phpDescend(n, lang, "const_element"); el != nil {
+			if nm := phpDescend(el, lang, "name"); nm != nil {
+				return string(src[nm.StartByte():nm.EndByte()]), true
+			}
+		}
+	}
+	return "", false
+}
+
+func phpDescend(n *gts.Node, lang *gts.Language, typ string) *gts.Node {
+	for i := 0; i < n.ChildCount(); i++ {
+		if c := n.Child(i); c != nil && c.Type(lang) == typ {
+			return c
+		}
+	}
+	return nil
+}

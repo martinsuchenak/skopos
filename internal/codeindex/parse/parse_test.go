@@ -671,7 +671,10 @@ func TestTypeRelations(t *testing.T) {
 			got := map[string]string{}
 			for _, e := range res.Edges {
 				if e.Caller == tc.caller {
-					got[e.Callee] = e.Kind
+					switch e.Kind {
+					case "extends", "implements", "uses", "embeds":
+						got[e.Callee] = e.Kind
+					}
 				}
 			}
 			if len(got) != len(tc.want) {
@@ -683,5 +686,134 @@ func TestTypeRelations(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTypeReferenceEdges(t *testing.T) {
+	e := NewExtractor()
+	p := writeTemp(t, "t.php", `<?php
+class Handler {
+  private CacheService $cache;
+  public function __construct(Logger $log) {}
+  public function run(HttpRequest $r): Response {
+    if ($r instanceof UploadRequest) {}
+    try {} catch (HttpException $e) {}
+  }
+}
+`)
+	res, err := e.ParseFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs := map[string]bool{}
+	for _, e := range res.Edges {
+		if e.Kind == "references" && strings.HasPrefix(e.Caller, "Handler") {
+			refs[e.Callee] = true
+		}
+	}
+	for _, want := range []string{"CacheService", "Logger", "HttpRequest", "Response", "UploadRequest", "HttpException"} {
+		if !refs[want] {
+			t.Errorf("type reference %s missing (got %v)", want, refs)
+		}
+	}
+}
+
+func TestFieldConstEnumSymbols(t *testing.T) {
+	cases := []struct {
+		file, src, name, kind string
+	}{
+		{"t.php", "<?php\nclass A {\n  private CacheService $cache;\n  const MAX = 5;\n}\n", "cache", "property"},
+		{"t.php", "<?php\nclass A { const MAX_RETRIES = 5; }\n", "MAX_RETRIES", "const"},
+		{"t.php", "<?php\nenum Status { case Active; }\n", "Active", "case"},
+		{"t.ts", "class A { cache: CacheService; }\n", "cache", "property"},
+		{"t.ts", "enum Color { Red = 1, Green = 2 }\n", "Red", "case"},
+		{"t.cs", "public class A { private CacheService cache; }\n", "cache", "field"},
+		{"t.java", "public class A { private CacheService cache; }\n", "cache", "field"},
+		{"t.go", "package p\nconst MaxRetries = 5\n", "MaxRetries", "const"},
+		{"t.go", "package p\ntype S struct { Name string }\n", "Name", "field"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.file+":"+tc.name, func(t *testing.T) {
+			res, err := NewExtractor().ParseFile(writeTemp(t, tc.file, tc.src))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, s := range res.Symbols {
+				if s.Name == tc.name {
+					if s.Kind != tc.kind {
+						t.Fatalf("%s: kind %s, want %s", tc.name, s.Kind, tc.kind)
+					}
+					return
+				}
+			}
+			t.Fatalf("%s not extracted: %+v", tc.name, res.Symbols)
+		})
+	}
+}
+
+func TestLocalJSConstIsNotAField(t *testing.T) {
+	res, err := NewExtractor().ParseFile(writeTemp(t, "t.js", "function boot() {\n  const w = new Widget();\n  w.render();\n}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range res.Symbols {
+		if s.Name == "w" {
+			t.Fatalf("local const emitted as a field symbol: %+v", s)
+		}
+	}
+}
+
+func TestImportEdges(t *testing.T) {
+	cases := []struct {
+		file, src, want string
+	}{
+		{"t.php", "<?php\nuse App\\Services\\CacheService;\nfunction f() {}\n", "CacheService"},
+		{"t.go", "package p\nimport \"github.com/org/repo/pkg\"\n", "github.com/org/repo/pkg"},
+		{"t.py", "import os\nfrom lib.helpers import thing\n", "lib.helpers"},
+		{"t.ts", "import { x } from \"./util\";\n", "./util"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.file, func(t *testing.T) {
+			res, err := NewExtractor().ParseFile(writeTemp(t, tc.file, tc.src))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, e := range res.Edges {
+				if e.Kind == "import" && strings.Contains(e.Callee, tc.want) {
+					return
+				}
+			}
+			t.Fatalf("import %q missing: %+v", tc.want, res.Edges)
+		})
+	}
+}
+
+func TestRubyAndRustRelations(t *testing.T) {
+	res, err := NewExtractor().ParseFile(writeTemp(t, "t.rb", "class Foo < Base\n  include CacheTrait\nend\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, e := range res.Edges {
+		if e.Caller == "Foo" {
+			got[e.Callee] = e.Kind
+		}
+	}
+	if got["Base"] != "extends" || got["CacheTrait"] != "uses" {
+		t.Fatalf("ruby relations: %v", got)
+	}
+
+	res2, err := NewExtractor().ParseFile(writeTemp(t, "t.rs", "struct UserService;\nimpl Repo for UserService { }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range res2.Edges {
+		if e.Caller == "UserService" && e.Callee == "Repo" && e.Kind == "implements" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("rust impl-trait relation missing: %+v", res2.Edges)
 	}
 }

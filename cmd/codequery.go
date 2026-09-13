@@ -388,6 +388,7 @@ var _ = io.Discard // keep io imported for future streaming helpers
 func init() {
 	Register(codeImpactCmd())
 	Register(codeDeadCmd())
+	Register(codeDepsCmd())
 	Register(codeCyclesCmd())
 	Register(codeCallTreeCmd())
 	Register(codeBranchDiffCmd())
@@ -468,6 +469,40 @@ func codeDeadCmd() *cli.Command {
 			}
 			for _, s := range res.Symbols {
 				printHit("", "", s.Name, s.Qualified, s.Kind, s.Path, s.Line, s.Signature)
+			}
+			return nil
+		},
+	}
+}
+
+func codeDepsCmd() *cli.Command {
+	return &cli.Command{
+		Name:    "deps",
+		Usage:   "List each file's imports (module dependency graph)",
+		Flags:   queryFlags(),
+		Run: func(ctx context.Context, cmd *cli.Command) error {
+			res, err := queryTarget[[]codeindex.FileDeps](ctx, cmd,
+				func(ws, branch string) string {
+					return fmt.Sprintf("/api/codeindex/%s/dependencies?branch=%s&path=%s", url.PathEscape(ws), url.QueryEscape(branch), url.QueryEscape(cmd.GetString("path")))
+				},
+				func(svc *codeindex.Service, ws, branch string) ([]codeindex.FileDeps, error) {
+					return svc.Dependencies(ctx, ws, branch, cmd.GetString("path"))
+				})
+			if err != nil {
+				return err
+			}
+			if cmd.GetBool("json") {
+				return printJSON(res)
+			}
+			if len(res) == 0 {
+				fmt.Println("no imports indexed")
+				return nil
+			}
+			for _, f := range res {
+				fmt.Println(f.Path)
+				for _, imp := range f.Imports {
+					fmt.Printf("    %s\n", imp)
+				}
 			}
 			return nil
 		},

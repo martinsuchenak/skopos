@@ -183,7 +183,19 @@ TypeScript/C#/Java) and **type relationships** — subclasses (`extends`),
 interface implementations, trait use (PHP), and Go struct embedding all
 appear as call sites, each labeled with its kind (`[new]`, `[extends]`,
 `[implements]`, `[uses]`, `[embeds]`). Python class bases count as
-extends. Changing a base class therefore impacts its whole hierarchy.
+extends. Changing a base class therefore impacts its whole hierarchy —
+including method **overrides**, which `impact` lists with an
+`override` relation on the affected node.
+
+Type **annotations** count too: parameter, return, and property types,
+`instanceof` checks, and `catch` clauses all record `references` edges
+(PHP, TypeScript, Java, Go), so constructor-injection sites surface in
+`who-calls`. Fields, properties, constants, and enum cases are symbols
+(searchable, with visibility), and `skopos deps` (CLI, REST
+`/dependencies`, MCP `code_dependencies`) lists each file's imports —
+the module-level dependency graph, scoping with `--path` like every
+other query. Ruby (`include`/superclass) and Rust (`impl Trait for
+Type`) hierarchies are recorded as well.
 
 MCP tools: `code_search`, `code_symbol`, `code_outline`, `code_callers`,
 `code_callees`, `code_impact`, `code_call_tree`, `code_dead`, `code_cycles`,

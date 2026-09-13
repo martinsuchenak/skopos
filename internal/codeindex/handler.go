@@ -431,6 +431,24 @@ func (h *Handler) RefreshStatus(w http.ResponseWriter, r *http.Request) {
 	rest.RespondJSON(w, http.StatusOK, h.refresher.State(ws))
 }
 
+// Dependencies handles GET /api/codeindex/{workspace}/dependencies.
+func (h *Handler) Dependencies(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	ws, ok := h.requireWorkspace(w, r)
+	if !ok {
+		return
+	}
+	res, err := h.service.Dependencies(r.Context(), ws, r.URL.Query().Get("branch"), r.URL.Query().Get("path"))
+	if err != nil {
+		h.respondServiceError(w, err)
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, res)
+}
+
 // Dead handles GET /api/codeindex/{workspace}/dead.
 func (h *Handler) Dead(w http.ResponseWriter, r *http.Request) {
 	if !h.authorized(r) {

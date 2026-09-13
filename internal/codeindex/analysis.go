@@ -79,7 +79,16 @@ func displayOf(h SymbolHit) string {
 	return h.Name
 }
 
+// deadExcludedKinds never have name-based callers: property/field access,
+// constants, and enum cases are used in positions the call graph cannot see.
+var deadExcludedKinds = map[string]bool{
+	"property": true, "field": true, "const": true, "case": true,
+}
+
 func isDeadExcluded(name, kind string) bool {
+	if deadExcludedKinds[kind] {
+		return true
+	}
 	// Check the short name (after Class:: qualification).
 	if i := strings.LastIndex(name, "::"); i >= 0 {
 		name = name[i+2:]

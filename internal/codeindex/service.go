@@ -249,6 +249,21 @@ func (s *Service) Impact(ctx context.Context, workspace, branch, name string, ma
 		}
 		frontier = next
 	}
+	// Overrides: changing Base::method also changes every subclass's
+	// override of it — direct subclasses with a same-named method.
+	for _, root := range roots {
+		if i := strings.Index(root, "::"); i > 0 {
+			cls, method := root[:i], root[i+2:]
+			for _, sub := range s.directSubclasses(workspace, resolved, cls) {
+				ov := sub + "::" + method
+				if _, seen := visited[ov]; !seen && s.symbolExists(workspace, resolved, ov) {
+					visited[ov] = 0
+					affected = append(affected, ImpactNode{Name: ov, Depth: 1, Relation: "override"})
+				}
+			}
+		}
+	}
+
 	// Attach each affected symbol's definition location (path:line).
 	if len(affected) > 0 {
 		names := make([]string, len(affected))
@@ -275,6 +290,44 @@ func (s *Service) Impact(ctx context.Context, workspace, branch, name string, ma
 		Branch: label, Fallback: fallback, Root: name,
 		Affected: affected,
 	}, nil
+}
+
+// directSubclasses lists types whose extends/implements edge targets cls.
+func (s *Service) directSubclasses(workspace, branch, cls string) []string {
+	db, err := s.store.DB(workspace)
+	if err != nil {
+		return nil
+	}
+	rows, err := db.Query(`
+		SELECT DISTINCT e.caller FROM edges e
+		JOIN branch_files bf ON bf.hash = e.hash AND bf.branch = ?
+		WHERE e.callee = ? AND e.kind IN ('extends','implements')`, branch, cls)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err == nil && c != "" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// symbolExists reports a qualified symbol on the branch.
+func (s *Service) symbolExists(workspace, branch, qual string) bool {
+	db, err := s.store.DB(workspace)
+	if err != nil {
+		return false
+	}
+	var one int
+	err = db.QueryRow(`
+		SELECT 1 FROM symbols s
+		JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
+		WHERE s.qual_name = ? LIMIT 1`, branch, qual).Scan(&one)
+	return err == nil
 }
 
 type defLoc struct {
@@ -345,6 +398,7 @@ type ImpactNode struct {
 	Path      string   `json:"path,omitempty"`
 	Line      int      `json:"line,omitempty"`
 	Modifiers []string `json:"modifiers,omitempty"`
+	Relation  string   `json:"relation,omitempty"` // "override": subclass method overriding a root
 }
 
 // ImpactResults is the transitive-caller set for a symbol.
@@ -353,6 +407,15 @@ type ImpactResults struct {
 	Fallback bool         `json:"fallback,omitempty"`
 	Root     string       `json:"root"`
 	Affected []ImpactNode `json:"affected"`
+}
+
+// Dependencies lists per-file import edges on a branch (module graph).
+func (s *Service) Dependencies(ctx context.Context, workspace, branch, pathPrefix string) ([]FileDeps, error) {
+	resolved, _, _, err := s.resolveBranch(workspace, branch)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.Dependencies(ctx, workspace, resolved, pathPrefix)
 }
 
 // GC removes index content no branch references; reclaimed symbol ids are

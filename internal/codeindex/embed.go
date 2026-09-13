@@ -97,6 +97,7 @@ func normalize(v []float32) []float32 {
 var embeddableKinds = map[string]bool{
 	"func": true, "method": true, "class": true, "interface": true,
 	"struct": true, "enum": true, "trait": true,
+	"property": true, "field": true, "const": true, "case": true,
 }
 
 func vecToBlob(v []float32) []byte {

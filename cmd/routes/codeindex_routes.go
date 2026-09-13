@@ -25,6 +25,7 @@ func registerCodeIndexRoutes(mux *http.ServeMux, h *codeindex.Handler) {
 	mux.HandleFunc("GET /api/codeindex/{workspace}/callees", h.Callees)
 	mux.HandleFunc("GET /api/codeindex/{workspace}/impact", h.Impact)
 	mux.HandleFunc("GET /api/codeindex/{workspace}/dead", h.Dead)
+	mux.HandleFunc("GET /api/codeindex/{workspace}/dependencies", h.Dependencies)
 	mux.HandleFunc("GET /api/codeindex/{workspace}/cycles", h.Cycles)
 	mux.HandleFunc("GET /api/codeindex/{workspace}/call-tree", h.CallTree)
 	mux.HandleFunc("GET /api/codeindex/{workspace}/branch-diff", h.BranchDiff)

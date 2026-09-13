@@ -13,6 +13,7 @@ func init() {
 	base.name = "python"
 	base.docFromBody = pythonDocString
 	base.relationNodes = pythonRelations()
+	base.importNodes = map[string]bool{"import_statement": true, "import_from_statement": true}
 	registerProfile(&base)
 }
 
