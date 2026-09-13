@@ -380,3 +380,74 @@ func TestInstallDryRunWritesNothing(t *testing.T) {
 		t.Errorf("dry-run should write nothing, got %v", entries)
 	}
 }
+
+func TestInstallZCodeLayout(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := t.TempDir()
+	wd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(wd) })
+
+	// Pre-existing config with foreign keys — the merge must preserve them.
+	cfg := filepath.Join(home, ".zcode", "cli", "config.json")
+	os.MkdirAll(filepath.Dir(cfg), 0o755)
+	os.WriteFile(cfg, []byte(`{"plugins":{"enabledPlugins":{"x@y":true}},"mcp":{"servers":{"other":{"url":"http://x"}}}}`), 0o644)
+
+	if _, err := Install(Options{Agent: "zcode", URL: "http://localhost:8080/mcp", APIKey: "k"}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	data, _, err := readJSONMap(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := data["plugins"]; !ok {
+		t.Error("foreign plugins key lost")
+	}
+	servers := data["mcp"].(map[string]any)["servers"].(map[string]any)
+	if _, ok := servers["other"]; !ok {
+		t.Error("foreign MCP server lost")
+	}
+	entry := servers["skopos"].(map[string]any)
+	if entry["type"] != "http" || entry["url"] != "http://localhost:8080/mcp" {
+		t.Errorf("skopos entry: %v", entry)
+	}
+
+	hooks := data["hooks"].(map[string]any)
+	if hooks["enabled"] != true {
+		t.Error("hooks.enabled must be true (ZCode gates config hooks)")
+	}
+	events := hooks["events"].(map[string]any)
+	pre := events["PreToolUse"].([]any)
+	if len(pre) != 3 {
+		t.Fatalf("PreToolUse matchers: %d", len(pre))
+	}
+
+	for _, c := range []string{"skopos.md", "skopos-report.md"} {
+		if _, err := os.Stat(filepath.Join(home, ".zcode", "commands", c)); err != nil {
+			t.Errorf("command %s missing: %v", c, err)
+		}
+	}
+	agentsMd, _ := os.ReadFile(filepath.Join(home, ".zcode", "AGENTS.md"))
+	if !strings.Contains(string(agentsMd), "Mandatory: Code exploration via skopos") {
+		t.Error("AGENTS.md block missing")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".zcode", "hooks", "skopos-session.sh")); err != nil {
+		t.Errorf("hook script missing: %v", err)
+	}
+
+	// Idempotent re-run: no duplicate registrations.
+	var results []Result
+	results, err = Install(Options{Agent: "zcode", URL: "http://localhost:8080/mcp", APIKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data2, _, _ := readJSONMap(cfg)
+	pre2 := data2["hooks"].(map[string]any)["events"].(map[string]any)["PreToolUse"].([]any)
+	if len(pre2) != 3 {
+		t.Fatalf("re-run added duplicates: %d", len(pre2))
+	}
+	_ = results
+}

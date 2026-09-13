@@ -21,7 +21,7 @@ func installCmd() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "agent",
-				Usage:   "Agent: claude-code, codex, gemini-cli, github-copilot, kiro, opencode, or all",
+				Usage:   "Agent: claude-code, codex, gemini-cli, github-copilot, kiro, opencode, zcode, or all",
 				EnvVars: []string{"SKOPOS_INSTALL_AGENT"},
 			},
 			&cli.StringFlag{
@@ -57,7 +57,7 @@ func installCmd() *cli.Command {
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			agent := cmd.GetString("agent")
 			if agent == "" {
-				return fmt.Errorf("--agent is required (one of: claude-code, codex, gemini-cli, github-copilot, kiro, opencode, all)")
+				return fmt.Errorf("--agent is required (one of: claude-code, codex, gemini-cli, github-copilot, kiro, opencode, zcode, all)")
 			}
 			var hooks *bool
 			if cmd.GetBool("no-hooks") {

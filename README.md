@@ -13,7 +13,7 @@ A coordination dashboard for AI coding agents — shared memory (blackboard), pl
 | Real-time | ✅ SSE at `/api/events/stream` |
 | Database | ✅ SQLite (WAL, FK-enforced, transactional) |
 | Auth | ✅ API key (Bearer); when set it gates every endpoint (REST reads/writes, MCP, SSE) |
-| Agent integration | ✅ `skopos install` for Claude Code, Codex, Gemini, Copilot, Kiro, opencode |
+| Agent integration | ✅ `skopos install` for Claude Code, Codex, Gemini, Copilot, Kiro, opencode, ZCode |
 | Agent hooks | ✅ Claude Code: session briefing, prompt-time code pre-fetch, search nudges, memory reminders (`--no-hooks` to skip) |
 | Code index | ✅ Central, branch-aware symbol/call-graph index (all languages, optional semantic search) |
 | Docker | ✅ |
@@ -53,7 +53,7 @@ See [Agent integration](docs/getting-started.md#connecting-an-agent) and [Integr
 | Guide: local-only workflow | [docs/guides/local.md](docs/guides/local.md) |
 | Guide: remote/central workflow | [docs/guides/remote.md](docs/guides/remote.md) |
 | Deployment (Docker, Nomad) | [docs/deployment/](docs/deployment/) |
-| Integration guides (6 agents) | [docs/integrations/](docs/integrations/) |
+| Integration guides (7 agents) | [docs/integrations/](docs/integrations/) |
 | API spec (OpenAPI) | [openapi.yaml](openapi.yaml) |
 
 ## Shell completion

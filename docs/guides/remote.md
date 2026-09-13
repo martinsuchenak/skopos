@@ -106,6 +106,7 @@ equivalents):
 | github-copilot | VS Code user `mcp.json` → `servers.skopos` | `~/.github/copilot-instructions.md` |
 | kiro | `~/.kiro/settings/mcp.json` → `mcpServers.skopos` | `.kiro/steering/skopos.md` (project-only, `alwaysApply` frontmatter) |
 | opencode | `~/.config/opencode/opencode.json` → `mcp.skopos` (type `remote`) | `~/.config/opencode/AGENTS.md` |
+| zcode | `~/.zcode/cli/config.json` → `mcp.servers.skopos` | `~/.zcode/AGENTS.md` + hooks (`hooks.events`, needs `hooks.enabled: true`) + `~/.zcode/commands/` |
 
 Every prompt block is managed between `<!-- skopos:begin -->` /
 `<!-- skopos:end -->` markers (re-running install refreshes it in place; a

@@ -66,7 +66,7 @@ var hookScripts = map[string]string{
 }
 
 // Agents is the set of supported install targets.
-var Agents = []string{"claude-code", "codex", "gemini-cli", "github-copilot", "kiro", "opencode"}
+var Agents = []string{"claude-code", "codex", "gemini-cli", "github-copilot", "kiro", "opencode", "zcode"}
 
 const DefaultURL = "http://localhost:8080/mcp"
 
@@ -198,6 +198,31 @@ func installAgent(name string, o Options) (Result, error) {
 			return r, err
 		}
 
+	case "zcode":
+		// ZCode reads ~/.zcode/cli/config.json for MCP (mcp.servers) and
+		// hooks (hooks.events, gated by hooks.enabled), ~/.zcode/AGENTS.md
+		// for instructions, and ~/.zcode/commands/ for slash commands.
+		cfg := scopePath(o.Scope, filepath.Join(homeOrErr(), ".zcode", "cli", "config.json"), filepath.Join(".zcode", "config.json"))
+		if err := mergeJSONFile(cfg, []string{"mcp", "servers", "skopos"}, entry, o, &r.Actions); err != nil {
+			return r, err
+		}
+		cmds := scopePath(o.Scope, filepath.Join(homeOrErr(), ".zcode", "commands"), filepath.Join(".zcode", "commands"))
+		explore := filepath.Join(cmds, "skopos.md")
+		if err := writeFileAction(explore, claudeExplore, o, &r.Actions); err != nil {
+			return r, err
+		}
+		report := filepath.Join(cmds, "skopos-report.md")
+		if err := writeFileAction(report, claudeSkill, o, &r.Actions); err != nil {
+			return r, err
+		}
+		agentsMd := scopePath(o.Scope, filepath.Join(homeOrErr(), ".zcode", "AGENTS.md"), "AGENTS.md")
+		if err := appendBlockAction(agentsMd, renderAgentBlock(name), o, &r.Actions); err != nil {
+			return r, err
+		}
+		if err := installZCodeHooks(o, &r.Actions); err != nil {
+			return r, err
+		}
+
 	case "opencode":
 		cfg := scopePath(o.Scope, filepath.Join(homeOrErr(), ".config", "opencode", "opencode.json"), "opencode.json")
 		if err := mergeJSONFile(cfg, []string{"mcp", "skopos"}, entry, o, &r.Actions); err != nil {
@@ -214,13 +239,13 @@ func installAgent(name string, o Options) (Result, error) {
 
 // mcpEntry builds the MCP server entry for an agent's config format. The
 // shapes follow each agent's documented schema — they are not interchangeable:
-// Claude Code and VS Code want type+url, Gemini CLI marks streamable HTTP as
-// "httpUrl" ("url" would select the SSE transport), OpenCode uses type
-// "remote", and Kiro infers remote servers from "url" alone.
+// Claude Code, VS Code, and ZCode want type+url, Gemini CLI marks streamable
+// HTTP as "httpUrl" ("url" would select the SSE transport), OpenCode uses
+// type "remote", and Kiro infers remote servers from "url" alone.
 func mcpEntry(agent, url, apiKey string) map[string]any {
 	e := map[string]any{}
 	switch agent {
-	case "claude-code", "github-copilot":
+	case "claude-code", "github-copilot", "zcode":
 		e["type"] = "http"
 		e["url"] = url
 	case "gemini-cli":
@@ -637,6 +662,140 @@ func installClaudeHooks(o Options, actions *[]string) error {
 		{event: "Stop", script: "skopos-stop.sh"},
 	}
 	return mergeHookSettings(scopePath(o.Scope, filepath.Join(home, ".claude", "settings.json"), filepath.Join(".claude", "settings.json")), hooksDir, events, o, actions)
+}
+
+// installZCodeHooks writes the hook scripts under ~/.zcode/hooks and
+// registers them in the ZCode config. ZCode gates configuration-file hooks
+// behind hooks.enabled and nests events under hooks.events; matchers are
+// case-sensitive regexes over the tool name, so the Claude matcher strings
+// work unchanged.
+func installZCodeHooks(o Options, actions *[]string) error {
+	if !hooksWanted(o) {
+		return nil
+	}
+	home := homeOrErr()
+	if home == "" {
+		return fmt.Errorf("cannot resolve home directory for hook install")
+	}
+	hooksDir := scopePath(o.Scope, filepath.Join(home, ".zcode", "hooks"), filepath.Join(".zcode", "hooks"))
+	if !o.DryRun {
+		if err := os.MkdirAll(hooksDir, 0o755); err != nil {
+			return fmt.Errorf("creating hooks dir: %w", err)
+		}
+		for _, name := range []string{"skopos-common.sh", "skopos-session.sh", "skopos-prompt.sh", "skopos-pre-tool.sh", "skopos-post-tool.sh", "skopos-stop.sh"} {
+			src, ok := hookScripts[name]
+			if !ok {
+				return fmt.Errorf("hook script %s not embedded", name)
+			}
+			path := filepath.Join(hooksDir, name)
+			if err := os.WriteFile(path, []byte(src), 0o755); err != nil {
+				return fmt.Errorf("writing hook %s: %w", path, err)
+			}
+			if err := os.Chmod(path, 0o755); err != nil {
+				return err
+			}
+		}
+	}
+	*actions = append(*actions, fmt.Sprintf("hook scripts written to %s (skopos-*.sh)", hooksDir))
+
+	events := map[string][]hookEvent{
+		"SessionStart":     {{event: "SessionStart", script: "skopos-session.sh"}},
+		"UserPromptSubmit": {{event: "UserPromptSubmit", script: "skopos-prompt.sh"}},
+		"PreToolUse": {
+			{event: "PreToolUse", matcher: "Grep", script: "skopos-pre-tool.sh"},
+			{event: "PreToolUse", matcher: "Agent", script: "skopos-pre-tool.sh"},
+			{event: "PreToolUse", matcher: "Bash", script: "skopos-pre-tool.sh"},
+		},
+		"PostToolUse": {{event: "PostToolUse", matcher: "Edit|Write", script: "skopos-post-tool.sh"}},
+		"Stop":           {{event: "Stop", script: "skopos-stop.sh"}},
+	}
+	return mergeZCodeHookConfig(scopePath(o.Scope, filepath.Join(home, ".zcode", "cli", "config.json"), filepath.Join(".zcode", "config.json")), hooksDir, events, o, actions)
+}
+
+// mergeZCodeHookConfig registers hooks in the ZCode config: enables the
+// hook runner and merges events idempotently, per (event, matcher, command).
+func mergeZCodeHookConfig(path, hooksDir string, events map[string][]hookEvent, o Options, actions *[]string) error {
+	data, existed, err := readJSONMap(path)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+	hooksAny, ok := data["hooks"]
+	var hooks map[string]any
+	if ok {
+		hooks, ok = hooksAny.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s: hooks key is not an object", path)
+		}
+	} else {
+		hooks = map[string]any{}
+		data["hooks"] = hooks
+	}
+	hooks["enabled"] = true
+	eventsAny, _ := hooks["events"].(map[string]any)
+	if eventsAny == nil {
+		eventsAny = map[string]any{}
+		hooks["events"] = eventsAny
+	}
+	added := 0
+	for event, evs := range events {
+		entryListAny, _ := eventsAny[event].([]any)
+		for _, ev := range evs {
+			command := filepath.Join(hooksDir, ev.script)
+			found := false
+			for _, eAny := range entryListAny {
+				e, ok := eAny.(map[string]any)
+				if !ok {
+					continue
+				}
+				if m, _ := e["matcher"].(string); m != ev.matcher {
+					continue
+				}
+				hs, ok := e["hooks"].([]any)
+				if !ok {
+					continue
+				}
+				for _, hAny := range hs {
+					h, ok := hAny.(map[string]any)
+					if !ok {
+						continue
+					}
+					if c, _ := h["command"].(string); c == command {
+						found = true
+					}
+				}
+			}
+			if found {
+				continue
+			}
+			entry := map[string]any{
+				"hooks": []any{map[string]any{"type": "command", "command": command}},
+			}
+			if ev.matcher != "" {
+				entry["matcher"] = ev.matcher
+			}
+			entryListAny = append(entryListAny, entry)
+			added++
+		}
+		eventsAny[event] = entryListAny
+	}
+	if added == 0 && existed {
+		*actions = append(*actions, "zcode hook registrations already up-to-date in "+path)
+		return nil
+	}
+	if o.DryRun {
+		*actions = append(*actions, fmt.Sprintf("would register %d zcode hook entries (hooks.enabled=true) in %s", added, path))
+		return nil
+	}
+	if existed {
+		if err := backup(path); err != nil {
+			return fmt.Errorf("backing up %s: %w", path, err)
+		}
+	}
+	if err := writeJSON(path, data); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	*actions = append(*actions, fmt.Sprintf("registered %d zcode hook entries in %s (hooks.enabled=true)", added, path))
+	return nil
 }
 
 // mergeHookSettings adds the hook entries to settings.json, preserving all
