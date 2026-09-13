@@ -8,7 +8,7 @@ A coordination dashboard for AI coding agents — shared memory (blackboard), pl
 |---------|--------|
 | CLI | ✅ `serve`, `setup`, `report`, `blackboard`, `plan`, `workspace`, `mode`, `index`, `search`, `symbol`, `who-calls`, `call-tree`, `impact`, `outline`, `dead-code`, `cycles`, `branch-diff`, `install`, `cleanup`, `completion` |
 | REST API | ✅ Sessions, blackboard, plans, workspaces |
-| MCP | ✅ 25 tools at `/mcp` (same port as HTTP), incl. code-index queries |
+| MCP | ✅ 26 tools at `/mcp` (same port as HTTP), incl. code-index queries |
 | Dashboard | ✅ Dark/light/system theme, sidebar nav, modals, SSE live updates |
 | Real-time | ✅ SSE at `/api/events/stream` |
 | Database | ✅ SQLite (WAL, FK-enforced, transactional) |

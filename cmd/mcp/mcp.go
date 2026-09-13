@@ -46,6 +46,7 @@ const instructions = `You are connected to **skopos**, a shared memory and coord
 1. Blackboard — durable knowledge entries (your memory). Scopes: project (all agents/branches), branch, session. Types: finding, decision, bug, debt, warning, context. "bug" and "debt" float: always returned regardless of branch. Use it as a notebook — read what others learned, record what you learn.
 2. Plans & items — shared to-do lists with dependencies. Item statuses: pending, in_progress, done, blocked. Adding a dependency auto-blocks the dependent item; finishing a dependency auto-unblocks; finishing every item auto-completes the plan.
 3. Status — agent status reports powering the dashboard.
+4. Code index — symbols, call graph, and dependencies of indexed repos. ` + "`code_search`" + ` (add ` + "`semantic: true`" + ` for meaning-based search, ` + "`path`" + ` to scope to a subtree), ` + "`code_symbol`" + ` for exact definitions with their docs, ` + "`code_callers`" + `/` + "`code_callees`" + ` / ` + "`code_impact`" + ` for the call graph (call sites include instantiations, subclasses, and type references), ` + "`code_dependencies`" + ` for module imports. Search visibility/attributes as text ("private cache", route names).
 
 At the start of every task, call ` + "`skopos_context`" + ` once (pass ` + "`workspace_id`" + ` and ` + "`branch`" + `) to load the relevant blackboard, active plans/blocked items, and in-flight sessions. Then:
 - recall prior notes -> ` + "`blackboard_read`" + ` (pass ` + "`workspace_id`" + ` and ` + "`branch`" + `).

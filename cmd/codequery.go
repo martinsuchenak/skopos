@@ -425,10 +425,14 @@ func codeImpactCmd() *cli.Command {
 				return nil
 			}
 			for _, a := range res.Affected {
+				rel := ""
+				if a.Relation != "" {
+					rel = " [" + a.Relation + "]"
+				}
 				if a.Path != "" {
-					fmt.Printf("  depth %d  %-44s %s:%d\n", a.Depth, a.Name, a.Path, a.Line)
+					fmt.Printf("  depth %d  %-44s%s  %s:%d\n", a.Depth, a.Name, rel, a.Path, a.Line)
 				} else {
-					fmt.Printf("  depth %d  %s\n", a.Depth, a.Name)
+					fmt.Printf("  depth %d  %s%s\n", a.Depth, a.Name, rel)
 				}
 			}
 			return nil

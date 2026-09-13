@@ -47,7 +47,7 @@ type Symbol struct {
 type Edge struct {
 	Caller string `json:"caller,omitempty"` // enclosing definition ("" = file scope)
 	Callee string `json:"callee"`
-	Kind   string `json:"kind"` // call | ref
+	Kind   string `json:"kind"` // call | new | references | extends | implements | uses | embeds | import
 	Line   int    `json:"line"`
 }
 
