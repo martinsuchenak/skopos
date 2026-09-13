@@ -141,8 +141,8 @@ CLI (add `--server-url` for remote, or omit for the local index dir):
 
 ```sh
 skopos search loadconfig     # FTS over symbols; camelCase is split-tokenized
-skopos symbol Handler        # exact-name definitions with file:line
-skopos outline pkg/util.go   # a file's definitions in source order
+skopos symbol Handler        # exact-name definitions with file:line + doc
+skopos outline pkg/util.go   # a file's definitions with one-line summaries
 skopos who-calls Handler     # call sites
 skopos call-tree main        # recursive callees (--mermaid for a diagram)
 skopos impact Handler        # transitive "what breaks if I change this"
@@ -150,6 +150,34 @@ skopos dead-code             # unreferenced symbols (heuristic — verify)
 skopos cycles                # cycles in the call graph
 skopos branch-diff feat/x    # symbols changed vs the default branch
 ```
+
+### Scoping to a part of the repo
+
+Search, who-calls, callees, and dead-code accept a path prefix — the
+monorepo answer for "only this area":
+
+```sh
+skopos search handler --path app/Services     # handlers under one namespace
+skopos dead-code --path app/Console           # dead candidates in one tree
+skopos who-calls validate --path app/Models   # call sites from Models only
+```
+
+The same filter exists as `path` on the REST endpoints and the
+`code_search` / `code_callers` / `code_callees` / `code_dead` MCP tools.
+
+### Searching by declaration properties
+
+Visibility, modifiers, and attributes are indexed text — search them like
+any other term:
+
+```sh
+skopos search "private cache"        # private helpers with cache in the name
+skopos search abstract               # every abstract definition
+skopos search "monica:localize"      # the command behind an attribute
+```
+
+`impact` answers blast-radius questions with visibility attached, so
+"private" vs "public" callers are distinguishable at a glance.
 
 MCP tools: `code_search`, `code_symbol`, `code_outline`, `code_callers`,
 `code_callees`, `code_impact`, `code_call_tree`, `code_dead`, `code_cycles`,
@@ -190,9 +218,10 @@ stale.
 Declaration modifiers (public/private/protected, static, abstract, final,
 async, …) and attributes (PHP 8 `#[…]`, Python decorators, Java annotations,
 C# attributes) are indexed too — they are part of the declaration, so they
-can never be stale. Searching "private" finds private symbols; searching a
-route path finds the handler it routes to; embeddings include attribute
-text for the same reason.
+can never be stale. They are searchable (see
+[Searching by declaration properties](#searching-by-declaration-properties)),
+and embeddings include attribute text so natural-language queries find
+routed handlers.
 
 Docs surface in three places:
 
@@ -201,10 +230,6 @@ Docs surface in three places:
 - Search — full-text and semantic matching both cover doc text, so
   "sends the password reset email" finds `queueResetNotification()` even
   though no identifier says so.
-
-Queries accept a `--path` prefix (CLI flag, `path` parameter on MCP and
-REST) to scope search, who-calls, callees, and dead-code to one subtree —
-`skopos search handler --path app/Services` only answers from there.
 
 Semantic results label each hit with `matched_by` (`fts`, `vector`, or
 `both`) so agents can judge confidence, and `skopos index status` reports

@@ -73,6 +73,7 @@ Same commands as local — they route to the configured server:
 skopos search send email          # keyword; add --semantic for vector search
 skopos who-calls Handler
 skopos impact Handler --depth 5
+skopos search "private retry" --path app/Actions   # by visibility, in one tree
 skopos branch-diff feat/search
 skopos index status               # all indexed branches + freshness
 ```

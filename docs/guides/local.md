@@ -36,6 +36,7 @@ skopos call-tree main --mermaid # same, as a Mermaid diagram
 skopos impact Handler           # what breaks if Handler changes
 skopos dead-code                # symbols nothing calls (verify before deleting)
 skopos cycles                   # cycles in the call graph
+skopos search handler --path pkg/   # scope any query to a subtree
 ```
 
 Options every query accepts: `--workspace <id>` (default: the git remote),
