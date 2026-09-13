@@ -612,6 +612,7 @@ type EdgeHit struct {
 	Callee string `json:"callee"`
 	Path   string `json:"path"`
 	Line   int    `json:"line"`
+	Kind   string `json:"kind,omitempty"` // call (default), new, extends, implements, uses, embeds
 }
 
 // Callers returns edges calling the given name on a branch.
@@ -624,7 +625,7 @@ func (st *Store) Callers(ctx context.Context, workspace, branch, name, pathPrefi
 	filterCond, filterArgs := pathFilter(pathPrefix)
 	args := append([]any{branch}, filterArgs...)
 	rows, err := db.Query(`
-		SELECT e.caller, e.callee, bf.path, e.line
+		SELECT e.caller, e.callee, bf.path, e.line, e.kind
 		FROM edges e
 		JOIN branch_files bf ON bf.hash = e.hash AND bf.branch = ?`+filterCond+`
 		WHERE (e.callee = ? COLLATE NOCASE OR e.callee LIKE '%::' || ? ESCAPE '\')
@@ -647,7 +648,7 @@ func (st *Store) Callees(ctx context.Context, workspace, branch, name, pathPrefi
 	filterCond, filterArgs := pathFilter(pathPrefix)
 	args := append([]any{branch}, filterArgs...)
 	rows, err := db.Query(`
-		SELECT e.caller, e.callee, bf.path, e.line
+		SELECT e.caller, e.callee, bf.path, e.line, e.kind
 		FROM edges e
 		JOIN branch_files bf ON bf.hash = e.hash AND bf.branch = ?`+filterCond+`
 		WHERE (e.caller = ? COLLATE NOCASE OR e.caller LIKE '%::' || ? ESCAPE '\')
@@ -866,7 +867,7 @@ func likeEscape(s string) string {
 // fallback) — used for graph traversal so nodes never merge across types.
 func (st *Store) exactCallers(db *sql.DB, branch, name string, limit int) ([]EdgeHit, error) {
 	rows, err := db.Query(`
-		SELECT e.caller, e.callee, bf.path, e.line
+		SELECT e.caller, e.callee, bf.path, e.line, e.kind
 		FROM edges e
 		JOIN branch_files bf ON bf.hash = e.hash AND bf.branch = ?
 		WHERE e.callee = ? COLLATE NOCASE
@@ -997,7 +998,7 @@ func scanEdges(rows *sql.Rows) ([]EdgeHit, error) {
 	var out []EdgeHit
 	for rows.Next() {
 		var e EdgeHit
-		if err := rows.Scan(&e.Caller, &e.Callee, &e.Path, &e.Line); err != nil {
+		if err := rows.Scan(&e.Caller, &e.Callee, &e.Path, &e.Line, &e.Kind); err != nil {
 			return nil, err
 		}
 		out = append(out, e)

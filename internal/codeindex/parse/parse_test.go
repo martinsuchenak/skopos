@@ -617,3 +617,71 @@ func TestNewExpressionJS(t *testing.T) {
 	}
 }
 
+
+func TestTypeRelations(t *testing.T) {
+	cases := []struct {
+		name, file, src, caller string
+		want                    map[string]string // callee -> kind
+	}{
+		{
+			name: "php extends implements trait",
+			file: "t.php", caller: "Foo",
+			src: "<?php\nclass Foo extends Base implements Iface1, Iface2 {\n  use CacheTrait;\n}\n",
+			want: map[string]string{"Base": "extends", "Iface1": "implements", "Iface2": "implements", "CacheTrait": "uses"},
+		},
+		{
+			name: "typescript extends implements",
+			file: "t.ts", caller: "Foo",
+			src: "class Foo extends Base implements Iface {}\n",
+			want: map[string]string{"Base": "extends", "Iface": "implements"},
+		},
+		{
+			name: "csharp base list",
+			file: "t.cs", caller: "Foo",
+			src: "public class Foo : Base, IFace {}\n",
+			want: map[string]string{"Base": "extends", "IFace": "implements"},
+		},
+		{
+			name: "java superclass interfaces",
+			file: "t.java", caller: "Foo",
+			src: "public class Foo extends Base implements Iface {}\n",
+			want: map[string]string{"Base": "extends", "Iface": "implements"},
+		},
+		{
+			name: "python base classes",
+			file: "t.py", caller: "Foo",
+			src: "class Foo(Base, Mixin):\n    pass\n",
+			want: map[string]string{"Base": "extends", "Mixin": "extends"},
+		},
+		{
+			name: "go struct embedding",
+			file: "t.go", caller: "Foo",
+			src: "package p\ntype Foo struct {\n\tBase\n\tName string\n}\n",
+			want: map[string]string{"Base": "embeds"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := NewExtractor()
+			p := writeTemp(t, tc.file, tc.src)
+			res, err := e.ParseFile(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := map[string]string{}
+			for _, e := range res.Edges {
+				if e.Caller == tc.caller {
+					got[e.Callee] = e.Kind
+				}
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("relations = %v, want %v (all edges: %+v)", got, tc.want, res.Edges)
+			}
+			for callee, kind := range tc.want {
+				if got[callee] != kind {
+					t.Fatalf("%s: got kind %q, want %q", callee, got[callee], kind)
+				}
+			}
+		})
+	}
+}

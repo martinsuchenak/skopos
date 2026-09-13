@@ -18,7 +18,7 @@ import (
 
 // ExtractorVersion changes whenever extraction logic changes; it is mixed
 // into the content hash so already-indexed files re-extract after upgrades.
-const ExtractorVersion = "13"
+const ExtractorVersion = "14"
 
 // DefaultTimeout is the per-file parse budget. Files that exceed it are still
 // parsed via tree-sitter error recovery and flagged (the measured pathological
@@ -282,6 +282,17 @@ func walkTree(prof *langProfile, root *gts.Node, lang *gts.Language, src []byte,
 					Caller: f.caller, Callee: callee, Kind: "call",
 					Line: int(n.StartPoint().Row) + 1,
 				})
+			}
+		} else if relFn, hasRel := prof.relationNodes[nt]; hasRel {
+			// Type relationships (extends/implements/uses/embeds): the
+			// enclosing definition's frame carries the declaring type name.
+			for _, rel := range relFn(n, lang, src) {
+				if callee := shortTypeName(rel.name); callee != "" && f.caller != "" {
+					res.Edges = append(res.Edges, Edge{
+						Caller: f.caller, Callee: callee, Kind: rel.kind,
+						Line: int(n.StartPoint().Row) + 1,
+					})
+				}
 			}
 		} else if newBindingNodes[nt] {
 			// Instantiation is the class's most important call site: record

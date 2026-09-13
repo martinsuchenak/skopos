@@ -312,7 +312,11 @@ func codeWhoCallsCmd() *cli.Command {
 				if caller == "" {
 					caller = "(file scope)"
 				}
-				fmt.Printf("%-32s -> %s  %s:%d\n", caller, e.Callee, e.Path, e.Line)
+				kind := ""
+				if e.Kind != "" && e.Kind != "call" {
+					kind = " [" + e.Kind + "]"
+				}
+				fmt.Printf("%-32s -> %s%s  %s:%d\n", caller, e.Callee, kind, e.Path, e.Line)
 			}
 			return nil
 		},

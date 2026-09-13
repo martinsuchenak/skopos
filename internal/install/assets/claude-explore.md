@@ -12,7 +12,7 @@ Answer using the skopos code index, not grep: $ARGUMENTS
 
 2. Pick the query path for the request:
    - "where is X / what is X" → `code_search` or `skopos search "$ARGUMENTS" --json`
-   - "who calls X" → `code_callers` or `skopos who-calls X` (includes `new X()` instantiations)
+   - "who calls X" → `code_callers` or `skopos who-calls X` (includes `new X()` instantiations and subclasses/implementations/trait use — labeled by kind)
    - "what breaks if I change X" → `code_impact` or `skopos impact X`
    - "what's in file F" → `code_outline` or `skopos outline F`
    - "only in this area" → add `path` (CLI `--path app/Services`)

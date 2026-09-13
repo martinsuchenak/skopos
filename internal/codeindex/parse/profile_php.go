@@ -13,6 +13,7 @@ func init() {
 	base := *commonProfile // copy
 	base.name = "php"
 	base.qualifyCallee = phpQualifyCallee
+	base.relationNodes = phpRelations()
 	registerProfile(&base)
 }
 

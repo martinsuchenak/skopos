@@ -30,6 +30,7 @@ func init() {
 	base.defName = csDefName
 	base.paramTypes = csParamTypes
 	base.qualifyCallee = csQualifyCallee
+	base.relationNodes = csRelations()
 	registerProfile(&base)
 }
 

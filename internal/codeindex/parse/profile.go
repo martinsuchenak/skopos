@@ -85,6 +85,10 @@ type langProfile struct {
 	// docFromBody extracts a doc that is part of the declaration itself
 	// (Python docstrings) rather than a preceding comment. Optional.
 	docFromBody func(n *gts.Node, lang *gts.Language, src []byte) string
+
+	// relationNodes maps clause node types to the type relationships they
+	// declare (extends/implements/uses/embeds). Optional.
+	relationNodes map[string]func(n *gts.Node, lang *gts.Language, src []byte) []typeRelation
 }
 
 // isName reports whether a node type is a name node for this profile.

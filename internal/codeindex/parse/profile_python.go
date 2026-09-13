@@ -12,6 +12,7 @@ func init() {
 	base := *commonProfile
 	base.name = "python"
 	base.docFromBody = pythonDocString
+	base.relationNodes = pythonRelations()
 	registerProfile(&base)
 }
 

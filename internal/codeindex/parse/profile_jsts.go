@@ -18,7 +18,8 @@ func init() {
 			"variable_declarator": jsConditionalDefs,
 		}
 		base.qualifyCallee = jsQualifyCallee
-		registerProfile(&base)
+		base.relationNodes = jstsRelations()
+	registerProfile(&base)
 	}
 }
 

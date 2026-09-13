@@ -1096,3 +1096,73 @@ function boot() {
 		t.Fatalf("instantiation not found by who-calls: %+v", out.Edges)
 	}
 }
+
+func TestHierarchyVisibleToGraphQueries(t *testing.T) {
+	store := newTestStore(t)
+	root := filepath.Join(t.TempDir(), "r")
+	os.MkdirAll(root, 0o755)
+	os.WriteFile(filepath.Join(root, "app.php"), []byte(`<?php
+abstract class BaseController {
+  public function handle(): void {}
+}
+
+trait Loggable {
+  public function log(string $m): void {}
+}
+
+class HomeController extends BaseController {
+  use Loggable;
+}
+
+class AdminController extends BaseController {}
+`), 0o644)
+	res, err := parse.NewExtractor().ParseFile(filepath.Join(root, "app.php"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Path = "app.php"
+	if err := store.AddBlob("ws", res); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit("ws", "main", "", "t", []FileEntry{{Path: "app.php", Hash: res.Hash}}); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(store)
+
+	// who-calls on the base class sees its subclasses, labeled.
+	out, err := svc.Callers(context.Background(), "ws", "main", "BaseController", "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]string{}
+	for _, e := range out.Edges {
+		kinds[e.Caller] = e.Kind
+	}
+	if kinds["HomeController"] != "extends" || kinds["AdminController"] != "extends" {
+		t.Fatalf("subclass relations missing from who-calls: %v (edges %+v)", kinds, out.Edges)
+	}
+
+	// impact through the hierarchy: changing the base hits the subclasses.
+	imp, err := svc.Impact(context.Background(), "ws", "main", "BaseController", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, a := range imp.Affected {
+		names[a.Name] = true
+	}
+	if !names["HomeController"] || !names["AdminController"] {
+		t.Fatalf("impact missed subclasses: %v", names)
+	}
+
+	// the trait is used, not dead.
+	dead, err := svc.Dead(context.Background(), "ws", "main", "", 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range dead.Symbols {
+		if h.Name == "Loggable" {
+			t.Fatalf("used trait reported dead")
+		}
+	}
+}

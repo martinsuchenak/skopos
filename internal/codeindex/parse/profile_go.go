@@ -12,6 +12,7 @@ func init() {
 	base := *commonProfile
 	base.name = "go"
 	base.methodScope = goMethodScope
+	base.relationNodes = goRelations()
 	registerProfile(&base)
 }
 
