@@ -4,6 +4,44 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] — 2026-09-13
+
+Post-deploy hardening follow-up to 0.1.0.
+
+### Added
+
+- `skopos serve` refuses to start without embedded frontend assets
+  (`web.VerifyAssets`): a binary built without `task frontend-build`
+  previously served a dead dashboard — every asset 404s, with no error
+  anywhere. Release tests now gate the bundle (goreleaser builds the
+  frontend before `go test`; unbuilt local checkouts skip).
+- Agent instructions (AGENTS block v3) direct agents to pass
+  `workspace_id` to `skopos_context` — unscoped reads span every
+  workspace on the server — and the session hook now prints the
+  repo's workspace ID in remote mode.
+
+### Fixed
+
+- Dashboard silently rendered empty lists when the browser had no
+  (or a wrong) API key stored: reads swallowed 401s by design, with
+  no prompt anywhere. Any 401 now opens the key modal with a toast
+  (latched per key change so polling/SSE retries don't spam), and
+  saving the key refreshes immediately instead of waiting for a
+  manual Refresh.
+- Session-derived workspaces are now auto-registered server-side on
+  every accepted status report (`status.Service` workspace
+  registrar, wired like the code-index push path). The documented
+  behavior previously existed only in the dashboard's JS heuristic —
+  workspaces used purely via MCP never persisted to the registry.
+- The dashboard Index view no longer falls back to the literal
+  workspace id `default` (matches nothing); it uses the first
+  registered workspace.
+- `web/dist/.gitkeep` is actually tracked now (the `.gitignore`
+  comment claimed it was, but the root `dist/` pattern excluded the
+  parent directory and blocked the negation) — fresh clones could
+  not compile `//go:embed all:dist` at all. The web build script
+  recreates the placeholder, since vite empties `dist/` on build.
+
 ## [0.1.0] — 2026-09-13
 
 The code-index release: skopos grows from agent coordination into a central,
