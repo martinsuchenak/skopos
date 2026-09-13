@@ -48,9 +48,7 @@ func declarationModifiers(n *gts.Node, lang *gts.Language, src []byte) (mods, at
 		if a == "" || len(attrs) >= maxAttrsPerSymbol {
 			return
 		}
-		if len(a) > maxAttrChars {
-			a = a[:maxAttrChars]
-		}
+		a = Truncate(a, maxAttrChars)
 		attrs = append(attrs, a)
 	}
 

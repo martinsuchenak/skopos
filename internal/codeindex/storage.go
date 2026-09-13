@@ -568,7 +568,7 @@ func (st *Store) Symbol(workspace, branch, name string, limit int) ([]SymbolHit,
 		return nil, err
 	}
 	defer rows.Close()
-	return scanHitsDoc(rows)
+	return scanHits(rows)
 }
 
 // Outline lists a file's symbols in source order.
@@ -587,7 +587,7 @@ func (st *Store) Outline(workspace, branch, path string) ([]SymbolHit, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanHitsDoc(rows)
+	return scanHits(rows)
 }
 
 // EdgeHit is a graph edge with the file it occurs in.
@@ -840,9 +840,6 @@ func namePartsInput(sym parse.Symbol) string {
 	}
 	return sym.Name
 }
-
-// scanHitsDoc scans the same uniform hit columns as scanHits.
-func scanHitsDoc(rows *sql.Rows) ([]SymbolHit, error) { return scanHits(rows) }
 
 // scanHits scans the uniform hit columns: name, qual, kind, path, line,
 // signature, lang, doc, modifiers, attrs.

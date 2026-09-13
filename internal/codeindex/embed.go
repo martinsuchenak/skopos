@@ -384,18 +384,13 @@ func embedText(name, sig, doc string, attrs []string) string {
 		if i := strings.IndexByte(summary, '\n'); i > 0 {
 			summary = summary[:i] // first paragraph
 		}
-		if len(summary) > embedDocChars {
-			summary = summary[:embedDocChars]
-		}
+		summary = parse.Truncate(summary, embedDocChars)
 		text += "\n" + summary
 	}
 	// Attributes carry routing/DI semantics ("Route('/users')" says more
 	// than the handler name); keep them short.
 	for _, a := range attrs {
-		if len(a) > 80 {
-			a = a[:80]
-		}
-		text += "\n" + a
+		text += "\n" + parse.Truncate(a, 80)
 	}
 	return text
 }

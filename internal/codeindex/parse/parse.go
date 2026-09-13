@@ -425,11 +425,10 @@ func signature(src []byte, start, end int) string {
 		}
 		line := strings.TrimSpace(string(src[start:e]))
 		if line != "" && !strings.HasPrefix(line, "#[") && !strings.HasPrefix(line, "[") {
-			sig := line
-			if len(sig) > 120 {
-				sig = sig[:117] + "..."
+			if len(line) > 120 {
+				return Truncate(line, 117) + "..."
 			}
-			return sig
+			return line
 		}
 		start = e + 1
 	}

@@ -235,7 +235,7 @@ paths:
         - { name: semantic, in: query, schema: { type: boolean } }
         - { name: limit, in: query, schema: { type: integer } }
       responses:
-        "200": { description: Symbol hits with branch/fallback labeling }
+        "200": { description: Symbol hits with branch/fallback labeling; hits carry doc, modifiers, and attributes }
   /api/codeindex/{workspace}/symbol:
     get:
       summary: Exact-name symbol definitions
@@ -246,7 +246,7 @@ paths:
         - { name: name, in: query, required: true, schema: { type: string } }
         - { name: branch, in: query, schema: { type: string } }
       responses:
-        "200": { description: Symbol hits, including each definition's doc comment (summary + non-signature tags; declaration data always wins over stale doc tags) }
+        "200": { description: Symbol hits with the full definition card — doc comment (summary + non-signature tags; declaration data always wins over stale doc tags), modifiers, attributes }
   /api/codeindex/{workspace}/outline:
     get:
       summary: A file's definitions in source order
@@ -301,7 +301,7 @@ paths:
         - { name: workspace, in: path, required: true, schema: { type: string } }
         - { name: branch, in: query, schema: { type: string } }
       responses:
-        "200": { description: Dead-code candidates }
+        "200": { description: Dead-code candidates, carrying doc/modifiers/attributes }
   /api/codeindex/{workspace}/cycles:
     get:
       summary: Cycles in the call graph

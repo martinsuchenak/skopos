@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func writeTemp(t *testing.T, name, content string) string {
@@ -518,5 +519,42 @@ func TestModifierExtraction(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDocNotAttachedAcrossBlankLine(t *testing.T) {
+	e := NewExtractor()
+	p := writeTemp(t, "a.go", "package p\n\n// Unrelated trailing note.\n\nfunc Far() {}\n")
+	res, err := e.ParseFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Symbols) == 0 {
+		t.Fatal("no symbols")
+	}
+	if res.Symbols[0].Doc != "" {
+		t.Fatalf("comment attached across a blank line: %q", res.Symbols[0].Doc)
+	}
+}
+
+func TestTruncateRuneSafe(t *testing.T) {
+	// "žžž" is 2 bytes per rune: cutting at 5 must back off to 4, not split.
+	if got := Truncate("žžžž", 5); got != "žž" {
+		t.Fatalf("rune-unsafe truncation: %q", got)
+	}
+	if got := Truncate("žžžž", 8); got != "žžžž" {
+		t.Fatalf("no-op truncation changed input: %q", got)
+	}
+	if got := Truncate("ascii", 3); got != "asc" {
+		t.Fatalf("ascii truncation: %q", got)
+	}
+	// A doc block whose cap lands mid-rune stays valid UTF-8.
+	long := strings.Repeat("ž", 600) // 1200 bytes > maxDocBytes
+	var sym Symbol
+	sym.Doc = long
+	_ = sym
+	doc := Truncate(long, maxDocBytes)
+	if !utf8.ValidString(doc) {
+		t.Fatal("truncated doc is not valid UTF-8")
 	}
 }
