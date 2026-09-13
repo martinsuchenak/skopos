@@ -892,10 +892,8 @@ func TestStatusReportsEmbeddingCoverage(t *testing.T) {
 	store := newTestStore(t)
 	docFixture(t, store)
 	svc := NewService(store)
-	// Embed with the deterministic test embedder.
-	m := NewEmbeddingManager(svc, &RandomEmbedder{Dims: 16})
-	m.Enqueue("ws")
-	// The manager runs async; drive EmbedPending directly for determinism.
+	// Drive EmbedPending directly: the manager runs async and would race
+	// the test's temp-dir cleanup.
 	if _, err := svc.EmbedPending(context.Background(), "ws", &RandomEmbedder{Dims: 16}); err != nil {
 		t.Fatal(err)
 	}
