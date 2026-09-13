@@ -28,6 +28,13 @@ type VectorStore interface {
 
 	// DropWorkspace removes all vectors of a workspace (index teardown).
 	DropWorkspace(ctx context.Context, workspace string) error
+
+	// Count reports stored vectors for a workspace; exists is false when
+	// the backend has nothing for it (no collection / empty).
+	Count(ctx context.Context, workspace string) (n int64, exists bool, err error)
+
+	// Delete removes vectors for the given symbol IDs (index GC).
+	Delete(ctx context.Context, workspace string, symbolIDs []int64) error
 }
 
 // ---- SQLite brute-force implementation (default) ----
@@ -168,6 +175,36 @@ func (s *SQLiteVectorStore) Search(ctx context.Context, workspace string, query 
 		ids[i] = h.id
 	}
 	return ids, nil
+}
+
+func (s *SQLiteVectorStore) Delete(ctx context.Context, workspace string, symbolIDs []int64) error {
+	if len(symbolIDs) == 0 {
+		return nil
+	}
+	db, err := s.store.DB(workspace)
+	if err != nil {
+		return err
+	}
+	qmarks := strings.Repeat("?,", len(symbolIDs))
+	qmarks = strings.TrimSuffix(qmarks, ",")
+	args := make([]any, len(symbolIDs))
+	for i, id := range symbolIDs {
+		args[i] = id
+	}
+	_, err = db.ExecContext(ctx, `DELETE FROM embeddings WHERE symbol_id IN (`+qmarks+`)`, args...)
+	return err
+}
+
+func (s *SQLiteVectorStore) Count(ctx context.Context, workspace string) (int64, bool, error) {
+	db, err := s.store.DB(workspace)
+	if err != nil {
+		return 0, false, err
+	}
+	var n int64
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM embeddings`).Scan(&n); err != nil {
+		return 0, false, err
+	}
+	return n, n > 0, nil
 }
 
 func (s *SQLiteVectorStore) DropWorkspace(ctx context.Context, workspace string) error {

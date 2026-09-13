@@ -21,7 +21,7 @@ type DeadResult struct {
 var deadExcludedPrefixes = []string{"main", "init", "Test", "test_", "__", "new_", "New"}
 
 // Dead lists unreferenced definitions (no call edges target them).
-func (s *Service) Dead(ctx context.Context, workspace, branch string, limit int) (*DeadResult, error) {
+func (s *Service) Dead(ctx context.Context, workspace, branch, pathPrefix string, limit int) (*DeadResult, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
@@ -33,17 +33,20 @@ func (s *Service) Dead(ctx context.Context, workspace, branch string, limit int)
 	if err != nil {
 		return nil, err
 	}
+	filterCond, filterArgs := pathFilter(pathPrefix)
+	args := append([]any{resolved}, filterArgs...)
+	args = append(args, resolved, limit)
 	rows, err := db.Query(`
 		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang, s.doc, s.modifiers, s.attrs
 		FROM symbols s
-		JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
+		JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?`+filterCond+`
 		WHERE NOT EXISTS (
 			SELECT 1 FROM edges e
 			JOIN branch_files bf2 ON bf2.hash = e.hash AND bf2.branch = ?
 			WHERE e.callee = s.name OR e.callee = s.qual_name
 		)
 		ORDER BY bf.path, s.line
-		LIMIT ?`, resolved, resolved, limit)
+		LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -268,6 +268,41 @@ func (q *QdrantVectorStore) Search(ctx context.Context, workspace string, query 
 	return ids, nil
 }
 
+func (q *QdrantVectorStore) Delete(ctx context.Context, workspace string, symbolIDs []int64) error {
+	if len(symbolIDs) == 0 {
+		return nil
+	}
+	ids := make([]any, len(symbolIDs))
+	for i, id := range symbolIDs {
+		ids[i] = id
+	}
+	_, err, _ := q.do(ctx, http.MethodPost, "/collections/"+q.collection(workspace)+"/points/delete?wait=true",
+		map[string]any{"points": ids})
+	if err != nil {
+		return fmt.Errorf("qdrant delete points: %w", err)
+	}
+	return nil
+}
+
+func (q *QdrantVectorStore) Count(ctx context.Context, workspace string) (int64, bool, error) {
+	data, err, notFound := q.do(ctx, http.MethodGet, "/collections/"+q.collection(workspace), nil)
+	if err != nil {
+		return 0, false, fmt.Errorf("qdrant collection info: %w", err)
+	}
+	if notFound {
+		return 0, false, nil
+	}
+	var res struct {
+		Result struct {
+			PointsCount int64 `json:"points_count"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(data, &res); err != nil {
+		return 0, false, err
+	}
+	return res.Result.PointsCount, res.Result.PointsCount > 0, nil
+}
+
 func (q *QdrantVectorStore) DropWorkspace(ctx context.Context, workspace string) error {
 	_, err, _ := q.do(ctx, http.MethodDelete, "/collections/"+q.collection(workspace), nil)
 	return err

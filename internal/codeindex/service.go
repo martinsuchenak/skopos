@@ -72,7 +72,7 @@ type SearchResults struct {
 	Hits     []SymbolHit `json:"hits"`
 }
 
-func (s *Service) Search(ctx context.Context, workspace, branch, query string, limit int) (*SearchResults, error) {
+func (s *Service) Search(ctx context.Context, workspace, branch, query, pathPrefix string, limit int) (*SearchResults, error) {
 	const maxQueryBytes = 256
 	if strings.TrimSpace(query) == "" {
 		return nil, fmt.Errorf("%w: query is required", ErrInvalidInput)
@@ -84,7 +84,7 @@ func (s *Service) Search(ctx context.Context, workspace, branch, query string, l
 	if err != nil {
 		return nil, err
 	}
-	hits, err := s.store.Search(ctx, workspace, resolved, query, limit)
+	hits, err := s.store.Search(ctx, workspace, resolved, query, pathPrefix, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -137,12 +137,12 @@ type GraphResults struct {
 	Edges    []EdgeHit `json:"edges"`
 }
 
-func (s *Service) Callers(ctx context.Context, workspace, branch, name string, limit int) (*GraphResults, error) {
+func (s *Service) Callers(ctx context.Context, workspace, branch, name, pathPrefix string, limit int) (*GraphResults, error) {
 	resolved, label, fallback, err := s.resolveBranch(workspace, branch)
 	if err != nil {
 		return nil, err
 	}
-	edges, err := s.store.Callers(workspace, resolved, name, limit)
+	edges, err := s.store.Callers(ctx, workspace, resolved, name, pathPrefix, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -153,12 +153,12 @@ func (s *Service) Callers(ctx context.Context, workspace, branch, name string, l
 	return out, nil
 }
 
-func (s *Service) Callees(ctx context.Context, workspace, branch, name string, limit int) (*GraphResults, error) {
+func (s *Service) Callees(ctx context.Context, workspace, branch, name, pathPrefix string, limit int) (*GraphResults, error) {
 	resolved, label, fallback, err := s.resolveBranch(workspace, branch)
 	if err != nil {
 		return nil, err
 	}
-	edges, err := s.store.Callees(workspace, resolved, name, limit)
+	edges, err := s.store.Callees(ctx, workspace, resolved, name, pathPrefix, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -260,6 +260,7 @@ func (s *Service) Impact(ctx context.Context, workspace, branch, name string, ma
 			for i := range affected {
 				if loc, ok := locs[affected[i].Name]; ok {
 					affected[i].Path, affected[i].Line = loc.path, loc.line
+					affected[i].Modifiers = unmarshalStrings(loc.mods)
 				}
 			}
 		}
@@ -278,6 +279,7 @@ func (s *Service) Impact(ctx context.Context, workspace, branch, name string, ma
 
 type defLoc struct {
 	path string
+	mods string
 	line int
 }
 
@@ -308,7 +310,7 @@ func (s *Service) definitionLocations(workspace, branch string, names []string) 
 			queryArgs = append(queryArgs, n)
 		}
 		rows, err := db.Query(`
-			SELECT COALESCE(NULLIF(s.qual_name,''), s.name), bf.path, s.line
+			SELECT COALESCE(NULLIF(s.qual_name,''), s.name), bf.path, s.line, s.modifiers
 			FROM symbols s
 			JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
 			WHERE s.name IN (`+qmarks+`) OR s.qual_name IN (`+qmarks+`)
@@ -319,12 +321,13 @@ func (s *Service) definitionLocations(workspace, branch string, names []string) 
 		for rows.Next() {
 			var n, p string
 			var l int
-			if err := rows.Scan(&n, &p, &l); err != nil {
+			var m string
+			if err := rows.Scan(&n, &p, &l, &m); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			if _, seen := out[n]; !seen {
-				out[n] = defLoc{p, l}
+				out[n] = defLoc{path: p, line: l, mods: m}
 			}
 		}
 		rows.Close()
@@ -337,10 +340,11 @@ func (s *Service) definitionLocations(workspace, branch string, names []string) 
 
 // ImpactNode is one transitively-affected symbol, with where it is defined.
 type ImpactNode struct {
-	Name  string `json:"name"`
-	Depth int    `json:"depth"`
-	Path  string `json:"path,omitempty"`
-	Line  int    `json:"line,omitempty"`
+	Name      string   `json:"name"`
+	Depth     int      `json:"depth"`
+	Path      string   `json:"path,omitempty"`
+	Line      int      `json:"line,omitempty"`
+	Modifiers []string `json:"modifiers,omitempty"`
 }
 
 // ImpactResults is the transitive-caller set for a symbol.
@@ -351,9 +355,38 @@ type ImpactResults struct {
 	Affected []ImpactNode `json:"affected"`
 }
 
-// Status lists indexed branches.
+// GC removes index content no branch references; reclaimed symbol ids are
+// returned so their vectors can be dropped too (DeleteVectors).
+func (s *Service) GC(ctx context.Context, workspace string) ([]int64, error) {
+	return s.store.GC(ctx, workspace)
+}
+
+// DeleteVectors removes vectors for the given symbol IDs (companion to GC).
+func (s *Service) DeleteVectors(ctx context.Context, workspace string, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return s.vectors.Delete(ctx, workspace, ids)
+}
+
+// Status lists indexed branches, enriched with embedding coverage when a
+// vector store is configured (coverage is workspace-wide; rows repeat it).
 func (s *Service) Status(ctx context.Context, workspace string) ([]BranchStatus, error) {
-	return s.store.Status(workspace)
+	out, err := s.store.Status(workspace)
+	if err != nil || len(out) == 0 {
+		return out, err
+	}
+	embedded, hasVectors, err := s.vectors.Count(ctx, workspace)
+	if err == nil && hasVectors {
+		embeddable := s.store.EmbeddableCount(ctx, workspace)
+		lastErr, _ := s.store.GetMeta(workspace, "embedding_error")
+		for i := range out {
+			out[i].Embeddable = embeddable
+			out[i].Embedded = int(embedded)
+			out[i].EmbeddingError = lastErr
+		}
+	}
+	return out, nil
 }
 
 // DropBranch removes a branch's index state.

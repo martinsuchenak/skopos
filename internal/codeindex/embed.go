@@ -120,7 +120,49 @@ func blobToVec(b []byte) []float32 {
 // for gaps) and embeds up to embedBatchPerPass of them; the embedding
 // manager loops until a pass makes no progress. This stays correct for any
 // vector backend (SQLite or external) and any corpus size.
+// embedPolicyVersion bumps when the embed INPUT text construction changes;
+// stored vectors predate/mismatch the model+policy and must be rebuilt.
+const embedPolicyVersion = 1
+
+func embeddingVersionFor(embedder Embedder) string {
+	return embedder.Model() + "/policy" + fmt.Sprint(embedPolicyVersion)
+}
+
+// ensureEmbeddingVersion drops stored vectors when the model or embed-text
+// policy changed since they were built, so the pass rebuilds from scratch.
+func (s *Service) ensureEmbeddingVersion(workspace string, embedder Embedder) error {
+	current := embeddingVersionFor(embedder)
+	if stored, ok := s.store.GetMeta(workspace, "embedding_version"); ok && stored == current {
+		return nil
+	}
+	if n, exists, err := s.vectors.Count(context.Background(), workspace); err == nil && exists && n > 0 {
+		if err := s.vectors.DropWorkspace(context.Background(), workspace); err != nil {
+			return err
+		}
+	}
+	// Stamp immediately, not on success: a multi-pass drain re-enters this
+	// check between passes and must not drop the vectors pass one just wrote.
+	_ = s.store.SetMeta(workspace, "embedding_version", current)
+	return nil
+}
+
+// RecordEmbeddingSuccess stamps the version and clears any pass error.
+func (s *Service) RecordEmbeddingSuccess(workspace string, embedder Embedder) {
+	_ = s.store.SetMeta(workspace, "embedding_version", embeddingVersionFor(embedder))
+	_ = s.store.SetMeta(workspace, "embedding_run_at", time.Now().UTC().Format(time.RFC3339))
+	_ = s.store.SetMeta(workspace, "embedding_error", "")
+}
+
+// RecordEmbeddingError surfaces a failed pass in index status.
+func (s *Service) RecordEmbeddingError(workspace string, err error) {
+	_ = s.store.SetMeta(workspace, "embedding_error", err.Error())
+	_ = s.store.SetMeta(workspace, "embedding_run_at", time.Now().UTC().Format(time.RFC3339))
+}
+
 func (s *Service) EmbedPending(ctx context.Context, workspace string, embedder Embedder) (int, error) {
+	if err := s.ensureEmbeddingVersion(workspace, embedder); err != nil {
+		return 0, err
+	}
 	db, err := s.store.DB(workspace)
 	if err != nil {
 		return 0, err
@@ -223,24 +265,56 @@ func (s *Service) EmbedPending(ctx context.Context, workspace string, embedder E
 		}
 	}
 
+	// Batches embed concurrently: sequential round-trips make a full pass
+	// ~minutes on large repos for no benefit.
 	const batch = 64
-	done := 0
-	for start := 0; start < len(texts); start += batch {
-		end := start + batch
-		if end > len(texts) {
-			end = len(texts)
-		}
-		vecs, err := embedder.Embed(ctx, texts[start:end])
-		if err != nil {
-			if done > 0 {
-				return done, nil // partial progress; the next pass continues
+	const workers = 4
+	type result struct{ n int; err error }
+	results := make(chan result, (len(texts)+batch-1)/batch)
+	jobs := make(chan [2]int)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for r := range jobs {
+				start, end := r[0], r[1]
+				vecs, err := embedder.Embed(ctx, texts[start:end])
+				if err == nil {
+					err = s.vectors.Add(ctx, workspace, toEmbedIDs[start:end], vecs)
+				}
+				results <- result{end - start, err}
 			}
-			return 0, err
+		}()
+	}
+	go func() {
+		for start := 0; start < len(texts); start += batch {
+			end := start + batch
+			if end > len(texts) {
+				end = len(texts)
+			}
+			jobs <- [2]int{start, end}
 		}
-		if err := s.vectors.Add(ctx, workspace, toEmbedIDs[start:end], vecs); err != nil {
-			return done, err
+		close(jobs)
+	}()
+	go func() { wg.Wait(); close(results) }()
+	done, firstErr := 0, error(nil)
+	anyErr := false
+	for r := range results {
+		if r.err != nil {
+			anyErr = true
+			if firstErr == nil {
+				firstErr = r.err
+			}
+			continue
 		}
-		done += end - start
+		done += r.n
+	}
+	if anyErr {
+		if done > 0 {
+			return done, nil // partial progress; the next pass continues
+		}
+		return 0, firstErr
 	}
 	return done, nil
 }
@@ -248,8 +322,8 @@ func (s *Service) EmbedPending(ctx context.Context, workspace string, embedder E
 // SemanticSearch fuses FTS and vector results with Reciprocal Rank Fusion.
 // When no embeddings exist the result degrades to the plain FTS search with
 // semantic=false.
-func (s *Service) SemanticSearch(ctx context.Context, workspace, branch, query string, limit int, embedder Embedder) (*SearchResults, error) {
-	base, err := s.Search(ctx, workspace, branch, query, limit)
+func (s *Service) SemanticSearch(ctx context.Context, workspace, branch, query, pathPrefix string, limit int, embedder Embedder) (*SearchResults, error) {
+	base, err := s.Search(ctx, workspace, branch, query, pathPrefix, limit)
 	if err != nil || embedder == nil {
 		return base, err
 	}
@@ -330,16 +404,22 @@ func (s *Service) SemanticSearch(ctx context.Context, workspace, branch, query s
 	}
 	score := map[string]float64{}
 	merged := map[string]SymbolHit{}
+	matchedBy := map[string]string{}
 	for i, h := range dedupe(base.Hits) {
 		key := h.Name + "\x00" + h.Path
 		score[key] += 1.0 / float64(rrfK+i+1)
 		merged[key] = h
+		matchedBy[key] = "fts"
 	}
 	for i, h := range dedupe(vecHits) {
 		key := h.Name + "\x00" + h.Path
 		score[key] += 1.0 / float64(rrfK+i+1)
-		if _, ok := merged[key]; !ok {
+		if prev, ok := merged[key]; !ok {
 			merged[key] = h
+			matchedBy[key] = "vector"
+		} else {
+			_ = prev
+			matchedBy[key] = "both"
 		}
 	}
 	keys := make([]string, 0, len(score))
@@ -353,7 +433,9 @@ func (s *Service) SemanticSearch(ctx context.Context, workspace, branch, query s
 	}
 	out := &SearchResults{Branch: base.Branch, Fallback: base.Fallback, Note: base.Note, Semantic: true}
 	for _, k := range keys {
-		out.Hits = append(out.Hits, merged[k])
+		h := merged[k]
+		h.MatchedBy = matchedBy[k]
+		out.Hits = append(out.Hits, h)
 	}
 	return out, nil
 }
@@ -440,12 +522,14 @@ func (m *EmbeddingManager) Enqueue(workspace string) {
 			n, err := m.service.EmbedPending(ctx, workspace, m.embedder)
 			cancel()
 			if err != nil {
+				m.service.RecordEmbeddingError(workspace, err)
 				if m.onError != nil {
 					m.onError(workspace, err)
 				}
 				return
 			}
 			if n == 0 {
+				m.service.RecordEmbeddingSuccess(workspace, m.embedder)
 				return
 			}
 		}

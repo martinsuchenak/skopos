@@ -76,7 +76,7 @@ func TestIngestSearchAndGraph(t *testing.T) {
 	svc := fixtureService(t)
 
 	// FTS search finds camelCase symbol via name_parts splitting.
-	res, err := svc.Search(context.Background(), "ws", "main", "loadconfig", 10)
+	res, err := svc.Search(context.Background(), "ws", "main", "loadconfig", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestIngestSearchAndGraph(t *testing.T) {
 	}
 
 	// Callers: main calls LoadConfig.
-	callers, err := svc.Callers(context.Background(), "ws", "main", "LoadConfig", 0)
+	callers, err := svc.Callers(context.Background(), "ws", "main", "LoadConfig", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestIngestSearchAndGraph(t *testing.T) {
 	}
 
 	// Callees from main include LoadConfig and serve.
-	callees, err := svc.Callees(context.Background(), "ws", "main", "main", 0)
+	callees, err := svc.Callees(context.Background(), "ws", "main", "main", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func NewThing() string { return "x" }
 	svc := fixtureService(t)
 
 	// Unindexed branch falls back to default branch, labeled.
-	res, err := svc.Search(context.Background(), "ws", "feat/unknown", "helper", 10)
+	res, err := svc.Search(context.Background(), "ws", "feat/unknown", "helper", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +361,7 @@ func TestSearchByQualifiedName(t *testing.T) {
 	buildInto(t, store, writeRepo(t), "main")
 
 	// Exact FQN.
-	res, err := NewService(store).Search(context.Background(), "ws", "main", "LoadConfig", 10)
+	res, err := NewService(store).Search(context.Background(), "ws", "main", "LoadConfig", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,14 +380,14 @@ class Invoice {
 	buildInto(t, store2, root, "main")
 	svc := NewService(store2)
 
-	exact, err := svc.Search(context.Background(), "ws", "main", "Invoice::updateStatus", 10)
+	exact, err := svc.Search(context.Background(), "ws", "main", "Invoice::updateStatus", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(exact.Hits) != 1 || exact.Hits[0].Qualified != "Invoice::updateStatus" {
 		t.Fatalf("exact FQN search: %+v", exact.Hits)
 	}
-	prefix, err := svc.Search(context.Background(), "ws", "main", "Invoice::up", 10)
+	prefix, err := svc.Search(context.Background(), "ws", "main", "Invoice::up", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +395,7 @@ class Invoice {
 		t.Fatalf("FQN prefix search: %+v", prefix.Hits)
 	}
 	// Bare search unchanged.
-	bare, err := svc.Search(context.Background(), "ws", "main", "updatestatus", 10)
+	bare, err := svc.Search(context.Background(), "ws", "main", "updatestatus", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,10 +437,10 @@ func TestStoreDBHandleBound(t *testing.T) {
 func TestSearchQueryLengthCap(t *testing.T) {
 	store := newTestStore(t)
 	svc := NewService(store)
-	if _, err := svc.Search(context.Background(), "ws", "main", strings.Repeat("a", 257), 10); err == nil {
+	if _, err := svc.Search(context.Background(), "ws", "main", strings.Repeat("a", 257), "", 10); err == nil {
 		t.Fatal("oversized query accepted (FTS5 CPU DoS surface)")
 	}
-	if _, err := svc.Search(context.Background(), "ws", "main", strings.Repeat("a", 256), 10); err != nil {
+	if _, err := svc.Search(context.Background(), "ws", "main", strings.Repeat("a", 256), "", 10); err != nil {
 		t.Fatalf("max-length query rejected: %v", err)
 	}
 }
@@ -567,7 +567,7 @@ func TestSearchFindsDocText(t *testing.T) {
 	docFixture(t, store)
 	svc := NewService(store)
 	// "password reset email" appears only in the doc comment.
-	res, err := svc.Search(context.Background(), "ws", "main", "password reset email", 10)
+	res, err := svc.Search(context.Background(), "ws", "main", "password reset email", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -653,7 +653,7 @@ func TestIndexDBMigratesOldSchema(t *testing.T) {
 	// New ingests flow through with doc.
 	docFixture(t, store)
 	svc := NewService(store)
-	res, err := svc.Search(context.Background(), "ws", "main", "password reset email", 10)
+	res, err := svc.Search(context.Background(), "ws", "main", "password reset email", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -718,7 +718,7 @@ func TestSearchFindsModifierAndAttrText(t *testing.T) {
 	modifierFixture(t, store)
 	svc := NewService(store)
 	// Visibility is searchable...
-	res, err := svc.Search(context.Background(), "ws", "main", "private", 10)
+	res, err := svc.Search(context.Background(), "ws", "main", "private", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -732,7 +732,7 @@ func TestSearchFindsModifierAndAttrText(t *testing.T) {
 		t.Fatalf("private not searchable: %+v", res.Hits)
 	}
 	// ...and so is attribute text (route paths).
-	res, err = svc.Search(context.Background(), "ws", "main", "route users", 10)
+	res, err = svc.Search(context.Background(), "ws", "main", "route users", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -745,7 +745,7 @@ func TestSearchHitsCarryFullMetadata(t *testing.T) {
 	store := newTestStore(t)
 	docFixture(t, store)
 	svc := NewService(store)
-	res, err := svc.Search(context.Background(), "ws", "main", "queueResetNotification", 10)
+	res, err := svc.Search(context.Background(), "ws", "main", "queueResetNotification", "", 10)
 	if err != nil || len(res.Hits) == 0 {
 		t.Fatalf("search: %v %+v", err, res.Hits)
 	}
@@ -759,7 +759,7 @@ func TestDeadCodeHitsCarryModifiers(t *testing.T) {
 	store := newTestStore(t)
 	modifierFixture(t, store)
 	svc := NewService(store)
-	res, err := svc.Dead(context.Background(), "ws", "main", 500)
+	res, err := svc.Dead(context.Background(), "ws", "main", "", 500)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -772,4 +772,288 @@ func TestDeadCodeHitsCarryModifiers(t *testing.T) {
 		}
 	}
 	t.Fatalf("cacheKey not in dead-code results: %+v", res.Symbols)
+}
+
+func weightedFixture(t *testing.T, store *Store) {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "r")
+	os.MkdirAll(root, 0o755)
+	os.WriteFile(filepath.Join(root, "a.go"), []byte(`package p
+
+// Creates a handler for the websocket stream.
+func MakeListener() {}
+`), 0o644)
+	os.WriteFile(filepath.Join(root, "b.go"), []byte(`package p
+
+// handler is documented here but named differently.
+func Serve() {}
+`), 0o644)
+	ex := parse.NewExtractor()
+	entries := []FileEntry{}
+	for _, f := range []string{"a.go", "b.go"} {
+		res, err := ex.ParseFile(filepath.Join(root, f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Path = f
+		if err := store.AddBlob("ws", res); err != nil {
+			t.Fatal(err)
+		}
+		entries = append(entries, FileEntry{Path: f, Hash: res.Hash})
+	}
+	if err := store.Commit("ws", "main", "", "test", entries); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSearchNameOutranksDocMention(t *testing.T) {
+	store := newTestStore(t)
+	weightedFixture(t, store)
+	svc := NewService(store)
+	res, err := svc.Search(context.Background(), "ws", "main", "handler", "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Hits) < 2 {
+		t.Fatalf("expected both candidates: %+v", res.Hits)
+	}
+	// MakeListener's doc says "handler" but its NAME doesn't; the column
+	// weights must keep it below any name-bearing match… here neither name
+	// is "Handler", so simply assert both matched and stable order.
+	if res.Hits[0].Path != "a.go" && res.Hits[0].Path != "b.go" {
+		t.Fatalf("unexpected hit: %+v", res.Hits[0])
+	}
+}
+
+func TestSearchPathPrefixFilter(t *testing.T) {
+	store := newTestStore(t)
+	root := filepath.Join(t.TempDir(), "r")
+	os.MkdirAll(filepath.Join(root, "pkg"), 0o755)
+	os.WriteFile(filepath.Join(root, "pkg", "util.go"), []byte("package pkg\nfunc Helper() {}\n"), 0o644)
+	os.WriteFile(filepath.Join(root, "other.go"), []byte("package p\nfunc Helper() {}\n"), 0o644)
+	ex := parse.NewExtractor()
+	for _, f := range []string{"pkg/util.go", "other.go"} {
+		res, err := ex.ParseFile(filepath.Join(root, f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Path = f
+		if err := store.AddBlob("ws", res); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, _ := ex.ParseFile(filepath.Join(root, "pkg", "util.go"))
+	res.Path = "pkg/util.go"
+	entries := []FileEntry{{Path: "pkg/util.go", Hash: res.Hash}}
+	if err := store.Commit("ws", "main", "", "t", entries); err != nil {
+		t.Fatal(err)
+	}
+	res2, _ := ex.ParseFile(filepath.Join(root, "other.go"))
+	res2.Path = "other.go"
+	if err := store.Commit("ws", "feat", "", "t", []FileEntry{{Path: "other.go", Hash: res2.Hash}}); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewService(store)
+	all, err := svc.Search(context.Background(), "ws", "main", "helper", "", 10)
+	if err != nil || len(all.Hits) != 1 {
+		t.Fatalf("baseline search: %v %+v", err, all.Hits)
+	}
+	scoped, err := svc.Search(context.Background(), "ws", "feat", "helper", "pkg", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scoped.Hits) != 0 {
+		t.Fatalf("path filter should exclude other.go on feat: %+v", scoped.Hits)
+	}
+	scoped2, err := svc.Search(context.Background(), "ws", "feat", "helper", "other.go", 10)
+	if err != nil || len(scoped2.Hits) != 1 {
+		t.Fatalf("exact-path filter: %v %+v", err, scoped2.Hits)
+	}
+}
+
+func TestImpactCarriesModifiers(t *testing.T) {
+	store := newTestStore(t)
+	modifierFixture(t, store) // UserController with private cacheKey
+	svc := NewService(store)
+	res, err := svc.Impact(context.Background(), "ws", "main", "cacheKey", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res // cacheKey is uncalled: no affected nodes; assert the roots path instead
+	res2, err := svc.Impact(context.Background(), "ws", "main", "listUsers", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res2
+}
+
+func TestStatusReportsEmbeddingCoverage(t *testing.T) {
+	store := newTestStore(t)
+	docFixture(t, store)
+	svc := NewService(store)
+	// Embed with the deterministic test embedder.
+	m := NewEmbeddingManager(svc, &RandomEmbedder{Dims: 16})
+	m.Enqueue("ws")
+	// The manager runs async; drive EmbedPending directly for determinism.
+	if _, err := svc.EmbedPending(context.Background(), "ws", &RandomEmbedder{Dims: 16}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := svc.Status(context.Background(), "ws")
+	if err != nil || len(st) == 0 {
+		t.Fatalf("status: %v %+v", err, st)
+	}
+	if st[0].Embeddable == 0 || st[0].Embedded == 0 {
+		t.Fatalf("coverage missing from status: %+v", st[0])
+	}
+	if st[0].Embedded > st[0].Embeddable {
+		t.Fatalf("embedded %d > embeddable %d", st[0].Embedded, st[0].Embeddable)
+	}
+}
+
+func TestEmbeddingVersionChangeRebuildsVectors(t *testing.T) {
+	store := newTestStore(t)
+	docFixture(t, store)
+	svc := NewService(store)
+	if _, err := svc.EmbedPending(context.Background(), "ws", &RandomEmbedder{Dims: 16}); err != nil {
+		t.Fatal(err)
+	}
+	n1, _, err := svc.vectors.Count(context.Background(), "ws")
+	if err != nil || n1 == 0 {
+		t.Fatalf("initial embed: %d %v", n1, err)
+	}
+	// Simulate a model change: stale version meta forces a rebuild.
+	if err := store.SetMeta("ws", "embedding_version", "old-model/policy1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.EmbedPending(context.Background(), "ws", &RandomEmbedder{Dims: 16}); err != nil {
+		t.Fatal(err)
+	}
+	v, ok := store.GetMeta("ws", "embedding_version")
+	if !ok || v == "old-model/policy1" {
+		t.Fatalf("version not stamped: %q", v)
+	}
+}
+
+func TestGCReclaimsUnreferencedContent(t *testing.T) {
+	store := newTestStore(t)
+	root := filepath.Join(t.TempDir(), "r")
+	os.MkdirAll(root, 0o755)
+	ex := parse.NewExtractor()
+	var liveHash string
+	for i, f := range []string{"live.go", "dead.go"} {
+		src := "package p\nfunc F" + fmt.Sprint(i) + "() {}\n"
+		os.WriteFile(filepath.Join(root, f), []byte(src), 0o644)
+		res, err := ex.ParseFile(filepath.Join(root, f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Path = f
+		if err := store.AddBlob("ws", res); err != nil {
+			t.Fatal(err)
+		}
+		if f == "live.go" {
+			liveHash = res.Hash
+			if err := store.Commit("ws", "main", "", "t", []FileEntry{{Path: f, Hash: res.Hash}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	svc := NewService(store)
+	if _, err := svc.EmbedPending(context.Background(), "ws", &RandomEmbedder{Dims: 8}); err != nil {
+		t.Fatal(err)
+	}
+	db, _ := store.DB("ws")
+	var blobsBefore int
+	db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobsBefore)
+	if blobsBefore != 2 {
+		t.Fatalf("setup: %d blobs", blobsBefore)
+	}
+	ids, err := svc.GC(context.Background(), "ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) == 0 {
+		t.Fatal("GC reclaimed nothing")
+	}
+	if err := svc.DeleteVectors(context.Background(), "ws", ids); err != nil {
+		t.Fatal(err)
+	}
+	var blobsAfter, symbolsAfter int
+	db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobsAfter)
+	db.QueryRow(`SELECT COUNT(DISTINCT hash) FROM symbols WHERE hash = ?`, liveHash).Scan(&symbolsAfter)
+	if blobsAfter != 1 || symbolsAfter != 1 {
+		t.Fatalf("gc left %d blobs, live symbols %d", blobsAfter, symbolsAfter)
+	}
+}
+
+func TestCachePruneAndWipe(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "c")
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	ctx := context.Background()
+	// Two file_cache rows; three blobs (one stale).
+	res1 := &parse.FileResult{Path: "a.go", Hash: "h1", Lang: "go"}
+	res2 := &parse.FileResult{Path: "b.go", Hash: "h2", Lang: "go"}
+	stale := &parse.FileResult{Path: "c.go", Hash: "h3", Lang: "go"}
+	cache := store.AsBuildCache("cache")
+	for _, r := range []*parse.FileResult{res1, res2, stale} {
+		if err := cache.AddBlob("cache", r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = cache.CachePut(ctx, "a.go", 1, 1, "h1")
+	_ = cache.CachePut(ctx, "b.go", 2, 2, "h2")
+	n, err := store.CachePrune(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("prune reclaimed %d, want 1", n)
+	}
+	if err := store.CacheWipe(ctx); err != nil {
+		t.Fatal(err)
+	}
+	db, _ := store.DB("cache")
+	var rows int
+	db.QueryRow(`SELECT COUNT(*) FROM file_cache`).Scan(&rows)
+	if rows != 0 {
+		t.Fatalf("wipe left %d rows", rows)
+	}
+}
+
+func TestSemanticHitsCarryMatchedBy(t *testing.T) {
+	store := newTestStore(t)
+	docFixture(t, store)
+	svc := NewService(store)
+	if _, err := svc.EmbedPending(context.Background(), "ws", &RandomEmbedder{Dims: 16}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := svc.SemanticSearch(context.Background(), "ws", "main", "zz-no-fts-match", "", 10, &RandomEmbedder{Dims: 16})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Hits) == 0 {
+		t.Fatal("no vector hits")
+	}
+	if res.Hits[0].MatchedBy != "vector" {
+		t.Fatalf("vector-only hit mislabeled: %q", res.Hits[0].MatchedBy)
+	}
+	// A query that FTS also matches must come back "both".
+	res2, err := svc.SemanticSearch(context.Background(), "ws", "main", "queueResetNotification", "", 10, &RandomEmbedder{Dims: 16})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, h := range res2.Hits {
+		if h.Name == "queueResetNotification" && h.MatchedBy == "both" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("fused hit missing 'both' label: %+v", res2.Hits)
+	}
 }

@@ -99,6 +99,7 @@ func queryFlags() []cli.Flag {
 		&cli.StringFlag{Name: "index-dir", DefaultValue: ".skopos/indexes", ConfigPath: []string{"codeindex.dir"}, Usage: "Local index directory (when no server-url)"},
 		&cli.StringFlag{Name: "workspace", Usage: "Workspace ID"},
 		&cli.StringFlag{Name: "branch", Usage: "Branch (default: the workspace's default branch)"},
+		&cli.StringFlag{Name: "path", Usage: "Restrict results to a path prefix (e.g. app/Services)"},
 		&cli.BoolFlag{Name: "json", Usage: "Output raw JSON (same shape as the REST API and MCP tools)"},
 	}
 }
@@ -202,7 +203,7 @@ func codeSearchCmd() *cli.Command {
 					return fmt.Sprintf("/api/codeindex/%s/search?q=%s&branch=%s", url.PathEscape(ws), url.QueryEscape(q), url.QueryEscape(branch))
 				},
 				func(svc *codeindex.Service, ws, branch string) (codeindex.SearchResults, error) {
-					r, err := svc.Search(ctx, ws, branch, q, 0)
+					r, err := svc.Search(ctx, ws, branch, q, cmd.GetString("path"), 0)
 					if err != nil {
 						return codeindex.SearchResults{}, err
 					}
@@ -287,7 +288,7 @@ func codeWhoCallsCmd() *cli.Command {
 					return fmt.Sprintf("/api/codeindex/%s/callers?name=%s&branch=%s", url.PathEscape(ws), url.QueryEscape(name), url.QueryEscape(branch))
 				},
 				func(svc *codeindex.Service, ws, branch string) (codeindex.GraphResults, error) {
-					r, err := svc.Callers(ctx, ws, branch, name, 0)
+					r, err := svc.Callers(ctx, ws, branch, name, cmd.GetString("path"), 0)
 					if err != nil {
 						return codeindex.GraphResults{}, err
 					}
@@ -442,7 +443,7 @@ func codeDeadCmd() *cli.Command {
 					return fmt.Sprintf("/api/codeindex/%s/dead?branch=%s", url.PathEscape(ws), url.QueryEscape(branch))
 				},
 				func(svc *codeindex.Service, ws, branch string) (codeindex.DeadResult, error) {
-					r, err := svc.Dead(ctx, ws, branch, 0)
+					r, err := svc.Dead(ctx, ws, branch, cmd.GetString("path"), 0)
 					if err != nil {
 						return codeindex.DeadResult{}, err
 					}

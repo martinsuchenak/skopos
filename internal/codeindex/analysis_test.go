@@ -45,7 +45,7 @@ func TestAnalysisDeadCyclesTree(t *testing.T) {
 	ctx := context.Background()
 
 	// Dead: orphan has no callers; main/NewCache excluded or called.
-	dead, err := svc.Dead(ctx, "ws", "main", 0)
+	dead, err := svc.Dead(ctx, "ws", "main", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 	}
 
 	// The imported index answers the same query.
-	res, err := svc2.Search(context.Background(), "ws2", "main", "orphan", 10)
+	res, err := svc2.Search(context.Background(), "ws2", "main", "orphan", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ class Beta {
 	ctx := context.Background()
 
 	// who-calls validate: both classes' call sites, qualified per class.
-	res, err := svc.Callers(ctx, "ws", "main", "validate", 0)
+	res, err := svc.Callers(ctx, "ws", "main", "validate", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -224,9 +224,9 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 	var res *SearchResults
 	var err error
 	if r.URL.Query().Get("semantic") == "true" {
-		res, err = h.service.SemanticSearch(r.Context(), ws, r.URL.Query().Get("branch"), r.URL.Query().Get("q"), queryLimit(r), h.semanticSearcher())
+		res, err = h.service.SemanticSearch(r.Context(), ws, r.URL.Query().Get("branch"), r.URL.Query().Get("q"), r.URL.Query().Get("path"), queryLimit(r), h.semanticSearcher())
 	} else {
-		res, err = h.service.Search(r.Context(), ws, r.URL.Query().Get("branch"), r.URL.Query().Get("q"), queryLimit(r))
+		res, err = h.service.Search(r.Context(), ws, r.URL.Query().Get("branch"), r.URL.Query().Get("q"), r.URL.Query().Get("path"), queryLimit(r))
 	}
 	if err != nil {
 		h.respondServiceError(w, err)
@@ -281,7 +281,7 @@ func (h *Handler) Callers(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res, err := h.service.Callers(r.Context(), ws, r.URL.Query().Get("branch"), r.URL.Query().Get("name"), queryLimit(r))
+	res, err := h.service.Callers(r.Context(), ws, r.URL.Query().Get("branch"), r.URL.Query().Get("name"), r.URL.Query().Get("path"), queryLimit(r))
 	if err != nil {
 		h.respondServiceError(w, err)
 		return
@@ -299,7 +299,7 @@ func (h *Handler) Callees(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res, err := h.service.Callees(r.Context(), ws, r.URL.Query().Get("branch"), r.URL.Query().Get("name"), queryLimit(r))
+	res, err := h.service.Callees(r.Context(), ws, r.URL.Query().Get("branch"), r.URL.Query().Get("name"), r.URL.Query().Get("path"), queryLimit(r))
 	if err != nil {
 		h.respondServiceError(w, err)
 		return
@@ -441,7 +441,7 @@ func (h *Handler) Dead(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res, err := h.service.Dead(r.Context(), ws, r.URL.Query().Get("branch"), queryLimit(r))
+	res, err := h.service.Dead(r.Context(), ws, r.URL.Query().Get("branch"), r.URL.Query().Get("path"), queryLimit(r))
 	if err != nil {
 		h.respondServiceError(w, err)
 		return

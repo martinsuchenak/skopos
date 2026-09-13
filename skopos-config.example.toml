@@ -34,6 +34,9 @@ retention_days = 30
 # Directory for per-workspace code index databases. Server-side refresh
 # checkouts live under <dir>/checkouts/.
 dir = ".skopos/indexes"
+# Poll registered git_url workspaces for server-side refresh (e.g. "30m";
+# unset/0 = manual refresh only, or trigger from CI: POST /api/codeindex/<ws>/refresh).
+# refresh_interval = "30m"
 
 [codeindex.embeddings]
 # Semantic code search — optional, disabled by default.

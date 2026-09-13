@@ -123,6 +123,13 @@ func serveCmd() *cli.Command {
 				ConfigPath: []string{"codeindex.embeddings.qdrant_api_key"},
 				EnvVars:    []string{"SKOPOS_QDRANT_API_KEY"},
 			},
+			&cli.StringFlag{
+				Name:         "refresh-interval",
+				Usage:        "Poll registered git_url workspaces for refresh every interval (e.g. 30m, 1h; 0 disables)",
+				ConfigPath:   []string{"codeindex.refresh_interval"},
+				EnvVars:      []string{"SKOPOS_REFRESH_INTERVAL"},
+				DefaultValue: "0",
+			},
 			&cli.IntFlag{
 				Name:         "cleanup-retention-days",
 				DefaultValue: 30,
@@ -242,6 +249,67 @@ func serveCmd() *cli.Command {
 				cleanupRetention := time.Duration(retentionDays) * 24 * time.Hour
 				cleanup.NewCleaner(sqlDB, cleanupRetention, log, hub).Start(ctx)
 			}
+
+			// Server-side indexing upkeep: poll registered git_url
+			// workspaces, and daily remove index content no branch
+			// references (extractor-version bumps orphan old blobs).
+			if d, err := time.ParseDuration(cmd.GetString("refresh-interval")); err == nil && d > 0 {
+				go func() {
+					t := time.NewTicker(d)
+					defer t.Stop()
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case <-t.C:
+							wss, err := workspacesService.List(ctx)
+							if err != nil {
+								continue
+							}
+							for _, w := range wss {
+								if w.GitURL == "" {
+									continue
+								}
+								if err := refresher.Start(ctx, w.ID, ""); err == nil {
+									log.Info("scheduled refresh started", "workspace", w.ID)
+								}
+							}
+						}
+					}
+				}()
+			}
+			go func() {
+				t := time.NewTicker(24 * time.Hour)
+				defer t.Stop()
+				runGC := func() {
+					wss, err := workspacesService.List(ctx)
+					if err != nil {
+						return
+					}
+					for _, w := range wss {
+						ids, err := codeIndexService.GC(ctx, w.ID)
+						if err != nil {
+							log.Warn("index gc failed", "workspace", w.ID, "error", err)
+							continue
+						}
+						if len(ids) > 0 {
+							if err := codeIndexService.DeleteVectors(ctx, w.ID, ids); err != nil {
+								log.Warn("vector gc failed", "workspace", w.ID, "error", err)
+							}
+							log.Info("index gc", "workspace", w.ID, "reclaimed", len(ids))
+						}
+					}
+				}
+				runGC() // also once at startup
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-t.C:
+						runGC()
+					}
+				}
+			}()
 			// go-scaffolder:serve-init
 
 			mux := http.NewServeMux()

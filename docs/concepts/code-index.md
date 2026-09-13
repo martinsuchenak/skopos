@@ -202,9 +202,32 @@ Docs surface in three places:
   "sends the password reset email" finds `queueResetNotification()` even
   though no identifier says so.
 
+Queries accept a `--path` prefix (CLI flag, `path` parameter on MCP and
+REST) to scope search, who-calls, callees, and dead-code to one subtree —
+`skopos search handler --path app/Services` only answers from there.
+
+Semantic results label each hit with `matched_by` (`fts`, `vector`, or
+`both`) so agents can judge confidence, and `skopos index status` reports
+embedding coverage (`embedded` / `embeddable` plus the last pass error)
+whenever embeddings are configured. Changing the embedding model (or an
+upgrade that changes the embed text) is detected automatically: stored
+vectors are dropped and rebuilt on the next pass.
+
 Re-index after upgrading (`skopos index build` / `push`) to pick up docs
 for previously indexed files; the extractor version bump handles cache
 invalidation automatically.
+
+## Housekeeping on the server
+
+The server garbage-collects each workspace's index daily (and at startup):
+blobs, symbols, and vectors no branch references — left behind by
+extractor-version bumps and dropped branches — are reclaimed. The local
+parse cache on pushing machines is pruned manually:
+
+```sh
+skopos index cache-clean            # drop payloads no cache entry references
+skopos index cache-clean --all      # wipe the cache; next push re-parses
+```
 
 ## Semantic search (optional, off by default)
 

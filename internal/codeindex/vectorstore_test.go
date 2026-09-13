@@ -71,7 +71,7 @@ func runVectorStoreConformance(t *testing.T, vs VectorStore, svc *Service, store
 	if _, err := svc.EmbedPending(ctx, "ws", &RandomEmbedder{Dims: 8}); err != nil {
 		t.Fatal(err)
 	}
-	res, err := svc.SemanticSearch(ctx, "ws", "main", "auth", 10, &RandomEmbedder{Dims: 8})
+	res, err := svc.SemanticSearch(ctx, "ws", "main", "auth", "", 10, &RandomEmbedder{Dims: 8})
 	if err != nil {
 		t.Fatal(err)
 	}

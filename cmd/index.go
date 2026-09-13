@@ -34,6 +34,7 @@ func indexCmd() *cli.Command {
 			indexExportCmd(),
 			indexImportCmd(),
 			indexDropWorkspaceCmd(),
+			indexCacheCleanCmd(),
 		},
 	}
 }
@@ -588,3 +589,42 @@ func indexDropWorkspaceCmd() *cli.Command {
 		},
 	}
 }
+
+
+func indexCacheCleanCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "cache-clean",
+		Usage: "Prune the local parse cache (.skopos): drop blobs no live cache entry references (reclaims old content versions)",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "cache-dir", DefaultValue: ".skopos", Usage: "Parse cache directory"},
+			&cli.BoolFlag{Name: "all", Usage: "Wipe the cache entirely (next build/push re-parses everything)"},
+		},
+		Run: func(ctx context.Context, cmd *cli.Command) error {
+			dir := cmd.GetString("cache-dir")
+			store, err := codeindex.NewStore(dir)
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			cache := cacheStoreAdapter{store}
+			if cmd.GetBool("all") {
+				if err := cache.Wipe(ctx); err != nil {
+					return err
+				}
+				fmt.Println("parse cache wiped:", dir)
+				return nil
+			}
+			n, err := cache.Prune(ctx)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("pruned %d unreferenced cache blobs in %s\n", n, dir)
+			return nil
+		},
+	}
+}
+
+type cacheStoreAdapter struct{ st *codeindex.Store }
+
+func (c cacheStoreAdapter) Wipe(ctx context.Context) error  { return c.st.CacheWipe(ctx) }
+func (c cacheStoreAdapter) Prune(ctx context.Context) (int64, error) { return c.st.CachePrune(ctx) }

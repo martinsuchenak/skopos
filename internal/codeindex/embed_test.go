@@ -45,7 +45,7 @@ func TestEmbedPendingAndFusedSearch(t *testing.T) {
 	// The same text embeds to the same vector, so querying with a symbol's
 	// description finds it via cosine even when FTS misses it: query text
 	// differs from the identifier.
-	res, err := svc.SemanticSearch(context.Background(), "ws", "main", "auth", 10, emb)
+	res, err := svc.SemanticSearch(context.Background(), "ws", "main", "auth", "", 10, emb)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestEmbedPendingAndFusedSearch(t *testing.T) {
 	}
 
 	// Plain search stays non-semantic.
-	plain, err := svc.Search(context.Background(), "ws", "main", "auth", 10)
+	plain, err := svc.Search(context.Background(), "ws", "main", "auth", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func (t4) Dup() {}
 		t.Fatal(err)
 	}
 
-	res, err := svc.SemanticSearch(context.Background(), "ws", "main", "unique", 10, &linearEmbedder{q: "unique", vec: q})
+	res, err := svc.SemanticSearch(context.Background(), "ws", "main", "unique", "", 10, &linearEmbedder{q: "unique", vec: q})
 	if err != nil {
 		t.Fatal(err)
 	}

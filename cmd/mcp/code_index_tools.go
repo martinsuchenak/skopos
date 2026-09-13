@@ -18,6 +18,7 @@ func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 		mcplib.NewTool("code_search", "Full-text search for symbols by name or signature (camelCase is split: 'loadconfig' matches LoadConfig). "+codeIndexDesc,
 			mcplib.String("workspace_id", "Workspace ID to search", mcplib.Required()),
 			mcplib.String("q", "Search query (prefix match)", mcplib.Required()),
+			mcplib.String("path", "Optional path prefix filter (e.g. app/Services)"),
 			mcplib.String("branch", "Branch to scope the search to"),
 			mcplib.Integer("limit", "Max results (default 50)"),
 			mcplib.Boolean("semantic", "Fuse full-text with semantic vector search (when the server has embeddings configured)"),
@@ -27,7 +28,7 @@ func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 			if n, err := req.Int("limit"); err == nil {
 				limit = n
 			}
-			res, err := svc.Search(ctx, req.StringOr("workspace_id", ""), req.StringOr("branch", ""), req.StringOr("q", ""), limit)
+			res, err := svc.Search(ctx, req.StringOr("workspace_id", ""), req.StringOr("branch", ""), req.StringOr("q", ""), req.StringOr("path", ""), limit)
 			if err != nil {
 				return nil, toolError(err)
 			}
@@ -77,7 +78,7 @@ func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 			if n, err := req.Int("limit"); err == nil {
 				limit = n
 			}
-			res, err := svc.Callers(ctx, req.StringOr("workspace_id", ""), req.StringOr("branch", ""), req.StringOr("name", ""), limit)
+			res, err := svc.Callers(ctx, req.StringOr("workspace_id", ""), req.StringOr("branch", ""), req.StringOr("name", ""), req.StringOr("path", ""), limit)
 			if err != nil {
 				return nil, toolError(err)
 			}
@@ -97,7 +98,7 @@ func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 			if n, err := req.Int("limit"); err == nil {
 				limit = n
 			}
-			res, err := svc.Callees(ctx, req.StringOr("workspace_id", ""), req.StringOr("branch", ""), req.StringOr("name", ""), limit)
+			res, err := svc.Callees(ctx, req.StringOr("workspace_id", ""), req.StringOr("branch", ""), req.StringOr("name", ""), req.StringOr("path", ""), limit)
 			if err != nil {
 				return nil, toolError(err)
 			}
@@ -148,6 +149,7 @@ func registerCodeAnalysisTools(server *mcplib.Server, svc *codeindex.Service) {
 		mcplib.NewTool("code_dead", "List symbols with no incoming call references (dead-code candidates; dynamic dispatch can hide usage — verify before deleting). "+codeIndexDesc,
 			mcplib.String("workspace_id", "Workspace ID", mcplib.Required()),
 			mcplib.String("branch", "Branch"),
+			mcplib.String("path", "Optional path prefix filter"),
 			mcplib.Integer("limit", "Max results (default 100)"),
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
@@ -155,7 +157,7 @@ func registerCodeAnalysisTools(server *mcplib.Server, svc *codeindex.Service) {
 			if n, err := req.Int("limit"); err == nil {
 				limit = n
 			}
-			res, err := svc.Dead(ctx, req.StringOr("workspace_id", ""), req.StringOr("branch", ""), limit)
+			res, err := svc.Dead(ctx, req.StringOr("workspace_id", ""), req.StringOr("branch", ""), req.StringOr("path", ""), limit)
 			if err != nil {
 				return nil, toolError(err)
 			}

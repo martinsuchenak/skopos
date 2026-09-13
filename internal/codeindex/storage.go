@@ -487,6 +487,7 @@ type SymbolHit struct {
 	Doc       string   `json:"doc,omitempty"`                // doc comment (summary + non-signature tags)
 	Modifiers []string `json:"modifiers,omitempty"`           // visibility/static/… from the declaration
 	Attrs     []string `json:"attrs,omitempty"`               // attributes, annotations, decorators
+	MatchedBy string   `json:"matched_by,omitempty"`          // semantic fusion: fts, vector, or both
 	Lang      string   `json:"lang,omitempty"`
 
 	rank int // vector rank when fused (internal)
@@ -494,7 +495,7 @@ type SymbolHit struct {
 
 // Search runs a full-text query over a branch's symbols. The query is
 // prefix-expanded when it has no FTS operators.
-func (st *Store) Search(ctx context.Context, workspace, branch, query string, limit int) ([]SymbolHit, error) {
+func (st *Store) Search(ctx context.Context, workspace, branch, query, pathPrefix string, limit int) ([]SymbolHit, error) {
 	db, err := st.DB(workspace)
 	if err != nil {
 		return nil, err
@@ -507,13 +508,15 @@ func (st *Store) Search(ctx context.Context, workspace, branch, query string, li
 	// [class, method] which matches neither the one-token short name nor
 	// the fully-split name_parts column.
 	if strings.Contains(query, "::") {
+		filterCond, filterArgs := pathFilter(pathPrefix)
+		args := append([]any{branch}, filterArgs...)
 		rows, err := db.QueryContext(ctx, `
 			SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang, s.doc, s.modifiers, s.attrs
 			FROM symbols s
-			JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
+			JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?`+filterCond+`
 			WHERE s.qual_name = ? COLLATE NOCASE OR s.qual_name LIKE ? COLLATE NOCASE ESCAPE '\'
 			ORDER BY (s.qual_name = ? COLLATE NOCASE) DESC, bf.path, s.line
-			LIMIT ?`, branch, query, likeEscape(query)+"%", query, limit)
+			LIMIT ?`, append(args, query, likeEscape(query)+"%", query, limit)...)
 		if err != nil {
 			return nil, err
 		}
@@ -524,30 +527,43 @@ func (st *Store) Search(ctx context.Context, workspace, branch, query string, li
 	if !strings.ContainsAny(q, `:*"^()`) {
 		q = q + "*"
 	}
+	filterCond, filterArgs := pathFilter(pathPrefix)
+	args := append([]any{branch}, filterArgs...)
 	rows, err := db.QueryContext(ctx, `
 		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang, s.doc, s.modifiers, s.attrs
 		FROM symbols_fts f
 		JOIN symbols s ON s.id = f.rowid
-		JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
+		JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?`+filterCond+`
 		WHERE symbols_fts MATCH ?
-		ORDER BY rank
-		LIMIT ?`, branch, q, limit)
+		-- Column weights: exact-name matches must outrank doc mentions
+		-- (name, name_parts, signature, kind, doc, modifiers, attrs).
+		ORDER BY bm25(symbols_fts, 10.0, 10.0, 5.0, 2.0, 4.0, 1.0, 4.0)
+		LIMIT ?`, append(args, q, limit)...)
 	if err != nil {
 		// Bad FTS syntax: retry as a plain quoted prefix query.
 		rows, err = db.QueryContext(ctx, `
 			SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang, s.doc, s.modifiers, s.attrs
 			FROM symbols_fts f
 			JOIN symbols s ON s.id = f.rowid
-			JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
+			JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?`+filterCond+`
 			WHERE symbols_fts MATCH ?
-			ORDER BY rank
-			LIMIT ?`, branch, `"`+strings.ReplaceAll(query, `"`, "")+`"*`, limit)
+			ORDER BY bm25(symbols_fts, 10.0, 10.0, 5.0, 2.0, 4.0, 1.0, 4.0)
+			LIMIT ?`, append(args, `"`+strings.ReplaceAll(query, `"`, "")+`"*`, limit)...)
 		if err != nil {
 			return nil, fmt.Errorf("search %q: %w", query, err)
 		}
 	}
 	defer rows.Close()
 	return scanHits(rows)
+}
+
+// pathFilter is the SQL fragment + args for an optional path-prefix scope.
+// Empty prefix means no filtering.
+func pathFilter(prefix string) (string, []any) {
+	if prefix == "" {
+		return "", nil
+	}
+	return " AND (bf.path = ? OR bf.path LIKE ? ESCAPE '\\')", []any{prefix, likeEscape(prefix) + "%"}
 }
 
 // Symbol returns exact-name definitions on a branch.
@@ -599,19 +615,21 @@ type EdgeHit struct {
 }
 
 // Callers returns edges calling the given name on a branch.
-func (st *Store) Callers(workspace, branch, name string, limit int) ([]EdgeHit, error) {
+func (st *Store) Callers(ctx context.Context, workspace, branch, name, pathPrefix string, limit int) ([]EdgeHit, error) {
 	db, err := st.DB(workspace)
 	if err != nil {
 		return nil, err
 	}
 	limit = clampLimit(limit, 100, 500)
+	filterCond, filterArgs := pathFilter(pathPrefix)
+	args := append([]any{branch}, filterArgs...)
 	rows, err := db.Query(`
 		SELECT e.caller, e.callee, bf.path, e.line
 		FROM edges e
-		JOIN branch_files bf ON bf.hash = e.hash AND bf.branch = ?
+		JOIN branch_files bf ON bf.hash = e.hash AND bf.branch = ?`+filterCond+`
 		WHERE (e.callee = ? COLLATE NOCASE OR e.callee LIKE '%::' || ? ESCAPE '\')
 		ORDER BY bf.path, e.line
-		LIMIT ?`, branch, name, likeEscape(name), limit)
+		LIMIT ?`, append(args, name, likeEscape(name), limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -620,19 +638,21 @@ func (st *Store) Callers(workspace, branch, name string, limit int) ([]EdgeHit, 
 }
 
 // Callees returns edges called from the given symbol on a branch.
-func (st *Store) Callees(workspace, branch, name string, limit int) ([]EdgeHit, error) {
+func (st *Store) Callees(ctx context.Context, workspace, branch, name, pathPrefix string, limit int) ([]EdgeHit, error) {
 	db, err := st.DB(workspace)
 	if err != nil {
 		return nil, err
 	}
 	limit = clampLimit(limit, 100, 500)
+	filterCond, filterArgs := pathFilter(pathPrefix)
+	args := append([]any{branch}, filterArgs...)
 	rows, err := db.Query(`
 		SELECT e.caller, e.callee, bf.path, e.line
 		FROM edges e
-		JOIN branch_files bf ON bf.hash = e.hash AND bf.branch = ?
+		JOIN branch_files bf ON bf.hash = e.hash AND bf.branch = ?`+filterCond+`
 		WHERE (e.caller = ? COLLATE NOCASE OR e.caller LIKE '%::' || ? ESCAPE '\')
 		ORDER BY bf.path, e.line
-		LIMIT ?`, branch, name, likeEscape(name), limit)
+		LIMIT ?`, append(args, name, likeEscape(name), limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -640,7 +660,8 @@ func (st *Store) Callees(workspace, branch, name string, limit int) ([]EdgeHit, 
 	return scanEdges(rows)
 }
 
-// BranchStatus describes one indexed branch.
+// BranchStatus describes one indexed branch. Embedding fields are
+// workspace-wide (vectors are not per-branch) and repeated on each row.
 type BranchStatus struct {
 	Branch      string `json:"branch"`
 	HeadSHA     string `json:"head_sha,omitempty"`
@@ -648,6 +669,104 @@ type BranchStatus struct {
 	Source      string `json:"source,omitempty"`
 	FileCount   int    `json:"file_count"`
 	SymbolCount int    `json:"symbol_count"`
+
+	Embeddable     int    `json:"embeddable,omitempty"`
+	Embedded       int    `json:"embedded,omitempty"`
+	EmbeddingError string `json:"embedding_error,omitempty"`
+}
+
+// GC removes index content no branch references: blobs, symbols, and edges
+// whose content hash is absent from every branch_files row (left behind by
+// extractor-version bumps and dropped branches). Returns reclaimed symbol
+// ids so callers can drop their vectors too. Irreversible.
+func (st *Store) GC(ctx context.Context, workspace string) (reclaimedIDs []int64, err error) {
+	db, err := st.DB(workspace)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `
+		SELECT s.id FROM symbols s
+		WHERE NOT EXISTS (SELECT 1 FROM branch_files bf WHERE bf.hash = s.hash)`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		reclaimedIDs = append(reclaimedIDs, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, stmt := range []string{
+		`DELETE FROM edges WHERE hash NOT IN (SELECT hash FROM branch_files)`,
+		`DELETE FROM symbols WHERE hash NOT IN (SELECT hash FROM branch_files)`,
+		`DELETE FROM blobs WHERE hash NOT IN (SELECT hash FROM branch_files)`,
+	} {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return reclaimedIDs, nil
+}
+
+// CachePrune removes cached blob payloads whose hash no file_cache row
+// references — content versions from before edits, safe to reclaim.
+func (st *Store) CachePrune(ctx context.Context) (int64, error) {
+	db, err := st.DB(st.cacheWorkspace)
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.ExecContext(ctx, `DELETE FROM blobs WHERE hash NOT IN (SELECT hash FROM file_cache)`)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// CacheWipe clears every file_cache row and blob payload.
+func (st *Store) CacheWipe(ctx context.Context) error {
+	db, err := st.DB(st.cacheWorkspace)
+	if err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM file_cache; DELETE FROM blobs;`); err != nil {
+		return err
+	}
+	return nil
+}
+
+// EmbeddableCount counts symbols eligible for embedding on any branch.
+func (st *Store) EmbeddableCount(ctx context.Context, workspace string) int {
+	db, err := st.DB(workspace)
+	if err != nil {
+		return 0
+	}
+	placeholders := make([]string, 0, len(embeddableKinds))
+	args := make([]any, 0, len(embeddableKinds))
+	for k := range embeddableKinds {
+		placeholders = append(placeholders, "?")
+		args = append(args, k)
+	}
+	var n int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM symbols WHERE kind IN (`+strings.Join(placeholders, ",")+`)`, args...).Scan(&n); err != nil {
+		return 0
+	}
+	return n
 }
 
 // Status lists indexed branches for a workspace.
