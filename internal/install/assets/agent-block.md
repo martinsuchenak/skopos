@@ -1,4 +1,4 @@
-<!-- skopos:version:2 -->
+<!-- skopos:version:3 -->
 
 ## Mandatory: Code exploration via skopos
 
@@ -33,6 +33,6 @@ Be selective — only facts useful in a future session. Skip task details and te
 
 ## Session cadence (remote mode)
 
-- Start of task: `skopos_context` — prior knowledge, active plans, in-flight sessions
-- State changes: `report_status` with agent_type "{{AGENT_TYPE}}" (never "stuck"/"orphaned" — server-set)
+- Start of task: `skopos_context` with `workspace_id` (this repo's id, e.g. `github.com/owner/repo` — print it with `skopos workspace` or derive from `git remote get-url origin`) and `branch` — unscoped reads span every workspace on the server
+- State changes: `report_status` with agent_type "{{AGENT_TYPE}}" and `workspace_id` (never "stuck"/"orphaned" — server-set)
 - Multi-step work: `plan_create` / `plan_add_item` / `plan_update_item`; archive with `plan_archive` when done or abandoned

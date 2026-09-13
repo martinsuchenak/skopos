@@ -1,6 +1,9 @@
 # Binaries
 bin/
-dist/
+# dist/* (not dist/) so the web/dist/.gitkeep negation below can work: git
+# cannot re-include a file whose parent directory is excluded.
+dist/*
+!dist/.gitkeep
 *.exe
 *.exe~
 *.dll

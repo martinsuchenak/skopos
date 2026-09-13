@@ -104,3 +104,34 @@ func TestServiceReportRejectsInvalidProgress(t *testing.T) {
 		t.Fatalf("expected ErrInvalidInput, got %v", err)
 	}
 }
+
+func TestServiceReportRegistersWorkspace(t *testing.T) {
+	var registered []string
+	svc := NewService(&fakeStore{})
+	svc.SetWorkspaceRegistrar(func(id string) { registered = append(registered, id) })
+
+	if _, err := svc.Report(context.Background(), ReportInput{
+		AgentID:   "agent",
+		AgentType: "codex",
+		Workspace: "github.com/example/repo",
+		Status:    StatusRunning,
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(registered) != 1 || registered[0] != "github.com/example/repo" {
+		t.Fatalf("expected registrar called once with the workspace, got %v", registered)
+	}
+
+	registered = nil
+	if _, err := svc.Report(context.Background(), ReportInput{
+		AgentID:   "agent",
+		AgentType: "codex",
+		Workspace: "github.com/example/repo",
+		Status:    StatusStuck,
+	}); err == nil {
+		t.Fatal("expected rejected report")
+	}
+	if len(registered) != 0 {
+		t.Fatalf("registrar must not fire for rejected reports, got %v", registered)
+	}
+}

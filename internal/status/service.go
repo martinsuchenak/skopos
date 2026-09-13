@@ -24,8 +24,9 @@ type Store interface {
 }
 
 type Service struct {
-	store Store
-	now   func() time.Time
+	store      Store
+	now        func() time.Time
+	registerWS func(id string)
 }
 
 func NewService(store Store) *Service {
@@ -34,6 +35,11 @@ func NewService(store Store) *Service {
 		now:   time.Now,
 	}
 }
+
+// SetWorkspaceRegistrar installs a callback invoked with the workspace id of
+// every accepted report — session-derived workspaces are auto-registered so
+// they persist in the registry.
+func (s *Service) SetWorkspaceRegistrar(fn func(id string)) { s.registerWS = fn }
 
 func (s *Service) Report(ctx context.Context, input ReportInput) (*ReportResult, error) {
 	normalized, err := normalizeReport(input)
@@ -66,6 +72,11 @@ func (s *Service) Report(ctx context.Context, input ReportInput) (*ReportResult,
 
 	if err := s.store.RecordReport(ctx, event, sessionTitle(normalized)); err != nil {
 		return nil, err
+	}
+
+	// Best-effort registry upsert; a failure must not fail the report.
+	if s.registerWS != nil {
+		s.registerWS(normalized.Workspace)
 	}
 
 	return &ReportResult{SessionID: normalized.SessionID, EventID: eventID}, nil

@@ -19,6 +19,9 @@ fi
 
 if skopos_hook_is_remote; then
   MSG="[skopos] Shared knowledge server is active ($(skopos_hook_mode)). Start every task with skopos_context (workspace_id + branch). Prefer code_* MCP tools (code_search, code_symbol, code_callers, code_impact) over grep for code structure."
+  if WS=$(skopos workspace 2>/dev/null) && [ -n "$WS" ]; then
+    MSG="$MSG Workspace ID for this repo: $WS."
+  fi
 else
   MSG="[skopos] Local code index is active. This machine runs no skopos server — there are no MCP tools; use the CLI via Bash instead: 'skopos search <term>', 'skopos symbol <name>', 'skopos who-calls <name>', 'skopos impact <name>'. Blackboard/plan/status tools need a server (skopos setup, option 2 or 3)."
 fi

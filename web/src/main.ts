@@ -59,6 +59,7 @@ const appState = () => ({
   apiKey: (localStorage.getItem('skopos:apiKey') || '') as string,
   showKeyModal: false,
   keyDraft: '',
+  authPrompted: false,
 
   // toasts
   toasts: [] as Toast[],
@@ -202,7 +203,9 @@ const appState = () => ({
     if (opts.body) headers.set('Content-Type', 'application/json');
     if (this.apiKey) headers.set('Authorization', 'Bearer ' + this.apiKey);
     try {
-      return await fetch(url, { ...opts, headers });
+      const res = await fetch(url, { ...opts, headers });
+      if (res.status === 401) this.authFailed();
+      return res;
     } catch {
       return new Response(JSON.stringify({ error: 'network error: server unreachable' }), {
         status: 503,
@@ -231,15 +234,27 @@ const appState = () => ({
   },
 
   // ---- api key modal ----
+  // Reads swallow non-OK responses by design (empty lists, no toasts), so a
+  // missing/wrong key would render as a silently dead dashboard. Any 401 funnels
+  // here instead: one prompt per key change, not one per polled request.
+  authFailed() {
+    if (this.authPrompted || this.showKeyModal) return;
+    this.authPrompted = true;
+    this.notify('Unauthorized — set your API key', 'error');
+    this.openKeyModal();
+  },
   openKeyModal() { this.keyDraft = this.apiKey; this.showKeyModal = true; },
   closeKeyModal() { this.showKeyModal = false; },
   saveKey() {
     this.apiKey = this.keyDraft.trim();
     if (this.apiKey) localStorage.setItem('skopos:apiKey', this.apiKey); else localStorage.removeItem('skopos:apiKey');
     this.showKeyModal = false;
+    this.authPrompted = false;
     this.notify(this.apiKey ? 'API key saved' : 'API key cleared', 'success');
+    // Reload with the new credentials instead of waiting for a manual refresh.
+    this.refresh();
   },
-  clearKey() { this.apiKey = ''; this.keyDraft = ''; localStorage.removeItem('skopos:apiKey'); this.showKeyModal = false; this.notify('API key cleared', 'success'); },
+  clearKey() { this.apiKey = ''; this.keyDraft = ''; localStorage.removeItem('skopos:apiKey'); this.showKeyModal = false; this.authPrompted = false; this.notify('API key cleared', 'success'); },
 
   // ---- view / workspace ----
   switchView(v: View) {
@@ -469,7 +484,9 @@ const appState = () => ({
 
   // ---- code index ----
   async fetchIndexStatus() {
-    const ws = this.activeWorkspace || 'default';
+    // No workspace selected: fall back to the first registered one — the
+    // literal id "default" matches nothing and would show an empty index.
+    const ws = this.activeWorkspace || this.registeredWorkspaces[0]?.id || this.workspaces[0] || 'default';
     try {
       const res = await this.authFetch(`/api/codeindex/${encodeURIComponent(ws)}/status`);
       if (!res.ok) { this.indexBranches = []; return; }

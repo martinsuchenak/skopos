@@ -28,6 +28,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/rest"
 	"github.com/martinsuchenak/skopos/internal/status"
 	"github.com/martinsuchenak/skopos/internal/workspaces"
+	appweb "github.com/martinsuchenak/skopos/web"
 	// go-scaffolder:serve-imports
 )
 
@@ -147,6 +148,10 @@ func serveCmd() *cli.Command {
 			})
 			log.Info("starting skopos service")
 
+			if err := appweb.VerifyAssets(); err != nil {
+				return err
+			}
+
 			apiKey := cmd.GetString("api-key")
 			if apiKey == "" {
 				if !isLoopbackHost(cmd.GetString("server-host")) && !cmd.GetBool("insecure-no-api-key") {
@@ -178,6 +183,12 @@ func serveCmd() *cli.Command {
 
 			workspacesService := workspaces.NewService(workspaces.NewStorage(sqlDB))
 			workspacesHandler := workspaces.NewHandler(workspacesService, apiKey)
+
+			// Session-derived workspaces are auto-registered so they persist
+			// in the registry (same contract as the code-index push path).
+			statusService.SetWorkspaceRegistrar(func(id string) {
+				_, _, _ = workspacesService.Create(context.Background(), workspaces.CreateInput{ID: id})
+			})
 
 			// Code index: one SQLite DB per workspace under --index-dir.
 			codeIndexStore, err := codeindex.NewStore(cmd.GetString("index-dir"))
