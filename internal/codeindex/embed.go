@@ -279,7 +279,7 @@ func (s *Service) SemanticSearch(ctx context.Context, workspace, branch, query s
 		args = append(args, id)
 	}
 	rows, err := db.Query(`
-		SELECT DISTINCT s.id, s.name, s.kind, bf.path, s.line, s.signature, s.lang
+		SELECT DISTINCT s.id, s.name, s.kind, bf.path, s.line, s.signature, s.lang, s.doc, s.modifiers, s.attrs
 		FROM symbols s
 		JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
 		WHERE s.id IN (`+strings.Join(qmarks, ",")+`)
@@ -296,9 +296,11 @@ func (s *Service) SemanticSearch(ctx context.Context, workspace, branch, query s
 	for rows.Next() {
 		var id int64
 		var h SymbolHit
-		if err := rows.Scan(&id, &h.Name, &h.Kind, &h.Path, &h.Line, &h.Signature, &h.Lang); err != nil {
+		var mods, attrs string
+		if err := rows.Scan(&id, &h.Name, &h.Kind, &h.Path, &h.Line, &h.Signature, &h.Lang, &h.Doc, &mods, &attrs); err != nil {
 			return base, nil
 		}
+		h.Modifiers, h.Attrs = unmarshalStrings(mods), unmarshalStrings(attrs)
 		h.rank = idOrder[id]
 		vecHits = append(vecHits, h)
 	}

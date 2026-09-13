@@ -740,3 +740,36 @@ func TestSearchFindsModifierAndAttrText(t *testing.T) {
 		t.Fatalf("attribute text not searchable: %+v", res.Hits)
 	}
 }
+
+func TestSearchHitsCarryFullMetadata(t *testing.T) {
+	store := newTestStore(t)
+	docFixture(t, store)
+	svc := NewService(store)
+	res, err := svc.Search(context.Background(), "ws", "main", "queueResetNotification", 10)
+	if err != nil || len(res.Hits) == 0 {
+		t.Fatalf("search: %v %+v", err, res.Hits)
+	}
+	h := res.Hits[0]
+	if !strings.Contains(h.Doc, "Sends the password reset email") {
+		t.Errorf("search hits missing doc: %+v", h)
+	}
+}
+
+func TestDeadCodeHitsCarryModifiers(t *testing.T) {
+	store := newTestStore(t)
+	modifierFixture(t, store)
+	svc := NewService(store)
+	res, err := svc.Dead(context.Background(), "ws", "main", 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range res.Symbols {
+		if h.Name == "cacheKey" {
+			if len(h.Modifiers) != 1 || h.Modifiers[0] != "private" {
+				t.Fatalf("dead-code hit missing modifiers: %+v", h)
+			}
+			return
+		}
+	}
+	t.Fatalf("cacheKey not in dead-code results: %+v", res.Symbols)
+}

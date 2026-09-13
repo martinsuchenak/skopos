@@ -508,7 +508,7 @@ func (st *Store) Search(ctx context.Context, workspace, branch, query string, li
 	// the fully-split name_parts column.
 	if strings.Contains(query, "::") {
 		rows, err := db.QueryContext(ctx, `
-			SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang, s.modifiers, s.attrs
+			SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang, s.doc, s.modifiers, s.attrs
 			FROM symbols s
 			JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
 			WHERE s.qual_name = ? COLLATE NOCASE OR s.qual_name LIKE ? COLLATE NOCASE ESCAPE '\'
@@ -525,7 +525,7 @@ func (st *Store) Search(ctx context.Context, workspace, branch, query string, li
 		q = q + "*"
 	}
 	rows, err := db.QueryContext(ctx, `
-		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang, s.modifiers, s.attrs
+		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang, s.doc, s.modifiers, s.attrs
 		FROM symbols_fts f
 		JOIN symbols s ON s.id = f.rowid
 		JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
@@ -535,7 +535,7 @@ func (st *Store) Search(ctx context.Context, workspace, branch, query string, li
 	if err != nil {
 		// Bad FTS syntax: retry as a plain quoted prefix query.
 		rows, err = db.QueryContext(ctx, `
-			SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang, s.modifiers, s.attrs
+			SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang, s.doc, s.modifiers, s.attrs
 			FROM symbols_fts f
 			JOIN symbols s ON s.id = f.rowid
 			JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
@@ -841,11 +841,12 @@ func namePartsInput(sym parse.Symbol) string {
 	return sym.Name
 }
 
-// scanHitsDoc scans the hit columns plus doc/modifiers/attrs
-// (Symbol/Outline).
-func scanHitsDoc(rows *sql.Rows) ([]SymbolHit, error) { return scanHitsN(rows, true) }
+// scanHitsDoc scans the same uniform hit columns as scanHits.
+func scanHitsDoc(rows *sql.Rows) ([]SymbolHit, error) { return scanHits(rows) }
 
-func scanHits(rows *sql.Rows) ([]SymbolHit, error) { return scanHitsN(rows, false) }
+// scanHits scans the uniform hit columns: name, qual, kind, path, line,
+// signature, lang, doc, modifiers, attrs.
+func scanHits(rows *sql.Rows) ([]SymbolHit, error) { return scanHitsN(rows) }
 
 // unmarshalStrings decodes a stored JSON string array; empty/null yields nil.
 func unmarshalStrings(s string) []string {
@@ -862,18 +863,12 @@ func unmarshalStrings(s string) []string {
 	return out
 }
 
-func scanHitsN(rows *sql.Rows, withDoc bool) ([]SymbolHit, error) {
+func scanHitsN(rows *sql.Rows) ([]SymbolHit, error) {
 	var out []SymbolHit
 	for rows.Next() {
 		var h SymbolHit
 		var mods, attrs string
-		var err error
-		if withDoc {
-			err = rows.Scan(&h.Name, &h.Qualified, &h.Kind, &h.Path, &h.Line, &h.Signature, &h.Lang, &h.Doc, &mods, &attrs)
-		} else {
-			err = rows.Scan(&h.Name, &h.Qualified, &h.Kind, &h.Path, &h.Line, &h.Signature, &h.Lang, &mods, &attrs)
-		}
-		if err != nil {
+		if err := rows.Scan(&h.Name, &h.Qualified, &h.Kind, &h.Path, &h.Line, &h.Signature, &h.Lang, &h.Doc, &mods, &attrs); err != nil {
 			return nil, err
 		}
 		h.Modifiers, h.Attrs = unmarshalStrings(mods), unmarshalStrings(attrs)

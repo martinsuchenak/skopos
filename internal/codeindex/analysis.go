@@ -34,7 +34,7 @@ func (s *Service) Dead(ctx context.Context, workspace, branch string, limit int)
 		return nil, err
 	}
 	rows, err := db.Query(`
-		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang
+		SELECT s.name, s.qual_name, s.kind, bf.path, s.line, s.signature, s.lang, s.doc, s.modifiers, s.attrs
 		FROM symbols s
 		JOIN branch_files bf ON bf.hash = s.hash AND bf.branch = ?
 		WHERE NOT EXISTS (
@@ -54,9 +54,11 @@ func (s *Service) Dead(ctx context.Context, workspace, branch string, limit int)
 	}
 	for rows.Next() {
 		var h SymbolHit
-		if err := rows.Scan(&h.Name, &h.Qualified, &h.Kind, &h.Path, &h.Line, &h.Signature, &h.Lang); err != nil {
+		var mods, attrs string
+		if err := rows.Scan(&h.Name, &h.Qualified, &h.Kind, &h.Path, &h.Line, &h.Signature, &h.Lang, &h.Doc, &mods, &attrs); err != nil {
 			return nil, err
 		}
+		h.Modifiers, h.Attrs = unmarshalStrings(mods), unmarshalStrings(attrs)
 		if isDeadExcluded(displayOf(h), h.Kind) {
 			continue
 		}
