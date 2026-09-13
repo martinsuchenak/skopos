@@ -55,6 +55,7 @@ See [Agent integration](docs/getting-started.md#connecting-an-agent) and [Integr
 | Deployment (Docker, Nomad) | [docs/deployment/](docs/deployment/) |
 | Integration guides (7 agents) | [docs/integrations/](docs/integrations/) |
 | API spec (OpenAPI) | [openapi.yaml](openapi.yaml) |
+| Changelog | [CHANGELOG.md](CHANGELOG.md) |
 
 ## Shell completion
 
