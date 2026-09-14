@@ -257,6 +257,10 @@ const appState = () => ({
     this.authPrompted = true;
     this.notify('Unauthorized — set your API key', 'error');
     this.openKeyModal();
+    // The stored key was just rejected: offer an empty draft, not the bad
+    // key. Pre-filling it invites paste-without-select-all, which appends
+    // and produces another 401 that looks like "the new key doesn't work".
+    this.keyDraft = '';
   },
   openKeyModal() { this.keyDraft = this.apiKey; this.showKeyModal = true; },
   closeKeyModal() { this.showKeyModal = false; },
