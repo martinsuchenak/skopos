@@ -18,7 +18,11 @@ func testStorage(t *testing.T) *Storage {
 	t.Helper()
 	// A file DB (not :memory:): pooled connections must share one database,
 	// which :memory: does not guarantee once transactions grab extra conns.
-	dsn := filepath.Join(t.TempDir(), "test.db") + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)"
+	// The DSN mirrors production (incl. _txlock=immediate): concurrency tests
+	// must exercise the same lock behavior the server ships with — under
+	// DEFERRED transactions the promote/read-then-write paths deadlock and
+	// the races under test resolve differently than in production.
+	dsn := filepath.Join(t.TempDir(), "test.db") + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)&_txlock=immediate"
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
