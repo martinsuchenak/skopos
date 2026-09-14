@@ -4,6 +4,100 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] — 2026-09-14
+
+The multi-tenant release: scoped API keys replace the single shared key, so
+each agent, machine, or integration gets a credential limited to chosen
+workspaces instead of access to everything (previously the only workaround
+was deploying multiple server copies). Hardened by two further external
+pentest rounds against the feature.
+
+### Breaking
+
+- **Writes require `workspace_id` for every principal, root included** —
+  unscoped entries rendered into every workspace's knowledge bundle (the
+  cross-workspace noise and poisoning-amplification channel). Legacy
+  workspace-less rows have no read path at all (wipe or re-scope at
+  upgrade; `DELETE FROM blackboard_entries WHERE workspace_id IS NULL`).
+- **Out-of-scope by-id operations return 404, identical to nonexistent
+  ids** (no cross-tenant existence or ownership oracle). Explicit-workspace
+  operations return 403 listing the caller's accessible workspaces. MCP
+  maps both to invalid-params.
+- **Unscoped reads return exactly the caller's slice** of the data — never
+  other tenants' rows.
+- **Workspace management and server-side index refresh are root-only**:
+  registering workspaces, setting `git_url`, dropping indexes, and
+  minting/editing/revoking keys.
+- **Session workspace bindings are immutable** — a status report can no
+  longer re-scope an existing session (it authorizes against the session's
+  actual workspace, never the client-declared field).
+
+### Added — multi-key workspace scoping
+
+- DB-backed scoped API keys (`sk_` + 256-bit, stored as SHA-256 hash +
+  display prefix, never in plaintext): scope `*` or an explicit workspace
+  list; soft revocation keeps the audit trail, hard delete removes old
+  keys. `last_used_at` recorded at most once per 5 minutes per key.
+- Full key lifecycle on every surface: REST (`POST/GET/PATCH
+  /api/keys`, `DELETE` with `?hard=true`), CLI (`skopos key
+  create|list|edit|revoke|delete`), and the dashboard's root-only Keys
+  view (create with one-time secret + copy-to-clipboard, edit dialog,
+  revoke, delete). `skopos key generate-root [--quiet]` mints a strong
+  root credential offline with rotation guidance.
+- `GET /api/whoami` resolves the caller's identity and accessible
+  workspaces; the dashboard adapts its workspace picker and write dialogs
+  to the signed-in key.
+- Authentication resolves once per request to a principal (root key,
+  DB key, or internal caller) carried in the request context; enforcement
+  lives in the service layer, covering REST, MCP, and CLI uniformly.
+- MCP `skopos_workspaces` tool lists the caller's accessible workspaces
+  for agent self-discovery.
+- Server-stamped provenance: the resolved key (id + name) is recorded in
+  `report_status` event metadata — an audit counterpart to the
+  client-asserted `author_agent_id`.
+- SSE streams are scope-filtered per subscriber and **terminated
+  immediately when their key is revoked**. Events are published by the
+  mutating services with the authoritative workspace (no inference from
+  requests); read-only MCP calls are silent.
+
+### Security
+
+Two further external pentest rounds (one gray-box against a live keyed
+deployment, one against the deployed multi-key build); all findings
+remediated with regression tests and live oracle replays:
+
+- **Session takeover via declared-workspace authorization** (CVSS 6.3):
+  reports authorized the client-declared workspace and could rebind and
+  seize foreign sessions — closed by ownership resolution + immutable
+  bindings (the Breaking entries above).
+- **Cross-workspace session-events read** (`GET /api/sessions/{id}/events`
+  skipped the scope check its siblings enforced) and **agent
+  enumeration** via `skopos_context`'s agents section — both scoped.
+- **Plan reference injection**: `plan_add/remove_plan_dependency` now
+  scope-check the referenced plan, not just the parent.
+- **SSE tenant isolation was inoperative** (attribution ran after bodies
+  were drained; path values invisible through the middleware chain;
+  fail-open delivery): rewritten as service-layer publishing with
+  fail-closed delivery.
+- `skopos setup` client config is `0600` on every write, not only
+  creation.
+
+### Fixed
+
+- All-workspaces keys crashed the dashboard key list (`workspaces: null`
+  from the API killed the render); the API now emits `[]` and the UI
+  tolerates null.
+- The 401 key prompt no longer pre-fills the just-rejected key (pasting
+  over it without selecting-all appended and produced another 401).
+
+### Docs
+
+- New `docs/concepts/api-keys.md`; README, getting-started,
+- workspaces concept, configuration reference, and all seven agent
+  integration guides updated for root/scoped keys; `openapi.yaml` covers
+  the new endpoints and the 403/404 scope semantics (guard test in
+  lockstep).
+
 ## [0.1.2] — 2026-09-14
 
 Security release: second external penetration-test round (gray-box against
