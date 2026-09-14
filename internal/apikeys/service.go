@@ -129,6 +129,103 @@ func (s *Service) Revoke(ctx context.Context, id string) error {
 	return nil
 }
 
+// UpdateInput changes a key's name and/or scope. Nil fields are left
+// unchanged (partial PATCH semantics).
+type UpdateInput struct {
+	Name       *string
+	Workspaces []string // nil = unchanged; ["*"] or explicit ids otherwise
+}
+
+// Update edits a key's name and/or workspace scope. Revoked keys are frozen —
+// re-mint instead. Scope changes take effect on the next request (lookups are
+// not cached).
+func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (*Key, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("%w: id is required", ErrInvalidInput)
+	}
+	existing, err := s.storage.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if existing.RevokedAt != nil {
+		return nil, fmt.Errorf("%w: key is revoked; mint a new key instead", ErrInvalidInput)
+	}
+
+	name := existing.Name
+	if input.Name != nil {
+		name = strings.TrimSpace(*input.Name)
+		if name == "" {
+			return nil, fmt.Errorf("%w: name is required", ErrInvalidInput)
+		}
+		if len(name) > 100 {
+			return nil, fmt.Errorf("%w: name must be at most 100 characters", ErrInvalidInput)
+		}
+	}
+	all := existing.AllWorkspaces
+	workspaces := existing.Workspaces
+	if input.Workspaces != nil {
+		all = false
+		workspaces = make([]string, 0, len(input.Workspaces))
+		for _, w := range input.Workspaces {
+			w = strings.TrimSpace(w)
+			if w == "" {
+				continue
+			}
+			if w == "*" {
+				all = true
+				continue
+			}
+			workspaces = append(workspaces, w)
+		}
+		if all && len(workspaces) > 0 {
+			return nil, fmt.Errorf("%w: workspaces \"*\" cannot be combined with an explicit list", ErrInvalidInput)
+		}
+		if !all && len(workspaces) == 0 {
+			return nil, fmt.Errorf("%w: workspaces must be a list of workspace ids or \"*\"", ErrInvalidInput)
+		}
+		seen := map[string]bool{}
+		unique := workspaces[:0]
+		for _, w := range workspaces {
+			if seen[w] {
+				continue
+			}
+			seen[w] = true
+			unique = append(unique, w)
+		}
+		workspaces = unique
+		for _, w := range workspaces {
+			exists, err := s.storage.WorkspaceExists(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			if !exists {
+				return nil, fmt.Errorf("%w: workspace %s is not registered (register it first, e.g. via a session report or POST /api/workspaces)", ErrInvalidInput, w)
+			}
+		}
+	}
+	if err := s.storage.Update(ctx, id, name, all, workspaces); err != nil {
+		return nil, err
+	}
+	updated, err := s.storage.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &updated, nil
+}
+
+// Delete hard-deletes a key (audit trail included) — for cleaning up old or
+// revoked keys. Active keys should usually be revoked first so their SSE
+// streams terminate; hard-deleting an active key leaves its streams open
+// until they reconnect.
+func (s *Service) Delete(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("%w: id is required", ErrInvalidInput)
+	}
+	return s.storage.Delete(ctx, id)
+}
+
 // generateSecret produces a key like "sk_" + 43 base64url chars (256 bits).
 func generateSecret() (string, error) {
 	buf := make([]byte, 32)

@@ -115,3 +115,76 @@ func hashOf(t *testing.T, secret string) string {
 	t.Helper()
 	return HashKeyForTest(secret)
 }
+
+func TestServiceUpdateAndDelete(t *testing.T) {
+	st := testStorage(t)
+	svc := NewService(st)
+	ctx := context.Background()
+	seedWorkspace(t, st, "ws-a")
+	seedWorkspace(t, st, "ws-b")
+
+	created, err := svc.Create(ctx, CreateInput{Name: "orig", Workspaces: []string{"ws-a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// validation matrix
+	newName := ""
+	for _, tc := range []struct {
+		name  string
+		input UpdateInput
+	}{
+		{"empty name", UpdateInput{Name: &newName}},
+		{"no scope", UpdateInput{Workspaces: []string{}}},
+		{"star mixed", UpdateInput{Workspaces: []string{"*", "ws-a"}}},
+		{"unknown workspace", UpdateInput{Workspaces: []string{"nope"}}},
+	} {
+		if _, err := svc.Update(ctx, created.Key.ID, tc.input); !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("%s: expected ErrInvalidInput, got %v", tc.name, err)
+		}
+	}
+
+	// partial: rename only keeps scope
+	rename := "renamed"
+	key, err := svc.Update(ctx, created.Key.ID, UpdateInput{Name: &rename})
+	if err != nil || key.Name != "renamed" || len(key.Workspaces) != 1 || key.Workspaces[0] != "ws-a" {
+		t.Fatalf("rename: %+v %v", key, err)
+	}
+
+	// scope change takes effect immediately for the secret's hash
+	key, err = svc.Update(ctx, created.Key.ID, UpdateInput{Workspaces: []string{"ws-b"}})
+	if err != nil || key.AllWorkspaces || len(key.Workspaces) != 1 || key.Workspaces[0] != "ws-b" {
+		t.Fatalf("rescope: %+v %v", key, err)
+	}
+	info, _ := st.LookupKey(ctx, hashOf(t, created.Secret))
+	if info == nil || len(info.Workspaces) != 1 || info.Workspaces[0] != "ws-b" {
+		t.Fatalf("lookup after rescope: %+v", info)
+	}
+	// widened to all
+	key, err = svc.Update(ctx, created.Key.ID, UpdateInput{Workspaces: []string{"*"}})
+	if err != nil || !key.AllWorkspaces {
+		t.Fatalf("widen: %+v %v", key, err)
+	}
+
+	// revoked keys are frozen
+	if err := svc.Revoke(ctx, created.Key.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Update(ctx, created.Key.ID, UpdateInput{Name: &rename}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("revoked key must be frozen, got %v", err)
+	}
+
+	// hard delete removes the row entirely
+	if err := svc.Delete(ctx, created.Key.ID); err != nil {
+		t.Fatal(err)
+	}
+	keys, _ := svc.List(ctx)
+	for _, k := range keys {
+		if k.ID == created.Key.ID {
+			t.Fatal("hard-deleted key still listed")
+		}
+	}
+	if err := svc.Delete(ctx, created.Key.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete: %v", err)
+	}
+}

@@ -88,8 +88,62 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	rest.RespondJSON(w, http.StatusOK, keys)
 }
 
+type updateRequest struct {
+	Name       *string   `json:"name"`
+	Workspaces *[]string `json:"workspaces"`
+}
+
+// Update handles PATCH /api/keys/{id}: partial edit of name and/or scope.
+func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
+	if h.requireRoot(w, r) == nil {
+		return
+	}
+	var req updateRequest
+	if err := rest.DecodeJSON(w, r, &req); err != nil {
+		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	input := UpdateInput{Name: req.Name}
+	if req.Workspaces != nil {
+		input.Workspaces = *req.Workspaces
+	}
+	key, err := h.service.Update(r.Context(), r.PathValue("id"), input)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
+			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrNotFound):
+			rest.RespondError(w, http.StatusNotFound, err.Error())
+		default:
+			rest.InternalError(w, err)
+		}
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, key)
+}
+
 func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 	if h.requireRoot(w, r) == nil {
+		return
+	}
+	// ?hard=true removes the key row entirely (old/revoked-key cleanup);
+	// the default is a soft revoke that keeps the audit trail.
+	if r.URL.Query().Get("hard") == "true" {
+		if err := h.service.Delete(r.Context(), r.PathValue("id")); err != nil {
+			switch {
+			case errors.Is(err, ErrNotFound):
+				rest.RespondError(w, http.StatusNotFound, err.Error())
+			case errors.Is(err, ErrInvalidInput):
+				rest.RespondError(w, http.StatusBadRequest, err.Error())
+			default:
+				rest.InternalError(w, err)
+			}
+			return
+		}
+		if h.publish != nil {
+			h.publish.Publish(events.Event{Type: events.TypeChange})
+		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if err := h.service.Revoke(r.Context(), r.PathValue("id")); err != nil {

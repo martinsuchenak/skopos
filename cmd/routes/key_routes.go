@@ -26,4 +26,5 @@ func registerKeyRoutes(mux *http.ServeMux, h *apikeys.Handler) {
 	mux.HandleFunc("POST /api/keys", h.Create)
 	mux.HandleFunc("GET /api/keys", h.List)
 	mux.HandleFunc("DELETE /api/keys/{id}", h.Revoke)
+	mux.HandleFunc("PATCH /api/keys/{id}", h.Update)
 }

@@ -183,3 +183,78 @@ func (s *Storage) TouchKey(ctx context.Context, keyID string) {
 		`UPDATE api_keys SET last_used_at = ? WHERE id = ? AND revoked_at IS NULL`,
 		formatTime(timeNowUTC()), keyID)
 }
+
+// Get returns one key by id (no secret — the hash never leaves storage).
+func (s *Storage) Get(ctx context.Context, id string) (Key, error) {
+	var (
+		k         Key
+		all       int
+		createdAt string
+		lastUsed  sql.NullString
+		revoked   sql.NullString
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, name, key_prefix, all_workspaces, created_at, last_used_at, revoked_at
+		FROM api_keys WHERE id = ?`, id,
+	).Scan(&k.ID, &k.Name, &k.Prefix, &all, &createdAt, &lastUsed, &revoked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return k, ErrNotFound
+	}
+	if err != nil {
+		return k, fmt.Errorf("getting api key: %w", err)
+	}
+	k.AllWorkspaces = all != 0
+	k.CreatedAt = parseTime(createdAt)
+	if lastUsed.Valid {
+		t := parseTime(lastUsed.String)
+		k.LastUsedAt = &t
+	}
+	if revoked.Valid {
+		t := parseTime(revoked.String)
+		k.RevokedAt = &t
+	}
+	if k.Workspaces, err = s.listWorkspaces(ctx, id); err != nil {
+		return k, err
+	}
+	return k, nil
+}
+
+// Update changes a key's name and scope atomically: the row is updated and
+// the workspace scope replaced in one transaction.
+func (s *Storage) Update(ctx context.Context, id, name string, all bool, workspaces []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx,
+		`UPDATE api_keys SET name = ?, all_workspaces = ? WHERE id = ?`, name, boolToInt(all), id)
+	if err != nil {
+		return fmt.Errorf("updating api key: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM api_key_workspaces WHERE api_key_id = ?`, id); err != nil {
+		return fmt.Errorf("clearing api key workspaces: %w", err)
+	}
+	for _, ws := range workspaces {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO api_key_workspaces (api_key_id, workspace_id) VALUES (?, ?)`, id, ws); err != nil {
+			return fmt.Errorf("inserting api key workspace: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// Delete hard-deletes a key and (via FK cascade) its scope rows.
+func (s *Storage) Delete(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM api_keys WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("deleting api key: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

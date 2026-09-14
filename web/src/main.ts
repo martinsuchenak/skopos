@@ -71,7 +71,10 @@ const appState = () => ({
   showNewKeyModal: false, keySaving: false,
   keyForm: { name: '', all: false, workspaces: [] as string[] } as KeyForm,
   keyErrors: {} as Record<string, string>,
-  showSecretModal: false, newSecret: '', newSecretName: '',
+  showSecretModal: false, newSecret: '', newSecretName: '', secretCopied: false,
+  showEditKeyModal: false, editKeySaving: false,
+  editKeyForm: { id: '', name: '', all: false, workspaces: [] as string[] },
+  editKeyErrors: {} as Record<string, string>,
 
   // toasts
   toasts: [] as Toast[],
@@ -191,7 +194,7 @@ const appState = () => ({
   },
 
   anyModalOpen() {
-    return this.showNewKeyModal || this.showSecretModal || this.showEntryModal || this.showPlanModal || this.showItemModal || this.showWorkspaceModal || this.confirm.open;
+    return this.showNewKeyModal || this.showSecretModal || this.showEditKeyModal || this.showEntryModal || this.showPlanModal || this.showItemModal || this.showWorkspaceModal || this.confirm.open;
   },
 
   // ---- theme ----
@@ -581,9 +584,54 @@ const appState = () => ({
       this.keySaving = false;
     }
   },
-  closeSecretModal() { this.newSecret = ''; this.showSecretModal = false; },
+  closeSecretModal() { this.newSecret = ''; this.newSecretName = ''; this.secretCopied = false; this.showSecretModal = false; },
+  async copySecret() {
+    try {
+      await navigator.clipboard.writeText(this.newSecret);
+      this.secretCopied = true;
+      this.notify('API key copied to clipboard', 'success');
+      window.setTimeout(() => { this.secretCopied = false; }, 2500);
+    } catch {
+      this.notify('Copy failed — select the secret and copy manually', 'error');
+    }
+  },
   revokeKey(k: ApiKey) {
     this.requestDelete('apikey', k.id, k.name);
+  },
+  deleteKey(k: ApiKey) {
+    this.requestDelete('apikeyhard', k.id, k.name);
+  },
+
+  // ---- edit key ----
+  openEditKeyModal(k: ApiKey) {
+    this.editKeyForm = { id: k.id, name: k.name, all: k.all_workspaces, workspaces: [...k.workspaces] };
+    this.editKeyErrors = {};
+    this.showEditKeyModal = true;
+  },
+  closeEditKeyModal() { this.showEditKeyModal = false; },
+  toggleEditKeyWorkspace(id: string) {
+    const i = this.editKeyForm.workspaces.indexOf(id);
+    if (i >= 0) this.editKeyForm.workspaces.splice(i, 1);
+    else this.editKeyForm.workspaces.push(id);
+  },
+  async submitEditKey() {
+    const f = this.editKeyForm;
+    const errs: Record<string, string> = {};
+    if (!f.name.trim()) errs.name = 'Name is required.';
+    if (!f.all && f.workspaces.length === 0) errs.workspaces = 'Select at least one workspace, or all workspaces.';
+    this.editKeyErrors = errs;
+    if (Object.keys(errs).length) return;
+    this.editKeySaving = true;
+    try {
+      const body: Record<string, unknown> = { name: f.name.trim(), workspaces: f.all ? ['*'] : f.workspaces };
+      const res = await this.authFetch(`/api/keys/${encodeURIComponent(f.id)}`, { method: 'PATCH', body: JSON.stringify(body) });
+      if (!await this.handleBad(res, 'Key not updated')) return;
+      this.notify('Key updated', 'success');
+      this.showEditKeyModal = false;
+      await this.fetchKeys();
+    } finally {
+      this.editKeySaving = false;
+    }
   },
 
   async fetchIndexStatus() {
@@ -614,6 +662,7 @@ const appState = () => ({
       url = `/api/plans/${encodeURIComponent(planId)}/items/${encodeURIComponent(itemId)}`;
     }
     else if (p.kind === 'apikey') url = `/api/keys/${encodeURIComponent(p.id)}`;
+    else if (p.kind === 'apikeyhard') url = `/api/keys/${encodeURIComponent(p.id)}?hard=true`;
     const res = await this.authFetch(url, { method: 'DELETE' });
     this.confirm.busy = false;
     if (!await this.handleBad(res, 'Delete failed')) return;

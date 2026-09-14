@@ -190,8 +190,39 @@ paths:
         "403": { description: Root key required }
 
   /api/keys/{id}:
+    patch:
+      summary: Edit an API key's name and/or workspace scope (root only)
+      operationId: updateApiKey
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                workspaces:
+                  description: Exact workspace ids, or ["*"] for all workspaces; omitted = unchanged
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          description: Updated key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiKey" }
+        "400": { description: Invalid input or revoked key, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "401": { description: Unauthorized }
+        "403": { description: Root key required }
+        "404": { description: Unknown key }
     delete:
-      summary: Revoke an API key (root only; idempotent)
+      summary: Revoke an API key (root only; idempotent) or hard-delete it with hard=true
       operationId: revokeApiKey
       security: [{ BearerAuth: [] }]
       parameters:
@@ -199,8 +230,12 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: hard
+          in: query
+          description: "true removes the key row entirely (cleanup of old/revoked keys) instead of soft-revoking"
+          schema: { type: boolean }
       responses:
-        "204": { description: Revoked }
+        "204": { description: Revoked or deleted }
         "401": { description: Unauthorized }
         "403": { description: Root key required }
         "404": { description: Unknown key }
