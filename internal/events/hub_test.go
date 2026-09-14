@@ -114,3 +114,26 @@ func TestHubFailsClosedForScopedSubscribers(t *testing.T) {
 		t.Fatalf("root must receive everything incl. unattributed: %+v", rootGot)
 	}
 }
+
+// TestDropKeyTerminatesKeyedStreams pins revocation semantics: DropKey closes
+// exactly the revoked key's streams; other subscribers keep receiving.
+func TestDropKeyTerminatesKeyedStreams(t *testing.T) {
+	hub := NewHub()
+	defer hub.Close()
+
+	mine, unsubMine := hub.SubscribeKeyed("k1", func(string) bool { return true })
+	other, unsubOther := hub.SubscribeKeyed("k2", func(string) bool { return true })
+	defer unsubOther()
+
+	hub.DropKey("k1")
+	if _, open := <-mine; open {
+		t.Fatal("revoked key's stream must be closed")
+	}
+	// unsubscribing a dropped stream is idempotent
+	unsubMine()
+
+	hub.Publish(Event{Type: TypeChange, Workspace: "ws"})
+	if _, open := <-other; !open {
+		t.Fatal("other keys' streams must keep receiving")
+	}
+}

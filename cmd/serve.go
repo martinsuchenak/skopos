@@ -172,6 +172,10 @@ func serveCmd() *cli.Command {
 				return err
 			}
 
+			// Created before the services: mutations publish through it, and
+			// key revocation terminates the revoked key's open SSE streams.
+			hub := events.NewHub()
+
 			// Resolve the authenticator before any handler: per-handler
 			// authorized() re-authenticates with it (defense in depth behind
 			// the router middleware) and must resolve DB keys, not just root.
@@ -255,10 +259,6 @@ func serveCmd() *cli.Command {
 			ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 
-			// Created before the background workers so they can publish events
-			// for their out-of-band mutations.
-			hub := events.NewHub()
-
 			stuckThreshold := cmd.GetInt("health-stuck-threshold")
 			if stuckThreshold > 0 {
 				health.NewChecker(sqlDB, time.Duration(stuckThreshold)*time.Minute, log, hub).Start(ctx)
@@ -337,6 +337,17 @@ func serveCmd() *cli.Command {
 			apiKeysService := apikeys.NewService(apiKeysStorage)
 			apiKeysHandler := apikeys.NewHandler(apiKeysService, workspacesService)
 
+			// Service-layer event publishing: the mutating service knows the
+			// authoritative workspace, so attribution cannot drift from the
+			// data. Revoking a key drops its SSE streams.
+			statusService.SetPublisher(hub)
+			blackboardService.SetPublisher(hub)
+			plansService.SetPublisher(hub)
+			workspacesService.SetPublisher(hub)
+			codeIndexHandler.SetPublisher(hub)
+			apiKeysHandler.SetPublisher(hub)
+			apiKeysService.SetRevocationNotifier(hub.DropKey)
+
 			webMux := http.NewServeMux()
 			apiMux := http.NewServeMux()
 			routes.RegisterRoutes(webMux, apiMux, statusHandler, blackboardHandler, plansHandler, workspacesHandler, codeIndexHandler, apiKeysHandler)
@@ -362,7 +373,7 @@ func serveCmd() *cli.Command {
 
 			httpServer := &http.Server{
 				Addr:              fmt.Sprintf("%s:%d", cmd.GetString("server-host"), cmd.GetInt("server-port")),
-				Handler:           hostAllowed(cmd.GetString("server-host"))(events.Middleware(hub, log, mux)),
+				Handler:           hostAllowed(cmd.GetString("server-host"))(events.Middleware(log, mux)),
 				ReadHeaderTimeout: 10 * time.Second,
 				ReadTimeout:       30 * time.Second,
 				WriteTimeout:      30 * time.Second, // SSE handler clears this per-request

@@ -1,18 +1,36 @@
 package plans
 
 import (
-
-	"github.com/martinsuchenak/skopos/internal/auth"
 	"context"
 	"fmt"
+	"github.com/martinsuchenak/skopos/internal/auth"
+	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/martinsuchenak/skopos/internal/ids"
 	"strings"
 	"time"
 )
 
 type Service struct {
-	store Store
-	now   func() time.Time
+	store     Store
+	now       func() time.Time
+	publisher events.Publisher
+}
+
+// SetPublisher installs the event bus; mutations publish with their plan's
+// authoritative workspace. Nil (the default) disables publishing.
+func (s *Service) SetPublisher(p events.Publisher) { s.publisher = p }
+
+// publishPlan emits the mutation event for a plan once the store write
+// succeeded; failures are silent (events are advisory).
+func (s *Service) publishPlan(ctx context.Context, planID string) {
+	if s.publisher == nil {
+		return
+	}
+	ws, err := s.store.PlanWorkspace(ctx, planID)
+	if err != nil {
+		return
+	}
+	s.publisher.Publish(events.Event{Type: events.TypePlans, Workspace: ws})
 }
 
 func NewService(store Store) *Service {
@@ -49,9 +67,9 @@ func (s *Service) CreatePlan(ctx context.Context, input CreatePlanInput) (*Plan,
 	if err := s.store.CreatePlan(ctx, plan); err != nil {
 		return nil, err
 	}
+	s.publishPlan(ctx, plan.ID)
 	return &plan, nil
 }
-
 
 // requirePlanScope authorizes a by-plan-id operation against the plan's
 // workspace; unknown plans report not-found first so existence is not
@@ -116,7 +134,7 @@ func (s *Service) UpdatePlan(ctx context.Context, id string, input UpdatePlanInp
 	if input.Status != "" && !validPlanStatus(input.Status) {
 		return fmt.Errorf("%w: invalid status %q", ErrInvalidInput, input.Status)
 	}
-	err := s.store.RunInTx(ctx, func(tx Store) error {
+	if err := s.store.RunInTx(ctx, func(tx Store) error {
 		if err := tx.UpdatePlan(ctx, id, input); err != nil {
 			return err
 		}
@@ -124,8 +142,11 @@ func (s *Service) UpdatePlan(ctx context.Context, id string, input UpdatePlanInp
 			return autoUnblockPlanDependents(ctx, tx, id)
 		}
 		return nil
-	})
-	return err
+	}); err != nil {
+		return err
+	}
+	s.publishPlan(ctx, id)
+	return nil
 }
 
 func (s *Service) DeletePlan(ctx context.Context, id string) error {
@@ -136,7 +157,11 @@ func (s *Service) DeletePlan(ctx context.Context, id string) error {
 	if id == "" {
 		return fmt.Errorf("%w: id is required", ErrInvalidInput)
 	}
-	return s.store.DeletePlan(ctx, id)
+	if err := s.store.DeletePlan(ctx, id); err != nil {
+		return err
+	}
+	s.publishPlan(ctx, id)
+	return nil
 }
 
 func (s *Service) AddItem(ctx context.Context, planID string, input CreateItemInput) (*Item, error) {
@@ -223,6 +248,7 @@ func (s *Service) AddItem(ctx context.Context, planID string, input CreateItemIn
 	if err != nil {
 		return nil, err
 	}
+	s.publishPlan(ctx, planID)
 	return &item, nil
 }
 
@@ -264,6 +290,7 @@ func (s *Service) UpdateItem(ctx context.Context, planID, itemID string, input U
 	if err != nil {
 		return nil, err
 	}
+	s.publishPlan(ctx, planID)
 	return s.store.GetItem(ctx, planID, itemID)
 }
 
@@ -319,7 +346,7 @@ func (s *Service) AddDependency(ctx context.Context, planID, itemID, dependsOnID
 	if itemID == dependsOnID {
 		return fmt.Errorf("%w: item cannot depend on itself", ErrInvalidInput)
 	}
-	return s.store.RunInTx(ctx, func(tx Store) error {
+	if err := s.store.RunInTx(ctx, func(tx Store) error {
 		exists, err := tx.ItemExistsInPlan(ctx, planID, itemID)
 		if err != nil {
 			return err
@@ -350,7 +377,11 @@ func (s *Service) AddDependency(ctx context.Context, planID, itemID, dependsOnID
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	s.publishPlan(ctx, planID)
+	return nil
 }
 
 func (s *Service) RemoveDependency(ctx context.Context, planID, itemID, dependsOnID string) error {
@@ -363,12 +394,16 @@ func (s *Service) RemoveDependency(ctx context.Context, planID, itemID, dependsO
 	if planID == "" || itemID == "" || dependsOnID == "" {
 		return fmt.Errorf("%w: plan_id, item_id, and depends_on_id are required", ErrInvalidInput)
 	}
-	return s.store.RunInTx(ctx, func(tx Store) error {
+	if err := s.store.RunInTx(ctx, func(tx Store) error {
 		if err := tx.RemoveDependency(ctx, itemID, dependsOnID); err != nil {
 			return err
 		}
 		return recheckItemBlocked(ctx, tx, itemID)
-	})
+	}); err != nil {
+		return err
+	}
+	s.publishPlan(ctx, planID)
+	return nil
 }
 
 func (s *Service) DeleteItem(ctx context.Context, planID, itemID string) error {
@@ -383,7 +418,11 @@ func (s *Service) DeleteItem(ctx context.Context, planID, itemID string) error {
 	if err := s.requirePlanScope(ctx, planID); err != nil {
 		return err
 	}
-	return s.store.DeleteItem(ctx, planID, itemID)
+	if err := s.store.DeleteItem(ctx, planID, itemID); err != nil {
+		return err
+	}
+	s.publishPlan(ctx, planID)
+	return nil
 }
 
 func (s *Service) AddPlanDependency(ctx context.Context, planID, dependsOnPlanID string) error {
@@ -398,7 +437,7 @@ func (s *Service) AddPlanDependency(ctx context.Context, planID, dependsOnPlanID
 	if planID == dependsOnPlanID {
 		return fmt.Errorf("%w: plan cannot depend on itself", ErrInvalidInput)
 	}
-	return s.store.RunInTx(ctx, func(tx Store) error {
+	if err := s.store.RunInTx(ctx, func(tx Store) error {
 		exists, err := tx.PlanExists(ctx, planID)
 		if err != nil {
 			return err
@@ -429,7 +468,11 @@ func (s *Service) AddPlanDependency(ctx context.Context, planID, dependsOnPlanID
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	s.publishPlan(ctx, planID)
+	return nil
 }
 
 func (s *Service) RemovePlanDependency(ctx context.Context, planID, dependsOnPlanID string) error {
@@ -441,12 +484,16 @@ func (s *Service) RemovePlanDependency(ctx context.Context, planID, dependsOnPla
 	if planID == "" || dependsOnPlanID == "" {
 		return fmt.Errorf("%w: plan_id and depends_on_plan_id are required", ErrInvalidInput)
 	}
-	return s.store.RunInTx(ctx, func(tx Store) error {
+	if err := s.store.RunInTx(ctx, func(tx Store) error {
 		if err := tx.RemovePlanDependency(ctx, planID, dependsOnPlanID); err != nil {
 			return err
 		}
 		return recheckPlanBlocked(ctx, tx, planID)
-	})
+	}); err != nil {
+		return err
+	}
+	s.publishPlan(ctx, planID)
+	return nil
 }
 
 func autoUnblockDependents(ctx context.Context, store Store, doneItemID string) error {

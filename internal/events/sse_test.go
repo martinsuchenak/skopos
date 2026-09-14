@@ -9,58 +9,25 @@ import (
 	"time"
 )
 
-func TestMiddlewarePublishesOnSuccess(t *testing.T) {
+// The middleware is logging-only now: publishing moved to the service layer
+// where the mutation's workspace is authoritative (third pentest round,
+// vuln-0004 remediation). These tests pin that no events leak through the
+// HTTP layer regardless of method or status.
+func TestMiddlewarePublishesNothing(t *testing.T) {
 	h := NewHub()
 	ch, unsub := h.Subscribe()
 	defer unsub()
 
-	mw := Middleware(h, nil, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	mw := Middleware(nil, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 	}))
-	req := httptest.NewRequest(http.MethodPost, "/api/reports", nil)
-	mw.ServeHTTP(httptest.NewRecorder(), req)
-
-	select {
-	case ev := <-ch:
-		if ev.Type != "sessions" {
-			t.Errorf("got %q, want sessions", ev.Type)
-		}
-	default:
-		t.Fatal("expected an event after a 2xx POST")
-	}
-}
-
-func TestMiddlewareSkipsReadsAndFailures(t *testing.T) {
-	h := NewHub()
-	ch, unsub := h.Subscribe()
-	defer unsub()
-
-	mw := Middleware(h, nil, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-	}))
 	mw.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/reports", nil))
-	mw.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/sessions", nil))
+	mw.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodDelete, "/api/plans/x", nil))
 
 	select {
 	case ev := <-ch:
-		t.Fatalf("did not expect an event, got %v", ev)
+		t.Fatalf("middleware must not publish; got %v", ev)
 	default:
-	}
-}
-
-func TestTypeForPath(t *testing.T) {
-	cases := map[string]string{
-		"/api/reports":            "sessions",
-		"/api/sessions/abc":       "sessions",
-		"/api/blackboard/entries": "blackboard",
-		"/api/plans/x/items":      "plans",
-		"/api/workspaces":         "workspaces",
-		"/health":                 "change",
-	}
-	for p, want := range cases {
-		if got := typeForPath(p); got != want {
-			t.Errorf("typeForPath(%q) = %q, want %q", p, got, want)
-		}
 	}
 }
 

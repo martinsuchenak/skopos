@@ -19,13 +19,19 @@ var (
 )
 
 type Service struct {
-	storage *Storage
-	now     func() time.Time
+	storage  *Storage
+	now      func() time.Time
+	onRevoke func(keyID string)
 }
 
 func NewService(storage *Storage) *Service {
 	return &Service{storage: storage, now: time.Now}
 }
+
+// SetRevocationNotifier installs a callback invoked whenever a key actually
+// transitions to revoked — wired to the event hub to terminate the key's
+// open SSE streams.
+func (s *Service) SetRevocationNotifier(fn func(keyID string)) { s.onRevoke = fn }
 
 type CreateInput struct {
 	Name          string
@@ -106,12 +112,21 @@ func (s *Service) List(ctx context.Context) ([]Key, error) {
 }
 
 // Revoke soft-deletes a key; revoking an already-revoked key is a no-op.
+// A successful transition fires the revocation notifier (the event hub
+// terminates the key's open SSE streams).
 func (s *Service) Revoke(ctx context.Context, id string) error {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return fmt.Errorf("%w: id is required", ErrInvalidInput)
 	}
-	return s.storage.Revoke(ctx, id)
+	revoked, err := s.storage.Revoke(ctx, id)
+	if err != nil {
+		return err
+	}
+	if revoked && s.onRevoke != nil {
+		s.onRevoke(id)
+	}
+	return nil
 }
 
 // generateSecret produces a key like "sk_" + 43 base64url chars (256 bits).

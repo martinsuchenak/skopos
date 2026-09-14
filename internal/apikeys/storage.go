@@ -138,24 +138,27 @@ func (s *Storage) List(ctx context.Context) ([]Key, error) {
 
 // Revoke soft-deletes by id; unknown ids return ErrNotFound. Revoking an
 // already-revoked key is a no-op (idempotent).
-func (s *Storage) Revoke(ctx context.Context, id string) error {
+// Revoke soft-deletes by id and reports whether this call performed the
+// transition (false = already revoked; unknown ids return ErrNotFound).
+func (s *Storage) Revoke(ctx context.Context, id string) (bool, error) {
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
 		formatTime(timeNowUTC()), id)
 	if err != nil {
-		return fmt.Errorf("revoking api key: %w", err)
+		return false, fmt.Errorf("revoking api key: %w", err)
 	}
 	n, _ := result.RowsAffected()
 	if n == 0 {
 		var one int
 		if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM api_keys WHERE id = ?`, id).Scan(&one); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return ErrNotFound
+				return false, ErrNotFound
 			}
-			return err
+			return false, err
 		}
+		return false, nil
 	}
-	return nil
+	return true, nil
 }
 
 func boolToInt(b bool) int {

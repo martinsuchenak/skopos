@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/martinsuchenak/skopos/internal/auth"
+	"github.com/martinsuchenak/skopos/internal/events"
 	"context"
 	"errors"
 	"fmt"
@@ -30,6 +31,7 @@ type Service struct {
 	store      Store
 	now        func() time.Time
 	registerWS func(id string)
+	publisher  events.Publisher
 }
 
 func NewService(store Store) *Service {
@@ -38,6 +40,10 @@ func NewService(store Store) *Service {
 		now:   time.Now,
 	}
 }
+
+// SetPublisher installs the event bus; mutations publish with their
+// authoritative workspace. Nil (the default) disables publishing.
+func (s *Service) SetPublisher(p events.Publisher) { s.publisher = p }
 
 // SetWorkspaceRegistrar installs a callback invoked with the workspace id of
 // every accepted report — session-derived workspaces are auto-registered so
@@ -89,6 +95,9 @@ func (s *Service) Report(ctx context.Context, input ReportInput) (*ReportResult,
 
 	if err := s.store.RecordReport(ctx, event, sessionTitle(normalized)); err != nil {
 		return nil, err
+	}
+	if s.publisher != nil {
+		s.publisher.Publish(events.Event{Type: events.TypeSessions, Workspace: normalized.Workspace})
 	}
 
 	// Best-effort registry upsert; a failure must not fail the report.
@@ -190,7 +199,13 @@ func (s *Service) DeleteSession(ctx context.Context, id string) error {
 	if err := auth.RequireWorkspace(ctx, session.Workspace); err != nil {
 		return err
 	}
-	return s.store.DeleteSession(ctx, id)
+	if err := s.store.DeleteSession(ctx, id); err != nil {
+		return err
+	}
+	if s.publisher != nil {
+		s.publisher.Publish(events.Event{Type: events.TypeSessions, Workspace: session.Workspace})
+	}
+	return nil
 }
 
 func normalizeReport(input ReportInput) (ReportInput, error) {

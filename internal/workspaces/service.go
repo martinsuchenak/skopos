@@ -3,6 +3,7 @@ package workspaces
 import (
 
 	"github.com/martinsuchenak/skopos/internal/auth"
+	"github.com/martinsuchenak/skopos/internal/events"
 	"context"
 	"fmt"
 	"strings"
@@ -10,11 +11,16 @@ import (
 )
 
 type Service struct {
-	store Store
-	now   func() time.Time
+	store     Store
+	now       func() time.Time
+	publisher events.Publisher
 }
 
 func NewService(store Store) *Service { return &Service{store: store, now: time.Now} }
+
+// SetPublisher installs the event bus; registry mutations publish with the
+// workspace id as scope. Nil (the default) disables publishing.
+func (s *Service) SetPublisher(p events.Publisher) { s.publisher = p }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (*Workspace, bool, error) {
 	// The registry and git_url feed the server-side clone path and define
@@ -31,6 +37,9 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (*Workspace, bo
 	created, err := s.store.Create(ctx, ws)
 	if err != nil {
 		return nil, false, err
+	}
+	if s.publisher != nil {
+		s.publisher.Publish(events.Event{Type: events.TypeWorkspaces, Workspace: ws.ID})
 	}
 	return &ws, created, nil
 }
@@ -69,5 +78,11 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if id == "" {
 		return fmt.Errorf("%w: id is required", ErrInvalidInput)
 	}
-	return s.store.Delete(ctx, id)
+	if err := s.store.Delete(ctx, id); err != nil {
+		return err
+	}
+	if s.publisher != nil {
+		s.publisher.Publish(events.Event{Type: events.TypeWorkspaces, Workspace: id})
+	}
+	return nil
 }

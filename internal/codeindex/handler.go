@@ -10,6 +10,7 @@ import (
 
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/codeindex/parse"
+	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/martinsuchenak/skopos/internal/rest"
 )
 
@@ -23,6 +24,7 @@ type Handler struct {
 	registerWS func(id string)
 	refresher  *Refresher
 	embeddings *EmbeddingManager
+	publish    events.Publisher
 }
 
 func NewHandler(service *Service, authn *auth.Authenticator) *Handler {
@@ -38,6 +40,16 @@ func (h *Handler) SetRefresher(r *Refresher) { h.refresher = r }
 
 // SetEmbeddingManager enables asynchronous semantic embeddings.
 func (h *Handler) SetEmbeddingManager(m *EmbeddingManager) { h.embeddings = m }
+
+// SetPublisher installs the event bus; index mutations publish an attributed
+// change event so scoped dashboards refresh their own workspace's index.
+func (h *Handler) SetPublisher(p events.Publisher) { h.publish = p }
+
+func (h *Handler) notifyChanged(ws string) {
+	if h.publish != nil {
+		h.publish.Publish(events.Event{Type: events.TypeChange, Workspace: ws})
+	}
+}
 
 // Embeddings exposes the embedding manager for wiring (e.g. error logging).
 func (h *Handler) Embeddings() *EmbeddingManager { return h.embeddings }
@@ -201,6 +213,7 @@ func (h *Handler) Commit(w http.ResponseWriter, r *http.Request) {
 	if h.embeddings != nil {
 		h.embeddings.Enqueue(ws)
 	}
+	h.notifyChanged(ws)
 	rest.RespondJSON(w, http.StatusOK, map[string]any{
 		"workspace": ws, "branch": req.Branch, "files": len(req.Files),
 	})
@@ -365,6 +378,7 @@ func (h *Handler) DropWorkspace(w http.ResponseWriter, r *http.Request) {
 		h.respondServiceError(w, err)
 		return
 	}
+	h.notifyChanged(ws)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -382,6 +396,7 @@ func (h *Handler) DropBranch(w http.ResponseWriter, r *http.Request) {
 		h.respondServiceError(w, err)
 		return
 	}
+	h.notifyChanged(ws)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -433,6 +448,7 @@ func (h *Handler) RefreshStart(w http.ResponseWriter, r *http.Request) {
 		h.respondServiceError(w, err)
 		return
 	}
+	h.notifyChanged(ws)
 	rest.RespondJSON(w, http.StatusAccepted, map[string]any{"workspace": ws, "refreshing": true})
 }
 

@@ -61,10 +61,7 @@ func integrationSetup(t *testing.T, apiKey string) *http.ServeMux {
 
 func TestIntegrationHealthAndSessions(t *testing.T) {
 	mux := integrationSetup(t, "")
-	ts := httptest.NewServer(events.Middleware(events.NewHub(), nil, mux))
-	defer ts.Close()
-
-	// health
+	ts := httptest.NewServer(events.Middleware(nil, mux))
 	resp, _ := http.Get(ts.URL + "/health")
 	if resp.StatusCode != 200 {
 		t.Fatalf("health: expected 200, got %d", resp.StatusCode)

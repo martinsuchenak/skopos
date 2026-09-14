@@ -49,25 +49,28 @@ func TestSSEAttributionThroughProductionWiring(t *testing.T) {
 	eventsCh, unsub := hub.Subscribe()
 	defer unsub()
 
+	statusSvc := status.NewService(status.NewStorage(sqlDB))
+	blackboardSvc := blackboard.NewService(blackboard.NewStorage(sqlDB))
+	plansSvc := plans.NewService(plans.NewStorage(sqlDB))
+	workspacesSvc := workspaces.NewService(wsStore)
+	statusSvc.SetPublisher(hub)
+	blackboardSvc.SetPublisher(hub)
+	plansSvc.SetPublisher(hub)
+	workspacesSvc.SetPublisher(hub)
+
 	authn := auth.NewAuthenticator("rootkey", apikeys.NewStorage(sqlDB))
 	webMux := http.NewServeMux()
 	apiMux := http.NewServeMux()
 	RegisterRoutes(webMux, apiMux,
-		status.NewHandler(status.NewService(status.NewStorage(sqlDB)), authn),
-		blackboard.NewHandler(blackboard.NewService(blackboard.NewStorage(sqlDB)), authn),
-		plans.NewHandler(plans.NewService(plans.NewStorage(sqlDB)), authn),
-		workspaces.NewHandler(workspaces.NewService(wsStore), authn),
+		status.NewHandler(statusSvc, authn),
+		blackboard.NewHandler(blackboardSvc, authn),
+		plans.NewHandler(plansSvc, authn),
+		workspaces.NewHandler(workspacesSvc, authn),
 		nil, nil)
 	root := http.NewServeMux()
 	root.Handle("/api/", authn.Middleware(apiMux))
 	root.Handle("/", webMux)
-	root.Handle("/mcp", authn.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Drain like the real MCP handler does — proving the pre-handler
-		// peek spliced the body back intact.
-		io.Copy(io.Discard, r.Body)
-		w.WriteHeader(200)
-	})))
-	ts := httptest.NewServer(events.Middleware(hub, nil, root))
+	ts := httptest.NewServer(events.Middleware(nil, root))
 	defer ts.Close()
 
 	post := func(path, body string) {
@@ -104,8 +107,14 @@ func TestSSEAttributionThroughProductionWiring(t *testing.T) {
 	resp, _ := http.DefaultClient.Do(req)
 	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
-	// MCP envelope attribution.
-	post("/mcp", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"blackboard_read","arguments":{"workspace_id":"ws-a"}}}`)
+	// MCP mutation equivalence: the MCP tool handlers call this same service
+	// method with the request context — the publish is identical.
+	if _, err := blackboardSvc.Write(context.Background(), blackboard.WriteInput{
+		Scope: blackboard.ScopeProject, EntryType: blackboard.TypeFinding,
+		Title: "mcp-equivalent", AuthorAgentID: "t", WorkspaceID: "ws-a",
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	collect()
 	byType := map[string]events.Event{}
@@ -116,7 +125,6 @@ func TestSSEAttributionThroughProductionWiring(t *testing.T) {
 		{"sessions", "ws-a"},
 		{"blackboard", "ws-a"},
 		{"workspaces", "ws-a"},
-		{"change", "ws-a"},
 	} {
 		got := byType[want.typ]
 		if got.Workspace != want.ws {
@@ -128,13 +136,18 @@ func TestSSEAttributionThroughProductionWiring(t *testing.T) {
 	// see the full valid payload (a 400 here would mean the splice broke it).
 	post("/api/plans", `{"name":"integrity","author_agent_id":"a","workspace_id":"ws-a"}`)
 	collect()
-	found := false
+	counts := map[string]int{}
 	for _, ev := range received {
-		if ev.Type == "plans" && ev.Workspace == "ws-a" {
-			found = true
+		if ev.Workspace != "ws-a" {
+			t.Fatalf("unattributed or foreign event leaked: %+v", ev)
 		}
+		counts[ev.Type]++
 	}
-	if !found {
-		t.Fatalf("plans mutation missing or unattributed: %+v", received)
+	// sessions x1 (report), blackboard x2 (HTTP entry + MCP-equivalent service
+	// write), workspaces x1 (HTTP delete), plans x1 (body integrity).
+	for typ, n := range map[string]int{"sessions": 1, "blackboard": 2, "workspaces": 1, "plans": 1} {
+		if counts[typ] != n {
+			t.Fatalf("event %q count %d, want %d (all: %+v)", typ, counts[typ], n, received)
+		}
 	}
 }

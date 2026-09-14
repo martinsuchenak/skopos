@@ -1,12 +1,9 @@
 package events
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/auth"
@@ -38,8 +35,9 @@ func StreamHandler(hub *Hub) http.HandlerFunc {
 		var ch <-chan Event
 		var unsub func()
 		if p := auth.PrincipalFromContext(streamCtx); p != nil && !p.Root {
-			principal := p
-			ch, unsub = hub.SubscribeFiltered(principal.CanAccess)
+			// Keyed subscription: scope-filtered and terminated when the
+			// key is revoked (hub.DropKey closes the channel).
+			ch, unsub = hub.SubscribeKeyed(p.KeyID, p.CanAccess)
 		} else {
 			ch, unsub = hub.Subscribe()
 		}
@@ -66,125 +64,21 @@ func StreamHandler(hub *Hub) http.HandlerFunc {
 	}
 }
 
-// Middleware wraps next and publishes an event to hub on successful mutating
-// requests (POST/PATCH/PUT/DELETE with a 2xx response), inferring the event
-// type from the request path. Reads and failures publish nothing.
-func Middleware(hub *Hub, log logger.Logger, next http.Handler) http.Handler {
+// Middleware wraps next for request logging. Event publishing lives in the
+// service layer, where the mutation's workspace is authoritative — inferring
+// it from requests (body peeks, path parsing, JSON-RPC probing) proved
+// fragile and shipped broken once; the services that mutate data now call
+// their Publisher directly.
+func Middleware(log logger.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		// Derive the workspace BEFORE the handler runs: REST handlers drain
-		// r.Body via DecodeJSON, so a post-handler peek would always read
-		// zero bytes (that defect is why attribution never worked).
-		var ws string
-		if isMutation(r.Method) {
-			ws = workspaceOf(r)
-		}
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		if isMutation(r.Method) && rec.status >= 200 && rec.status < 300 {
-			hub.Publish(Event{Type: typeForPath(r.URL.Path), Workspace: ws})
-		}
 		if log != nil {
 			log.Debug("http request", "method", r.Method, "path", r.URL.Path, "status", rec.status, "duration", time.Since(start).String())
 		}
 	})
 }
-
-// workspaceOf derives a mutation's workspace for subscriber filtering:
-// explicit query parameters, URL path segments (codeindex and workspace
-// routes), or the request body (flat JSON workspace_id, or the MCP JSON-RPC
-// envelope's params.arguments). The body is peeked non-destructively BEFORE
-// the handler runs and spliced back with the unread remainder. Empty means
-// unattributed — the hub withholds such events from scoped subscribers.
-func workspaceOf(r *http.Request) string {
-	if ws := r.URL.Query().Get("workspace"); ws != "" {
-		return ws
-	}
-	if ws := r.URL.Query().Get("workspace_id"); ws != "" {
-		return ws
-	}
-	// Path segments, not PathValue: this middleware wraps the outer mux
-	// while route patterns match on the inner one, and the auth
-	// middleware's WithContext rewrap detaches pattern matches from the
-	// request instance seen here.
-	segs := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(segs) >= 3 && segs[0] == "api" && segs[1] == "codeindex" {
-		return strings.ToLower(segs[2])
-	}
-	if len(segs) == 3 && segs[0] == "api" && segs[1] == "workspaces" {
-		return strings.ToLower(segs[2]) // DELETE/PATCH /api/workspaces/{id}
-	}
-	if r.Body == nil {
-		return ""
-	}
-	// Peek a bounded prefix and splice the unread remainder back: replacing
-	// the body wholesale would truncate requests larger than the peek.
-	const peekLimit = 1 << 20
-	body, err := io.ReadAll(io.LimitReader(r.Body, peekLimit))
-	if err != nil {
-		r.Body = struct {
-			io.Reader
-			io.Closer
-		}{io.MultiReader(bytes.NewReader(body), r.Body), r.Body}
-		return ""
-	}
-	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
-	if len(body) == peekLimit {
-		return "" // truncated peek — do not parse a partial document
-	}
-	if strings.HasPrefix(r.URL.Path, "/mcp") {
-		var probe struct {
-			Params struct {
-				Arguments struct {
-					WorkspaceID string `json:"workspace_id"`
-					Workspace   string `json:"workspace"`
-				} `json:"arguments"`
-			} `json:"params"`
-		}
-		if json.Unmarshal(body, &probe) == nil {
-			if probe.Params.Arguments.WorkspaceID != "" {
-				return probe.Params.Arguments.WorkspaceID
-			}
-			return probe.Params.Arguments.Workspace
-		}
-		return ""
-	}
-	var probe struct {
-		WorkspaceID string `json:"workspace_id"`
-		Workspace   string `json:"workspace"`
-	}
-	if json.Unmarshal(body, &probe) != nil {
-		return ""
-	}
-	if probe.WorkspaceID != "" {
-		return probe.WorkspaceID
-	}
-	return probe.Workspace
-}
-
-func isMutation(method string) bool {
-	switch method {
-	case http.MethodPost, http.MethodPatch, http.MethodPut, http.MethodDelete:
-		return true
-	}
-	return false
-}
-
-func typeForPath(path string) string {
-	switch {
-	case strings.HasPrefix(path, "/api/blackboard"):
-		return "blackboard"
-	case strings.HasPrefix(path, "/api/plans"):
-		return "plans"
-	case strings.HasPrefix(path, "/api/workspaces"):
-		return "workspaces"
-	case strings.HasPrefix(path, "/api/sessions"), strings.HasPrefix(path, "/api/reports"):
-		return "sessions"
-	default:
-		return "change"
-	}
-}
-
 // statusRecorder captures the response status. It proxies Flush so streaming
 // handlers (SSE) still work when wrapped.
 type statusRecorder struct {

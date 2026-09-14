@@ -4,19 +4,25 @@ import (
 	"context"
 	"fmt"
 	"github.com/martinsuchenak/skopos/internal/auth"
+	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/martinsuchenak/skopos/internal/ids"
 	"strings"
 	"time"
 )
 
 type Service struct {
-	store Store
-	now   func() time.Time
+	store    Store
+	now      func() time.Time
+	publisher events.Publisher
 }
 
 func NewService(store Store) *Service {
 	return &Service{store: store, now: time.Now}
 }
+
+// SetPublisher installs the event bus; mutations publish with their
+// authoritative workspace. Nil (the default) disables publishing.
+func (s *Service) SetPublisher(p events.Publisher) { s.publisher = p }
 
 func (s *Service) Write(ctx context.Context, input WriteInput) (*WriteResult, error) {
 	input.Scope = Scope(strings.TrimSpace(string(input.Scope)))
@@ -81,6 +87,9 @@ func (s *Service) Write(ctx context.Context, input WriteInput) (*WriteResult, er
 	}
 	if err := s.store.Write(ctx, entry); err != nil {
 		return nil, err
+	}
+	if s.publisher != nil {
+		s.publisher.Publish(events.Event{Type: events.TypeBlackboard, Workspace: entry.WorkspaceID})
 	}
 	return &WriteResult{ID: entry.ID, Scope: entry.Scope}, nil
 }
@@ -156,10 +165,17 @@ func (s *Service) Promote(ctx context.Context, id string) error {
 	if id == "" {
 		return fmt.Errorf("%w: id is required", ErrInvalidInput)
 	}
-	if err := s.requireEntryScope(ctx, id); err != nil {
+	entry, scopeErr := s.requireEntryScopeValue(ctx, id)
+	if scopeErr != nil {
+		return scopeErr
+	}
+	if err := s.store.Promote(ctx, id); err != nil {
 		return err
 	}
-	return s.store.Promote(ctx, id)
+	if s.publisher != nil && entry != nil {
+		s.publisher.Publish(events.Event{Type: events.TypeBlackboard, Workspace: entry.WorkspaceID})
+	}
+	return nil
 }
 
 func (s *Service) Delete(ctx context.Context, id string) error {
@@ -167,21 +183,32 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if id == "" {
 		return fmt.Errorf("%w: id is required", ErrInvalidInput)
 	}
-	if err := s.requireEntryScope(ctx, id); err != nil {
+	entry, scopeErr := s.requireEntryScopeValue(ctx, id)
+	if scopeErr != nil {
+		return scopeErr
+	}
+	if err := s.store.Delete(ctx, id); err != nil {
 		return err
 	}
-	return s.store.Delete(ctx, id)
+	if s.publisher != nil && entry != nil {
+		s.publisher.Publish(events.Event{Type: events.TypeBlackboard, Workspace: entry.WorkspaceID})
+	}
+	return nil
 }
 
 // requireEntryScope authorizes a by-id operation against the entry's
 // workspace; unknown ids surface ErrNotFound before any scope decision so
-// existence is not leaked across tenants.
-func (s *Service) requireEntryScope(ctx context.Context, id string) error {
+// existence is not leaked across tenants. It returns the loaded entry for
+// callers that publish the mutation event afterwards.
+func (s *Service) requireEntryScopeValue(ctx context.Context, id string) (*Entry, error) {
 	entry, err := s.store.Get(ctx, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return auth.RequireWorkspace(ctx, entry.WorkspaceID)
+	if err := auth.RequireWorkspace(ctx, entry.WorkspaceID); err != nil {
+		return nil, err
+	}
+	return entry, nil
 }
 
 func validScope(s Scope) bool {

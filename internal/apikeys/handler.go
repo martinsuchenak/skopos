@@ -5,18 +5,25 @@ import (
 	"net/http"
 
 	"github.com/martinsuchenak/skopos/internal/auth"
+	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/martinsuchenak/skopos/internal/rest"
 	"github.com/martinsuchenak/skopos/internal/workspaces"
 )
 
 type Handler struct {
-	service    *Service
-	registry   *workspaces.Service
+	service  *Service
+	registry *workspaces.Service
+	publish  events.Publisher
 }
 
 func NewHandler(service *Service, registry *workspaces.Service) *Handler {
 	return &Handler{service: service, registry: registry}
 }
+
+// SetPublisher installs the event bus; key lifecycle publishes an
+// unattributed change event (the surface is root-only, so delivery is
+// root-only under fail-closed filtering).
+func (h *Handler) SetPublisher(p events.Publisher) { h.publish = p }
 
 // requireRoot gates key management: only the root key may mint or revoke
 // keys. The router middleware has already authenticated the request; the
@@ -60,6 +67,9 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		rest.InternalError(w, err)
 		return
 	}
+	if h.publish != nil {
+		h.publish.Publish(events.Event{Type: events.TypeChange})
+	}
 	rest.RespondJSON(w, http.StatusCreated, result)
 }
 
@@ -93,6 +103,9 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 		}
 		rest.InternalError(w, err)
 		return
+	}
+	if h.publish != nil {
+		h.publish.Publish(events.Event{Type: events.TypeChange})
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
