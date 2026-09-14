@@ -131,6 +131,11 @@ func (s *Storage) List(ctx context.Context) ([]Key, error) {
 		if err != nil {
 			return nil, err
 		}
+		// All-workspaces keys carry no explicit scope rows; emit [] rather
+		// than null so every client can treat workspaces as a list.
+		if k.Workspaces == nil {
+			k.Workspaces = []string{}
+		}
 		out = append(out, k)
 	}
 	return out, rows.Err()
@@ -215,6 +220,9 @@ func (s *Storage) Get(ctx context.Context, id string) (Key, error) {
 	}
 	if k.Workspaces, err = s.listWorkspaces(ctx, id); err != nil {
 		return k, err
+	}
+	if k.Workspaces == nil {
+		k.Workspaces = []string{}
 	}
 	return k, nil
 }

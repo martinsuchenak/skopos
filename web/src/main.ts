@@ -553,7 +553,7 @@ const appState = () => ({
     }
   },
   keyScope(k: ApiKey): string {
-    return k.all_workspaces ? '* (all workspaces)' : k.workspaces.join(', ');
+    return k.all_workspaces ? '* (all workspaces)' : (k.workspaces || []).join(', ');
   },
   openNewKeyModal() {
     this.keyForm = { name: '', all: false, workspaces: [] };
@@ -608,7 +608,7 @@ const appState = () => ({
 
   // ---- edit key ----
   openEditKeyModal(k: ApiKey) {
-    this.editKeyForm = { id: k.id, name: k.name, all: k.all_workspaces, workspaces: [...k.workspaces] };
+    this.editKeyForm = { id: k.id, name: k.name, all: k.all_workspaces, workspaces: [...(k.workspaces || [])] };
     this.editKeyErrors = {};
     this.showEditKeyModal = true;
   },

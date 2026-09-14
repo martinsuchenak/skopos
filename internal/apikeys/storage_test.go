@@ -68,3 +68,26 @@ var _ auth.KeyLookup = (*Storage)(nil)
 func HashKeyForTest(secret string) string {
 	return auth.HashKey(secret)
 }
+
+// TestListAllWorkspacesKeyEmitsEmptySlice pins the API contract: an
+// all-workspaces key has no scope rows, and List must emit [] (not null) so
+// every client can treat workspaces as a list (regression: the dashboard's
+// list rendering crashed on null and showed no keys at all).
+func TestListAllWorkspacesKeyEmitsEmptySlice(t *testing.T) {
+	s := testStorage(t)
+	ctx := context.Background()
+	now := "2026-09-14T00:00:00Z"
+	s.db.ExecContext(ctx, `INSERT INTO api_keys (id, name, key_hash, key_prefix, all_workspaces, created_at)
+		VALUES ('ka', 'all', 'h', 'sk_p', 1, ?)`, now)
+	keys, err := s.List(ctx)
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("list: %+v %v", keys, err)
+	}
+	if keys[0].Workspaces == nil || len(keys[0].Workspaces) != 0 {
+		t.Fatalf("all-workspaces key must emit [], got %#v", keys[0].Workspaces)
+	}
+	got, err := s.Get(ctx, "ka")
+	if err != nil || got.Workspaces == nil {
+		t.Fatalf("get: %+v %v", got, err)
+	}
+}
