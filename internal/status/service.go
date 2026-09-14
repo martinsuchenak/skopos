@@ -147,11 +147,34 @@ func (s *Service) ListEvents(ctx context.Context, sessionID string) ([]Event, er
 	if sessionID == "" {
 		return nil, fmt.Errorf("%w: session_id is required", ErrInvalidInput)
 	}
+	// Authorize against the session's workspace; unknown ids report
+	// not-found first so existence is not leaked across tenants.
+	session, err := s.store.GetSession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if err := auth.RequireWorkspace(ctx, session.Workspace); err != nil {
+		return nil, err
+	}
 	return s.store.ListEvents(ctx, sessionID)
 }
 
 func (s *Service) ListActiveAgents(ctx context.Context) ([]ActiveAgent, error) {
-	return s.store.ListActiveAgents(ctx)
+	agents, err := s.store.ListActiveAgents(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !auth.ScopedContext(ctx) {
+		return agents, nil
+	}
+	p := auth.PrincipalFromContext(ctx)
+	out := make([]ActiveAgent, 0, len(agents))
+	for _, a := range agents {
+		if p.CanAccess(a.Workspace) {
+			out = append(out, a)
+		}
+	}
+	return out, nil
 }
 func (s *Service) DeleteSession(ctx context.Context, id string) error {
 	id = strings.TrimSpace(id)

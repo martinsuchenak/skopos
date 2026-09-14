@@ -68,3 +68,44 @@ func TestStatusWorkspaceScopeMatrix(t *testing.T) {
 		}
 	}
 }
+
+func TestStatusListEventsAndActiveAgentsScoped(t *testing.T) {
+	svc := NewService(testStorage(t))
+	ctx := context.Background()
+
+	own, err := svc.Report(scopedCtx(), ReportInput{
+		AgentID: "a", AgentType: "zcode", Workspace: "ws-a", Status: StatusRunning,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := svc.Report(ctx, ReportInput{
+		AgentID: "f", AgentType: "zcode", Workspace: "ws-b", Status: StatusRunning,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// ListEvents on a foreign session is out of scope (404 semantics).
+	if _, err := svc.ListEvents(scopedCtx(), foreign.SessionID); !errors.Is(err, auth.ErrOutOfScope) {
+		t.Fatalf("foreign ListEvents: %v", err)
+	}
+	if _, err := svc.ListEvents(scopedCtx(), own.SessionID); err != nil {
+		t.Fatalf("own ListEvents: %v", err)
+	}
+
+	// ListActiveAgents returns only the caller's workspace's agents.
+	agents, err := svc.ListActiveAgents(scopedCtx())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range agents {
+		if a.Workspace != "ws-a" {
+			t.Fatalf("ListActiveAgents leaked agent from %q", a.Workspace)
+		}
+	}
+	all, err := svc.ListActiveAgents(ctx)
+	if err != nil || len(all) != 2 {
+		t.Fatalf("root/internal must see all agents: %+v %v", all, err)
+	}
+}

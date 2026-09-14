@@ -4,7 +4,8 @@ import "sync"
 
 // Event is a change notification pushed to connected SSE clients. Workspace
 // carries the mutation's scope when the middleware could derive it; scoped
-// subscribers do not receive events for workspaces outside their key.
+// subscribers receive only events whose workspace they can access, and
+// unattributed events reach unfiltered (root/internal) subscribers only.
 type Event struct {
 	Type      string `json:"type"`
 	Workspace string `json:"workspace,omitempty"`
@@ -23,9 +24,11 @@ func NewHub() *Hub {
 	return &Hub{subscribers: make(map[chan Event]struct{}), filters: make(map[chan Event]func(string) bool)}
 }
 
-// SubscribeFiltered behaves like Subscribe but drops events whose workspace
-// is outside the filter (empty-workspace events always pass: they are either
-// unattributed or global signals, and carry no data).
+// SubscribeFiltered behaves like Subscribe but enforces tenant isolation:
+// the subscriber receives only events attributed to a workspace the filter
+// accepts. Unattributed (empty-workspace) events are withheld — a scoped
+// subscriber cannot verify their ownership, so delivery fails closed.
+// Unfiltered (root/internal) subscribers receive everything.
 func (h *Hub) SubscribeFiltered(canAccess func(workspace string) bool) (<-chan Event, func()) {
 	ch := make(chan Event, 16)
 	h.mu.Lock()
@@ -98,8 +101,10 @@ func (h *Hub) Publish(e Event) {
 		return
 	}
 	for ch := range h.subscribers {
-		if ws := e.Workspace; ws != "" {
-			if f, ok := h.filters[ch]; ok && f != nil && !f(ws) {
+		if f, ok := h.filters[ch]; ok && f != nil {
+			// Scoped subscriber: fail closed — only attributed, in-scope
+			// events are delivered.
+			if e.Workspace == "" || !f(e.Workspace) {
 				continue
 			}
 		}

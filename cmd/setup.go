@@ -322,14 +322,16 @@ func writeClientConfig(path, serverURL, apiKey string) error {
 		}
 		updated = existing + "\n" + block
 	}
-	mode := os.FileMode(0o644)
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		mode = 0o600
-	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil && filepath.Dir(path) != "." {
 		return err
 	}
-	return os.WriteFile(path, []byte(updated), mode)
+	// Owner-only on every write, not just creation: the file may embed an
+	// API key, and a merge into a pre-existing looser file must not keep
+	// the loose permissions (mirrors writeFilePrivate).
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }
 
 // replaceClientSection swaps the [client] block (until the next section or

@@ -72,10 +72,17 @@ func StreamHandler(hub *Hub) http.HandlerFunc {
 func Middleware(hub *Hub, log logger.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		// Derive the workspace BEFORE the handler runs: REST handlers drain
+		// r.Body via DecodeJSON, so a post-handler peek would always read
+		// zero bytes (that defect is why attribution never worked).
+		var ws string
+		if isMutation(r.Method) {
+			ws = workspaceOf(r)
+		}
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
 		if isMutation(r.Method) && rec.status >= 200 && rec.status < 300 {
-			hub.Publish(Event{Type: typeForPath(r.URL.Path), Workspace: workspaceOf(r)})
+			hub.Publish(Event{Type: typeForPath(r.URL.Path), Workspace: ws})
 		}
 		if log != nil {
 			log.Debug("http request", "method", r.Method, "path", r.URL.Path, "status", rec.status, "duration", time.Since(start).String())
@@ -84,30 +91,37 @@ func Middleware(hub *Hub, log logger.Logger, next http.Handler) http.Handler {
 }
 
 // workspaceOf derives a mutation's workspace for subscriber filtering:
-// the codeindex path parameter, the workspace query parameter, or the JSON
-// body's workspace_id (peeked non-destructively, bounded). Empty means
-// unattributed — such events carry no data and always pass filters.
+// explicit query parameters, URL path segments (codeindex and workspace
+// routes), or the request body (flat JSON workspace_id, or the MCP JSON-RPC
+// envelope's params.arguments). The body is peeked non-destructively BEFORE
+// the handler runs and spliced back with the unread remainder. Empty means
+// unattributed — the hub withholds such events from scoped subscribers.
 func workspaceOf(r *http.Request) string {
-	if rest := r.PathValue("workspace"); rest != "" {
-		return strings.ToLower(rest)
-	}
 	if ws := r.URL.Query().Get("workspace"); ws != "" {
 		return ws
 	}
 	if ws := r.URL.Query().Get("workspace_id"); ws != "" {
 		return ws
 	}
+	// Path segments, not PathValue: this middleware wraps the outer mux
+	// while route patterns match on the inner one, and the auth
+	// middleware's WithContext rewrap detaches pattern matches from the
+	// request instance seen here.
+	segs := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(segs) >= 3 && segs[0] == "api" && segs[1] == "codeindex" {
+		return strings.ToLower(segs[2])
+	}
+	if len(segs) == 3 && segs[0] == "api" && segs[1] == "workspaces" {
+		return strings.ToLower(segs[2]) // DELETE/PATCH /api/workspaces/{id}
+	}
 	if r.Body == nil {
 		return ""
 	}
 	// Peek a bounded prefix and splice the unread remainder back: replacing
-	// the body wholesale would truncate requests larger than the peek
-	// (blob uploads, MCP calls). Parsing is skipped for truncated peeks —
-	// a workspace_id that far into a body is not worth the risk.
+	// the body wholesale would truncate requests larger than the peek.
 	const peekLimit = 1 << 20
 	body, err := io.ReadAll(io.LimitReader(r.Body, peekLimit))
 	if err != nil {
-		// The original body may still hold unread bytes; splice what we got.
 		r.Body = struct {
 			io.Reader
 			io.Closer
@@ -117,6 +131,23 @@ func workspaceOf(r *http.Request) string {
 	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
 	if len(body) == peekLimit {
 		return "" // truncated peek — do not parse a partial document
+	}
+	if strings.HasPrefix(r.URL.Path, "/mcp") {
+		var probe struct {
+			Params struct {
+				Arguments struct {
+					WorkspaceID string `json:"workspace_id"`
+					Workspace   string `json:"workspace"`
+				} `json:"arguments"`
+			} `json:"params"`
+		}
+		if json.Unmarshal(body, &probe) == nil {
+			if probe.Params.Arguments.WorkspaceID != "" {
+				return probe.Params.Arguments.WorkspaceID
+			}
+			return probe.Params.Arguments.Workspace
+		}
+		return ""
 	}
 	var probe struct {
 		WorkspaceID string `json:"workspace_id"`

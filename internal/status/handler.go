@@ -97,11 +97,14 @@ func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	events, err := h.service.ListEvents(r.Context(), r.PathValue("id"))
 	if err != nil {
-		if errors.Is(err, ErrInvalidInput) {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
-			return
+		case errors.Is(err, ErrNotFound), errors.Is(err, auth.ErrOutOfScope):
+			rest.RespondError(w, http.StatusNotFound, err.Error())
+		default:
+			rest.InternalError(w, err)
 		}
-		rest.InternalError(w, err)
 		return
 	}
 	if events == nil {
