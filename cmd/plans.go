@@ -37,8 +37,8 @@ func planCreateCmd() *cli.Command {
 		Name:  "create",
 		Usage: "Create a new plan",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}},
-			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "name", Usage: "Plan name"},
 			&cli.StringFlag{Name: "branch", Usage: "Branch name (omit for project-wide)"},
 			&cli.StringFlag{Name: "description", Usage: "Optional description"},
@@ -69,8 +69,8 @@ func planListCmd() *cli.Command {
 		Name:  "list",
 		Usage: "List plans",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}},
-			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "branch", Usage: "Filter by branch name"},
 			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID"},
 		},
@@ -99,8 +99,8 @@ func planShowCmd() *cli.Command {
 		Name:  "show",
 		Usage: "Show a plan with its items",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}},
-			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "id", Usage: "Plan ID"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
@@ -137,8 +137,8 @@ func planDoneCmd() *cli.Command {
 		Name:  "done",
 		Usage: "Mark a plan as completed",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}},
-			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "id", Usage: "Plan ID"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
@@ -157,8 +157,8 @@ func planArchiveCmd() *cli.Command {
 		Name:  "archive",
 		Usage: "Archive a plan (done or abandoned)",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}},
-			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "id", Usage: "Plan ID"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
@@ -191,8 +191,8 @@ func planItemAddCmd() *cli.Command {
 		Name:  "add",
 		Usage: "Add an item to a plan",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}},
-			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "plan-id", Usage: "Plan ID"},
 			&cli.StringFlag{Name: "title", Usage: "Item title"},
 			&cli.StringFlag{Name: "description", Usage: "Optional description"},
@@ -221,8 +221,8 @@ func planItemDoneCmd() *cli.Command {
 		Name:  "done",
 		Usage: "Mark an item as done",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}},
-			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "plan-id", Usage: "Plan ID"},
 			&cli.StringFlag{Name: "item-id", Usage: "Item ID"},
 		},
@@ -244,8 +244,8 @@ func planItemClaimCmd() *cli.Command {
 		Name:  "claim",
 		Usage: "Claim an item as being worked on",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}},
-			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "plan-id", Usage: "Plan ID"},
 			&cli.StringFlag{Name: "item-id", Usage: "Item ID"},
 			&cli.StringFlag{Name: "agent-id", Usage: "Agent identifier", EnvVars: []string{"SKOPOS_AGENT_ID"}},
@@ -269,8 +269,8 @@ func planItemUnclaimCmd() *cli.Command {
 		Name:  "unclaim",
 		Usage: "Release claim on an item",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}},
-			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "plan-id", Usage: "Plan ID"},
 			&cli.StringFlag{Name: "item-id", Usage: "Item ID"},
 		},
@@ -293,8 +293,8 @@ func planItemBlockCmd() *cli.Command {
 		Name:  "block",
 		Usage: "Mark an item as blocked",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}},
-			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "plan-id", Usage: "Plan ID"},
 			&cli.StringFlag{Name: "item-id", Usage: "Item ID"},
 		},

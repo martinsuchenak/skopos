@@ -21,8 +21,8 @@ func reportCmd() *cli.Command {
 		Name:  "report",
 		Usage: "Report an AI agent status update to skopos",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}},
-			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "session-id", Usage: "Session identifier"},
 			&cli.StringFlag{Name: "agent-id", Usage: "Stable agent identifier"},
 			&cli.StringFlag{Name: "agent-type", Usage: "Agent type, such as codex, gemini, claude-code, opencode, kiro, or praxis"},
