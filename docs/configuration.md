@@ -82,5 +82,6 @@ SQLite with WAL journal mode, foreign keys enforced per-connection (via DSN prag
 
 Besides the root `api_key`, the server supports scoped API keys stored in
 the database — see [concepts/api-keys.md](concepts/api-keys.md). The root
-key stays in configuration and is the only key that can mint or revoke
-others. `last_used_at` is updated at most once per 5 minutes per key.
+key stays in configuration and is the only key that can mint, edit, revoke,
+or delete others; generate a strong one with `skopos key generate-root`.
+`last_used_at` is updated at most once per 5 minutes per key.

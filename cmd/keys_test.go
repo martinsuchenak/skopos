@@ -90,6 +90,28 @@ func TestKeysLifecycleEndToEnd(t *testing.T) {
 		t.Fatalf("scoped whoami: %+v", who)
 	}
 
+	// Edit: rescope to github.com/o/b, verify via whoami.
+	if _, err2 := http.NewRequest(http.MethodPost, ts.URL+"/api/workspaces", nil); err2 != nil {
+		t.Fatal(err2)
+	}
+	if err := keysDo(ctx, ts.URL, "rootkey1", http.MethodPost, "/api/workspaces", map[string]any{"id": "github.com/o/b"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var edited apikeys.Key
+	if err := keysDo(ctx, ts.URL, "rootkey1", http.MethodPatch, "/api/keys/"+created.Key.ID,
+		map[string]any{"name": "ci-renamed", "workspaces": []string{"github.com/o/b"}}, &edited); err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	if edited.Name != "ci-renamed" || len(edited.Workspaces) != 1 || edited.Workspaces[0] != "github.com/o/b" {
+		t.Fatalf("edited key: %+v", edited)
+	}
+	if err := keysDo(ctx, ts.URL, created.Secret, http.MethodGet, "/api/whoami", nil, &who); err != nil {
+		t.Fatalf("whoami after edit: %v", err)
+	}
+	if len(who.Workspaces) != 1 || who.Workspaces[0].ID != "github.com/o/b" {
+		t.Fatalf("rescope must apply immediately: %+v", who.Workspaces)
+	}
+
 	// Revocation cuts access off.
 	if err := keysDo(ctx, ts.URL, "rootkey1", http.MethodDelete, "/api/keys/"+created.Key.ID, nil, nil); err != nil {
 		t.Fatalf("revoke: %v", err)
@@ -97,12 +119,46 @@ func TestKeysLifecycleEndToEnd(t *testing.T) {
 	if err := keysDo(ctx, ts.URL, created.Secret, http.MethodGet, "/api/whoami", nil, &who); err == nil {
 		t.Fatal("revoked key must not authenticate")
 	}
+
+	// Hard delete removes the row entirely.
+	if err := keysDo(ctx, ts.URL, "rootkey1", http.MethodDelete, "/api/keys/"+created.Key.ID+"?hard=true", nil, nil); err != nil {
+		t.Fatalf("hard delete: %v", err)
+	}
+	var keys []apikeys.Key
+	if err := keysDo(ctx, ts.URL, "rootkey1", http.MethodGet, "/api/keys", nil, &keys); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range keys {
+		if k.ID == created.Key.ID {
+			t.Fatal("hard-deleted key must not be listed")
+		}
+	}
+}
+
+func TestGenerateSecret(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 100; i++ {
+		secret, err := apikeys.GenerateSecret()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(secret) != 46 || !strings.HasPrefix(secret, "sk_") {
+			t.Fatalf("unexpected shape: %q", secret)
+		}
+		if seen[secret] {
+			t.Fatalf("duplicate secret generated: %q", secret)
+		}
+		seen[secret] = true
+	}
 }
 
 func TestKeyCmdsExist(t *testing.T) {
-	if key := keyCmd(); key == nil || key.Name != "key" || len(key.Commands) != 3 {
-		t.Fatal("key command must exist with three subcommands")
+	if key := keyCmd(); key == nil || len(key.Commands) != 6 {
+		t.Fatalf("key command must exist with six subcommands, got %d", len(key.Commands))
 	}
+}
+
+func TestWhoamiCmdExists(t *testing.T) {
 	if w := whoamiCmd(); w == nil || w.Name != "whoami" {
 		t.Fatal("whoami command must exist")
 	}

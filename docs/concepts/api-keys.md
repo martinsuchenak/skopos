@@ -43,13 +43,26 @@ skopos supports two kinds of credential:
 skopos key create --name zcode-laptop --workspace github.com/me/repo   # repeatable
 skopos key create --name ci --all-workspaces
 skopos key list
-skopos key revoke <id>
+skopos key edit <id> --name new-name                                  # partial: only given fields change
+skopos key edit <id> --workspace github.com/me/other                  # replaces the scope list
+skopos key revoke <id>                                                # soft: keeps the audit trail, cuts access
+skopos key delete <id>                                                # hard: removes an old (revoked) key
 skopos whoami
+# offline helper for the server's root credential:
+skopos key generate-root [--quiet]
 ```
 
-REST: `POST/GET /api/keys`, `DELETE /api/keys/{id}`, `GET /api/whoami`.
-Dashboard: the **Keys** view (root key only) mints and revokes keys; the
-workspace filter adapts to the signed-in key's scope.
+Editing takes effect on the key's next request (lookups are not cached);
+revoked keys are frozen — mint a new one instead of editing one back to
+life. Hard-deleting an *active* key is refused unless `--force` is passed,
+because revoking first terminates the key's open SSE streams.
+
+REST: `POST/GET /api/keys`, `PATCH /api/keys/{id}`,
+`DELETE /api/keys/{id}` (revoke) and `DELETE /api/keys/{id}?hard=true`
+(hard delete), `GET /api/whoami`. Dashboard: the **Keys** view (root key
+only) mints, edits, revokes, and deletes keys, with a copy-to-clipboard
+button on the one-time secret; the workspace filter adapts to the
+signed-in key's scope.
 
 The plaintext secret (`sk_…`, 256 bits) is shown exactly once at creation;
 only its SHA-256 hash and a display prefix are stored. Revocation is soft —
@@ -58,8 +71,9 @@ cut off immediately on revocation.
 
 ## Rolling out
 
-1. Deploy with the root key configured (behavior identical to a single-key
-   server until other keys exist).
+1. Generate a root key (`skopos key generate-root`) and configure it on the
+   server (`[auth] api_key` in skopos-config.toml, or `SKOPOS_API_KEY`).
+   Behavior is identical to a single-key server until other keys exist.
 2. Mint one key per agent/machine, scoped to the workspaces it may touch
    (`skopos install --api-key <scoped-key>` wires agents).
 3. Rotate the root key last if desired — the root key is only needed for

@@ -87,7 +87,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (*CreateResult,
 		}
 	}
 
-	secret, err := generateSecret()
+	secret, err := GenerateSecret()
 	if err != nil {
 		return nil, err
 	}
@@ -226,8 +226,10 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	return s.storage.Delete(ctx, id)
 }
 
-// generateSecret produces a key like "sk_" + 43 base64url chars (256 bits).
-func generateSecret() (string, error) {
+// GenerateSecret produces a key like "sk_" + 43 base64url chars (256 bits).
+// Used for scoped keys and for suggesting a root key (skopos key
+// generate-root) — the server treats whatever sits in auth.api_key as root.
+func GenerateSecret() (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", fmt.Errorf("generating key material: %w", err)
