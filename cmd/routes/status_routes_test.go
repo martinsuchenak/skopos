@@ -8,9 +8,11 @@ import (
 	"github.com/martinsuchenak/skopos/internal/status"
 )
 
+
+
 func TestRegisterStatusRoutes(t *testing.T) {
 	mux := http.NewServeMux()
-	registerStatusRoutes(mux, status.NewHandler(status.NewService(&noopStore{}), ""))
+	registerStatusRoutes(mux, status.NewHandler(status.NewService(&noopStore{}), testAuth("")))
 }
 
 type noopStore struct{}

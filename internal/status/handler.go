@@ -10,15 +10,15 @@ import (
 
 type Handler struct {
 	service *Service
-	apiKey  string
+	authn   *auth.Authenticator
 }
 
-func NewHandler(service *Service, apiKey string) *Handler {
-	return &Handler{service: service, apiKey: apiKey}
+func NewHandler(service *Service, authn *auth.Authenticator) *Handler {
+	return &Handler{service: service, authn: authn}
 }
 
 func (h *Handler) authorized(r *http.Request) bool {
-	return auth.Authorize(r, h.apiKey)
+	return h.authn.Authenticate(r) != nil
 }
 
 func (h *Handler) Report(w http.ResponseWriter, r *http.Request) {
@@ -35,11 +35,14 @@ func (h *Handler) Report(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.service.Report(r.Context(), input)
 	if err != nil {
-		if errors.Is(err, ErrInvalidInput) {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
-			return
+		case errors.Is(err, auth.ErrOutOfScope):
+			rest.RespondError(w, http.StatusForbidden, err.Error())
+		default:
+			rest.InternalError(w, err)
 		}
-		rest.InternalError(w, err)
 		return
 	}
 	rest.RespondJSON(w, http.StatusCreated, result)
@@ -53,6 +56,10 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	workspaceID := rest.QueryAlias(r, "workspace_id", "workspace")
 	sessions, err := h.service.ListSessions(r.Context(), workspaceID)
 	if err != nil {
+		if errors.Is(err, auth.ErrOutOfScope) {
+			rest.RespondError(w, http.StatusForbidden, err.Error())
+			return
+		}
 		rest.InternalError(w, err)
 		return
 	}
@@ -69,7 +76,7 @@ func (h *Handler) GetSession(w http.ResponseWriter, r *http.Request) {
 	}
 	session, err := h.service.GetSession(r.Context(), r.PathValue("id"))
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope) {
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 			return
 		}
@@ -109,7 +116,7 @@ func (h *Handler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.service.DeleteSession(r.Context(), r.PathValue("id")); err != nil {
-		if errors.Is(err, ErrNotFound) {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope) {
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 			return
 		}

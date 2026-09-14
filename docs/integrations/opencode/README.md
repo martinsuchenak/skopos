@@ -8,6 +8,9 @@
 
 > **Quick install:** `skopos install --agent opencode [--url ...] [--api-key "$SKOPOS_API_KEY"]` does this for you — it merges the MCP config into `~/.config/opencode/opencode.json` (idempotent, backs up existing config). Add `--scope project` to write into `./opencode.json`. The manual steps below are the fallback.
 
+> **Scoped keys:** prefer minting a per-machine key with `skopos key create --workspace <id>` over sharing the root key — see [concepts/api-keys.md](../concepts/api-keys.md).
+
+
 ## Step 1: Apply MCP config
 
 Add the `skopos` entry from `config-snippet.json` into the `mcp` section of `~/.config/opencode/opencode.json`:

@@ -77,3 +77,10 @@ When empty (default), authentication is disabled — all endpoints are open. A s
 ## Database
 
 SQLite with WAL journal mode, foreign keys enforced per-connection (via DSN pragma), and a bounded connection pool. Migrations run automatically on every `serve` (idempotent `CREATE TABLE IF NOT EXISTS`). The schema lives in `internal/db/schema.sql`.
+
+## API keys
+
+Besides the root `api_key`, the server supports scoped API keys stored in
+the database — see [concepts/api-keys.md](concepts/api-keys.md). The root
+key stays in configuration and is the only key that can mint or revoke
+others. `last_used_at` is updated at most once per 5 minutes per key.

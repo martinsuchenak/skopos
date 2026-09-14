@@ -1,6 +1,9 @@
 package status
 
 import (
+	"sort"
+
+	"github.com/martinsuchenak/skopos/internal/auth"
 	"context"
 	"errors"
 	"fmt"
@@ -70,6 +73,20 @@ func (s *Service) Report(ctx context.Context, input ReportInput) (*ReportResult,
 		GitBranch:   normalized.GitBranch,
 	}
 
+	// Scope enforcement + server-stamped provenance: the resolved key is
+	// recorded by the server, giving an audit counterpart to the
+	// client-asserted author_agent_id.
+	if err := auth.RequireWorkspace(ctx, normalized.Workspace); err != nil {
+		return nil, err
+	}
+	if p := auth.PrincipalFromContext(ctx); p != nil && !p.Root {
+		if normalized.Metadata == nil {
+			normalized.Metadata = map[string]any{}
+		}
+		normalized.Metadata["auth_key"] = map[string]any{"id": p.KeyID, "name": p.Name}
+		event.Metadata = normalized.Metadata
+	}
+
 	if err := s.store.RecordReport(ctx, event, sessionTitle(normalized)); err != nil {
 		return nil, err
 	}
@@ -83,7 +100,31 @@ func (s *Service) Report(ctx context.Context, input ReportInput) (*ReportResult,
 }
 
 func (s *Service) ListSessions(ctx context.Context, workspaceID string) ([]SessionSummary, error) {
-	return s.store.ListSessions(ctx, workspaceID)
+	if workspaceID != "" {
+		if err := auth.RequireWorkspace(ctx, workspaceID); err != nil {
+			return nil, err
+		}
+		return s.store.ListSessions(ctx, workspaceID)
+	}
+	if !auth.ScopedContext(ctx) {
+		return s.store.ListSessions(ctx, workspaceID)
+	}
+	var merged []SessionSummary
+	seen := map[string]bool{}
+	for _, ws := range auth.PrincipalFromContext(ctx).WorkspaceList() {
+		sessions, err := s.store.ListSessions(ctx, ws)
+		if err != nil {
+			return nil, err
+		}
+		for _, sess := range sessions {
+			if !seen[sess.ID] {
+				seen[sess.ID] = true
+				merged = append(merged, sess)
+			}
+		}
+	}
+	sort.SliceStable(merged, func(i, j int) bool { return merged[i].UpdatedAt.After(merged[j].UpdatedAt) })
+	return merged, nil
 }
 
 func (s *Service) GetSession(ctx context.Context, id string) (*SessionDetail, error) {
@@ -91,7 +132,14 @@ func (s *Service) GetSession(ctx context.Context, id string) (*SessionDetail, er
 	if id == "" {
 		return nil, fmt.Errorf("%w: session_id is required", ErrInvalidInput)
 	}
-	return s.store.GetSession(ctx, id)
+	session, err := s.store.GetSession(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := auth.RequireWorkspace(ctx, session.Workspace); err != nil {
+		return nil, err
+	}
+	return session, nil
 }
 
 func (s *Service) ListEvents(ctx context.Context, sessionID string) ([]Event, error) {
@@ -109,6 +157,15 @@ func (s *Service) DeleteSession(ctx context.Context, id string) error {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return fmt.Errorf("%w: session_id is required", ErrInvalidInput)
+	}
+	// Authorize before deleting; unknown ids report not-found first so
+	// existence is not leaked across tenants.
+	session, err := s.store.GetSession(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := auth.RequireWorkspace(ctx, session.Workspace); err != nil {
+		return err
 	}
 	return s.store.DeleteSession(ctx, id)
 }

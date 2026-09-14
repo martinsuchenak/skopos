@@ -8,6 +8,9 @@
 
 > **Quick install:** `skopos install --agent gemini-cli [--url ...] [--api-key "$SKOPOS_API_KEY"]` does this for you — it merges the MCP config into `~/.gemini/settings.json` and manages the behavioral block in `~/.gemini/GEMINI.md` between `<!-- skopos:begin -->` / `<!-- skopos:end -->` markers (idempotent, backs up existing config). Add `--scope project` to write into `.gemini/`. The manual steps below are the fallback.
 
+> **Scoped keys:** prefer minting a per-machine key with `skopos key create --workspace <id>` over sharing the root key — see [concepts/api-keys.md](../concepts/api-keys.md).
+
+
 ## Step 1: Apply MCP config
 
 Add the `skopos` entry from `settings-snippet.json` into the `mcpServers` section of `~/.gemini/settings.json`:

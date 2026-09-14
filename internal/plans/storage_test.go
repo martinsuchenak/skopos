@@ -657,7 +657,7 @@ func TestStorageConcurrentClaimsExactlyOneWinner(t *testing.T) {
 	st := testFileStorage(t)
 	ctx := context.Background()
 	svc := NewService(st)
-	plan, err := svc.CreatePlan(ctx, CreatePlanInput{Name: "P", AuthorAgentID: "a"})
+	plan, err := svc.CreatePlan(ctx, CreatePlanInput{Name: "P", AuthorAgentID: "a", WorkspaceID: "ws-x"})
 	if err != nil {
 		t.Fatalf("create plan: %v", err)
 	}

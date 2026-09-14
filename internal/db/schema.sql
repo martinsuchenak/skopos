@@ -139,3 +139,25 @@ CREATE TABLE IF NOT EXISTS workspaces (
     git_url    TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
+
+-- API keys: scoped credentials replacing the single shared root key
+-- (docs/design/api-keys.md). Plaintext keys are never stored — only the
+-- SHA-256 hash and a display prefix. Revocation is soft (audit trail).
+CREATE TABLE IF NOT EXISTS api_keys (
+    id             TEXT PRIMARY KEY,
+    name           TEXT NOT NULL,
+    key_hash       TEXT NOT NULL UNIQUE,
+    key_prefix     TEXT NOT NULL,
+    all_workspaces INTEGER NOT NULL DEFAULT 0,
+    created_at     TEXT NOT NULL,
+    last_used_at   TEXT,
+    revoked_at     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
+
+CREATE TABLE IF NOT EXISTS api_key_workspaces (
+    api_key_id   TEXT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+    workspace_id TEXT NOT NULL,
+    PRIMARY KEY (api_key_id, workspace_id)
+);

@@ -16,6 +16,8 @@ path = "skopos.db"
 # authentication and is only allowed on loopback binds unless the server is
 # started with --insecure-no-api-key.
 api_key = ""
+# ^ The ROOT key: full access plus exclusive key/workspace management.
+# Mint per-agent scoped keys after startup: skopos key create (docs/concepts/api-keys.md)
 
 [health]
 stuck_threshold_minutes = 15

@@ -32,6 +32,7 @@ type Store interface {
 	ListPlanDependencies(ctx context.Context, planID string) ([]string, error)
 	ListPlanDependents(ctx context.Context, planID string) ([]string, error)
 	PlanStatus(ctx context.Context, planID string) (PlanStatus, error)
+	PlanWorkspace(ctx context.Context, planID string) (string, error)
 	SetPlanStatus(ctx context.Context, planID string, status PlanStatus) error
 	PlanExists(ctx context.Context, planID string) (bool, error)
 	AllItemsDone(ctx context.Context, planID string) (bool, error)
@@ -514,6 +515,22 @@ func (s *Storage) ListPlanDependents(ctx context.Context, planID string) ([]stri
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// PlanWorkspace returns the plan's workspace scope for authorization.
+func (s *Storage) PlanWorkspace(ctx context.Context, planID string) (string, error) {
+	var ws sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT workspace_id FROM plans WHERE id = ?`, planID).Scan(&ws)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("%w: plan %s", ErrNotFound, planID)
+	}
+	if err != nil {
+		return "", err
+	}
+	if ws.Valid {
+		return ws.String, nil
+	}
+	return "", nil
 }
 
 func (s *Storage) PlanStatus(ctx context.Context, planID string) (PlanStatus, error) {

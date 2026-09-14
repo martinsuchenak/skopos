@@ -3,6 +3,7 @@ package blackboard
 import (
 	"context"
 	"fmt"
+	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/ids"
 	"strings"
 	"time"
@@ -44,6 +45,14 @@ func (s *Service) Write(ctx context.Context, input WriteInput) (*WriteResult, er
 	if input.Scope == ScopeSession && input.SessionID == "" {
 		return nil, fmt.Errorf("%w: session_id is required when scope=session", ErrInvalidInput)
 	}
+	// Writes are workspace-scoped for every principal, root included: an
+	// unscoped entry would render into every workspace's knowledge bundle.
+	if input.WorkspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace_id is required on writes (derive it with `skopos workspace` or the git remote)", ErrInvalidInput)
+	}
+	if err := auth.RequireWorkspace(ctx, input.WorkspaceID); err != nil {
+		return nil, err
+	}
 	// Validate session_id references an existing session before the INSERT hits the FK.
 	if input.SessionID != "" {
 		exists, err := s.store.SessionExists(ctx, input.SessionID)
@@ -79,7 +88,12 @@ func (s *Service) Write(ctx context.Context, input WriteInput) (*WriteResult, er
 func (s *Service) Bundle(ctx context.Context, workspaceID, branchName, sessionID string) (*Bundle, error) {
 	branchName = strings.TrimSpace(branchName)
 	sessionID = strings.TrimSpace(sessionID)
-	entries, err := s.store.Bundle(ctx, workspaceID, branchName, sessionID)
+	if workspaceID != "" {
+		if err := auth.RequireWorkspace(ctx, workspaceID); err != nil {
+			return nil, err
+		}
+	}
+	entries, err := s.bundleEntries(ctx, workspaceID, branchName, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -92,13 +106,58 @@ func (s *Service) Bundle(ctx context.Context, workspaceID, branchName, sessionID
 	}, nil
 }
 
+// bundleEntries reads across the caller's scope: an explicit workspace uses
+// one query; a scoped key with no filter enumerates its workspaces so the
+// unscoped read returns exactly the key's slice, never other tenants' data.
+func (s *Service) bundleEntries(ctx context.Context, workspaceID, branchName, sessionID string) ([]Entry, error) {
+	if workspaceID != "" || !auth.ScopedContext(ctx) {
+		return s.store.Bundle(ctx, workspaceID, branchName, sessionID)
+	}
+	var merged []Entry
+	seen := map[string]bool{}
+	for _, ws := range auth.PrincipalFromContext(ctx).WorkspaceList() {
+		entries, err := s.store.Bundle(ctx, ws, branchName, sessionID)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range entries {
+			if !seen[e.ID] {
+				seen[e.ID] = true
+				merged = append(merged, e)
+			}
+		}
+	}
+	return merged, nil
+}
+
 func (s *Service) Search(ctx context.Context, f SearchFilters) ([]Entry, error) {
-	return s.store.Search(ctx, f)
+	if f.WorkspaceID != "" {
+		if err := auth.RequireWorkspace(ctx, f.WorkspaceID); err != nil {
+			return nil, err
+		}
+		return s.store.Search(ctx, f)
+	}
+	if !auth.ScopedContext(ctx) {
+		return s.store.Search(ctx, f)
+	}
+	var merged []Entry
+	for _, ws := range auth.PrincipalFromContext(ctx).WorkspaceList() {
+		f.WorkspaceID = ws
+		entries, err := s.store.Search(ctx, f)
+		if err != nil {
+			return nil, err
+		}
+		merged = append(merged, entries...)
+	}
+	return merged, nil
 }
 func (s *Service) Promote(ctx context.Context, id string) error {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return fmt.Errorf("%w: id is required", ErrInvalidInput)
+	}
+	if err := s.requireEntryScope(ctx, id); err != nil {
+		return err
 	}
 	return s.store.Promote(ctx, id)
 }
@@ -108,7 +167,21 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if id == "" {
 		return fmt.Errorf("%w: id is required", ErrInvalidInput)
 	}
+	if err := s.requireEntryScope(ctx, id); err != nil {
+		return err
+	}
 	return s.store.Delete(ctx, id)
+}
+
+// requireEntryScope authorizes a by-id operation against the entry's
+// workspace; unknown ids surface ErrNotFound before any scope decision so
+// existence is not leaked across tenants.
+func (s *Service) requireEntryScope(ctx context.Context, id string) error {
+	entry, err := s.store.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	return auth.RequireWorkspace(ctx, entry.WorkspaceID)
 }
 
 func validScope(s Scope) bool {

@@ -3,6 +3,8 @@ package mcp
 import (
 	"errors"
 
+	"github.com/martinsuchenak/skopos/internal/auth"
+
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/status"
@@ -19,7 +21,8 @@ func toolError(err error) error {
 		errors.Is(err, blackboard.ErrInvalidInput) || errors.Is(err, blackboard.ErrNotFound) ||
 		errors.Is(err, blackboard.ErrAlreadyAtTopScope) ||
 		errors.Is(err, plans.ErrInvalidInput) || errors.Is(err, plans.ErrNotFound) ||
-		errors.Is(err, plans.ErrCycleDetected) || errors.Is(err, plans.ErrClaimConflict) {
+		errors.Is(err, plans.ErrCycleDetected) || errors.Is(err, plans.ErrClaimConflict) ||
+		errors.Is(err, auth.ErrOutOfScope) || errors.Is(err, auth.ErrRootRequired) {
 		return mcplib.NewToolErrorInvalidParams(err.Error())
 	}
 	return mcplib.NewToolErrorInternal(err.Error())

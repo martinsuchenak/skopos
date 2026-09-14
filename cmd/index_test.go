@@ -17,6 +17,8 @@ import (
 
 // cliIndexServer runs a real codeindex handler (no full skopos serve) for
 // CLI protocol tests.
+
+
 func cliIndexServer(t *testing.T, apiKey string) *httptest.Server {
 	t.Helper()
 	store, err := codeindex.NewStore(filepath.Join(t.TempDir(), "idx"))
@@ -24,7 +26,7 @@ func cliIndexServer(t *testing.T, apiKey string) *httptest.Server {
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	h := codeindex.NewHandler(codeindex.NewService(store), apiKey)
+	h := codeindex.NewHandler(codeindex.NewService(store), testAuth(apiKey))
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/codeindex/{workspace}/manifest", h.Manifest)
 	mux.HandleFunc("POST /api/codeindex/{workspace}/blobs", h.Blobs)

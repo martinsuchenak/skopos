@@ -8,6 +8,9 @@
 
 > **Quick install:** `skopos install --agent codex [--url ...] [--api-key "$SKOPOS_API_KEY"]` does this for you — it merges the `[mcp_servers.skopos]` block into `~/.codex/config.toml` and manages the block in `~/AGENTS.md` between `<!-- skopos:begin -->` / `<!-- skopos:end -->` markers (idempotent, backs up existing config). The manual steps below are the fallback.
 
+> **Scoped keys:** prefer minting a per-machine key with `skopos key create --workspace <id>` over sharing the root key — see [concepts/api-keys.md](../concepts/api-keys.md).
+
+
 ## Step 1: Apply MCP config
 
 Add the `skopos` entry from `config-snippet.toml` to `~/.codex/config.toml`:

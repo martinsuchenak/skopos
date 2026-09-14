@@ -19,6 +19,8 @@ import (
 	"github.com/martinsuchenak/skopos/internal/codeindex/parse"
 )
 
+
+
 func codeindexSetup(t *testing.T, apiKey string) (*httptest.Server, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -36,7 +38,7 @@ func helper() string { return "x" }
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	h := codeindex.NewHandler(codeindex.NewService(store), apiKey)
+	h := codeindex.NewHandler(codeindex.NewService(store), testAuth(apiKey))
 
 	mux := http.NewServeMux()
 	registerCodeIndexRoutes(mux, h)
@@ -232,7 +234,7 @@ func TestCodeIndexServerSideRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(store2.Close)
-	h2 := codeindex.NewHandler(codeindex.NewService(store2), "")
+	h2 := codeindex.NewHandler(codeindex.NewService(store2), testAuth(""))
 	ref, err := codeindex.NewRefresher(store2, t.TempDir(), func(id string) (string, error) {
 		if id == "github.com/example/repo" {
 			return gitURL, nil

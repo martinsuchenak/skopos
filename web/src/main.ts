@@ -15,12 +15,15 @@ type Bundle = { entries: Entry[]; markdown_bundle: string };
 type PlanItem = { id: string; plan_id: string; title: string; description?: string; phase?: string; status: string; position: number; claimed_by_agent_id?: string; depends_on?: string[] };
 type Plan = { id: string; name: string; branch_name?: string; workspace_id?: string; description?: string; status: string; author_agent_id: string; items?: PlanItem[]; depends_on?: string[]; created_at: string };
 type Toast = { id: number; message: string; type: 'success' | 'error' | 'info' };
+type ApiKey = { id: string; name: string; key_prefix: string; all_workspaces: boolean; workspaces: string[]; created_at: string; last_used_at?: string; revoked_at?: string };
+type Whoami = { root: boolean; key?: { id: string; name: string; all_workspaces: boolean; workspaces: string[] }; workspaces: { id: string; name: string }[] };
+type KeyForm = { name: string; all: boolean; workspaces: string[] };
 type EntryForm = { scope: 'project' | 'branch' | 'session'; entry_type: 'finding' | 'decision' | 'bug' | 'debt' | 'warning' | 'context'; title: string; content: string; code_ref: string; branch_name: string; session_id: string };
 type PlanForm = { name: string; description: string; branch_name: string };
 type ItemForm = { title: string; description: string; phase: string; depends_on: string };
 
 const UI_AUTHOR = 'ui';
-type View = 'sessions' | 'blackboard' | 'plans' | 'index';
+type View = 'sessions' | 'blackboard' | 'plans' | 'index' | 'keys';
 
 declare global { interface Window { Alpine: typeof Alpine; app: () => object } }
 
@@ -60,6 +63,15 @@ const appState = () => ({
   showKeyModal: false,
   keyDraft: '',
   authPrompted: false,
+
+  // api keys / identity
+  whoami: null as Whoami | null,
+  keys: [] as ApiKey[],
+  keysLoading: false,
+  showNewKeyModal: false, keySaving: false,
+  keyForm: { name: '', all: false, workspaces: [] as string[] } as KeyForm,
+  keyErrors: {} as Record<string, string>,
+  showSecretModal: false, newSecret: '', newSecretName: '',
 
   // toasts
   toasts: [] as Toast[],
@@ -179,7 +191,7 @@ const appState = () => ({
   },
 
   anyModalOpen() {
-    return this.showKeyModal || this.showEntryModal || this.showPlanModal || this.showItemModal || this.showWorkspaceModal || this.confirm.open;
+    return this.showNewKeyModal || this.showSecretModal || this.showEntryModal || this.showPlanModal || this.showItemModal || this.showWorkspaceModal || this.confirm.open;
   },
 
   // ---- theme ----
@@ -262,7 +274,9 @@ const appState = () => ({
     if (v === 'blackboard') this.fetchBundle();
     if (v === 'plans') this.fetchPlans();
     if (v === 'index') this.fetchIndexStatus();
+    if (v === 'keys') this.fetchKeys();
   },
+  whoamiIsRoot(): boolean { return !!this.whoami && this.whoami.root; },
   setWorkspace(ws: string) { this.activeWorkspace = ws; this.refresh(); },
 
   // ---- workspaces ----
@@ -274,9 +288,22 @@ const appState = () => ({
   },
   workspaceOptions(): { id: string; label: string }[] {
     const map = new Map<string, string>();
+    if (this.whoami && !this.whoami.root) {
+      // Scoped keys see exactly their slice of the registry — the server
+      // enforces it; the UI mirrors it so the filter is honest.
+      for (const w of this.whoami.workspaces) map.set(w.id, w.name || w.id);
+      return [...map.entries()].map(([id, label]) => ({ id, label }));
+    }
     for (const w of this.registeredWorkspaces) map.set(w.id, w.name || w.id);
     for (const ws of this.workspaces) if (!map.has(ws)) map.set(ws, ws);
     return [...map.entries()].map(([id, label]) => ({ id, label }));
+  },
+  // writeWorkspace resolves the workspace for a write: the active filter if
+  // it is a concrete workspace, else the first option. Writes are
+  // workspace-scoped on the server; '' means "block the write".
+  writeWorkspace(): string {
+    if (this.activeWorkspace) return this.activeWorkspace;
+    return this.workspaceOptions()[0]?.id || '';
   },
   workspaceLabel(id?: string): string {
     if (!id) return '';
@@ -327,6 +354,7 @@ const appState = () => ({
     } catch { /* keep previous sessions */ } finally { this.loading = false; }
     const seen = new Set([...(this.workspaces ?? []), ...this.sessions.map((s: SessionSummary) => s.workspace).filter(Boolean)]);
     this.workspaces = [...seen];
+    await this.fetchWhoami();
     await this.fetchWorkspaces();
     await this.autoRegisterWorkspaces();
     if (!this.selectedSessionId && this.sessions.length > 0) this.selectedSessionId = this.sessions[0].id;
@@ -339,6 +367,7 @@ const appState = () => ({
     if (this.activeView === 'blackboard') await this.fetchBundle();
     else if (this.activeView === 'plans') await this.fetchPlans();
     else if (this.activeView === 'index') await this.fetchIndexStatus();
+    else if (this.activeView === 'keys') await this.fetchKeys();
   },
   async selectSession(id: string) {
     this.selectedSessionId = id; localStorage.setItem('skopos:session', id);
@@ -376,7 +405,8 @@ const appState = () => ({
     this.entrySaving = true;
     try {
       const body: Record<string, string> = { scope: f.scope, entry_type: f.entry_type, title: f.title.trim(), content: f.content.trim(), author_agent_id: UI_AUTHOR };
-      if (this.activeWorkspace) body.workspace_id = this.activeWorkspace;
+      body.workspace_id = this.writeWorkspace();
+      if (!body.workspace_id) { this.notify('Writes are workspace-scoped — select a workspace first', 'error'); return; }
       if (f.scope === 'branch') body.branch_name = f.branch_name.trim();
       if (f.scope === 'session') body.session_id = f.session_id.trim();
       if (f.code_ref.trim()) body.code_ref = f.code_ref.trim();
@@ -453,7 +483,8 @@ const appState = () => ({
     try {
       const body: Record<string, string> = { name: this.planForm.name.trim(), description: this.planForm.description.trim(), author_agent_id: UI_AUTHOR };
       if (this.planForm.branch_name.trim()) body.branch_name = this.planForm.branch_name.trim();
-      if (this.activeWorkspace) body.workspace_id = this.activeWorkspace;
+      body.workspace_id = this.writeWorkspace();
+      if (!body.workspace_id) { this.notify('Writes are workspace-scoped — select a workspace first', 'error'); return; }
       const res = await this.authFetch('/api/plans', { method: 'POST', body: JSON.stringify(body) });
       if (!await this.handleBad(res, 'Plan not created')) return;
       this.notify('Plan created', 'success'); this.showPlanModal = false; await this.fetchPlans();
@@ -483,6 +514,78 @@ const appState = () => ({
   },
 
   // ---- code index ----
+  async fetchWhoami() {
+    try {
+      const res = await this.authFetch('/api/whoami');
+      if (res.ok) this.whoami = (await res.json()) ?? null;
+    } catch { /* non-fatal */ }
+    if (this.whoami && !this.whoami.root && this.activeWorkspace) {
+      const allowed = this.whoami.workspaces.some((w) => w.id === this.activeWorkspace);
+      if (!allowed) {
+        this.activeWorkspace = this.whoami.workspaces[0]?.id || '';
+        localStorage.setItem('skopos:workspace', this.activeWorkspace);
+      }
+    }
+  },
+
+  // ---- api keys ----
+  async fetchKeys() {
+    this.keysLoading = true;
+    try {
+      const res = await this.authFetch('/api/keys');
+      if (!res.ok) {
+        this.keys = [];
+        if (res.status === 403) this.notify('Key management requires the root key', 'error');
+        return;
+      }
+      this.keys = (await res.json()) ?? [];
+    } catch {
+      this.keys = [];
+    } finally {
+      this.keysLoading = false;
+    }
+  },
+  keyScope(k: ApiKey): string {
+    return k.all_workspaces ? '* (all workspaces)' : k.workspaces.join(', ');
+  },
+  openNewKeyModal() {
+    this.keyForm = { name: '', all: false, workspaces: [] };
+    this.keyErrors = {};
+    this.showNewKeyModal = true;
+  },
+  closeNewKeyModal() { this.showNewKeyModal = false; },
+  toggleKeyWorkspace(id: string) {
+    const i = this.keyForm.workspaces.indexOf(id);
+    if (i >= 0) this.keyForm.workspaces.splice(i, 1);
+    else this.keyForm.workspaces.push(id);
+  },
+  async submitKey() {
+    const f = this.keyForm;
+    const errs: Record<string, string> = {};
+    if (!f.name.trim()) errs.name = 'Name is required.';
+    if (!f.all && f.workspaces.length === 0) errs.workspaces = 'Select at least one workspace, or all workspaces.';
+    this.keyErrors = errs;
+    if (Object.keys(errs).length) return;
+    this.keySaving = true;
+    try {
+      const body: Record<string, unknown> = { name: f.name.trim(), workspaces: f.all ? ['*'] : f.workspaces };
+      const res = await this.authFetch('/api/keys', { method: 'POST', body: JSON.stringify(body) });
+      if (!await this.handleBad(res, 'Key not created')) return;
+      const data = await res.json();
+      this.newSecret = data.key_secret;
+      this.newSecretName = data.key.name;
+      this.showNewKeyModal = false;
+      this.showSecretModal = true;
+      await this.fetchKeys();
+    } finally {
+      this.keySaving = false;
+    }
+  },
+  closeSecretModal() { this.newSecret = ''; this.showSecretModal = false; },
+  revokeKey(k: ApiKey) {
+    this.requestDelete('apikey', k.id, k.name);
+  },
+
   async fetchIndexStatus() {
     // No workspace selected: fall back to the first registered one — the
     // literal id "default" matches nothing and would show an empty index.
@@ -510,6 +613,7 @@ const appState = () => ({
       const [planId, itemId] = p.id.split('|');
       url = `/api/plans/${encodeURIComponent(planId)}/items/${encodeURIComponent(itemId)}`;
     }
+    else if (p.kind === 'apikey') url = `/api/keys/${encodeURIComponent(p.id)}`;
     const res = await this.authFetch(url, { method: 'DELETE' });
     this.confirm.busy = false;
     if (!await this.handleBad(res, 'Delete failed')) return;
@@ -521,6 +625,7 @@ const appState = () => ({
     } else if (p.kind === 'entry') await this.fetchBundle();
     else if (p.kind === 'plan') { if (this.expandedPlan?.id === p.id) this.expandedPlan = null; await this.fetchPlans(); }
     else if (p.kind === 'item' && this.expandedPlan) await this.reloadPlan(this.expandedPlan.id);
+    else if (p.kind === 'apikey') await this.fetchKeys();
   },
 
   // shared bad-response handler: returns true when ok, false (and notifies) when not

@@ -12,6 +12,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+
+
 func testHandler(t *testing.T, apiKey string) *Handler {
 	t.Helper()
 	sqlDB, err := sql.Open("sqlite", ":memory:")
@@ -25,13 +27,13 @@ func testHandler(t *testing.T, apiKey string) *Handler {
 	if err := db.RunMigrations(sqlDB); err != nil {
 		t.Fatalf("run migrations: %v", err)
 	}
-	return NewHandler(NewService(NewStorage(sqlDB)), apiKey)
+	return NewHandler(NewService(NewStorage(sqlDB)), testAuth(apiKey))
 }
 
 func TestHandlerWriteRequiresAPIKey(t *testing.T) {
 	h := testHandler(t, "secret")
 	body := bytes.NewBufferString(`{
-		"scope":"project","entry_type":"finding","title":"T","author_agent_id":"a"
+		"scope":"project","entry_type":"finding","title":"T","author_agent_id":"a","workspace_id":"ws-1"
 	}`)
 	req := httptest.NewRequest("POST", "/api/blackboard/entries", body)
 	req.Header.Set("Content-Type", "application/json")
@@ -46,7 +48,7 @@ func TestHandlerWriteAndReadBundle(t *testing.T) {
 	h := testHandler(t, "")
 	body := bytes.NewBufferString(`{
 		"scope":"project","entry_type":"finding","title":"Auth issue",
-		"content":"Details.","author_agent_id":"agent-1"
+		"content":"Details.","author_agent_id":"agent-1","workspace_id":"ws-1"
 	}`)
 	req := httptest.NewRequest("POST", "/api/blackboard/entries", body)
 	req.Header.Set("Content-Type", "application/json")
@@ -133,7 +135,7 @@ func TestHandlerDeleteNotFound(t *testing.T) {
 func TestHandlerPromoteAlreadyAtTopScope(t *testing.T) {
 	h := testHandler(t, "")
 	body := bytes.NewBufferString(`{
-		"scope":"project","entry_type":"finding","title":"T","author_agent_id":"a"
+		"scope":"project","entry_type":"finding","title":"T","author_agent_id":"a","workspace_id":"ws-1"
 	}`)
 	req := httptest.NewRequest("POST", "/api/blackboard/entries", body)
 	req.Header.Set("Content-Type", "application/json")
@@ -170,8 +172,8 @@ func TestHandlerReadBundleWorkspaceFilter(t *testing.T) {
 	}
 
 	body2 := bytes.NewBufferString(`{
-		"scope":"project","entry_type":"finding","title":"Global entry",
-		"author_agent_id":"a"
+		"scope":"project","entry_type":"finding","title":"Other workspace entry",
+		"author_agent_id":"a","workspace_id":"ws-2"
 	}`)
 	req2 := httptest.NewRequest("POST", "/api/blackboard/entries", body2)
 	req2.Header.Set("Content-Type", "application/json")
@@ -198,7 +200,7 @@ func TestHandlerReadBundleWorkspaceFilter(t *testing.T) {
 	for _, e := range bundle.Entries {
 		titles[e.Title] = true
 	}
-	if !titles["Scoped entry"] || titles["Global entry"] {
-		t.Errorf("expected only scoped entry, got titles: %v", titles)
+	if !titles["Scoped entry"] || titles["Other workspace entry"] {
+		t.Errorf("expected only the scoped entry, got titles: %v", titles)
 	}
 }

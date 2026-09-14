@@ -11,7 +11,7 @@ func TestPlanReadWithItemID(t *testing.T) {
 	ctx := context.Background()
 	_, _, plansSvc := testSnapshotServices(t)
 
-	plan, err := plansSvc.CreatePlan(ctx, plans.CreatePlanInput{Name: "P", AuthorAgentID: "a"})
+	plan, err := plansSvc.CreatePlan(ctx, plans.CreatePlanInput{Name: "P", AuthorAgentID: "a", WorkspaceID: "ws"})
 	if err != nil {
 		t.Fatalf("create plan: %v", err)
 	}

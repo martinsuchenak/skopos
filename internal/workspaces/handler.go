@@ -10,14 +10,14 @@ import (
 
 type Handler struct {
 	service *Service
-	apiKey  string
+	authn   *auth.Authenticator
 }
 
-func NewHandler(service *Service, apiKey string) *Handler {
-	return &Handler{service: service, apiKey: apiKey}
+func NewHandler(service *Service, authn *auth.Authenticator) *Handler {
+	return &Handler{service: service, authn: authn}
 }
 
-func (h *Handler) authorized(r *http.Request) bool { return auth.Authorize(r, h.apiKey) }
+func (h *Handler) authorized(r *http.Request) bool { return h.authn.Authenticate(r) != nil }
 
 // Create handles POST /api/workspaces.
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
@@ -32,11 +32,14 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	ws, created, err := h.service.Create(r.Context(), input)
 	if err != nil {
-		if errors.Is(err, ErrInvalidInput) {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
-			return
+		case errors.Is(err, auth.ErrRootRequired):
+			rest.RespondError(w, http.StatusForbidden, err.Error())
+		default:
+			rest.InternalError(w, err)
 		}
-		rest.InternalError(w, err)
 		return
 	}
 	// 201 for a new registration, 200 when an existing workspace was renamed.
@@ -76,6 +79,8 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, auth.ErrRootRequired):
+			rest.RespondError(w, http.StatusForbidden, err.Error())
 		default:
 			rest.InternalError(w, err)
 		}

@@ -11,12 +11,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/codeindex"
 	"github.com/martinsuchenak/skopos/internal/codeindex/parse"
 	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/status"
+	"github.com/martinsuchenak/skopos/internal/workspaces"
 	_ "modernc.org/sqlite"
 )
 
@@ -45,6 +47,7 @@ func toolsE2E(t *testing.T) http.Handler {
 		blackboard.NewService(blackboard.NewStorage(sqlDB)),
 		plans.NewService(plans.NewStorage(sqlDB)),
 		codeIndexServiceForTest(t, sqlDB),
+		workspaces.NewService(workspaces.NewStorage(sqlDB)),
 	)
 }
 
@@ -184,14 +187,14 @@ func TestMCPDependencyToolsEndToEnd(t *testing.T) {
 	id := 1
 
 	// Two plans, two items each.
-	planA := callText(t, h, sessionID, id, "plan_create", map[string]any{"name": "A", "author_agent_id": "t"})
+	planA := callText(t, h, sessionID, id, "plan_create", map[string]any{"name": "A", "author_agent_id": "t", "workspace_id": "ws"})
 	id++
 	var a struct {
 		ID string `json:"id"`
 	}
 	json.Unmarshal([]byte(planA), &a)
 
-	planB := callText(t, h, sessionID, id, "plan_create", map[string]any{"name": "B", "author_agent_id": "t"})
+	planB := callText(t, h, sessionID, id, "plan_create", map[string]any{"name": "B", "author_agent_id": "t", "workspace_id": "ws"})
 	id++
 	var b struct {
 		ID string `json:"id"`
@@ -271,7 +274,7 @@ func TestMCPReadToolsAcceptAliases(t *testing.T) {
 	h := toolsE2E(t)
 	sessionID := initialize(t, h)
 
-	created := callText(t, h, sessionID, 1, "plan_create", map[string]any{"name": "P", "author_agent_id": "t"})
+	created := callText(t, h, sessionID, 1, "plan_create", map[string]any{"name": "P", "author_agent_id": "t", "workspace_id": "ws"})
 	var p struct {
 		ID string `json:"id"`
 	}
@@ -333,6 +336,7 @@ func helper() int { return 42 }
 		blackboard.NewService(blackboard.NewStorage(mustOpenDB(t))),
 		plans.NewService(plans.NewStorage(mustOpenDB(t))),
 		svc,
+		nil,
 	)
 	sessionID := initialize(t, h)
 
@@ -395,6 +399,7 @@ func deadSym() {}
 		blackboard.NewService(blackboard.NewStorage(mustOpenDB(t))),
 		plans.NewService(plans.NewStorage(mustOpenDB(t))),
 		svc,
+		nil,
 	)
 	sessionID := initialize(t, h)
 
@@ -469,4 +474,29 @@ func TestMCPReadToolsRequireWorkspaceID(t *testing.T) {
 	expectToolError(t, h, sessionID, 1, "blackboard_read", map[string]any{}, -32602)
 	expectToolError(t, h, sessionID, 2, "blackboard_read", map[string]any{"q": "x"}, -32602)
 	expectToolError(t, h, sessionID, 3, "skopos_context", map[string]any{}, -32602)
+}
+
+// TestMCPCodeIndexToolsScopedToWorkspace guards the codeindex service-layer
+// scope check (regression: MCP code_* tools called the service directly and
+// bypassed the REST handler's authorization, leaking foreign workspaces'
+// indexes).
+func TestMCPCodeIndexToolsScopedToWorkspace(t *testing.T) {
+	h := toolsE2E(t)
+
+	scoped := auth.WithPrincipal(context.Background(), &auth.Principal{
+		KeyID: "k1", Name: "ci", Workspaces: map[string]struct{}{"ws-own": {}},
+	})
+	const body = `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"code_search","arguments":{"workspace_id":"ws-foreign","q":"Load"}}}`
+	req := httptest.NewRequest("POST", "/mcp", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(scoped)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	out := w.Body.String()
+	if !strings.Contains(out, "out of scope") || !strings.Contains(out, "ws-own") {
+		t.Fatalf("expected out-of-scope error naming the accessible workspace, got: %s", out)
+	}
 }

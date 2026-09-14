@@ -62,6 +62,7 @@ paths:
               schema: { $ref: "#/components/schemas/ReportResult" }
         "400": { description: Invalid report, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { description: Unauthorized }
+        "403": { description: "Workspace out of scope for this credential (or root key required)" }
   /api/sessions:
     get:
       summary: List sessions
@@ -103,6 +104,7 @@ paths:
       responses:
         "204": { description: Deleted }
         "401": { description: Unauthorized }
+        "403": { description: "Workspace out of scope for this credential (or root key required)" }
   /api/sessions/{id}/events:
     get:
       summary: List events for a session
@@ -138,6 +140,70 @@ paths:
               schema:
                 type: string
                 description: "Lines of event: <type> / data: <json> / blank"
+
+  /api/whoami:
+    get:
+      summary: What can this credential access
+      description: Resolves the caller's principal and the accessible slice of the workspace registry.
+      operationId: whoami
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: Principal and accessible workspaces
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Whoami" }
+        "401": { description: Unauthorized }
+
+  /api/keys:
+    post:
+      summary: Create a scoped API key (root only)
+      operationId: createApiKey
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ApiKeyCreateInput" }
+      responses:
+        "201":
+          description: Key created — key_secret is shown only here
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiKeyCreateResult" }
+        "400": { description: Invalid input, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "401": { description: Unauthorized }
+        "403": { description: Root key required }
+    get:
+      summary: List API keys including revoked (root only)
+      operationId: listApiKeys
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: Keys (no secrets)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ApiKey" }
+        "401": { description: Unauthorized }
+        "403": { description: Root key required }
+
+  /api/keys/{id}:
+    delete:
+      summary: Revoke an API key (root only; idempotent)
+      operationId: revokeApiKey
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Revoked }
+        "401": { description: Unauthorized }
+        "403": { description: Root key required }
+        "404": { description: Unknown key }
 
   /api/workspaces:
     post:
@@ -378,6 +444,7 @@ paths:
       responses:
         "204": { description: Dropped }
         "401": { description: Unauthorized }
+        "403": { description: "Workspace out of scope for this credential (or root key required)" }
         "404": { description: Unknown workspace }
   /api/codeindex/{workspace}/branch/{branch}:
     delete:
@@ -420,6 +487,7 @@ paths:
               schema: { $ref: "#/components/schemas/BlackboardWriteResult" }
         "400": { description: Invalid input, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { description: Unauthorized }
+        "403": { description: "Workspace out of scope for this credential (or root key required)" }
     get:
       summary: Read the knowledge bundle (entries + markdown), or search when q/entry_type/author is present
       operationId: blackboardRead
@@ -447,6 +515,7 @@ paths:
       responses:
         "204": { description: Promoted }
         "401": { description: Unauthorized }
+        "403": { description: "Workspace out of scope for this credential (or root key required)" }
         "404": { description: Entry not found }
         "409": { description: Already at project scope }
   /api/blackboard/entries/{id}:
@@ -459,6 +528,7 @@ paths:
       responses:
         "204": { description: Deleted }
         "401": { description: Unauthorized }
+        "403": { description: "Workspace out of scope for this credential (or root key required)" }
         "404": { description: Entry not found }
 
   # ---- plans ----
@@ -480,6 +550,7 @@ paths:
               schema: { $ref: "#/components/schemas/Plan" }
         "400": { description: Invalid input, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { description: Unauthorized }
+        "403": { description: "Workspace out of scope for this credential (or root key required)" }
     get:
       summary: List plans
       operationId: listPlans
@@ -521,6 +592,7 @@ paths:
       responses:
         "204": { description: Updated }
         "401": { description: Unauthorized }
+        "403": { description: "Workspace out of scope for this credential (or root key required)" }
         "404": { description: Plan not found }
     delete:
       summary: Delete a plan (cascades to items and dependencies)
@@ -530,6 +602,7 @@ paths:
       responses:
         "204": { description: Deleted }
         "401": { description: Unauthorized }
+        "403": { description: "Workspace out of scope for this credential (or root key required)" }
         "404": { description: Plan not found }
   /api/plans/{id}/items:
     post:
@@ -550,6 +623,7 @@ paths:
               schema: { $ref: "#/components/schemas/PlanItem" }
         "400": { description: Invalid input, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { description: Unauthorized }
+        "403": { description: "Workspace out of scope for this credential (or root key required)" }
         "404": { description: Plan not found }
   /api/plans/{id}/items/{item_id}:
     patch:
@@ -567,6 +641,7 @@ paths:
       responses:
         "204": { description: Updated }
         "401": { description: Unauthorized }
+        "403": { description: "Workspace out of scope for this credential (or root key required)" }
         "404": { description: Not found }
     delete:
       summary: Delete an item
@@ -578,6 +653,7 @@ paths:
       responses:
         "204": { description: Deleted }
         "401": { description: Unauthorized }
+        "403": { description: "Workspace out of scope for this credential (or root key required)" }
         "404": { description: Not found }
   /api/plans/{id}/items/{item_id}/dependencies:
     post:
@@ -603,6 +679,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PlanItem" }
         "401": { description: Unauthorized }
+        "403": { description: "Workspace out of scope for this credential (or root key required)" }
         "404": { description: Not found }
         "409": { description: Dependency cycle detected }
   /api/plans/{id}/items/{item_id}/dependencies/{depends_on_id}:
@@ -617,6 +694,7 @@ paths:
       responses:
         "204": { description: Removed }
         "401": { description: Unauthorized }
+        "403": { description: "Workspace out of scope for this credential (or root key required)" }
         "404": { description: Not found }
   /api/plans/{id}/dependencies:
     post:
@@ -640,6 +718,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Plan" }
         "401": { description: Unauthorized }
+        "403": { description: "Workspace out of scope for this credential (or root key required)" }
         "404": { description: Not found }
         "409": { description: Dependency cycle detected }
   /api/plans/{id}/dependencies/{depends_on_id}:
@@ -653,6 +732,7 @@ paths:
       responses:
         "204": { description: Removed }
         "401": { description: Unauthorized }
+        "403": { description: "Workspace out of scope for this credential (or root key required)" }
         "404": { description: Not found }
 
 components:
@@ -665,7 +745,13 @@ components:
     BearerAuth:
       type: http
       scheme: bearer
-      description: Send the API key as the bearer token.
+      description: >-
+        Send an API key as the bearer token: the root key (server config, full
+        access and exclusive key/workspace management) or a scoped key minted
+        via POST /api/keys. Scoped keys are limited to their workspace list —
+        explicit-workspace operations outside the scope return 403 (listing
+        the accessible workspaces), by-id operations return 404, and writes
+        require workspace_id for every principal including root.
   schemas:
     Error:
       type: object
@@ -677,6 +763,54 @@ components:
         id: { type: string }
         name: { type: string }
         created_at: { type: string, format: date-time }
+    Whoami:
+      type: object
+      properties:
+        root: { type: boolean }
+        key:
+          nullable: true
+          type: object
+          properties:
+            id: { type: string }
+            name: { type: string }
+            all_workspaces: { type: boolean }
+            workspaces: { type: array, items: { type: string } }
+        workspaces:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              name: { type: string }
+
+    ApiKey:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        key_prefix: { type: string }
+        all_workspaces: { type: boolean }
+        workspaces: { type: array, items: { type: string } }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time, nullable: true }
+        revoked_at: { type: string, format: date-time, nullable: true }
+
+    ApiKeyCreateInput:
+      type: object
+      required: [name, workspaces]
+      properties:
+        name: { type: string }
+        workspaces:
+          description: Exact workspace ids, or ["*"] for all workspaces
+          type: array
+          items: { type: string }
+
+    ApiKeyCreateResult:
+      type: object
+      properties:
+        key: { $ref: "#/components/schemas/ApiKey" }
+        key_secret: { type: string, description: The plaintext key — shown only once }
+
     WorkspaceCreateInput:
       type: object
       required: [id]

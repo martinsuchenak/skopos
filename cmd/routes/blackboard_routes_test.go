@@ -11,7 +11,7 @@ import (
 func TestRegisterBlackboardRoutes(t *testing.T) {
 	mux := http.NewServeMux()
 	registerBlackboardRoutes(mux, blackboard.NewHandler(
-		blackboard.NewService(&noopBlackboardStore{}), "",
+		blackboard.NewService(&noopBlackboardStore{}), testAuth(""),
 	))
 }
 

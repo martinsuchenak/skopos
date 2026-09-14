@@ -1,6 +1,8 @@
 package codeindex
 
 import (
+
+	"github.com/martinsuchenak/skopos/internal/auth"
 	"bytes"
 	"context"
 	"encoding/binary"
@@ -324,6 +326,9 @@ func (s *Service) EmbedPending(ctx context.Context, workspace string, embedder E
 // When no embeddings exist the result degrades to the plain FTS search with
 // semantic=false.
 func (s *Service) SemanticSearch(ctx context.Context, workspace, branch, query, pathPrefix string, limit int, embedder Embedder) (*SearchResults, error) {
+	if err := auth.RequireWorkspace(ctx, workspace); err != nil {
+		return nil, err
+	}
 	base, err := s.Search(ctx, workspace, branch, query, pathPrefix, limit)
 	if err != nil || embedder == nil {
 		return base, err

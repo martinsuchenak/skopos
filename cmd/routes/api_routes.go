@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/martinsuchenak/skopos/build"
+	"github.com/martinsuchenak/skopos/internal/apikeys"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/codeindex"
 	"github.com/martinsuchenak/skopos/internal/plans"
@@ -47,28 +48,36 @@ func RegisterCodeIndex(fn func(*http.ServeMux, *codeindex.Handler)) {
 	codeIndexRegistrations = append(codeIndexRegistrations, fn)
 }
 
-func RegisterRoutes(mux *http.ServeMux, statusHandler *status.Handler, blackboardHandler *blackboard.Handler, plansHandler *plans.Handler, workspacesHandler *workspaces.Handler, codeIndexHandler *codeindex.Handler) {
-	mux.HandleFunc("GET /health", healthHandler)
-	registerWebRoutes(mux)
+// RegisterRoutes mounts the public surface (dashboard, statics, health) on
+// webMux and the authenticated API on apiMux. The caller wraps apiMux with
+// auth (see cmd.serve: the principal must reach services via the request
+// context, so authentication lives in middleware, not in each handler).
+func RegisterRoutes(webMux, apiMux *http.ServeMux, statusHandler *status.Handler, blackboardHandler *blackboard.Handler, plansHandler *plans.Handler, workspacesHandler *workspaces.Handler, codeIndexHandler *codeindex.Handler, keysHandler *apikeys.Handler) {
+	webMux.HandleFunc("GET /health", healthHandler)
+	registerWebRoutes(webMux)
 
 	for _, fn := range registrations {
-		fn(mux, statusHandler)
+		fn(apiMux, statusHandler)
 	}
 
 	for _, fn := range blackboardRegistrations {
-		fn(mux, blackboardHandler)
+		fn(apiMux, blackboardHandler)
 	}
 
 	for _, fn := range plansRegistrations {
-		fn(mux, plansHandler)
+		fn(apiMux, plansHandler)
 	}
 
 	for _, fn := range workspacesRegistrations {
-		fn(mux, workspacesHandler)
+		fn(apiMux, workspacesHandler)
 	}
 
 	for _, fn := range codeIndexRegistrations {
-		fn(mux, codeIndexHandler)
+		fn(apiMux, codeIndexHandler)
+	}
+
+	for _, fn := range keysRegistrations {
+		fn(apiMux, keysHandler)
 	}
 }
 

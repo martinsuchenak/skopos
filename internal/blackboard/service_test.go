@@ -103,6 +103,7 @@ func TestServiceWriteSuccess(t *testing.T) {
 		Title:         "Found something",
 		Content:       "Details here.",
 		AuthorAgentID: "agent-1",
+		WorkspaceID:   "ws-x",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -185,6 +186,7 @@ func TestServiceWriteSessionExistsErrorPropagates(t *testing.T) {
 		Title:         "T",
 		AuthorAgentID: "a",
 		SessionID:     "session-1",
+		WorkspaceID:   "ws-x",
 	})
 	if err == nil {
 		t.Fatal("expected error from SessionExists, got nil")

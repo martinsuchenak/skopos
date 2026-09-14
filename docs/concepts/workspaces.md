@@ -12,6 +12,12 @@ Workspaces can be explicitly registered (`POST /api/workspaces`) with an optiona
 
 **Auto-registration**: any workspace seen in session data is automatically registered so it persists in the database even if all sessions are later deleted. This prevents workspaces from vanishing from the picker when their data is cleaned up.
 
+**Management is root-only**: registering, renaming, deleting workspaces and
+setting `git_url` require the root key. Scoped API keys can list (and see)
+only the workspaces they are scoped to — see
+[api-keys.md](api-keys.md). The dashboard's workspace picker reflects the
+signed-in key's scope.
+
 A registered workspace can also carry a `git_url` — that's what enables
 server-side indexing: `skopos index refresh --workspace <id>` makes the server
 clone/pull that URL and index it itself (see
@@ -35,6 +41,6 @@ When a workspace filter is active (a workspace is selected in the picker or pass
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/workspaces` | Register/upsert a workspace |
-| GET | `/api/workspaces` | List registered workspaces |
+| POST | `/api/workspaces` | Register/upsert a workspace (root key only) |
+| GET | `/api/workspaces` | List registered workspaces (scope-filtered for scoped keys) |
 | DELETE | `/api/workspaces/{id}` | Unregister (does not delete data) |

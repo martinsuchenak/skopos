@@ -1,6 +1,8 @@
 package workspaces
 
 import (
+
+	"github.com/martinsuchenak/skopos/internal/auth"
 	"context"
 	"fmt"
 	"strings"
@@ -15,6 +17,11 @@ type Service struct {
 func NewService(store Store) *Service { return &Service{store: store, now: time.Now} }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (*Workspace, bool, error) {
+	// The registry and git_url feed the server-side clone path and define
+	// the scoping graph itself: workspace management is root-only.
+	if err := auth.RequireRoot(ctx); err != nil {
+		return nil, false, err
+	}
 	input.ID = strings.TrimSpace(input.ID)
 	input.Name = strings.TrimSpace(input.Name)
 	if input.ID == "" {
@@ -28,7 +35,23 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (*Workspace, bo
 	return &ws, created, nil
 }
 
-func (s *Service) List(ctx context.Context) ([]Workspace, error) { return s.store.List(ctx) }
+func (s *Service) List(ctx context.Context) ([]Workspace, error) {
+	all, err := s.store.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Scoped keys see exactly their slice of the registry.
+	if !auth.ScopedContext(ctx) {
+		return all, nil
+	}
+	out := make([]Workspace, 0, len(all))
+	for _, ws := range all {
+		if auth.PrincipalFromContext(ctx).CanAccess(ws.ID) {
+			out = append(out, ws)
+		}
+	}
+	return out, nil
+}
 
 func (s *Service) Get(ctx context.Context, id string) (*Workspace, error) {
 	id = strings.TrimSpace(id)
@@ -39,6 +62,9 @@ func (s *Service) Get(ctx context.Context, id string) (*Workspace, error) {
 }
 
 func (s *Service) Delete(ctx context.Context, id string) error {
+	if err := auth.RequireRoot(ctx); err != nil {
+		return err
+	}
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return fmt.Errorf("%w: id is required", ErrInvalidInput)

@@ -2,9 +2,12 @@ package events
 
 import "sync"
 
-// Event is a change notification pushed to connected SSE clients.
+// Event is a change notification pushed to connected SSE clients. Workspace
+// carries the mutation's scope when the middleware could derive it; scoped
+// subscribers do not receive events for workspaces outside their key.
 type Event struct {
-	Type string `json:"type"`
+	Type      string `json:"type"`
+	Workspace string `json:"workspace,omitempty"`
 }
 
 // Hub fans out Events to all subscribed SSE clients. It is in-process and
@@ -12,11 +15,37 @@ type Event struct {
 type Hub struct {
 	mu          sync.Mutex
 	subscribers map[chan Event]struct{}
+	filters     map[chan Event]func(string) bool
 	closed      bool
 }
 
 func NewHub() *Hub {
-	return &Hub{subscribers: make(map[chan Event]struct{})}
+	return &Hub{subscribers: make(map[chan Event]struct{}), filters: make(map[chan Event]func(string) bool)}
+}
+
+// SubscribeFiltered behaves like Subscribe but drops events whose workspace
+// is outside the filter (empty-workspace events always pass: they are either
+// unattributed or global signals, and carry no data).
+func (h *Hub) SubscribeFiltered(canAccess func(workspace string) bool) (<-chan Event, func()) {
+	ch := make(chan Event, 16)
+	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		close(ch)
+		return ch, func() {}
+	}
+	h.filters[ch] = canAccess
+	h.subscribers[ch] = struct{}{}
+	h.mu.Unlock()
+	return ch, func() {
+		h.mu.Lock()
+		if _, ok := h.subscribers[ch]; ok {
+			delete(h.subscribers, ch)
+			delete(h.filters, ch)
+			close(ch)
+		}
+		h.mu.Unlock()
+	}
 }
 
 // Subscribe returns a buffered channel of events and an unsubscribe function.
@@ -69,6 +98,11 @@ func (h *Hub) Publish(e Event) {
 		return
 	}
 	for ch := range h.subscribers {
+		if ws := e.Workspace; ws != "" {
+			if f, ok := h.filters[ch]; ok && f != nil && !f(ws) {
+				continue
+			}
+		}
 		select {
 		case ch <- e:
 		default:

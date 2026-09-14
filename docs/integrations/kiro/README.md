@@ -8,6 +8,9 @@
 
 > **Quick install:** `skopos install --agent kiro [--url ...] [--api-key "$SKOPOS_API_KEY"]` does this for you — it merges the MCP config and writes `.kiro/steering/skopos.md` with the frontmatter Kiro needs to always apply it (idempotent, backs up existing config). Add `--scope project` to target `.kiro/` in the current directory. The manual steps below are the fallback.
 
+> **Scoped keys:** prefer minting a per-machine key with `skopos key create --workspace <id>` over sharing the root key — see [concepts/api-keys.md](../concepts/api-keys.md).
+
+
 ## Step 1: Apply MCP config (global)
 
 Add the `skopos` entry from `mcp.json` into `~/.kiro/settings/mcp.json`:

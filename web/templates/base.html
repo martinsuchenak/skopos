@@ -33,6 +33,10 @@
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 1.1.9 2 2 2h9M4 7l4-4 4 4M4 7h10a2 2 0 012 2v2m4 4l-4-2v4l4-2z m0 0v0z m-4-2l4 2"/></svg>
                 Index
             </button>
+            <button type="button" @click="switchView('keys')" class="nav-item" x-show="whoamiIsRoot()" x-cloak :aria-current="activeView === 'keys' ? 'page' : null">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a4 4 0 11-8 0 4 4 0 018 0zm3 9a4 4 0 00-4-4H8a4 4 0 00-4 4v1h14v-1z"/></svg>
+                Keys
+            </button>
         </nav>
         <div class="border-t border-zinc-800 p-4">
             <div class="mb-1.5 flex items-center justify-between">
@@ -337,6 +341,43 @@
                     </template>
                 </ul>
             </section>
+            <!-- ===================== API KEYS ===================== -->
+            <section x-show="activeView === 'keys'" x-cloak>
+                <div class="mb-6 flex items-center justify-between gap-4">
+                    <div>
+                        <h2 class="mb-1 text-2xl font-semibold">API keys</h2>
+                        <p class="text-sm text-zinc-500">
+                            Scoped credentials for agents and machines. The root key (server config) always has full access;
+                            these keys see only the workspaces they are scoped to.
+                        </p>
+                    </div>
+                    <button type="button" @click="openNewKeyModal()" class="btn">New key</button>
+                </div>
+                <div x-show="keysLoading" class="text-sm text-zinc-500">Loading…</div>
+                <div x-show="!keysLoading && keys.length === 0" class="rounded-lg border border-zinc-800 bg-zinc-900/50 p-6 text-sm text-zinc-500">
+                    No API keys yet. Mint one per agent or machine and scope it to the workspaces it may touch.
+                </div>
+                <ul class="space-y-2" x-show="keys.length > 0">
+                    <template x-for="k in keys" :key="k.id">
+                        <li class="flex flex-wrap items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3" :class="k.revoked_at ? 'opacity-50' : ''">
+                            <div class="min-w-0 flex-1">
+                                <div class="flex flex-wrap items-baseline gap-2">
+                                    <span class="font-medium" x-text="k.name"></span>
+                                    <span class="font-mono text-xs text-zinc-500" x-text="k.key_prefix + '…'"></span>
+                                    <span class="rounded bg-zinc-800 px-1.5 py-0.5 text-[11px] text-zinc-300" x-text="keyScope(k)"></span>
+                                    <span x-show="k.revoked_at" class="rounded bg-rose-500/15 px-1.5 py-0.5 text-[11px] text-rose-300">revoked</span>
+                                </div>
+                                <div class="mt-0.5 text-xs text-zinc-600">
+                                    created <span x-text="formatTime(k.created_at)"></span>
+                                    <span x-show="k.last_used_at"> · last used <span x-text="formatTime(k.last_used_at || '')"></span></span>
+                                </div>
+                            </div>
+                            <button type="button" x-show="!k.revoked_at" @click="revokeKey(k)"
+                                class="btn btn-sm border-rose-800/60 text-rose-300 hover:border-rose-700">Revoke</button>
+                        </li>
+                    </template>
+                </ul>
+            </section>
         </main>
     </div>
 
@@ -354,6 +395,59 @@
             <div class="mt-6 flex items-center justify-between">
                 <button type="button" @click="clearKey()" class="btn btn-ghost btn-sm text-rose-400">Clear</button>
                 <button type="button" @click="saveKey()" class="btn btn-primary">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================== CREATE API KEY MODAL ===================== -->
+    <div x-show="showNewKeyModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="newkey-modal-title" @keydown.escape.window="closeNewKeyModal()" x-trap="showNewKeyModal">
+        <div class="fixed inset-0 bg-black/60" @click="closeNewKeyModal()" aria-hidden="true"></div>
+        <div class="card relative w-full max-w-md p-6 shadow-2xl">
+            <h2 id="newkey-modal-title" class="mb-1 text-lg font-semibold">New API key</h2>
+            <p class="mb-4 text-sm text-zinc-400">The secret is shown once after creation. Scope decides which workspaces the key can read and write.</p>
+            <label class="lbl" for="newkey-name">Name</label>
+            <input id="newkey-name" type="text" x-model="keyForm.name" class="fld" placeholder="ci, zcode-laptop, …" autocomplete="off" :aria-invalid="!!keyErrors.name" />
+            <p x-show="keyErrors.name" class="mt-1 text-xs text-rose-400" x-text="keyErrors.name"></p>
+            <div class="mt-4">
+                <label class="flex items-center gap-2 text-sm text-zinc-200">
+                    <input type="checkbox" x-model="keyForm.all" class="h-4 w-4 rounded border-zinc-700 bg-zinc-900" />
+                    All workspaces (current and future)
+                </label>
+            </div>
+            <div class="mt-3" x-show="!keyForm.all">
+                <span class="lbl">Workspaces</span>
+                <div class="max-h-44 space-y-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900/60 p-2">
+                    <template x-for="o in workspaceOptions()" :key="o.id">
+                        <label class="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm text-zinc-200 hover:bg-zinc-800/60">
+                            <input type="checkbox" :checked="keyForm.workspaces.indexOf(o.id) >= 0" @change="toggleKeyWorkspace(o.id)" class="h-4 w-4 rounded border-zinc-700 bg-zinc-900" />
+                            <span class="truncate" x-text="o.label"></span>
+                        </label>
+                    </template>
+                </div>
+                <p x-show="keyErrors.workspaces" class="mt-1 text-xs text-rose-400" x-text="keyErrors.workspaces"></p>
+            </div>
+            <div class="mt-6 flex justify-end gap-2">
+                <button type="button" @click="closeNewKeyModal()" class="btn btn-ghost">Cancel</button>
+                <button type="button" @click="submitKey()" class="btn btn-primary" :disabled="keySaving" x-text="keySaving ? 'Creating…' : 'Create key'"></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================== NEW KEY SECRET MODAL ===================== -->
+    <div x-show="showSecretModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="secret-modal-title" @keydown.escape.window="closeSecretModal()" x-trap="showSecretModal">
+        <div class="card relative w-full max-w-lg p-6 shadow-2xl">
+            <h2 id="secret-modal-title" class="mb-1 text-lg font-semibold">API key created</h2>
+            <p class="mb-3 text-sm text-amber-300">Store this secret now — it is shown only once and cannot be recovered.</p>
+            <div class="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
+                <code class="break-all font-mono text-sm text-emerald-300" x-text="newSecret"></code>
+            </div>
+            <p class="mt-3 text-xs text-zinc-500">
+                Key <span class="text-zinc-300" x-text="newSecretName"></span> — use it as
+                <code class="rounded bg-zinc-800 px-1">Authorization: Bearer &lt;secret&gt;</code> or configure it as the client api_key
+                (<code class="rounded bg-zinc-800 px-1">skopos install --api-key</code>, <code class="rounded bg-zinc-800 px-1">skopos-config.toml</code>).
+            </p>
+            <div class="mt-5 flex justify-end">
+                <button type="button" @click="closeSecretModal()" class="btn btn-primary">Done</button>
             </div>
         </div>
     </div>

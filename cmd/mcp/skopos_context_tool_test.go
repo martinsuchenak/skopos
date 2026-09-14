@@ -42,10 +42,11 @@ func TestBuildSnapshot(t *testing.T) {
 	if _, err := bbSvc.Write(ctx, blackboard.WriteInput{
 		Scope: blackboard.ScopeBranch, BranchName: "feat",
 		EntryType: blackboard.TypeFinding, Title: "found", AuthorAgentID: "a1",
+		WorkspaceID: "ws",
 	}); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	plan, err := plansSvc.CreatePlan(ctx, plans.CreatePlanInput{Name: "P", AuthorAgentID: "a1", BranchName: "feat"})
+	plan, err := plansSvc.CreatePlan(ctx, plans.CreatePlanInput{Name: "P", AuthorAgentID: "a1", BranchName: "feat", WorkspaceID: "ws"})
 	if err != nil {
 		t.Fatalf("create plan: %v", err)
 	}
@@ -99,7 +100,7 @@ func TestBuildSnapshotNextReadyEmptyWhenAllClaimed(t *testing.T) {
 	ctx := context.Background()
 	statusSvc, bbSvc, plansSvc := testSnapshotServices(t)
 
-	plan, err := plansSvc.CreatePlan(ctx, plans.CreatePlanInput{Name: "P", AuthorAgentID: "a"})
+	plan, err := plansSvc.CreatePlan(ctx, plans.CreatePlanInput{Name: "P", AuthorAgentID: "a", WorkspaceID: "ws"})
 	if err != nil {
 		t.Fatalf("create plan: %v", err)
 	}

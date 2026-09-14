@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/martinsuchenak/skopos/internal/apikeys"
+	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/events"
@@ -19,6 +21,8 @@ import (
 	logslog "github.com/paularlott/logger/slog"
 	_ "modernc.org/sqlite"
 )
+
+
 
 func integrationSetup(t *testing.T, apiKey string) *http.ServeMux {
 	t.Helper()
@@ -38,16 +42,21 @@ func integrationSetup(t *testing.T, apiKey string) *http.ServeMux {
 
 	rest.SetLogger(log)
 
-	st := status.NewHandler(status.NewService(status.NewStorage(sqlDB)), apiKey)
-	bb := blackboard.NewHandler(blackboard.NewService(blackboard.NewStorage(sqlDB)), apiKey)
-	pl := plans.NewHandler(plans.NewService(plans.NewStorage(sqlDB)), apiKey)
-	ws := workspaces.NewHandler(workspaces.NewService(workspaces.NewStorage(sqlDB)), apiKey)
+	st := status.NewHandler(status.NewService(status.NewStorage(sqlDB)), testAuth(apiKey))
+	bb := blackboard.NewHandler(blackboard.NewService(blackboard.NewStorage(sqlDB)), testAuth(apiKey))
+	pl := plans.NewHandler(plans.NewService(plans.NewStorage(sqlDB)), testAuth(apiKey))
+	ws := workspaces.NewHandler(workspaces.NewService(workspaces.NewStorage(sqlDB)), testAuth(apiKey))
 
-	mux := http.NewServeMux()
-	RegisterRoutes(mux, st, bb, pl, ws, nil)
+	webMux := http.NewServeMux()
+	apiMux := http.NewServeMux()
+	RegisterRoutes(webMux, apiMux, st, bb, pl, ws, nil, nil)
+	authn := auth.NewAuthenticator(apiKey, apikeys.NewStorage(sqlDB))
+	root := http.NewServeMux()
+	root.Handle("/api/", authn.Middleware(apiMux))
+	root.Handle("/", webMux)
 	hub := events.NewHub()
-	mux.HandleFunc("GET /api/events/stream", events.StreamHandler(hub))
-	return mux
+	root.Handle("GET /api/events/stream", authn.Middleware(events.StreamHandler(hub)))
+	return root
 }
 
 func TestIntegrationHealthAndSessions(t *testing.T) {
@@ -88,14 +97,14 @@ func TestIntegrationReportAndBlackboard(t *testing.T) {
 	resp.Body.Close()
 
 	// write a blackboard entry
-	resp, _ = http.Post(ts.URL+"/api/blackboard/entries", "application/json", strings.NewReader(`{"scope":"project","entry_type":"finding","title":"test finding","author_agent_id":"a1"}`))
+	resp, _ = http.Post(ts.URL+"/api/blackboard/entries", "application/json", strings.NewReader(`{"scope":"project","entry_type":"finding","title":"test finding","author_agent_id":"a1","workspace_id":"ws-a"}`))
 	if resp.StatusCode != 201 {
 		t.Fatalf("blackboard write: expected 201, got %d", resp.StatusCode)
 	}
 	resp.Body.Close()
 
 	// write a second, distinct entry so search filters can discriminate
-	resp, _ = http.Post(ts.URL+"/api/blackboard/entries", "application/json", strings.NewReader(`{"scope":"project","entry_type":"decision","title":"use sqlite","author_agent_id":"a1"}`))
+	resp, _ = http.Post(ts.URL+"/api/blackboard/entries", "application/json", strings.NewReader(`{"scope":"project","entry_type":"decision","title":"use sqlite","author_agent_id":"a1","workspace_id":"ws-a"}`))
 	if resp.StatusCode != 201 {
 		t.Fatalf("blackboard write 2: expected 201, got %d", resp.StatusCode)
 	}
@@ -148,7 +157,7 @@ func TestIntegrationPlans(t *testing.T) {
 	defer ts.Close()
 
 	// create plan
-	resp, _ := http.Post(ts.URL+"/api/plans", "application/json", strings.NewReader(`{"name":"Test plan","author_agent_id":"a1"}`))
+	resp, _ := http.Post(ts.URL+"/api/plans", "application/json", strings.NewReader(`{"name":"Test plan","author_agent_id":"a1","workspace_id":"ws-a"}`))
 	if resp.StatusCode != 201 {
 		t.Fatalf("create plan: expected 201, got %d", resp.StatusCode)
 	}

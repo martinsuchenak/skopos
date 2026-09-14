@@ -35,7 +35,8 @@ internal/
   ├── events/     in-process SSE hub + middleware (publishes named events on mutations)
   ├── codeindex/  code index (parse → storage → service → handler; per-workspace SQLite DBs)
   ├── install/    skopos install — wires MCP config into AI agent configs (+ Claude Code hook suite in assets/hooks/)
-  ├── auth/       API key auth (Authorization: Bearer; when set it gates every endpoint)
+  ├── auth/       principals + root/scoped API key auth (Bearer); scoping enforced in services
+  ├── apikeys/    scoped API key domain (handler → service → storage; sk_ keys, sha256-hashed)
   ├── health/     background goroutine: stuck-agent detection
   ├── cleanup/    background goroutine: data retention cleanup
   ├── db/         SQLite connection + schema.sql migrations
@@ -55,7 +56,8 @@ Every domain package follows `handler → service → storage` layering. Storage
 - Frontend assets are embedded in the binary via `web/embed.go`. Run `task frontend-build` before `task build` (the build task depends on it automatically).
 - `task lint` sets `GOCACHE` to a local directory — don't run bare `golangci-lint`.
 - The dashboard subscribes to `/api/events/stream` (SSE) for real-time updates; the `events` package's middleware publishes named events on successful mutations.
-- Workspaces are strict-scoped: blackboard entries and plans require an exact `workspace_id` match when filtered. Session-derived workspaces are auto-registered so they persist.
+- Workspaces are strict-scoped: blackboard entries and plans require an exact `workspace_id` match when filtered — and writes require `workspace_id` for every principal (root included). Unscoped reads for a scoped key return exactly its slice; by-id access to foreign objects 404s. Session-derived workspaces are auto-registered (system privilege) so they persist.
+- API keys: root key from config + DB-backed scoped keys (internal/apikeys). The principal travels in the request context (internal/auth, ctxkeys.PrincipalKey); nil principal = internal/background caller (registrar, health ticker, refresher).
 
 ## Blackboard
 

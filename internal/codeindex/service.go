@@ -1,6 +1,8 @@
 package codeindex
 
 import (
+
+	"github.com/martinsuchenak/skopos/internal/auth"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -73,6 +75,9 @@ type SearchResults struct {
 }
 
 func (s *Service) Search(ctx context.Context, workspace, branch, query, pathPrefix string, limit int) (*SearchResults, error) {
+	if err := auth.RequireWorkspace(ctx, workspace); err != nil {
+		return nil, err
+	}
 	const maxQueryBytes = 256
 	if strings.TrimSpace(query) == "" {
 		return nil, fmt.Errorf("%w: query is required", ErrInvalidInput)
@@ -96,6 +101,9 @@ func (s *Service) Search(ctx context.Context, workspace, branch, query, pathPref
 }
 
 func (s *Service) Symbol(ctx context.Context, workspace, branch, name string) (*SearchResults, error) {
+	if err := auth.RequireWorkspace(ctx, workspace); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(name) == "" {
 		return nil, fmt.Errorf("%w: name is required", ErrInvalidInput)
 	}
@@ -115,6 +123,9 @@ func (s *Service) Symbol(ctx context.Context, workspace, branch, name string) (*
 }
 
 func (s *Service) Outline(ctx context.Context, workspace, branch, path string) (*SearchResults, error) {
+	if err := auth.RequireWorkspace(ctx, workspace); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("%w: path is required", ErrInvalidInput)
 	}
@@ -138,6 +149,9 @@ type GraphResults struct {
 }
 
 func (s *Service) Callers(ctx context.Context, workspace, branch, name, pathPrefix string, limit int) (*GraphResults, error) {
+	if err := auth.RequireWorkspace(ctx, workspace); err != nil {
+		return nil, err
+	}
 	resolved, label, fallback, err := s.resolveBranch(workspace, branch)
 	if err != nil {
 		return nil, err
@@ -154,6 +168,9 @@ func (s *Service) Callers(ctx context.Context, workspace, branch, name, pathPref
 }
 
 func (s *Service) Callees(ctx context.Context, workspace, branch, name, pathPrefix string, limit int) (*GraphResults, error) {
+	if err := auth.RequireWorkspace(ctx, workspace); err != nil {
+		return nil, err
+	}
 	resolved, label, fallback, err := s.resolveBranch(workspace, branch)
 	if err != nil {
 		return nil, err
@@ -173,6 +190,9 @@ func (s *Service) Callees(ctx context.Context, workspace, branch, name, pathPref
 // given name — everything potentially affected by changing it. BFS over the
 // caller edges, bounded by maxDepth.
 func (s *Service) Impact(ctx context.Context, workspace, branch, name string, maxDepth int) (*ImpactResults, error) {
+	if err := auth.RequireWorkspace(ctx, workspace); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(name) == "" {
 		return nil, fmt.Errorf("%w: name is required", ErrInvalidInput)
 	}
@@ -411,6 +431,9 @@ type ImpactResults struct {
 
 // Dependencies lists per-file import edges on a branch (module graph).
 func (s *Service) Dependencies(ctx context.Context, workspace, branch, pathPrefix string) ([]FileDeps, error) {
+	if err := auth.RequireWorkspace(ctx, workspace); err != nil {
+		return nil, err
+	}
 	resolved, _, _, err := s.resolveBranch(workspace, branch)
 	if err != nil {
 		return nil, err
@@ -426,6 +449,9 @@ func (s *Service) GC(ctx context.Context, workspace string) ([]int64, error) {
 
 // DeleteVectors removes vectors for the given symbol IDs (companion to GC).
 func (s *Service) DeleteVectors(ctx context.Context, workspace string, ids []int64) error {
+	if err := auth.RequireWorkspace(ctx, workspace); err != nil {
+		return err
+	}
 	if len(ids) == 0 {
 		return nil
 	}
@@ -435,6 +461,9 @@ func (s *Service) DeleteVectors(ctx context.Context, workspace string, ids []int
 // Status lists indexed branches, enriched with embedding coverage when a
 // vector store is configured (coverage is workspace-wide; rows repeat it).
 func (s *Service) Status(ctx context.Context, workspace string) ([]BranchStatus, error) {
+	if err := auth.RequireWorkspace(ctx, workspace); err != nil {
+		return nil, err
+	}
 	out, err := s.store.Status(workspace)
 	if err != nil || len(out) == 0 {
 		return out, err
@@ -454,6 +483,9 @@ func (s *Service) Status(ctx context.Context, workspace string) ([]BranchStatus,
 
 // DropBranch removes a branch's index state.
 func (s *Service) DropBranch(ctx context.Context, workspace, branch string) error {
+	if err := auth.RequireWorkspace(ctx, workspace); err != nil {
+		return err
+	}
 	if branch == "" {
 		return fmt.Errorf("%w: branch is required", ErrInvalidInput)
 	}
@@ -463,6 +495,9 @@ func (s *Service) DropBranch(ctx context.Context, workspace, branch string) erro
 // DropWorkspace tears down a workspace's entire index: vectors (any
 // backend, including external stores) and the index database itself.
 func (s *Service) DropWorkspace(ctx context.Context, workspace string) error {
+	if err := auth.RequireWorkspace(ctx, workspace); err != nil {
+		return err
+	}
 	if strings.TrimSpace(workspace) == "" {
 		return fmt.Errorf("%w: workspace is required", ErrInvalidInput)
 	}

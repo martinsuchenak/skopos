@@ -12,7 +12,7 @@ A coordination dashboard for AI coding agents — shared memory (blackboard), pl
 | Dashboard | ✅ Dark/light/system theme, sidebar nav, modals, SSE live updates |
 | Real-time | ✅ SSE at `/api/events/stream` |
 | Database | ✅ SQLite (WAL, FK-enforced, transactional) |
-| Auth | ✅ API key (Bearer); when set it gates every endpoint (REST reads/writes, MCP, SSE) |
+| Auth | ✅ API keys (Bearer): a root key from config plus scoped per-workspace keys (`skopos key create`) — every endpoint (REST, MCP, SSE) checks the key's workspace scope |
 | Agent integration | ✅ `skopos install` for Claude Code, Codex, Gemini, Copilot, Kiro, opencode, ZCode |
 | Agent hooks | ✅ Claude Code: session briefing, prompt-time code pre-fetch, search nudges, memory reminders (`--no-hooks` to skip) |
 | Code index | ✅ Central, branch-aware symbol/call-graph index (all languages, optional semantic search) |
@@ -34,6 +34,8 @@ Open `http://localhost:8080`.
 skopos setup                               # interactive: local or remote code index
 skopos install --agent claude-code          # local
 skopos install --agent all --api-key "$SKOPOS_API_KEY"  # remote + auth
+# Tip: prefer minting a scoped key per machine (skopos key create) over
+# sharing the root key — see docs/concepts/api-keys.md.
 ```
 
 See [Agent integration](docs/getting-started.md#connecting-an-agent) and [Integration guides](docs/integrations/).

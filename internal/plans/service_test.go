@@ -240,6 +240,14 @@ func (f *fakeStore) PlanStatus(_ context.Context, planID string) (PlanStatus, er
 	return p.Status, nil
 }
 
+func (f *fakeStore) PlanWorkspace(_ context.Context, planID string) (string, error) {
+	p, ok := f.plans[planID]
+	if !ok {
+		return "", fmt.Errorf("%w: plan %s", ErrNotFound, planID)
+	}
+	return p.WorkspaceID, nil
+}
+
 func (f *fakeStore) SetPlanStatus(_ context.Context, planID string, status PlanStatus) error {
 	p, ok := f.plans[planID]
 	if !ok {
@@ -290,6 +298,7 @@ func TestServiceCreatePlanSuccess(t *testing.T) {
 		Name:          "Auth refactor",
 		AuthorAgentID: "agent-1",
 		BranchName:    "feat-auth",
+		WorkspaceID:   "ws-x",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -558,7 +567,7 @@ func TestServiceUpdateItemEnforcesDependencyGate(t *testing.T) {
 	svc := NewService(st)
 	ctx := context.Background()
 
-	plan, err := svc.CreatePlan(ctx, CreatePlanInput{Name: "P", AuthorAgentID: "a"})
+	plan, err := svc.CreatePlan(ctx, CreatePlanInput{Name: "P", AuthorAgentID: "a", WorkspaceID: "ws-x"})
 	if err != nil {
 		t.Fatalf("create plan: %v", err)
 	}
@@ -593,7 +602,7 @@ func TestServiceUpdateItemEnforcesDependencyGate(t *testing.T) {
 	}
 
 	// Reopen rule on a still-active plan: C done, D pending keeps it active.
-	plan2, err := svc.CreatePlan(ctx, CreatePlanInput{Name: "P2", AuthorAgentID: "a"})
+	plan2, err := svc.CreatePlan(ctx, CreatePlanInput{Name: "P2", AuthorAgentID: "a", WorkspaceID: "ws-x"})
 	if err != nil {
 		t.Fatalf("create plan2: %v", err)
 	}
@@ -620,7 +629,7 @@ func TestServiceConcurrentAddItemsAllPersist(t *testing.T) {
 	st := testFileStorage(t)
 	svc := NewService(st)
 	ctx := context.Background()
-	plan, err := svc.CreatePlan(ctx, CreatePlanInput{Name: "P", AuthorAgentID: "a"})
+	plan, err := svc.CreatePlan(ctx, CreatePlanInput{Name: "P", AuthorAgentID: "a", WorkspaceID: "ws-x"})
 	if err != nil {
 		t.Fatalf("create plan: %v", err)
 	}

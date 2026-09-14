@@ -19,14 +19,14 @@ const commitBodyLimit = 64 << 20
 
 type Handler struct {
 	service    *Service
-	apiKey     string
+	authn      *auth.Authenticator
 	registerWS func(id string)
 	refresher  *Refresher
 	embeddings *EmbeddingManager
 }
 
-func NewHandler(service *Service, apiKey string) *Handler {
-	return &Handler{service: service, apiKey: apiKey}
+func NewHandler(service *Service, authn *auth.Authenticator) *Handler {
+	return &Handler{service: service, authn: authn}
 }
 
 // SetWorkspaceRegistrar installs a callback invoked when a commit names a
@@ -56,7 +56,7 @@ func (h *Handler) maybeRegisterWorkspace(ws string) {
 	}
 }
 
-func (h *Handler) authorized(r *http.Request) bool { return auth.Authorize(r, h.apiKey) }
+func (h *Handler) authorized(r *http.Request) bool { return h.authn.Authenticate(r) != nil }
 
 func (h *Handler) workspace(r *http.Request) string {
 	return strings.ToLower(strings.TrimSpace(r.PathValue("workspace")))
@@ -68,7 +68,23 @@ func (h *Handler) requireWorkspace(w http.ResponseWriter, r *http.Request) (stri
 		rest.RespondError(w, http.StatusBadRequest, "workspace path parameter is required")
 		return "", false
 	}
+	// The workspace path parameter is explicit input: out-of-scope is a 403
+	// with the accessible list, not a silent empty result.
+	if err := auth.RequireWorkspace(r.Context(), ws); err != nil {
+		rest.RespondError(w, http.StatusForbidden, err.Error())
+		return "", false
+	}
 	return ws, true
+}
+
+// requireRoot gates server-side refresh and workspace drop: both drive the
+// clone path (the SSRF surface) or destroy index data.
+func (h *Handler) requireRoot(w http.ResponseWriter, r *http.Request) bool {
+	if err := auth.RequireRoot(r.Context()); err != nil {
+		rest.RespondError(w, http.StatusForbidden, err.Error())
+		return false
+	}
+	return true
 }
 
 // Manifest handles POST /api/codeindex/{workspace}/manifest: the client sends
@@ -342,6 +358,9 @@ func (h *Handler) DropWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !h.requireRoot(w, r) {
+		return
+	}
 	if err := h.service.DropWorkspace(r.Context(), ws); err != nil {
 		h.respondServiceError(w, err)
 		return
@@ -392,6 +411,9 @@ func (h *Handler) RefreshStart(w http.ResponseWriter, r *http.Request) {
 	}
 	ws, ok := h.requireWorkspace(w, r)
 	if !ok {
+		return
+	}
+	if !h.requireRoot(w, r) {
 		return
 	}
 	if h.refresher == nil {

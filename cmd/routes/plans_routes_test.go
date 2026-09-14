@@ -11,7 +11,7 @@ import (
 func TestRegisterPlansRoutes(t *testing.T) {
 	mux := http.NewServeMux()
 	registerPlansRoutes(mux, plans.NewHandler(
-		plans.NewService(&noopPlansStore{}), "",
+		plans.NewService(&noopPlansStore{}), testAuth(""),
 	))
 }
 
@@ -83,3 +83,5 @@ func (s *noopPlansStore) AllItemsDone(_ context.Context, _ string) (bool, error)
 func (s *noopPlansStore) RunInTx(_ context.Context, fn func(plans.Store) error) error {
 	return fn(s)
 }
+
+func (s *noopPlansStore) PlanWorkspace(_ context.Context, _ string) (string, error) { return "", nil }

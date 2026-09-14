@@ -9,6 +9,9 @@ ZCode connects to skopos over MCP and picks up the same behavioral assets as the
 
 > **Quick install:** `skopos install --agent zcode [--url ...] [--api-key "$SKOPOS_API_KEY"]` does all three steps for you — it merges the MCP entry into `~/.zcode/cli/config.json` (`mcp.servers.skopos`), writes the `/skopos` and `/skopos-report` commands to `~/.zcode/commands/`, manages the behavioral block in `~/.zcode/AGENTS.md` between skopos markers, installs the hook suite, and sets `hooks.enabled: true` (ZCode runs configuration-file hooks only when that flag is set). Idempotent; backs up existing config. Use `--scope project` to write `.zcode/` in the current repo instead (instructions then go to the repo's `AGENTS.md`). The manual steps below are the fallback.
 
+> **Scoped keys:** prefer minting a per-machine key with `skopos key create --workspace <id>` over sharing the root key — see [concepts/api-keys.md](../concepts/api-keys.md).
+
+
 ## Step 1: MCP config
 
 Add to `mcp.servers` in `~/.zcode/cli/config.json` (or `.zcode/config.json` in a repo for team scope):

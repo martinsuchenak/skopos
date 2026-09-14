@@ -10,15 +10,15 @@ import (
 
 type Handler struct {
 	service *Service
-	apiKey  string
+	authn   *auth.Authenticator
 }
 
-func NewHandler(service *Service, apiKey string) *Handler {
-	return &Handler{service: service, apiKey: apiKey}
+func NewHandler(service *Service, authn *auth.Authenticator) *Handler {
+	return &Handler{service: service, authn: authn}
 }
 
 func (h *Handler) authorized(r *http.Request) bool {
-	return auth.Authorize(r, h.apiKey)
+	return h.authn.Authenticate(r) != nil
 }
 
 func (h *Handler) CreatePlan(w http.ResponseWriter, r *http.Request) {
@@ -33,11 +33,14 @@ func (h *Handler) CreatePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	plan, err := h.service.CreatePlan(r.Context(), input)
 	if err != nil {
-		if errors.Is(err, ErrInvalidInput) {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
-			return
+		case errors.Is(err, auth.ErrOutOfScope):
+			rest.RespondError(w, http.StatusForbidden, err.Error())
+		default:
+			rest.InternalError(w, err)
 		}
-		rest.InternalError(w, err)
 		return
 	}
 	rest.RespondJSON(w, http.StatusCreated, plan)
@@ -52,6 +55,10 @@ func (h *Handler) ListPlans(w http.ResponseWriter, r *http.Request) {
 	branch := r.URL.Query().Get("branch")
 	plans, err := h.service.ListPlans(r.Context(), workspace, branch)
 	if err != nil {
+		if errors.Is(err, auth.ErrOutOfScope) {
+			rest.RespondError(w, http.StatusForbidden, err.Error())
+			return
+		}
 		rest.InternalError(w, err)
 		return
 	}
@@ -69,7 +76,7 @@ func (h *Handler) GetPlan(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	plan, err := h.service.GetPlan(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope) {
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 			return
 		}
@@ -92,7 +99,7 @@ func (h *Handler) UpdatePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.service.UpdatePlan(r.Context(), id, input); err != nil {
 		switch {
-		case errors.Is(err, ErrNotFound):
+		case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
@@ -111,7 +118,7 @@ func (h *Handler) DeletePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	if err := h.service.DeletePlan(r.Context(), id); err != nil {
-		if errors.Is(err, ErrNotFound) {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope) {
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 			return
 		}
@@ -135,7 +142,7 @@ func (h *Handler) AddItem(w http.ResponseWriter, r *http.Request) {
 	item, err := h.service.AddItem(r.Context(), planID, input)
 	if err != nil {
 		switch {
-		case errors.Is(err, ErrNotFound):
+		case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
@@ -161,7 +168,7 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := h.service.UpdateItem(r.Context(), planID, itemID, input); err != nil {
 		switch {
-		case errors.Is(err, ErrNotFound):
+		case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
@@ -183,7 +190,7 @@ func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request) {
 	planID := r.PathValue("id")
 	itemID := r.PathValue("item_id")
 	if err := h.service.DeleteItem(r.Context(), planID, itemID); err != nil {
-		if errors.Is(err, ErrNotFound) {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope) {
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 			return
 		}
@@ -209,7 +216,7 @@ func (h *Handler) AddDependency(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.service.AddDependency(r.Context(), planID, itemID, input.DependsOnID); err != nil {
 		switch {
-		case errors.Is(err, ErrNotFound):
+		case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
@@ -244,7 +251,7 @@ func (h *Handler) RemoveDependency(w http.ResponseWriter, r *http.Request) {
 	dependsOnID := r.PathValue("depends_on_id")
 	if err := h.service.RemoveDependency(r.Context(), planID, itemID, dependsOnID); err != nil {
 		switch {
-		case errors.Is(err, ErrNotFound):
+		case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
@@ -271,7 +278,7 @@ func (h *Handler) AddPlanDependency(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.service.AddPlanDependency(r.Context(), planID, input.DependsOnPlanID); err != nil {
 		switch {
-		case errors.Is(err, ErrNotFound):
+		case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
@@ -299,7 +306,7 @@ func (h *Handler) RemovePlanDependency(w http.ResponseWriter, r *http.Request) {
 	dependsOnID := r.PathValue("depends_on_id")
 	if err := h.service.RemovePlanDependency(r.Context(), planID, dependsOnID); err != nil {
 		switch {
-		case errors.Is(err, ErrNotFound):
+		case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())

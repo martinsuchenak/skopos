@@ -436,3 +436,5 @@ func TestStorageConcurrentPromoteReachesProject(t *testing.T) {
 		}
 	}
 }
+
+func timeNow() time.Time { return time.Now().UTC() }

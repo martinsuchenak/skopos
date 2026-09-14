@@ -51,7 +51,12 @@ The config file is optional — skopos runs on flag defaults + env vars without 
 
 Key flags:
 ```bash
-skopos serve --api-key mysecret    # require the key on every endpoint (REST, MCP, SSE)
+skopos serve --api-key mysecret    # root key: required on every endpoint (REST, MCP, SSE)
+
+# The --api-key above is the ROOT key (full access, manages keys/workspaces).
+# For agents and machines, mint scoped keys instead — each limited to chosen
+# workspaces: `skopos key create --name zcode-laptop --workspace github.com/me/repo`
+# (see docs/concepts/api-keys.md).
 skopos serve --log-level debug     # debug logging
 ```
 

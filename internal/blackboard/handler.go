@@ -10,15 +10,15 @@ import (
 
 type Handler struct {
 	service *Service
-	apiKey  string
+	authn   *auth.Authenticator
 }
 
-func NewHandler(service *Service, apiKey string) *Handler {
-	return &Handler{service: service, apiKey: apiKey}
+func NewHandler(service *Service, authn *auth.Authenticator) *Handler {
+	return &Handler{service: service, authn: authn}
 }
 
 func (h *Handler) authorized(r *http.Request) bool {
-	return auth.Authorize(r, h.apiKey)
+	return h.authn.Authenticate(r) != nil
 }
 
 // WriteEntry handles POST /api/blackboard/entries.
@@ -36,11 +36,14 @@ func (h *Handler) WriteEntry(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.service.Write(r.Context(), input)
 	if err != nil {
-		if errors.Is(err, ErrInvalidInput) {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
-			return
+		case errors.Is(err, auth.ErrOutOfScope):
+			rest.RespondError(w, http.StatusForbidden, err.Error())
+		default:
+			rest.InternalError(w, err)
 		}
-		rest.InternalError(w, err)
 		return
 	}
 	rest.RespondJSON(w, http.StatusCreated, result)
@@ -71,6 +74,10 @@ func (h *Handler) ReadBundle(w http.ResponseWriter, r *http.Request) {
 			Query:         query,
 		})
 		if err != nil {
+			if errors.Is(err, auth.ErrOutOfScope) {
+				rest.RespondError(w, http.StatusForbidden, err.Error())
+				return
+			}
 			rest.InternalError(w, err)
 			return
 		}
@@ -83,6 +90,10 @@ func (h *Handler) ReadBundle(w http.ResponseWriter, r *http.Request) {
 
 	bundle, err := h.service.Bundle(r.Context(), workspaceID, branchName, sessionID)
 	if err != nil {
+		if errors.Is(err, auth.ErrOutOfScope) {
+			rest.RespondError(w, http.StatusForbidden, err.Error())
+			return
+		}
 		rest.InternalError(w, err)
 		return
 	}
@@ -99,7 +110,7 @@ func (h *Handler) Promote(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := h.service.Promote(r.Context(), id); err != nil {
 		switch {
-		case errors.Is(err, ErrNotFound):
+		case errors.Is(err, ErrNotFound), errors.Is(err, auth.ErrOutOfScope):
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrAlreadyAtTopScope):
 			rest.RespondError(w, http.StatusConflict, err.Error())
@@ -123,7 +134,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := h.service.Delete(r.Context(), id); err != nil {
 		switch {
-		case errors.Is(err, ErrNotFound):
+		case errors.Is(err, ErrNotFound), errors.Is(err, auth.ErrOutOfScope):
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())

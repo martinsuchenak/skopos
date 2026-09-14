@@ -13,6 +13,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+
+
 func testHandler(t *testing.T, apiKey string) *Handler {
 	t.Helper()
 	sqlDB, err := sql.Open("sqlite", ":memory:")
@@ -26,7 +28,7 @@ func testHandler(t *testing.T, apiKey string) *Handler {
 	if err := db.RunMigrations(sqlDB); err != nil {
 		t.Fatalf("run migrations: %v", err)
 	}
-	return NewHandler(NewService(NewStorage(sqlDB)), apiKey)
+	return NewHandler(NewService(NewStorage(sqlDB)), testAuth(apiKey))
 }
 
 func TestHandlerCreateAndList(t *testing.T) {

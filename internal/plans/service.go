@@ -1,6 +1,8 @@
 package plans
 
 import (
+
+	"github.com/martinsuchenak/skopos/internal/auth"
 	"context"
 	"fmt"
 	"github.com/martinsuchenak/skopos/internal/ids"
@@ -26,6 +28,12 @@ func (s *Service) CreatePlan(ctx context.Context, input CreatePlanInput) (*Plan,
 	if input.AuthorAgentID == "" {
 		return nil, fmt.Errorf("%w: author_agent_id is required", ErrInvalidInput)
 	}
+	if input.WorkspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace_id is required on writes (derive it with `skopos workspace` or the git remote)", ErrInvalidInput)
+	}
+	if err := auth.RequireWorkspace(ctx, input.WorkspaceID); err != nil {
+		return nil, err
+	}
 	now := s.now().UTC()
 	plan := Plan{
 		ID:            ids.New(),
@@ -44,7 +52,26 @@ func (s *Service) CreatePlan(ctx context.Context, input CreatePlanInput) (*Plan,
 	return &plan, nil
 }
 
+
+// requirePlanScope authorizes a by-plan-id operation against the plan's
+// workspace; unknown plans report not-found first so existence is not
+// leaked across tenants. The workspace is immutable, so checking before the
+// transaction is race-free.
+func (s *Service) requirePlanScope(ctx context.Context, planID string) error {
+	if strings.TrimSpace(planID) == "" {
+		return fmt.Errorf("%w: plan_id is required", ErrInvalidInput)
+	}
+	ws, err := s.store.PlanWorkspace(ctx, planID)
+	if err != nil {
+		return err
+	}
+	return auth.RequireWorkspace(ctx, ws)
+}
+
 func (s *Service) GetPlan(ctx context.Context, id string) (*Plan, error) {
+	if err := s.requirePlanScope(ctx, id); err != nil {
+		return nil, err
+	}
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil, fmt.Errorf("%w: id is required", ErrInvalidInput)
@@ -53,10 +80,35 @@ func (s *Service) GetPlan(ctx context.Context, id string) (*Plan, error) {
 }
 
 func (s *Service) ListPlans(ctx context.Context, workspaceID, branchName string) ([]Plan, error) {
+	if workspaceID != "" {
+		if err := auth.RequireWorkspace(ctx, workspaceID); err != nil {
+			return nil, err
+		}
+	}
+	if workspaceID == "" && auth.ScopedContext(ctx) {
+		var merged []Plan
+		seen := map[string]bool{}
+		for _, ws := range auth.PrincipalFromContext(ctx).WorkspaceList() {
+			plans, err := s.store.ListPlans(ctx, ws, branchName)
+			if err != nil {
+				return nil, err
+			}
+			for _, pl := range plans {
+				if !seen[pl.ID] {
+					seen[pl.ID] = true
+					merged = append(merged, pl)
+				}
+			}
+		}
+		return merged, nil
+	}
 	return s.store.ListPlans(ctx, strings.TrimSpace(workspaceID), strings.TrimSpace(branchName))
 }
 
 func (s *Service) UpdatePlan(ctx context.Context, id string, input UpdatePlanInput) error {
+	if err := s.requirePlanScope(ctx, id); err != nil {
+		return err
+	}
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return fmt.Errorf("%w: id is required", ErrInvalidInput)
@@ -77,6 +129,9 @@ func (s *Service) UpdatePlan(ctx context.Context, id string, input UpdatePlanInp
 }
 
 func (s *Service) DeletePlan(ctx context.Context, id string) error {
+	if err := s.requirePlanScope(ctx, id); err != nil {
+		return err
+	}
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return fmt.Errorf("%w: id is required", ErrInvalidInput)
@@ -85,6 +140,9 @@ func (s *Service) DeletePlan(ctx context.Context, id string) error {
 }
 
 func (s *Service) AddItem(ctx context.Context, planID string, input CreateItemInput) (*Item, error) {
+	if err := s.requirePlanScope(ctx, planID); err != nil {
+		return nil, err
+	}
 	planID = strings.TrimSpace(planID)
 	if planID == "" {
 		return nil, fmt.Errorf("%w: plan_id is required", ErrInvalidInput)
@@ -169,6 +227,9 @@ func (s *Service) AddItem(ctx context.Context, planID string, input CreateItemIn
 }
 
 func (s *Service) UpdateItem(ctx context.Context, planID, itemID string, input UpdateItemInput) (*Item, error) {
+	if err := s.requirePlanScope(ctx, planID); err != nil {
+		return nil, err
+	}
 	planID = strings.TrimSpace(planID)
 	itemID = strings.TrimSpace(itemID)
 	if planID == "" {
@@ -246,6 +307,9 @@ func assertTransitionAllowed(ctx context.Context, store Store, planID, itemID st
 }
 
 func (s *Service) AddDependency(ctx context.Context, planID, itemID, dependsOnID string) error {
+	if err := s.requirePlanScope(ctx, planID); err != nil {
+		return err
+	}
 	planID = strings.TrimSpace(planID)
 	itemID = strings.TrimSpace(itemID)
 	dependsOnID = strings.TrimSpace(dependsOnID)
@@ -290,6 +354,9 @@ func (s *Service) AddDependency(ctx context.Context, planID, itemID, dependsOnID
 }
 
 func (s *Service) RemoveDependency(ctx context.Context, planID, itemID, dependsOnID string) error {
+	if err := s.requirePlanScope(ctx, planID); err != nil {
+		return err
+	}
 	planID = strings.TrimSpace(planID)
 	itemID = strings.TrimSpace(itemID)
 	dependsOnID = strings.TrimSpace(dependsOnID)
@@ -313,10 +380,16 @@ func (s *Service) DeleteItem(ctx context.Context, planID, itemID string) error {
 	if itemID == "" {
 		return fmt.Errorf("%w: item_id is required", ErrInvalidInput)
 	}
+	if err := s.requirePlanScope(ctx, planID); err != nil {
+		return err
+	}
 	return s.store.DeleteItem(ctx, planID, itemID)
 }
 
 func (s *Service) AddPlanDependency(ctx context.Context, planID, dependsOnPlanID string) error {
+	if err := s.requirePlanScope(ctx, planID); err != nil {
+		return err
+	}
 	planID = strings.TrimSpace(planID)
 	dependsOnPlanID = strings.TrimSpace(dependsOnPlanID)
 	if planID == "" || dependsOnPlanID == "" {
@@ -360,6 +433,9 @@ func (s *Service) AddPlanDependency(ctx context.Context, planID, dependsOnPlanID
 }
 
 func (s *Service) RemovePlanDependency(ctx context.Context, planID, dependsOnPlanID string) error {
+	if err := s.requirePlanScope(ctx, planID); err != nil {
+		return err
+	}
 	planID = strings.TrimSpace(planID)
 	dependsOnPlanID = strings.TrimSpace(dependsOnPlanID)
 	if planID == "" || dependsOnPlanID == "" {

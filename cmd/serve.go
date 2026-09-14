@@ -17,6 +17,7 @@ import (
 
 	"github.com/martinsuchenak/skopos/cmd/mcp"
 	"github.com/martinsuchenak/skopos/cmd/routes"
+	"github.com/martinsuchenak/skopos/internal/apikeys"
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/cleanup"
@@ -171,18 +172,23 @@ func serveCmd() *cli.Command {
 				return err
 			}
 
+			// Resolve the authenticator before any handler: per-handler
+			// authorized() re-authenticates with it (defense in depth behind
+			// the router middleware) and must resolve DB keys, not just root.
+			authn := auth.NewAuthenticator(apiKey, apikeys.NewStorage(sqlDB))
+
 			statusService := status.NewService(status.NewStorage(sqlDB))
-			statusHandler := status.NewHandler(statusService, apiKey)
+			statusHandler := status.NewHandler(statusService, authn)
 
 			blackboardService := blackboard.NewService(blackboard.NewStorage(sqlDB))
-			blackboardHandler := blackboard.NewHandler(blackboardService, apiKey)
+			blackboardHandler := blackboard.NewHandler(blackboardService, authn)
 
 			plansStorage := plans.NewStorage(sqlDB)
 			plansService := plans.NewService(plansStorage)
-			plansHandler := plans.NewHandler(plansService, apiKey)
+			plansHandler := plans.NewHandler(plansService, authn)
 
 			workspacesService := workspaces.NewService(workspaces.NewStorage(sqlDB))
-			workspacesHandler := workspaces.NewHandler(workspacesService, apiKey)
+			workspacesHandler := workspaces.NewHandler(workspacesService, authn)
 
 			// Session-derived workspaces are auto-registered so they persist
 			// in the registry (same contract as the code-index push path).
@@ -197,7 +203,7 @@ func serveCmd() *cli.Command {
 			}
 			defer codeIndexStore.Close()
 			codeIndexService := codeindex.NewService(codeIndexStore)
-			codeIndexHandler := codeindex.NewHandler(codeIndexService, apiKey)
+			codeIndexHandler := codeindex.NewHandler(codeIndexService, authn)
 			codeIndexHandler.SetWorkspaceRegistrar(func(id string) {
 				// First push registers the workspace so it persists in the registry.
 				_, _, _ = workspacesService.Create(context.Background(), workspaces.CreateInput{ID: id})
@@ -325,22 +331,31 @@ func serveCmd() *cli.Command {
 			}()
 			// go-scaffolder:serve-init
 
-			mux := http.NewServeMux()
-			routes.RegisterRoutes(mux, statusHandler, blackboardHandler, plansHandler, workspacesHandler, codeIndexHandler)
-			mux.Handle("GET /api/events/stream", auth.APIKeyMiddleware(apiKey)(events.StreamHandler(hub)))
+			// API keys: DB-backed scoped credentials alongside the root key
+			// (docs/design/api-keys.md).
+			apiKeysStorage := apikeys.NewStorage(sqlDB)
+			apiKeysService := apikeys.NewService(apiKeysStorage)
+			apiKeysHandler := apikeys.NewHandler(apiKeysService, workspacesService)
 
-			// Runtime metrics are not part of the product API: require the API key
-			// when auth is enabled (the middleware is a no-op otherwise).
-			mux.Handle("GET /metrics", auth.APIKeyMiddleware(apiKey)(http.HandlerFunc(routes.MetricsHandler)))
+			webMux := http.NewServeMux()
+			apiMux := http.NewServeMux()
+			routes.RegisterRoutes(webMux, apiMux, statusHandler, blackboardHandler, plansHandler, workspacesHandler, codeIndexHandler, apiKeysHandler)
+			mux := http.NewServeMux()
+			// Longest-pattern wins: the exact SSE route below overrides /api/.
+			mux.Handle("/api/", authn.Middleware(apiMux))
+			mux.Handle("/", webMux)
+			mux.Handle("GET /api/events/stream", authn.Middleware(events.StreamHandler(hub)))
+
+			// Runtime metrics are not part of the product API: require authentication
+			// when enabled (the middleware is a no-op otherwise).
+			mux.Handle("GET /metrics", authn.Middleware(http.HandlerFunc(routes.MetricsHandler)))
 
 			// MCP endpoint, mounted on the same server/port as everything else. Body
 			// is capped like the REST API (rest.DecodeJSON applies its cap only to
 			// handlers that decode via it).
-			mcpHandler := mcp.NewMCPHandler(statusService, blackboardService, plansService, codeIndexService)
+			mcpHandler := mcp.NewMCPHandler(statusService, blackboardService, plansService, codeIndexService, workspacesService)
 			mcpHandler = rest.BodyLimit(noBrowserOrigin(mcpHandler))
-			if apiKey != "" {
-				mcpHandler = auth.APIKeyMiddleware(apiKey)(mcpHandler)
-			}
+			mcpHandler = authn.Middleware(mcpHandler)
 			for _, m := range []string{http.MethodPost, http.MethodGet, http.MethodDelete, http.MethodOptions} {
 				mux.Handle(m+" /mcp", mcpHandler)
 			}
