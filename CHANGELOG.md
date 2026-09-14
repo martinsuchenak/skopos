@@ -4,6 +4,38 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] — 2026-09-14
+
+Sessions that tell their story: automatic progress data from the hooks, and
+a dashboard that reads well with it.
+
+### Added
+
+- **Automatic session heartbeats** (agent hooks, block v4): the
+  SessionStart hook begins a skopos session, stores its id in the
+  gitignored `.skopos-session`, reports the start, and tells the agent the
+  id so `report_status` calls join one timeline (omitting session_id
+  mints a new session per call — the source of 1-2 event slivers). The
+  PreToolUse hook fires a throttled (5-minute) fire-and-forget heartbeat
+  on every tool call, so working agents stay off the stuck list and the
+  timeline fills in without agent discipline. Heartbeat events carry
+  `metadata.source=hook` / `heartbeat=true`. Agent identity derives from
+  the hook install directory + hostname. Instructions now ask for a
+  report at least every ~10 minutes on long tasks.
+- **Session timeline** (dashboard): chronological events with consecutive
+  heartbeats collapsed into compact rows ("N auto heartbeats · alive 12m"),
+  an AUTO badge on hook/server events, "silent for Xm" gap markers,
+  per-event progress bars and step chips. Session cards show "active Xm
+  ago" and "ran Xh Ym"; the detail header adds started-time, duration,
+  and last activity.
+
+### Fixed
+
+- The zsh completion script was not installable: it lacked the
+  `#compdef skopos` first line (compinit ignores fpath files without it)
+  and registered completion for the binary's absolute invocation path
+  instead of the command name. Both standard install forms now work.
+
 ## [0.2.1] — 2026-09-14
 
 ### Fixed
