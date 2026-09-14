@@ -344,13 +344,14 @@
             <section x-show="activeView === 'index'" x-cloak>
                 <h2 class="mb-1 text-2xl font-semibold">Code index</h2>
                 <p class="mb-6 text-sm text-zinc-500">
-                    Indexed branches for <span class="font-mono text-zinc-400" x-text="activeWorkspace || 'default'"></span>.
+                    <span x-show="activeWorkspace">Indexed branches for <span class="font-mono text-zinc-400" x-text="activeWorkspace"></span>.</span>
+                    <span x-show="!activeWorkspace">Indexed branches across all workspaces.</span>
                     Push with <code class="rounded bg-zinc-800 px-1">skopos index push</code> or refresh from the registered git URL.
                 </p>
                 <div x-show="indexBranches.length === 0" class="rounded-lg border border-zinc-800 bg-zinc-900/50 p-6 text-sm text-zinc-500">
                     No indexed branches yet. Agents push indexes via the CLI; every machine then queries the same central index.
                 </div>
-                <ul class="space-y-2" x-show="indexBranches.length > 0">
+                <ul class="space-y-2" x-show="activeWorkspace && indexBranches.length > 0">
                     <template x-for="b in indexBranches" :key="b.branch">
                         <li class="flex flex-wrap items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3">
                             <span class="font-mono text-sm text-cyan-300" x-text="b.branch"></span>
@@ -363,6 +364,29 @@
                         </li>
                     </template>
                 </ul>
+                <div x-show="!activeWorkspace && indexGroups.length > 0" class="space-y-6">
+                    <template x-for="g in indexGroups" :key="g.id">
+                        <div>
+                            <h3 class="mb-2 flex items-baseline gap-2 text-sm font-semibold text-zinc-300">
+                                <span class="font-mono" x-text="g.label"></span>
+                                <span class="text-xs font-normal text-zinc-600" x-text="g.branches.length === 0 ? 'not indexed' : g.branches.length + ' branch(es)'"></span>
+                            </h3>
+                            <ul x-show="g.branches.length > 0" class="space-y-2">
+                                <template x-for="b in g.branches" :key="b.branch">
+                                    <li class="flex flex-wrap items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3">
+                                        <span class="font-mono text-sm text-cyan-300" x-text="b.branch"></span>
+                                        <span class="text-xs text-zinc-500">
+                                            <span x-text="b.file_count"></span> files ·
+                                            <span x-text="b.symbol_count"></span> symbols
+                                        </span>
+                                        <span class="ml-auto text-xs text-zinc-600" x-text="b.source || ''"></span>
+                                        <span class="text-xs text-zinc-600" x-text="formatTime(b.built_at)"></span>
+                                    </li>
+                                </template>
+                            </ul>
+                        </div>
+                    </template>
+                </div>
             </section>
             <!-- ===================== API KEYS ===================== -->
             <section x-show="activeView === 'keys'" x-cloak>

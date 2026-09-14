@@ -76,7 +76,13 @@ type Options struct {
 	URL    string // MCP server URL (default DefaultURL)
 	APIKey string // sent as Authorization: Bearer; empty omits the header
 	Scope  string // "global" (default) or "project"
-	DryRun bool
+	// Workflow configures the client side per install: "remote" writes the
+	// shared global client config (connection info) and bakes this agent's
+	// API key into its hook scripts so CLI calls authenticate as the agent;
+	// "local" touches nothing (per-repo local indexing). Empty = legacy
+	// behavior (MCP config only).
+	Workflow string
+	DryRun   bool
 	// Hooks installs the Claude Code hook suite (session briefing, prompt
 	// pre-fetch, search nudges, edit reminders). Default on for claude-code.
 	Hooks *bool
@@ -106,9 +112,98 @@ func Install(o Options) ([]Result, error) {
 		if err != nil {
 			return results, fmt.Errorf("%s: %w", a, err)
 		}
+		if err := applyWorkflow(a, o, &r.Actions); err != nil {
+			return results, fmt.Errorf("%s: %w", a, err)
+		}
 		results = append(results, r)
 	}
 	return results, nil
+}
+
+// applyWorkflow configures the client side for one agent install.
+// Remote: the shared global client config gains server_url (and an api_key
+// only when absent, so one agent's install never overwrites another's
+// terminal default), and this agent's hook scripts get the agent's key
+// baked in — hook-driven CLI calls then authenticate as the agent.
+func applyWorkflow(agent string, o Options, actions *[]string) error {
+	if o.Workflow != "remote" || o.DryRun {
+		if o.Workflow == "remote" && o.DryRun {
+			*actions = append(*actions, "would write global client config and per-agent hook credentials")
+		}
+		return nil
+	}
+	if o.URL == "" {
+		return fmt.Errorf("--workflow remote needs --url")
+	}
+	global := filepath.Join(GlobalConfigDir(), "skopos-config.toml")
+	key := ""
+	if !ClientConfigHasAPIKey(global) {
+		key = o.APIKey // first remote install sets the terminal default
+	}
+	if err := WriteClientConfig(global, baseURL(o.URL), key); err != nil {
+		return fmt.Errorf("writing global client config: %w", err)
+	}
+	*actions = append(*actions, "global client config -> "+global+" (every checkout resolves remote)")
+
+	// Bake the agent's credentials into its hook dir so heartbeats and
+	// CLI calls carry this agent's identity (per-agent key model).
+	common := hookCommonPath(o.Scope, agent)
+	if common == "" {
+		return nil // agent without a hook suite: MCP-side only
+	}
+	env := fmt.Sprintf("\n# Installed credentials for this agent (skopos install --workflow remote).\n# Env wins: an exported SKOPOS_API_KEY overrides this default.\nexport SKOPOS_SERVER_URL=%q\nexport SKOPOS_API_KEY=%q\n", baseURL(o.URL), o.APIKey)
+	if err := appendHookEnv(common, env); err != nil {
+		return fmt.Errorf("baking hook credentials: %w", err)
+	}
+	// The file now embeds a key: owner-only.
+	if err := os.Chmod(common, 0o600); err != nil {
+		return err
+	}
+	*actions = append(*actions, "agent credentials baked into "+common)
+	return nil
+}
+
+// appendHookEnv removes a previously baked credential block and appends the
+// new one, keeping the operation idempotent.
+func appendHookEnv(path, env string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	content := string(raw)
+	if i := strings.Index(content, "\n# Installed credentials for this agent"); i >= 0 {
+		content = content[:i]
+	}
+	if !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	return os.WriteFile(path, []byte(content+env), 0o600)
+}
+
+// hookCommonPath returns the skopos-common.sh path for an agent's hook dir,
+// or "" when the agent has no hook suite.
+func hookCommonPath(scope, agent string) string {
+	if scope == "project" {
+		return "" // project-scope hooks are committed files; no secrets
+	}
+	home := homeOrErr()
+	if home == "" {
+		return ""
+	}
+	var dir string
+	switch agent {
+	case "claude-code":
+		dir = filepath.Join(home, ".claude", "hooks")
+	case "zcode":
+		dir = filepath.Join(home, ".zcode", "hooks")
+	default:
+		return ""
+	}
+	p := filepath.Join(dir, "skopos-common.sh")
+	if _, err := os.Stat(p); err != nil {
+		return ""
+	}
+	return p
 }
 
 func resolveAgents(agent string) ([]string, error) {
@@ -893,4 +988,104 @@ func mergeHookSettings(path, hooksDir string, events []hookEvent, o Options, act
 	}
 	*actions = append(*actions, fmt.Sprintf("registered %d skopos hook entries in %s", added, path))
 	return nil
+}
+
+// WriteClientConfig creates or updates the [client] section at path,
+// preserving the rest of the file. Owner-only permissions on every write:
+// the file may embed an API key. Shared by `skopos setup` and
+// `skopos install --workflow remote`.
+func WriteClientConfig(path, serverURL, apiKey string) error {
+	block := fmt.Sprintf("[client]\nserver_url = %q\napi_key = %q\n", serverURL, apiKey)
+	existing := ""
+	if raw, err := os.ReadFile(path); err == nil {
+		existing = string(raw)
+	}
+	updated, existed := replaceClientSection(existing, block)
+	if !existed {
+		if existing != "" && !strings.HasSuffix(existing, "\n") {
+			existing += "\n"
+		}
+		updated = existing + "\n" + block
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil && filepath.Dir(path) != "." {
+		return err
+	}
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
+}
+
+// replaceClientSection swaps the [client] block (until the next section or
+// EOF) with block; reports whether a section existed.
+func replaceClientSection(content, block string) (string, bool) {
+	lines := strings.Split(content, "\n")
+	start := -1
+	for i, l := range lines {
+		if strings.TrimSpace(l) == "[client]" {
+			start = i
+			break
+		}
+	}
+	if start == -1 {
+		return content, false
+	}
+	end := start + 1
+	for end < len(lines) {
+		t := strings.TrimSpace(lines[end])
+		if strings.HasPrefix(t, "[") && !strings.HasPrefix(t, "[client") {
+			break
+		}
+		end++
+	}
+	before := strings.Join(lines[:start], "\n")
+	after := strings.Join(lines[end:], "\n")
+	res := before
+	if res != "" && !strings.HasSuffix(res, "\n") {
+		res += "\n"
+	}
+	res += block
+	if after != "" {
+		if !strings.HasSuffix(res, "\n") {
+			res += "\n"
+		}
+		res += after
+	}
+	return res, true
+}
+
+// ClientConfigHasAPIKey reports whether the [client] section at path
+// already carries an api_key (used to avoid one agent's install
+// overwriting another's terminal default).
+func ClientConfigHasAPIKey(path string) bool {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	inClient := false
+	for _, l := range strings.Split(string(raw), "\n") {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "[") {
+			inClient = strings.HasPrefix(t, "[client")
+			continue
+		}
+		if inClient && strings.HasPrefix(t, "api_key") && strings.Contains(t, "=") {
+			val := strings.TrimSpace(strings.SplitN(t, "=", 2)[1])
+			return val != "" && val != `""`
+		}
+	}
+	return false
+}
+
+// baseURL strips a trailing /mcp from an MCP endpoint — the client config
+// wants the server root.
+func baseURL(mcpURL string) string {
+	return strings.TrimSuffix(strings.TrimSuffix(mcpURL, "/"), "/mcp")
+}
+
+// GlobalConfigDir returns ~/.config/skopos — the config search-path
+// fallback when no repo-local skopos-config.toml exists.
+func GlobalConfigDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "skopos")
 }

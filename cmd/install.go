@@ -36,6 +36,11 @@ func installCmd() *cli.Command {
 				EnvVars: []string{"SKOPOS_API_KEY"},
 			},
 			&cli.StringFlag{
+				Name:         "workflow",
+				Usage:        "Client workflow for this agent: remote (default connection in ~/.config/skopos + this agent's key baked into its hooks) or local (per-repo indexing, nothing written)",
+				EnvVars:      []string{"SKOPOS_INSTALL_WORKFLOW"},
+			},
+			&cli.StringFlag{
 				Name:         "scope",
 				DefaultValue: "global",
 				Usage:        "Config scope: global (default) or project (writes into the current directory)",
@@ -66,12 +71,13 @@ func installCmd() *cli.Command {
 				hooks = ptrBool(true)
 			}
 			results, err := install.Install(install.Options{
-				Agent:  agent,
-				URL:    cmd.GetString("url"),
-				APIKey: cmd.GetString("api-key"),
-				Scope:  cmd.GetString("scope"),
-				DryRun: cmd.GetBool("dry-run"),
-				Hooks:  hooks,
+				Agent:    agent,
+				URL:      cmd.GetString("url"),
+				APIKey:   cmd.GetString("api-key"),
+				Scope:    cmd.GetString("scope"),
+				Workflow: cmd.GetString("workflow"),
+				DryRun:   cmd.GetBool("dry-run"),
+				Hooks:    hooks,
 			})
 			if err != nil {
 				return err

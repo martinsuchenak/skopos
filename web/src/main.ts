@@ -52,6 +52,7 @@ const appState = () => ({
 
   // code index
   indexBranches: [] as { branch: string; head_sha?: string; built_at: string; source?: string; file_count: number; symbol_count: number }[],
+  indexGroups: [] as { id: string; label: string; branches: { branch: string; head_sha?: string; built_at: string; source?: string; file_count: number; symbol_count: number }[] }[],
 
   // header
   activeWorkspace: '',
@@ -639,11 +640,28 @@ const appState = () => ({
   },
 
   async fetchIndexStatus() {
-    // No workspace selected: fall back to the first registered one — the
-    // literal id "default" matches nothing and would show an empty index.
-    const ws = this.activeWorkspace || this.registeredWorkspaces[0]?.id || this.workspaces[0] || 'default';
+    // No workspace selected: list every workspace's indexes grouped, so the
+    // view is useful without picking first (and the literal "default" id —
+    // which matches nothing — is never queried).
+    if (!this.activeWorkspace) {
+      const ids = this.workspaceOptions().map((o: { id: string }) => o.id);
+      if (ids.length === 0) { this.indexBranches = []; this.indexGroups = []; return; }
+      const groups: { id: string; label: string; branches: typeof this.indexBranches }[] = [];
+      await Promise.all(ids.map(async (id: string) => {
+        try {
+          const res = await this.authFetch(`/api/codeindex/${encodeURIComponent(id)}/status`);
+          const branches = res.ok ? ((await res.json()) ?? []) : [];
+          groups.push({ id, label: this.workspaceOptions().find((o: { id: string }) => o.id === id)?.label || id, branches });
+        } catch { /* per-workspace failure is non-fatal */ }
+      }));
+      groups.sort((a, b) => a.id.localeCompare(b.id));
+      this.indexGroups = groups;
+      this.indexBranches = groups.flatMap((g) => g.branches);
+      return;
+    }
+    this.indexGroups = [];
     try {
-      const res = await this.authFetch(`/api/codeindex/${encodeURIComponent(ws)}/status`);
+      const res = await this.authFetch(`/api/codeindex/${encodeURIComponent(this.activeWorkspace)}/status`);
       if (!res.ok) { this.indexBranches = []; return; }
       this.indexBranches = (await res.json()) ?? [];
     } catch { this.indexBranches = []; }

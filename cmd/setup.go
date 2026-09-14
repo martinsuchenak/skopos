@@ -12,6 +12,7 @@ import (
 
 	"github.com/martinsuchenak/skopos/internal/codeindex"
 	"github.com/martinsuchenak/skopos/internal/codeindex/parse"
+	"github.com/martinsuchenak/skopos/internal/install"
 	"github.com/paularlott/cli"
 )
 
@@ -25,10 +26,30 @@ func setupCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "setup",
 		Usage: "Interactive setup: choose a local-only or remote workflow, configure it, and index your first repo",
+		Flags: []cli.Flag{
+			&cli.BoolFlag{
+				Name:   "global",
+				Usage:  "Write the client config to ~/.config/skopos instead of this repo (applies to every checkout)",
+			},
+		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
+			if cmd.GetBool("global") {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return err
+				}
+				return runSetup(ctx, bufio.NewReader(os.Stdin), filepath.Join(home, ".config", "skopos"))
+			}
 			return runSetup(ctx, bufio.NewReader(os.Stdin), filepath.Dir(configFileFor(cmd)))
 		},
 	}
+}
+
+// GlobalConfigPath returns ~/.config/skopos (the search-path fallback used
+// when no repo-local skopos-config.toml exists).
+func GlobalConfigPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "skopos")
 }
 
 // configFileFor resolves the config path the same way the CLI does.
@@ -310,66 +331,7 @@ func checkServerAuth(ctx context.Context, serverURL, apiKey string) (int, error)
 // writeClientConfig creates or updates the [client] section, preserving the
 // rest of the file. New files are owner-only (they may hold an API key).
 func writeClientConfig(path, serverURL, apiKey string) error {
-	block := fmt.Sprintf("[client]\nserver_url = %q\napi_key = %q\n", serverURL, apiKey)
-	existing := ""
-	if raw, err := os.ReadFile(path); err == nil {
-		existing = string(raw)
-	}
-	updated, existed := replaceClientSection(existing, block)
-	if !existed {
-		if existing != "" && !strings.HasSuffix(existing, "\n") {
-			existing += "\n"
-		}
-		updated = existing + "\n" + block
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil && filepath.Dir(path) != "." {
-		return err
-	}
-	// Owner-only on every write, not just creation: the file may embed an
-	// API key, and a merge into a pre-existing looser file must not keep
-	// the loose permissions (mirrors writeFilePrivate).
-	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
-		return err
-	}
-	return os.Chmod(path, 0o600)
-}
-
-// replaceClientSection swaps the [client] block (until the next section or
-// EOF) with block; reports whether a section existed.
-func replaceClientSection(content, block string) (string, bool) {
-	lines := strings.Split(content, "\n")
-	start := -1
-	for i, l := range lines {
-		if strings.TrimSpace(l) == "[client]" {
-			start = i
-			break
-		}
-	}
-	if start == -1 {
-		return content, false
-	}
-	end := start + 1
-	for end < len(lines) {
-		t := strings.TrimSpace(lines[end])
-		if strings.HasPrefix(t, "[") && !strings.HasPrefix(t, "[client") {
-			break
-		}
-		end++
-	}
-	before := strings.Join(lines[:start], "\n")
-	after := strings.Join(lines[end:], "\n")
-	res := before
-	if res != "" && !strings.HasSuffix(res, "\n") {
-		res += "\n"
-	}
-	res += block
-	if after != "" {
-		if !strings.HasSuffix(res, "\n") {
-			res += "\n"
-		}
-		res += after
-	}
-	return res, true
+	return install.WriteClientConfig(path, serverURL, apiKey)
 }
 
 func prompt(in *bufio.Reader, label, def string) string {

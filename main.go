@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/paularlott/cli"
 	"github.com/paularlott/cli/env"
@@ -16,6 +17,21 @@ import (
 
 var configFile = "skopos-config.toml"
 
+// configSearchPaths resolves the client config CWD-first, then globally:
+// a repo-local skopos-config.toml wins, else ~/.config/skopos (explicitly,
+// not os.UserConfigDir — on macOS that is ~/Library/Application Support,
+// which nobody looks in for CLI configs; the XDG path is the convention
+// users expect on every platform). Without the global fallback, every new
+// checkout silently reverts to local mode even when a server is configured
+// globally via `skopos install` — the CLI and hooks then disagree with the
+// MCP config and steer agents toward starting a local server.
+func configSearchPaths() []string {
+	if home, err := os.UserHomeDir(); err == nil {
+		return []string{".", filepath.Join(home, ".config", "skopos")}
+	}
+	return []string{"."}
+}
+
 func main() {
 	_ = env.Load()
 
@@ -23,7 +39,7 @@ func main() {
 		Name:       "skopos",
 		Usage:      "skopos service",
 		Version:    build.Version + " (" + build.Date + ")",
-		ConfigFile: cli_toml.NewConfigFile(&configFile, nil),
+		ConfigFile: cli_toml.NewConfigFile(&configFile, configSearchPaths),
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:         "config",

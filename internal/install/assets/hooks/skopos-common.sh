@@ -11,7 +11,9 @@ SKOPOS_HOOK_CACHE="${TMPDIR:-/tmp}/skopos-hook-cache"
 skopos_hook_ready() {
   command -v jq &>/dev/null || return 1
   command -v skopos &>/dev/null || return 1
-  # "In a skopos project": the index answers (local .skopos or configured server).
+  # Remote mode is always ready: the server answers regardless of whether
+  # THIS repo is indexed yet. Local mode needs a local index to be useful.
+  if skopos_hook_is_remote; then return 0; fi
   skopos index status &>/dev/null || return 1
   return 0
 }
