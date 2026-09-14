@@ -74,3 +74,33 @@ func TestCompletionDynamicFlags(t *testing.T) {
 		}
 	}
 }
+
+// TestCompletionZshInstallable pins the two properties the standard zsh
+// install forms need: the script's first line is the "#compdef skopos" tag
+// (compinit ignores fpath files without it) and the registration line binds
+// the command NAME, not the absolute invocation path the upstream library
+// emits. Regression: both were broken, making the documented installs no-ops.
+func TestCompletionZshInstallable(t *testing.T) {
+	bin := buildBinary(t)
+	script := runCompletion(t, bin, "completion", "zsh")
+	lines := strings.Split(script, "\n")
+	if lines[0] != "#compdef skopos" {
+		t.Fatalf("first line must be the compdef tag, got %q", lines[0])
+	}
+	found := false
+	for _, l := range lines {
+		if strings.HasPrefix(l, "compdef ") {
+			found = true
+			if l != "compdef _skopos skopos" {
+				t.Fatalf("registration must bind the command name only, got %q", l)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no compdef registration line in script")
+	}
+	// The runtime query modes the script calls back into must be untouched.
+	if cmds := runCompletion(t, bin, "completion", "zsh", "--command=skopos key"); !strings.Contains(cmds, "create") {
+		t.Fatalf("hidden query mode broken: %q", cmds)
+	}
+}
