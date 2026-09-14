@@ -4,6 +4,22 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.4] — 2026-09-14
+
+### Fixed
+
+- **`skopos index push` failed on large repos**: the manifest step decoded
+  with the general 1 MiB JSON cap, but a manifest carries one entry per
+  file (~100 bytes) — repos past ~10k files got "invalid request body" and
+  could not push at all. The manifest now decodes under the commit-sized
+  64 MiB cap (~500k files of headroom); blobs and commit were already
+  capped appropriately. Oversized bodies now return 413 with guidance
+  instead of masquerading as malformed JSON.
+- `skopos install --workflow remote` always updates the stored key (last
+  install wins): the previous "write only when absent" rule kept a revoked
+  key in the global client config after re-installing with a rotated
+  credential, 401-ing the CLI while the hooks kept working.
+
 ## [0.2.3] — 2026-09-14
 
 ### Added
