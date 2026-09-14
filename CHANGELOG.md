@@ -4,6 +4,34 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.3] — 2026-09-14
+
+### Added
+
+- **Global client config fallback**: the client config is searched CWD
+  first, then `~/.config/skopos/skopos-config.toml` (explicit XDG path on
+  every platform) — previously it was repo-local only, so any checkout
+  without one silently reverted the CLI and hooks to local mode even with
+  a remote MCP server configured globally. In new projects the session
+  hook stayed silent and the local-mode instructions steered agents into
+  starting their own local skopos server instead of using the remote one.
+  `skopos setup --global` writes to the global path.
+- **`skopos install --workflow remote|local`** (per agent): remote writes
+  the shared global client config (server_url always; api_key only when
+  absent, so one agent's install never overwrites another's terminal
+  default) and bakes this agent's API key into its hook scripts
+  (skopos-common.sh, owner-only, env-overridable) — hook-driven CLI calls
+  (heartbeats, index queries) authenticate as the agent. local writes
+  nothing.
+- Session hooks treat remote mode as always ready — the briefing now
+  prints in every remote-configured repo, indexed or not.
+
+### Fixed
+
+- Dashboard Index view with "All workspaces" selected listed every
+  workspace's indexes grouped (with a "not indexed" state) instead of
+  querying the literal id "default" and showing nothing.
+
 ## [0.2.2] — 2026-09-14
 
 Sessions that tell their story: automatic progress data from the hooks, and
