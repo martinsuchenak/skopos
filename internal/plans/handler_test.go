@@ -389,3 +389,50 @@ func TestHandlerAddItemWithPosition(t *testing.T) {
 		t.Errorf("expected first item Inserted, got %q", updated.Items[0].Title)
 	}
 }
+
+// TestHandlerUpdateItemClaimConflict surfaces the claim race outcome as HTTP
+// 409 so the losing agent learns it lost instead of a successful lie.
+func TestHandlerUpdateItemClaimConflict(t *testing.T) {
+	h := testHandler(t, "")
+
+	body := bytes.NewBufferString(`{"name":"P","author_agent_id":"a"}`)
+	req := httptest.NewRequest("POST", "/api/plans", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.CreatePlan(w, req)
+	var plan Plan
+	json.NewDecoder(w.Body).Decode(&plan)
+
+	itemBody := bytes.NewBufferString(`{"title":"task"}`)
+	req2 := httptest.NewRequest("POST", "/api/plans/"+plan.ID+"/items", itemBody)
+	req2.Header.Set("Content-Type", "application/json")
+	req2.SetPathValue("id", plan.ID)
+	w2 := httptest.NewRecorder()
+	h.AddItem(w2, req2)
+	var item Item
+	json.NewDecoder(w2.Body).Decode(&item)
+
+	patch := func(claim string) int {
+		b := bytes.NewBufferString(`{"claimed_by_agent_id":"` + claim + `"}`)
+		r := httptest.NewRequest("PATCH", "/api/plans/"+plan.ID+"/items/"+item.ID, b)
+		r.Header.Set("Content-Type", "application/json")
+		r.SetPathValue("id", plan.ID)
+		r.SetPathValue("item_id", item.ID)
+		rec := httptest.NewRecorder()
+		h.UpdateItem(rec, r)
+		return rec.Code
+	}
+
+	if code := patch("agent-1"); code != http.StatusNoContent {
+		t.Fatalf("first claim: expected 204, got %d", code)
+	}
+	if code := patch("agent-2"); code != http.StatusConflict {
+		t.Fatalf("contended claim: expected 409, got %d", code)
+	}
+	if code := patch("agent-1"); code != http.StatusNoContent {
+		t.Fatalf("re-claim by owner: expected 204, got %d", code)
+	}
+	if code := patch(""); code != http.StatusNoContent {
+		t.Fatalf("release: expected 204, got %d", code)
+	}
+}

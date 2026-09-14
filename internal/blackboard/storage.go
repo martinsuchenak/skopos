@@ -178,13 +178,20 @@ func (s *Storage) Promote(ctx context.Context, id string) error {
 	}
 
 	now := formatTime(time.Now().UTC())
-	_, err = s.db.ExecContext(ctx, `
+	// Execute on the transaction (not the pool) and commit: the deciding
+	// SELECT must be serialized against concurrent promotes, otherwise two
+	// requests can both read "session", both decide "branch", and the second
+	// overwrites a first that already reached "project".
+	_, err = tx.ExecContext(ctx, `
 		UPDATE blackboard_entries
 		SET scope = ?, branch_name = ?, session_id = NULL, updated_at = ?
 		WHERE id = ?
 	`, string(newScope), newBranch, now, id)
 	if err != nil {
 		return fmt.Errorf("promoting entry: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
 	}
 	return nil
 }

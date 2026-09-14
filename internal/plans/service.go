@@ -182,6 +182,11 @@ func (s *Service) UpdateItem(ctx context.Context, planID, itemID string, input U
 	}
 
 	err := s.store.RunInTx(ctx, func(tx Store) error {
+		if input.Status != "" {
+			if err := assertTransitionAllowed(ctx, tx, planID, itemID, input.Status); err != nil {
+				return err
+			}
+		}
 		if err := tx.UpdateItem(ctx, planID, itemID, input); err != nil {
 			return err
 		}
@@ -199,6 +204,45 @@ func (s *Service) UpdateItem(ctx context.Context, planID, itemID string, input U
 		return nil, err
 	}
 	return s.store.GetItem(ctx, planID, itemID)
+}
+
+// assertTransitionAllowed enforces the item state machine on the update path:
+// an item may not be marked done while any dependency is unfinished, a done
+// item may not be reopened (it would invalidate dependents already unblocked
+// by its completion), and items of a completed or archived plan are frozen.
+// The create and dependency-add paths already enforce these invariants; this
+// guard extends them to direct PATCHes so they cannot be bypassed.
+func assertTransitionAllowed(ctx context.Context, store Store, planID, itemID string, next ItemStatus) error {
+	planStatus, err := store.PlanStatus(ctx, planID)
+	if err != nil {
+		return err
+	}
+	if planStatus == PlanCompleted || planStatus == PlanArchived {
+		return fmt.Errorf("%w: plan is %s; items are frozen", ErrInvalidInput, planStatus)
+	}
+	current, err := store.ItemStatus(ctx, itemID)
+	if err != nil {
+		return err
+	}
+	if current == ItemDone && next != ItemDone {
+		return fmt.Errorf("%w: item is done and cannot be reopened", ErrInvalidInput)
+	}
+	if next == ItemDone {
+		deps, err := store.ListDependencies(ctx, itemID)
+		if err != nil {
+			return err
+		}
+		for _, depID := range deps {
+			depStatus, err := store.ItemStatus(ctx, depID)
+			if err != nil {
+				return err
+			}
+			if depStatus != ItemDone {
+				return fmt.Errorf("%w: dependency %s is not done", ErrInvalidInput, depID)
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Service) AddDependency(ctx context.Context, planID, itemID, dependsOnID string) error {

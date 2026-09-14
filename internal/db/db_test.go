@@ -114,3 +114,15 @@ func TestResolveHostInvalid(t *testing.T) {
 		t.Error("expected error for invalid host:port")
 	}
 }
+
+// TestSQLiteDSNUsesImmediateTxLock pins the production DSN: without
+// _txlock=immediate, DEFERRED read-then-write transactions (plans mutations)
+// deadlock on contention and silently drop writes — busy_timeout does not
+// apply to lock upgrades. The plans concurrency tests use their own mirrored
+// DSN, so only this test catches a revert in the real Connect path.
+func TestSQLiteDSNUsesImmediateTxLock(t *testing.T) {
+	dsn := sqliteDSN("/tmp/skopos.db")
+	if !strings.Contains(dsn, "_txlock=immediate") {
+		t.Fatalf("production DSN must set _txlock=immediate, got: %s", dsn)
+	}
+}

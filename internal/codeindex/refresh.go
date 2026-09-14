@@ -3,6 +3,8 @@ package codeindex
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -69,25 +71,53 @@ func validBranch(branch string) bool {
 	return true
 }
 
-// safeGitURL blocks git remote-helper transports (ext::, fd::, and any
-// scheme with "::") that can execute local commands during clone/fetch,
-// and non-git schemes (SSRF surface). Allowed: http(s)://, git://, ssh://,
-// and scp-like user@host:path. Scheme-less values are treated as local
-// paths and must be relative with no ".." segment and no leading "~"
-// (git expands ~ and ~user to home directories), so the server only
-// clones repositories inside its own working tree.
+// safeGitURL gates what the server-side refresher will hand to git clone.
+// The URL is privileged operator-ish input reachable by any key holder, so it
+// is validated as an attack surface (SSRF), not just for transport safety:
+//
+//   - remote URLs must be http:// or https:// only — git:// and ssh:// are
+//     rejected (they reach arbitrary ports/daemons), and any remote-helper
+//     transport (ext::, fd::, any scheme containing "::") is rejected because
+//     it can execute local commands;
+//   - embedded userinfo (user:pass@host) is rejected — credentials would be
+//     sent to the target and echoed in error output;
+//   - IP-literal hosts in loopback, private, link-local, unspecified, or
+//     multicast ranges are rejected so the server cannot be aimed at internal
+//     services or cloud metadata endpoints. DNS names that resolve internally
+//     are a residual risk that needs a deployment-level egress allowlist;
+//   - leading-dash values are rejected (git would parse them as options);
+//   - scheme-less values are treated as local paths and must be relative with
+//     no ".." segment, no leading "~", and no "@" (scp-like ssh syntax).
 func safeGitURL(u string) bool {
-	if u == "" || strings.Contains(u, "::") {
+	if u == "" || strings.Contains(u, "::") || strings.HasPrefix(u, "-") {
 		return false
 	}
 	if i := strings.Index(u, "://"); i > 0 {
-		switch strings.ToLower(u[:i]) {
-		case "http", "https", "git", "ssh":
-			return true
+		scheme := strings.ToLower(u[:i])
+		if scheme != "http" && scheme != "https" {
+			return false
 		}
-		return false
+		parsed, err := url.Parse(u)
+		if err != nil {
+			return false
+		}
+		if parsed.User != nil {
+			return false
+		}
+		host := strings.ToLower(parsed.Hostname())
+		// localhost is not an IP literal, so ParseIP below misses it.
+		if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+			return false
+		}
+		if ip := net.ParseIP(host); ip != nil {
+			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+				ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+				return false
+			}
+		}
+		return true
 	}
-	if filepath.IsAbs(u) || strings.HasPrefix(u, "~") {
+	if filepath.IsAbs(u) || strings.HasPrefix(u, "~") || strings.Contains(u, "@") {
 		return false
 	}
 	for _, seg := range strings.Split(filepath.ToSlash(u), "/") {
@@ -95,7 +125,7 @@ func safeGitURL(u string) bool {
 			return false
 		}
 	}
-	return true // relative local path or scp-like syntax — no helper transport, no escape
+	return true // relative local path inside the server's working tree
 }
 
 // Start kicks an asynchronous refresh; it returns immediately. Only one build
@@ -109,7 +139,7 @@ func (r *Refresher) Start(ctx context.Context, workspace, branch string) error {
 		return fmt.Errorf("%w: workspace %s has no git_url registered (POST /api/workspaces with git_url first)", ErrInvalidInput, workspace)
 	}
 	if !safeGitURL(url) {
-		return fmt.Errorf("%w: workspace %s has an unsafe git_url (allowed: http(s), git, ssh, or a relative path)", ErrInvalidInput, workspace)
+		return fmt.Errorf("%w: workspace %s has an unsafe git_url (allowed: http(s) to a public host, or a relative path)", ErrInvalidInput, workspace)
 	}
 	if branch != "" && !validBranch(branch) {
 		return fmt.Errorf("%w: invalid branch name %q", ErrInvalidInput, branch)
@@ -208,7 +238,8 @@ func (r *Refresher) syncCheckout(gitURL, branch string) (string, error) {
 	if branch != "" {
 		args = append(args, "--branch", branch)
 	}
-	args = append(args, gitURL, dir)
+	// "--" ends option parsing so a URL can never be interpreted as a git option.
+	args = append(args, "--", gitURL, dir)
 	if out, err := git("", args...); err != nil {
 		os.RemoveAll(dir) // partial clone: start clean next time
 		return "", fmt.Errorf("git clone: %w (%s)", err, lastLine(out))

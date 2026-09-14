@@ -19,7 +19,7 @@ func toolError(err error) error {
 		errors.Is(err, blackboard.ErrInvalidInput) || errors.Is(err, blackboard.ErrNotFound) ||
 		errors.Is(err, blackboard.ErrAlreadyAtTopScope) ||
 		errors.Is(err, plans.ErrInvalidInput) || errors.Is(err, plans.ErrNotFound) ||
-		errors.Is(err, plans.ErrCycleDetected) {
+		errors.Is(err, plans.ErrCycleDetected) || errors.Is(err, plans.ErrClaimConflict) {
 		return mcplib.NewToolErrorInvalidParams(err.Error())
 	}
 	return mcplib.NewToolErrorInternal(err.Error())

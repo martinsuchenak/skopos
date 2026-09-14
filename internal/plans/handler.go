@@ -165,6 +165,8 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrClaimConflict):
+			rest.RespondError(w, http.StatusConflict, err.Error())
 		default:
 			rest.InternalError(w, err)
 		}

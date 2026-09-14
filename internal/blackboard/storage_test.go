@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -377,6 +379,56 @@ func TestStorageSearchLikeEscaping(t *testing.T) {
 			if tc.q == "snake_case" && len(got) != 1 {
 				t.Errorf("search snake_case: expected exactly the literal match, got %d results", len(got))
 			}
+		}
+	}
+}
+
+// TestStorageConcurrentPromoteReachesProject guards the promote fix: the
+// scope UPDATE must run inside the deciding transaction (regression: it ran
+// on the pool outside the transaction and never committed, so concurrent
+// promotes downgraded entries that every caller was told had promoted).
+func TestStorageConcurrentPromoteReachesProject(t *testing.T) {
+	s := testStorage(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO sessions (id, title, workspace, status, started_at, updated_at)
+		 VALUES ('sess-race', 'test', '/repo', 'running', ?, ?)`,
+		formatTime(now), formatTime(now)); err != nil {
+		t.Fatalf("insert session: %v", err)
+	}
+
+	const n = 8
+	for round := 0; round < 10; round++ {
+		id := fmt.Sprintf("e-race-%d", round)
+		if err := s.Write(ctx, Entry{
+			ID: id, Scope: ScopeSession, SessionID: "sess-race",
+			EntryType: TypeFinding, Title: "race " + id,
+			AuthorAgentID: "a", CreatedAt: now, UpdatedAt: now,
+		}); err != nil {
+			t.Fatalf("write entry: %v", err)
+		}
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				_ = s.Promote(ctx, id) // ErrAlreadyAtTopScope for late arrivals is fine
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		entry, err := s.Get(ctx, id)
+		if err != nil {
+			t.Fatalf("get entry: %v", err)
+		}
+		if entry.Scope != ScopeProject {
+			t.Fatalf("round %d: expected scope project, got %s (lost promotion)", round, entry.Scope)
 		}
 	}
 }

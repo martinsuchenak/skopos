@@ -278,16 +278,24 @@ func (s *Storage) AddItem(ctx context.Context, item Item) error {
 func (s *Storage) UpdateItem(ctx context.Context, planID, itemID string, input UpdateItemInput) error {
 	var sets []string
 	var args []any
+	var conds []string
+	var condArgs []any
 	if input.Status != "" {
 		sets = append(sets, "status = ?")
 		args = append(args, string(input.Status))
 	}
 	if input.ClaimedByAgentID != nil {
+		claim := *input.ClaimedByAgentID
 		sets = append(sets, "claimed_by_agent_id = ?")
-		if *input.ClaimedByAgentID == "" {
-			args = append(args, nil)
+		if claim != "" {
+			// Compare-and-swap: the claim only takes effect when the item is
+			// unclaimed or already claimed by the same agent, so concurrent
+			// claimers cannot silently overwrite each other.
+			args = append(args, claim)
+			conds = append(conds, "(claimed_by_agent_id IS NULL OR claimed_by_agent_id = ?)")
+			condArgs = append(condArgs, claim)
 		} else {
-			args = append(args, *input.ClaimedByAgentID)
+			args = append(args, nil)
 		}
 	}
 	if len(sets) == 0 {
@@ -296,13 +304,20 @@ func (s *Storage) UpdateItem(ctx context.Context, planID, itemID string, input U
 	sets = append(sets, "updated_at = ?")
 	args = append(args, formatTime(time.Now().UTC()))
 	args = append(args, itemID, planID)
-	result, err := s.db.ExecContext(ctx,
-		"UPDATE plan_items SET "+strings.Join(sets, ", ")+" WHERE id = ? AND plan_id = ?", args...)
+	args = append(args, condArgs...)
+	query := "UPDATE plan_items SET " + strings.Join(sets, ", ") + " WHERE id = ? AND plan_id = ?"
+	if len(conds) > 0 {
+		query += " AND " + strings.Join(conds, " AND ")
+	}
+	result, err := s.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("updating item: %w", err)
 	}
 	n, _ := result.RowsAffected()
 	if n == 0 {
+		if len(conds) > 0 {
+			return ErrClaimConflict
+		}
 		return fmt.Errorf("%w: item %s in plan %s", ErrNotFound, itemID, planID)
 	}
 	return nil

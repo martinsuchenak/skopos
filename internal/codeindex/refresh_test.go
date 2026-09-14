@@ -25,9 +25,7 @@ func TestSafeGitURL(t *testing.T) {
 	for _, ok := range []string{
 		"https://github.com/org/repo.git",
 		"http://host/repo",
-		"git@github.com:org/repo.git",
-		"ssh://git@host/repo",
-		"git://host/repo",
+		"https://host:8443/repo.git",
 		"relative/path/repo",
 		"./repo",
 	} {
@@ -48,6 +46,24 @@ func TestSafeGitURL(t *testing.T) {
 		"~user/repo", // git expands ~user to that user's home
 		"../repo",
 		"a/../b/../../c",
+		// SSRF: non-https transports reachable by any key holder.
+		"git://host/repo",
+		"ssh://git@host/repo",
+		"git@github.com:org/repo.git", // scp-like syntax = implicit ssh
+		// SSRF: internal / metadata targets.
+		"http://127.0.0.1:8080/x.git",
+		"http://localhost/repo.git",
+		"https://[::1]/repo.git",
+		"http://10.0.0.1/repo.git",
+		"http://192.168.1.5/repo.git",
+		"http://172.16.0.9/repo.git",
+		"http://169.254.169.254/latest/meta-data/",
+		"http://0.0.0.0/repo.git",
+		// Credentials embedded in the URL.
+		"https://user:pass@example.com/repo.git",
+		// git would parse a leading dash as an option.
+		"-u",
+		"--upload-pack=x",
 	} {
 		if safeGitURL(bad) {
 			t.Errorf("safeGitURL(%q) = true, want false", bad)

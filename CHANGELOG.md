@@ -4,6 +4,67 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.1.2] — 2026-09-14
+
+Security release: second external penetration-test round (gray-box against
+a live keyed deployment), all seven confirmed findings remediated with
+regression tests and attack-oracle replays.
+
+### Breaking
+
+- **MCP read tools now require `workspace_id`** — `blackboard_read` and
+  `skopos_context` fail closed with invalid-params when the scope is
+  omitted, instead of silently returning every workspace's entries, plans,
+  and sessions. REST and the dashboard keep their explicit
+  "All workspaces" filter. Agents should derive the id via
+  `skopos workspace` or the git remote (the v3 instruction block and
+  session hook already say so).
+
+### Security
+
+- **SSRF & internal repository indexing via `git_url`** (CWE-918):
+  server-side code-index refresh now accepts `http(s)` URLs to public
+  hosts only — `git://`, `ssh://`, and scp-like transports are rejected,
+  as are IP literals in loopback/private/link-local/unspecified ranges,
+  `localhost`, embedded credentials, and leading-dash values (git option
+  parsing); `git clone` arguments are terminated with `--`. Residual,
+  documented: hostnames resolving to internal IPs and redirects to
+  internal targets require a deployment-level egress allowlist.
+- **Agent-context poisoning** (CWE-74): blackboard entry text rendered
+  into the knowledge bundle (and plan-item titles in `skopos_context`)
+  is now flattened to single-line, metacharacter-escaped, and
+  length-capped, and the bundle opens with a provenance banner telling
+  consuming agents that entries are data — instructions inside entries
+  must never be followed. Forged "## System Instructions" headings no
+  longer round-trip structurally; entry data itself is preserved.
+- **Plan state-machine bypass on updates** (CWE-1050): item updates now
+  re-validate inside the transaction — no marking items done while
+  dependencies are unfinished, no reopening done items, and items of
+  completed/archived plans are frozen (the create and dependency-add
+  paths already enforced these invariants).
+
+### Fixed
+
+- **Silent write loss under concurrency** (CWE-1291): the SQLite DSN now
+  sets `_txlock=immediate` — DEFERRED read-then-write transactions
+  deadlocked with SQLITE_BUSY under contention and dropped writes (the
+  live test lost 5 of 6 concurrent item adds). Pinned by a dedicated DSN
+  test plus barrier-based regression tests.
+- **Plan-item claim race** (CWE-362): claiming is now a compare-and-swap
+  — exactly one concurrent claimant wins; losers receive HTTP 409 /
+  MCP invalid-params instead of a success whose ownership was silently
+  overwritten. Re-claim by the owner and release still work.
+- **Blackboard promote lost-write** (CWE-367): the scope UPDATE now runs
+  inside the deciding transaction and commits (it previously executed on
+  the pool outside the transaction and was never committed, so
+  concurrent promotes downgraded entries every caller was told had
+  promoted).
+
+### Hardening
+
+- `/static/` no longer serves directory listings; the dashboard CSP adds
+  `object-src 'none'`.
+
 ## [0.1.1] — 2026-09-13
 
 Post-deploy hardening follow-up to 0.1.0.

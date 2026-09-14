@@ -287,8 +287,9 @@ func TestMCPReadToolsAcceptAliases(t *testing.T) {
 	// blackboard_read search accepts author_agent_id as an alias of author.
 	callText(t, h, sessionID, 4, "blackboard_write", map[string]any{
 		"scope": "project", "entry_type": "finding", "title": "alias probe", "author_agent_id": "agent-x",
+		"workspace_id": "ws-alias",
 	})
-	found := callText(t, h, sessionID, 5, "blackboard_read", map[string]any{"author_agent_id": "agent-x"})
+	found := callText(t, h, sessionID, 5, "blackboard_read", map[string]any{"author_agent_id": "agent-x", "workspace_id": "ws-alias"})
 	if !bytes.Contains([]byte(found), []byte("alias probe")) {
 		t.Fatalf("blackboard_read via author_agent_id alias failed: %s", found)
 	}
@@ -455,4 +456,17 @@ func deadSym() {}
 	if !strings.Contains(got, "leafA") {
 		t.Fatalf("call tree: %s", got)
 	}
+}
+
+// TestMCPReadToolsRequireWorkspaceID guards the fail-closed scoping fix:
+// blackboard_read and skopos_context must reject calls without workspace_id
+// instead of silently returning every workspace's data (regression: an
+// unscoped read returned the whole cross-workspace bundle).
+func TestMCPReadToolsRequireWorkspaceID(t *testing.T) {
+	h := toolsE2E(t)
+	sessionID := initialize(t, h)
+
+	expectToolError(t, h, sessionID, 1, "blackboard_read", map[string]any{}, -32602)
+	expectToolError(t, h, sessionID, 2, "blackboard_read", map[string]any{"q": "x"}, -32602)
+	expectToolError(t, h, sessionID, 3, "skopos_context", map[string]any{}, -32602)
 }

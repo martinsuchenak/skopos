@@ -57,8 +57,13 @@ func ResolveHost(log logger.Logger, host string) (*DBAddr, error) {
 // sqliteDSN builds a SQLite connection string with pragmas applied per-connection.
 // foreign_keys must be in the DSN (not a separate PRAGMA call) so that every
 // pooled connection enforces it, otherwise CASCADE deletes silently no-op.
+// _txlock=immediate takes the write lock at BEGIN: DEFERRED read-then-write
+// transactions (plans AddItem/AddDependency/UpdateItem) deadlock on contention
+// and fail with SQLITE_BUSY immediately — busy_timeout does not apply to lock
+// upgrades — silently dropping the write. Immediate transactions queue on
+// busy_timeout instead.
 func sqliteDSN(path string) string {
-	return path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)"
+	return path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)&_txlock=immediate"
 }
 
 // Connect opens the SQLite database at path and applies connection-pool tuning.

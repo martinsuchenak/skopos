@@ -54,6 +54,7 @@ var (
 	ErrInvalidInput  = errors.New("invalid plans input")
 	ErrNotFound      = errors.New("not found")
 	ErrCycleDetected = errors.New("dependency cycle detected")
+	ErrClaimConflict = errors.New("item already claimed by another agent")
 )
 
 type CreatePlanInput struct {

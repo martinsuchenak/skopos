@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"runtime"
+	"strings"
 
 	"github.com/martinsuchenak/skopos/build"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
@@ -91,7 +92,16 @@ func registerWebRoutes(mux *http.ServeMux) {
 	templates := template.Must(template.ParseFS(appweb.TemplateFiles, "templates/base.html"))
 	staticFS, err := fs.Sub(appweb.StaticFiles, "dist")
 	if err == nil {
-		mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+		// Serve files but never directory listings: the bundle contains only
+		// named assets, and an index of dist/ leaks the asset inventory.
+		files := http.StripPrefix("/static/", http.FileServer(http.FS(staticFS)))
+		mux.Handle("GET /static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/") {
+				http.NotFound(w, r)
+				return
+			}
+			files.ServeHTTP(w, r)
+		}))
 	}
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -106,7 +116,7 @@ func registerWebRoutes(mux *http.ServeMux) {
 		// 'unsafe-eval' is needed; 'unsafe-inline' applies to styles only
 		// (Alpine's :style writes style attributes).
 		w.Header().Set("Content-Security-Policy",
-			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

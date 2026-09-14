@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -626,5 +629,86 @@ func TestStorageAllItemsDone(t *testing.T) {
 	}
 	if !done {
 		t.Error("expected true when all items done")
+	}
+}
+
+// testFileStorage mirrors testStorage but on a file-backed DSN with the
+// production _txlock=immediate setting: pooled connections must share one
+// database for concurrency tests, and the immediate lock is the fix under test.
+func testFileStorage(t *testing.T) *Storage {
+	t.Helper()
+	sqlDB, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "test.db")+
+		"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)&_txlock=immediate")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { sqlDB.Close() })
+	if err := db.RunMigrations(sqlDB); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	return NewStorage(sqlDB)
+}
+
+// TestStorageConcurrentClaimsExactlyOneWinner proves the claim is a
+// compare-and-swap: of N simultaneous claimants exactly one succeeds, the
+// rest receive ErrClaimConflict, and the stored owner is the winner
+// (regression: the unconditional UPDATE told every claimant it won).
+func TestStorageConcurrentClaimsExactlyOneWinner(t *testing.T) {
+	st := testFileStorage(t)
+	ctx := context.Background()
+	svc := NewService(st)
+	plan, err := svc.CreatePlan(ctx, CreatePlanInput{Name: "P", AuthorAgentID: "a"})
+	if err != nil {
+		t.Fatalf("create plan: %v", err)
+	}
+	item, err := svc.AddItem(ctx, plan.ID, CreateItemInput{Title: "task"})
+	if err != nil {
+		t.Fatalf("add item: %v", err)
+	}
+
+	const n = 8
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	successes, conflicts := 0, 0
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			claim := fmt.Sprintf("agent-%d", i)
+			err := st.UpdateItem(ctx, plan.ID, item.ID, UpdateItemInput{ClaimedByAgentID: &claim})
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err == nil:
+				successes++
+			case errors.Is(err, ErrClaimConflict):
+				conflicts++
+			default:
+				t.Errorf("claim %d: unexpected error: %v", i, err)
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	if successes != 1 || conflicts != n-1 {
+		t.Fatalf("expected exactly 1 winner and %d conflicts, got %d successes / %d conflicts", n-1, successes, conflicts)
+	}
+	stored, err := st.GetItem(ctx, plan.ID, item.ID)
+	if err != nil {
+		t.Fatalf("get item: %v", err)
+	}
+	if stored.ClaimedByAgentID == "" {
+		t.Fatal("winner's claim was not stored")
+	}
+	// The stored owner may re-claim (idempotent) and release.
+	if err := st.UpdateItem(ctx, plan.ID, item.ID, UpdateItemInput{ClaimedByAgentID: &stored.ClaimedByAgentID}); err != nil {
+		t.Fatalf("re-claim by owner: %v", err)
+	}
+	release := ""
+	if err := st.UpdateItem(ctx, plan.ID, item.ID, UpdateItemInput{ClaimedByAgentID: &release}); err != nil {
+		t.Fatalf("release claim: %v", err)
 	}
 }

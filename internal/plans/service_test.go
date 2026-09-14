@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -546,5 +547,109 @@ func TestServiceUpdateItemDoneAutoCompletesPlanAndUnblocksDependentPlan(t *testi
 	}
 	if store.plans["p2"].Status != PlanActive {
 		t.Errorf("expected p2 auto-unblocked to active, got %q", store.plans["p2"].Status)
+	}
+}
+
+// TestServiceUpdateItemEnforcesDependencyGate covers the state-machine guard
+// on the update path (regression: PATCH could mark items done with unfinished
+// dependencies, reopen done items, and mutate completed plans).
+func TestServiceUpdateItemEnforcesDependencyGate(t *testing.T) {
+	st := testFileStorage(t)
+	svc := NewService(st)
+	ctx := context.Background()
+
+	plan, err := svc.CreatePlan(ctx, CreatePlanInput{Name: "P", AuthorAgentID: "a"})
+	if err != nil {
+		t.Fatalf("create plan: %v", err)
+	}
+	b, err := svc.AddItem(ctx, plan.ID, CreateItemInput{Title: "B"})
+	if err != nil {
+		t.Fatalf("add B: %v", err)
+	}
+	a, err := svc.AddItem(ctx, plan.ID, CreateItemInput{Title: "A", DependsOn: []string{b.ID}})
+	if err != nil {
+		t.Fatalf("add A: %v", err)
+	}
+	if a.Status != ItemBlocked {
+		t.Fatalf("A should be created blocked, got %s", a.Status)
+	}
+
+	// done while dependency pending -> rejected.
+	if _, err := svc.UpdateItem(ctx, plan.ID, a.ID, UpdateItemInput{Status: ItemDone}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput marking blocked item done, got %v", err)
+	}
+
+	// Legitimate sequence: B done -> A unblocked -> A done.
+	if _, err := svc.UpdateItem(ctx, plan.ID, b.ID, UpdateItemInput{Status: ItemDone}); err != nil {
+		t.Fatalf("B done: %v", err)
+	}
+	if _, err := svc.UpdateItem(ctx, plan.ID, a.ID, UpdateItemInput{Status: ItemDone}); err != nil {
+		t.Fatalf("A done after B: %v", err)
+	}
+
+	// All items done -> plan auto-completed; items are now frozen.
+	if _, err := svc.UpdateItem(ctx, plan.ID, a.ID, UpdateItemInput{Status: ItemInProgress}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput on completed-plan mutation, got %v", err)
+	}
+
+	// Reopen rule on a still-active plan: C done, D pending keeps it active.
+	plan2, err := svc.CreatePlan(ctx, CreatePlanInput{Name: "P2", AuthorAgentID: "a"})
+	if err != nil {
+		t.Fatalf("create plan2: %v", err)
+	}
+	c, err := svc.AddItem(ctx, plan2.ID, CreateItemInput{Title: "C"})
+	if err != nil {
+		t.Fatalf("add C: %v", err)
+	}
+	if _, err := svc.AddItem(ctx, plan2.ID, CreateItemInput{Title: "D"}); err != nil {
+		t.Fatalf("add D: %v", err)
+	}
+	if _, err := svc.UpdateItem(ctx, plan2.ID, c.ID, UpdateItemInput{Status: ItemDone}); err != nil {
+		t.Fatalf("C done: %v", err)
+	}
+	if _, err := svc.UpdateItem(ctx, plan2.ID, c.ID, UpdateItemInput{Status: ItemPending}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput reopening done item, got %v", err)
+	}
+}
+
+// TestServiceConcurrentAddItemsAllPersist guards the _txlock=immediate DSN
+// fix: barrier-synchronized AddItem calls (read-then-write transactions) must
+// all persist instead of deadlocking with SQLITE_BUSY (regression: 4-5 of 6
+// concurrent adds were silently dropped).
+func TestServiceConcurrentAddItemsAllPersist(t *testing.T) {
+	st := testFileStorage(t)
+	svc := NewService(st)
+	ctx := context.Background()
+	plan, err := svc.CreatePlan(ctx, CreatePlanInput{Name: "P", AuthorAgentID: "a"})
+	if err != nil {
+		t.Fatalf("create plan: %v", err)
+	}
+
+	const n = 6
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, errs[i] = svc.AddItem(ctx, plan.ID, CreateItemInput{Title: fmt.Sprintf("item-%d", i)})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent add %d failed: %v", i, err)
+		}
+	}
+	detail, err := svc.GetPlan(ctx, plan.ID)
+	if err != nil {
+		t.Fatalf("get plan: %v", err)
+	}
+	if len(detail.Items) != n {
+		t.Fatalf("expected all %d items persisted, got %d", n, len(detail.Items))
 	}
 }
