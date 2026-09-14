@@ -1,4 +1,4 @@
-<!-- skopos:version:3 -->
+<!-- skopos:version:4 -->
 
 ## Mandatory: Code exploration via skopos
 
@@ -34,5 +34,5 @@ Be selective — only facts useful in a future session. Skip task details and te
 ## Session cadence (remote mode)
 
 - Start of task: `skopos_context` with `workspace_id` (this repo's id, e.g. `github.com/owner/repo` — print it with `skopos workspace` or derive from `git remote get-url origin`) and `branch` — unscoped reads span every workspace on the server
-- State changes: `report_status` with agent_type "{{AGENT_TYPE}}" and `workspace_id` (never "stuck"/"orphaned" — server-set)
+- State changes: `report_status` with agent_type "{{AGENT_TYPE}}" and `workspace_id` (never "stuck"/"orphaned" — server-set). Report at least every ~10 minutes on long tasks — the server marks silent agents stuck after 15. Reuse ONE `session_id` for the whole task (omitting it creates a new session per call, fragmenting the timeline); the session hook prints the current id. Tool-hook heartbeats cover the gaps automatically.
 - Multi-step work: `plan_create` / `plan_add_item` / `plan_update_item`; archive with `plan_archive` when done or abandoned

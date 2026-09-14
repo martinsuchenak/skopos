@@ -2,6 +2,10 @@
 # skopos hook shared library — sourced by every hook script.
 # Guards: never break the agent; any failure is silent (exit 0 downstream).
 
+# Hooks set SCRIPT_DIR before sourcing; derive it here too so the library
+# works standalone (agent-type detection depends on it).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 SKOPOS_HOOK_CACHE="${TMPDIR:-/tmp}/skopos-hook-cache"
 
 skopos_hook_ready() {
@@ -47,4 +51,51 @@ skopos_hook_mode() {
 
 skopos_hook_is_remote() {
   case "$(skopos_hook_mode)" in remote*) return 0;; *) return 1;; esac
+}
+
+# skopos_hook_agent_type — derived from the hook install directory
+# (~/.claude/hooks -> claude-code, ~/.zcode/hooks -> zcode, ...).
+skopos_hook_agent_type() {
+  case "$SCRIPT_DIR" in
+    */.claude/hooks*) echo "claude-code";;
+    */.codex/hooks*|*/.codex*) echo "codex";;
+    */.gemini/hooks*) echo "gemini-cli";;
+    */.zcode/hooks*) echo "zcode";;
+    */.opencode/hooks*) echo "opencode";;
+    *) echo "unknown";;
+  esac
+}
+
+# skopos_hook_agent_id — stable per machine + agent type.
+skopos_hook_agent_id() {
+  echo "$(skopos_hook_agent_type)-$(hostname -s)"
+}
+
+# skopos_hook_session_file — per-workspace session id store (gitignored).
+skopos_hook_session_file() {
+  echo ".skopos-session"
+}
+
+# skopos_hook_session_id — current session id, or "" when none.
+skopos_hook_session_id() {
+  cat "$(skopos_hook_session_file)" 2>/dev/null | head -1
+}
+
+# skopos_hook_begin_session — mint a fresh session id and report the start.
+# Continuity matters: report_status calls that omit session_id each create a
+# NEW session, fragmenting the timeline into 1-2 event slivers.
+skopos_hook_begin_session() {
+  local SID
+  SID=$(uuidgen 2>/dev/null | tr "A-Z" "a-z") || SID="sess-$(date +%s)-$$"
+  echo "$SID" > "$(skopos_hook_session_file)"
+  skopos report     --session-id "$SID"     --agent-id "$(skopos_hook_agent_id)"     --agent-type "$(skopos_hook_agent_type)"     --workspace "$(skopos workspace 2>/dev/null)"     --status running     --message "session started (auto)"     --metadata "{\"source\":\"hook\"}"     >/dev/null 2>&1 &
+  echo "$SID"
+}
+
+# skopos_hook_heartbeat — throttled progress ping so active agents are never
+# marked stuck while working silently between reports.
+skopos_hook_heartbeat() {
+  local SID; SID="$(skopos_hook_session_id)"
+  [ -z "$SID" ] && return 0
+  skopos report     --session-id "$SID"     --agent-id "$(skopos_hook_agent_id)"     --agent-type "$(skopos_hook_agent_type)"     --workspace "$(skopos workspace 2>/dev/null)"     --status running     --metadata "{\"source\":\"hook\",\"heartbeat\":true}"     >/dev/null 2>&1 &
 }

@@ -10,6 +10,13 @@ skopos_hook_ready || exit 0
 INPUT=$(cat)
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // .toolName // empty')
 
+# Auto-heartbeat: tool calls are proof of life. Throttled to one ping per
+# 5 minutes, fire-and-forget — active agents stay off the stuck list and
+# the session timeline shows real progress between explicit reports.
+if skopos_hook_is_remote && ! skopos_hook_throttled "heartbeat" 300; then
+  skopos_hook_heartbeat
+fi
+
 NUDGE=""
 case "$TOOL_NAME" in
   Grep)
