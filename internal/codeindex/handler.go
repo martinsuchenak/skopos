@@ -68,6 +68,17 @@ func (h *Handler) maybeRegisterWorkspace(ws string) {
 	}
 }
 
+// respondBodyError maps decode failures: oversized bodies are 413 with the
+// limit spelled out (actionable for large-repo pushes), malformed ones 400.
+func respondBodyError(w http.ResponseWriter, err error) {
+	if errors.Is(err, rest.ErrBodyTooLarge) {
+		rest.RespondError(w, http.StatusRequestEntityTooLarge,
+			"request body exceeds this endpoint's size limit — the manifest/commit scales with file count; split the push or raise commitBodyLimit")
+		return
+	}
+	rest.RespondError(w, http.StatusBadRequest, "invalid request body")
+}
+
 func (h *Handler) authorized(r *http.Request) bool { return h.authn.Authenticate(r) != nil }
 
 func (h *Handler) workspace(r *http.Request) string {
@@ -113,8 +124,11 @@ func (h *Handler) Manifest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Files []FileEntry `json:"files"`
 	}
-	if err := rest.DecodeJSON(w, r, &req); err != nil {
-		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
+	// Manifests carry one entry per file (~100 bytes each): large repos
+	// blow past the 1 MiB default that suits ordinary API bodies, so use
+	// the commit-sized cap.
+	if err := rest.DecodeJSONLimit(w, r, &req, commitBodyLimit); err != nil {
+		respondBodyError(w, err)
 		return
 	}
 	hashes := make([]string, 0, len(req.Files))
@@ -194,7 +208,7 @@ func (h *Handler) Commit(w http.ResponseWriter, r *http.Request) {
 	// One entry per indexed file: large repos legitimately exceed the 1 MiB
 	// API default (20k files ~ 2MB), so this endpoint allows more.
 	if err := rest.DecodeJSONLimit(w, r, &req, commitBodyLimit); err != nil {
-		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
+		respondBodyError(w, err)
 		return
 	}
 	if req.Branch == "" {

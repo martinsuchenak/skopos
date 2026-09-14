@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"errors"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -49,6 +50,11 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, v interface{}) error {
 	return DecodeJSONLimit(w, r, v, maxBodyBytes)
 }
 
+// ErrBodyTooLarge reports a request body that exceeded its endpoint's cap
+// (the MaxBytesReader limit inside DecodeJSONLimit). Handlers map it to 413
+// so an oversized payload is distinguishable from a malformed one.
+var ErrBodyTooLarge = errors.New("request body exceeds the endpoint size limit")
+
 // DecodeJSONLimit is DecodeJSON with an explicit body cap, for endpoints
 // whose legitimate payloads are larger than the general API default (e.g.
 // index commits carrying one entry per indexed file).
@@ -59,7 +65,13 @@ func DecodeJSONLimit(w http.ResponseWriter, r *http.Request, v interface{}, limi
 	}
 	defer r.Body.Close()
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
-	return json.NewDecoder(r.Body).Decode(v)
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		if strings.Contains(err.Error(), "request body too large") {
+			return fmt.Errorf("%w (%d bytes)", ErrBodyTooLarge, limit)
+		}
+		return err
+	}
+	return nil
 }
 
 // QueryAlias returns the first non-empty value among the named query
