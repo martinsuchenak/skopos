@@ -136,11 +136,10 @@ func applyWorkflow(agent string, o Options, actions *[]string) error {
 		return fmt.Errorf("--workflow remote needs --url")
 	}
 	global := filepath.Join(GlobalConfigDir(), "skopos-config.toml")
-	key := ""
-	if !ClientConfigHasAPIKey(global) {
-		key = o.APIKey // first remote install sets the terminal default
-	}
-	if err := WriteClientConfig(global, baseURL(o.URL), key); err != nil {
+	// Always write the key: last install wins for the terminal default.
+	// A "preserve if set" rule silently keeps a revoked key around after
+	// re-install with a rotated credential.
+	if err := WriteClientConfig(global, baseURL(o.URL), o.APIKey); err != nil {
 		return fmt.Errorf("writing global client config: %w", err)
 	}
 	*actions = append(*actions, "global client config -> "+global+" (every checkout resolves remote)")
@@ -1052,29 +1051,6 @@ func replaceClientSection(content, block string) (string, bool) {
 		res += after
 	}
 	return res, true
-}
-
-// ClientConfigHasAPIKey reports whether the [client] section at path
-// already carries an api_key (used to avoid one agent's install
-// overwriting another's terminal default).
-func ClientConfigHasAPIKey(path string) bool {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	inClient := false
-	for _, l := range strings.Split(string(raw), "\n") {
-		t := strings.TrimSpace(l)
-		if strings.HasPrefix(t, "[") {
-			inClient = strings.HasPrefix(t, "[client")
-			continue
-		}
-		if inClient && strings.HasPrefix(t, "api_key") && strings.Contains(t, "=") {
-			val := strings.TrimSpace(strings.SplitN(t, "=", 2)[1])
-			return val != "" && val != `""`
-		}
-	}
-	return false
 }
 
 // baseURL strips a trailing /mcp from an MCP endpoint — the client config
