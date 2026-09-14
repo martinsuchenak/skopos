@@ -58,6 +58,17 @@ func (s *Service) Report(ctx context.Context, input ReportInput) (*ReportResult,
 
 	if normalized.SessionID == "" {
 		normalized.SessionID = ids.New()
+	} else if existing, err := s.store.GetSession(ctx, normalized.SessionID); err == nil {
+		// Attaching to an existing session: authorize against the session's
+		// ACTUAL workspace, never the client-declared field — and the
+		// binding is immutable, so the declared workspace cannot rewrite it.
+		if err := auth.RequireWorkspaceQuiet(ctx, existing.Workspace); err != nil {
+			// Uniform with a nonexistent id: no existence or ownership oracle.
+			return nil, fmt.Errorf("%w: session %s", ErrNotFound, normalized.SessionID)
+		}
+		normalized.Workspace = existing.Workspace
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, err
 	}
 
 	eventID := ids.New()
@@ -145,8 +156,8 @@ func (s *Service) GetSession(ctx context.Context, id string) (*SessionDetail, er
 	if err != nil {
 		return nil, err
 	}
-	if err := auth.RequireWorkspace(ctx, session.Workspace); err != nil {
-		return nil, err
+	if err := auth.RequireWorkspaceQuiet(ctx, session.Workspace); err != nil {
+		return nil, fmt.Errorf("%w: session %s", ErrNotFound, id)
 	}
 	return session, nil
 }
@@ -162,8 +173,8 @@ func (s *Service) ListEvents(ctx context.Context, sessionID string) ([]Event, er
 	if err != nil {
 		return nil, err
 	}
-	if err := auth.RequireWorkspace(ctx, session.Workspace); err != nil {
-		return nil, err
+	if err := auth.RequireWorkspaceQuiet(ctx, session.Workspace); err != nil {
+		return nil, fmt.Errorf("%w: session %s", ErrNotFound, sessionID)
 	}
 	return s.store.ListEvents(ctx, sessionID)
 }
@@ -196,8 +207,8 @@ func (s *Service) DeleteSession(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if err := auth.RequireWorkspace(ctx, session.Workspace); err != nil {
-		return err
+	if err := auth.RequireWorkspaceQuiet(ctx, session.Workspace); err != nil {
+		return fmt.Errorf("%w: session %s", ErrNotFound, id)
 	}
 	if err := s.store.DeleteSession(ctx, id); err != nil {
 		return err

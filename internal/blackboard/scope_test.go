@@ -1,6 +1,7 @@
 package blackboard
 
 import (
+	"strings"
 	"context"
 	"errors"
 	"testing"
@@ -75,11 +76,17 @@ func TestBlackboardWorkspaceScopeMatrix(t *testing.T) {
 		}
 	}
 
-	// By-id: out-of-scope is indistinguishable from unknown (404 semantics).
-	if err := svc.Delete(scopedCtx(), "e-b"); !errors.Is(err, auth.ErrOutOfScope) {
-		t.Fatalf("delete out of scope: %v", err)
+	// By-id: out-of-scope is indistinguishable from unknown — uniform
+	// not-found, no owner leak (fourth pentest round, vuln-0003).
+	foreignErr := svc.Delete(scopedCtx(), "e-b")
+	unknownErr := svc.Delete(scopedCtx(), "no-such-id")
+	if !errors.Is(foreignErr, ErrNotFound) || !errors.Is(unknownErr, ErrNotFound) {
+		t.Fatalf("by-id errors must be not-found: %v / %v", foreignErr, unknownErr)
 	}
-	if err := svc.Promote(scopedCtx(), "e-b"); !errors.Is(err, auth.ErrOutOfScope) {
+	if strings.Replace(foreignErr.Error(), "e-b", "X", 1) != strings.Replace(unknownErr.Error(), "no-such-id", "X", 1) {
+		t.Fatalf("by-id error shapes must be identical: %q vs %q", foreignErr, unknownErr)
+	}
+	if err := svc.Promote(scopedCtx(), "e-b"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("promote out of scope: %v", err)
 	}
 	// Root still reaches everything.

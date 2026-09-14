@@ -205,8 +205,9 @@ func (s *Service) requireEntryScopeValue(ctx context.Context, id string) (*Entry
 	if err != nil {
 		return nil, err
 	}
-	if err := auth.RequireWorkspace(ctx, entry.WorkspaceID); err != nil {
-		return nil, err
+	if err := auth.RequireWorkspaceQuiet(ctx, entry.WorkspaceID); err != nil {
+		// Uniform with a nonexistent id: no existence or ownership oracle.
+		return nil, fmt.Errorf("%w: entry %s", ErrNotFound, id)
 	}
 	return entry, nil
 }

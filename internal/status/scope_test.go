@@ -1,6 +1,7 @@
 package status
 
 import (
+	"strings"
 	"context"
 	"errors"
 	"testing"
@@ -52,12 +53,33 @@ func TestStatusWorkspaceScopeMatrix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.GetSession(scopedCtx(), foreign.SessionID); !errors.Is(err, auth.ErrOutOfScope) {
+	if _, err := svc.GetSession(scopedCtx(), foreign.SessionID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("get foreign session: %v", err)
 	}
-	if err := svc.DeleteSession(scopedCtx(), foreign.SessionID); !errors.Is(err, auth.ErrOutOfScope) {
+	_, foreignErr := svc.GetSession(scopedCtx(), foreign.SessionID)
+	_, unknownErr := svc.GetSession(scopedCtx(), "no-such-session")
+	if strings.Replace(foreignErr.Error(), foreign.SessionID, "X", 1) != strings.Replace(unknownErr.Error(), "no-such-session", "X", 1) {
+		t.Fatalf("foreign/unknown session errors differ beyond the id: %q vs %q", foreignErr, unknownErr)
+	}
+	if err := svc.DeleteSession(scopedCtx(), foreign.SessionID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("delete foreign session: %v", err)
 	}
+	if _, err := svc.ListEvents(scopedCtx(), foreign.SessionID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign ListEvents: %v", err)
+	}
+	// Session takeover (fourth pentest round, vuln-0001): attaching to a
+	// foreign session with a declared workspace is rejected, and the
+	// binding is immutable even for in-scope reports.
+	if _, err := svc.Report(scopedCtx(), ReportInput{
+		AgentID: "evil", AgentType: "zcode", Workspace: "ws-a",
+		SessionID: foreign.SessionID, Status: StatusRunning,
+	}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign session attach must be rejected: %v", err)
+	}
+	if sess, err := svc.GetSession(ctx, foreign.SessionID); err != nil || sess.Workspace != "ws-b" {
+		t.Fatalf("foreign session must keep its binding: %+v %v", sess, err)
+	}
+
 	sessions, err := svc.ListSessions(scopedCtx(), "")
 	if err != nil {
 		t.Fatal(err)
@@ -86,8 +108,8 @@ func TestStatusListEventsAndActiveAgentsScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// ListEvents on a foreign session is out of scope (404 semantics).
-	if _, err := svc.ListEvents(scopedCtx(), foreign.SessionID); !errors.Is(err, auth.ErrOutOfScope) {
+	// ListEvents on a foreign session: uniform not-found (no oracle).
+	if _, err := svc.ListEvents(scopedCtx(), foreign.SessionID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("foreign ListEvents: %v", err)
 	}
 	if _, err := svc.ListEvents(scopedCtx(), own.SessionID); err != nil {

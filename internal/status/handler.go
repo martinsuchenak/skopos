@@ -40,6 +40,10 @@ func (h *Handler) Report(w http.ResponseWriter, r *http.Request) {
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
 		case errors.Is(err, auth.ErrOutOfScope):
 			rest.RespondError(w, http.StatusForbidden, err.Error())
+		case errors.Is(err, ErrNotFound):
+			// Attaching to a foreign session is indistinguishable from an
+			// unknown one (uniform 404, no existence oracle).
+			rest.RespondError(w, http.StatusNotFound, err.Error())
 		default:
 			rest.InternalError(w, err)
 		}

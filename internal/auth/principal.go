@@ -204,6 +204,17 @@ func RequireWorkspace(ctx context.Context, ws string) error {
 	return fmt.Errorf("%w: %q (accessible: %s)", ErrOutOfScope, ws, strings.Join(list, ", "))
 }
 
+// RequireWorkspaceQuiet is RequireWorkspace for by-id operations: the error
+// carries no workspace detail, so a foreign object is indistinguishable from
+// a nonexistent one (uniform 404 — no existence or ownership oracle).
+func RequireWorkspaceQuiet(ctx context.Context, ws string) error {
+	p := PrincipalFromContext(ctx)
+	if p.CanAccess(ws) {
+		return nil
+	}
+	return ErrOutOfScope
+}
+
 // RequireRoot enforces root-only operations (key/workspace management,
 // server-side refresh).
 func RequireRoot(ctx context.Context) error {

@@ -86,8 +86,24 @@ func (s *Service) requirePlanScope(ctx context.Context, planID string) error {
 	return auth.RequireWorkspace(ctx, ws)
 }
 
+// requirePlanScopeQuiet is the by-id variant: foreign plans return the same
+// not-found error as nonexistent ones — no existence or ownership oracle.
+func (s *Service) requirePlanScopeQuiet(ctx context.Context, planID string) error {
+	if strings.TrimSpace(planID) == "" {
+		return fmt.Errorf("%w: plan_id is required", ErrInvalidInput)
+	}
+	ws, err := s.store.PlanWorkspace(ctx, planID)
+	if err != nil {
+		return err
+	}
+	if err := auth.RequireWorkspaceQuiet(ctx, ws); err != nil {
+		return fmt.Errorf("%w: plan %s", ErrNotFound, planID)
+	}
+	return nil
+}
+
 func (s *Service) GetPlan(ctx context.Context, id string) (*Plan, error) {
-	if err := s.requirePlanScope(ctx, id); err != nil {
+	if err := s.requirePlanScopeQuiet(ctx, id); err != nil {
 		return nil, err
 	}
 	id = strings.TrimSpace(id)
@@ -124,7 +140,7 @@ func (s *Service) ListPlans(ctx context.Context, workspaceID, branchName string)
 }
 
 func (s *Service) UpdatePlan(ctx context.Context, id string, input UpdatePlanInput) error {
-	if err := s.requirePlanScope(ctx, id); err != nil {
+	if err := s.requirePlanScopeQuiet(ctx, id); err != nil {
 		return err
 	}
 	id = strings.TrimSpace(id)
@@ -150,7 +166,7 @@ func (s *Service) UpdatePlan(ctx context.Context, id string, input UpdatePlanInp
 }
 
 func (s *Service) DeletePlan(ctx context.Context, id string) error {
-	if err := s.requirePlanScope(ctx, id); err != nil {
+	if err := s.requirePlanScopeQuiet(ctx, id); err != nil {
 		return err
 	}
 	id = strings.TrimSpace(id)
@@ -165,7 +181,7 @@ func (s *Service) DeletePlan(ctx context.Context, id string) error {
 }
 
 func (s *Service) AddItem(ctx context.Context, planID string, input CreateItemInput) (*Item, error) {
-	if err := s.requirePlanScope(ctx, planID); err != nil {
+	if err := s.requirePlanScopeQuiet(ctx, planID); err != nil {
 		return nil, err
 	}
 	planID = strings.TrimSpace(planID)
@@ -253,7 +269,7 @@ func (s *Service) AddItem(ctx context.Context, planID string, input CreateItemIn
 }
 
 func (s *Service) UpdateItem(ctx context.Context, planID, itemID string, input UpdateItemInput) (*Item, error) {
-	if err := s.requirePlanScope(ctx, planID); err != nil {
+	if err := s.requirePlanScopeQuiet(ctx, planID); err != nil {
 		return nil, err
 	}
 	planID = strings.TrimSpace(planID)
@@ -334,7 +350,7 @@ func assertTransitionAllowed(ctx context.Context, store Store, planID, itemID st
 }
 
 func (s *Service) AddDependency(ctx context.Context, planID, itemID, dependsOnID string) error {
-	if err := s.requirePlanScope(ctx, planID); err != nil {
+	if err := s.requirePlanScopeQuiet(ctx, planID); err != nil {
 		return err
 	}
 	planID = strings.TrimSpace(planID)
@@ -385,7 +401,7 @@ func (s *Service) AddDependency(ctx context.Context, planID, itemID, dependsOnID
 }
 
 func (s *Service) RemoveDependency(ctx context.Context, planID, itemID, dependsOnID string) error {
-	if err := s.requirePlanScope(ctx, planID); err != nil {
+	if err := s.requirePlanScopeQuiet(ctx, planID); err != nil {
 		return err
 	}
 	planID = strings.TrimSpace(planID)
@@ -415,7 +431,7 @@ func (s *Service) DeleteItem(ctx context.Context, planID, itemID string) error {
 	if itemID == "" {
 		return fmt.Errorf("%w: item_id is required", ErrInvalidInput)
 	}
-	if err := s.requirePlanScope(ctx, planID); err != nil {
+	if err := s.requirePlanScopeQuiet(ctx, planID); err != nil {
 		return err
 	}
 	if err := s.store.DeleteItem(ctx, planID, itemID); err != nil {
@@ -426,7 +442,13 @@ func (s *Service) DeleteItem(ctx context.Context, planID, itemID string) error {
 }
 
 func (s *Service) AddPlanDependency(ctx context.Context, planID, dependsOnPlanID string) error {
-	if err := s.requirePlanScope(ctx, planID); err != nil {
+	if err := s.requirePlanScopeQuiet(ctx, planID); err != nil {
+		return err
+	}
+	if err := s.requirePlanScopeQuiet(ctx, dependsOnPlanID); err != nil {
+		return err
+	}
+	if err := s.requirePlanScopeQuiet(ctx, planID); err != nil {
 		return err
 	}
 	planID = strings.TrimSpace(planID)
@@ -476,7 +498,13 @@ func (s *Service) AddPlanDependency(ctx context.Context, planID, dependsOnPlanID
 }
 
 func (s *Service) RemovePlanDependency(ctx context.Context, planID, dependsOnPlanID string) error {
-	if err := s.requirePlanScope(ctx, planID); err != nil {
+	if err := s.requirePlanScopeQuiet(ctx, planID); err != nil {
+		return err
+	}
+	if err := s.requirePlanScopeQuiet(ctx, dependsOnPlanID); err != nil {
+		return err
+	}
+	if err := s.requirePlanScopeQuiet(ctx, planID); err != nil {
 		return err
 	}
 	planID = strings.TrimSpace(planID)

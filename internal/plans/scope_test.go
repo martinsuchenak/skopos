@@ -1,6 +1,7 @@
 package plans
 
 import (
+	"strings"
 	"context"
 	"errors"
 	"testing"
@@ -36,16 +37,31 @@ func TestPlansWorkspaceScopeMatrix(t *testing.T) {
 		t.Fatalf("create without workspace: %v", err)
 	}
 
-	// By-id operations on foreign plans are 404-shaped (ErrOutOfScope), and
-	// mutations under a scoped key cannot touch them.
-	if _, err := svc.GetPlan(scopedCtx(), other.ID); !errors.Is(err, auth.ErrOutOfScope) {
+	// By-id operations on foreign plans are uniform not-found — same error
+	// text as a nonexistent id (no existence/ownership oracle).
+	if _, err := svc.GetPlan(scopedCtx(), other.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("get foreign plan: %v", err)
 	}
-	if _, err := svc.AddItem(scopedCtx(), other.ID, CreateItemInput{Title: "i"}); !errors.Is(err, auth.ErrOutOfScope) {
+	if _, err := svc.AddItem(scopedCtx(), other.ID, CreateItemInput{Title: "i"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("add item to foreign plan: %v", err)
 	}
-	if _, err := svc.UpdateItem(scopedCtx(), other.ID, "any", UpdateItemInput{Status: ItemDone}); !errors.Is(err, auth.ErrOutOfScope) {
+	_, foreignErr := svc.GetPlan(scopedCtx(), other.ID)
+	_, unknownErr := svc.GetPlan(scopedCtx(), "no-such-plan")
+	if strings.Replace(foreignErr.Error(), other.ID, "X", 1) != strings.Replace(unknownErr.Error(), "no-such-plan", "X", 1) {
+		t.Fatalf("foreign/unknown plan errors differ beyond the id: %q vs %q", foreignErr, unknownErr)
+	}
+	if _, err := svc.UpdateItem(scopedCtx(), other.ID, "any", UpdateItemInput{Status: ItemDone}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("update item on foreign plan: %v", err)
+	}
+
+	// Plan-level dependencies cannot reference foreign-workspace plans
+	// (fourth pentest round, vuln-0002).
+	foreignDep, err := svc.CreatePlan(ctx, CreatePlanInput{Name: "dep-foreign", AuthorAgentID: "a", WorkspaceID: "ws-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AddPlanDependency(scopedCtx(), own.ID, foreignDep.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign plan dependency must be rejected uniformly: %v", err)
 	}
 
 	// Unscoped list returns exactly the key's slice.

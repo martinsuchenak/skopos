@@ -34,7 +34,9 @@ func (s *Storage) RecordReport(ctx context.Context, report Event, sessionTitle s
 		INSERT INTO sessions (id, title, workspace, status, started_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			workspace = excluded.workspace,
+			-- workspace is deliberately NOT updatable: the session's
+			-- workspace binding is set at creation and immutable, so a
+			-- report cannot re-scope an existing session.
 			status = excluded.status,
 			updated_at = excluded.updated_at
 	`, report.SessionID, sessionTitle, report.Workspace, string(report.Status), now, now); err != nil {
