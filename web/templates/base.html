@@ -103,9 +103,13 @@
                                             <span class="truncate text-sm font-medium" x-text="session.title"></span>
                                             <span class="badge shrink-0" :class="statusClass(session.status)" x-text="session.status"></span>
                                         </div>
-                                        <div class="mt-2 flex items-center justify-between text-xs text-zinc-500">
+                                        <div class="mt-2 flex items-center justify-between gap-2 text-xs text-zinc-500">
                                             <span class="truncate" x-text="session.workspace"></span>
-                                            <span x-text="session.agent_count + ' agents'"></span>
+                                            <span class="shrink-0" x-text="session.agent_count + ' agents'"></span>
+                                        </div>
+                                        <div class="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-zinc-600">
+                                            <span x-text="'active ' + timeAgo(session.updated_at)"></span>
+                                            <span class="shrink-0" x-text="'ran ' + sessionDuration(session)"></span>
                                         </div>
                                     </button>
                                     <button type="button" @click.stop="requestDelete('session', session.id, session.title)" class="btn btn-sm btn-ghost shrink-0 self-start text-rose-400" :aria-label="'Delete session ' + session.title">Delete</button>
@@ -120,6 +124,8 @@
                         <div>
                             <h2 class="text-2xl font-semibold" x-text="selectedSession && selectedSession.title || 'No session selected'"></h2>
                             <p class="mt-1 text-sm text-zinc-400" x-text="selectedSession && selectedSession.workspace || 'Reports appear here as agents check in.'"></p>
+                            <p x-show="selectedSession" class="mt-0.5 text-xs text-zinc-600"
+                                x-text="selectedSession && ('started ' + formatTime(selectedSession.started_at) + ' · ran ' + sessionDuration(selectedSession) + ' · last activity ' + timeAgo(selectedSession.updated_at))"></p>
                         </div>
                         <span x-show="selectedSession" class="badge" :class="statusClass(selectedSession && selectedSession.status)" x-text="selectedSession && selectedSession.status"></span>
                     </div>
@@ -153,14 +159,31 @@
                                 <h3 class="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">Events</h3>
                                 <p x-show="!selectedSession.events || selectedSession.events.length === 0" class="card p-4 text-sm text-zinc-500">No events yet.</p>
                                 <ul class="space-y-2" aria-label="Events">
-                                    <template x-for="event in selectedSession.events || []" :key="event.id">
-                                        <li class="card p-3">
-                                            <div class="flex flex-wrap items-center gap-2 text-sm">
-                                                <span class="font-medium" x-text="event.agent_id"></span>
-                                                <span class="badge" :class="statusClass(event.status)" x-text="event.status"></span>
-                                                <span class="text-xs text-zinc-500" x-text="formatTime(event.created_at)"></span>
+                                    <template x-for="item in sessionTimeline()" :key="item.key">
+                                        <li :class="item.isGroup ? 'flex items-center justify-between gap-3 rounded-lg border border-dashed border-zinc-800 px-3 py-1.5 text-xs text-zinc-500' : 'card p-3'">
+                                            <span x-show="item.isGroup" class="flex items-center gap-2">
+                                                <svg class="h-3.5 w-3.5 text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.880 5.66A9 9 0 105.66 19.12m9.24-15.1a9 9 0 017.3 16.5"/></svg>
+                                                <span x-text="item.countText"></span>
+                                                <span class="text-zinc-600" x-text="item.aliveText"></span>
+                                                <span class="shrink-0 text-zinc-600" x-text="item.rangeText"></span>
+                                            </span>
+                                            <div x-show="!item.isGroup">
+                                                <div x-show="item.gap" class="mb-2 flex items-center gap-2 text-[11px] text-amber-500/80" role="note">
+                                                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                                    <span x-text="'silent for ' + item.gap + ' before this'"></span>
+                                                </div>
+                                                <div class="flex flex-wrap items-center gap-2 text-sm">
+                                                    <span class="font-medium" x-text="item.agent"></span>
+                                                    <span class="badge" :class="item.statusCls" x-text="item.statusLabel"></span>
+                                                    <span x-show="item.auto" class="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-zinc-400">auto</span>
+                                                    <span x-show="item.stepLabel" class="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300" x-text="item.stepLabel"></span>
+                                                    <span class="ml-auto text-xs text-zinc-500" x-text="item.time"></span>
+                                                </div>
+                                                <div x-show="item.progress >= 0" class="mt-2 h-1.5 overflow-hidden rounded bg-zinc-800">
+                                                    <div class="h-full bg-cyan-400 transition-all" :style="'width: ' + item.progress + '%'"></div>
+                                                </div>
+                                                <p x-show="item.message" class="mt-2 text-sm text-zinc-300" x-text="item.message"></p>
                                             </div>
-                                            <p class="mt-2 text-sm text-zinc-300" x-text="event.message"></p>
                                         </li>
                                     </template>
                                 </ul>

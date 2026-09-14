@@ -9,7 +9,7 @@ import focus from '@alpinejs/focus';
 type SessionSummary = { id: string; title: string; workspace: string; status: string; agent_count: number };
 type SessionDetail = SessionSummary & { agents?: AgentState[]; events?: Event[] };
 type AgentState = { agent_id: string; agent_type: string; status: string; progress?: number; message: string; snippet: string };
-type Event = AgentState & { id: string; created_at: string };
+type Event = AgentState & { id: string; created_at: string; metadata?: Record<string, unknown>; step_current?: number; step_total?: number };
 type Entry = { id: string; scope: string; workspace_id?: string; branch_name?: string; session_id?: string; entry_type: string; title: string; content: string; code_ref?: string; author_agent_id: string; created_at: string };
 type Bundle = { entries: Entry[]; markdown_bundle: string };
 type PlanItem = { id: string; plan_id: string; title: string; description?: string; phase?: string; status: string; position: number; claimed_by_agent_id?: string; depends_on?: string[] };
@@ -719,6 +719,88 @@ const appState = () => ({
     }
   },
   formatTime(v: string) { if (!v) return ''; return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(v)); },
+
+  isAutoEvent(e: Event): boolean {
+    const m = (e.metadata || {}) as Record<string, unknown>;
+    return m.source === 'hook' || m.source === 'server';
+  },
+  isHeartbeat(e: Event): boolean {
+    const m = (e.metadata || {}) as Record<string, unknown>;
+    return m.heartbeat === true;
+  },
+  // timeAgo: "just now", "4m ago", "2h ago", "3d ago".
+  timeAgo(iso: string): string {
+    if (!iso) return '';
+    const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  },
+  // durationBetween: "42s", "6m", "1h 23m", "2d 4h".
+  durationBetween(startIso: string, endIso: string): string {
+    if (!startIso || !endIso) return '';
+    let s = Math.max(0, (new Date(endIso).getTime() - new Date(startIso).getTime()) / 1000);
+    const d = Math.floor(s / 86400); s -= d * 86400;
+    const h = Math.floor(s / 3600); s -= h * 3600;
+    const m = Math.floor(s / 60);
+    if (d > 0) return d + 'd ' + h + 'h';
+    if (h > 0) return h + 'h ' + m + 'm';
+    if (m > 0) return m + 'm';
+    return Math.floor(s) + 's';
+  },
+  sessionDuration(sess: SessionSummary | null): string {
+    if (!sess) return '';
+    return this.durationBetween(sess.started_at, sess.updated_at);
+  },
+  // sessionTimeline returns display-ready rows in chronological order:
+  // consecutive heartbeat pings collapse into one compact row (isGroup),
+  // real events carry flat precomputed fields (the CSP template only reads
+  // scalars — never item.event.* — so no binding can throw on a row kind it
+  // wasn't meant for), and gaps >5 minutes get a "silent for" marker.
+  sessionTimeline(): Array<Record<string, unknown>> {
+    const evs = [...(this.selectedSession?.events || [])].sort((a, b) => a.created_at.localeCompare(b.created_at));
+    const out: Array<Record<string, unknown>> = [];
+    let prevTs = 0;
+    let i = 0;
+    const blank = { agent: '', statusLabel: '', statusCls: '', time: '', auto: false, stepLabel: '', progress: -1, message: '' };
+    while (i < evs.length) {
+      const e = evs[i];
+      if (this.isHeartbeat(e)) {
+        let j = i;
+        while (j < evs.length && this.isHeartbeat(evs[j])) j++;
+        const group = evs.slice(i, j);
+        out.push({
+          key: 'hb-' + e.id, isGroup: true,
+          countText: group.length + ' auto heartbeats',
+          aliveText: 'alive ' + this.durationBetween(group[0].created_at, group[group.length - 1].created_at),
+          rangeText: this.formatTime(group[0].created_at) + ' – ' + this.formatTime(group[group.length - 1].created_at),
+          gap: '',
+          ...blank,
+        });
+        prevTs = new Date(group[group.length - 1].created_at).getTime();
+        i = j;
+        continue;
+      }
+      const ts = new Date(e.created_at).getTime();
+      const gapMs = ts - prevTs;
+      out.push({
+        key: e.id, isGroup: false,
+        gap: prevTs > 0 && gapMs > 5 * 60 * 1000 ? this.durationBetween(new Date(prevTs).toISOString(), e.created_at) : '',
+        agent: e.agent_id,
+        statusLabel: e.status,
+        statusCls: this.statusClass(e.status),
+        time: this.formatTime(e.created_at),
+        auto: this.isAutoEvent(e),
+        stepLabel: e.step_total ? 'step ' + (e.step_current || 0) + '/' + e.step_total : '',
+        progress: e.progress == null ? -1 : e.progress,
+        message: e.message,
+      });
+      prevTs = ts;
+      i++;
+    }
+    return out;
+  },
 });
 
 function wsParam(ws: string) { const p = new URLSearchParams(); if (ws) p.set('workspace', ws); return p.size ? '?' + p.toString() : ''; }
