@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] — 2026-09-14
+
+### Fixed
+
+- The `blackboard`, `plan`, and `report` CLI command families ignored the
+  `[client]` section of skopos-config.toml (no ConfigPath on their
+  `--server-url`/`--api-key` flags), so with a configured client they
+  dialed localhost instead of the server. `index` and `key` commands were
+  unaffected. Found verifying the v0.2.0 deployment.
+
 ## [0.2.0] — 2026-09-14
 
 The multi-tenant release: scoped API keys replace the single shared key, so
