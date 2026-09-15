@@ -4,6 +4,70 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] — 2026-09-15
+
+The benchmark-response release: compactness, ergonomics, and indexing
+accuracy driven by a 224-run index-effectiveness series (llm-bench over
+phantom overlays; report in the llm-bench repo).
+
+### Added
+
+- **`code_find`** — the anchorless flagship: semantic-first tool for
+  role/description questions with no identifier ("which class renders
+  errors as HTML?"). Semantic search when embeddings are configured, with
+  an FTS fallback that mines identifier-shaped tokens from the prose.
+  Compact top-N by design (name, kind, file:line, matched_by, one-line
+  summary). Measured regime: indexes delivered perfect recall where grep
+  guessed 1/3 on role-based questions.
+- **MCP lean tools** (`[mcp] lean_tools`, default off): hides non-core
+  tools from `tools/list` behind the MCP `tool_search`/`execute_tool`
+  meta-tools — schema bytes are step-level weight (~20 KB re-sent every
+  turn); lean lists 11 tools / 10.7 KB (−47%). Hidden tools stay fully
+  callable.
+- **`skopos install --profile index|full`**: index profile drops the
+  coordination steering and disables session reporting/heartbeats via a
+  `SKOPOS_PROFILE=index` hook gate — the ceremony measured at up to ~40%
+  of treatment tokens with zero contribution to solving.
+- PHP: bare `SomeClass::class` in argument position now emits a
+  type-reference edge (previously only the receiver idiom was captured).
+- **.gitignore-aware indexing**: git checkouts skip ignored files (a
+  fully-built working tree of a 12k-file repo had >100k files on disk —
+  8× index inflation). Native matcher (negation, anchoring, dir-only,
+  `**`); `SKOPOS_NO_GITIGNORE=1` opts out; non-git directories unaffected.
+- `skopos setup --global` writes the client config to `~/.config/skopos`.
+
+### Changed
+
+- **workspace_id is optional** on every MCP read tool when the key is
+  scoped to exactly one workspace (defaults to it); ambiguous scopes fail
+  closed. The `skopos_workspaces` discovery turn is no longer necessary.
+- **Terse results by default**: `code_search`/`code_symbol` return
+  name/kind/file:line/signature; doc comments, modifiers, and attributes
+  require `detail=true`. Tool descriptions dieted (28 tools: 23.0 →
+  20.3 KB); the routing decision tree lives only on `code_search`/`code_find`.
+- `code_callers` gains a `kinds` filter (MCP/CLI/REST): `kinds=call` is
+  true call sites, excluding the definition/type-reference edges that
+  made compliant agents wrong under every provider tested.
+- Agent block v5: three-line question-shape decision tree (named
+  identifier → code_search/code_symbol; role/description → code_find;
+  literal string → grep) replacing the prose that measured as
+  quotable-and-ignorable.
+- Hook readiness: remote mode is always ready — the session briefing
+  prints in every remote-configured repo, indexed or not.
+- Config search path: repo-local skopos-config.toml, then
+  ~/.config/skopos/skopos-config.toml — every checkout inherits remote
+  mode instead of silently reverting to local.
+
+### Fixed
+
+- `skopos index push` failed on large repos: the manifest hit the general
+  1 MiB JSON cap (~10k files); now decodes under the commit-sized 64 MiB
+  cap, and oversized bodies return 413 instead of a misleading 400.
+- `skopos install --workflow remote` always updates the stored key (the
+  preserve-if-absent rule kept revoked keys after rotation).
+- MCP agent credentials baked per-agent into hook scripts (chmod 600,
+  env-overridable) — hook CLI calls authenticate as the agent.
+
 ## [0.2.4] — 2026-09-14
 
 ### Fixed
