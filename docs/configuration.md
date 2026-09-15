@@ -85,3 +85,15 @@ the database — see [concepts/api-keys.md](concepts/api-keys.md). The root
 key stays in configuration and is the only key that can mint, edit, revoke,
 or delete others; generate a strong one with `skopos key generate-root`.
 `last_used_at` is updated at most once per 5 minutes per key.
+
+## MCP lean tools
+
+`[mcp] lean_tools = true` (or `--mcp-lean-tools` / `SKOPOS_MCP_LEAN_TOOLS`)
+hides non-core MCP tools from `tools/list`, keeping only the workhorses
+natively visible (code_search, code_find, code_symbol, code_callers,
+code_impact, skopos_context, blackboard_read/write, report_status). Hidden
+tools remain fully callable via the `tool_search` / `execute_tool`
+meta-tools the server exposes automatically. This roughly halves the
+per-step schema weight agents re-send every turn — the measured step-level
+token cost in the index-effectiveness benchmarks. Default: off (all tools
+listed).

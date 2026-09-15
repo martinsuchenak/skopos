@@ -12,7 +12,7 @@ func init() {
 }
 
 func registerBlackboardDeleteTool(server *mcplib.Server, service *blackboard.Service) {
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("blackboard_delete", "Permanently delete a blackboard entry by ID",
 			mcplib.String("id", "Required. ID of the entry to delete", mcplib.Required()),
 		),

@@ -19,7 +19,7 @@ func init() {
 const codeFindDesc = "Find code by ROLE or DESCRIPTION — use when the question names no identifier ('where is deferred work drained?', 'which class renders errors as HTML?'). Prefer code_search when you have a name. Returns a compact top-N of file:line + name + kind + why it matched; open the file or code_symbol for detail."
 
 func registerCodeFindTool(server *mcplib.Server, svc *codeindex.Service) {
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("code_find",
 			codeFindDesc,
 			wsParam(),

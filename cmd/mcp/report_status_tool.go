@@ -13,7 +13,7 @@ func init() {
 }
 
 func registerReportStatusTool(server *mcplib.Server, service *status.Service) {
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("report_status", "Report an AI agent status update to Skopos",
 			mcplib.String("agent_id", "Stable agent identifier", mcplib.Required()),
 			mcplib.String("agent_type", "Agent implementation, such as codex, gemini, claude-code, opencode, kiro, or praxis", mcplib.Required()),

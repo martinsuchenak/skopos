@@ -12,7 +12,7 @@ func init() {
 }
 
 func registerPlanUpdateItemTool(server *mcplib.Server, service *plans.Service) {
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("plan_update_item", "Update an item's status or claim it",
 			mcplib.String("plan_id", "Plan ID", mcplib.Required()),
 			mcplib.String("item_id", "Item ID", mcplib.Required()),

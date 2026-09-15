@@ -12,7 +12,7 @@ func init() {
 }
 
 func registerPlanReadTool(server *mcplib.Server, service *plans.Service) {
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("plan_read", "Get a plan with all items, or a single item if item_id is provided",
 			// plan_id is validated in the handler (not via Required) so the
 			// legacy `id` spelling can be accepted as an alias.

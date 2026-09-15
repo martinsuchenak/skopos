@@ -16,7 +16,7 @@ func init() {
 }
 
 func registerSkoposContextTool(server *mcplib.Server, statusSvc *status.Service, bbSvc *blackboard.Service, plansSvc *plans.Service) {
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool(
 			"skopos_context",
 			"Load structural context for the current task: the branch's blackboard (memory), active plans with blocked items (todos), and in-flight sessions. Call once at the start of a task.",

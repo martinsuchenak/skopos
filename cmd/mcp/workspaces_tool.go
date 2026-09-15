@@ -12,7 +12,7 @@ func init() {
 }
 
 func registerSkoposWorkspacesTool(server *mcplib.Server, registry *workspaces.Service) {
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool(
 			"skopos_workspaces",
 			"Rarely needed: workspace_id is OPTIONAL on all skopos tools when your key has one workspace (the common case — just omit it). Only call this when you must choose between multiple workspaces and don't know the ids.",

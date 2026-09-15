@@ -15,7 +15,7 @@ func init() {
 const codeIndexDesc = "workspace_id defaults to your key's sole workspace; branch optional (falls back to the default branch)."
 
 func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("code_search", "Search symbols by name/signature — use when the question NAMES an identifier; for role/description questions use code_find; literal strings -> grep. "+codeIndexDesc,
 			wsParam(),
 			mcplib.String("q", "Search query (prefix match)", mcplib.Required()),
@@ -66,7 +66,7 @@ func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 		},
 	)
 
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("code_symbol", "Definition of a named symbol: file:line + signature (detail=true adds doc). "+codeIndexDesc,
 			wsParam(),
 			mcplib.String("name", "Exact symbol name", mcplib.Required()),
@@ -94,7 +94,7 @@ func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 		},
 	)
 
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("code_outline", "Outline one file's definitions in source order. "+codeIndexDesc,
 			wsParam(),
 			mcplib.String("path", "File path relative to the repo root", mcplib.Required()),
@@ -113,7 +113,7 @@ func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 		},
 	)
 
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("code_callers", "Call sites of a name. kinds=\"call\" = true calls only (default includes type refs/definitions). "+codeIndexDesc,
 			wsParam(),
 			mcplib.String("name", "Symbol name", mcplib.Required()),
@@ -137,7 +137,7 @@ func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 		},
 	)
 
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("code_callees", "What does this symbol call? Returns callee name, file, and line. "+codeIndexDesc,
 			wsParam(),
 			mcplib.String("name", "Symbol name", mcplib.Required()),
@@ -161,7 +161,7 @@ func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 		},
 	)
 
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("code_impact", "Transitive blast radius of changing a symbol (callers by BFS depth, default 3). "+codeIndexDesc,
 			wsParam(),
 			mcplib.String("name", "Symbol name", mcplib.Required()),
@@ -185,7 +185,7 @@ func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 		},
 	)
 
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("code_dependencies", "List each file's imports (module dependency graph) on a branch. "+codeIndexDesc,
 			wsParam(),
 			mcplib.String("branch", "Branch"),
@@ -204,7 +204,7 @@ func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 		},
 	)
 
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("code_index_status", "Which branches of a workspace are indexed, at which git HEAD, and how fresh.",
 			wsParam(),
 		),
@@ -227,7 +227,7 @@ func init() {
 }
 
 func registerCodeAnalysisTools(server *mcplib.Server, svc *codeindex.Service) {
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("code_dead", "Symbols with no incoming references (dead-code candidates; verify — dynamic dispatch hides usage). "+codeIndexDesc,
 			wsParam(),
 			mcplib.String("branch", "Branch"),
@@ -251,7 +251,7 @@ func registerCodeAnalysisTools(server *mcplib.Server, svc *codeindex.Service) {
 		},
 	)
 
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("code_cycles", "Find cycles in the call graph (up to length 6). "+codeIndexDesc,
 			wsParam(),
 			mcplib.String("branch", "Branch"),
@@ -269,7 +269,7 @@ func registerCodeAnalysisTools(server *mcplib.Server, svc *codeindex.Service) {
 		},
 	)
 
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("code_call_tree", "Expand what a symbol calls, recursively (tree, depth default 3). "+codeIndexDesc,
 			wsParam(),
 			mcplib.String("name", "Symbol name", mcplib.Required()),
@@ -293,7 +293,7 @@ func registerCodeAnalysisTools(server *mcplib.Server, svc *codeindex.Service) {
 		},
 	)
 
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("code_branch_diff", "Diff a feature branch's symbols against the default branch (merge prep). "+codeIndexDesc,
 			wsParam(),
 			mcplib.String("branch", "Feature branch to compare", mcplib.Required()),

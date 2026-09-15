@@ -12,7 +12,7 @@ func init() {
 }
 
 func registerPlanAddItemTool(server *mcplib.Server, service *plans.Service) {
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("plan_add_item", "Add a work item to a plan",
 			mcplib.String("plan_id", "Plan ID", mcplib.Required()),
 			mcplib.String("title", "Item title", mcplib.Required()),

@@ -12,7 +12,7 @@ func init() {
 }
 
 func registerBlackboardWriteTool(server *mcplib.Server, service *blackboard.Service) {
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("blackboard_write", "Write an entry to the Skopos blackboard memory",
 			mcplib.String("scope", "branch (default), project, or session", mcplib.Required()),
 			mcplib.String("entry_type", "finding|decision|bug|debt|warning|context (bug/debt float across branches)", mcplib.Required()),

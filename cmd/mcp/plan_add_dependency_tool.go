@@ -12,7 +12,7 @@ func init() {
 }
 
 func registerPlanAddDependencyTool(server *mcplib.Server, service *plans.Service) {
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("plan_add_dependency", "Add a dependency between two plan items; the dependent item is auto-blocked until its dependency is done",
 			mcplib.String("plan_id", "Plan ID", mcplib.Required()),
 			mcplib.String("item_id", "Item ID that will be blocked", mcplib.Required()),

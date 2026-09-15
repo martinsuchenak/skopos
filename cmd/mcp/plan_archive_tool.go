@@ -12,7 +12,7 @@ func init() {
 }
 
 func registerPlanArchiveTool(server *mcplib.Server, service *plans.Service) {
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("plan_archive", "Archive a plan (soft delete: sets status to 'archived'). Prefer this over deleting when a plan's work is done or abandoned; archived plans are kept for the record but no longer active.",
 			mcplib.String("plan_id", "Plan ID", mcplib.Required()),
 		),

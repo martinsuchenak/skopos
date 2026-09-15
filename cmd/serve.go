@@ -125,6 +125,12 @@ func serveCmd() *cli.Command {
 				ConfigPath: []string{"codeindex.embeddings.qdrant_api_key"},
 				EnvVars:    []string{"SKOPOS_QDRANT_API_KEY"},
 			},
+			&cli.BoolFlag{
+				Name:         "mcp-lean-tools",
+				Usage:        "Hide non-core MCP tools from tools/list behind tool_search (halves per-step schema weight; tools stay callable via tool_search/execute_tool)",
+				ConfigPath:   []string{"mcp.lean_tools"},
+				EnvVars:      []string{"SKOPOS_MCP_LEAN_TOOLS"},
+			},
 			&cli.StringFlag{
 				Name:         "refresh-interval",
 				Usage:        "Poll registered git_url workspaces for refresh every interval (e.g. 30m, 1h; 0 disables)",
@@ -364,6 +370,9 @@ func serveCmd() *cli.Command {
 			// MCP endpoint, mounted on the same server/port as everything else. Body
 			// is capped like the REST API (rest.DecodeJSON applies its cap only to
 			// handlers that decode via it).
+			if cmd.GetBool("mcp-lean-tools") {
+				mcp.SetLeanToolset(true)
+			}
 			mcpHandler := mcp.NewMCPHandler(statusService, blackboardService, plansService, codeIndexService, workspacesService)
 			mcpHandler = rest.BodyLimit(noBrowserOrigin(mcpHandler))
 			mcpHandler = authn.Middleware(mcpHandler)

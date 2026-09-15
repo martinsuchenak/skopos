@@ -12,7 +12,7 @@ func init() {
 }
 
 func registerPlanRemovePlanDependencyTool(server *mcplib.Server, service *plans.Service) {
-	server.RegisterTool(
+	registerTool(server, 
 		mcplib.NewTool("plan_remove_plan_dependency", "Remove a plan-to-plan dependency; auto-unblocks the plan if all remaining deps are completed",
 			mcplib.String("plan_id", "Plan ID to unblock", mcplib.Required()),
 			mcplib.String("depends_on_plan_id", "Plan ID to remove from dependencies", mcplib.Required()),
