@@ -298,3 +298,35 @@ class Other {
 		t.Fatalf("leafWork missing: %v", names)
 	}
 }
+
+// TestCallersOfKinds guards the strict-call-sites filter: kinds=["call"]
+// must exclude non-call edges (type references etc.) — inclusive edges made
+// compliant agents wrong in measured benchmarks (m2t callgraph: 0/2 under
+// all providers).
+func TestCallersOfKinds(t *testing.T) {
+	store := newTestStore(t)
+	buildInto(t, store, analysisRepo(t), "main")
+	svc := NewService(store)
+	ctx := context.Background()
+
+	all, err := svc.Callers(ctx, "ws", "main", "NewCache", "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all.Edges) == 0 {
+		t.Fatal("fixture unexpectedly has no NewCache edges")
+	}
+	calls, err := svc.CallersOfKinds(ctx, "ws", "main", "NewCache", "", 100, []string{"call"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range calls.Edges {
+		if e.Kind != "call" {
+			t.Fatalf("kinds=[call] returned a %q edge", e.Kind)
+		}
+	}
+	// Inclusive set must be a superset of the strict set.
+	if len(calls.Edges) > len(all.Edges) {
+		t.Fatal("strict filter returned more edges than the inclusive set")
+	}
+}

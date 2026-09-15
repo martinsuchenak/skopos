@@ -18,9 +18,17 @@ if [ -n "$BRANCH" ]; then
 fi
 
 if skopos_hook_is_remote; then
-  HOOK_SESSION="$(skopos_hook_begin_session)"
+  if [ "${SKOPOS_PROFILE:-}" = "index" ]; then
+    HOOK_SESSION=""
+  else
+    HOOK_SESSION="$(skopos_hook_begin_session)"
+  fi
   MSG="[skopos] Shared knowledge server is active ($(skopos_hook_mode)). Start every task with skopos_context (workspace_id + branch). Prefer code_* MCP tools (code_search, code_symbol, code_callers, code_impact) over grep for code structure."
-  [ -n "$HOOK_SESSION" ] && MSG="$MSG This session's id is $HOOK_SESSION — pass it as session_id to every report_status so your updates join one timeline."
+  if [ -n "$HOOK_SESSION" ]; then
+    MSG="$MSG This session's id is $HOOK_SESSION — pass it as session_id to every report_status so your updates join one timeline."
+  else
+    MSG="$MSG (index-only profile: status reporting disabled)"
+  fi
   if WS=$(skopos workspace 2>/dev/null) && [ -n "$WS" ]; then
     MSG="$MSG Workspace ID for this repo: $WS."
   fi

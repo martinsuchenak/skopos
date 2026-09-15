@@ -21,13 +21,13 @@ func registerSkoposContextTool(server *mcplib.Server, statusSvc *status.Service,
 			"skopos_context",
 			"Load structural context for the current task: the branch's blackboard (memory), active plans with blocked items (todos), and in-flight sessions. Call once at the start of a task.",
 			mcplib.String("branch", "Current git branch name (recommended)"),
-			mcplib.String("workspace_id", "Required. Workspace ID (derive it with `skopos workspace` or from the git remote) — the snapshot is workspace-scoped, never cross-workspace"),
+			wsParam(),
 			mcplib.String("session_id", "Session id to scope the blackboard to"),
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
-			workspace := req.StringOr("workspace_id", "")
-			if workspace == "" {
-				return nil, toolError(fmt.Errorf("%w: workspace_id is required — the snapshot is scoped to one workspace; derive it with `skopos workspace` or the git remote (e.g. github.com/owner/repo)", blackboard.ErrInvalidInput))
+			workspace, err := resolveWorkspace(ctx, req)
+			if err != nil {
+				return nil, toolError(err)
 			}
 			snapshot := buildSnapshot(ctx, statusSvc, bbSvc, plansSvc,
 				req.StringOr("branch", ""),

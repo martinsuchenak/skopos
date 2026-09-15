@@ -278,17 +278,27 @@ func codeSymbolCmd() *cli.Command {
 func codeWhoCallsCmd() *cli.Command {
 	return &cli.Command{
 		Name:    "who-calls",
-		Usage:   "List call sites of a symbol",
+		Usage:   "List call sites of a symbol (default inclusive: call sites + type references; --kinds call for true call sites only)",
 		MinArgs: 1, MaxArgs: 1,
-		Flags: queryFlags(),
+		Flags: append(queryFlags(), &cli.StringFlag{Name: "kinds", Usage: "Comma-separated edge kinds (call,new,references,extends,implements,uses,embeds); \"call\" = true call sites"}),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			name := cmd.GetArgs()[0]
 			res, err := queryTarget(ctx, cmd,
 				func(ws, branch string) string {
-					return fmt.Sprintf("/api/codeindex/%s/callers?name=%s&branch=%s", url.PathEscape(ws), url.QueryEscape(name), url.QueryEscape(branch))
+					kindsQ := ""
+					if k := cmd.GetString("kinds"); k != "" {
+						kindsQ = "&kinds=" + url.QueryEscape(k)
+					}
+					return fmt.Sprintf("/api/codeindex/%s/callers?name=%s&branch=%s%s", url.PathEscape(ws), url.QueryEscape(name), url.QueryEscape(branch), kindsQ)
 				},
 				func(svc *codeindex.Service, ws, branch string) (codeindex.GraphResults, error) {
-					r, err := svc.Callers(ctx, ws, branch, name, cmd.GetString("path"), 0)
+					var kinds []string
+				for _, k := range strings.Split(cmd.GetString("kinds"), ",") {
+					if k = strings.TrimSpace(k); k != "" {
+						kinds = append(kinds, k)
+					}
+				}
+				r, err := svc.CallersOfKinds(ctx, ws, branch, name, cmd.GetString("path"), 0, kinds)
 					if err != nil {
 						return codeindex.GraphResults{}, err
 					}

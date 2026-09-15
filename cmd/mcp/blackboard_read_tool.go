@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	mcplib "github.com/paularlott/mcp"
@@ -15,7 +14,7 @@ func init() {
 func registerBlackboardReadTool(server *mcplib.Server, service *blackboard.Service) {
 	server.RegisterTool(
 		mcplib.NewTool("blackboard_read", "Read the Skopos blackboard Knowledge Bundle",
-			mcplib.String("workspace_id", "Required. Workspace ID to scope entries by (derive it with `skopos workspace` or from the git remote) — unscoped reads would span every workspace on the server"),
+			wsParam(),
 			mcplib.String("branch", "Branch name to filter branch-scoped entries"),
 			mcplib.String("entry_type", "Filter by type: finding, decision, bug, debt, warning, context"),
 			mcplib.String("author", "Filter by author agent ID"),
@@ -25,11 +24,11 @@ func registerBlackboardReadTool(server *mcplib.Server, service *blackboard.Servi
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 			// workspace_id is an authorization boundary, not an optional
-			// filter: an omitted scope must fail closed instead of silently
-			// widening to every workspace's entries.
-			workspaceID := req.StringOr("workspace_id", "")
-			if workspaceID == "" {
-				return nil, toolError(fmt.Errorf("%w: workspace_id is required — unscoped reads would return every workspace's entries; derive it with `skopos workspace` or the git remote (e.g. github.com/owner/repo)", blackboard.ErrInvalidInput))
+			// filter: an omitted scope fails closed unless the key has
+			// exactly one workspace (then it defaults — no discovery turn).
+			workspaceID, err := resolveWorkspace(ctx, req)
+			if err != nil {
+				return nil, toolError(err)
 			}
 			entryType := req.StringOr("entry_type", "")
 			author := req.StringOr("author", "")

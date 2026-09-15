@@ -247,8 +247,8 @@ func TestAgentBlockRenders(t *testing.T) {
 		}
 		for _, want := range []string{
 			"<!-- skopos:version:",
-			"Mandatory: Code exploration via skopos",
-			"**Do NOT**",
+			"Code exploration: pick by question shape",
+			"one skopos query before grep",
 			"`skopos mode`",
 			fmt.Sprintf("agent_type %q", agent),
 		} {
@@ -325,7 +325,7 @@ func TestInstallClaudeCodeGlobalLayout(t *testing.T) {
 	if strings.Count(string(claudeMd), "<!-- skopos:begin -->") != 1 {
 		t.Errorf("expected exactly one block marker, got:\n%s", claudeMd)
 	}
-	if !strings.Contains(string(claudeMd), "Mandatory: Code exploration via skopos") {
+	if !strings.Contains(string(claudeMd), "Code exploration: pick by question shape") {
 		t.Errorf("CLAUDE.md missing mandatory block:\n%s", claudeMd)
 	}
 
@@ -431,7 +431,7 @@ func TestInstallZCodeLayout(t *testing.T) {
 		}
 	}
 	agentsMd, _ := os.ReadFile(filepath.Join(home, ".zcode", "AGENTS.md"))
-	if !strings.Contains(string(agentsMd), "Mandatory: Code exploration via skopos") {
+	if !strings.Contains(string(agentsMd), "Code exploration: pick by question shape") {
 		t.Error("AGENTS.md block missing")
 	}
 	if _, err := os.Stat(filepath.Join(home, ".zcode", "hooks", "skopos-session.sh")); err != nil {

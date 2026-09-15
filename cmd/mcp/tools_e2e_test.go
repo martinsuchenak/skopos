@@ -500,3 +500,58 @@ func TestMCPCodeIndexToolsScopedToWorkspace(t *testing.T) {
 		t.Fatalf("expected out-of-scope error naming the accessible workspace, got: %s", out)
 	}
 }
+
+// TestWorkspaceDefaultsToSoleWorkspace: a key scoped to exactly one
+// workspace can omit workspace_id on read tools (the discovery turn the
+// benchmarks measured as pure overhead); ambiguous scopes still fail
+// closed.
+func TestWorkspaceDefaultsToSoleWorkspace(t *testing.T) {
+	h := toolsE2E(t)
+	single := auth.WithPrincipal(context.Background(), &auth.Principal{
+		KeyID: "k1", Workspaces: map[string]struct{}{"ws-a": {}},
+	})
+	multi := auth.WithPrincipal(context.Background(), &auth.Principal{
+		KeyID: "k1", Workspaces: map[string]struct{}{"ws-a": {}, "ws-b": {}},
+	})
+	post := func(ctx context.Context, tool string, args map[string]any) string {
+		body := map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": tool, "arguments": args}}
+		raw, _ := json.Marshal(body)
+		req := httptest.NewRequest("POST", "/mcp", bytes.NewReader(raw))
+		req.Header.Set("Content-Type", "application/json")
+		req = req.WithContext(ctx)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w.Body.String()
+	}
+
+	// single-scope key: blackboard_read with no workspace_id works.
+	out := post(single, "blackboard_read", map[string]any{})
+	if strings.Contains(out, "workspace_id is required") {
+		t.Fatalf("sole-workspace key must default: %s", out[:200])
+	}
+	// multi-scope key: omitted workspace_id fails with guidance.
+	out = post(multi, "blackboard_read", map[string]any{})
+	if !strings.Contains(out, "spans 2 workspaces") {
+		t.Fatalf("multi-scope omission must fail closed with count: %s", out[:200])
+	}
+	// root-style (no principal) still fails closed.
+	out = post(context.Background(), "blackboard_read", map[string]any{})
+	if !strings.Contains(out, "workspace_id is required") {
+		t.Fatalf("unscoped principal must fail closed: %s", out[:200])
+	}
+}
+
+// TestCodeFindToolRegistered: the anchorless flagship tool exists and is
+// described for role-based questions.
+func TestCodeFindToolRegistered(t *testing.T) {
+	h := toolsE2E(t)
+	body := map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": map[string]any{}}
+	raw, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/mcp", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if !strings.Contains(w.Body.String(), `"code_find"`) {
+		t.Fatal("code_find tool not registered")
+	}
+}

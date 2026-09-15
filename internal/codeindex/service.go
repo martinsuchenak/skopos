@@ -149,6 +149,13 @@ type GraphResults struct {
 }
 
 func (s *Service) Callers(ctx context.Context, workspace, branch, name, pathPrefix string, limit int) (*GraphResults, error) {
+	return s.CallersOfKinds(ctx, workspace, branch, name, pathPrefix, limit, nil)
+}
+
+// CallersOfKinds restricts caller edges to the given kinds; ["call"] is
+// true call sites (type references and definitions excluded — inclusive
+// edges made compliant agents wrong in measured benchmarks).
+func (s *Service) CallersOfKinds(ctx context.Context, workspace, branch, name, pathPrefix string, limit int, kinds []string) (*GraphResults, error) {
 	if err := auth.RequireWorkspace(ctx, workspace); err != nil {
 		return nil, err
 	}
@@ -156,7 +163,7 @@ func (s *Service) Callers(ctx context.Context, workspace, branch, name, pathPref
 	if err != nil {
 		return nil, err
 	}
-	edges, err := s.store.Callers(ctx, workspace, resolved, name, pathPrefix, limit)
+	edges, err := s.store.CallersOfKinds(ctx, workspace, resolved, name, pathPrefix, limit, kinds)
 	if err != nil {
 		return nil, err
 	}

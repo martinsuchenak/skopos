@@ -36,6 +36,12 @@ func installCmd() *cli.Command {
 				EnvVars: []string{"SKOPOS_API_KEY"},
 			},
 			&cli.StringFlag{
+				Name:         "profile",
+				DefaultValue: "full",
+				Usage:        "Install profile: full (code intelligence + coordination: memory, status, heartbeats) or index (code intelligence only — no session ceremony; for benchmark arms and single-purpose agents)",
+				EnvVars:      []string{"SKOPOS_INSTALL_PROFILE"},
+			},
+			&cli.StringFlag{
 				Name:         "workflow",
 				Usage:        "Client workflow for this agent: remote (default connection in ~/.config/skopos + this agent's key baked into its hooks) or local (per-repo indexing, nothing written)",
 				EnvVars:      []string{"SKOPOS_INSTALL_WORKFLOW"},
@@ -76,6 +82,7 @@ func installCmd() *cli.Command {
 				APIKey:   cmd.GetString("api-key"),
 				Scope:    cmd.GetString("scope"),
 				Workflow: cmd.GetString("workflow"),
+				Profile:  cmd.GetString("profile"),
 				DryRun:   cmd.GetBool("dry-run"),
 				Hooks:    hooks,
 			})

@@ -40,6 +40,21 @@ var hookStop string
 // renderAgentBlock specializes the shared behavioral block for one agent:
 // the report_status agent_type everywhere, plus the exploration-skill
 // invocation line for agents that support slash-command skills.
+// renderAgentBlockForProfile renders the steering block; the index profile
+// keeps only the code-exploration section (everything before the memory
+// marker) — coordination ceremony measured at up to ~40% of treatment
+// tokens with zero contribution to solving.
+func renderAgentBlockForProfile(agent, profile string) string {
+	block := renderAgentBlock(agent)
+	if profile != "index" {
+		return block
+	}
+	if i := strings.Index(block, "## Shared memory"); i > 0 {
+		return strings.TrimSpace(block[:i])
+	}
+	return block
+}
+
 func renderAgentBlock(agent string) string {
 	skill := ""
 	if agent == "claude-code" {
@@ -76,6 +91,13 @@ type Options struct {
 	URL    string // MCP server URL (default DefaultURL)
 	APIKey string // sent as Authorization: Bearer; empty omits the header
 	Scope  string // "global" (default) or "project"
+	// Profile selects the install shape: "full" (default) ships code
+	// intelligence + coordination (memory, status, heartbeats); "index"
+	// ships code intelligence only — the steering block drops the
+	// ceremony sections and hooks skip session reporting (measured at up
+	// to ~40% of treatment tokens in index-effectiveness benchmarks,
+	// contributing nothing to solving).
+	Profile string
 	// Workflow configures the client side per install: "remote" writes the
 	// shared global client config (connection info) and bakes this agent's
 	// API key into its hook scripts so CLI calls authenticate as the agent;
@@ -126,6 +148,15 @@ func Install(o Options) ([]Result, error) {
 // terminal default), and this agent's hook scripts get the agent's key
 // baked in — hook-driven CLI calls then authenticate as the agent.
 func applyWorkflow(agent string, o Options, actions *[]string) error {
+	if o.Profile == "index" {
+		// Index profile: hooks stay (grep->index nudges are exploration),
+		// but coordination (session reporting, heartbeats) is gated off.
+		if common := hookCommonPath(o.Scope, agent); common != "" && !o.DryRun {
+			if err := appendHookEnv(common, "\n# Profile: index — coordination disabled by skopos install --profile index.\nexport SKOPOS_PROFILE=index\n"); err != nil {
+				return fmt.Errorf("gating hooks for index profile: %w", err)
+			}
+		}
+	}
 	if o.Workflow != "remote" || o.DryRun {
 		if o.Workflow == "remote" && o.DryRun {
 			*actions = append(*actions, "would write global client config and per-agent hook credentials")
@@ -240,7 +271,7 @@ func installAgent(name string, o Options) (Result, error) {
 		}
 		// Always-on behavioral instructions in the global CLAUDE.md.
 		claudeMd := scopePath(o.Scope, filepath.Join(homeOrErr(), ".claude", "CLAUDE.md"), "CLAUDE.md")
-		if err := appendBlockAction(claudeMd, renderAgentBlock(name), o, &r.Actions); err != nil {
+		if err := appendBlockAction(claudeMd, renderAgentBlockForProfile(name, o.Profile), o, &r.Actions); err != nil {
 			return r, err
 		}
 		if err := installClaudeHooks(o, &r.Actions); err != nil {
@@ -255,7 +286,7 @@ func installAgent(name string, o Options) (Result, error) {
 		}
 		// Always-on behavioral instructions in the global ~/AGENTS.md.
 		agentsMd := scopePath(o.Scope, filepath.Join(homeOrErr(), "AGENTS.md"), "AGENTS.md")
-		if err := appendBlockAction(agentsMd, renderAgentBlock(name), o, &r.Actions); err != nil {
+		if err := appendBlockAction(agentsMd, renderAgentBlockForProfile(name, o.Profile), o, &r.Actions); err != nil {
 			return r, err
 		}
 
@@ -266,7 +297,7 @@ func installAgent(name string, o Options) (Result, error) {
 		}
 		// Always-on behavioral instructions in the global GEMINI.md.
 		geminiMd := scopePath(o.Scope, filepath.Join(homeOrErr(), ".gemini", "GEMINI.md"), "GEMINI.md")
-		if err := appendBlockAction(geminiMd, renderAgentBlock(name), o, &r.Actions); err != nil {
+		if err := appendBlockAction(geminiMd, renderAgentBlockForProfile(name, o.Profile), o, &r.Actions); err != nil {
 			return r, err
 		}
 
@@ -278,7 +309,7 @@ func installAgent(name string, o Options) (Result, error) {
 		// Global instructions are the personal file in ~/.github; project
 		// instructions live in the repo.
 		instructions := scopePath(o.Scope, filepath.Join(homeOrErr(), ".github", "copilot-instructions.md"), filepath.Join(".github", "copilot-instructions.md"))
-		if err := appendBlockAction(instructions, renderAgentBlock(name), o, &r.Actions); err != nil {
+		if err := appendBlockAction(instructions, renderAgentBlockForProfile(name, o.Profile), o, &r.Actions); err != nil {
 			return r, err
 		}
 
@@ -288,7 +319,7 @@ func installAgent(name string, o Options) (Result, error) {
 			return r, err
 		}
 		// Steering is inherently project-level.
-		if err := writeFileAction(filepath.Join(".kiro", "steering", "skopos.md"), renderAgentBlock(name), o, &r.Actions); err != nil {
+		if err := writeFileAction(filepath.Join(".kiro", "steering", "skopos.md"), renderAgentBlockForProfile(name, o.Profile), o, &r.Actions); err != nil {
 			return r, err
 		}
 
@@ -310,7 +341,7 @@ func installAgent(name string, o Options) (Result, error) {
 			return r, err
 		}
 		agentsMd := scopePath(o.Scope, filepath.Join(homeOrErr(), ".zcode", "AGENTS.md"), "AGENTS.md")
-		if err := appendBlockAction(agentsMd, renderAgentBlock(name), o, &r.Actions); err != nil {
+		if err := appendBlockAction(agentsMd, renderAgentBlockForProfile(name, o.Profile), o, &r.Actions); err != nil {
 			return r, err
 		}
 		if err := installZCodeHooks(o, &r.Actions); err != nil {
@@ -324,7 +355,7 @@ func installAgent(name string, o Options) (Result, error) {
 		}
 		// Write behavioral instructions to the global AGENTS.md.
 		agentsPath := scopePath(o.Scope, filepath.Join(homeOrErr(), ".config", "opencode", "AGENTS.md"), "AGENTS.md")
-		if err := appendBlockAction(agentsPath, renderAgentBlock(name), o, &r.Actions); err != nil {
+		if err := appendBlockAction(agentsPath, renderAgentBlockForProfile(name, o.Profile), o, &r.Actions); err != nil {
 			return r, err
 		}
 	}

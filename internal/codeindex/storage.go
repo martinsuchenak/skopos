@@ -188,7 +188,7 @@ func ensureColumn(db *sql.DB, table, column, decl string) error {
 			return nil
 		}
 	}
-_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, decl))
+	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, decl))
 	return err
 }
 
@@ -478,16 +478,16 @@ func (st *Store) DropBranch(workspace, branch string) error {
 
 // SymbolHit is a query result row.
 type SymbolHit struct {
-	Name      string `json:"name"`
-	Qualified string `json:"qualified,omitempty"` // Class::method when nested in a type
-	Kind      string `json:"kind"`
-	Path      string `json:"path"`
-	Line      int    `json:"line"`
+	Name      string   `json:"name"`
+	Qualified string   `json:"qualified,omitempty"` // Class::method when nested in a type
+	Kind      string   `json:"kind"`
+	Path      string   `json:"path"`
+	Line      int      `json:"line"`
 	Signature string   `json:"signature,omitempty"`
-	Doc       string   `json:"doc,omitempty"`                // doc comment (summary + non-signature tags)
-	Modifiers []string `json:"modifiers,omitempty"`           // visibility/static/… from the declaration
-	Attrs     []string `json:"attrs,omitempty"`               // attributes, annotations, decorators
-	MatchedBy string   `json:"matched_by,omitempty"`          // semantic fusion: fts, vector, or both
+	Doc       string   `json:"doc,omitempty"`        // doc comment (summary + non-signature tags)
+	Modifiers []string `json:"modifiers,omitempty"`  // visibility/static/… from the declaration
+	Attrs     []string `json:"attrs,omitempty"`      // attributes, annotations, decorators
+	MatchedBy string   `json:"matched_by,omitempty"` // semantic fusion: fts, vector, or both
 	Lang      string   `json:"lang,omitempty"`
 
 	rank int // vector rank when fused (internal)
@@ -617,6 +617,17 @@ type EdgeHit struct {
 
 // Callers returns edges calling the given name on a branch.
 func (st *Store) Callers(ctx context.Context, workspace, branch, name, pathPrefix string, limit int) ([]EdgeHit, error) {
+	return st.callersFiltered(ctx, workspace, branch, name, pathPrefix, limit, nil)
+}
+
+// CallersOfKinds returns caller edges restricted to the given kinds (e.g.
+// ["call"] for true call sites, excluding type references and definitions —
+// inclusive edges made compliant agents wrong in measured benchmarks).
+func (st *Store) CallersOfKinds(ctx context.Context, workspace, branch, name, pathPrefix string, limit int, kinds []string) ([]EdgeHit, error) {
+	return st.callersFiltered(ctx, workspace, branch, name, pathPrefix, limit, kinds)
+}
+
+func (st *Store) callersFiltered(ctx context.Context, workspace, branch, name, pathPrefix string, limit int, kinds []string) ([]EdgeHit, error) {
 	db, err := st.DB(workspace)
 	if err != nil {
 		return nil, err
@@ -624,13 +635,23 @@ func (st *Store) Callers(ctx context.Context, workspace, branch, name, pathPrefi
 	limit = clampLimit(limit, 100, 500)
 	filterCond, filterArgs := pathFilter(pathPrefix)
 	args := append([]any{branch}, filterArgs...)
+	kindCond := ""
+	kindArgs := []any{}
+	if len(kinds) > 0 {
+		ph := make([]string, len(kinds))
+		for i, k := range kinds {
+			ph[i] = "?"
+			kindArgs = append(kindArgs, k)
+		}
+		kindCond = " AND e.kind IN (" + strings.Join(ph, ",") + ")"
+	}
 	rows, err := db.Query(`
 		SELECT e.caller, e.callee, bf.path, e.line, e.kind
 		FROM edges e
 		JOIN branch_files bf ON bf.hash = e.hash AND bf.branch = ?`+filterCond+`
-		WHERE (e.callee = ? COLLATE NOCASE OR e.callee LIKE '%::' || ? ESCAPE '\')
+		WHERE (e.callee = ? COLLATE NOCASE OR e.callee LIKE '%::' || ? ESCAPE '\')`+kindCond+`
 		ORDER BY bf.path, e.line
-		LIMIT ?`, append(args, name, likeEscape(name), limit)...)
+		LIMIT ?`, append(append(args, name, likeEscape(name)), append(kindArgs, limit)...)...)
 	if err != nil {
 		return nil, err
 	}

@@ -324,7 +324,13 @@ func (h *Handler) Callers(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res, err := h.service.Callers(r.Context(), ws, r.URL.Query().Get("branch"), r.URL.Query().Get("name"), r.URL.Query().Get("path"), queryLimit(r))
+	var kinds []string
+	for _, k := range strings.Split(r.URL.Query().Get("kinds"), ",") {
+		if k = strings.TrimSpace(k); k != "" {
+			kinds = append(kinds, k)
+		}
+	}
+	res, err := h.service.CallersOfKinds(r.Context(), ws, r.URL.Query().Get("branch"), r.URL.Query().Get("name"), r.URL.Query().Get("path"), queryLimit(r), kinds)
 	if err != nil {
 		h.respondServiceError(w, err)
 		return

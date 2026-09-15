@@ -1,14 +1,12 @@
-<!-- skopos:version:4 -->
+<!-- skopos:version:5 -->
 
-## Mandatory: Code exploration via skopos
+## Code exploration: pick by question shape
 
-In any project with a skopos code index, ALWAYS use skopos as the FIRST step for code exploration, architecture understanding, or symbol lookup. This applies to:
-- Answering questions about how something works
-- Finding symbols, callers, dependencies, file outlines
-- Understanding code before making changes
-- Assessing the blast radius of a change
+- **Question names a symbol/function/class** → skopos code_search / code_symbol / code_callers (structure, callers, blast radius — grep can't answer these cheaply).
+- **Question describes a role or behavior with no name** ("which class renders errors as HTML?") → skopos code_find (semantic).
+- **Literal string, config value, or exhaustive listing** → grep/find is the right tool.
 
-**Do NOT** use grep/find for code structure or delegate code search to sub-agents until skopos has been tried first.
+Rule: one skopos query before grep for anything structural; never grep-call-graph by hand.
 
 Check once per session which skopos surface you have (Bash: `skopos mode`):
 - `remote <url>` — skopos MCP tools: `code_search` (names/signatures), `code_symbol` (exact definitions with file:line), `code_outline` (a file's definitions), `code_callers` / `code_callees` (call graph), `code_impact` (what transitively breaks), `code_branch_diff` (index diff against the default branch)
