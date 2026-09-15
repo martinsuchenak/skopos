@@ -14,8 +14,8 @@ func init() {
 func registerBlackboardWriteTool(server *mcplib.Server, service *blackboard.Service) {
 	server.RegisterTool(
 		mcplib.NewTool("blackboard_write", "Write an entry to the Skopos blackboard memory",
-			mcplib.String("scope", "Required. Entry scope: project (visible to all agents), branch (shared on a git branch), or session (this session only)", mcplib.Required()),
-			mcplib.String("entry_type", "Required. Entry type: finding, decision, bug, debt, warning, or context. Bug and debt are floating (always visible regardless of branch filter).", mcplib.Required()),
+			mcplib.String("scope", "branch (default), project, or session", mcplib.Required()),
+			mcplib.String("entry_type", "finding|decision|bug|debt|warning|context (bug/debt float across branches)", mcplib.Required()),
 			mcplib.String("title", "Required. Short descriptive title", mcplib.Required()),
 			mcplib.String("author_agent_id", "Required. Stable agent identifier, e.g. codex-macbook", mcplib.Required()),
 			mcplib.String("workspace_id", "Recommended for project and branch scope. The workspace this entry belongs to (omitting it makes the entry visible in every workspace)."),

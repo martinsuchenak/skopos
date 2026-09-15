@@ -18,7 +18,7 @@ func registerReportStatusTool(server *mcplib.Server, service *status.Service) {
 			mcplib.String("agent_id", "Stable agent identifier", mcplib.Required()),
 			mcplib.String("agent_type", "Agent implementation, such as codex, gemini, claude-code, opencode, kiro, or praxis", mcplib.Required()),
 			wsParam(),
-			mcplib.String("status", "One of: pending, thinking, planning, running, editing, testing, waiting, blocked, paused, handoff, succeeded, failed, cancelled. (stuck and orphaned are server-set only — do not use)", mcplib.Required()),
+			mcplib.String("status", "pending|thinking|planning|running|editing|testing|waiting|blocked|paused|handoff|succeeded|failed|cancelled (stuck/orphaned server-set)", mcplib.Required()),
 			mcplib.String("session_id", "Optional session identifier"),
 			mcplib.Integer("progress", "Optional progress percentage from 0 to 100"),
 			mcplib.Integer("step_current", "Optional current step"),

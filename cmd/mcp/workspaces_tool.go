@@ -15,7 +15,7 @@ func registerSkoposWorkspacesTool(server *mcplib.Server, registry *workspaces.Se
 	server.RegisterTool(
 		mcplib.NewTool(
 			"skopos_workspaces",
-			"List the workspaces this credential can access (with the git_url when registered). Use it to discover valid workspace_id values for the other tools.",
+			"Rarely needed: workspace_id is OPTIONAL on all skopos tools when your key has one workspace (the common case — just omit it). Only call this when you must choose between multiple workspaces and don't know the ids.",
 		),
 		func(ctx context.Context, _ *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 			list, err := registry.List(ctx)

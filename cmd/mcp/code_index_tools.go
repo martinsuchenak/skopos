@@ -12,11 +12,11 @@ func init() {
 	RegisterCodeIndexTool(registerCodeIndexTools)
 }
 
-const codeIndexDesc = "Use when the question NAMES an identifier (symbol, function, class). For role/description questions with no name, use code_find. For literal strings or config values, grep is fine. workspace_id defaults to the key's sole workspace; branch optional (unindexed branches fall back to the default, labeled in the response)."
+const codeIndexDesc = "workspace_id defaults to your key's sole workspace; branch optional (falls back to the default branch)."
 
 func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 	server.RegisterTool(
-		mcplib.NewTool("code_search", "Full-text search for symbols by name or signature (camelCase is split: 'loadconfig' matches LoadConfig). "+codeIndexDesc,
+		mcplib.NewTool("code_search", "Search symbols by name/signature — use when the question NAMES an identifier; for role/description questions use code_find; literal strings -> grep. "+codeIndexDesc,
 			wsParam(),
 			mcplib.String("q", "Search query (prefix match)", mcplib.Required()),
 			mcplib.String("path", "Optional path prefix filter (e.g. app/Services)"),
@@ -67,7 +67,7 @@ func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 	)
 
 	server.RegisterTool(
-		mcplib.NewTool("code_symbol", "Find definitions of a symbol by exact name (file:line + signature; detail=true adds the doc comment). "+codeIndexDesc,
+		mcplib.NewTool("code_symbol", "Definition of a named symbol: file:line + signature (detail=true adds doc). "+codeIndexDesc,
 			wsParam(),
 			mcplib.String("name", "Exact symbol name", mcplib.Required()),
 			mcplib.String("branch", "Branch"),
@@ -95,7 +95,7 @@ func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 	)
 
 	server.RegisterTool(
-		mcplib.NewTool("code_outline", "List a file's definitions in source order — cheaper than reading the file. "+codeIndexDesc,
+		mcplib.NewTool("code_outline", "Outline one file's definitions in source order. "+codeIndexDesc,
 			wsParam(),
 			mcplib.String("path", "File path relative to the repo root", mcplib.Required()),
 			mcplib.String("branch", "Branch"),
@@ -114,7 +114,7 @@ func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 	)
 
 	server.RegisterTool(
-		mcplib.NewTool("code_callers", "Who calls this name? Returns caller symbol, file, and line. Name-based heuristics. "+codeIndexDesc,
+		mcplib.NewTool("code_callers", "Call sites of a name. kinds=\"call\" = true calls only (default includes type refs/definitions). "+codeIndexDesc,
 			wsParam(),
 			mcplib.String("name", "Symbol name", mcplib.Required()),
 			mcplib.String("branch", "Branch"),
@@ -162,7 +162,7 @@ func registerCodeIndexTools(server *mcplib.Server, svc *codeindex.Service) {
 	)
 
 	server.RegisterTool(
-		mcplib.NewTool("code_impact", "What is transitively affected by changing this symbol? Returns callers by BFS depth (default 3, max 10). "+codeIndexDesc,
+		mcplib.NewTool("code_impact", "Transitive blast radius of changing a symbol (callers by BFS depth, default 3). "+codeIndexDesc,
 			wsParam(),
 			mcplib.String("name", "Symbol name", mcplib.Required()),
 			mcplib.String("branch", "Branch"),
@@ -228,7 +228,7 @@ func init() {
 
 func registerCodeAnalysisTools(server *mcplib.Server, svc *codeindex.Service) {
 	server.RegisterTool(
-		mcplib.NewTool("code_dead", "List symbols with no incoming call references (dead-code candidates; dynamic dispatch can hide usage — verify before deleting). "+codeIndexDesc,
+		mcplib.NewTool("code_dead", "Symbols with no incoming references (dead-code candidates; verify — dynamic dispatch hides usage). "+codeIndexDesc,
 			wsParam(),
 			mcplib.String("branch", "Branch"),
 			mcplib.String("path", "Optional path prefix filter"),
@@ -294,7 +294,7 @@ func registerCodeAnalysisTools(server *mcplib.Server, svc *codeindex.Service) {
 	)
 
 	server.RegisterTool(
-		mcplib.NewTool("code_branch_diff", "Compare a feature branch's indexed symbols against the default branch — merge-prep intelligence (what changed, what the other side added). "+codeIndexDesc,
+		mcplib.NewTool("code_branch_diff", "Diff a feature branch's symbols against the default branch (merge prep). "+codeIndexDesc,
 			wsParam(),
 			mcplib.String("branch", "Feature branch to compare", mcplib.Required()),
 			mcplib.String("base", "Explicit diff base (default: the workspace's default branch)"),
