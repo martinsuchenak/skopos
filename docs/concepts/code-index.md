@@ -319,3 +319,11 @@ Blade/PHP templates). Dependency and build-output directories (`vendor/`,
 `node_modules/`, `dist/`, `bin/`, …) and files over 1 MiB are skipped;
 unparseable or pathological files are indexed via error recovery under a 2s
 per-file budget.
+
+## What gets indexed
+
+- `vendor/`, `node_modules/`, build/cache directories (see
+  `DefaultExcludes` in parse.go) are always skipped, as are files >1 MiB.
+- In git checkouts, **`.gitignore` rules apply**: built assets, caches, and
+  dependencies under non-vendor names are excluded automatically. Set
+  `SKOPOS_NO_GITIGNORE=1` to index everything.

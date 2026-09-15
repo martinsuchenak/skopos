@@ -817,3 +817,31 @@ func TestRubyAndRustRelations(t *testing.T) {
 		t.Fatalf("rust impl-trait relation missing: %+v", res2.Edges)
 	}
 }
+
+func TestParsePHPBareClassLiteralArgument(t *testing.T) {
+	e := NewExtractor()
+	p := writeTemp(t, "check.php", `<?php
+class Repo {}
+class Handler {
+  public function check($obj): bool {
+    return is_a($obj, Repo::class);
+  }
+  public function tags(): array {
+    return [Mailer::class, Repo::class];
+  }
+}
+`)
+	res, err := e.ParseFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs := map[string]bool{}
+	for _, e := range res.Edges {
+		if e.Kind == "references" {
+			refs[e.Callee] = true
+		}
+	}
+	if !refs["Repo"] || !refs["Mailer"] {
+		t.Fatalf("bare ::class type-refs missing (got refs %v, all edges %+v)", refs, res.Edges)
+	}
+}

@@ -512,8 +512,21 @@ var DefaultExcludes = map[string]bool{
 const MaxFileSize = 1 << 20 // 1 MiB
 
 // Walk returns candidate source files under root (DetectLanguage != "").
+// DefaultExcludes always apply. When the checkout is a git repository,
+// .gitignore rules apply too: fully-built working trees (assets, caches,
+// dependencies under non-vendor names) can dwarf the tracked source, and
+// indexing them wastes the shared index. Set SKOPOS_NO_GITIGNORE=1 to
+// disable on a fully-functional checkout where ignored files must be
+// indexed anyway.
 func Walk(root string) ([]string, error) {
 	var files []string
+	useGitignore := os.Getenv("SKOPOS_NO_GITIGNORE") != "1"
+	var gi *gitignoreMatcher
+	if useGitignore {
+		if _, err := os.Stat(filepath.Join(root, ".git")); err == nil {
+			gi = newGitignoreMatcher()
+		}
+	}
 	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip unreadable entries
@@ -522,6 +535,15 @@ func Walk(root string) ([]string, error) {
 			if DefaultExcludes[d.Name()] {
 				return filepath.SkipDir
 			}
+			if gi != nil {
+				gi.loadDir(p)
+				if p != root && gi.Ignore(root, p, true) {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		if gi != nil && gi.Ignore(root, p, false) {
 			return nil
 		}
 		if Detect(p) == "" {

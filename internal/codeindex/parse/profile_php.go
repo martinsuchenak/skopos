@@ -16,8 +16,10 @@ func init() {
 	base.defs = cloneDefs(commonDefs)
 	base.qualifyCallee = phpQualifyCallee
 	base.typeRefNodes = map[string]func(n *gts.Node, lang *gts.Language, src []byte) []string{
-		"named_type":        typeRefFunc(false),
-		"binary_expression": phpInstanceofRef,
+		"named_type":                       typeRefFunc(false),
+		"binary_expression":                phpInstanceofRef,
+		"class_constant_access_expression": phpClassConstantRef,
+		"scoped_constant_access":           phpClassConstantRef,
 	}
 	base.relationNodes = phpRelations()
 	base.importNodes = map[string]bool{"namespace_use_declaration": true}
@@ -74,6 +76,22 @@ func phpDescend(n *gts.Node, lang *gts.Language, typ string) *gts.Node {
 	for i := 0; i < n.ChildCount(); i++ {
 		if c := n.Child(i); c != nil && c.Type(lang) == typ {
 			return c
+		}
+	}
+	return nil
+}
+
+// phpClassConstantRef turns bare `SomeClass::class` mentions (argument
+// position: is_a($x, Repo::class), arrays of class names) into
+// type-reference edges on the named class — previously only the receiver
+// position (app(Repo::class)->save()) was captured, leaving
+// argument-position mentions unfindable.
+func phpClassConstantRef(n *gts.Node, lang *gts.Language, src []byte) []string {
+	text := strings.TrimSpace(string(src[n.StartByte():n.EndByte()]))
+	if m := classLiteralRe.FindStringSubmatch(text); m != nil {
+		// Only the ::class literal itself, not ::CONSTANT accesses.
+		if m[0] == text {
+			return []string{m[1]}
 		}
 	}
 	return nil
