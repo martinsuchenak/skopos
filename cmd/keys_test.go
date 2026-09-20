@@ -14,6 +14,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/db"
+	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/status"
 	"github.com/martinsuchenak/skopos/internal/workspaces"
@@ -47,6 +48,7 @@ func keysTestServer(t *testing.T, rootKey string) *httptest.Server {
 		status.NewHandler(status.NewService(status.NewStorage(sqlDB)), testAuth(rootKey)),
 		blackboard.NewHandler(blackboard.NewService(blackboard.NewStorage(sqlDB)), testAuth(rootKey)),
 		plans.NewHandler(plans.NewService(plans.NewStorage(sqlDB)), testAuth(rootKey)),
+		inbox.NewHandler(inbox.NewService(inbox.NewStorage(sqlDB)), testAuth(rootKey)),
 		workspaces.NewHandler(workspaces.NewService(wsStorage), testAuth(rootKey)),
 		nil, handler)
 	root := http.NewServeMux()

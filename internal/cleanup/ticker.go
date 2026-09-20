@@ -80,19 +80,26 @@ func (c *Cleaner) clean(ctx context.Context) error {
 	}
 	plansDeleted, _ := plansResult.RowsAffected()
 
+	inboxResult, err := c.db.ExecContext(ctx, `DELETE FROM inbox_items WHERE status IN ('discarded', 'done') AND updated_at < ?`, cutoffStr)
+	if err != nil {
+		return fmt.Errorf("deleting old inbox items: %w", err)
+	}
+	inboxDeleted, _ := inboxResult.RowsAffected()
+
 	agentsResult, err := c.db.ExecContext(ctx, `DELETE FROM agents WHERE last_seen_at < ?`, cutoffStr)
 	if err != nil {
 		return fmt.Errorf("deleting stale agents: %w", err)
 	}
 	agentsDeleted, _ := agentsResult.RowsAffected()
 
-	total := eventsDeleted + sessionsDeleted + bbDeleted + plansDeleted + agentsDeleted
+	total := eventsDeleted + sessionsDeleted + bbDeleted + plansDeleted + inboxDeleted + agentsDeleted
 	if total > 0 && c.log != nil {
 		c.log.Info("cleanup completed",
 			"events", eventsDeleted,
 			"sessions", sessionsDeleted,
 			"blackboard", bbDeleted,
 			"plans", plansDeleted,
+			"inbox", inboxDeleted,
 			"agents", agentsDeleted,
 		)
 	}
@@ -108,6 +115,9 @@ func (c *Cleaner) clean(ctx context.Context) error {
 		}
 		if plansDeleted > 0 {
 			c.hub.Publish(events.Event{Type: "plans"})
+		}
+		if inboxDeleted > 0 {
+			c.hub.Publish(events.Event{Type: events.TypeInbox})
 		}
 	}
 

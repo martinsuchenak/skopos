@@ -11,6 +11,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/apikeys"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/codeindex"
+	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/rest"
 	"github.com/martinsuchenak/skopos/internal/status"
@@ -21,11 +22,12 @@ import (
 var registrations []func(*http.ServeMux, *status.Handler)
 var blackboardRegistrations []func(*http.ServeMux, *blackboard.Handler)
 var plansRegistrations []func(*http.ServeMux, *plans.Handler)
+var inboxRegistrations []func(*http.ServeMux, *inbox.Handler)
 var workspacesRegistrations []func(*http.ServeMux, *workspaces.Handler)
 var codeIndexRegistrations []func(*http.ServeMux, *codeindex.Handler)
 
 // RegisterStatus registers status/session routes. (Named for symmetry with
-// RegisterBlackboard/RegisterPlans/RegisterWorkspaces.)
+// RegisterBlackboard/RegisterPlans/RegisterInbox/RegisterWorkspaces.)
 func RegisterStatus(fn func(*http.ServeMux, *status.Handler)) {
 	registrations = append(registrations, fn)
 }
@@ -36,6 +38,10 @@ func RegisterBlackboard(fn func(*http.ServeMux, *blackboard.Handler)) {
 
 func RegisterPlans(fn func(*http.ServeMux, *plans.Handler)) {
 	plansRegistrations = append(plansRegistrations, fn)
+}
+
+func RegisterInbox(fn func(*http.ServeMux, *inbox.Handler)) {
+	inboxRegistrations = append(inboxRegistrations, fn)
 }
 
 func RegisterWorkspaces(fn func(*http.ServeMux, *workspaces.Handler)) {
@@ -52,7 +58,7 @@ func RegisterCodeIndex(fn func(*http.ServeMux, *codeindex.Handler)) {
 // webMux and the authenticated API on apiMux. The caller wraps apiMux with
 // auth (see cmd.serve: the principal must reach services via the request
 // context, so authentication lives in middleware, not in each handler).
-func RegisterRoutes(webMux, apiMux *http.ServeMux, statusHandler *status.Handler, blackboardHandler *blackboard.Handler, plansHandler *plans.Handler, workspacesHandler *workspaces.Handler, codeIndexHandler *codeindex.Handler, keysHandler *apikeys.Handler) {
+func RegisterRoutes(webMux, apiMux *http.ServeMux, statusHandler *status.Handler, blackboardHandler *blackboard.Handler, plansHandler *plans.Handler, inboxHandler *inbox.Handler, workspacesHandler *workspaces.Handler, codeIndexHandler *codeindex.Handler, keysHandler *apikeys.Handler) {
 	webMux.HandleFunc("GET /health", healthHandler)
 	registerWebRoutes(webMux)
 
@@ -66,6 +72,10 @@ func RegisterRoutes(webMux, apiMux *http.ServeMux, statusHandler *status.Handler
 
 	for _, fn := range plansRegistrations {
 		fn(apiMux, plansHandler)
+	}
+
+	for _, fn := range inboxRegistrations {
+		fn(apiMux, inboxHandler)
 	}
 
 	for _, fn := range workspacesRegistrations {

@@ -140,6 +140,29 @@ CREATE TABLE IF NOT EXISTS workspaces (
     created_at TEXT NOT NULL
 );
 
+-- Inbox: workspace-scoped captures of unprocessed work (docs/design/inbox.md).
+-- Content is raw markdown (source of truth); tags is a normalized JSON array.
+-- Priority is a partial order: NULL = unprioritized (always sorted after
+-- prioritized items); smaller values first. workspace_id is NULL for unfiled
+-- captures (root-only visibility until the item is filed).
+CREATE TABLE IF NOT EXISTS inbox_items (
+    id                  TEXT PRIMARY KEY,
+    workspace_id        TEXT,
+    title               TEXT NOT NULL,
+    content             TEXT NOT NULL DEFAULT '',
+    tags                TEXT NOT NULL DEFAULT '[]',
+    status              TEXT NOT NULL DEFAULT 'open',
+    priority            INTEGER,
+    claimed_by_agent_id TEXT,
+    author_agent_id     TEXT NOT NULL,
+    plan_id             TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_inbox_workspace ON inbox_items(workspace_id, status);
+CREATE INDEX IF NOT EXISTS idx_inbox_plan ON inbox_items(plan_id);
+
 -- API keys: scoped credentials replacing the single shared root key
 -- (docs/design/api-keys.md). Plaintext keys are never stored — only the
 -- SHA-256 hash and a display prefix. Revocation is soft (audit trail).

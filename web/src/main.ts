@@ -5,6 +5,8 @@
 // expression style in base.html.
 import Alpine from '@alpinejs/csp';
 import focus from '@alpinejs/focus';
+import type { EditorView } from '@codemirror/view';
+import { mountMarkdownEditor, editorText, destroyEditor } from './editor';
 
 type SessionSummary = { id: string; title: string; workspace: string; status: string; agent_count: number };
 type SessionDetail = SessionSummary & { agents?: AgentState[]; events?: Event[] };
@@ -21,9 +23,17 @@ type KeyForm = { name: string; all: boolean; workspaces: string[] };
 type EntryForm = { scope: 'project' | 'branch' | 'session'; entry_type: 'finding' | 'decision' | 'bug' | 'debt' | 'warning' | 'context'; title: string; content: string; code_ref: string; branch_name: string; session_id: string };
 type PlanForm = { name: string; description: string; branch_name: string };
 type ItemForm = { title: string; description: string; phase: string; depends_on: string };
+type InboxPlanSummary = { id: string; name: string; status: string };
+type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; created_at: string; updated_at: string; excerpt?: string };
+type InboxDetail = InboxItem & { content: string; content_html: string };
+type InboxForm = { id: string; title: string; tags: string; workspace: string };
 
 const UI_AUTHOR = 'ui';
-type View = 'sessions' | 'blackboard' | 'plans' | 'index' | 'keys';
+type View = 'sessions' | 'blackboard' | 'plans' | 'inbox' | 'index' | 'keys';
+
+// The inbox markdown editor lives OUTSIDE Alpine's reactive state: deep-
+// proxying a live CodeMirror view breaks it. One instance per open modal.
+let inboxEditor: EditorView | null = null;
 
 declare global { interface Window { Alpine: typeof Alpine; app: () => object } }
 
@@ -49,6 +59,18 @@ const appState = () => ({
   plansBranch: '',
   plansLoading: false,
   expandedPlan: null as Plan | null,
+
+  // inbox
+  inboxItems: [] as InboxItem[],
+  inboxLoading: false,
+  inboxLayout: (localStorage.getItem('skopos:inboxLayout') === 'lanes' ? 'lanes' : 'list'),
+  inboxStatus: 'open' as '' | 'open' | 'in_progress' | 'converted' | 'done' | 'discarded',
+  inboxTagFilter: '',
+  expandedInboxId: '',
+  expandedInbox: null as InboxDetail | null,
+  // id of the card being dragged (HTML5 DnD; same-window only, so state is
+  // the transport — dataTransfer.setData exists for Firefox's sake)
+  inboxDragId: '',
 
   // code index
   indexBranches: [] as { branch: string; head_sha?: string; built_at: string; source?: string; file_count: number; symbol_count: number }[],
@@ -97,8 +119,17 @@ const appState = () => ({
   // modal: add item
   showItemModal: false, itemSaving: false,
   itemForm: emptyItemForm(), itemErrors: {} as Record<string, string>,
+  // modal: create/edit inbox item (CodeMirror-backed content)
+  showInboxItemModal: false, inboxItemSaving: false,
+  inboxForm: emptyInboxForm(), inboxErrors: {} as Record<string, string>,
+  // what the form/editor held when the modal opened — the dirty check
+  // compares against this so an accidental close never silently discards edits
+  inboxBaseline: emptyInboxBaseline(),
+  // set when the plan-create modal was opened to convert an inbox item
+  pendingConvertItemId: '',
+  pendingConvertWorkspaceId: '',
   // modal: delete confirm
-  confirm: { open: false, title: '', message: '', busy: false, pending: null as null | { kind: string; id: string } },
+  confirm: { open: false, title: '', message: '', label: 'Delete', busy: false, pending: null as null | { kind: string; id: string } },
   // modal: create workspace
   showWorkspaceModal: false, workspaceSaving: false,
   workspaceForm: { id: '', name: '' }, workspaceErrors: {} as Record<string, string>,
@@ -180,6 +211,7 @@ const appState = () => ({
     if (type === 'sessions') this.refresh();
     else if (type === 'blackboard') { if (this.activeView === 'blackboard') this.fetchBundle(); }
     else if (type === 'plans') { if (this.activeView === 'plans') this.fetchPlans(); }
+    else if (type === 'inbox') { if (this.activeView === 'inbox') this.fetchInbox(); }
     else if (type === 'workspaces') this.fetchWorkspaces();
     else if (type === 'change') this.refresh();
   },
@@ -195,7 +227,7 @@ const appState = () => ({
   },
 
   anyModalOpen() {
-    return this.showNewKeyModal || this.showSecretModal || this.showEditKeyModal || this.showEntryModal || this.showPlanModal || this.showItemModal || this.showWorkspaceModal || this.confirm.open;
+    return this.showNewKeyModal || this.showSecretModal || this.showEditKeyModal || this.showEntryModal || this.showPlanModal || this.showItemModal || this.showInboxItemModal || this.showWorkspaceModal || this.confirm.open;
   },
 
   // ---- theme ----
@@ -281,6 +313,7 @@ const appState = () => ({
     this.activeView = v; this.sidebarOpen = false; localStorage.setItem('skopos:view', v);
     if (v === 'blackboard') this.fetchBundle();
     if (v === 'plans') this.fetchPlans();
+    if (v === 'inbox') this.fetchInbox();
     if (v === 'index') this.fetchIndexStatus();
     if (v === 'keys') this.fetchKeys();
   },
@@ -374,6 +407,7 @@ const appState = () => ({
     // Always reload the active view so workspace switches are reflected.
     if (this.activeView === 'blackboard') await this.fetchBundle();
     else if (this.activeView === 'plans') await this.fetchPlans();
+    else if (this.activeView === 'inbox') await this.fetchInbox();
     else if (this.activeView === 'index') await this.fetchIndexStatus();
     else if (this.activeView === 'keys') await this.fetchKeys();
   },
@@ -443,16 +477,20 @@ const appState = () => ({
     // Keep the open plan's items in sync when the list is refreshed (e.g. via SSE).
     if (this.expandedPlan) await this.reloadPlan(this.expandedPlan.id);
   },
+  // Same CSP constraint as isInboxExpanded: method-call x-show only.
+  isPlanExpanded(plan: Plan): boolean { return this.expandedPlan !== null && this.expandedPlan.id === plan.id; },
   async togglePlan(plan: Plan) {
-    if (this.expandedPlan?.id === plan.id) { this.expandedPlan = null; return; }
+    if (this.expandedPlan?.id === plan.id) { this.expandedPlan = null; this.syncPlanExpansion(); return; }
     const res = await this.authFetch(`/api/plans/${encodeURIComponent(plan.id)}`);
     if (res.ok) this.expandedPlan = await res.json();
+    this.syncPlanExpansion();
   },
   // Re-fetch the open plan and keep it expanded (used after item/dependency changes).
   async reloadPlan(planId: string) {
     if (this.expandedPlan?.id !== planId) return;
     const res = await this.authFetch(`/api/plans/${encodeURIComponent(planId)}`);
     if (res.ok) this.expandedPlan = await res.json();
+    this.syncPlanExpansion();
   },
   otherItems(item: PlanItem): PlanItem[] {
     const deps = new Set(item.depends_on ?? []);
@@ -465,13 +503,20 @@ const appState = () => ({
     if (this.expandedPlan?.id === planId) this.expandedPlan = null;
     await this.fetchPlans();
   },
-  async updateItemStatus(planId: string, itemId: string, status: string) {
+  // Both take the select element (single-statement @change handlers — the
+  // CSP evaluator silently fails to bind two-statement expressions) and
+  // reset it to the placeholder after reading the value.
+  async updateItemStatus(planId: string, itemId: string, el: HTMLSelectElement) {
+    const status = el.value;
+    el.value = '';
     if (!status) return;
     const res = await this.authFetch(`/api/plans/${encodeURIComponent(planId)}/items/${encodeURIComponent(itemId)}`, { method: 'PATCH', body: JSON.stringify({ status }) });
     if (!await this.handleBad(res, 'Status not updated')) return;
     this.notify('Item status updated', 'success'); await this.reloadPlan(planId);
   },
-  async addPlanDependency(planId: string, itemId: string, dependsOnId: string) {
+  async addPlanDependency(planId: string, itemId: string, el: HTMLSelectElement) {
+    const dependsOnId = el.value;
+    el.value = '';
     if (!dependsOnId) return;
     const res = await this.authFetch(`/api/plans/${encodeURIComponent(planId)}/items/${encodeURIComponent(itemId)}/dependencies`, { method: 'POST', body: JSON.stringify({ depends_on_item_id: dependsOnId }) });
     if (!await this.handleBad(res, 'Dependency not added')) return;
@@ -479,9 +524,10 @@ const appState = () => ({
   },
   openPlanModal() {
     this.planForm = emptyPlanForm(this.plansBranch); this.planErrors = {};
+    this.pendingConvertItemId = '';
+    this.pendingConvertWorkspaceId = '';
     this.showPlanModal = true;
   },
-  closePlanModal() { this.showPlanModal = false; },
   async submitPlan() {
     const e: Record<string, string> = {};
     if (!this.planForm.name.trim()) e.name = 'Name is required.';
@@ -491,13 +537,29 @@ const appState = () => ({
     try {
       const body: Record<string, string> = { name: this.planForm.name.trim(), description: this.planForm.description.trim(), author_agent_id: UI_AUTHOR };
       if (this.planForm.branch_name.trim()) body.branch_name = this.planForm.branch_name.trim();
-      body.workspace_id = this.writeWorkspace();
+      // A conversion plan is pinned to the item's workspace; plain plan
+      // creation falls back to the workspace filter.
+      body.workspace_id = this.pendingConvertItemId ? this.pendingConvertWorkspaceId : this.writeWorkspace();
       if (!body.workspace_id) { this.notify('Writes are workspace-scoped — select a workspace first', 'error'); return; }
       const res = await this.authFetch('/api/plans', { method: 'POST', body: JSON.stringify(body) });
       if (!await this.handleBad(res, 'Plan not created')) return;
-      this.notify('Plan created', 'success'); this.showPlanModal = false; await this.fetchPlans();
+      // Plan created from an inbox item: link it back (convert) and refresh
+      // the inbox view too.
+      if (this.pendingConvertItemId) {
+        const created = await res.json();
+        const cres = await this.authFetch('/api/inbox/' + encodeURIComponent(this.pendingConvertItemId) + '/convert', { method: 'POST', body: JSON.stringify({ plan_id: created.id }) });
+        this.pendingConvertItemId = '';
+        if (!await this.handleBad(cres, 'Plan created but the item was not converted')) return;
+        this.notify('Plan created — item converted', 'success');
+        if (this.expandedInboxId) { this.expandedInboxId = ''; this.expandedInbox = null; }
+        await this.fetchInbox();
+      } else {
+        this.notify('Plan created', 'success');
+      }
+      this.showPlanModal = false; await this.fetchPlans();
     } finally { this.planSaving = false; }
   },
+  closePlanModal() { this.showPlanModal = false; this.pendingConvertItemId = ''; this.pendingConvertWorkspaceId = ''; },
   openItemModal() {
     this.itemForm = emptyItemForm(); this.itemErrors = {};
     this.showItemModal = true;
@@ -519,6 +581,361 @@ const appState = () => ({
       if (!await this.handleBad(res, 'Item not added')) return;
       this.notify('Item added', 'success'); this.showItemModal = false; await this.reloadPlan(planId);
     } finally { this.itemSaving = false; }
+  },
+
+  // ---- inbox ----
+  async fetchInbox() {
+    this.inboxLoading = true;
+    try {
+      const p = new URLSearchParams();
+      if (this.activeWorkspace) p.set('workspace', this.activeWorkspace);
+      // The board shows every lane at once; the status chips only filter the
+      // list layout (the chip selection is kept and restored on switch-back).
+      if (this.inboxLayout === 'list' && this.inboxStatus) p.set('status', this.inboxStatus);
+      if (this.inboxTagFilter) p.set('tag', this.inboxTagFilter);
+      const qs = p.size ? '?' + p.toString() : '';
+      const res = await this.authFetch('/api/inbox' + qs);
+      if (!res.ok) { this.inboxItems = []; return; }
+      this.inboxItems = (await res.json()) ?? [];
+    } catch { this.inboxItems = []; } finally { this.inboxLoading = false; }
+    if (this.expandedInboxId) await this.reloadInboxItem(this.expandedInboxId);
+  },
+  setInboxLayout(l: 'list' | 'lanes') {
+    if (this.inboxLayout === l) return;
+    this.inboxLayout = l;
+    localStorage.setItem('skopos:inboxLayout', l);
+    this.fetchInbox();
+  },
+  setInboxStatus(s: string) { this.inboxStatus = s as typeof this.inboxStatus; this.fetchInbox(); },
+  setInboxTagFilter(t: string) { this.inboxTagFilter = this.inboxTagFilter === t ? '' : t; this.fetchInbox(); },
+  inboxStatusChips(): { key: string; label: string }[] {
+    return [
+      { key: 'open', label: 'Open' },
+      { key: 'in_progress', label: 'In progress' },
+      { key: 'converted', label: 'Converted' },
+      { key: 'done', label: 'Done' },
+      { key: 'discarded', label: 'Discarded' },
+      { key: '', label: 'All' },
+    ];
+  },
+  inboxOpenCount(): number {
+    return this.inboxItems.filter((i: InboxItem) => i.status === 'open').length;
+  },
+  // x-show inside x-for MUST be a method call: the CSP build's evaluator
+  // does not re-run compound `expanded && expanded.id === item.id`
+  // expressions when the state changes (same class as the dead dropdowns —
+  // silently evaluated once, never again).
+  isInboxExpanded(item: InboxItem): boolean { return this.expandedInboxId === item.id; },
+  // Imperative expansion sync: the CSP build's x-show effects inside x-for
+  // rows do not reliably re-run when outer state (expandedInboxId) changes,
+  // so the containers' display is driven directly alongside the markdown
+  // injection (same rationale as the [data-md-body] pattern).
+  syncInboxExpansion() {
+    this.$nextTick(() => {
+      document.querySelectorAll('[data-md-row]').forEach((row) => {
+        (row as HTMLElement).style.display = row.getAttribute('data-md-row') === this.expandedInboxId ? '' : 'none';
+      });
+    });
+  },
+  syncPlanExpansion() {
+    this.$nextTick(() => {
+      document.querySelectorAll('[data-plan-row]').forEach((row) => {
+        (row as HTMLElement).style.display = this.expandedPlan !== null && row.getAttribute('data-plan-row') === this.expandedPlan.id ? '' : 'none';
+      });
+    });
+  },
+  async toggleInboxItem(item: InboxItem) {
+    if (this.expandedInboxId === item.id) { this.expandedInboxId = ''; this.expandedInbox = null; this.syncInboxExpansion(); return; }
+    // Set the id first: reloadInboxItem re-checks it after its await, so a
+    // collapse during the fetch is not resurrected by the late response.
+    this.expandedInboxId = item.id;
+    this.syncInboxExpansion();
+    await this.reloadInboxItem(item.id);
+  },
+  async reloadInboxItem(id: string) {
+    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(id));
+    if (this.expandedInboxId !== id) return; // collapsed while fetching
+    if (!res.ok) { this.expandedInboxId = ''; this.expandedInbox = null; return; }
+    this.expandedInboxId = id;
+    this.expandedInbox = (await res.json()) as InboxDetail;
+    // The Alpine CSP build prohibits the html directive, and $refs does not
+    // resolve inside x-for templates — so the server-sanitized content_html
+    // is injected imperatively by querying the row's data attribute once the
+    // (x-show, never x-if) block is rendered.
+    const html = this.expandedInbox.content_html;
+    const rowId = id;
+    this.$nextTick(() => {
+      // Both layouts keep their copy of the row in the DOM (x-show only
+      // hides); inject into every copy so whichever is visible renders.
+      document.querySelectorAll('[data-md-body="' + CSS.escape(rowId) + '"]').forEach((el) => { el.innerHTML = html; });
+    });
+    this.syncInboxExpansion();
+  },
+  inboxStatusClass(s: string) { return { open: 'bg-amber-500/15 text-amber-300', in_progress: 'bg-cyan-500/15 text-cyan-300', converted: 'bg-violet-500/15 text-violet-300', done: 'bg-emerald-500/15 text-emerald-300', discarded: 'bg-zinc-700 text-zinc-400' }[s] ?? 'bg-zinc-700 text-zinc-200'; },
+  inboxItemEditable(item: InboxItem): boolean { return item.status === 'open' || item.status === 'in_progress'; },
+
+  // ---- inbox board (swimlanes) ----
+  inboxLanes(): { key: string; label: string }[] {
+    return [
+      { key: 'open', label: 'Open' },
+      { key: 'in_progress', label: 'In progress' },
+      { key: 'converted', label: 'Converted' },
+      { key: 'done', label: 'Done' },
+      { key: 'discarded', label: 'Discarded' },
+    ];
+  },
+  laneItems(key: string): InboxItem[] { return this.inboxItems.filter((i: InboxItem) => i.status === key); },
+  // Draggable: only actionable items plus converted (which can be dragged to
+  // Discarded). Done/Discarded are terminal.
+  inboxDraggable(item: InboxItem): boolean {
+    // Discarded cards drag back to Open (restore); done is terminal.
+    return item.status !== 'done';
+  },
+  laneAcceptsDrop(key: string): boolean {
+    const from = this.inboxItems.find((i: InboxItem) => i.id === this.inboxDragId);
+    if (!from) return false;
+    if (key === from.status) return true; // reorder within the lane
+    if (key === 'in_progress' && from.status === 'open') return true;
+    if (key === 'open' && (from.status === 'in_progress' || from.status === 'discarded')) return true;
+    if (key === 'discarded' && from.status !== 'done' && from.status !== 'discarded') return true;
+    return false; // converted needs a plan; done is automatic
+  },
+  startInboxDrag(item: InboxItem, ev: DragEvent) {
+    if (item.status === 'done') { ev.preventDefault(); return; } // terminal
+    this.inboxDragId = item.id;
+    if (ev.dataTransfer) {
+      ev.dataTransfer.setData('text/plain', item.id); // Firefox requires data
+      ev.dataTransfer.effectAllowed = 'move';
+    }
+  },
+  endInboxDrag() { this.inboxDragId = ''; },
+  laneDragOver(key: string, ev: DragEvent) {
+    if (!this.laneAcceptsDrop(key)) return; // no preventDefault -> drop not allowed
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+    ev.preventDefault();
+  },
+  // Drop on a lane (its empty area or below all cards): a cross-lane drop is
+  // the status transition; a same-lane drop at the end unprioritizes.
+  async dropOnLane(key: string) {
+    const dragId = this.inboxDragId;
+    this.inboxDragId = '';
+    if (!dragId) return;
+    const from = this.inboxItems.find((i: InboxItem) => i.id === dragId);
+    if (!from) return;
+    if (key !== from.status) { await this.inboxTransition(dragId, from.status, key); return; }
+    if (key !== 'open' && key !== 'in_progress') return;
+    // Same lane, dropped at the end: the bottom is the unordered zone, so a
+    // prioritized item gets unpinned; an unordered one is already there.
+    if (from.priority != null) await this.inboxSetPriority(dragId, 0);
+  },
+  // Drop onto a specific card: cross-lane = transition; same-lane = rank the
+  // dragged item right before the target card (dropping among the unordered
+  // tail clears the dragged item's priority instead).
+  async dropBeforeItem(key: string, target: InboxItem) {
+    const dragId = this.inboxDragId;
+    this.inboxDragId = '';
+    if (!dragId || dragId === target.id) return;
+    const from = this.inboxItems.find((i: InboxItem) => i.id === dragId);
+    if (!from) return;
+    if (key !== from.status) { await this.inboxTransition(dragId, from.status, key); return; }
+    if (key !== 'open' && key !== 'in_progress') return;
+    // Rank against the server's unfiltered ordered prefix (the visible lane
+    // may be tag-filtered); dropping onto an UNORDERED target unpins.
+    const ordered = await this.inboxOrderedIds(dragId);
+    if (ordered === null) return;
+    const targetIdx = ordered.indexOf(target.id);
+    if (targetIdx >= 0) {
+      // Target is ranked: the dragged item takes its rank, the rest shifts.
+      const ids = ordered.slice(0, targetIdx).concat([dragId], ordered.slice(targetIdx));
+      const res = await this.authFetch('/api/inbox/reorder', { method: 'POST', body: JSON.stringify({ ids }) });
+      if (!await this.handleBad(res, 'Reorder failed')) return;
+      await this.fetchInbox();
+    } else if (from.priority != null) {
+      // Dropped onto an unordered card: unpin.
+      await this.inboxSetPriority(dragId, 0);
+    }
+  },
+  async inboxTransition(id: string, from: string, to: string) {
+    // Capture the source lane's ordered prefix from the server truth first:
+    // when a ranked item leaves, the remaining ranks are compacted (no
+    // #2-without-#1) — unfiltered, so hidden ranked items renumber too.
+    const sourceOrdered = await this.inboxOrderedIds(id);
+    if (from === 'open' && to === 'in_progress') { await this.claimInboxItem(id); }
+    else if (from === 'in_progress' && to === 'open') { await this.releaseInboxItem(id); }
+    else if (from === 'discarded' && to === 'open') { await this.restoreInboxItem(id); }
+    else if (to === 'discarded') { await this.discardInboxItem(id); }
+    else return;
+    if (sourceOrdered && sourceOrdered.length > 0) {
+      const res = await this.authFetch('/api/inbox/reorder', { method: 'POST', body: JSON.stringify({ ids: sourceOrdered }) });
+      await this.handleBad(res, 'Rank compaction failed');
+      await this.fetchInbox();
+    }
+  },
+  // Server-truth ordered prefix for reorder/pin/compaction: the visible
+  // list may be tag- or status-filtered, and reorder semantics keep the
+  // priority of every id NOT sent — computing ids from a filtered view would
+  // silently un-sync hidden ranked items (duplicate #1s).
+  async inboxOrderedIds(excludeId: string): Promise<string[] | null> {
+    const p = new URLSearchParams();
+    if (this.activeWorkspace) p.set('workspace', this.activeWorkspace);
+    const qs = p.size ? '?' + p.toString() : '';
+    const res = await this.authFetch('/api/inbox' + qs);
+    if (!res.ok) return null;
+    const all = (await res.json()) as InboxItem[];
+    return all.filter((i: InboxItem) => i.priority != null && i.id !== excludeId).map((i: InboxItem) => i.id);
+  },
+  async inboxSetPriority(id: string, priority: number) {
+    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify({ priority }) });
+    if (!await this.handleBad(res, 'Priority not updated')) return;
+    await this.fetchInbox();
+  },
+  // Pin = rank first against the server's unfiltered ordered prefix.
+  async pinInboxItem(id: string) {
+    const ordered = await this.inboxOrderedIds(id);
+    if (ordered === null) return;
+    const ids = [id].concat(ordered);
+    const res = await this.authFetch('/api/inbox/reorder', { method: 'POST', body: JSON.stringify({ ids }) });
+    if (!await this.handleBad(res, 'Pin failed')) return;
+    this.notify('Pinned to top', 'success');
+    await this.fetchInbox();
+  },
+  // The editor host div lives inside the modal; it only exists in the DOM
+  // once the modal renders, hence the $nextTick mount.
+  mountInboxEditor(initial: string) {
+    this.$nextTick(() => {
+      const host = this.$refs.inboxEditorHost as HTMLElement | undefined;
+      if (!host) return;
+      inboxEditor = destroyEditor(inboxEditor);
+      inboxEditor = mountMarkdownEditor(host, initial, {
+        // Cmd/Ctrl+Enter saves straight from the editor.
+        onSubmit: () => { this.submitInboxItem(); },
+      });
+      inboxEditor.focus();
+    });
+  },
+  openInboxCreateModal() {
+    this.inboxForm = emptyInboxForm();
+    // Preselect the active workspace filter so the common path is one click;
+    // with "All workspaces" the picker starts empty and must be answered
+    // explicitly (an inline field error, not a silent toast).
+    this.inboxForm.workspace = this.activeWorkspace;
+    this.inboxErrors = {};
+    this.inboxBaseline = { title: '', tags: '', content: '', workspace: this.activeWorkspace };
+    this.showInboxItemModal = true;
+    this.mountInboxEditor('');
+  },
+  async openInboxEditModal(item: InboxItem) {
+    // Edit needs the full content: fetch the detail even if already expanded.
+    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(item.id));
+    if (!await this.handleBad(res, 'Could not load item')) return;
+    const detail = (await res.json()) as InboxDetail;
+    this.inboxForm = { id: detail.id, title: detail.title, tags: (detail.tags || []).join(', '), workspace: detail.workspace_id || '' };
+    this.inboxBaseline = { title: detail.title, tags: this.inboxForm.tags, content: detail.content, workspace: detail.workspace_id || '' };
+    this.inboxErrors = {};
+    this.showInboxItemModal = true;
+    this.mountInboxEditor(detail.content);
+  },
+  closeInboxItemModal() {
+    this.showInboxItemModal = false;
+    inboxEditor = destroyEditor(inboxEditor);
+  },
+  // Unsaved-edits guard: the backdrop, Escape, and Cancel all route here.
+  // Closing an editor with a long markdown draft in it must be deliberate.
+  inboxItemIsDirty(): boolean {
+    return editorText(inboxEditor) !== this.inboxBaseline.content
+      || this.inboxForm.title !== this.inboxBaseline.title
+      || this.inboxForm.tags !== this.inboxBaseline.tags
+      || this.inboxForm.workspace !== this.inboxBaseline.workspace;
+  },
+  attemptCloseInboxItemModal() {
+    if (!this.showInboxItemModal || this.confirm.open) return;
+    if (!this.inboxItemIsDirty()) { this.closeInboxItemModal(); return; }
+    this.confirm = {
+      open: true, title: 'Discard changes?', label: 'Discard', busy: false,
+      message: 'This item has unsaved edits. Discard them and close the editor?',
+      pending: { kind: 'inboxdiscard', id: '' },
+    };
+  },
+  async submitInboxItem() {
+    if (this.inboxItemSaving) return; // Mod-Enter can double-fire
+    const f = this.inboxForm, e: Record<string, string> = {};
+    if (!f.title.trim()) e.title = 'Title is required.';
+    if (!f.id && !f.workspace) e.workspace = 'Choose a workspace — or “Unfiled” to decide later.';
+    this.inboxErrors = e;
+    if (Object.keys(e).length) return;
+    this.inboxItemSaving = true;
+    try {
+      const content = editorText(inboxEditor);
+      const tags = f.tags.split(',').map((t: string) => t.trim()).filter(Boolean);
+      const editing = !!f.id;
+      if (!editing) {
+        const body: Record<string, unknown> = { title: f.title.trim(), content, tags, author_agent_id: UI_AUTHOR };
+        // 'unfiled' (root-only option) captures without a workspace; the
+        // server rejects it for scoped keys with an actionable error.
+        if (f.workspace !== 'unfiled') body.workspace_id = f.workspace;
+        const res = await this.authFetch('/api/inbox', { method: 'POST', body: JSON.stringify(body) });
+        if (!await this.handleBad(res, 'Item not captured')) return;
+        this.notify(f.workspace === 'unfiled' ? 'Item captured (unfiled)' : 'Item captured', 'success');
+      } else {
+        const body: Record<string, unknown> = { title: f.title.trim(), content, tags };
+        // Filing: a changed, non-empty workspace re-files the item.
+        if (f.workspace && f.workspace !== this.inboxBaseline.workspace) body.workspace_id = f.workspace;
+        const res = await this.authFetch('/api/inbox/' + encodeURIComponent(f.id), { method: 'PATCH', body: JSON.stringify(body) });
+        if (!await this.handleBad(res, 'Item not updated')) return;
+        this.notify('Item updated', 'success');
+      }
+      this.showInboxItemModal = false;
+      inboxEditor = destroyEditor(inboxEditor);
+      await this.fetchInbox();
+      if (editing && this.expandedInboxId === f.id) await this.reloadInboxItem(f.id);
+    } finally { this.inboxItemSaving = false; }
+  },
+  // Single-statement @change handler (the CSP evaluator is only proven on
+  // plain method calls): the select resets itself via the passed element.
+  async fileInboxItem(item: InboxItem, el: HTMLSelectElement) {
+    const ws = el.value;
+    el.value = '';
+    if (!ws || !item.id) return;
+    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(item.id), { method: 'PATCH', body: JSON.stringify({ workspace_id: ws }) });
+    if (!await this.handleBad(res, 'Could not file item')) return;
+    this.notify('Filed into ' + ws, 'success');
+    await this.fetchInbox();
+  },
+  async claimInboxItem(id: string) {
+    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(id) + '/claim', { method: 'POST', body: JSON.stringify({ agent_id: 'ui-user' }) });
+    if (!await this.handleBad(res, 'Claim failed')) return;
+    this.notify('Item claimed', 'success'); await this.fetchInbox();
+  },
+  async releaseInboxItem(id: string) {
+    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(id) + '/claim', { method: 'POST', body: JSON.stringify({ agent_id: '' }) });
+    if (!await this.handleBad(res, 'Release failed')) return;
+    this.notify('Item released', 'success'); await this.fetchInbox();
+  },
+  async restoreInboxItem(id: string) {
+    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(id) + '/restore', { method: 'POST', body: JSON.stringify({}) });
+    if (!await this.handleBad(res, 'Restore failed')) return;
+    this.notify('Item restored', 'success');
+    await this.fetchInbox();
+  },
+  async discardInboxItem(id: string) {
+    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(id) + '/discard', { method: 'POST', body: JSON.stringify({}) });
+    if (!await this.handleBad(res, 'Discard failed')) return;
+    this.notify('Item discarded', 'success');
+    if (this.expandedInboxId === id) { this.expandedInboxId = ''; this.expandedInbox = null; }
+    await this.fetchInbox();
+  },
+  // Convert = create a plan prefilled from the item, then link it. The plan
+  // MUST land in the item's workspace (the server rejects cross-workspace
+  // convert), so the pending state carries it explicitly — writeWorkspace()
+  // would otherwise pick the active filter or an arbitrary first workspace
+  // and leave a stray plan behind on failure.
+  convertInboxItem(item: InboxItem) {
+    if (!item.workspace_id) return; // unfiled: convert is impossible by construction
+    this.pendingConvertItemId = item.id;
+    this.pendingConvertWorkspaceId = item.workspace_id;
+    this.planForm = { name: item.title, description: (item.excerpt || '').slice(0, 200), branch_name: '' };
+    this.planErrors = {};
+    this.showPlanModal = true;
   },
 
   // ---- code index ----
@@ -669,12 +1086,19 @@ const appState = () => ({
 
   // ---- delete (modal-driven) ----
   requestDelete(kind: string, id: string, name: string) {
-    this.confirm = { open: true, title: `Delete ${kind}`, message: `Delete “${name}”? This cannot be undone.`, busy: false, pending: { kind, id } };
+    this.confirm = { open: true, title: `Delete ${kind}`, message: `Delete “${name}”? This cannot be undone.`, label: 'Delete', busy: false, pending: { kind, id } };
   },
-  cancelDelete() { if (!this.confirm.busy) this.confirm = { open: false, title: '', message: '', busy: false, pending: null }; },
+  cancelDelete() { if (!this.confirm.busy) this.confirm = { open: false, title: '', message: '', label: 'Delete', busy: false, pending: null }; },
   async confirmDelete() {
     const p = this.confirm.pending; if (!p) return;
     this.confirm.busy = true;
+    // Discarding unsaved inbox edits closes the editor; nothing to delete.
+    if (p.kind === 'inboxdiscard') {
+      this.confirm.busy = false;
+      this.confirm.open = false; this.confirm.pending = null;
+      this.closeInboxItemModal();
+      return;
+    }
     let url = '';
     if (p.kind === 'session') url = `/api/sessions/${encodeURIComponent(p.id)}`;
     else if (p.kind === 'entry') url = `/api/blackboard/entries/${encodeURIComponent(p.id)}`;
@@ -685,6 +1109,7 @@ const appState = () => ({
     }
     else if (p.kind === 'apikey') url = `/api/keys/${encodeURIComponent(p.id)}`;
     else if (p.kind === 'apikeyhard') url = `/api/keys/${encodeURIComponent(p.id)}?hard=true`;
+    else if (p.kind === 'inboxitem') url = `/api/inbox/${encodeURIComponent(p.id)}`;
     const res = await this.authFetch(url, { method: 'DELETE' });
     this.confirm.busy = false;
     if (!await this.handleBad(res, 'Delete failed')) return;
@@ -695,6 +1120,7 @@ const appState = () => ({
       await this.refresh();
     } else if (p.kind === 'entry') await this.fetchBundle();
     else if (p.kind === 'plan') { if (this.expandedPlan?.id === p.id) this.expandedPlan = null; await this.fetchPlans(); }
+    else if (p.kind === 'inboxitem') { if (this.expandedInboxId === p.id) { this.expandedInboxId = ''; this.expandedInbox = null; } await this.fetchInbox(); }
     else if (p.kind === 'item' && this.expandedPlan) await this.reloadPlan(this.expandedPlan.id);
     else if (p.kind === 'apikey') await this.fetchKeys();
   },
@@ -831,6 +1257,8 @@ function bundleParams(ws: string, branch: string) {
 function emptyEntryForm(branch = ''): EntryForm { return { scope: 'branch', entry_type: 'finding', title: '', content: '', code_ref: '', branch_name: branch, session_id: '' }; }
 function emptyPlanForm(branch = ''): PlanForm { return { name: '', description: '', branch_name: branch }; }
 function emptyItemForm(): ItemForm { return { title: '', description: '', phase: '', depends_on: '' }; }
+function emptyInboxForm(): InboxForm { return { id: '', title: '', tags: '', workspace: '' }; }
+function emptyInboxBaseline() { return { title: '', tags: '', content: '', workspace: '' }; }
 
 Alpine.plugin(focus);
 // Register as a named component: the CSP Alpine build cannot resolve globals

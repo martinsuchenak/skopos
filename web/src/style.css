@@ -30,21 +30,23 @@ body.modal-open { overflow: hidden; }
 @layer components {
   /* Buttons — consistent shape, 44px min target (WCAG 2.5.5/2.5.8) */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-md border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 transition cursor-pointer;
+    @apply inline-flex items-center justify-center gap-2 rounded-md border border-zinc-500 px-4 py-2 text-sm font-medium text-zinc-200 transition cursor-pointer;
     @apply hover:border-zinc-500 hover:text-white;
     @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500;
     @apply disabled:opacity-50 disabled:cursor-not-allowed;
     min-height: 44px;
   }
-  .btn-primary { @apply border-transparent bg-cyan-600 text-white hover:bg-cyan-500; }
-  .btn-danger  { @apply border-transparent bg-rose-600 text-white hover:bg-rose-500; }
+  /* Button fills meet 4.5:1 with white text in every state
+     (cyan-700 5.3:1, cyan-800 7.3:1, rose-700 6.3:1, rose-800 8.9:1). */
+  .btn-primary { @apply border-transparent bg-cyan-700 text-white hover:bg-cyan-800; }
+  .btn-danger  { @apply border-transparent bg-rose-700 text-white hover:bg-rose-800; }
   .btn-ghost   { @apply border-transparent text-zinc-300 hover:bg-zinc-800 hover:text-white; }
   .btn-sm      { @apply px-3 py-1.5 text-xs; min-height: 36px; }
 
   /* Form fields — WCAG-compliant focus + 44px target */
   .fld {
-    @apply mt-1 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100;
-    @apply placeholder:text-zinc-500;
+    @apply mt-1 w-full rounded-md border border-zinc-500 bg-zinc-900 px-3 py-2 text-sm text-zinc-100;
+    @apply placeholder:text-zinc-400;
     @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 focus-visible:border-cyan-500;
     min-height: 44px;
   }
@@ -55,7 +57,7 @@ body.modal-open { overflow: hidden; }
   .field-error { @apply mt-1 text-sm text-rose-400; }
   /* Compact select for inline toolbar controls */
   .fld-sm {
-    @apply rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-100;
+    @apply rounded-md border border-zinc-500 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-100 placeholder:text-zinc-400;
     @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500;
     min-height: 36px;
   }
@@ -73,7 +75,7 @@ body.modal-open { overflow: hidden; }
     line-height: 1.5;
   }
 
-  .card { @apply rounded-lg border border-zinc-800 bg-zinc-900; }
+  .card { @apply rounded-lg border border-zinc-700 bg-zinc-900; }
   .badge { @apply inline-flex items-center rounded px-2 py-0.5 text-xs font-medium; }
 
   /* Sidebar nav items */
@@ -125,21 +127,25 @@ html.light { color-scheme: light; }
 .light .bg-zinc-700 { background-color: #e4e4e7; }
 .light .text-zinc-100, .light .text-zinc-200 { color: #18181b; }
 .light .text-zinc-300, .light .text-zinc-400 { color: #52525b; }
-.light .text-zinc-500, .light .text-zinc-600 { color: #71717a; }
+.light .text-zinc-500, .light .text-zinc-600 { color: #52525b; }
 .light .border-zinc-800 { border-color: #e4e4e7; }
 .light .border-zinc-700 { border-color: #d4d4d8; }
 
 /* component classes bake in dark colors via @apply; re-skin them for light */
-.light .card { background-color: #ffffff; border-color: #e4e4e7; }
-.light .fld { background-color: #f4f4f5; border-color: #d4d4d8; color: #18181b; }
-.light .fld-sm { background-color: #ffffff; border-color: #d4d4d8; color: #18181b; }
-.light .fld::placeholder { color: #a1a1aa; }
-.light .fld-sm::placeholder { color: #a1a1aa; }
+.light .card { background-color: #ffffff; border-color: #d4d4d8; }
+.light .fld { background-color: #f4f4f5; border-color: #71717a; color: #18181b; }
+.light .fld-sm { background-color: #ffffff; border-color: #71717a; color: #18181b; }
+.light .fld::placeholder { color: #52525b; }
+.light .fld-sm::placeholder { color: #52525b; }
 
 /* Recess inputs slightly from the card surface in dark too */
 .dark .fld { background-color: #09090b; }
 .light .lbl { color: #52525b; }
-.light .btn { border-color: #d4d4d8; color: #18181b; }
+.light .btn { border-color: #71717a; color: #18181b; }
+/* Filled buttons keep WHITE text: the .light .btn color above out-ranks
+   .btn-primary's own (0,2,0 vs 0,1,0) and would drop cyan-700 text to
+   dark-on-cyan at 3.3:1. */
+.light .btn-primary, .light .btn-danger { color: #ffffff; }
 .light .btn:hover { background-color: #f4f4f5; }
 .light .btn-ghost { color: #52525b; }
 .light .btn-ghost:hover { background-color: #f4f4f5; color: #18181b; }
@@ -162,3 +168,66 @@ html.light { color-scheme: light; }
 .light .bg-rose-950\/80 { background-color: #fef2f2; }
 .light .border-emerald-700 { border-color: #6ee7b7; }
 .light .border-rose-700 { border-color: #fda4af; }
+
+/* ===================== Inbox markdown (CodeMirror 6 + rendered) ===================== */
+/* The editor rides on the card surface; classes below bridge CM6's own
+   styling to the dashboard's zinc palette for both themes. */
+.cm-host { border: 1px solid #27272a; border-radius: 0.5rem; overflow: hidden; background: #09090b; }
+.light .cm-host { border-color: #d4d4d8; background: #ffffff; }
+.cm-host .cm-editor { max-height: 32rem; }
+/* Focus ring on the HOST (it owns the border-radius): an outline on the
+   inner .cm-editor is rectangular and gets clipped by the host's rounded
+   overflow:hidden, leaving corner gaps. box-shadow rings follow the radius,
+   matching the .fld inputs exactly. */
+.cm-host:focus-within { border-color: #06b6d4; box-shadow: 0 0 0 2px #06b6d4; }
+.cm-host .cm-scroller { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; line-height: 1.5; }
+.dark .cm-host .cm-content { caret-color: #22d3ee; color: #d4d4d8; }
+.dark .cm-host .cm-gutters { background: #09090b; color: #52525b; border-right: 1px solid #27272a; }
+.light .cm-host .cm-content { caret-color: #0e7490; color: #27272a; }
+.light .cm-host .cm-gutters { background: #fafafa; color: #a1a1aa; border-right: 1px solid #e4e4e7; }
+.dark .cm-host .cm-activeLine { background: rgba(63, 63, 70, 0.25); }
+.light .cm-host .cm-activeLine { background: rgba(244, 244, 245, 0.7); }
+
+/* Rendered item content (server-side goldmark + bluemonday HTML). */
+.md-body { font-size: 0.9rem; line-height: 1.6; color: #d4d4d8; overflow-wrap: anywhere; }
+.light .md-body { color: #3f3f46; }
+.md-body h1, .md-body h2, .md-body h3, .md-body h4 { font-weight: 600; color: #f4f4f5; margin: 1rem 0 0.4rem; line-height: 1.3; }
+.light .md-body h1, .light .md-body h2, .light .md-body h3, .light .md-body h4 { color: #18181b; }
+.md-body h1 { font-size: 1.15rem; } .md-body h2 { font-size: 1.05rem; } .md-body h3 { font-size: 0.95rem; }
+.md-body p { margin: 0.45rem 0; }
+.md-body a { color: #22d3ee; text-decoration: underline; }
+.light .md-body a { color: #0e7490; }
+.md-body ul, .md-body ol { margin: 0.45rem 0; padding-left: 1.4rem; list-style: revert; }
+.md-body code { background: #18181b; border-radius: 0.25rem; padding: 0.1rem 0.3rem; font-size: 0.8rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.light .md-body code { background: #f4f4f5; }
+.md-body pre { background: #09090b; border: 1px solid #27272a; border-radius: 0.5rem; padding: 0.75rem; overflow-x: auto; margin: 0.6rem 0; }
+.light .md-body pre { background: #fafafa; border-color: #e4e4e7; }
+.md-body pre code { background: transparent; padding: 0; }
+.md-body blockquote { border-left: 3px solid #3f3f46; padding-left: 0.75rem; margin: 0.6rem 0; color: #a1a1aa; }
+.md-body table { border-collapse: collapse; margin: 0.6rem 0; font-size: 0.8rem; }
+.md-body th, .md-body td { border: 1px solid #3f3f46; padding: 0.3rem 0.6rem; text-align: left; }
+.md-body hr { border-color: #27272a; margin: 0.8rem 0; }
+.md-body img { max-width: 100%; }
+
+/* Markdown syntax-highlight palette for the CodeMirror inbox editor.
+   The HighlightStyle in editor.ts references these variables, so theme
+   switching works without swapping editor facets. */
+.dark {
+  --md-heading: #f4f4f5; --md-strong: #fafafa; --md-link: #22d3ee; --md-url: #7dd3fc;
+  --md-code: #a5f3fc; --md-code-bg: #18181b; --md-quote: #a1a1aa; --md-marks: #52525b;
+}
+.light {
+  --md-heading: #18181b; --md-strong: #09090b; --md-link: #0e7490; --md-url: #0369a1;
+  --md-code: #0e7490; --md-code-bg: #f4f4f5; --md-quote: #52525b; --md-marks: #a1a1aa;
+}
+.cm-host .cm-placeholder { color: #a1a1aa; }
+.light .cm-host .cm-placeholder { color: #52525b; }
+
+/* Fractional panel surfaces — the light theme missed these because the
+   overrides above target the solid utilities only. Same zinc-100 panel
+   tone with the equivalent translucency. */
+.light .bg-zinc-900\/40 { background-color: rgba(244, 244, 245, 0.6); }
+.light .bg-zinc-900\/50 { background-color: rgba(244, 244, 245, 0.7); }
+.light .bg-zinc-900\/60 { background-color: rgba(244, 244, 245, 0.8); }
+.light .hover\:bg-zinc-800\/60:hover { background-color: rgba(228, 228, 231, 0.6); }
+.light .hover\:bg-zinc-700:hover { background-color: #e4e4e7; }

@@ -1,4 +1,4 @@
-<!-- skopos:version:5 -->
+<!-- skopos:version:6 -->
 
 ## Code exploration: pick by question shape
 
@@ -34,3 +34,4 @@ Be selective — only facts useful in a future session. Skip task details and te
 - Start of task: `skopos_context` with `workspace_id` (this repo's id, e.g. `github.com/owner/repo` — print it with `skopos workspace` or derive from `git remote get-url origin`) and `branch` — unscoped reads span every workspace on the server
 - State changes: `report_status` with agent_type "{{AGENT_TYPE}}" and `workspace_id` (never "stuck"/"orphaned" — server-set). Report at least every ~10 minutes on long tasks — the server marks silent agents stuck after 15. Reuse ONE `session_id` for the whole task (omitting it creates a new session per call, fragmenting the timeline); the session hook prints the current id. Tool-hook heartbeats cover the gaps automatically.
 - Multi-step work: `plan_create` / `plan_add_item` / `plan_update_item`; archive with `plan_archive` when done or abandoned
+- Inbox work (when the user asks you to process captured ideas): `inbox_list` / `inbox_read` → `inbox_claim` → enrich via `inbox_update` (preserve the original content, append an `## Enrichment` section) → build a plan with the plan tools → `inbox_convert` with the new plan id

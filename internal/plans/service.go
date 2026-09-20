@@ -14,6 +14,21 @@ type Service struct {
 	store     Store
 	now       func() time.Time
 	publisher events.Publisher
+	// completionHook fires (post-commit, best-effort) whenever a plan
+	// transitions to completed — wired in serve to the inbox, whose converted
+	// items complete with their plan. Nil (the default) disables it.
+	completionHook func(planID string)
+}
+
+// SetCompletionHook installs the plan-completion callback (registrar
+// pattern: no import between the two domains).
+func (s *Service) SetCompletionHook(fn func(planID string)) { s.completionHook = fn }
+
+// fireCompletion invokes the hook after the completing transaction committed.
+func (s *Service) fireCompletion(planID string) {
+	if s.completionHook != nil {
+		s.completionHook(planID)
+	}
 }
 
 // SetPublisher installs the event bus; mutations publish with their plan's
@@ -150,18 +165,31 @@ func (s *Service) UpdatePlan(ctx context.Context, id string, input UpdatePlanInp
 	if input.Status != "" && !validPlanStatus(input.Status) {
 		return fmt.Errorf("%w: invalid status %q", ErrInvalidInput, input.Status)
 	}
+	var autoCompleted bool
 	if err := s.store.RunInTx(ctx, func(tx Store) error {
+		prior, err := tx.PlanStatus(ctx, id)
+		if err != nil {
+			return err
+		}
 		if err := tx.UpdatePlan(ctx, id, input); err != nil {
 			return err
 		}
-		if input.Status == PlanCompleted {
-			return autoUnblockPlanDependents(ctx, tx, id)
+		// Only the transition to completed fires the hook (a redundant
+		// completed->completed PATCH must not re-run completion work).
+		if input.Status == PlanCompleted && prior != PlanCompleted {
+			if err := autoUnblockPlanDependents(ctx, tx, id); err != nil {
+				return err
+			}
+			autoCompleted = true
 		}
 		return nil
 	}); err != nil {
 		return err
 	}
 	s.publishPlan(ctx, id)
+	if autoCompleted {
+		s.fireCompletion(id)
+	}
 	return nil
 }
 
@@ -284,6 +312,7 @@ func (s *Service) UpdateItem(ctx context.Context, planID, itemID string, input U
 		return nil, fmt.Errorf("%w: invalid status %q", ErrInvalidInput, input.Status)
 	}
 
+	var autoCompleted bool
 	err := s.store.RunInTx(ctx, func(tx Store) error {
 		if input.Status != "" {
 			if err := assertTransitionAllowed(ctx, tx, planID, itemID, input.Status); err != nil {
@@ -297,9 +326,11 @@ func (s *Service) UpdateItem(ctx context.Context, planID, itemID string, input U
 			if err := autoUnblockDependents(ctx, tx, itemID); err != nil {
 				return err
 			}
-			if err := tryAutoCompletePlan(ctx, tx, planID); err != nil {
+			completed, err := tryAutoCompletePlan(ctx, tx, planID)
+			if err != nil {
 				return err
 			}
+			autoCompleted = completed
 		}
 		return nil
 	})
@@ -307,6 +338,9 @@ func (s *Service) UpdateItem(ctx context.Context, planID, itemID string, input U
 		return nil, err
 	}
 	s.publishPlan(ctx, planID)
+	if autoCompleted {
+		s.fireCompletion(planID)
+	}
 	return s.store.GetItem(ctx, planID, itemID)
 }
 
@@ -537,25 +571,28 @@ func autoUnblockDependents(ctx context.Context, store Store, doneItemID string) 
 	return nil
 }
 
-func tryAutoCompletePlan(ctx context.Context, store Store, planID string) error {
+// tryAutoCompletePlan completes the plan when every item is done, cascading
+// the unblock of dependent plans. It reports whether this call performed the
+// transition (so the completion hook fires only on the transition).
+func tryAutoCompletePlan(ctx context.Context, store Store, planID string) (bool, error) {
 	allDone, err := store.AllItemsDone(ctx, planID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !allDone {
-		return nil
+		return false, nil
 	}
 	status, err := store.PlanStatus(ctx, planID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if status != PlanActive && status != PlanBlocked {
-		return nil
+		return false, nil
 	}
 	if err := store.SetPlanStatus(ctx, planID, PlanCompleted); err != nil {
-		return err
+		return false, err
 	}
-	return autoUnblockPlanDependents(ctx, store, planID)
+	return true, autoUnblockPlanDependents(ctx, store, planID)
 }
 
 func recheckItemBlocked(ctx context.Context, store Store, itemID string) error {

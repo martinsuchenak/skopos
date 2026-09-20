@@ -14,6 +14,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/events"
+	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/rest"
 	"github.com/martinsuchenak/skopos/internal/status"
@@ -49,7 +50,7 @@ func integrationSetup(t *testing.T, apiKey string) *http.ServeMux {
 
 	webMux := http.NewServeMux()
 	apiMux := http.NewServeMux()
-	RegisterRoutes(webMux, apiMux, st, bb, pl, ws, nil, nil)
+	RegisterRoutes(webMux, apiMux, st, bb, pl, inbox.NewHandler(inbox.NewService(inbox.NewStorage(sqlDB)), testAuth(apiKey)), ws, nil, nil)
 	authn := auth.NewAuthenticator(apiKey, apikeys.NewStorage(sqlDB))
 	root := http.NewServeMux()
 	root.Handle("/api/", authn.Middleware(apiMux))

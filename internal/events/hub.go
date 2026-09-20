@@ -8,6 +8,7 @@ const (
 	TypeBlackboard = "blackboard"
 	TypePlans      = "plans"
 	TypeWorkspaces = "workspaces"
+	TypeInbox      = "inbox"
 	TypeChange     = "change"
 )
 

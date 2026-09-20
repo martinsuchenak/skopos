@@ -31,6 +31,7 @@ internal/
   ├── status/     handler → service → storage   (agent status, sessions, events)
   ├── blackboard/ handler → service → storage   (scoped knowledge entries)
   ├── plans/      handler → service → storage   (plans, items, dependencies)
+  ├── inbox/      handler → service → storage   (workspace inbox: capture → enrich → convert-to-plan)
   ├── workspaces/ handler → service → storage   (workspace registry, auto-register)
   ├── events/     in-process SSE hub + middleware (publishes named events on mutations)
   ├── codeindex/  code index (parse → storage → service → handler; per-workspace SQLite DBs)

@@ -29,6 +29,11 @@
             <button type="button" @click="switchView('plans')" class="nav-item" :aria-current="activeView === 'plans' ? 'page' : null">
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
                 Plans
+            </button>
+            <button type="button" @click="switchView('inbox')" class="nav-item" :aria-current="activeView === 'inbox' ? 'page' : null">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 3h1a2 2 0 012 2v12a2 2 0 002 2h12a2 2 0 002-2v-6M2 3v0zm20 0h-6m6 0v6m0-6L13 12"/></svg>
+                Inbox
+                <span x-show="activeView === 'inbox' && !inboxTagFilter && (inboxLayout === 'lanes' || inboxStatus === 'open') && inboxOpenCount() > 0" class="badge ml-auto bg-amber-500/15 text-amber-300" x-text="inboxOpenCount()"></span>
             </button><button type="button" @click="switchView('index')" class="nav-item" :aria-current="activeView === 'index' ? 'page' : null">
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 1.1.9 2 2 2h9M4 7l4-4 4 4M4 7h10a2 2 0 012 2v2m4 4l-4-2v4l4-2z m0 0v0z m-4-2l4 2"/></svg>
                 Index
@@ -41,7 +46,7 @@
         <div class="border-t border-zinc-800 p-4">
             <div class="mb-1.5 flex items-center justify-between">
                 <label class="text-xs font-medium text-zinc-500" for="workspace-select">Workspace</label>
-                <button type="button" @click="openWorkspaceModal()" class="btn btn-sm !min-h-0 px-2 py-0.5 text-xs" aria-label="Create workspace" title="Create workspace">
+                <button type="button" @click="openWorkspaceModal()" class="btn btn-sm !min-h-6 px-2 py-0.5 text-xs" aria-label="Create workspace" title="Create workspace">
                     <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                     New
                 </button>
@@ -198,7 +203,7 @@
                 <div class="mb-6 flex flex-wrap items-center gap-3">
                     <div class="flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2">
                         <label class="text-xs text-zinc-500" for="bb-branch">Branch</label>
-                        <input id="bb-branch" type="text" x-model="blackboardBranch" @input.debounce.300ms="fetchBundle()" placeholder="all" class="w-36 bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600" />
+                        <input id="bb-branch" type="text" x-model="blackboardBranch" @input.debounce.300ms="fetchBundle()" placeholder="all" class="h-6 w-36 bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600" />
                     </div>
                     <span x-show="blackboardLoading" class="text-xs text-zinc-500" role="status" aria-live="polite">Loading…</span>
                     <span x-show="!blackboardLoading" class="text-xs text-zinc-500" x-text="entries.length + ' entries'"></span>
@@ -251,7 +256,7 @@
                 <div class="mb-6 flex flex-wrap items-center gap-3">
                     <div class="flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2">
                         <label class="text-xs text-zinc-500" for="pl-branch">Branch</label>
-                        <input id="pl-branch" type="text" x-model="plansBranch" @input.debounce.300ms="fetchPlans()" placeholder="all" class="w-36 bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600" />
+                        <input id="pl-branch" type="text" x-model="plansBranch" @input.debounce.300ms="fetchPlans()" placeholder="all" class="h-6 w-36 bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600" />
                     </div>
                     <span x-show="plansLoading" class="text-xs text-zinc-500" role="status" aria-live="polite">Loading…</span>
                     <span x-show="!plansLoading" class="text-xs text-zinc-500" x-text="plans.length + ' plans'"></span>
@@ -286,7 +291,7 @@
                                 </div>
                             </div>
 
-                            <div x-show="expandedPlan && expandedPlan.id === plan.id" x-cloak class="border-t border-zinc-800 px-4 pb-4">
+                            <div x-show="isPlanExpanded(plan)" x-cloak :data-plan-row="plan.id" class="border-t border-zinc-800 px-4 pb-4">
                                 <p x-show="!expandedPlan || !expandedPlan.items || expandedPlan.items.length === 0" class="pt-4 text-sm text-zinc-500">No items.</p>
                                 <div class="mt-3 space-y-4">
                                     <template x-for="grp in itemsGroupedByPhase(expandedPlan && expandedPlan.items || [])" :key="grp.phase">
@@ -308,7 +313,7 @@
                                                             </div>
                                                             <div class="mt-2 flex flex-wrap items-center gap-2">
                                                                 <label class="sr-only" :for="'item-status-' + item.id">Item status</label>
-                                                                <select :id="'item-status-' + item.id" @change="updateItemStatus(plan.id, item.id, $event.target.value); $event.target.value=''" class="fld-sm w-36" aria-label="Set item status">
+                                                                <select :id="'item-status-' + item.id" @change="updateItemStatus(plan.id, item.id, $event.target)" class="fld-sm w-36" aria-label="Set item status">
                                                                     <option value="">status…</option>
                                                                     <option value="pending">pending</option>
                                                                     <option value="in_progress">in_progress</option>
@@ -316,7 +321,7 @@
                                                                     <option value="blocked">blocked</option>
                                                                 </select>
                                                                 <label class="sr-only" :for="'item-dep-' + item.id">Add dependency</label>
-                                                                <select x-show="otherItems(item).length > 0" :id="'item-dep-' + item.id" @change="addPlanDependency(plan.id, item.id, $event.target.value); $event.target.value=''" class="fld-sm w-48" aria-label="Add dependency">
+                                                                <select x-show="otherItems(item).length > 0" :id="'item-dep-' + item.id" @change="addPlanDependency(plan.id, item.id, $event.target)" class="fld-sm w-48" aria-label="Add dependency">
                                                                     <option value="">+ depends on…</option>
                                                                     <template x-for="dep in otherItems(item)" :key="dep.id">
                                                                         <option :value="dep.id" x-text="'#' + dep.position + ' ' + dep.title"></option>
@@ -338,6 +343,151 @@
                         </li>
                     </template>
                 </ul>
+            </section>
+
+            <!-- ===================== INBOX ===================== -->
+            <section x-show="activeView === 'inbox'" x-cloak>
+                <div class="mb-6 flex flex-wrap items-center gap-3">
+                    <div class="flex items-center gap-1 rounded-md border border-zinc-700 bg-zinc-900 p-1" role="group" aria-label="Inbox layout">
+                        <button type="button" @click="setInboxLayout('list')" class="btn btn-sm !min-h-6 px-2 py-1" :class="inboxLayout === 'list' ? 'border-cyan-500 text-cyan-300' : 'border-transparent text-zinc-400'" aria-label="List layout" title="List layout">
+                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+                        </button>
+                        <button type="button" @click="setInboxLayout('lanes')" class="btn btn-sm !min-h-6 px-2 py-1" :class="inboxLayout === 'lanes' ? 'border-cyan-500 text-cyan-300' : 'border-transparent text-zinc-400'" aria-label="Board layout (swimlanes)" title="Board layout (swimlanes)">
+                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 4v16m6-16v16M4 4h16M4 20h16"/></svg>
+                        </button>
+                    </div>
+                    <div x-show="inboxLayout === 'list'" class="flex flex-wrap items-center gap-1" role="group" aria-label="Filter by status">
+                        <template x-for="chip in inboxStatusChips()" :key="chip.key || 'all'">
+                            <button type="button" @click="setInboxStatus(chip.key)" class="btn btn-sm" :class="inboxStatus === chip.key ? 'border-cyan-500 text-cyan-300' : 'border-zinc-700 text-zinc-400'" x-text="chip.label"></button>
+                        </template>
+                    </div>
+                    <span x-show="inboxTagFilter" class="badge bg-violet-500/15 text-violet-300" role="button" tabindex="0" @click="setInboxTagFilter(inboxTagFilter)" @keydown.enter.prevent="setInboxTagFilter(inboxTagFilter)" @keydown.space.prevent="setInboxTagFilter(inboxTagFilter)" :aria-label="'Clear tag filter ' + inboxTagFilter" x-text="'#' + inboxTagFilter + ' ×'"></span>
+                    <span x-show="inboxLoading" class="text-xs text-zinc-500" role="status" aria-live="polite">Loading…</span>
+                    <span x-show="!inboxLoading" class="text-xs text-zinc-500" x-text="inboxItems.length + ' items'"></span>
+                    <button type="button" @click="openInboxCreateModal()" class="btn btn-primary btn-sm ml-auto">
+                        <span aria-hidden="true">+</span> Capture item
+                    </button>
+                </div>
+
+                <!-- Board (swimlanes): drag between lanes to claim/release/discard;
+                     drag within a lane onto a card to rank above it; drop at the
+                     lane bottom to unpin. Converted/Done lanes are read-only. -->
+                <p x-show="inboxLayout === 'lanes' && !inboxLoading && inboxItems.length === 0" class="card p-6 text-sm text-zinc-400">
+                    No inbox items. Capture rough ideas here — an agent can then claim, enrich, and convert them into a plan.
+                </p>
+                <div x-show="inboxLayout === 'lanes' && inboxItems.length > 0" class="flex gap-4 overflow-x-auto pb-4" @dragend="endInboxDrag()">
+                    <template x-for="lane in inboxLanes()" :key="lane.key">
+                        <div class="flex w-72 min-w-72 flex-col rounded-lg border bg-zinc-900/40"
+                            :class="laneAcceptsDrop(lane.key) && inboxDragId ? 'border-cyan-500/70' : 'border-zinc-800'">
+                            <div class="flex items-center justify-between gap-2 border-b border-zinc-800 px-3 py-2">
+                                <span class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                                    <span x-text="lane.label"></span>
+                                    <span class="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400" x-text="laneItems(lane.key).length"></span>
+                                </span>
+                                <span x-show="lane.key === 'converted' || lane.key === 'done'" class="text-[10px] text-zinc-600" :title="lane.key === 'converted' ? 'Conversion links a plan (Convert on a card)' : 'Completed automatically with the linked plan'">auto</span>
+                            </div>
+                            <!-- Drop handlers live on a CHILD of the x-for root: the
+                                 CSP build does not bind event handlers on the
+                                 template's root element (verified live). -->
+                            <ul class="flex-1 space-y-2 p-2 min-h-24" @dragover="laneDragOver(lane.key, $event)" @drop.prevent="dropOnLane(lane.key)">
+                                <template x-for="item in laneItems(lane.key)" :key="item.id">
+                                    <li>
+                                        <div class="card cursor-grab p-3 active:cursor-grabbing" :class="inboxDragId === item.id ? 'opacity-40' : ''"
+                                            :draggable="inboxDraggable(item)"
+                                            @dragstart="startInboxDrag(item, $event)"
+                                            @drop.stop.prevent="dropBeforeItem(lane.key, item)"
+                                            @dragover="laneDragOver(lane.key, $event)">
+                                            <div class="flex items-start justify-between gap-2">
+                                                <div class="min-w-0 flex-1">
+                                                    <span x-show="item.priority != null" class="mr-1 rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] text-amber-300" x-text="'#' + item.priority"></span>
+                                                    <span class="text-sm font-medium text-zinc-100" x-text="item.title"></span>
+                                                </div>
+                                                <div class="flex shrink-0 items-center gap-1">
+                                                    <button type="button" x-show="item.status === 'discarded'" @click.stop="restoreInboxItem(item.id)" class="btn btn-sm btn-ghost !min-h-6 !px-2 !py-0.5 text-xs">Restore</button>
+                                                    <button type="button" x-show="inboxItemEditable(item)" @click.stop="openInboxEditModal(item)" class="btn btn-sm btn-ghost !min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Edit item ' + item.title">Edit</button>
+                                                </div>
+                                            </div>
+                                            <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
+                                                <span x-show="!item.workspace_id" class="badge bg-amber-500/15 text-amber-300">unfiled</span>
+                                                <select x-show="!item.workspace_id && workspaceOptions().length > 0" @change="fileInboxItem(item, $event.target)" class="fld-sm !min-h-6 w-36 text-[11px]" :aria-label="'File item ' + item.title + ' into workspace'">
+                                                    <option value="">file into…</option>
+                                                    <template x-for="o in workspaceOptions()" :key="o.id">
+                                                        <option :value="o.id" x-text="o.label"></option>
+                                                    </template>
+                                                </select>
+                                                <span x-show="item.claimed_by_agent_id" class="truncate max-w-28" x-text="item.claimed_by_agent_id"></span>
+                                                <span x-show="item.plan_id" class="badge max-w-32 truncate bg-violet-500/15 text-violet-300" x-text="item.plan && item.plan.name ? '→ ' + item.plan.name : '→ plan'"></span>
+                                                <span class="ml-auto" x-text="timeAgo(item.created_at)"></span>
+                                            </div>
+                                        </div>
+                                    </li>
+                                </template>
+                                <li x-show="laneItems(lane.key).length === 0" class="rounded-lg border border-dashed border-zinc-800 p-3 text-center text-xs text-zinc-600">—</li>
+                            </ul>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- List -->
+                <div x-show="inboxLayout === 'list'">
+                <p x-show="!inboxLoading && inboxItems.length === 0" class="card p-6 text-sm text-zinc-400">
+                    No inbox items. Capture rough ideas here — an agent can then claim, enrich, and convert them into a plan.
+                </p>
+
+                <ul class="space-y-3">
+                    <template x-for="item in inboxItems" :key="item.id">
+                        <li class="card" :class="expandedInboxId === item.id ? 'border-cyan-500' : ''">
+                            <div class="flex items-start justify-between gap-2 p-4">
+                                <button type="button" @click="toggleInboxItem(item)" class="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 rounded">
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <span x-show="item.priority != null" class="rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] text-amber-300" x-text="'#' + item.priority"></span>
+                                        <span class="font-medium text-zinc-100" x-text="item.title"></span>
+                                        <span class="badge" :class="inboxStatusClass(item.status)" x-text="item.status"></span>
+                                        <span x-show="item.claimed_by_agent_id" class="badge bg-zinc-700 text-zinc-300" x-text="'claimed: ' + item.claimed_by_agent_id"></span>
+                                        <span x-show="!activeWorkspace && item.workspace_id" class="badge max-w-[12rem] truncate bg-sky-500/15 text-sky-300" :title="item.workspace_id" x-text="workspaceLabel(item.workspace_id)"></span>
+                                        <span x-show="!item.workspace_id" class="badge bg-amber-500/15 text-amber-300" title="Not yet assigned to a workspace">unfiled</span>
+                                    </div>
+                                    <div class="mt-1.5 flex flex-wrap items-center gap-2">
+                                        <template x-for="tag in item.tags || []" :key="item.id + tag">
+                                            <button type="button" @click.stop="setInboxTagFilter(tag)" class="inline-flex h-6 items-center rounded bg-zinc-800 px-1.5 text-[11px] text-zinc-300 hover:bg-zinc-700" :aria-label="'Filter by tag ' + tag" x-text="'#' + tag"></button>
+                                        </template>
+                                        <span x-show="item.plan_id" class="badge bg-violet-500/15 text-violet-300" x-text="item.plan && item.plan.name ? '→ ' + item.plan.name : '→ plan'"></span>
+                                        <span class="text-xs text-zinc-600" x-text="timeAgo(item.created_at)"></span>
+                                        <span class="text-xs text-zinc-600" x-text="'by ' + item.author_agent_id"></span>
+                                    </div>
+                                </button>
+                                <div class="flex shrink-0 items-center gap-1">
+                                    <select x-show="!item.workspace_id && workspaceOptions().length > 0" @change="fileInboxItem(item, $event.target)" class="fld-sm w-44" :aria-label="'File item ' + item.title + ' into workspace'">
+                                        <option value="">file into…</option>
+                                        <template x-for="o in workspaceOptions()" :key="o.id">
+                                            <option :value="o.id" x-text="o.label"></option>
+                                        </template>
+                                    </select>
+                                    <button type="button" x-show="inboxItemEditable(item)" @click.stop="item.priority != null ? inboxSetPriority(item.id, 0) : pinInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="item.priority != null ? 'Unpin item ' + item.title : 'Pin item ' + item.title + ' to top'" x-text="item.priority != null ? 'Unpin' : 'Pin'"></button>
+                                    <button type="button" x-show="inboxItemEditable(item)" @click.stop="openInboxEditModal(item)" class="btn btn-sm btn-ghost" :aria-label="'Edit item ' + item.title">Edit</button>
+                                    <button type="button" x-show="item.status === 'discarded'" @click.stop="restoreInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Restore item ' + item.title + ' to open'">Restore</button>
+                                    <button type="button" x-show="item.status === 'open'" @click.stop="claimInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Claim item ' + item.title">Claim</button>
+                                    <button type="button" x-show="item.status === 'in_progress'" @click.stop="releaseInboxItem(item.id)" class="btn btn-sm btn-ghost">Release</button>
+                                    <button type="button" x-show="item.workspace_id && (item.status === 'open' || item.status === 'in_progress')" @click.stop="convertInboxItem(item)" class="btn btn-sm btn-ghost text-violet-300" :aria-label="'Convert item ' + item.title + ' to a plan'">Convert</button>
+                                    <button type="button" x-show="item.status !== 'done' && item.status !== 'discarded'" @click.stop="discardInboxItem(item.id)" class="btn btn-sm btn-ghost">Discard</button>
+                                    <button type="button" @click.stop="requestDelete('inboxitem', item.id, item.title)" class="btn btn-sm btn-ghost text-rose-400" :aria-label="'Delete item ' + item.title">Delete</button>
+                                </div>
+                            </div>
+
+                            <div x-show="isInboxExpanded(item)" x-cloak :data-md-row="item.id" class="border-t border-zinc-800 px-4 pb-4 pt-3">
+                                <!-- CSP note: the Alpine CSP build PROHIBITS the html directive
+                                     (it errors on sight), and $refs does not resolve inside x-for
+                                     templates — so rendered markdown is injected imperatively from
+                                     reloadInboxItem by querying this data attribute. The HTML is
+                                     sanitized server-side (goldmark default config + bluemonday
+                                     UGC); CSP remains the backstop. -->
+                                <div class="md-body max-h-96 overflow-y-auto" :data-md-body="item.id" aria-live="polite"></div>
+                                <p x-show="expandedInbox && !expandedInbox.content" class="text-sm text-zinc-500">No content.</p>
+                            </div>
+                        </li>
+                    </template>
+                </ul>
+                </div>
             </section>
 
             <!-- ===================== CODE INDEX ===================== -->
@@ -720,6 +870,57 @@
         </div>
     </div>
 
+    <!-- ===================== CREATE/EDIT INBOX ITEM MODAL ===================== -->
+    <div x-show="showInboxItemModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="inbox-item-modal-title" @keydown.escape.window="closeInboxItemModal()" x-trap="showInboxItemModal">
+        <div class="fixed inset-0 bg-black/60" @click="attemptCloseInboxItemModal()" aria-hidden="true"></div>
+        <div class="card relative w-full max-w-4xl p-6 shadow-2xl">
+            <button type="button" @click="attemptCloseInboxItemModal()" class="absolute right-4 top-4 rounded-full p-2 text-zinc-400 hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" aria-label="Close dialog">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+            <h2 id="inbox-item-modal-title" class="mb-4 text-lg font-semibold" x-text="inboxForm.id ? 'Edit inbox item' : 'Capture inbox item'"></h2>
+            <form @submit.prevent="submitInboxItem()">
+                <div class="space-y-3">
+                    <div>
+                        <label class="lbl" for="ib-ws">Workspace <span aria-hidden="true">*</span></label>
+                        <select id="ib-ws" x-model="inboxForm.workspace" class="fld" :aria-invalid="!!inboxErrors.workspace">
+                            <option value="" x-text="inboxForm.id ? 'keep current' : 'Select workspace…'"></option>
+                            <option value="unfiled" x-show="!inboxForm.id && whoamiIsRoot()">Unfiled — decide later</option>
+                            <template x-for="o in workspaceOptions()" :key="o.id">
+                                <option :value="o.id" x-text="o.label"></option>
+                            </template>
+                        </select>
+                        <p x-show="inboxErrors.workspace" class="field-error" role="alert" x-text="inboxErrors.workspace"></p>
+                        <p x-show="!inboxForm.id" class="text-xs text-zinc-500">Unfiled items stay visible only to the root key until filed.</p>
+                    </div>
+                    <div class="grid gap-3 sm:grid-cols-[1fr_16rem]">
+                        <div>
+                            <label class="lbl" for="ib-title">Title <span aria-hidden="true">*</span></label>
+                            <input id="ib-title" type="text" x-model="inboxForm.title" class="fld" :aria-invalid="!!inboxErrors.title" autocomplete="off" autofocus />
+                            <p x-show="inboxErrors.title" class="field-error" role="alert" x-text="inboxErrors.title"></p>
+                        </div>
+                        <div>
+                            <label class="lbl" for="ib-tags">Tags (comma-separated)</label>
+                            <input id="ib-tags" type="text" x-model="inboxForm.tags" class="fld" placeholder="auth, refactor" autocomplete="off" />
+                        </div>
+                    </div>
+                    <div>
+                        <label class="lbl" for="ib-content">Content (markdown)</label>
+                        <div class="cm-host" id="ib-content" x-ref="inboxEditorHost" aria-label="Markdown content editor"></div>
+                        <p class="mt-1 text-xs text-zinc-500">Rough notes are fine — an agent enriches this when the item is processed.</p>
+                    </div>
+                </div>
+                <div class="mt-6 flex justify-end gap-3">
+                    <button type="button" @click="attemptCloseInboxItemModal()" class="btn">Cancel</button>
+                    <button type="submit" class="btn btn-primary" :disabled="inboxItemSaving">
+                        <span x-show="!inboxItemSaving" x-text="inboxForm.id ? 'Save' : 'Capture'"></span>
+                        <span x-show="inboxItemSaving">Saving…</span>
+                    </button>
+                </div>
+            </form>
+            <p class="mt-2 text-right text-[11px] text-zinc-600">⌘/Ctrl+Enter saves · Esc closes without saving · accidental closes (backdrop/Cancel) are confirmed</p>
+        </div>
+    </div>
+
     <!-- ===================== DELETE CONFIRM MODAL ===================== -->
     <div x-show="confirm.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4"         role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-desc" @keydown.escape.window="cancelDelete()" x-trap="confirm.open">
         <div class="fixed inset-0 bg-black/60" @click="cancelDelete()" aria-hidden="true"></div>
@@ -729,8 +930,8 @@
             <div class="mt-6 flex justify-end gap-3">
                 <button type="button" @click="cancelDelete()" class="btn">Cancel</button>
                 <button type="button" @click="confirmDelete()" class="btn btn-danger" :disabled="confirm.busy">
-                    <span x-show="!confirm.busy">Delete</span>
-                    <span x-show="confirm.busy">Deleting…</span>
+                    <span x-show="!confirm.busy" x-text="confirm.label || 'Delete'"></span>
+                    <span x-show="confirm.busy" x-text="confirm.label === 'Discard' ? 'Discarding…' : 'Deleting…'"></span>
                 </button>
             </div>
         </div>

@@ -6,12 +6,13 @@ import (
 	"testing"
 
 	"github.com/martinsuchenak/skopos/internal/blackboard"
+	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/status"
 )
 
 func TestNewMCPHandlerBuildsServer(t *testing.T) {
-	handler := NewMCPHandler(&status.Service{}, &blackboard.Service{}, &plans.Service{}, nil, nil)
+	handler := NewMCPHandler(&status.Service{}, &blackboard.Service{}, &plans.Service{}, &inbox.Service{}, nil, nil)
 	if handler == nil {
 		t.Fatal("expected non-nil handler")
 	}

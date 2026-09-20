@@ -15,6 +15,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/events"
+	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/status"
 	"github.com/martinsuchenak/skopos/internal/workspaces"
@@ -52,10 +53,12 @@ func TestSSEAttributionThroughProductionWiring(t *testing.T) {
 	statusSvc := status.NewService(status.NewStorage(sqlDB))
 	blackboardSvc := blackboard.NewService(blackboard.NewStorage(sqlDB))
 	plansSvc := plans.NewService(plans.NewStorage(sqlDB))
+	inboxSvc := inbox.NewService(inbox.NewStorage(sqlDB))
 	workspacesSvc := workspaces.NewService(wsStore)
 	statusSvc.SetPublisher(hub)
 	blackboardSvc.SetPublisher(hub)
 	plansSvc.SetPublisher(hub)
+	inboxSvc.SetPublisher(hub)
 	workspacesSvc.SetPublisher(hub)
 
 	authn := auth.NewAuthenticator("rootkey", apikeys.NewStorage(sqlDB))
@@ -65,6 +68,7 @@ func TestSSEAttributionThroughProductionWiring(t *testing.T) {
 		status.NewHandler(statusSvc, authn),
 		blackboard.NewHandler(blackboardSvc, authn),
 		plans.NewHandler(plansSvc, authn),
+		inbox.NewHandler(inboxSvc, authn),
 		workspaces.NewHandler(workspacesSvc, authn),
 		nil, nil)
 	root := http.NewServeMux()

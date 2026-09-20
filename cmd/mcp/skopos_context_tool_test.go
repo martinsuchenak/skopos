@@ -7,6 +7,7 @@ import (
 
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/db"
+	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/status"
 	_ "modernc.org/sqlite"
@@ -58,7 +59,7 @@ func TestBuildSnapshot(t *testing.T) {
 		t.Fatalf("add B: %v", err)
 	}
 
-	snap := buildSnapshot(ctx, statusSvc, bbSvc, plansSvc, "feat", "", "")
+	snap := buildSnapshot(ctx, statusSvc, bbSvc, plansSvc, inboxSvcForTest(t), "feat", "", "")
 
 	if snap["branch"] != "feat" {
 		t.Errorf("branch = %v", snap["branch"])
@@ -122,7 +123,7 @@ func TestBuildSnapshotNextReadyEmptyWhenAllClaimed(t *testing.T) {
 		t.Fatalf("claim item: %v", err)
 	}
 
-	snap := buildSnapshot(ctx, statusSvc, bbSvc, plansSvc, "", "", "")
+	snap := buildSnapshot(ctx, statusSvc, bbSvc, plansSvc, inboxSvcForTest(t), "", "", "")
 	plansList := snap["plans"].([]map[string]any)
 	if plansList[0]["next_ready"] != "" {
 		t.Errorf("expected empty next_ready when only item is claimed, got %v", plansList[0]["next_ready"])
@@ -133,4 +134,18 @@ func TestContextToolRegistered(t *testing.T) {
 	if len(contextToolRegistrations) == 0 {
 		t.Fatal("contextToolRegistrations should not be empty")
 	}
+}
+
+// inboxSvcForTest builds an inbox service over a fresh in-memory database.
+func inboxSvcForTest(t *testing.T) *inbox.Service {
+	t.Helper()
+	sqlDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { sqlDB.Close() })
+	if err := db.RunMigrations(sqlDB); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	return inbox.NewService(inbox.NewStorage(sqlDB))
 }

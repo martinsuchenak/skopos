@@ -16,6 +16,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/codeindex"
 	"github.com/martinsuchenak/skopos/internal/codeindex/parse"
 	"github.com/martinsuchenak/skopos/internal/db"
+	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/status"
 	"github.com/martinsuchenak/skopos/internal/workspaces"
@@ -46,6 +47,7 @@ func toolsE2E(t *testing.T) http.Handler {
 		status.NewService(status.NewStorage(sqlDB)),
 		blackboard.NewService(blackboard.NewStorage(sqlDB)),
 		plans.NewService(plans.NewStorage(sqlDB)),
+		inbox.NewService(inbox.NewStorage(sqlDB)),
 		codeIndexServiceForTest(t, sqlDB),
 		workspaces.NewService(workspaces.NewStorage(sqlDB)),
 	)
@@ -335,6 +337,7 @@ func helper() int { return 42 }
 		status.NewService(status.NewStorage(mustOpenDB(t))),
 		blackboard.NewService(blackboard.NewStorage(mustOpenDB(t))),
 		plans.NewService(plans.NewStorage(mustOpenDB(t))),
+		inbox.NewService(inbox.NewStorage(mustOpenDB(t))),
 		svc,
 		nil,
 	)
@@ -398,6 +401,7 @@ func deadSym() {}
 		status.NewService(status.NewStorage(mustOpenDB(t))),
 		blackboard.NewService(blackboard.NewStorage(mustOpenDB(t))),
 		plans.NewService(plans.NewStorage(mustOpenDB(t))),
+		inbox.NewService(inbox.NewStorage(mustOpenDB(t))),
 		svc,
 		nil,
 	)

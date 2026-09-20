@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/martinsuchenak/skopos/internal/blackboard"
+	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/status"
 	mcplib "github.com/paularlott/mcp"
@@ -15,11 +16,11 @@ func init() {
 	RegisterContextTool(registerSkoposContextTool)
 }
 
-func registerSkoposContextTool(server *mcplib.Server, statusSvc *status.Service, bbSvc *blackboard.Service, plansSvc *plans.Service) {
-	registerTool(server, 
+func registerSkoposContextTool(server *mcplib.Server, statusSvc *status.Service, bbSvc *blackboard.Service, plansSvc *plans.Service, inboxSvc *inbox.Service) {
+	registerTool(server,
 		mcplib.NewTool(
 			"skopos_context",
-			"Load structural context for the current task: the branch's blackboard (memory), active plans with blocked items (todos), and in-flight sessions. Call once at the start of a task.",
+			"Load structural context for the current task: the branch's blackboard (memory), active plans with blocked items (todos), open inbox items (unprocessed work), and in-flight sessions. Call once at the start of a task.",
 			mcplib.String("branch", "Current git branch name (recommended)"),
 			wsParam(),
 			mcplib.String("session_id", "Session id to scope the blackboard to"),
@@ -29,7 +30,7 @@ func registerSkoposContextTool(server *mcplib.Server, statusSvc *status.Service,
 			if err != nil {
 				return nil, toolError(err)
 			}
-			snapshot := buildSnapshot(ctx, statusSvc, bbSvc, plansSvc,
+			snapshot := buildSnapshot(ctx, statusSvc, bbSvc, plansSvc, inboxSvc,
 				req.StringOr("branch", ""),
 				workspace,
 				req.StringOr("session_id", ""),
@@ -39,14 +40,15 @@ func registerSkoposContextTool(server *mcplib.Server, statusSvc *status.Service,
 	)
 }
 
-// buildSnapshot composes the front-loaded context from all three domains.
-// Each section is gathered independently so a failure in one doesn't blank the
+// buildSnapshot composes the front-loaded context from the domains. Each
+// section is gathered independently so a failure in one doesn't blank the
 // whole snapshot.
 func buildSnapshot(
 	ctx context.Context,
 	statusSvc *status.Service,
 	bbSvc *blackboard.Service,
 	plansSvc *plans.Service,
+	inboxSvc *inbox.Service,
 	branch, workspace, sessionID string,
 ) map[string]any {
 	snapshot := map[string]any{"branch": branch}
@@ -119,6 +121,28 @@ func buildSnapshot(
 			}
 		}
 		snapshot["plans"] = out
+	}
+
+	// --- inbox (the user's captured, unprocessed work) ---
+	if inboxSvc != nil {
+		items, err := inboxSvc.ListItems(ctx, workspace, string(inbox.StatusOpen), "", "")
+		if err != nil {
+			snapshot["inbox"] = map[string]any{"error": err.Error()}
+		} else {
+			out := make([]map[string]any, 0, len(items))
+			for i, it := range items {
+				if i >= 5 {
+					break
+				}
+				out = append(out, map[string]any{
+					"id":     it.ID,
+					"title":  flattenText(it.Title),
+					"tags":   it.Tags,
+					"age":    coarseAge(it.CreatedAt),
+				})
+			}
+			snapshot["inbox"] = map[string]any{"open": len(items), "items": out}
+		}
 	}
 
 	// --- in-flight sessions ---

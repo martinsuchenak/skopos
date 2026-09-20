@@ -25,6 +25,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/martinsuchenak/skopos/internal/health"
+	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/rest"
 	"github.com/martinsuchenak/skopos/internal/status"
@@ -197,6 +198,17 @@ func serveCmd() *cli.Command {
 			plansService := plans.NewService(plansStorage)
 			plansHandler := plans.NewHandler(plansService, authn)
 
+			// Inbox: workspace-scoped captures of unprocessed work
+			// (docs/design/inbox.md).
+			inboxService := inbox.NewService(inbox.NewStorage(sqlDB))
+			inboxHandler := inbox.NewHandler(inboxService, authn)
+
+			// Completing a plan completes the inbox items it was converted
+			// from (registrar pattern; background context, best-effort).
+			plansService.SetCompletionHook(func(planID string) {
+				_, _ = inboxService.CompleteForPlan(context.Background(), planID)
+			})
+
 			workspacesService := workspaces.NewService(workspaces.NewStorage(sqlDB))
 			workspacesHandler := workspaces.NewHandler(workspacesService, authn)
 
@@ -349,6 +361,7 @@ func serveCmd() *cli.Command {
 			statusService.SetPublisher(hub)
 			blackboardService.SetPublisher(hub)
 			plansService.SetPublisher(hub)
+			inboxService.SetPublisher(hub)
 			workspacesService.SetPublisher(hub)
 			codeIndexHandler.SetPublisher(hub)
 			apiKeysHandler.SetPublisher(hub)
@@ -356,7 +369,7 @@ func serveCmd() *cli.Command {
 
 			webMux := http.NewServeMux()
 			apiMux := http.NewServeMux()
-			routes.RegisterRoutes(webMux, apiMux, statusHandler, blackboardHandler, plansHandler, workspacesHandler, codeIndexHandler, apiKeysHandler)
+			routes.RegisterRoutes(webMux, apiMux, statusHandler, blackboardHandler, plansHandler, inboxHandler, workspacesHandler, codeIndexHandler, apiKeysHandler)
 			mux := http.NewServeMux()
 			// Longest-pattern wins: the exact SSE route below overrides /api/.
 			mux.Handle("/api/", authn.Middleware(apiMux))
@@ -373,7 +386,7 @@ func serveCmd() *cli.Command {
 			if cmd.GetBool("mcp-lean-tools") {
 				mcp.SetLeanToolset(true)
 			}
-			mcpHandler := mcp.NewMCPHandler(statusService, blackboardService, plansService, codeIndexService, workspacesService)
+			mcpHandler := mcp.NewMCPHandler(statusService, blackboardService, plansService, inboxService, codeIndexService, workspacesService)
 			mcpHandler = rest.BodyLimit(noBrowserOrigin(mcpHandler))
 			mcpHandler = authn.Middleware(mcpHandler)
 			for _, m := range []string{http.MethodPost, http.MethodGet, http.MethodDelete, http.MethodOptions} {

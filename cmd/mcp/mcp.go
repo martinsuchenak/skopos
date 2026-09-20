@@ -5,6 +5,7 @@ import (
 
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/codeindex"
+	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/status"
 	"github.com/martinsuchenak/skopos/internal/workspaces"
@@ -14,7 +15,8 @@ import (
 var toolRegistrations []func(*mcplib.Server, *status.Service)
 var blackboardToolRegistrations []func(*mcplib.Server, *blackboard.Service)
 var plansToolRegistrations []func(*mcplib.Server, *plans.Service)
-var contextToolRegistrations []func(*mcplib.Server, *status.Service, *blackboard.Service, *plans.Service)
+var inboxToolRegistrations []func(*mcplib.Server, *inbox.Service)
+var contextToolRegistrations []func(*mcplib.Server, *status.Service, *blackboard.Service, *plans.Service, *inbox.Service)
 var codeIndexToolRegistrations []func(*mcplib.Server, *codeindex.Service)
 var workspacesToolRegistrations []func(*mcplib.Server, *workspaces.Service)
 
@@ -30,7 +32,11 @@ func RegisterPlansTool(fn func(*mcplib.Server, *plans.Service)) {
 	plansToolRegistrations = append(plansToolRegistrations, fn)
 }
 
-func RegisterContextTool(fn func(*mcplib.Server, *status.Service, *blackboard.Service, *plans.Service)) {
+func RegisterInboxTool(fn func(*mcplib.Server, *inbox.Service)) {
+	inboxToolRegistrations = append(inboxToolRegistrations, fn)
+}
+
+func RegisterContextTool(fn func(*mcplib.Server, *status.Service, *blackboard.Service, *plans.Service, *inbox.Service)) {
 	contextToolRegistrations = append(contextToolRegistrations, fn)
 }
 
@@ -54,6 +60,7 @@ const instructions = `You are connected to **skopos**, a shared memory and coord
 2. Plans & items — shared to-do lists with dependencies. Item statuses: pending, in_progress, done, blocked. Adding a dependency auto-blocks the dependent item; finishing a dependency auto-unblocks; finishing every item auto-completes the plan.
 3. Status — agent status reports powering the dashboard.
 4. Code index — symbols, call graph, and dependencies of indexed repos. ` + "`code_search`" + ` (add ` + "`semantic: true`" + ` for meaning-based search, ` + "`path`" + ` to scope to a subtree), ` + "`code_symbol`" + ` for exact definitions with their docs, ` + "`code_callers`" + `/` + "`code_callees`" + ` / ` + "`code_impact`" + ` for the call graph (call sites include instantiations, subclasses, and type references), ` + "`code_dependencies`" + ` for module imports. Search visibility/attributes as text ("private cache", route names).
+5. Inbox — the user's captured, unprocessed work (rough ideas in markdown). When the user asks you to work an inbox item: ` + "`inbox_list`" + `/` + "`inbox_read`" + ` it, ` + "`inbox_claim`" + ` it, enrich the content with ` + "`inbox_update`" + ` (preserve the original, append an Enrichment section), build a plan with the plan tools, then ` + "`inbox_convert`" + ` with the new plan id.
 
 At the start of every task, call ` + "`skopos_context`" + ` once (pass ` + "`workspace_id`" + ` and ` + "`branch`" + `) to load the relevant blackboard, active plans/blocked items, and in-flight sessions. Then:
 - recall prior notes -> ` + "`blackboard_read`" + ` (pass ` + "`workspace_id`" + ` and ` + "`branch`" + `).
@@ -73,7 +80,7 @@ func SetSemanticSearcher(e codeindex.Embedder) { semanticSearcher = e }
 // NewMCPHandler builds the MCP server with all registered tools and returns
 // the http.Handler that serves the MCP protocol. The caller mounts it at /mcp
 // (see cmd.serve). Authentication and lifecycle are the caller's responsibility.
-func NewMCPHandler(statusService *status.Service, blackboardService *blackboard.Service, plansService *plans.Service, codeIndexService *codeindex.Service, workspacesService *workspaces.Service) http.Handler {
+func NewMCPHandler(statusService *status.Service, blackboardService *blackboard.Service, plansService *plans.Service, inboxService *inbox.Service, codeIndexService *codeindex.Service, workspacesService *workspaces.Service) http.Handler {
 	server := mcplib.NewServer("skopos-mcp", "1.0.0")
 	server.SetInstructions(instructions)
 
@@ -86,8 +93,11 @@ func NewMCPHandler(statusService *status.Service, blackboardService *blackboard.
 	for _, fn := range plansToolRegistrations {
 		fn(server, plansService)
 	}
+	for _, fn := range inboxToolRegistrations {
+		fn(server, inboxService)
+	}
 	for _, fn := range contextToolRegistrations {
-		fn(server, statusService, blackboardService, plansService)
+		fn(server, statusService, blackboardService, plansService, inboxService)
 	}
 	for _, fn := range codeIndexToolRegistrations {
 		if codeIndexService != nil {

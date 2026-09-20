@@ -4,6 +4,108 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] — 2026-09-20
+
+### Added
+
+- **Inbox** — a workspace-scoped capture queue for unprocessed work
+  (docs/design/inbox.md): rough ideas in markdown that an agent claims,
+  enriches, and converts into a plan; completing the plan completes the
+  item automatically (plans completion hook, registrar pattern).
+  - Lifecycle: `open` -> `in_progress` (CAS claim, 409 on conflict) ->
+    `converted` (links an existing same-workspace plan) -> `done` (auto),
+    plus `discarded`; content/tags frozen after `in_progress`.
+  - Tags: normalized server-side (lowercase, `[a-z0-9._/-]`, <= 10 x 40
+    chars), stored as a JSON array, filtered with a delimiter-safe LIKE.
+  - REST: `POST/GET /api/inbox`, `GET/PATCH/DELETE /api/inbox/{id}`,
+    `POST /api/inbox/{id}/claim|convert|discard`. Detail reads return
+    `content_html` — markdown rendered server-side with goldmark (default
+    config, raw source HTML escaped) and sanitized with bluemonday's UGC
+    policy; adversarial tests pin the sanitization. Lists carry
+    plain-text excerpts only.
+  - MCP: `inbox_create/list/read/update/claim/convert/discard` (behind
+    `tool_search` in lean mode) + an `inbox` section in `skopos_context`.
+  - CLI: `skopos inbox add|list|show|update|claim|convert|discard|delete`
+    with `--content`/`--file`/stdin (notes-vault migration) and repeatable
+    `--tag`.
+  - Dashboard: Inbox view with status chips, tag filter chips, rendered
+    markdown, and a CodeMirror 6 markdown editor in the create/edit
+    modals (CSP-compatible): markdown syntax highlighting themed via CSS
+    variables, list continuation on Enter, active-line highlight,
+    placeholder, Cmd/Ctrl+Enter to save. Unsaved edits are guarded —
+    backdrop/Escape/Cancel ask for confirmation before discarding (an
+    untouched modal still closes immediately). SSE type `inbox`.
+    Rendering is injected imperatively: the Alpine CSP build PROHIBITS
+    the html directive (a template guard test pins this).
+  - Cleanup: `discarded`/`done` items deleted past the retention window.
+  - **Partial priority ordering**: items may carry a priority (>= 1,
+    smaller first); unprioritized items always sort after prioritized
+    ones. `priority` on create/PATCH (0 clears), `POST /api/inbox/reorder`
+    renumbers an ordered prefix atomically, `--priority N|clear` in the
+    CLI, `priority` on the MCP create/update tools (-1 clears).
+  - **Board layout (swimlanes)**: list/board toggle (persisted per
+    browser); one lane per status with drag & drop — open→in_progress
+    claims, in_progress→open releases, →discarded discards; drag onto a
+    card to rank above it (prefix renumbers), drop at the lane end to
+    unpin; cross-lane moves compact ranks. Converted/Done lanes are
+    plan-driven ("auto"). List view gains Pin/Unpin and `#rank` badges.
+  - **Unfiled captures**: creates may omit `workspace_id` (root only) —
+    the item is unfiled: visible to root alone until filed via PATCH
+    `workspace_id` / `skopos inbox file` / the dashboard's picker and
+    "file into…" action. Scoped keys must name a workspace. The capture
+    modal now shows an explicit workspace picker with inline validation
+    (previously a missing selection failed with only a toast).
+  - Fixed a pre-existing dashboard bug: the Alpine CSP build silently fails
+    to bind two-statement `@change` expressions, so the plans item-status
+    and add-dependency dropdowns never fired — all such handlers are now
+    single-statement method calls (element passed in, method resets it).
+  - Code-review round fixes: (1) list/board item ordering now sorts by the
+    fixed-width UUIDv7 id — RFC3339Nano TEXT timestamps do not sort
+    lexicographically (truncated fraction zeros), which made the
+    priority/newest-first order flaky; (2) convert no longer leaks foreign
+    plans (out-of-scope plan = uniform 404, mismatch detail only for
+    in-scope plans) and unfiled items are rejected up-front; (3) MCP
+    `toolError` classifies the inbox sentinels (unknown id, claim conflict,
+    double-convert, frozen) as invalid-params instead of internal errors;
+    (4) the plans completion hook fires only on the actual transition to
+    completed; (5) reorder is per-board (one workspace per call);
+    (6) `inbox_list` over MCP lets the root key omit workspace_id (unfiled
+    items become discoverable); (7) dashboard fixes: item/plan detail
+    expansion is driven imperatively (CSP x-show effects inside x-for rows
+    do not re-run on outer-state changes — plan expansion was dead in
+    production since the CSP migration), the modal X routes through the
+    unsaved-edits guard, conversion plans are created in the item's
+    workspace (no stray plans), reorder/pin/compaction compute ids from
+    the unfiltered server list (tag/status filters no longer corrupt
+    ranks), and the sidebar open-count badge only shows when the visible
+    filters make it truthful.
+  - **Restore from discarded**: `discarded` is no longer terminal — drag
+    the card back to Open, the Restore button, `POST /api/inbox/{id}/restore`,
+    `skopos inbox restore`, or the `inbox_restore` MCP tool returns it to
+    open (stale claim cleared; `done` stays terminal — it belongs to its
+    plan).
+  - Dashboard polish: the markdown editor's focus ring follows the rounded
+    corners (box-shadow on the host, matching the other inputs); the
+    capture/edit modal is wider (max-w-4xl) with a much taller editor for
+    long notes; board cards no longer expand inline (long content is
+    unreadable in a narrow lane — read/edit via Edit or the list view); the
+    list view no longer shows a plain-text excerpt while collapsed; the
+    light theme now covers the fractional panel surfaces (kanban lanes,
+    index/keys rows, workspace picker lists) that previously stayed dark.
+  - **WCAG 2.2 AA pass**: primary/danger button fills meet 4.5:1 in every
+    state and theme (light theme had dark-on-cyan 3.3:1 via a specificity
+    accident); light-theme secondary text 4.4 → 7.7:1; placeholders meet
+    4.5:1 in both themes; interactive control boundaries (inputs, buttons)
+    at 3:1; card borders nudged for perceivability; small controls raised
+    to the 24×24 minimum (lane buttons, tag chips, sidebar New, branch
+    filters); the tag-filter chip responds to Space as well as Enter.
+  - Escape now closes the inbox capture/edit dialog directly (consistent
+    with every other dialog) — previously it toggled the unsaved-edits
+    confirm and the dialog never closed; the confirm still guards the
+    accidental paths (backdrop, Cancel, X).
+  - New deps (pure Go): `github.com/yuin/goldmark`,
+    `github.com/microcosm-cc/bluemonday`.
+
 ## [0.3.0] — 2026-09-15
 
 The benchmark-response release: compactness, ergonomics, and indexing
