@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.2] — 2026-09-21
+
+### Fixed
+
+- Kanban workspace badges still clipped longer org names after the
+  host-strip change (`martinsuchenak/s…`): the badge cap is widened to
+  fit real org/repo pairs; anything longer truncates with the full id
+  on hover.
+
 ## [0.5.1] — 2026-09-21
 
 ### Fixed
