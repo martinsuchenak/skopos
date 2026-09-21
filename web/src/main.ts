@@ -74,6 +74,7 @@ const appState = () => ({
   inboxStatus: 'open' as '' | 'open' | 'in_progress' | 'converted' | 'done' | 'discarded',
   inboxTagFilter: '',
   inboxQuery: '',
+  inboxSort: (['newest', 'oldest'].includes(localStorage.getItem('skopos:inboxSort') || '') ? localStorage.getItem('skopos:inboxSort') : 'priority') as 'priority' | 'newest' | 'oldest',
   workspaceMenuOpen: false,
   workspaceSearch: '',
   workspaceHighlightId: '',
@@ -724,6 +725,31 @@ const appState = () => ({
   // toggle behavior and x-model syncs the select either way.
   selectInboxTagFilter(t: string) { this.inboxTagFilter = t; this.fetchInbox(); },
   setInboxQuery(v: string) { this.inboxQuery = v; this.fetchInbox(); },
+  // Display-layer sort (list rows + board lanes). 'priority' keeps the
+  // server's truth (prioritized first, unprioritized tail newest-first);
+  // the date sorts are a client-side lens over the same fetch — priority
+  // ranks still exist underneath (#n badges, reorder), they just stop
+  // driving the view. Rank drops are disabled in date views: inserting
+  // "before this card" is meaningless when the view is not in rank order.
+  setInboxSort(s: string) {
+    this.inboxSort = s as typeof this.inboxSort;
+    localStorage.setItem('skopos:inboxSort', s);
+    // List rows key on item.id + inboxSort so row-level directives re-evaluate
+    // when the lens changes; re-created rows lose the imperatively-injected
+    // markdown, so an expanded item is re-fetched and re-injected.
+    this.$nextTick(() => { if (this.expandedInboxId) this.reloadInboxItem(this.expandedInboxId); });
+  },
+  sortInbox(items: InboxItem[]): InboxItem[] {
+    if (this.inboxSort === 'priority') return items;
+    // RFC3339Nano strings do NOT compare lexicographically (truncated
+    // fractions: ".5Z" > ".512345678Z") — parse to ms and tie-break on the
+    // UUIDv7 id, same fix as the server-side ordering.
+    const dir = this.inboxSort === 'newest' ? -1 : 1;
+    const arr = [...items];
+    arr.sort((a, b) => dir * (Date.parse(a.created_at) - Date.parse(b.created_at)) || a.id.localeCompare(b.id));
+    return arr;
+  },
+  sortedInboxItems(): InboxItem[] { return this.sortInbox(this.inboxItems); },
   // Tag options derive from the CURRENT result set: honest about what is
   // visible, but a filter that empties the list hides the other tags — clear
   // via "All tags" in that case.
@@ -797,6 +823,10 @@ const appState = () => ({
   },
   inboxStatusClass(s: string) { return { open: 'bg-amber-500/15 text-amber-300', in_progress: 'bg-cyan-500/15 text-cyan-300', converted: 'bg-violet-500/15 text-violet-300', done: 'bg-emerald-500/15 text-emerald-300', discarded: 'bg-zinc-700 text-zinc-400' }[s] ?? 'bg-zinc-700 text-zinc-200'; },
   inboxItemEditable(item: InboxItem): boolean { return item.status === 'open' || item.status === 'in_progress'; },
+  // Rank controls (Pin/Unpin) only in the rank-ordered view — pinning into a
+  // date lens lands invisibly (the view would not move). Row-level x-show:
+  // correct only because list rows re-create on sort change (composite :key).
+  inboxCanRank(item: InboxItem): boolean { return this.inboxItemEditable(item) && this.inboxSort === 'priority'; },
 
   // ---- inbox board (swimlanes) ----
   inboxLanes(): { key: string; label: string }[] {
@@ -808,7 +838,7 @@ const appState = () => ({
       { key: 'discarded', label: 'Discarded' },
     ];
   },
-  laneItems(key: string): InboxItem[] { return this.inboxItems.filter((i: InboxItem) => i.status === key); },
+  laneItems(key: string): InboxItem[] { return this.sortInbox(this.inboxItems.filter((i: InboxItem) => i.status === key)); },
   // Draggable: only actionable items plus converted (which can be dragged to
   // Discarded). Done/Discarded are terminal.
   inboxDraggable(item: InboxItem): boolean {
@@ -860,8 +890,13 @@ const appState = () => ({
     ev.preventDefault();
     const el = ev.currentTarget as HTMLElement;
     const from = this.inboxItems.find((i: InboxItem) => i.id === this.inboxDragId);
+    // Positional marker only in rank-ordered views; a date-sorted lane takes
+    // cross-lane transitions only (drop-into). Same-lane in a date view is a
+    // no-op — show nothing rather than a misleading drop-into outline.
+    const reorderable = from != null && from.status === key && this.inboxSort === 'priority';
+    if (from != null && from.status === key && !reorderable) { clearInboxDropMarker(); return; }
     const rect = el.getBoundingClientRect();
-    const cls = from && from.status === key ? (ev.clientY < rect.top + rect.height / 2 ? 'drop-before' : 'drop-after') : 'drop-into';
+    const cls = reorderable ? (ev.clientY < rect.top + rect.height / 2 ? 'drop-before' : 'drop-after') : 'drop-into';
     if (el === inboxDropMarker) {
       // Same card, position may have flipped top/bottom half.
       if (!el.classList.contains(cls)) { el.classList.remove('drop-before', 'drop-after', 'drop-into'); el.classList.add(cls); }
@@ -882,6 +917,7 @@ const appState = () => ({
     if (!from) return;
     if (key !== from.status) { await this.inboxTransition(dragId, from.status, key); return; }
     if (key !== 'open' && key !== 'in_progress') return;
+    if (this.inboxSort !== 'priority') return; // rank ops need the rank-ordered view
     // Same lane, dropped at the end: the bottom is the unordered zone, so a
     // prioritized item gets unpinned; an unordered one is already there.
     if (from.priority != null) await this.inboxSetPriority(dragId, 0);
@@ -898,6 +934,7 @@ const appState = () => ({
     if (!from) return;
     if (key !== from.status) { await this.inboxTransition(dragId, from.status, key); return; }
     if (key !== 'open' && key !== 'in_progress') return;
+    if (this.inboxSort !== 'priority') return; // ranking into a date-sorted view would land invisibly
     // Rank against the server's unfiltered ordered prefix (the visible lane
     // may be tag-filtered); dropping onto an UNORDERED target unpins.
     const ordered = await this.inboxOrderedIds(dragId);

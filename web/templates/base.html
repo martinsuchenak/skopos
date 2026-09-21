@@ -404,6 +404,11 @@
                                 <option :value="t" x-text="'# ' + t"></option>
                             </template>
                         </select>
+                        <select x-model="inboxSort" @change="setInboxSort($event.target.value)" class="fld-sm" aria-label="Sort items" title="Priority: ranked items first (drag to rank). Date sorts are a display lens — rank drops are disabled until you switch back.">
+                            <option value="priority">Sort: priority</option>
+                            <option value="newest">Sort: newest first</option>
+                            <option value="oldest">Sort: oldest first</option>
+                        </select>
                     </div>
                     <span x-show="inboxTagFilter" class="badge bg-violet-500/15 text-violet-300" role="button" tabindex="0" @click="setInboxTagFilter(inboxTagFilter)" @keydown.enter.prevent="setInboxTagFilter(inboxTagFilter)" @keydown.space.prevent="setInboxTagFilter(inboxTagFilter)" :aria-label="'Clear tag filter ' + inboxTagFilter" x-text="'#' + inboxTagFilter + ' ×'"></span>
                     <span x-show="inboxLoading" class="text-xs text-zinc-500" role="status" aria-live="polite">Loading…</span>
@@ -480,7 +485,10 @@
                 </p>
 
                 <ul class="space-y-3">
-                    <template x-for="item in inboxItems" :key="item.id">
+                    <!-- Composite key incl. the sort lens: rows re-create when
+                         it changes, so row-level directives (Pin visibility)
+                         re-evaluate — the verified workspace-picker pattern. -->
+                    <template x-for="item in sortedInboxItems()" :key="item.id + '|' + inboxSort">
                         <li class="card" :class="expandedInboxId === item.id ? 'border-cyan-500' : ''">
                             <div class="flex items-start justify-between gap-2 p-4">
                                 <button type="button" @click="toggleInboxItem(item)" class="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 rounded">
@@ -508,7 +516,7 @@
                                             <option :value="o.id" x-text="o.label"></option>
                                         </template>
                                     </select>
-                                    <button type="button" x-show="inboxItemEditable(item)" @click.stop="item.priority != null ? inboxSetPriority(item.id, 0) : pinInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="item.priority != null ? 'Unpin item ' + item.title : 'Pin item ' + item.title + ' to top'" x-text="item.priority != null ? 'Unpin' : 'Pin'"></button>
+                                    <button type="button" x-show="inboxCanRank(item)" @click.stop="item.priority != null ? inboxSetPriority(item.id, 0) : pinInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="item.priority != null ? 'Unpin item ' + item.title : 'Pin item ' + item.title + ' to top'" x-text="item.priority != null ? 'Unpin' : 'Pin'"></button>
                                     <button type="button" x-show="inboxItemEditable(item)" @click.stop="openInboxEditModal(item)" class="btn btn-sm btn-ghost" :aria-label="'Edit item ' + item.title">Edit</button>
                                     <button type="button" x-show="item.status === 'discarded'" @click.stop="restoreInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Restore item ' + item.title + ' to open'">Restore</button>
                                     <button type="button" x-show="item.status === 'open'" @click.stop="claimInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Claim item ' + item.title">Claim</button>
