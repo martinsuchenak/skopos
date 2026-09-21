@@ -223,6 +223,26 @@ html.light { color-scheme: light; }
 .cm-host .cm-placeholder { color: #a1a1aa; }
 .light .cm-host .cm-placeholder { color: #52525b; }
 
+/* ===================== Inbox board drop indicators ===================== */
+/* Positional cue for same-lane reorder: the inset edge on the hovered card
+   shows where the dragged item will land (top edge = rank above it). A
+   cross-lane hover gets a dashed "this lane takes it" outline instead —
+   position is only meaningful within one lane. Classes are toggled
+   imperatively from cardDragOver (main.ts); the CSP build does not
+   reliably re-evaluate row directives mid-drag. */
+.card.drop-before { box-shadow: inset 0 3px 0 0 #06b6d4; }
+.card.drop-after  { box-shadow: inset 0 -3px 0 0 #06b6d4; }
+.card.drop-into   { outline: 2px dashed #06b6d4; outline-offset: -2px; }
+/* Dragged source card dims via classList (startInboxDrag), not a row :class. */
+.card.drag-src    { opacity: 0.4; }
+
+/* Workspace dropdown option rows (searchable picker in the header) */
+.ws-opt:hover { background-color: #27272a; }
+.light .ws-opt:hover { background-color: #f4f4f5; }
+.light .card.drop-before { box-shadow: inset 0 3px 0 0 #0e7490; }
+.light .card.drop-after  { box-shadow: inset 0 -3px 0 0 #0e7490; }
+.light .card.drop-into   { outline-color: #0e7490; }
+
 /* Fractional panel surfaces — the light theme missed these because the
    overrides above target the solid utilities only. Same zinc-100 panel
    tone with the equivalent translucency. */

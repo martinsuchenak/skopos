@@ -35,6 +35,13 @@ type View = 'sessions' | 'blackboard' | 'plans' | 'inbox' | 'index' | 'keys';
 // proxying a live CodeMirror view breaks it. One instance per open modal.
 let inboxEditor: EditorView | null = null;
 
+// The kanban drop-indicator element also stays outside Alpine state for the
+// same reason — it is transient DOM bookkeeping, not UI state.
+let inboxDropMarker: HTMLElement | null = null;
+function clearInboxDropMarker() {
+  if (inboxDropMarker) { inboxDropMarker.classList.remove('drop-before', 'drop-after', 'drop-into'); inboxDropMarker = null; }
+}
+
 declare global { interface Window { Alpine: typeof Alpine; app: () => object } }
 
 const appState = () => ({
@@ -66,6 +73,10 @@ const appState = () => ({
   inboxLayout: (localStorage.getItem('skopos:inboxLayout') === 'lanes' ? 'lanes' : 'list'),
   inboxStatus: 'open' as '' | 'open' | 'in_progress' | 'converted' | 'done' | 'discarded',
   inboxTagFilter: '',
+  inboxQuery: '',
+  workspaceMenuOpen: false,
+  workspaceSearch: '',
+  workspaceHighlightId: '',
   expandedInboxId: '',
   expandedInbox: null as InboxDetail | null,
   // id of the card being dragged (HTML5 DnD; same-window only, so state is
@@ -143,6 +154,9 @@ const appState = () => ({
       });
     }
     this.activeView = (localStorage.getItem('skopos:view') || 'sessions') as View;
+    // Restore the persisted workspace filter; refresh() sanitizes it against
+    // the options the key can actually see once whoami/registry have loaded.
+    this.activeWorkspace = localStorage.getItem('skopos:workspace') || '';
     const saved = localStorage.getItem('skopos:session') || '';
     if (saved) this.selectedSessionId = saved;
     this.refresh();
@@ -318,7 +332,92 @@ const appState = () => ({
     if (v === 'keys') this.fetchKeys();
   },
   whoamiIsRoot(): boolean { return !!this.whoami && this.whoami.root; },
-  setWorkspace(ws: string) { this.activeWorkspace = ws; this.refresh(); },
+  setWorkspace(ws: string) {
+    this.activeWorkspace = ws;
+    if (ws) localStorage.setItem('skopos:workspace', ws); else localStorage.removeItem('skopos:workspace');
+    this.refresh();
+  },
+  // A persisted workspace selection can outlive the key's scope (revoked,
+  // re-scoped) or the registry entry — drop it instead of filtering every
+  // view to an empty list with no indication why.
+  sanitizeActiveWorkspace() {
+    if (this.activeWorkspace && !this.workspaceOptions().some((o: { id: string }) => o.id === this.activeWorkspace)) {
+      this.activeWorkspace = '';
+      localStorage.removeItem('skopos:workspace');
+    }
+  },
+
+  // ---- workspace dropdown (searchable picker) ----
+  // Native <select> cannot search and truncates long repo paths; the header
+  // control opens a panel with a filter input instead. Panel visibility (and
+  // the panel's static sub-elements) are driven IMPERATIVELY: in this
+  // @alpinejs/csp build x-show effects on these elements evaluate once and
+  // never re-run on state writes (sixth silent-mode variant; the modal x-shows
+  // work, nothing about position or expression shape explains the split), so
+  // display is owned by syncWorkspaceMenu — the same pattern as
+  // syncInboxExpansion. Option rows keep working reactively via a composite
+  // :key that re-creates rows on selection/highlight changes.
+  openWorkspaceMenu() {
+    this.workspaceSearch = '';
+    this.workspaceMenuOpen = true;
+    this.wsSearchChanged();
+    this.syncWorkspaceMenu();
+    this.$nextTick(() => { const el = document.getElementById('ws-menu-search'); if (el) el.focus(); });
+  },
+  closeWorkspaceMenu() {
+    this.workspaceMenuOpen = false;
+    this.syncWorkspaceMenu();
+  },
+  toggleWorkspaceMenu() { if (this.workspaceMenuOpen) this.closeWorkspaceMenu(); else this.openWorkspaceMenu(); },
+  syncWorkspaceMenu() {
+    this.$nextTick(() => {
+      const open = this.workspaceMenuOpen;
+      document.querySelectorAll('[data-ws-menu-layer]').forEach((el) => { (el as HTMLElement).style.display = open ? '' : 'none'; });
+      const empty = document.querySelector('[data-ws-empty]') as HTMLElement | null;
+      if (empty) empty.style.display = (!open || this.workspaceFilteredOptions().length > 0) ? 'none' : '';
+      const allBtn = document.querySelector('[data-ws-allopt]') as HTMLElement | null;
+      if (allBtn) {
+        allBtn.classList.toggle('bg-cyan-600/15', !this.activeWorkspace);
+        allBtn.classList.toggle('text-cyan-300', !this.activeWorkspace);
+        allBtn.classList.toggle('text-zinc-300', !!this.activeWorkspace);
+      }
+      const allCheck = document.querySelector('[data-ws-allopt-check]') as HTMLElement | null;
+      if (allCheck) allCheck.style.display = this.activeWorkspace ? 'none' : '';
+    });
+  },
+  wsSearchChanged() {
+    const first = this.workspaceFilteredOptions()[0];
+    this.workspaceHighlightId = first ? first.id : '';
+    this.syncWorkspaceMenu();
+  },
+  workspaceFilteredOptions(): { id: string; label: string }[] {
+    const q = this.workspaceSearch.trim().toLowerCase();
+    const opts = this.workspaceOptions();
+    if (!q) return opts;
+    return opts.filter((o: { id: string; label: string }) => o.label.toLowerCase().includes(q) || o.id.toLowerCase().includes(q));
+  },
+  pickWorkspace(id: string) {
+    this.closeWorkspaceMenu();
+    this.setWorkspace(id);
+  },
+  workspaceKeyNav(ev: KeyboardEvent) {
+    if (ev.key === 'Escape') { ev.preventDefault(); this.closeWorkspaceMenu(); return; }
+    const opts = this.workspaceFilteredOptions();
+    if (opts.length === 0) return;
+    const idx = opts.findIndex((o: { id: string }) => o.id === this.workspaceHighlightId);
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      const next = (idx + (ev.key === 'ArrowDown' ? 1 : -1) + opts.length) % opts.length;
+      this.workspaceHighlightId = opts[next].id;
+      this.$nextTick(() => {
+        const el = document.querySelector('[data-ws-opt="' + CSS.escape(this.workspaceHighlightId) + '"]');
+        if (el) (el as HTMLElement).scrollIntoView({ block: 'nearest' });
+      });
+    } else if (ev.key === 'Enter' && this.workspaceHighlightId) {
+      ev.preventDefault();
+      this.pickWorkspace(this.workspaceHighlightId);
+    }
+  },
 
   // ---- workspaces ----
   async fetchWorkspaces() {
@@ -398,6 +497,7 @@ const appState = () => ({
     await this.fetchWhoami();
     await this.fetchWorkspaces();
     await this.autoRegisterWorkspaces();
+    this.sanitizeActiveWorkspace();
     if (!this.selectedSessionId && this.sessions.length > 0) this.selectedSessionId = this.sessions[0].id;
     if (this.selectedSessionId) {
       const match = this.sessions.find((s: SessionSummary) => s.id === this.selectedSessionId);
@@ -593,6 +693,8 @@ const appState = () => ({
       // list layout (the chip selection is kept and restored on switch-back).
       if (this.inboxLayout === 'list' && this.inboxStatus) p.set('status', this.inboxStatus);
       if (this.inboxTagFilter) p.set('tag', this.inboxTagFilter);
+      const q = this.inboxQuery.trim();
+      if (q) p.set('q', q);
       const qs = p.size ? '?' + p.toString() : '';
       const res = await this.authFetch('/api/inbox' + qs);
       if (!res.ok) { this.inboxItems = []; return; }
@@ -608,6 +710,19 @@ const appState = () => ({
   },
   setInboxStatus(s: string) { this.inboxStatus = s as typeof this.inboxStatus; this.fetchInbox(); },
   setInboxTagFilter(t: string) { this.inboxTagFilter = this.inboxTagFilter === t ? '' : t; this.fetchInbox(); },
+  // The toolbar tag <select> keeps a plain value (no toggle — picking the
+  // already-active option fires no change event anyway); item chips keep the
+  // toggle behavior and x-model syncs the select either way.
+  selectInboxTagFilter(t: string) { this.inboxTagFilter = t; this.fetchInbox(); },
+  setInboxQuery(v: string) { this.inboxQuery = v; this.fetchInbox(); },
+  // Tag options derive from the CURRENT result set: honest about what is
+  // visible, but a filter that empties the list hides the other tags — clear
+  // via "All tags" in that case.
+  inboxAllTags(): string[] {
+    const tags = new Set<string>();
+    for (const i of this.inboxItems) for (const t of i.tags || []) tags.add(t);
+    return [...tags].sort();
+  },
   inboxStatusChips(): { key: string; label: string }[] {
     return [
       { key: 'open', label: 'Open' },
@@ -703,22 +818,56 @@ const appState = () => ({
   startInboxDrag(item: InboxItem, ev: DragEvent) {
     if (item.status === 'done') { ev.preventDefault(); return; } // terminal
     this.inboxDragId = item.id;
+    // Dim the source imperatively: a :class on row state from OUTER scope
+    // does not re-evaluate in the CSP build (same family as x-show-in-x-for).
+    (ev.currentTarget as HTMLElement).classList.add('drag-src');
     if (ev.dataTransfer) {
       ev.dataTransfer.setData('text/plain', item.id); // Firefox requires data
       ev.dataTransfer.effectAllowed = 'move';
     }
   },
-  endInboxDrag() { this.inboxDragId = ''; },
+  endInboxDrag() {
+    this.inboxDragId = '';
+    clearInboxDropMarker();
+    document.querySelectorAll('.drag-src').forEach((el) => el.classList.remove('drag-src'));
+  },
   laneDragOver(key: string, ev: DragEvent) {
     if (!this.laneAcceptsDrop(key)) return; // no preventDefault -> drop not allowed
     if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
     ev.preventDefault();
+    // Card dragovers bubble into this handler right after cardDragOver set
+    // the marker — only clear it when the hover genuinely left the cards
+    // (lane padding / empty-lane placeholder).
+    if (inboxDropMarker && !(ev.target instanceof Node && inboxDropMarker.contains(ev.target))) clearInboxDropMarker();
+  },
+  // Dragging over a CARD: same-lane shows WHERE the item will land (inset
+  // edge above/below the hovered card — dropBeforeItem ranks it there);
+  // cross-lane only shows "this lane takes it" since position is meaningless
+  // across lanes. Imperative classList: the CSP build does not reliably
+  // re-evaluate row-level directives during a drag.
+  cardDragOver(key: string, item: InboxItem, ev: DragEvent) {
+    if (!this.laneAcceptsDrop(key)) return; // no preventDefault -> drop not allowed
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+    ev.preventDefault();
+    const el = ev.currentTarget as HTMLElement;
+    const from = this.inboxItems.find((i: InboxItem) => i.id === this.inboxDragId);
+    const rect = el.getBoundingClientRect();
+    const cls = from && from.status === key ? (ev.clientY < rect.top + rect.height / 2 ? 'drop-before' : 'drop-after') : 'drop-into';
+    if (el === inboxDropMarker) {
+      // Same card, position may have flipped top/bottom half.
+      if (!el.classList.contains(cls)) { el.classList.remove('drop-before', 'drop-after', 'drop-into'); el.classList.add(cls); }
+      return;
+    }
+    clearInboxDropMarker();
+    el.classList.add(cls);
+    inboxDropMarker = el;
   },
   // Drop on a lane (its empty area or below all cards): a cross-lane drop is
   // the status transition; a same-lane drop at the end unprioritizes.
   async dropOnLane(key: string) {
     const dragId = this.inboxDragId;
     this.inboxDragId = '';
+    clearInboxDropMarker();
     if (!dragId) return;
     const from = this.inboxItems.find((i: InboxItem) => i.id === dragId);
     if (!from) return;
@@ -734,6 +883,7 @@ const appState = () => ({
   async dropBeforeItem(key: string, target: InboxItem) {
     const dragId = this.inboxDragId;
     this.inboxDragId = '';
+    clearInboxDropMarker();
     if (!dragId || dragId === target.id) return;
     const from = this.inboxItems.find((i: InboxItem) => i.id === dragId);
     if (!from) return;
@@ -774,15 +924,22 @@ const appState = () => ({
   // Server-truth ordered prefix for reorder/pin/compaction: the visible
   // list may be tag- or status-filtered, and reorder semantics keep the
   // priority of every id NOT sent — computing ids from a filtered view would
-  // silently un-sync hidden ranked items (duplicate #1s).
+  // silently un-sync hidden ranked items (duplicate #1s). The slice is the
+  // DRAGGED ITEM's board: reorder is per-workspace and open/in_progress only,
+  // so the all-workspaces view must not mix foreign workspaces in (400), and
+  // converted items must be excluded even though they keep stale priorities.
   async inboxOrderedIds(excludeId: string): Promise<string[] | null> {
+    const from = this.inboxItems.find((i: InboxItem) => i.id === excludeId);
+    const ws = this.activeWorkspace || (from ? from.workspace_id || '' : '');
     const p = new URLSearchParams();
-    if (this.activeWorkspace) p.set('workspace', this.activeWorkspace);
+    if (ws) p.set('workspace', ws);
     const qs = p.size ? '?' + p.toString() : '';
     const res = await this.authFetch('/api/inbox' + qs);
     if (!res.ok) return null;
     const all = (await res.json()) as InboxItem[];
-    return all.filter((i: InboxItem) => i.priority != null && i.id !== excludeId).map((i: InboxItem) => i.id);
+    return all
+      .filter((i: InboxItem) => (i.status === 'open' || i.status === 'in_progress') && i.priority != null && i.id !== excludeId)
+      .map((i: InboxItem) => i.id);
   },
   async inboxSetPriority(id: string, priority: number) {
     const res = await this.authFetch('/api/inbox/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify({ priority }) });

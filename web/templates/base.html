@@ -44,20 +44,7 @@
             </button>
         </nav>
         <div class="border-t border-zinc-800 p-4">
-            <div class="mb-1.5 flex items-center justify-between">
-                <label class="text-xs font-medium text-zinc-500" for="workspace-select">Workspace</label>
-                <button type="button" @click="openWorkspaceModal()" class="btn btn-sm !min-h-6 px-2 py-0.5 text-xs" aria-label="Create workspace" title="Create workspace">
-                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                    New
-                </button>
-            </div>
-            <select id="workspace-select" x-model="activeWorkspace" @change="setWorkspace($event.target.value)" class="fld-sm w-full" aria-label="Filter by workspace">
-                <option value="">All workspaces</option>
-                <template x-for="o in workspaceOptions()" :key="o.id">
-                    <option :value="o.id" x-text="o.label"></option>
-                </template>
-            </select>
-            <p class="mt-3 text-center text-[11px] text-zinc-600">skopos {{.Version}}</p>
+            <p class="text-center text-[11px] text-zinc-600">skopos {{.Version}}</p>
         </div>
     </aside>
 
@@ -71,6 +58,52 @@
                 <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
             </button>
             <h1 class="text-base font-semibold capitalize" x-text="activeView"></h1>
+
+            <!-- Workspace filter: global context, so it lives in the sticky
+                 header and persists in localStorage. A native select cannot
+                 search and truncates long repo paths — the trigger opens a
+                 searchable panel instead. -->
+            <div class="relative ml-1 flex min-w-0 items-center gap-1.5">
+                <button type="button" @click="toggleWorkspaceMenu()" class="fld-sm flex max-w-44 items-center gap-1.5 text-left sm:max-w-80" :aria-expanded="workspaceMenuOpen ? 'true' : 'false'" aria-haspopup="listbox" aria-label="Filter by workspace" :title="activeWorkspace ? workspaceLabel(activeWorkspace) : 'All workspaces'">
+                    <span class="truncate" x-text="activeWorkspace ? workspaceLabel(activeWorkspace) : 'All workspaces'"></span>
+                    <svg class="ml-auto h-3.5 w-3.5 shrink-0 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                </button>
+                <button type="button" @click="openWorkspaceModal()" class="btn btn-sm !min-h-6 !px-2" aria-label="Create workspace" title="Create workspace">
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                    <span class="hidden lg:inline">New</span>
+                </button>
+
+                <!-- click-away backdrop + panel. Visibility is driven
+                     imperatively by syncWorkspaceMenu (data-ws-menu-layer):
+                     x-show effects on these elements never re-run in the CSP
+                     build — see main.ts. -->
+                <div data-ws-menu-layer style="display: none" class="fixed inset-0 z-40" @click="closeWorkspaceMenu()" aria-hidden="true"></div>
+                <div data-ws-menu-layer style="display: none" class="absolute left-0 top-full z-50 mt-2 w-[22rem] max-w-[calc(100vw-2rem)] rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl">
+                    <div class="border-b border-zinc-800 p-2">
+                        <input id="ws-menu-search" type="search" x-model="workspaceSearch" @input="wsSearchChanged()" @keydown="workspaceKeyNav($event)" class="fld-sm w-full" placeholder="Search workspaces…" aria-label="Search workspaces" autocomplete="off">
+                    </div>
+                    <ul class="max-h-72 overflow-y-auto p-1" aria-label="Workspace options">
+                        <li>
+                            <button type="button" data-ws-allopt @click="pickWorkspace('')" class="ws-opt flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-zinc-300">
+                                <span class="truncate">All workspaces</span>
+                                <svg data-ws-allopt-check style="display: none" class="ml-auto h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                            </button>
+                        </li>
+                        <!-- Composite key: picking or arrowing re-creates the row so
+                             row-level :class/x-show re-evaluate (CSP build skips
+                             outer-state re-evaluation inside x-for rows). -->
+                        <template x-for="o in workspaceFilteredOptions()" :key="o.id + '|' + activeWorkspace + '|' + (workspaceHighlightId === o.id ? '1' : '0')">
+                            <li>
+                                <button type="button" :data-ws-opt="o.id" @click="pickWorkspace(o.id)" class="ws-opt flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs" :class="activeWorkspace === o.id ? 'bg-cyan-600/15 text-cyan-300' : (workspaceHighlightId === o.id ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-300')" :title="o.id">
+                                    <span class="truncate font-mono" x-text="o.label"></span>
+                                    <svg x-show="activeWorkspace === o.id" class="ml-auto h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                                </button>
+                            </li>
+                        </template>
+                        <li data-ws-empty style="display: none" class="px-3 py-4 text-center text-xs text-zinc-500">No workspaces match.</li>
+                    </ul>
+                </div>
+            </div>
 
             <div class="ml-auto flex items-center gap-2">
                 <button type="button" @click="openKeyModal()" class="btn btn-sm" :class="apiKey ? 'border-emerald-700 text-emerald-300' : 'border-amber-700 text-amber-300'" :aria-label="apiKey ? 'API key set — edit' : 'Set API key'">
@@ -361,6 +394,17 @@
                             <button type="button" @click="setInboxStatus(chip.key)" class="btn btn-sm" :class="inboxStatus === chip.key ? 'border-cyan-500 text-cyan-300' : 'border-zinc-700 text-zinc-400'" x-text="chip.label"></button>
                         </template>
                     </div>
+                    <!-- Top-of-page search + tag filter: item-level tag chips
+                         only exist wherever the items happen to render. -->
+                    <div class="flex items-center gap-1.5" role="search">
+                        <input type="search" x-model="inboxQuery" @input.debounce.300ms="setInboxQuery($event.target.value)" class="fld-sm w-36 sm:w-52" placeholder="Search inbox…" aria-label="Search inbox by title or content">
+                        <select x-model="inboxTagFilter" @change="selectInboxTagFilter($event.target.value)" class="fld-sm max-w-40 truncate" aria-label="Filter by tag">
+                            <option value="">All tags</option>
+                            <template x-for="t in inboxAllTags()" :key="t">
+                                <option :value="t" x-text="'# ' + t"></option>
+                            </template>
+                        </select>
+                    </div>
                     <span x-show="inboxTagFilter" class="badge bg-violet-500/15 text-violet-300" role="button" tabindex="0" @click="setInboxTagFilter(inboxTagFilter)" @keydown.enter.prevent="setInboxTagFilter(inboxTagFilter)" @keydown.space.prevent="setInboxTagFilter(inboxTagFilter)" :aria-label="'Clear tag filter ' + inboxTagFilter" x-text="'#' + inboxTagFilter + ' ×'"></span>
                     <span x-show="inboxLoading" class="text-xs text-zinc-500" role="status" aria-live="polite">Loading…</span>
                     <span x-show="!inboxLoading" class="text-xs text-zinc-500" x-text="inboxItems.length + ' items'"></span>
@@ -392,11 +436,11 @@
                             <ul class="flex-1 space-y-2 p-2 min-h-24" @dragover="laneDragOver(lane.key, $event)" @drop.prevent="dropOnLane(lane.key)">
                                 <template x-for="item in laneItems(lane.key)" :key="item.id">
                                     <li>
-                                        <div class="card cursor-grab p-3 active:cursor-grabbing" :class="inboxDragId === item.id ? 'opacity-40' : ''"
+                                        <div class="card cursor-grab p-3 active:cursor-grabbing"
                                             :draggable="inboxDraggable(item)"
                                             @dragstart="startInboxDrag(item, $event)"
                                             @drop.stop.prevent="dropBeforeItem(lane.key, item)"
-                                            @dragover="laneDragOver(lane.key, $event)">
+                                            @dragover="cardDragOver(lane.key, item, $event)">
                                             <div class="flex items-start justify-between gap-2">
                                                 <div class="min-w-0 flex-1">
                                                     <span x-show="item.priority != null" class="mr-1 rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] text-amber-300" x-text="'#' + item.priority"></span>
@@ -408,6 +452,7 @@
                                                 </div>
                                             </div>
                                             <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
+                                                <span x-show="!activeWorkspace && item.workspace_id" class="badge max-w-28 truncate bg-sky-500/15 text-sky-300" :title="item.workspace_id" x-text="workspaceLabel(item.workspace_id)"></span>
                                                 <span x-show="!item.workspace_id" class="badge bg-amber-500/15 text-amber-300">unfiled</span>
                                                 <select x-show="!item.workspace_id && workspaceOptions().length > 0" @change="fileInboxItem(item, $event.target)" class="fld-sm !min-h-6 w-36 text-[11px]" :aria-label="'File item ' + item.title + ' into workspace'">
                                                     <option value="">file into…</option>
