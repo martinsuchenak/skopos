@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.3] — 2026-09-21
+
+### Added
+
+- **Dashboard: inbox sort control** — the inbox toolbar gained a sort
+  select: priority (server rank order, the default), newest first, or
+  oldest first, applied as a display lens over both the list and the
+  kanban lanes and persisted across reloads. Date sorts parse the
+  timestamps (`RFC3339Nano` strings do not compare lexicographically).
+  Rank operations are disabled in date-sorted views — same-lane drop
+  markers, Pin/Unpin, and drag-ranking require the rank-ordered view;
+  cross-lane drag transitions keep working everywhere.
+
 ## [0.5.2] — 2026-09-21
 
 ### Fixed
