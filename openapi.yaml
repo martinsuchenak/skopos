@@ -81,6 +81,26 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/SessionSummary" }
+    delete:
+      summary: Bulk-delete sessions (the optional workspace, or every session on the server)
+      operationId: purgeSessions
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: workspace_id
+          in: query
+          schema: { type: string }
+          description: Limit the purge to one workspace. Omit to delete EVERY session (root key only). Cascades to events, agent states, and session-scoped blackboard entries.
+      responses:
+        "200":
+          description: "Purge result: { deleted: N }"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: integer }
+        "401": { description: Unauthorized }
+        "403": { description: "Workspace out of scope for this credential, or root key required for the all-workspaces purge" }
   /api/sessions/{id}:
     get:
       summary: Get a session (with agents and events)
@@ -540,6 +560,25 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BlackboardBundle" }
+    delete:
+      summary: Bulk-delete every entry of one type in one workspace (all scopes and branches)
+      operationId: blackboardPurgeType
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: workspace_id, in: query, required: true, schema: { type: string }, description: Workspace to purge (required for every principal, root included) }
+        - { name: entry_type, in: query, required: true, schema: { type: string }, description: "One of: finding, decision, bug, debt, warning, context" }
+      responses:
+        "200":
+          description: "Purge result: { deleted: N }"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: integer }
+        "400": { description: "Missing or invalid workspace_id / entry_type" }
+        "401": { description: Unauthorized }
+        "403": { description: Workspace out of scope for this credential }
   /api/blackboard/entries/{id}/promote:
     patch:
       summary: Promote an entry to a wider scope (session -> branch -> project)

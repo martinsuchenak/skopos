@@ -15,4 +15,5 @@ func registerBlackboardRoutes(mux *http.ServeMux, h *blackboard.Handler) {
 	mux.HandleFunc("GET /api/blackboard/entries", h.ReadBundle)
 	mux.HandleFunc("PATCH /api/blackboard/entries/{id}/promote", h.Promote)
 	mux.HandleFunc("DELETE /api/blackboard/entries/{id}", h.Delete)
+	mux.HandleFunc("DELETE /api/blackboard/entries", h.PurgeType)
 }

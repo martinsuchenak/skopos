@@ -508,6 +508,7 @@ const appState = () => ({
     await this.fetchWorkspaces();
     await this.autoRegisterWorkspaces();
     this.sanitizeActiveWorkspace();
+    this.syncSessionPurge();
     if (!this.selectedSessionId && this.sessions.length > 0) this.selectedSessionId = this.sessions[0].id;
     if (this.selectedSessionId) {
       const match = this.sessions.find((s: SessionSummary) => s.id === this.selectedSessionId);
@@ -1291,6 +1292,40 @@ const appState = () => ({
   requestDelete(kind: string, id: string, name: string) {
     this.confirm = { open: true, title: `Delete ${kind}`, message: `Delete “${name}”? This cannot be undone.`, label: 'Delete', busy: false, pending: { kind, id } };
   },
+  // ---- bulk purge (same confirm dialog as deletes) ----
+  // No workspace selected = purge EVERYTHING, which the server gates on the
+  // root key; the button itself only shows for root in that state
+  // (syncSessionPurge — a new x-show on a static element is one of the
+  // silent CSP failure modes, so visibility is driven imperatively).
+  requestSessionPurge() {
+    const scope = this.activeWorkspace ? ` in ${this.workspaceLabel(this.activeWorkspace)}` : ' across every workspace';
+    this.confirm = {
+      open: true, title: 'Delete all sessions',
+      message: `Delete all ${this.sessions.length} sessions${scope}? Their events, agent states, and session-scoped blackboard entries are deleted with them. This cannot be undone.`,
+      label: 'Delete all', busy: false,
+      pending: { kind: 'sessionpurge', id: this.activeWorkspace },
+    };
+  },
+  // Entry purge is one workspace + one type (the API requires both); the
+  // per-group button only renders when a workspace is selected.
+  requestEntryPurge(type: string, label: string) {
+    if (!this.activeWorkspace) return; // belt-and-braces: no purge without a target
+    this.confirm = {
+      open: true, title: `Delete all ${label.toLowerCase()} entries`,
+      message: `Delete every ${label.toLowerCase()} entry in ${this.workspaceLabel(this.activeWorkspace)} — all scopes and branches? This cannot be undone.`,
+      label: 'Delete all', busy: false,
+      pending: { kind: 'entrypurge', id: this.activeWorkspace + '|' + type },
+    };
+  },
+  entryPurgeTitle(group: { type: string; label: string }): string {
+    return `Delete every ${group.label.toLowerCase()} entry in ${this.workspaceLabel(this.activeWorkspace)} — all scopes and branches`;
+  },
+  syncSessionPurge() {
+    const btn = document.querySelector('[data-session-purge]') as HTMLElement | null;
+    if (!btn) return;
+    const show = this.sessions.length > 0 && (!!this.activeWorkspace || this.whoamiIsRoot());
+    btn.style.display = show ? '' : 'none';
+  },
   cancelDelete() { if (!this.confirm.busy) this.confirm = { open: false, title: '', message: '', label: 'Delete', busy: false, pending: null }; },
   async confirmDelete() {
     const p = this.confirm.pending; if (!p) return;
@@ -1300,6 +1335,29 @@ const appState = () => ({
       this.confirm.busy = false;
       this.confirm.open = false; this.confirm.pending = null;
       this.closeInboxItemModal();
+      return;
+    }
+    if (p.kind === 'sessionpurge' || p.kind === 'entrypurge') {
+      let url: string;
+      if (p.kind === 'sessionpurge') {
+        url = p.id ? '/api/sessions?workspace_id=' + encodeURIComponent(p.id) : '/api/sessions';
+      } else {
+        const [ws, type] = p.id.split('|');
+        url = '/api/blackboard/entries?workspace_id=' + encodeURIComponent(ws) + '&entry_type=' + encodeURIComponent(type);
+      }
+      const res = await this.authFetch(url, { method: 'DELETE' });
+      this.confirm.busy = false;
+      if (!await this.handleBad(res, 'Purge failed')) return;
+      let n = -1;
+      try { n = ((await res.json()) ?? { deleted: -1 }).deleted; } catch { /* non-JSON body */ }
+      this.notify(n >= 0 ? `Deleted ${n}` : 'Deleted', 'success');
+      this.confirm.open = false; this.confirm.pending = null;
+      if (p.kind === 'sessionpurge') {
+        this.selectedSessionId = ''; this.selectedSession = null; localStorage.removeItem('skopos:session');
+        await this.refresh();
+      } else {
+        await this.fetchBundle();
+      }
       return;
     }
     let url = '';

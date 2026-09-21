@@ -7,8 +7,9 @@ import (
 )
 
 type fakeStore struct {
-	report Event
-	title  string
+	report     Event
+	title      string
+	deletedAll int64
 }
 
 func (s *fakeStore) RecordReport(ctx context.Context, report Event, sessionTitle string) error {
@@ -30,6 +31,10 @@ func (s *fakeStore) ListEvents(ctx context.Context, sessionID string) ([]Event, 
 }
 
 func (s *fakeStore) DeleteSession(_ context.Context, _ string) error           { return nil }
+func (s *fakeStore) DeleteAllSessions(_ context.Context, _ string) (int64, error) {
+	s.deletedAll++
+	return 2, nil
+}
 func (s *fakeStore) ListActiveAgents(_ context.Context) ([]ActiveAgent, error) { return nil, nil }
 
 func TestServiceReportCreatesImplicitSession(t *testing.T) {

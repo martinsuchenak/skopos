@@ -57,6 +57,8 @@ Promote an entry to a wider scope: `session → branch → project`. Done via `P
 
 Permanently remove an entry with the `blackboard_delete` MCP tool (param: `id`) or `DELETE /api/blackboard/entries/{id}`. This is a **hard delete** — the row is removed immediately, and there is no archive/soft-delete for entries. Session-scoped entries are also removed automatically when their session is deleted (foreign-key cascade).
 
+To delete every entry of one type in a workspace at once, use `DELETE /api/blackboard/entries?workspace_id=…&entry_type=bug` (or `skopos blackboard purge --workspace … --type bug`). Both parameters are required for every principal, root included — there is no cross-workspace variant. The purge matches across **all scopes and branches**: floating `bug`/`debt` entries are caught wherever they sit. The response reports the count (`{"deleted": N}`). There is deliberately no MCP tool for this — bulk destructive operations are an operator concern (REST, CLI, and the dashboard's per-type "Delete all" button).
+
 ## CLI
 
 The same operations from the terminal (add `--server-url`/`--api-key` for a
@@ -70,6 +72,7 @@ skopos blackboard read --branch feat/auth     # the markdown bundle
 skopos blackboard list --branch feat/auth     # tabular listing with entry IDs
 skopos blackboard promote --id <entry-id>     # widen the entry's scope
 skopos blackboard delete --id <entry-id>
+skopos blackboard purge --type bug           # every bug in this checkout's workspace
 ```
 
 ## Workspace scoping

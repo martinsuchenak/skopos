@@ -145,3 +145,30 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// PurgeType handles DELETE /api/blackboard/entries — the collection-level
+// bulk delete (workspace_id + entry_type both required), distinct from the
+// by-id route. Responds 200 with {"deleted":N}. Out-of-scope maps to an
+// actionable 403 (explicit-target semantics, like WriteEntry), not a 404:
+// this is not a by-id oracle case.
+func (h *Handler) PurgeType(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	workspaceID := rest.QueryAlias(r, "workspace_id", "workspace")
+	entryType := r.URL.Query().Get("entry_type")
+	deleted, err := h.service.PurgeType(r.Context(), workspaceID, EntryType(entryType))
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
+			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, auth.ErrOutOfScope):
+			rest.RespondError(w, http.StatusForbidden, err.Error())
+		default:
+			rest.InternalError(w, err)
+		}
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, map[string]int{"deleted": deleted})
+}

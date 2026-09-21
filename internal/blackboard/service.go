@@ -196,6 +196,32 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// PurgeType bulk-deletes every entry of one type in one workspace, across
+// all scopes and branches. The workspace is required for every principal
+// (root included) — same rule as writes; there is deliberately no
+// cross-workspace variant. Returns the number of entries deleted.
+func (s *Service) PurgeType(ctx context.Context, workspaceID string, entryType EntryType) (int, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	entryType = EntryType(strings.TrimSpace(string(entryType)))
+	if workspaceID == "" {
+		return 0, fmt.Errorf("%w: workspace_id is required (derive it with `skopos workspace` or the git remote)", ErrInvalidInput)
+	}
+	if !validEntryType(entryType) {
+		return 0, fmt.Errorf("%w: invalid entry_type %q. Use: finding, decision, bug, debt, warning, or context", ErrInvalidInput, entryType)
+	}
+	if err := auth.RequireWorkspace(ctx, workspaceID); err != nil {
+		return 0, err
+	}
+	n, err := s.store.DeleteByType(ctx, workspaceID, entryType)
+	if err != nil {
+		return 0, err
+	}
+	if s.publisher != nil && n > 0 {
+		s.publisher.Publish(events.Event{Type: events.TypeBlackboard, Workspace: workspaceID})
+	}
+	return int(n), nil
+}
+
 // requireEntryScope authorizes a by-id operation against the entry's
 // workspace; unknown ids surface ErrNotFound before any scope decision so
 // existence is not leaked across tenants. It returns the loaded entry for

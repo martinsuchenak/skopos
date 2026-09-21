@@ -27,6 +27,7 @@ func blackboardCmd() *cli.Command {
 			blackboardListCmd(),
 			blackboardPromoteCmd(),
 			blackboardDeleteCmd(),
+			blackboardPurgeCmd(),
 		},
 	}
 }
@@ -163,6 +164,61 @@ func blackboardDeleteCmd() *cli.Command {
 			return blackboardDoDelete(ctx, cmd.GetString("server-url"), cmd.GetString("api-key"), id)
 		},
 	}
+}
+
+func blackboardPurgeCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "purge",
+		Usage: "Bulk-delete every entry of one type in a workspace (all scopes and branches)",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
+			&cli.StringFlag{Name: "type", Usage: "Entry type to purge: finding, decision, bug, debt, warning, context"},
+			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID (defaults to this checkout's workspace)"},
+		},
+		Run: func(ctx context.Context, cmd *cli.Command) error {
+			entryType := cmd.GetString("type")
+			if strings.TrimSpace(entryType) == "" {
+				return fmt.Errorf("--type is required")
+			}
+			ws := workspaceOrDefault(cmd.GetString("workspace"))
+			deleted, err := blackboardDoPurge(ctx, cmd.GetString("server-url"), cmd.GetString("api-key"), ws, entryType)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("deleted %d %s entries in %s\n", deleted, entryType, ws)
+			return nil
+		},
+	}
+}
+
+func blackboardDoPurge(ctx context.Context, serverURL, apiKey, workspaceID, entryType string) (int, error) {
+	q := url.Values{}
+	q.Set("workspace_id", workspaceID)
+	q.Set("entry_type", entryType)
+	u := strings.TrimRight(serverURL, "/") + "/api/blackboard/entries?" + q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u, nil)
+	if err != nil {
+		return 0, fmt.Errorf("creating request: %w", err)
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("purging entries: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("%s", apiErrorMessage("purging entries", resp))
+	}
+	var out struct {
+		Deleted int `json:"deleted"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return 0, fmt.Errorf("decoding response: %w", err)
+	}
+	return out.Deleted, nil
 }
 
 func blackboardPostEntry(ctx context.Context, serverURL, apiKey string, input blackboard.WriteInput) (*blackboard.WriteResult, error) {

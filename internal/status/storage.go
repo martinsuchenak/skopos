@@ -234,6 +234,29 @@ func (s *Storage) DeleteSession(ctx context.Context, id string) error {
 	return nil
 }
 
+// DeleteAllSessions removes every session — or every session in workspaceID
+// when non-empty — in one statement. The FK cascades carry the dependent
+// rows (agent_states, events, session-scoped blackboard entries) along.
+func (s *Storage) DeleteAllSessions(ctx context.Context, workspaceID string) (int64, error) {
+	var (
+		result sql.Result
+		err    error
+	)
+	if workspaceID == "" {
+		result, err = s.db.ExecContext(ctx, `DELETE FROM sessions`)
+	} else {
+		result, err = s.db.ExecContext(ctx, `DELETE FROM sessions WHERE workspace = ?`, workspaceID)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("purging sessions: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("checking purge result: %w", err)
+	}
+	return n, nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }

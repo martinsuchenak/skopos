@@ -24,8 +24,21 @@ func (f *fakeStore) Write(_ context.Context, e Entry) error {
 func (f *fakeStore) Bundle(_ context.Context, _, _, _ string) ([]Entry, error) {
 	return f.entries, nil
 }
-func (f *fakeStore) Promote(_ context.Context, _ string) error                  { return nil }
-func (f *fakeStore) Delete(_ context.Context, _ string) error                   { return nil }
+func (f *fakeStore) Promote(_ context.Context, _ string) error { return nil }
+func (f *fakeStore) Delete(_ context.Context, _ string) error  { return nil }
+func (f *fakeStore) DeleteByType(_ context.Context, workspaceID string, entryType EntryType) (int64, error) {
+	kept := f.entries[:0]
+	var n int64
+	for _, e := range f.entries {
+		if e.WorkspaceID == workspaceID && e.EntryType == entryType {
+			n++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	f.entries = kept
+	return n, nil
+}
 func (f *fakeStore) Search(_ context.Context, _ SearchFilters) ([]Entry, error) { return nil, nil }
 func (f *fakeStore) SessionExists(_ context.Context, _ string) (bool, error) {
 	return f.sessionExists, f.sessionExistsErr

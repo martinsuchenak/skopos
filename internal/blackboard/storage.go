@@ -14,6 +14,7 @@ type Store interface {
 	Bundle(ctx context.Context, workspaceID, branchName, sessionID string) ([]Entry, error)
 	Promote(ctx context.Context, id string) error
 	Delete(ctx context.Context, id string) error
+	DeleteByType(ctx context.Context, workspaceID string, entryType EntryType) (int64, error)
 	Search(ctx context.Context, filters SearchFilters) ([]Entry, error)
 	Get(ctx context.Context, id string) (*Entry, error)
 	SessionExists(ctx context.Context, sessionID string) (bool, error)
@@ -209,6 +210,24 @@ func (s *Storage) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("%w: entry %s", ErrNotFound, id)
 	}
 	return nil
+}
+
+// DeleteByType removes every entry of one type in one workspace, across all
+// scopes and branches (floating bug/debt carry a branch_name but render
+// cross-branch — a type purge must catch them wherever they sit). One
+// statement; RowsAffected reports how many matched.
+func (s *Storage) DeleteByType(ctx context.Context, workspaceID string, entryType EntryType) (int64, error) {
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM blackboard_entries WHERE workspace_id = ? AND entry_type = ?`,
+		workspaceID, string(entryType))
+	if err != nil {
+		return 0, fmt.Errorf("purging entries by type: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("checking purge result: %w", err)
+	}
+	return n, nil
 }
 
 type rowScanner interface {

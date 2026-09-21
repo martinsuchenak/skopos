@@ -70,3 +70,5 @@ cleanup worker    →  deletes old data after retention
 ```
 
 Sessions can be deleted via `DELETE /api/sessions/{id}` (requires API key). Deleting a session cascades to its agents, events, and session-scoped blackboard entries (via FK).
+
+Bulk deletions use `DELETE /api/sessions` (or `skopos sessions purge`): with `?workspace_id=` it deletes that workspace's sessions — allowed for any key scoped to the workspace — and without it, it deletes **every** session on the server (root key only). The response reports the count (`{"deleted": N}`). The same cascades apply; a running agent that reports afterwards simply starts a continuation session.

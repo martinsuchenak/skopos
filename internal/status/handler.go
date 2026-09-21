@@ -136,3 +136,27 @@ func (h *Handler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// PurgeSessions handles DELETE /api/sessions (all sessions, or those in the
+// optional workspace_id filter). Responds 200 with {"deleted":N} so callers
+// learn the count.
+func (h *Handler) PurgeSessions(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	workspaceID := rest.QueryAlias(r, "workspace_id", "workspace")
+	deleted, err := h.service.PurgeSessions(r.Context(), workspaceID)
+	if err != nil {
+		switch {
+		case errors.Is(err, auth.ErrRootRequired), errors.Is(err, auth.ErrOutOfScope):
+			rest.RespondError(w, http.StatusForbidden, err.Error())
+		case errors.Is(err, ErrInvalidInput):
+			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		default:
+			rest.InternalError(w, err)
+		}
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, map[string]int{"deleted": deleted})
+}

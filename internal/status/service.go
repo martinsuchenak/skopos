@@ -24,6 +24,7 @@ type Store interface {
 	GetSession(ctx context.Context, id string) (*SessionDetail, error)
 	ListEvents(ctx context.Context, sessionID string) ([]Event, error)
 	DeleteSession(ctx context.Context, id string) error
+	DeleteAllSessions(ctx context.Context, workspaceID string) (int64, error)
 	ListActiveAgents(ctx context.Context) ([]ActiveAgent, error)
 }
 
@@ -217,6 +218,31 @@ func (s *Service) DeleteSession(ctx context.Context, id string) error {
 		s.publisher.Publish(events.Event{Type: events.TypeSessions, Workspace: session.Workspace})
 	}
 	return nil
+}
+
+// PurgeSessions bulk-deletes sessions. An explicit workspace is authorized
+// against the principal's scope; purging EVERY workspace at once is a
+// root-only maintenance operation. Returns the number of sessions deleted.
+func (s *Service) PurgeSessions(ctx context.Context, workspaceID string) (int, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		if err := auth.RequireRoot(ctx); err != nil {
+			return 0, err
+		}
+	} else if err := auth.RequireWorkspace(ctx, workspaceID); err != nil {
+		return 0, err
+	}
+	n, err := s.store.DeleteAllSessions(ctx, workspaceID)
+	if err != nil {
+		return 0, err
+	}
+	// Session-scoped blackboard entries die in the FK cascade — those views
+	// need the refresh signal too.
+	if s.publisher != nil && n > 0 {
+		s.publisher.Publish(events.Event{Type: events.TypeSessions, Workspace: workspaceID})
+		s.publisher.Publish(events.Event{Type: events.TypeBlackboard, Workspace: workspaceID})
+	}
+	return int(n), nil
 }
 
 func normalizeReport(input ReportInput) (ReportInput, error) {

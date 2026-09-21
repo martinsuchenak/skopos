@@ -4,6 +4,28 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] — 2026-09-21
+
+### Added
+
+- **Bulk deletes** — two operator maintenance endpoints, both reporting
+  the count (`{"deleted": N}`), with CLI and dashboard support and no MCP
+  surface (keeping the toolset lean, as with audit reads):
+  - `DELETE /api/sessions` purges sessions — one workspace via
+    `?workspace_id=` (any key scoped to it) or every session on the
+    server (root key only). The usual cascades apply: events, agent
+    states, and session-scoped blackboard entries go with them; both
+    the `sessions` and `blackboard` refresh events fire. CLI:
+    `skopos sessions purge [--workspace …]`. Dashboard: "Delete all…"
+    in the sessions header (hidden for non-root keys in the
+    All-workspaces view).
+  - `DELETE /api/blackboard/entries?workspace_id=…&entry_type=…` purges
+    every entry of one type in one workspace, across all scopes and
+    branches (floating bug/debt included). Both parameters are required
+    for every principal. CLI: `skopos blackboard purge --type …
+    --workspace …`. Dashboard: a per-type "Delete all" button in the
+    blackboard view (shown when a workspace is selected).
+
 ## [0.5.3] — 2026-09-21
 
 ### Added

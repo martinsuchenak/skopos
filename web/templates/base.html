@@ -129,7 +129,13 @@
                 <div>
                     <div class="mb-3 flex items-center justify-between">
                         <h2 class="text-sm font-semibold uppercase tracking-wide text-zinc-400">Sessions</h2>
-                        <span class="text-sm text-zinc-500" x-text="sessions.length"></span>
+                        <div class="flex items-center gap-2">
+                            <span class="text-sm text-zinc-500" x-text="sessions.length"></span>
+                            <!-- Visibility driven imperatively by syncSessionPurge:
+                                 a new x-show on a static element never re-runs in the
+                                 CSP build. Purge-everything is root-only server-side. -->
+                            <button type="button" data-session-purge style="display: none" @click="requestSessionPurge()" class="btn btn-sm btn-ghost text-rose-400" title="Bulk-delete sessions — their events, agent states, and session-scoped blackboard entries go with them">Delete all…</button>
+                        </div>
                     </div>
                     <p x-show="!loading && sessions.length === 0" class="card p-4 text-sm text-zinc-400">No reports yet.</p>
                     <ul class="space-y-2" aria-label="Sessions list">
@@ -250,9 +256,18 @@
                 </p>
 
                 <div class="space-y-8">
-                    <template x-for="group in entriesByType()" :key="group.type">
+                    <!-- Composite key incl. activeWorkspace (ws-menu row pattern):
+                         group.type alone is identical across workspaces, so a
+                         plain key lets Alpine reuse elements and skip re-evaluating
+                         the outer-state x-show below when the workspace changes. -->
+                    <template x-for="group in entriesByType()" :key="group.type + '|' + activeWorkspace">
                         <section>
-                            <h3 class="mb-3 text-sm font-semibold" :class="group.colorClass" x-text="group.label"></h3>
+                            <div class="mb-3 flex items-center justify-between gap-2">
+                                <h3 class="text-sm font-semibold" :class="group.colorClass" x-text="group.label"></h3>
+                                <!-- Purge needs an explicit workspace; re-created
+                                     groups (key above) re-evaluate this on switch. -->
+                                <button x-show="!!activeWorkspace" type="button" @click="requestEntryPurge(group.type, group.label)" class="btn btn-sm btn-ghost text-rose-400" :title="entryPurgeTitle(group)" :aria-label="entryPurgeTitle(group)">Delete all</button>
+                            </div>
                             <ul class="space-y-2">
                                 <template x-for="entry in group.items" :key="entry.id">
                                     <li class="card p-4">
