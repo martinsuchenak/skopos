@@ -64,7 +64,7 @@
                  search and truncates long repo paths — the trigger opens a
                  searchable panel instead. -->
             <div class="relative ml-1 flex min-w-0 items-center gap-1.5">
-                <button type="button" @click="toggleWorkspaceMenu()" class="fld-sm flex max-w-44 items-center gap-1.5 text-left sm:max-w-80" :aria-expanded="workspaceMenuOpen ? 'true' : 'false'" aria-haspopup="listbox" aria-label="Filter by workspace" :title="activeWorkspace ? workspaceLabel(activeWorkspace) : 'All workspaces'">
+                <button type="button" @click="toggleWorkspaceMenu()" class="fld-sm flex max-w-44 items-center gap-1.5 text-left sm:max-w-80" :aria-expanded="workspaceMenuOpen ? 'true' : 'false'" aria-haspopup="listbox" aria-label="Filter by workspace" :title="activeWorkspace || 'All workspaces'">
                     <span class="truncate" x-text="activeWorkspace ? workspaceLabel(activeWorkspace) : 'All workspaces'"></span>
                     <svg class="ml-auto h-3.5 w-3.5 shrink-0 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                 </button>
@@ -142,7 +142,7 @@
                                             <span class="badge shrink-0" :class="statusClass(session.status)" x-text="session.status"></span>
                                         </div>
                                         <div class="mt-2 flex items-center justify-between gap-2 text-xs text-zinc-500">
-                                            <span class="truncate" x-text="session.workspace"></span>
+                                            <span class="truncate" x-text="workspaceLabel(session.workspace)"></span>
                                             <span class="shrink-0" x-text="session.agent_count + ' agents'"></span>
                                         </div>
                                         <div class="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-zinc-600">
@@ -161,7 +161,7 @@
                     <div class="mb-5 flex flex-wrap items-start justify-between gap-3">
                         <div>
                             <h2 class="text-2xl font-semibold" x-text="selectedSession && selectedSession.title || 'No session selected'"></h2>
-                            <p class="mt-1 text-sm text-zinc-400" x-text="selectedSession && selectedSession.workspace || 'Reports appear here as agents check in.'"></p>
+                            <p class="mt-1 text-sm text-zinc-400" x-text="selectedSession && workspaceLabel(selectedSession.workspace) || 'Reports appear here as agents check in.'"></p>
                             <p x-show="selectedSession" class="mt-0.5 text-xs text-zinc-600"
                                 x-text="selectedSession && ('started ' + formatTime(selectedSession.started_at) + ' · ran ' + sessionDuration(selectedSession) + ' · last activity ' + timeAgo(selectedSession.updated_at))"></p>
                         </div>

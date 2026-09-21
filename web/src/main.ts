@@ -431,10 +431,10 @@ const appState = () => ({
     if (this.whoami && !this.whoami.root) {
       // Scoped keys see exactly their slice of the registry — the server
       // enforces it; the UI mirrors it so the filter is honest.
-      for (const w of this.whoami.workspaces) map.set(w.id, w.name || w.id);
+      for (const w of this.whoami.workspaces) map.set(w.id, w.name || this.compactWorkspace(w.id));
       return [...map.entries()].map(([id, label]) => ({ id, label }));
     }
-    for (const w of this.registeredWorkspaces) map.set(w.id, w.name || w.id);
+    for (const w of this.registeredWorkspaces) map.set(w.id, w.name || this.compactWorkspace(w.id));
     for (const ws of this.workspaces) if (!map.has(ws)) map.set(ws, ws);
     return [...map.entries()].map(([id, label]) => ({ id, label }));
   },
@@ -445,10 +445,19 @@ const appState = () => ({
     if (this.activeWorkspace) return this.activeWorkspace;
     return this.workspaceOptions()[0]?.id || '';
   },
+  // Display form of a workspace id: drop a leading host-like segment
+  // (github.com/, gitlab.example.com/…). The host is shared noise — right-side
+  // truncation eats the org/repo tail, which is the part that actually
+  // distinguishes workspaces. Registry names (when set) bypass this entirely.
+  compactWorkspace(id: string): string {
+    const slash = id.indexOf('/');
+    if (slash > 0 && id.slice(0, slash).includes('.')) return id.slice(slash + 1);
+    return id;
+  },
   workspaceLabel(id?: string): string {
     if (!id) return '';
-    const w = this.registeredWorkspaces.find((r: { id: string; name: string }) => r.id === id);
-    return w?.name || id;
+    const w = this.registeredWorkspaces.find((r: { id: string; name?: string }) => r.id === id);
+    return w?.name || this.compactWorkspace(id);
   },
   // Auto-register any workspace seen in sessions so it persists in the DB.
   async autoRegisterWorkspaces() {
