@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] — 2026-09-21
+
+### Fixed
+
+- Workspace labels truncated the distinguishing part: badges and the
+  header picker cut off from the right, leaving only the shared host
+  (`github.com/fortix…`). Labels now display host-stripped
+  (`fortix/freedom3`) across all views — kanban and list badges, the
+  header picker, write-modal selects, the Sessions view, and index
+  groups. Display-only: full ids remain the values everywhere, on
+  hover (title attributes), and searchable in the picker; registry
+  names still take precedence when set.
+
 ## [0.5.0] — 2026-09-21
 
 ### Added
