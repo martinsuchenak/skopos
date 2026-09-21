@@ -452,7 +452,7 @@
                                                 </div>
                                             </div>
                                             <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
-                                                <span x-show="!activeWorkspace && item.workspace_id" class="badge max-w-28 truncate bg-sky-500/15 text-sky-300" :title="item.workspace_id" x-text="workspaceLabel(item.workspace_id)"></span>
+                                                <span x-show="!activeWorkspace && item.workspace_id" class="badge max-w-40 truncate bg-sky-500/15 text-sky-300" :title="item.workspace_id" x-text="workspaceLabel(item.workspace_id)"></span>
                                                 <span x-show="!item.workspace_id" class="badge bg-amber-500/15 text-amber-300">unfiled</span>
                                                 <select x-show="!item.workspace_id && workspaceOptions().length > 0" @change="fileInboxItem(item, $event.target)" class="fld-sm !min-h-6 w-36 text-[11px]" :aria-label="'File item ' + item.title + ' into workspace'">
                                                     <option value="">file into…</option>
