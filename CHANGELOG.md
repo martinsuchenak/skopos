@@ -4,6 +4,39 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] — 2026-09-21
+
+### Added
+
+- **Dashboard: workspace picker in the header** — the workspace filter
+  moved from the sidebar footer to the sticky header next to the view
+  title. The trigger is wider (full repo paths truncate with a tooltip)
+  and opens a searchable panel: filter by name or id, arrow-key
+  navigation, Enter to pick, Escape or click-away to close, checkmark on
+  the current selection. The selection persists across reloads
+  (localStorage) and is dropped automatically when the key can no longer
+  see that workspace.
+- **Inbox board: workspace badges and drop indicators** — kanban cards
+  show a workspace badge in the All-workspaces view; same-lane drags
+  show where the item will land (inset edge on the top or bottom half of
+  the hovered card), cross-lane hovers get a dashed outline, and the
+  dragged card dims.
+- **Inbox: search and tag filter at the top of the page** — a debounced
+  search box (title and content) and a tag select in the toolbar, active
+  in both list and board layouts. Per-item tag chips keep working.
+
+### Fixed
+
+- Inbox drag-reorder in the All-workspaces board failed with 400
+  ("reorder spans multiple workspaces"): reorder ids were computed from
+  a cross-workspace fetch and included converted items with stale
+  frozen priorities. Ids are now scoped to the dragged item's workspace
+  and to open/in_progress items.
+- The dragged kanban card never dimmed: a row-level `:class` bound to
+  outer-scope state never re-evaluates in the Alpine CSP build (sixth
+  documented silent mode, alongside `x-show` on newly added elements);
+  both are now driven imperatively from TypeScript.
+
 ## [0.4.0] — 2026-09-20
 
 ### Added
