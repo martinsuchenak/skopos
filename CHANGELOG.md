@@ -4,6 +4,21 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.7.2] — 2026-09-22
+
+### Fixed
+
+- **Dashboard: mobile layout (WCAG 2.2 AA at phone widths)** — list rows
+  in the Inbox and Plans now stack their action buttons below the title
+  on narrow screens (the old side cluster was `shrink-0` and overflowed);
+  the inbox toolbar's search/tag/sort group wraps; the header drops the
+  view title and shrinks the workspace picker below `sm` so nothing
+  crowds; compact 24px buttons rise to 32px below `sm` (all regular
+  buttons are already 36–44px). Verified at 390px and at the 320px WCAG
+  reflow benchmark across every view: no page-level horizontal scrolling
+  (the kanban board scrolls internally by design), tap targets ≥ 24px
+  AA everywhere.
+
 ## [0.7.1] — 2026-09-22
 
 ### Fixed

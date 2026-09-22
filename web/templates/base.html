@@ -57,18 +57,18 @@
             <button type="button" @click="sidebarOpen = !sidebarOpen" class="btn btn-ghost p-2 md:hidden" aria-label="Toggle navigation" :aria-expanded="sidebarOpen">
                 <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
             </button>
-            <h1 class="text-base font-semibold capitalize" x-text="activeView"></h1>
+            <h1 class="hidden min-w-0 truncate text-base font-semibold capitalize sm:block" x-text="activeView"></h1>
 
             <!-- Workspace filter: global context, so it lives in the sticky
                  header and persists in localStorage. A native select cannot
                  search and truncates long repo paths — the trigger opens a
                  searchable panel instead. -->
             <div class="relative ml-1 flex min-w-0 items-center gap-1.5">
-                <button type="button" @click="toggleWorkspaceMenu()" class="fld-sm flex max-w-44 items-center gap-1.5 text-left sm:max-w-80" :aria-expanded="workspaceMenuOpen ? 'true' : 'false'" aria-haspopup="listbox" aria-label="Filter by workspace" :title="activeWorkspace || 'All workspaces'">
+                <button type="button" @click="toggleWorkspaceMenu()" class="fld-sm flex max-w-32 items-center gap-1.5 text-left sm:max-w-80" :aria-expanded="workspaceMenuOpen ? 'true' : 'false'" aria-haspopup="listbox" aria-label="Filter by workspace" :title="activeWorkspace || 'All workspaces'">
                     <span class="truncate" x-text="activeWorkspace ? workspaceLabel(activeWorkspace) : 'All workspaces'"></span>
                     <svg class="ml-auto h-3.5 w-3.5 shrink-0 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                 </button>
-                <button type="button" @click="openWorkspaceModal()" class="btn btn-sm !min-h-6 !px-2" aria-label="Create workspace" title="Create workspace">
+                <button type="button" @click="openWorkspaceModal()" class="btn btn-sm !min-h-8 sm:!min-h-6 !px-2" aria-label="Create workspace" title="Create workspace">
                     <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                     <span class="hidden lg:inline">New</span>
                 </button>
@@ -122,7 +122,7 @@
             </div>
         </header>
 
-        <main id="main-content" class="p-6" role="main">
+        <main id="main-content" class="p-4 sm:p-6" role="main">
 
             <!-- ===================== SESSIONS ===================== -->
             <section x-show="activeView === 'sessions'" class="grid gap-6 lg:grid-cols-[360px_1fr]">
@@ -320,7 +320,7 @@
                 <ul class="space-y-3">
                     <template x-for="plan in plans" :key="plan.id">
                         <li class="card">
-                            <div class="flex items-center justify-between gap-2 p-4">
+                            <div class="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
                                 <button type="button" @click="togglePlan(plan)" class="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 rounded">
                                     <div class="flex flex-wrap items-center gap-2">
                                         <span class="font-medium text-zinc-100" x-text="plan.name"></span>
@@ -333,7 +333,7 @@
                                     </div>
                                     <p x-show="plan.description" class="mt-1 text-sm text-zinc-400" x-text="plan.description"></p>
                                 </button>
-                                <div class="flex items-center gap-1">
+                                <div class="flex flex-wrap items-center gap-1">
                                     <button type="button" x-show="plan.status !== 'archived'" @click.stop="archivePlan(plan.id)" class="btn btn-sm btn-ghost" aria-label="Archive plan">Archive</button>
                                     <button type="button" @click.stop="requestDelete('plan', plan.id, plan.name)" class="btn btn-sm btn-ghost text-rose-400" :aria-label="'Delete plan ' + plan.name">Delete</button>
                                 </div>
@@ -397,10 +397,10 @@
             <section x-show="activeView === 'inbox'" x-cloak>
                 <div class="mb-6 flex flex-wrap items-center gap-3">
                     <div class="flex items-center gap-1 rounded-md border border-zinc-700 bg-zinc-900 p-1" role="group" aria-label="Inbox layout">
-                        <button type="button" @click="setInboxLayout('list')" class="btn btn-sm !min-h-6 px-2 py-1" :class="inboxLayout === 'list' ? 'border-cyan-500 text-cyan-300' : 'border-transparent text-zinc-400'" aria-label="List layout" title="List layout">
+                        <button type="button" @click="setInboxLayout('list')" class="btn btn-sm !min-h-8 sm:!min-h-6 px-2 py-1" :class="inboxLayout === 'list' ? 'border-cyan-500 text-cyan-300' : 'border-transparent text-zinc-400'" aria-label="List layout" title="List layout">
                             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
                         </button>
-                        <button type="button" @click="setInboxLayout('lanes')" class="btn btn-sm !min-h-6 px-2 py-1" :class="inboxLayout === 'lanes' ? 'border-cyan-500 text-cyan-300' : 'border-transparent text-zinc-400'" aria-label="Board layout (swimlanes)" title="Board layout (swimlanes)">
+                        <button type="button" @click="setInboxLayout('lanes')" class="btn btn-sm !min-h-8 sm:!min-h-6 px-2 py-1" :class="inboxLayout === 'lanes' ? 'border-cyan-500 text-cyan-300' : 'border-transparent text-zinc-400'" aria-label="Board layout (swimlanes)" title="Board layout (swimlanes)">
                             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 4v16m6-16v16M4 4h16M4 20h16"/></svg>
                         </button>
                     </div>
@@ -411,7 +411,7 @@
                     </div>
                     <!-- Top-of-page search + tag filter: item-level tag chips
                          only exist wherever the items happen to render. -->
-                    <div class="flex items-center gap-1.5" role="search">
+                    <div class="flex flex-wrap items-center gap-1.5" role="search">
                         <input type="search" x-model="inboxQuery" @input.debounce.300ms="setInboxQuery($event.target.value)" class="fld-sm w-36 sm:w-52" placeholder="Search inbox…" aria-label="Search inbox by title or content">
                         <select x-model="inboxTagFilter" @change="selectInboxTagFilter($event.target.value)" class="fld-sm max-w-40 truncate" aria-label="Filter by tag">
                             <option value="">All tags</option>
@@ -457,7 +457,7 @@
                                 <span class="flex items-center gap-1">
                                     <span x-show="lane.key === 'converted'" class="text-[10px] text-zinc-600" title="Conversion links a plan (Convert on a card)">auto</span>
                                     <span x-show="lane.key === 'done'" class="text-[10px] text-zinc-600" title="Linked plans flip their items here on completion; drag a card here to mark it done manually; drag it back to Open to reopen">auto</span>
-                                    <button x-show="!!activeWorkspace" type="button" @click="requestInboxPurge(lane.key, lane.label)" class="btn btn-sm btn-ghost !min-h-6 !px-1.5 !py-0 text-[10px] text-rose-400" :title="'Permanently delete every ' + lane.label.toLowerCase() + ' item in ' + activeWorkspace" :aria-label="'Delete every ' + lane.label.toLowerCase() + ' item in ' + activeWorkspace">Clear</button>
+                                    <button x-show="!!activeWorkspace" type="button" @click="requestInboxPurge(lane.key, lane.label)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-1.5 !py-0 text-[10px] text-rose-400" :title="'Permanently delete every ' + lane.label.toLowerCase() + ' item in ' + activeWorkspace" :aria-label="'Delete every ' + lane.label.toLowerCase() + ' item in ' + activeWorkspace">Clear</button>
                                 </span>
                             </div>
                             <!-- Drop handlers live on a CHILD of the x-for root: the
@@ -477,9 +477,9 @@
                                                     <span class="text-sm font-medium text-zinc-100" x-text="item.title"></span>
                                                 </div>
                                                 <div class="flex shrink-0 items-center gap-1">
-                                                    <button type="button" x-show="item.status === 'discarded'" @click.stop="restoreInboxItem(item.id)" class="btn btn-sm btn-ghost !min-h-6 !px-2 !py-0.5 text-xs">Restore</button>
-                                                    <button type="button" x-show="item.status === 'done'" @click.stop="reopenInboxItem(item.id)" class="btn btn-sm btn-ghost !min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Reopen item ' + item.title + ' back to open'">Reopen</button>
-                                                    <button type="button" x-show="inboxItemEditable(item)" @click.stop="openInboxEditModal(item)" class="btn btn-sm btn-ghost !min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Edit item ' + item.title">Edit</button>
+                                                    <button type="button" x-show="item.status === 'discarded'" @click.stop="restoreInboxItem(item.id)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs">Restore</button>
+                                                    <button type="button" x-show="item.status === 'done'" @click.stop="reopenInboxItem(item.id)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Reopen item ' + item.title + ' back to open'">Reopen</button>
+                                                    <button type="button" x-show="inboxItemEditable(item)" @click.stop="openInboxEditModal(item)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Edit item ' + item.title">Edit</button>
                                                 </div>
                                             </div>
                                             <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
@@ -516,8 +516,11 @@
                          it changes, so row-level directives (Pin visibility)
                          re-evaluate — the verified workspace-picker pattern. -->
                     <template x-for="item in sortedInboxItems()" :key="item.id + '|' + inboxSort">
+                        <!-- Actions stack under the title on phones (flex-col
+                             below sm) and wrap; the old shrink-0 side cluster
+                             never yielded and overflowed narrow screens. -->
                         <li class="card" :class="expandedInboxId === item.id ? 'border-cyan-500' : ''">
-                            <div class="flex items-start justify-between gap-2 p-4">
+                            <div class="flex flex-col gap-2 p-4 sm:flex-row sm:items-start sm:justify-between">
                                 <button type="button" @click="toggleInboxItem(item)" class="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 rounded">
                                     <div class="flex flex-wrap items-center gap-2">
                                         <span x-show="item.priority != null" class="rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] text-amber-300" x-text="'#' + item.priority"></span>
@@ -536,7 +539,7 @@
                                         <span class="text-xs text-zinc-600" x-text="'by ' + item.author_agent_id"></span>
                                     </div>
                                 </button>
-                                <div class="flex shrink-0 items-center gap-1">
+                                <div class="flex flex-wrap items-center gap-1">
                                     <button type="button" x-show="!item.workspace_id && inboxItemEditable(item)" @click.stop="openFileModal(item)" class="btn btn-sm btn-ghost" :aria-label="'File item ' + item.title + ' into a workspace'">File into…</button>
                                     <button type="button" x-show="inboxCanRank(item)" @click.stop="item.priority != null ? inboxSetPriority(item.id, 0) : pinInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="item.priority != null ? 'Unpin item ' + item.title : 'Pin item ' + item.title + ' to top'" x-text="item.priority != null ? 'Unpin' : 'Pin'"></button>
                                     <button type="button" x-show="inboxItemEditable(item)" @click.stop="openInboxEditModal(item)" class="btn btn-sm btn-ghost" :aria-label="'Edit item ' + item.title">Edit</button>
