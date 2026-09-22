@@ -20,5 +20,8 @@ func registerInboxRoutes(mux *http.ServeMux, h *inbox.Handler) {
 	mux.HandleFunc("POST /api/inbox/{id}/convert", h.Convert)
 	mux.HandleFunc("POST /api/inbox/{id}/discard", h.Discard)
 	mux.HandleFunc("POST /api/inbox/{id}/restore", h.Restore)
+	mux.HandleFunc("POST /api/inbox/{id}/complete", h.Complete)
+	mux.HandleFunc("POST /api/inbox/{id}/reopen", h.Reopen)
 	mux.HandleFunc("DELETE /api/inbox/{id}", h.DeleteItem)
+	mux.HandleFunc("DELETE /api/inbox", h.Purge)
 }

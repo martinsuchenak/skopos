@@ -266,3 +266,72 @@ func (h *Handler) Restore(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// Complete manually marks an item done (work that finished without a plan,
+// or ahead of it) — the drag-to-Done lane target.
+func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	id := r.PathValue("id")
+	if err := h.service.Complete(r.Context(), id); err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
+			rest.RespondError(w, http.StatusNotFound, err.Error())
+		case errors.Is(err, ErrInvalidInput):
+			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		default:
+			rest.InternalError(w, err)
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Reopen brings a done item back to open (undo a wrong manual complete).
+func (h *Handler) Reopen(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	id := r.PathValue("id")
+	if err := h.service.Reopen(r.Context(), id); err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
+			rest.RespondError(w, http.StatusNotFound, err.Error())
+		case errors.Is(err, ErrInvalidInput):
+			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		default:
+			rest.InternalError(w, err)
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Purge handles DELETE /api/inbox — the collection-level bulk delete:
+// workspace_id required, optional status narrows to one lane. Responds 200
+// with {"deleted":N}. Out-of-scope maps to an actionable 403
+// (explicit-target semantics), not a 404: this is not a by-id oracle case.
+func (h *Handler) Purge(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	workspaceID := rest.QueryAlias(r, "workspace_id", "workspace")
+	status := Status(r.URL.Query().Get("status"))
+	deleted, err := h.service.Purge(r.Context(), workspaceID, status)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
+			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, auth.ErrOutOfScope):
+			rest.RespondError(w, http.StatusForbidden, err.Error())
+		default:
+			rest.InternalError(w, err)
+		}
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, map[string]int{"deleted": deleted})
+}

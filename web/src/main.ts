@@ -131,6 +131,12 @@ const appState = () => ({
   // modal: add item
   showItemModal: false, itemSaving: false,
   itemForm: emptyItemForm(), itemErrors: {} as Record<string, string>,
+  // modal: file an unfiled item into a workspace (searchable picker)
+  showFileModal: false,
+  fileTargetItem: null as InboxItem | null,
+  fileQuery: '',
+  fileHighlightId: '',
+
   // modal: create/edit inbox item (CodeMirror-backed content)
   showInboxItemModal: false, inboxItemSaving: false,
   inboxForm: emptyInboxForm(), inboxErrors: {} as Record<string, string>,
@@ -242,7 +248,7 @@ const appState = () => ({
   },
 
   anyModalOpen() {
-    return this.showNewKeyModal || this.showSecretModal || this.showEditKeyModal || this.showEntryModal || this.showPlanModal || this.showItemModal || this.showInboxItemModal || this.showWorkspaceModal || this.confirm.open;
+    return this.showNewKeyModal || this.showSecretModal || this.showEditKeyModal || this.showEntryModal || this.showPlanModal || this.showItemModal || this.showInboxItemModal || this.showWorkspaceModal || this.showFileModal || this.confirm.open;
   },
 
   // ---- theme ----
@@ -840,23 +846,23 @@ const appState = () => ({
     ];
   },
   laneItems(key: string): InboxItem[] { return this.sortInbox(this.inboxItems.filter((i: InboxItem) => i.status === key)); },
-  // Draggable: only actionable items plus converted (which can be dragged to
-  // Discarded). Done/Discarded are terminal.
+  // Draggable: every card — done included (drag back to Open = reopen).
   inboxDraggable(item: InboxItem): boolean {
-    // Discarded cards drag back to Open (restore); done is terminal.
-    return item.status !== 'done';
+    return true;
   },
   laneAcceptsDrop(key: string): boolean {
     const from = this.inboxItems.find((i: InboxItem) => i.id === this.inboxDragId);
     if (!from) return false;
     if (key === from.status) return true; // reorder within the lane
     if (key === 'in_progress' && from.status === 'open') return true;
-    if (key === 'open' && (from.status === 'in_progress' || from.status === 'discarded')) return true;
+    // Open takes back released, discarded (restore), and done (reopen).
+    if (key === 'open' && (from.status === 'in_progress' || from.status === 'discarded' || from.status === 'done')) return true;
     if (key === 'discarded' && from.status !== 'done' && from.status !== 'discarded') return true;
-    return false; // converted needs a plan; done is automatic
+    // Manual complete: work finished without a plan, or ahead of it.
+    if (key === 'done' && from.status !== 'done' && from.status !== 'discarded') return true;
+    return false; // converted needs a plan (Convert button); done→in_progress would invent a claim
   },
   startInboxDrag(item: InboxItem, ev: DragEvent) {
-    if (item.status === 'done') { ev.preventDefault(); return; } // terminal
     this.inboxDragId = item.id;
     // Dim the source imperatively: a :class on row state from OUTER scope
     // does not re-evaluate in the CSP build (same family as x-show-in-x-for).
@@ -960,7 +966,9 @@ const appState = () => ({
     if (from === 'open' && to === 'in_progress') { await this.claimInboxItem(id); }
     else if (from === 'in_progress' && to === 'open') { await this.releaseInboxItem(id); }
     else if (from === 'discarded' && to === 'open') { await this.restoreInboxItem(id); }
+    else if (from === 'done' && to === 'open') { await this.reopenInboxItem(id); }
     else if (to === 'discarded') { await this.discardInboxItem(id); }
+    else if (to === 'done') { await this.completeInboxItem(id); }
     else return;
     if (sourceOrdered && sourceOrdered.length > 0) {
       const res = await this.authFetch('/api/inbox/reorder', { method: 'POST', body: JSON.stringify({ ids: sourceOrdered }) });
@@ -991,6 +999,21 @@ const appState = () => ({
   async inboxSetPriority(id: string, priority: number) {
     const res = await this.authFetch('/api/inbox/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify({ priority }) });
     if (!await this.handleBad(res, 'Priority not updated')) return;
+    await this.fetchInbox();
+  },
+  // Manual done — work finished without a plan, or ahead of it. Server-side
+  // twin of the plan-completion hook's automatic flip.
+  async completeInboxItem(id: string) {
+    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(id) + '/complete', { method: 'POST' });
+    if (!await this.handleBad(res, 'Complete failed')) return;
+    this.notify('Marked done', 'success');
+    await this.fetchInbox();
+  },
+  // Undo for a wrong manual complete: back to open, claim/plan/priority reset.
+  async reopenInboxItem(id: string) {
+    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(id) + '/reopen', { method: 'POST' });
+    if (!await this.handleBad(res, 'Reopen failed')) return;
+    this.notify('Reopened', 'success');
     await this.fetchInbox();
   },
   // Pin = rank first against the server's unfiltered ordered prefix.
@@ -1096,13 +1119,96 @@ const appState = () => ({
   },
   // Single-statement @change handler (the CSP evaluator is only proven on
   // plain method calls): the select resets itself via the passed element.
-  async fileInboxItem(item: InboxItem, el: HTMLSelectElement) {
-    const ws = el.value;
-    el.value = '';
-    if (!ws || !item.id) return;
-    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(item.id), { method: 'PATCH', body: JSON.stringify({ workspace_id: ws }) });
+  // ---- file-into-workspace modal ----
+  // Searchable picker replacing the inline `file into…` selects (cramped,
+  // no search). Visibility is driven imperatively ([data-file-modal]):
+  // a NEW x-show is one of the CSP build's silent failure modes. Row-level
+  // x-shows that read only the row's own item keep working.
+  //
+  // Keyboard model = the ARIA combobox pattern (mirrors the header
+  // workspace picker): focus stays in the search input; ArrowDown/ArrowUp
+  // move the active option, Enter picks it, Escape closes, Tab cycles
+  // input ⇄ Cancel (options are tabindex -1). Screen readers announce the
+  // active option via aria-activedescendant.
+  openFileModal(item: InboxItem) {
+    if (!this.inboxItemEditable(item)) return; // frozen items cannot be re-filed
+    this.fileTargetItem = item;
+    this.fileQuery = '';
+    this.fileHighlightId = this.firstFileOptionId();
+    this.showFileModal = true;
+    this.$nextTick(() => {
+      const el = document.querySelector('[data-file-modal]') as HTMLElement | null;
+      if (el) el.style.display = '';
+      const input = document.getElementById('file-ws-query') as HTMLInputElement | null;
+      if (input) input.focus();
+    });
+  },
+  closeFileModal() {
+    this.showFileModal = false;
+    this.fileTargetItem = null;
+    this.fileQuery = '';
+    this.fileHighlightId = '';
+    const el = document.querySelector('[data-file-modal]') as HTMLElement | null;
+    if (el) el.style.display = 'none';
+  },
+  fileOptionIds(): string[] {
+    return this.fileOptions().filter((o: { id: string; empty?: boolean }) => !o.empty).map((o: { id: string }) => o.id);
+  },
+  firstFileOptionId(): string {
+    const ids = this.fileOptionIds();
+    return ids.length > 0 ? ids[0] : '';
+  },
+  fileQueryChanged() {
+    if (!this.fileOptionIds().includes(this.fileHighlightId)) {
+      this.fileHighlightId = this.firstFileOptionId();
+    }
+  },
+  fileHighlightMove(delta: number) {
+    const ids = this.fileOptionIds();
+    if (ids.length === 0) return;
+    const i = ids.indexOf(this.fileHighlightId);
+    this.fileHighlightId = i === -1
+      ? (delta > 0 ? ids[0] : ids[ids.length - 1])
+      : ids[Math.min(ids.length - 1, Math.max(0, i + delta))];
+    // Keep the active option inside the scrollable list.
+    this.$nextTick(() => {
+      const el = document.getElementById('file-opt-' + CSS.escape(this.fileHighlightId));
+      if (el) el.scrollIntoView({ block: 'nearest' });
+    });
+  },
+  filePickHighlighted() {
+    if (!this.fileHighlightId) return;
+    this.fileItemInto(this.fileHighlightId);
+  },
+  fileActiveDescendant(): string {
+    return this.fileHighlightId ? 'file-opt-' + this.fileHighlightId : '';
+  },
+  // Tab cycles search input ⇄ Cancel (the only two tab stops; options are
+  // tabindex -1 by design) so focus never escapes the modal.
+  trapFileTab(ev: KeyboardEvent) {
+    const input = document.getElementById('file-ws-query');
+    const modal = document.querySelector('[data-file-modal]');
+    const cancel = modal ? modal.querySelector<HTMLButtonElement>('.flex.justify-end button') : null;
+    if (!input || !cancel) return;
+    if (ev.shiftKey && document.activeElement === input) { ev.preventDefault(); cancel.focus(); }
+    else if (!ev.shiftKey && document.activeElement === cancel) { ev.preventDefault(); input.focus(); }
+  },
+  // Sentinel row keeps the empty state inside x-for reactivity (x-show on a
+  // new static element would never re-run in the CSP build).
+  fileOptions(): { id: string; label: string; empty?: boolean }[] {
+    const q = this.fileQuery.trim().toLowerCase();
+    const opts = this.workspaceOptions().filter((o: { id: string; label: string }) =>
+      !q || o.label.toLowerCase().includes(q) || o.id.toLowerCase().includes(q));
+    if (opts.length === 0) return [{ id: '', label: 'No workspaces match.', empty: true }];
+    return opts;
+  },
+  async fileItemInto(wsId: string) {
+    const item = this.fileTargetItem;
+    if (!item || !wsId) return;
+    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(item.id), { method: 'PATCH', body: JSON.stringify({ workspace_id: wsId }) });
     if (!await this.handleBad(res, 'Could not file item')) return;
-    this.notify('Filed into ' + ws, 'success');
+    this.notify('Filed into ' + this.workspaceLabel(wsId), 'success');
+    this.closeFileModal();
     await this.fetchInbox();
   },
   async claimInboxItem(id: string) {
@@ -1320,6 +1426,20 @@ const appState = () => ({
   entryPurgeTitle(group: { type: string; label: string }): string {
     return `Delete every ${group.label.toLowerCase()} entry in ${this.workspaceLabel(this.activeWorkspace)} — all scopes and branches`;
   },
+  // Per-lane clear on the board: one workspace + one status (the API allows
+  // omitting status for a full wipe — the CLI covers that shape). The count
+  // is read live at request time, so it reflects the current lane even
+  // though the header button's own visibility only tracks the workspace.
+  requestInboxPurge(status: string, label: string) {
+    if (!this.activeWorkspace) return; // purge needs an explicit workspace
+    const n = this.laneItems(status).length;
+    this.confirm = {
+      open: true, title: `Delete all ${label.toLowerCase()} items`,
+      message: `Permanently delete all ${n} ${label.toLowerCase()} item${n === 1 ? '' : 's'} in ${this.workspaceLabel(this.activeWorkspace)}? This cannot be undone.`,
+      label: 'Delete all', busy: false,
+      pending: { kind: 'inboxpurge', id: this.activeWorkspace + '|' + status },
+    };
+  },
   syncSessionPurge() {
     const btn = document.querySelector('[data-session-purge]') as HTMLElement | null;
     if (!btn) return;
@@ -1337,10 +1457,13 @@ const appState = () => ({
       this.closeInboxItemModal();
       return;
     }
-    if (p.kind === 'sessionpurge' || p.kind === 'entrypurge') {
+    if (p.kind === 'sessionpurge' || p.kind === 'entrypurge' || p.kind === 'inboxpurge') {
       let url: string;
       if (p.kind === 'sessionpurge') {
         url = p.id ? '/api/sessions?workspace_id=' + encodeURIComponent(p.id) : '/api/sessions';
+      } else if (p.kind === 'inboxpurge') {
+        const [ws, status] = p.id.split('|');
+        url = '/api/inbox?workspace_id=' + encodeURIComponent(ws) + '&status=' + encodeURIComponent(status);
       } else {
         const [ws, type] = p.id.split('|');
         url = '/api/blackboard/entries?workspace_id=' + encodeURIComponent(ws) + '&entry_type=' + encodeURIComponent(type);
@@ -1355,6 +1478,9 @@ const appState = () => ({
       if (p.kind === 'sessionpurge') {
         this.selectedSessionId = ''; this.selectedSession = null; localStorage.removeItem('skopos:session');
         await this.refresh();
+      } else if (p.kind === 'inboxpurge') {
+        if (this.expandedInboxId) { this.expandedInboxId = ''; this.expandedInbox = null; }
+        await this.fetchInbox();
       } else {
         await this.fetchBundle();
       }

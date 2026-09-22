@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -98,5 +99,53 @@ func TestSessionsCmdRegistered(t *testing.T) {
 	cmd := sessionsCmd()
 	if cmd == nil || cmd.Name != "sessions" || len(cmd.Commands) == 0 {
 		t.Fatalf("unexpected sessions command: %+v", cmd)
+	}
+}
+
+func TestInboxCompleteAndPurgeLifecycle(t *testing.T) {
+	ts := keysTestServer(t, "root-key")
+	ctx := context.Background()
+	K := "root-key"
+
+	// Capture two items in ws-a.
+	mk := `{"workspace_id":"ws-a","title":"t","content":"c","author_agent_id":"a"}`
+	purgeSeedPost(t, ts.URL+"/api/inbox", K, mk)
+	purgeSeedPost(t, ts.URL+"/api/inbox", K, mk)
+
+	list := []struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}{}
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/inbox?workspace_id=ws-a", nil)
+	req.Header.Set("Authorization", "Bearer root-key")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(list) != 2 {
+		t.Fatalf("expected 2 seeded items, got %d", len(list))
+	}
+	if err := inboxAction(ctx, ts.URL, "root-key", list[0].ID, "complete", []byte("{}"), "completing item"); err != nil {
+		t.Fatal(err)
+	}
+	// Reopen undoes the manual complete.
+	if err := inboxAction(ctx, ts.URL, "root-key", list[0].ID, "reopen", []byte("{}"), "reopening item"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reopen undoes the manual complete, so no done items remain; the
+	// all-statuses purge then takes both open items.
+	if n, err := inboxDoPurge(ctx, ts.URL, "root-key", "ws-a", "done"); err != nil || n != 0 {
+		t.Fatalf("done purge after reopen: n=%d err=%v", n, err)
+	}
+	if n, err := inboxDoPurge(ctx, ts.URL, "root-key", "ws-a", ""); err != nil || n != 2 {
+		t.Fatalf("all purge: n=%d err=%v", n, err)
+	}
+	if n, err := inboxDoPurge(ctx, ts.URL, "root-key", "ws-a", "done"); err != nil || n != 0 {
+		t.Fatalf("empty purge should be 0: n=%d err=%v", n, err)
 	}
 }

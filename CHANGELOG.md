@@ -4,6 +4,41 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] — 2026-09-22
+
+### Added
+
+- **Inbox: manual complete** — items that finished without a plan (or
+  ahead of it) can now be marked done manually: drag the card to the
+  Done lane, the Done button in the list view,
+  `POST /api/inbox/{id}/complete`, `skopos inbox complete --id`, or the
+  `inbox_complete` MCP tool. Allowed from open/in_progress/converted
+  (completing a converted item early is safe — the later plan-completion
+  flip no-ops); done stays terminal and discarded items must be restored
+  first.
+- **Inbox: bulk purge** — `DELETE /api/inbox?workspace_id=…` permanently
+  deletes items in one workspace, every status or one via `&status=`
+  (the answer to "how do I wipe the accumulated pile"): `skopos inbox
+  purge --workspace … [--status done]`, and Clear buttons on the board
+  lanes. Workspace required for every principal; unfiled items are never
+  matched; response reports the count. No MCP tool (operator concern,
+  like the other purges).
+
+- **Inbox: reopen** — a wrong manual complete can be undone: done → open
+  via drag-back-to-Open, the Reopen button, `POST /api/inbox/{id}/reopen`,
+  `skopos inbox reopen --id`, or `inbox_reopen`. The claim, plan link,
+  and priority are cleared — a fresh cycle.
+- **Inbox: UX round** — the unfiled item's "file into workspace" control
+  is now a full-width button opening a searchable picker modal (the old
+  inline select was crammed into the card's metadata row and could not
+  search); the control only appears on editable (open/in-progress)
+  items. The modal follows the ARIA combobox pattern: focus stays in the
+  search input, arrow keys move the active option, Enter picks, Escape
+  closes, and Tab cycles within the dialog (options expose
+  `aria-selected`/`aria-activedescendant` for screen readers). Error
+  messages now use human terms ("item is in progress") while messages
+  listing valid input values keep the API slugs.
+
 ## [0.6.0] — 2026-09-21
 
 ### Added

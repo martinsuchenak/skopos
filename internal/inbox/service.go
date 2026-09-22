@@ -191,7 +191,7 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 			return err
 		}
 		if !editable(item.Status) {
-			return fmt.Errorf("%w: item is %s; only open and in_progress items can be edited", ErrFrozen, item.Status)
+			return fmt.Errorf("%w: item is %s; only open and in-progress items can be edited", ErrFrozen, statusLabel(item.Status))
 		}
 		title, content, tags, workspace := item.Title, item.Content, item.Tags, item.WorkspaceID
 		if input.Title != "" {
@@ -247,7 +247,7 @@ func (s *Service) Reorder(ctx context.Context, input ReorderInput) error {
 				return fmt.Errorf("%w: item %s", ErrNotFound, id)
 			}
 			if !editable(item.Status) {
-				return fmt.Errorf("%w: item %s is %s; only open and in_progress items can be reordered", ErrInvalidInput, id, item.Status)
+				return fmt.Errorf("%w: item %s is %s; only open and in-progress items can be reordered", ErrInvalidInput, id, statusLabel(item.Status))
 			}
 			// Reorder is a board operation: one workspace per call (the SSE
 			// event is attributed to it). Unfiled items share "" — a
@@ -293,9 +293,9 @@ func (s *Service) Claim(ctx context.Context, itemID, agentID string) (*Item, err
 			case item.Status == StatusInProgress && item.ClaimedByAgentID == agentID:
 				return nil // idempotent re-claim by the same agent
 			case item.Status == StatusInProgress:
-				return fmt.Errorf("%w: item is in_progress (claimed by %q)", ErrClaimConflict, item.ClaimedByAgentID)
+				return fmt.Errorf("%w: item is in progress (claimed by %q)", ErrClaimConflict, item.ClaimedByAgentID)
 			default:
-				return fmt.Errorf("%w: item is %s; only open items can be claimed", ErrInvalidInput, item.Status)
+				return fmt.Errorf("%w: item is %s; only open items can be claimed", ErrInvalidInput, statusLabel(item.Status))
 			}
 		}
 		// Release.
@@ -305,7 +305,7 @@ func (s *Service) Claim(ctx context.Context, itemID, agentID string) (*Item, err
 		case StatusInProgress:
 			return tx.ReleaseItem(ctx, itemID, s.now().UTC())
 		default:
-			return fmt.Errorf("%w: only open and in_progress items can be claimed or released (item is %s)", ErrInvalidInput, item.Status)
+			return fmt.Errorf("%w: only open and in-progress items can be claimed or released (item is %s)", ErrInvalidInput, statusLabel(item.Status))
 		}
 	})
 	if err != nil {
@@ -381,7 +381,7 @@ func (s *Service) Restore(ctx context.Context, itemID string) error {
 			return err
 		}
 		if item.Status != StatusDiscarded {
-			return fmt.Errorf("%w: only discarded items can be restored (item is %s)", ErrInvalidInput, item.Status)
+			return fmt.Errorf("%w: only discarded items can be restored (item is %s)", ErrInvalidInput, statusLabel(item.Status))
 		}
 		return tx.RestoreItem(ctx, itemID, s.now().UTC())
 	})
@@ -406,7 +406,7 @@ func (s *Service) Discard(ctx context.Context, itemID string) error {
 		}
 		switch item.Status {
 		case StatusDone, StatusDiscarded:
-			return fmt.Errorf("%w: item is %s (terminal)", ErrInvalidInput, item.Status)
+			return fmt.Errorf("%w: item is %s (terminal)", ErrInvalidInput, statusLabel(item.Status))
 		default:
 			return tx.SetStatus(ctx, itemID, StatusDiscarded, s.now().UTC())
 		}
@@ -416,6 +416,92 @@ func (s *Service) Discard(ctx context.Context, itemID string) error {
 	}
 	s.publishItem(ctx, itemID)
 	return nil
+}
+
+// Complete manually marks an item done — the operator path for work that
+// finished without a plan, or ahead of it. Allowed from open, in_progress,
+// and converted (the plan-completion hook remains the automatic route for
+// converted items; completing early is safe — the later hook flip targets
+// status='converted' and no-ops). Done and discarded are terminal: restore
+// a discarded item first. The linked plan, if any, is untouched.
+func (s *Service) Complete(ctx context.Context, itemID string) error {
+	if err := s.requireItemScopeQuiet(ctx, itemID); err != nil {
+		return err
+	}
+	itemID = strings.TrimSpace(itemID)
+	err := s.store.RunInTx(ctx, func(tx Store) error {
+		item, err := tx.GetItem(ctx, itemID)
+		if err != nil {
+			return err
+		}
+		switch item.Status {
+		case StatusDone:
+			return fmt.Errorf("%w: item is already done", ErrInvalidInput)
+		case StatusDiscarded:
+			return fmt.Errorf("%w: item is discarded — restore it before completing", ErrInvalidInput)
+		default:
+			return tx.SetStatus(ctx, itemID, StatusDone, s.now().UTC())
+		}
+	})
+	if err != nil {
+		return err
+	}
+	s.publishItem(ctx, itemID)
+	return nil
+}
+
+// Reopen brings a done item back to open — the undo for a wrong manual
+// complete (done is no longer strictly terminal for humans; the automatic
+// plan-completion flip still never reopens anything). Fresh cycle: claim,
+// plan link, and priority are cleared, so the item re-enters the actionable
+// pool unclaimed and can be re-converted.
+func (s *Service) Reopen(ctx context.Context, itemID string) error {
+	if err := s.requireItemScopeQuiet(ctx, itemID); err != nil {
+		return err
+	}
+	itemID = strings.TrimSpace(itemID)
+	err := s.store.RunInTx(ctx, func(tx Store) error {
+		item, err := tx.GetItem(ctx, itemID)
+		if err != nil {
+			return err
+		}
+		if item.Status != StatusDone {
+			return fmt.Errorf("%w: only done items can be reopened (item is %s)", ErrInvalidInput, statusLabel(item.Status))
+		}
+		return tx.ReopenItem(ctx, itemID, s.now().UTC())
+	})
+	if err != nil {
+		return err
+	}
+	s.publishItem(ctx, itemID)
+	return nil
+}
+
+// Purge bulk-deletes items in one workspace — every status, or one status
+// when set (the board's per-lane "clear"). The workspace is required for
+// every principal, root included; there is deliberately no cross-workspace
+// variant, and unfiled items (NULL workspace) are never matched. Returns
+// the number of items deleted.
+func (s *Service) Purge(ctx context.Context, workspaceID string, status Status) (int, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	status = Status(strings.TrimSpace(string(status)))
+	if workspaceID == "" {
+		return 0, fmt.Errorf("%w: workspace_id is required (derive it with `skopos workspace` or the git remote)", ErrInvalidInput)
+	}
+	if status != "" && !ValidStatus(status) {
+		return 0, fmt.Errorf("%w: invalid status %q. Use: open, in_progress, converted, done, or discarded", ErrInvalidInput, status)
+	}
+	if err := auth.RequireWorkspace(ctx, workspaceID); err != nil {
+		return 0, err
+	}
+	n, err := s.store.DeleteByFilter(ctx, workspaceID, status)
+	if err != nil {
+		return 0, err
+	}
+	if s.publisher != nil && n > 0 {
+		s.publisher.Publish(events.Event{Type: events.TypeInbox, Workspace: workspaceID})
+	}
+	return int(n), nil
 }
 
 func (s *Service) DeleteItem(ctx context.Context, itemID string) error {
@@ -460,6 +546,16 @@ func (s *Service) CompleteForPlan(ctx context.Context, planID string) (int64, er
 
 func editable(status Status) bool {
 	return status == StatusOpen || status == StatusInProgress
+}
+
+// statusLabel renders a status for human-facing error messages ("in
+// progress"); messages that enumerate valid INPUT values keep the raw
+// slugs, since that is what callers must type.
+func statusLabel(s Status) string {
+	if s == StatusInProgress {
+		return "in progress"
+	}
+	return string(s)
 }
 
 func ValidStatus(s Status) bool {

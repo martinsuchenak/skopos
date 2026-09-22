@@ -194,6 +194,32 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 	)
 
 	registerTool(server,
+		mcplib.NewTool("inbox_complete",
+			"Manually mark an item done — for work that finished without a plan, or ahead of it. Allowed from open, in_progress, and converted; discarded items must be restored first. Done stays terminal.",
+			mcplib.String("item_id", "Item ID", mcplib.Required()),
+		),
+		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
+			if err := service.Complete(ctx, req.StringOr("item_id", "")); err != nil {
+				return nil, toolError(err)
+			}
+			return mcplib.NewToolResponseJSON(map[string]any{"completed": true}), nil
+		},
+	)
+
+	registerTool(server,
+		mcplib.NewTool("inbox_reopen",
+			"Bring a done item back to open (undo a wrong manual complete). Clears the claim, plan link, and priority — a fresh cycle; the item can be claimed and converted again.",
+			mcplib.String("item_id", "Item ID", mcplib.Required()),
+		),
+		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
+			if err := service.Reopen(ctx, req.StringOr("item_id", "")); err != nil {
+				return nil, toolError(err)
+			}
+			return mcplib.NewToolResponseJSON(map[string]any{"reopened": true}), nil
+		},
+	)
+
+	registerTool(server,
 		mcplib.NewTool("inbox_restore",
 			"Restore a discarded item back to open (undo an accidental discard; clears any stale claim). Done items are terminal — they belong to their plan.",
 			mcplib.String("item_id", "Item ID", mcplib.Required()),

@@ -433,14 +433,20 @@
                     </button>
                 </div>
 
-                <!-- Board (swimlanes): drag between lanes to claim/release/discard;
-                     drag within a lane onto a card to rank above it; drop at the
-                     lane bottom to unpin. Converted/Done lanes are read-only. -->
+                <!-- Board (swimlanes): drag between lanes to claim/release/
+                     complete/discard; drag within a lane onto a card to rank
+                     above it; drop at the lane bottom to unpin. Dragging INTO
+                     Done is the manual complete (work finished without a plan);
+                     dragging done BACK to Open reopens it. Converted cards move
+                     only to Discarded. -->
                 <p x-show="inboxLayout === 'lanes' && !inboxLoading && inboxItems.length === 0" class="card p-6 text-sm text-zinc-400">
                     No inbox items. Capture rough ideas here — an agent can then claim, enrich, and convert them into a plan.
                 </p>
                 <div x-show="inboxLayout === 'lanes' && inboxItems.length > 0" class="flex gap-4 overflow-x-auto pb-4" @dragend="endInboxDrag()">
-                    <template x-for="lane in inboxLanes()" :key="lane.key">
+                    <!-- Composite key incl. activeWorkspace (keyed-reuse trap):
+                         the lane header's Clear button reads outer state, so
+                         lanes must re-create on workspace switches. -->
+                    <template x-for="lane in inboxLanes()" :key="lane.key + '|' + activeWorkspace">
                         <div class="flex w-72 min-w-72 flex-col rounded-lg border bg-zinc-900/40"
                             :class="laneAcceptsDrop(lane.key) && inboxDragId ? 'border-cyan-500/70' : 'border-zinc-800'">
                             <div class="flex items-center justify-between gap-2 border-b border-zinc-800 px-3 py-2">
@@ -448,7 +454,11 @@
                                     <span x-text="lane.label"></span>
                                     <span class="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400" x-text="laneItems(lane.key).length"></span>
                                 </span>
-                                <span x-show="lane.key === 'converted' || lane.key === 'done'" class="text-[10px] text-zinc-600" :title="lane.key === 'converted' ? 'Conversion links a plan (Convert on a card)' : 'Completed automatically with the linked plan'">auto</span>
+                                <span class="flex items-center gap-1">
+                                    <span x-show="lane.key === 'converted'" class="text-[10px] text-zinc-600" title="Conversion links a plan (Convert on a card)">auto</span>
+                                    <span x-show="lane.key === 'done'" class="text-[10px] text-zinc-600" title="Linked plans flip their items here on completion; drag a card here to mark it done manually; drag it back to Open to reopen">auto</span>
+                                    <button x-show="!!activeWorkspace" type="button" @click="requestInboxPurge(lane.key, lane.label)" class="btn btn-sm btn-ghost !min-h-6 !px-1.5 !py-0 text-[10px] text-rose-400" :title="'Permanently delete every ' + lane.label.toLowerCase() + ' item in ' + activeWorkspace" :aria-label="'Delete every ' + lane.label.toLowerCase() + ' item in ' + activeWorkspace">Clear</button>
+                                </span>
                             </div>
                             <!-- Drop handlers live on a CHILD of the x-for root: the
                                  CSP build does not bind event handlers on the
@@ -468,21 +478,23 @@
                                                 </div>
                                                 <div class="flex shrink-0 items-center gap-1">
                                                     <button type="button" x-show="item.status === 'discarded'" @click.stop="restoreInboxItem(item.id)" class="btn btn-sm btn-ghost !min-h-6 !px-2 !py-0.5 text-xs">Restore</button>
+                                                    <button type="button" x-show="item.status === 'done'" @click.stop="reopenInboxItem(item.id)" class="btn btn-sm btn-ghost !min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Reopen item ' + item.title + ' back to open'">Reopen</button>
                                                     <button type="button" x-show="inboxItemEditable(item)" @click.stop="openInboxEditModal(item)" class="btn btn-sm btn-ghost !min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Edit item ' + item.title">Edit</button>
                                                 </div>
                                             </div>
                                             <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
                                                 <span x-show="!activeWorkspace && item.workspace_id" class="badge max-w-40 truncate bg-sky-500/15 text-sky-300" :title="item.workspace_id" x-text="workspaceLabel(item.workspace_id)"></span>
                                                 <span x-show="!item.workspace_id" class="badge bg-amber-500/15 text-amber-300">unfiled</span>
-                                                <select x-show="!item.workspace_id && workspaceOptions().length > 0" @change="fileInboxItem(item, $event.target)" class="fld-sm !min-h-6 w-36 text-[11px]" :aria-label="'File item ' + item.title + ' into workspace'">
-                                                    <option value="">file into…</option>
-                                                    <template x-for="o in workspaceOptions()" :key="o.id">
-                                                        <option :value="o.id" x-text="o.label"></option>
-                                                    </template>
-                                                </select>
                                                 <span x-show="item.claimed_by_agent_id" class="truncate max-w-28" x-text="item.claimed_by_agent_id"></span>
                                                 <span x-show="item.plan_id" class="badge max-w-32 truncate bg-violet-500/15 text-violet-300" x-text="item.plan && item.plan.name ? '→ ' + item.plan.name : '→ plan'"></span>
                                                 <span class="ml-auto" x-text="timeAgo(item.created_at)"></span>
+                                            </div>
+                                            <!-- Own row, 24px+ target: the inline `file into…`
+                                                 select was crammed into the 11px metadata row and
+                                                 could not search. Frozen items can't be re-filed,
+                                                 so the button hides for them. -->
+                                            <div class="mt-2" x-show="!item.workspace_id && inboxItemEditable(item)">
+                                                <button type="button" @click.stop="openFileModal(item)" class="btn btn-sm !min-h-8 w-full justify-start text-xs" :aria-label="'File item ' + item.title + ' into a workspace'">File into workspace…</button>
                                             </div>
                                         </div>
                                     </li>
@@ -525,17 +537,14 @@
                                     </div>
                                 </button>
                                 <div class="flex shrink-0 items-center gap-1">
-                                    <select x-show="!item.workspace_id && workspaceOptions().length > 0" @change="fileInboxItem(item, $event.target)" class="fld-sm w-44" :aria-label="'File item ' + item.title + ' into workspace'">
-                                        <option value="">file into…</option>
-                                        <template x-for="o in workspaceOptions()" :key="o.id">
-                                            <option :value="o.id" x-text="o.label"></option>
-                                        </template>
-                                    </select>
+                                    <button type="button" x-show="!item.workspace_id && inboxItemEditable(item)" @click.stop="openFileModal(item)" class="btn btn-sm btn-ghost" :aria-label="'File item ' + item.title + ' into a workspace'">File into…</button>
                                     <button type="button" x-show="inboxCanRank(item)" @click.stop="item.priority != null ? inboxSetPriority(item.id, 0) : pinInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="item.priority != null ? 'Unpin item ' + item.title : 'Pin item ' + item.title + ' to top'" x-text="item.priority != null ? 'Unpin' : 'Pin'"></button>
                                     <button type="button" x-show="inboxItemEditable(item)" @click.stop="openInboxEditModal(item)" class="btn btn-sm btn-ghost" :aria-label="'Edit item ' + item.title">Edit</button>
                                     <button type="button" x-show="item.status === 'discarded'" @click.stop="restoreInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Restore item ' + item.title + ' to open'">Restore</button>
+                                    <button type="button" x-show="item.status === 'done'" @click.stop="reopenInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Reopen item ' + item.title + ' back to open'">Reopen</button>
                                     <button type="button" x-show="item.status === 'open'" @click.stop="claimInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Claim item ' + item.title">Claim</button>
                                     <button type="button" x-show="item.status === 'in_progress'" @click.stop="releaseInboxItem(item.id)" class="btn btn-sm btn-ghost">Release</button>
+                                    <button type="button" x-show="item.status !== 'done' && item.status !== 'discarded'" @click.stop="completeInboxItem(item.id)" class="btn btn-sm btn-ghost text-emerald-300" :aria-label="'Mark item ' + item.title + ' done'">Done</button>
                                     <button type="button" x-show="item.workspace_id && (item.status === 'open' || item.status === 'in_progress')" @click.stop="convertInboxItem(item)" class="btn btn-sm btn-ghost text-violet-300" :aria-label="'Convert item ' + item.title + ' to a plan'">Convert</button>
                                     <button type="button" x-show="item.status !== 'done' && item.status !== 'discarded'" @click.stop="discardInboxItem(item.id)" class="btn btn-sm btn-ghost">Discard</button>
                                     <button type="button" @click.stop="requestDelete('inboxitem', item.id, item.title)" class="btn btn-sm btn-ghost text-rose-400" :aria-label="'Delete item ' + item.title">Delete</button>
@@ -986,6 +995,40 @@
                 </div>
             </form>
             <p class="mt-2 text-right text-[11px] text-zinc-600">⌘/Ctrl+Enter saves · Esc closes without saving · accidental closes (backdrop/Cancel) are confirmed</p>
+        </div>
+    </div>
+
+    <!-- ===================== FILE-INTO-WORKSPACE MODAL ===================== -->
+    <!-- Visibility is imperative ([data-file-modal], set in openFileModal/
+         closeFileModal): a NEW x-show never re-runs in the CSP build. The
+         empty state rides the x-for as a sentinel row for the same reason.
+         Keyboard: ARIA combobox pattern — focus stays in the search input,
+         arrows move the active option (composite :key re-renders the
+         highlight), Enter picks, Escape closes, Tab cycles input ⇄ Cancel. -->
+    <div data-file-modal style="display: none" class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="file-modal-title" @keydown.escape.window="closeFileModal()">
+        <div class="fixed inset-0 bg-black/60" @click="closeFileModal()" aria-hidden="true"></div>
+        <div class="card relative w-full max-w-md p-6 shadow-2xl" @keydown.tab="trapFileTab($event)">
+            <h2 id="file-modal-title" class="mb-1 text-lg font-semibold">File item into workspace</h2>
+            <p class="mb-4 truncate text-sm text-zinc-400" :title="fileTargetItem ? fileTargetItem.title : ''" x-text="fileTargetItem ? fileTargetItem.title : ''"></p>
+            <input id="file-ws-query" type="search" x-model="fileQuery" @input="fileQueryChanged()"
+                @keydown.down.prevent="fileHighlightMove(1)" @keydown.up.prevent="fileHighlightMove(-1)"
+                @keydown.enter.prevent="filePickHighlighted()"
+                role="combobox" aria-expanded="true" aria-controls="file-ws-list" aria-autocomplete="list"
+                :aria-activedescendant="fileActiveDescendant()"
+                class="fld mb-3" placeholder="Search workspaces…" aria-label="Search workspaces" autocomplete="off">
+            <ul id="file-ws-list" class="max-h-64 space-y-1 overflow-y-auto" role="listbox" aria-label="Workspaces">
+                <template x-for="o in fileOptions()" :key="o.id + '|' + fileQuery + '|' + (fileHighlightId === o.id ? '1' : '0')">
+                    <li :id="o.id ? 'file-opt-' + o.id : 'file-opt-empty'">
+                        <div role="option" tabindex="-1" :aria-selected="fileHighlightId === o.id ? 'true' : 'false'" @click="o.empty === true ? null : fileItemInto(o.id)"
+                            class="flex min-h-11 w-full cursor-pointer items-center rounded px-3 py-2 text-left text-xs"
+                            :class="o.empty ? 'cursor-default text-zinc-500' : (fileHighlightId === o.id ? 'bg-zinc-800 font-mono text-zinc-100' : 'font-mono text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100')"
+                            :title="o.id" x-text="o.label"></div>
+                    </li>
+                </template>
+            </ul>
+            <div class="mt-5 flex justify-end">
+                <button type="button" @click="closeFileModal()" class="btn">Cancel</button>
+            </div>
         </div>
     </div>
 

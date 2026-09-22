@@ -856,6 +856,25 @@ paths:
         "400": { description: Invalid status filter }
         "401": { description: Unauthorized }
         "403": { description: "Workspace out of scope for this credential" }
+    delete:
+      summary: Bulk-delete items in one workspace (every status, or one with status)
+      operationId: purgeInboxItems
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: workspace_id, in: query, required: true, schema: { type: string }, description: Workspace to purge (required for every principal, root included; unfiled items are never matched) }
+        - { name: status, in: query, schema: { type: string, enum: [open, in_progress, converted, done, discarded] }, description: Limit the purge to one status; omit for all statuses }
+      responses:
+        "200":
+          description: "Purge result: { deleted: N }"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: integer }
+        "400": { description: Missing/invalid workspace_id or status }
+        "401": { description: Unauthorized }
+        "403": { description: Workspace out of scope for this credential }
   /api/inbox/reorder:
     post:
       summary: Assign explicit priorities 1..N to the posted id order (board drag-and-drop)
@@ -994,6 +1013,28 @@ paths:
       responses:
         "204": { description: Restored }
         "400": { description: Only discarded items can be restored (done is terminal) }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+  /api/inbox/{id}/complete:
+    post:
+      summary: Manually mark an item done (work finished without a plan, or ahead of it)
+      operationId: completeInboxItem
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      responses:
+        "204": { description: Completed }
+        "400": { description: "Item is already done, or is discarded (restore it first)" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+  /api/inbox/{id}/reopen:
+    post:
+      summary: Bring a done item back to open (undo a wrong manual complete; clears claim, plan link, and priority)
+      operationId: reopenInboxItem
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      responses:
+        "204": { description: Reopened }
+        "400": { description: Only done items can be reopened }
         "401": { description: Unauthorized }
         "404": { description: Not found }
 

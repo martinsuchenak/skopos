@@ -35,6 +35,9 @@ func inboxCmd() *cli.Command {
 			inboxFileCmd(),
 			inboxRestoreCmd(),
 			inboxDiscardCmd(),
+			inboxCompleteCmd(),
+			inboxReopenCmd(),
+			inboxPurgeCmd(),
 			inboxDeleteCmd(),
 		},
 	}
@@ -347,6 +350,109 @@ func inboxDiscardCmd() *cli.Command {
 			return nil
 		},
 	}
+}
+
+func inboxCompleteCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "complete",
+		Usage: "Manually mark an item done (work finished without a plan, or ahead of it)",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
+			&cli.StringFlag{Name: "id", Usage: "Item ID"},
+		},
+		Run: func(ctx context.Context, cmd *cli.Command) error {
+			id := strings.TrimSpace(cmd.GetString("id"))
+			if id == "" {
+				return fmt.Errorf("--id is required")
+			}
+			if err := inboxAction(ctx, cmd.GetString("server-url"), cmd.GetString("api-key"), id, "complete", []byte("{}"), "completing item"); err != nil {
+				return err
+			}
+			fmt.Println("done")
+			return nil
+		},
+	}
+}
+
+func inboxReopenCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "reopen",
+		Usage: "Bring a done item back to open (undo a wrong complete; clears claim, plan link, priority)",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
+			&cli.StringFlag{Name: "id", Usage: "Item ID"},
+		},
+		Run: func(ctx context.Context, cmd *cli.Command) error {
+			id := strings.TrimSpace(cmd.GetString("id"))
+			if id == "" {
+				return fmt.Errorf("--id is required")
+			}
+			if err := inboxAction(ctx, cmd.GetString("server-url"), cmd.GetString("api-key"), id, "reopen", []byte("{}"), "reopening item"); err != nil {
+				return err
+			}
+			fmt.Println("reopened")
+			return nil
+		},
+	}
+}
+
+func inboxPurgeCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "purge",
+		Usage: "Bulk-delete items in one workspace (optionally one status; omit for every status)",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
+			&cli.StringFlag{Name: "status", Usage: "Limit the purge to one status: open, in_progress, converted, done, or discarded"},
+			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID (defaults to this checkout's workspace)"},
+		},
+		Run: func(ctx context.Context, cmd *cli.Command) error {
+			ws := workspaceOrDefault(cmd.GetString("workspace"))
+			deleted, err := inboxDoPurge(ctx, cmd.GetString("server-url"), cmd.GetString("api-key"), ws, strings.TrimSpace(cmd.GetString("status")))
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(cmd.GetString("status")) != "" {
+				fmt.Printf("deleted %d %s items in %s\n", deleted, cmd.GetString("status"), ws)
+			} else {
+				fmt.Printf("deleted %d items (all statuses) in %s\n", deleted, ws)
+			}
+			return nil
+		},
+	}
+}
+
+func inboxDoPurge(ctx context.Context, serverURL, apiKey, workspaceID, status string) (int, error) {
+	q := url.Values{}
+	q.Set("workspace_id", workspaceID)
+	if status != "" {
+		q.Set("status", status)
+	}
+	u := strings.TrimRight(serverURL, "/") + "/api/inbox?" + q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u, nil)
+	if err != nil {
+		return 0, fmt.Errorf("creating request: %w", err)
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("purging inbox items: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("%s", apiErrorMessage("purging inbox items", resp))
+	}
+	var out struct {
+		Deleted int `json:"deleted"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return 0, fmt.Errorf("decoding response: %w", err)
+	}
+	return out.Deleted, nil
 }
 
 func inboxRestoreCmd() *cli.Command {

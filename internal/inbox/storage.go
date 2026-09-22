@@ -21,12 +21,18 @@ type Store interface {
 	ReorderItems(ctx context.Context, ids []string, updatedAt time.Time) error
 	// RestoreItem moves a discarded item back to open (claim cleared).
 	RestoreItem(ctx context.Context, id string, updatedAt time.Time) error
+	// ReopenItem moves a done item back to open — fresh cycle: claim, plan
+	// link, and priority are cleared.
+	ReopenItem(ctx context.Context, id string, updatedAt time.Time) error
 	ClaimItem(ctx context.Context, id, agentID string, updatedAt time.Time) error
 	ReleaseItem(ctx context.Context, id string, updatedAt time.Time) error
 	ConvertItem(ctx context.Context, id, planID string, updatedAt time.Time) error
 	SetStatus(ctx context.Context, id string, status Status, updatedAt time.Time) error
 	CompleteForPlan(ctx context.Context, planID string, updatedAt time.Time) (int64, error)
 	DeleteItem(ctx context.Context, id string) error
+	// DeleteByFilter bulk-deletes items in one workspace — every status, or
+	// one status when non-empty. Unfiled items (NULL workspace) never match.
+	DeleteByFilter(ctx context.Context, workspaceID string, status Status) (int64, error)
 	// RunInTx executes fn inside a single SQL transaction. The Store passed to
 	// fn is bound to the transaction, so all operations are atomic. If fn is
 	// called on a store already inside a transaction, fn runs inline (no nesting).
@@ -290,6 +296,24 @@ func (s *Storage) RestoreItem(ctx context.Context, id string, updatedAt time.Tim
 	return nil
 }
 
+// ReopenItem moves a done item back to open for a fresh cycle. The claim,
+// plan link, and priority are cleared: the old rank would resurface the
+// item mid-board, and the completed plan link would block re-converting.
+func (s *Storage) ReopenItem(ctx context.Context, id string, updatedAt time.Time) error {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE inbox_items SET status = ?, claimed_by_agent_id = NULL, plan_id = NULL, priority = NULL, updated_at = ?
+		WHERE id = ? AND status = ?
+	`, string(StatusOpen), formatTime(updatedAt), id, string(StatusDone))
+	if err != nil {
+		return fmt.Errorf("reopening inbox item: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("%w: item %s", ErrNotFound, id)
+	}
+	return nil
+}
+
 func (s *Storage) SetStatus(ctx context.Context, id string, status Status, updatedAt time.Time) error {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE inbox_items SET status = ?, updated_at = ? WHERE id = ?
@@ -328,6 +352,26 @@ func (s *Storage) DeleteItem(ctx context.Context, id string) error {
 		return fmt.Errorf("%w: item %s", ErrNotFound, id)
 	}
 	return nil
+}
+
+// DeleteByFilter implements Store.DeleteByFilter: one statement over the
+// workspace (optionally narrowed to a status); RowsAffected is the count.
+func (s *Storage) DeleteByFilter(ctx context.Context, workspaceID string, status Status) (int64, error) {
+	query := `DELETE FROM inbox_items WHERE workspace_id = ?`
+	args := []any{workspaceID}
+	if status != "" {
+		query += ` AND status = ?`
+		args = append(args, string(status))
+	}
+	result, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("purging inbox items: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("checking purge result: %w", err)
+	}
+	return n, nil
 }
 
 type rowScanner interface {
