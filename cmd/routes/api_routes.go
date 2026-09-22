@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"encoding/hex"
+	"hash/fnv"
 	"html/template"
 	"io/fs"
 	"net/http"
@@ -109,8 +111,20 @@ func MetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 func registerWebRoutes(mux *http.ServeMux) {
 	templates := template.Must(template.ParseFS(appweb.TemplateFiles, "templates/base.html"))
+	// assetsVersion derives the dashboard's cache-busting suffix from the
+	// embedded bundle CONTENT: the asset URLs change exactly when the assets
+	// do (every dev rebuild, every release upgrade), so a browser can never
+	// run a cached app.js against markup from a newer binary — the
+	// "hard reload fixes it" class of confusion. Falls back to the build
+	// version when the bundle cannot be read.
+	assetsVersion := build.Version
 	staticFS, err := fs.Sub(appweb.StaticFiles, "dist")
 	if err == nil {
+		if data, readErr := fs.ReadFile(staticFS, "app.js"); readErr == nil {
+			h := fnv.New64a()
+			h.Write(data)
+			assetsVersion = hex.EncodeToString(h.Sum(nil))[:12]
+		}
 		// Serve files but never directory listings: the bundle contains only
 		// named assets, and an index of dist/ leaks the asset inventory.
 		files := http.StripPrefix("/static/", http.FileServer(http.FS(staticFS)))
@@ -119,6 +133,9 @@ func registerWebRoutes(mux *http.ServeMux) {
 				http.NotFound(w, r)
 				return
 			}
+			// URLs are content-versioned in the HTML (see assetsVersion);
+			// a versioned URL always serves that exact content forever.
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			files.ServeHTTP(w, r)
 		}))
 	}
@@ -139,10 +156,13 @@ func registerWebRoutes(mux *http.ServeMux) {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		// The HTML is tiny and references versioned assets; it must always be
+		// revalidated so a new binary's asset URLs are picked up immediately.
+		w.Header().Set("Cache-Control", "no-cache")
 		version := build.Version
 		if build.Date != "unknown" {
 			version += " · " + build.Date
 		}
-		templates.ExecuteTemplate(w, "base.html", map[string]any{"Title": "Dashboard", "Version": version})
+		templates.ExecuteTemplate(w, "base.html", map[string]any{"Title": "Dashboard", "Version": version, "Assets": assetsVersion})
 	})
 }

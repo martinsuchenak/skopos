@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.7.1] — 2026-09-22
+
+### Fixed
+
+- **Dashboard: stale cached assets after an upgrade** — the dashboard now
+  references its scripts and styles through content-versioned URLs
+  (`/static/app.js?v=<hash-of-bundle>`, recomputed at startup), so a
+  browser holding a cached bundle from an older binary can never run
+  stale JavaScript against new markup — the "it works after a hard
+  reload" failure mode. The HTML itself is `no-cache`; versioned assets
+  are `immutable`.
+
 ## [0.7.0] — 2026-09-22
 
 ### Added
