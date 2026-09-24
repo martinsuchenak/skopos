@@ -4,6 +4,37 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] — 2026-09-24
+
+### Added
+
+- **Inbox: address items by priority number (MCP)** — every
+  item-addressing `inbox_*` tool except `inbox_update` (whose `priority`
+  param already sets the rank) now accepts `workspace_id` + `priority` in
+  place of `item_id`: "claim item #2 in <workspace>" is a single call. The
+  number names the open/in-progress item currently holding it; frozen
+  items with stale numbers never collide, `item_id` wins when both are
+  passed, and a stale number returns not-found pointing at `inbox_list`.
+  `inbox_list` advertises the convention, and `skopos_context`'s inbox
+  rows now include each item's priority.
+- **Dashboard: inbox cards show an "updated Xm ago" chip** next to the
+  created age once an item has been touched (claim, convert, edit,
+  reorder...). Untouched items show only their age; the bare age remains
+  the created date. Interim recency signal ahead of the planned audit
+  log, which will later add the qualitative "what happened" layer.
+
+### Fixed
+
+- **Dashboard: pinned/renumbered inbox rows went stale** — after Pin or a
+  reorder, reused rows kept the old `#n` badge and Pin/Unpin label (the
+  Alpine CSP build does not re-run row-level directives when the row key
+  is unchanged). List rows and board cards now key on `item.priority`
+  too, so rows re-create when renumbering changes them.
+- **Dashboard: Pin/Unpin now visible in the newest/oldest sorts** — the
+  buttons were hidden outside the priority lens; pinning is absolute (top)
+  and unpin clears, so both are meaningful in any lens. Drag-ranking
+  remains priority-lens only.
+
 ## [0.7.2] — 2026-09-22
 
 ### Fixed
