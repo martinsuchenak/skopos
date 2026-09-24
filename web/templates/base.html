@@ -482,13 +482,19 @@
                                                     <button type="button" x-show="inboxItemEditable(item)" @click.stop="openInboxEditModal(item)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Edit item ' + item.title">Edit</button>
                                                 </div>
                                             </div>
-                                            <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
+                                            <!-- Locked meta layout: context badges (workspace/
+                                                 claim/plan) wrap as whole units; the dates are
+                                                 one non-breaking, right-anchored group so
+                                                 created+updated never split across lines. -->
+                                            <div class="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-zinc-500">
                                                 <span x-show="!activeWorkspace && item.workspace_id" class="badge max-w-40 truncate bg-sky-500/15 text-sky-300" :title="item.workspace_id" x-text="workspaceLabel(item.workspace_id)"></span>
                                                 <span x-show="!item.workspace_id" class="badge bg-amber-500/15 text-amber-300">unfiled</span>
                                                 <span x-show="item.claimed_by_agent_id" class="truncate max-w-28" x-text="item.claimed_by_agent_id"></span>
                                                 <span x-show="item.plan_id" class="badge max-w-32 truncate bg-violet-500/15 text-violet-300" x-text="item.plan && item.plan.name ? '→ ' + item.plan.name : '→ plan'"></span>
-                                                <span class="ml-auto" x-text="timeAgo(item.created_at)"></span>
-                                                <span x-show="inboxShowUpdated(item)" x-text="inboxUpdatedLabel(item)"></span>
+                                                <span class="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+                                                    <span x-text="timeAgo(item.created_at)"></span>
+                                                    <span x-show="inboxShowUpdated(item)" x-text="inboxUpdatedLabel(item)"></span>
+                                                </span>
                                             </div>
                                             <!-- Own row, 24px+ target: the inline `file into…`
                                                  select was crammed into the 11px metadata row and
@@ -500,7 +506,10 @@
                                         </div>
                                     </li>
                                 </template>
-                                <li x-show="laneItems(lane.key).length === 0" class="rounded-lg border border-dashed border-zinc-800 p-3 text-center text-xs text-zinc-600">—</li>
+                                <!-- x-show is the boot baseline only; syncInboxLanes drives
+                                     display imperatively (CSP: x-show in x-for rows reading
+                                     outer state never re-runs). -->
+                                <li x-show="laneIsEmpty(lane.key)" :data-lane-ph="lane.key" class="rounded-lg border border-dashed border-zinc-800 p-3 text-center text-xs text-zinc-600">—</li>
                             </ul>
                         </div>
                     </template>
@@ -538,8 +547,11 @@
                                             <button type="button" @click.stop="setInboxTagFilter(tag)" class="inline-flex h-6 items-center rounded bg-zinc-800 px-1.5 text-[11px] text-zinc-300 hover:bg-zinc-700" :aria-label="'Filter by tag ' + tag" x-text="'#' + tag"></button>
                                         </template>
                                         <span x-show="item.plan_id" class="badge bg-violet-500/15 text-violet-300" x-text="item.plan && item.plan.name ? '→ ' + item.plan.name : '→ plan'"></span>
-                                        <span class="text-xs text-zinc-600" x-text="timeAgo(item.created_at)"></span>
-                                        <span x-show="inboxShowUpdated(item)" class="text-xs text-zinc-600" x-text="inboxUpdatedLabel(item)"></span>
+                                        <!-- Dates stay one group: never split created/updated. -->
+                                        <span class="flex shrink-0 items-center gap-2 whitespace-nowrap">
+                                            <span class="text-xs text-zinc-600" x-text="timeAgo(item.created_at)"></span>
+                                            <span x-show="inboxShowUpdated(item)" class="text-xs text-zinc-600" x-text="inboxUpdatedLabel(item)"></span>
+                                        </span>
                                         <span class="text-xs text-zinc-600" x-text="'by ' + item.author_agent_id"></span>
                                     </div>
                                 </button>

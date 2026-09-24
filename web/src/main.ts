@@ -714,9 +714,14 @@ const appState = () => ({
       if (q) p.set('q', q);
       const qs = p.size ? '?' + p.toString() : '';
       const res = await this.authFetch('/api/inbox' + qs);
-      if (!res.ok) { this.inboxItems = []; return; }
+      // Transient failure (server restarting mid-redeploy, reconnect window):
+      // KEEP the current rows — blanking the board on a hiccup reads as data
+      // loss. Connection state is already visible in the header pill; a 401
+      // funnels into the key modal via authFetch.
+      if (!res.ok) return;
       this.inboxItems = (await res.json()) ?? [];
-    } catch { this.inboxItems = []; } finally { this.inboxLoading = false; }
+      this.syncInboxLanes();
+    } catch { /* network hiccup: keep the stale rows */ } finally { this.inboxLoading = false; }
     if (this.expandedInboxId) await this.reloadInboxItem(this.expandedInboxId);
   },
   setInboxLayout(l: 'list' | 'lanes') {
@@ -853,6 +858,19 @@ const appState = () => ({
     ];
   },
   laneItems(key: string): InboxItem[] { return this.sortInbox(this.inboxItems.filter((i: InboxItem) => i.status === key)); },
+  // Imperative lane-placeholder sync: x-show inside x-for rows reading OUTER
+  // state (inboxItems) never re-runs in the CSP build — method call or
+  // compound expression alike (the syncInboxExpansion rationale). The "—"
+  // empties are therefore driven directly after every items change; the
+  // x-show on the element stays as the boot-time baseline.
+  syncInboxLanes() {
+    this.$nextTick(() => {
+      document.querySelectorAll('[data-lane-ph]').forEach((el) => {
+        (el as HTMLElement).style.display = this.laneIsEmpty(el.getAttribute('data-lane-ph') || '') ? '' : 'none';
+      });
+    });
+  },
+  laneIsEmpty(key: string): boolean { return this.laneItems(key).length === 0; },
   // Draggable: every card — done included (drag back to Open = reopen).
   inboxDraggable(item: InboxItem): boolean {
     return true;
