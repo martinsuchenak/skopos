@@ -464,7 +464,7 @@
                                  CSP build does not bind event handlers on the
                                  template's root element (verified live). -->
                             <ul class="flex-1 space-y-2 p-2 min-h-24" @dragover="laneDragOver(lane.key, $event)" @drop.prevent="dropOnLane(lane.key)">
-                                <template x-for="item in laneItems(lane.key)" :key="item.id">
+                                <template x-for="item in laneItems(lane.key)" :key="item.id + '|' + item.priority + '|' + item.updated_at">
                                     <li>
                                         <div class="card cursor-grab p-3 active:cursor-grabbing"
                                             :draggable="inboxDraggable(item)"
@@ -488,6 +488,7 @@
                                                 <span x-show="item.claimed_by_agent_id" class="truncate max-w-28" x-text="item.claimed_by_agent_id"></span>
                                                 <span x-show="item.plan_id" class="badge max-w-32 truncate bg-violet-500/15 text-violet-300" x-text="item.plan && item.plan.name ? '→ ' + item.plan.name : '→ plan'"></span>
                                                 <span class="ml-auto" x-text="timeAgo(item.created_at)"></span>
+                                                <span x-show="inboxShowUpdated(item)" x-text="inboxUpdatedLabel(item)"></span>
                                             </div>
                                             <!-- Own row, 24px+ target: the inline `file into…`
                                                  select was crammed into the 11px metadata row and
@@ -512,10 +513,12 @@
                 </p>
 
                 <ul class="space-y-3">
-                    <!-- Composite key incl. the sort lens: rows re-create when
-                         it changes, so row-level directives (Pin visibility)
-                         re-evaluate — the verified workspace-picker pattern. -->
-                    <template x-for="item in sortedInboxItems()" :key="item.id + '|' + inboxSort">
+                    <!-- Composite key incl. the sort lens, the item's priority,
+                         AND updated_at: rows re-create when any changes, so
+                         row-level directives (the #n badge, Pin/Unpin label,
+                         "updated" chip) re-evaluate after renumbering or any
+                         touch — the verified workspace-picker pattern. -->
+                    <template x-for="item in sortedInboxItems()" :key="item.id + '|' + item.priority + '|' + item.updated_at + '|' + inboxSort">
                         <!-- Actions stack under the title on phones (flex-col
                              below sm) and wrap; the old shrink-0 side cluster
                              never yielded and overflowed narrow screens. -->
@@ -536,6 +539,7 @@
                                         </template>
                                         <span x-show="item.plan_id" class="badge bg-violet-500/15 text-violet-300" x-text="item.plan && item.plan.name ? '→ ' + item.plan.name : '→ plan'"></span>
                                         <span class="text-xs text-zinc-600" x-text="timeAgo(item.created_at)"></span>
+                                        <span x-show="inboxShowUpdated(item)" class="text-xs text-zinc-600" x-text="inboxUpdatedLabel(item)"></span>
                                         <span class="text-xs text-zinc-600" x-text="'by ' + item.author_agent_id"></span>
                                     </div>
                                 </button>

@@ -15,6 +15,48 @@ func init() {
 	RegisterInboxTool(registerInboxTools)
 }
 
+// itemIDParam is the addressing parameter shared by every item tool: the id
+// alone, or (with itemRefParams) workspace_id + priority naming the item by
+// its rank number.
+func itemIDParam() mcplib.Parameter {
+	return mcplib.String("item_id", "Item ID — or omit and pass workspace_id + priority to address a prioritized item by its rank number")
+}
+
+// itemRefParams are the by-number addressing parameters. Not on inbox_update:
+// its priority param already sets/clears the rank and must keep that meaning.
+func itemRefParams() []mcplib.Parameter {
+	return []mcplib.Parameter{
+		mcplib.String("workspace_id", "Workspace of the item — with priority, resolves the item by its rank number (ignored when item_id is set)"),
+		mcplib.Integer("priority", "Address the item by its priority number (requires workspace_id): the open/in-progress item currently holding this rank"),
+	}
+}
+
+// resolveItemID picks the addressing mode: item_id when present, else the
+// workspace_id + priority pair resolved through the service.
+func resolveItemID(ctx context.Context, service *inbox.Service, req *mcplib.ToolRequest) (string, error) {
+	if id := req.StringOr("item_id", ""); id != "" {
+		return id, nil
+	}
+	ws := req.StringOr("workspace_id", "")
+	priority := req.IntOr("priority", 0)
+	if ws == "" || priority < 1 {
+		return "", fmt.Errorf("%w: pass item_id, or workspace_id + priority to address a prioritized item by its rank number", inbox.ErrInvalidInput)
+	}
+	item, err := service.ResolveByPriority(ctx, ws, priority)
+	if err != nil {
+		return "", err
+	}
+	return item.ID, nil
+}
+
+// itemRefToolParams spreads the addressing parameters (item_id or the
+// workspace_id + priority pair) ahead of any tool-specific ones.
+func itemRefToolParams(extra ...mcplib.Parameter) []mcplib.Parameter {
+	params := []mcplib.Parameter{itemIDParam()}
+	params = append(params, itemRefParams()...)
+	return append(params, extra...)
+}
+
 // registerInboxTools exposes the workspace inbox (docs/design/inbox.md):
 // captured, unprocessed work that an agent claims, enriches, and converts
 // into a plan. The tools are not in coreTools: in lean mode they stay behind
@@ -48,7 +90,7 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 
 	registerTool(server,
 		mcplib.NewTool("inbox_list",
-			"List inbox items. Defaults to open (unprocessed) items; pass status=all for every item. With the root key, omit workspace_id to list every workspace's items including unfiled captures.",
+			"List inbox items. Defaults to open (unprocessed) items; pass status=all for every item. With the root key, omit workspace_id to list every workspace's items including unfiled captures. Rows carry each item's priority — in the other inbox tools, workspace_id + priority can stand in for item_id to address a prioritized item by its number.",
 			wsParam(),
 			mcplib.String("status", "Filter: open (default), in_progress, converted, done, discarded, or all"),
 			mcplib.String("tag", "Filter by tag"),
@@ -99,10 +141,14 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 	registerTool(server,
 		mcplib.NewTool("inbox_read",
 			"Read one inbox item in full: raw markdown content, tags, claim, and the linked plan when converted.",
-			mcplib.String("item_id", "Item ID", mcplib.Required()),
+			itemRefToolParams()...,
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
-			item, err := service.GetItem(ctx, req.StringOr("item_id", ""))
+			itemID, err := resolveItemID(ctx, service, req)
+			if err != nil {
+				return nil, toolError(err)
+			}
+			item, err := service.GetItem(ctx, itemID)
 			if err != nil {
 				return nil, toolError(err)
 			}
@@ -166,11 +212,16 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 	registerTool(server,
 		mcplib.NewTool("inbox_claim",
 			"Claim an open item to start processing it (moves to in_progress; another agent's claim returns a conflict). Pass an empty agent_id to release back to open.",
-			mcplib.String("item_id", "Item ID", mcplib.Required()),
-			mcplib.String("agent_id", "Claiming agent ID; empty string releases the item"),
+			itemRefToolParams(
+				mcplib.String("agent_id", "Claiming agent ID; empty string releases the item"),
+			)...,
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
-			item, err := service.Claim(ctx, req.StringOr("item_id", ""), req.StringOr("agent_id", ""))
+			itemID, err := resolveItemID(ctx, service, req)
+			if err != nil {
+				return nil, toolError(err)
+			}
+			item, err := service.Claim(ctx, itemID, req.StringOr("agent_id", ""))
 			if err != nil {
 				return nil, toolError(err)
 			}
@@ -181,11 +232,16 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 	registerTool(server,
 		mcplib.NewTool("inbox_convert",
 			"Mark an item converted by linking the plan built from it. Author the plan FIRST with plan_create/plan_add_item (same workspace), then call this with the plan's ID. Completing the plan automatically completes the item.",
-			mcplib.String("item_id", "Item ID", mcplib.Required()),
-			mcplib.String("plan_id", "ID of the plan created from this item", mcplib.Required()),
+			itemRefToolParams(
+				mcplib.String("plan_id", "ID of the plan created from this item", mcplib.Required()),
+			)...,
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
-			item, err := service.Convert(ctx, req.StringOr("item_id", ""), inbox.ConvertInput{PlanID: req.StringOr("plan_id", "")})
+			itemID, err := resolveItemID(ctx, service, req)
+			if err != nil {
+				return nil, toolError(err)
+			}
+			item, err := service.Convert(ctx, itemID, inbox.ConvertInput{PlanID: req.StringOr("plan_id", "")})
 			if err != nil {
 				return nil, toolError(err)
 			}
@@ -196,10 +252,14 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 	registerTool(server,
 		mcplib.NewTool("inbox_complete",
 			"Manually mark an item done — for work that finished without a plan, or ahead of it. Allowed from open, in_progress, and converted; discarded items must be restored first. Done stays terminal.",
-			mcplib.String("item_id", "Item ID", mcplib.Required()),
+			itemRefToolParams()...,
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
-			if err := service.Complete(ctx, req.StringOr("item_id", "")); err != nil {
+			itemID, err := resolveItemID(ctx, service, req)
+			if err != nil {
+				return nil, toolError(err)
+			}
+			if err := service.Complete(ctx, itemID); err != nil {
 				return nil, toolError(err)
 			}
 			return mcplib.NewToolResponseJSON(map[string]any{"completed": true}), nil
@@ -209,10 +269,14 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 	registerTool(server,
 		mcplib.NewTool("inbox_reopen",
 			"Bring a done item back to open (undo a wrong manual complete). Clears the claim, plan link, and priority — a fresh cycle; the item can be claimed and converted again.",
-			mcplib.String("item_id", "Item ID", mcplib.Required()),
+			itemRefToolParams()...,
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
-			if err := service.Reopen(ctx, req.StringOr("item_id", "")); err != nil {
+			itemID, err := resolveItemID(ctx, service, req)
+			if err != nil {
+				return nil, toolError(err)
+			}
+			if err := service.Reopen(ctx, itemID); err != nil {
 				return nil, toolError(err)
 			}
 			return mcplib.NewToolResponseJSON(map[string]any{"reopened": true}), nil
@@ -222,10 +286,14 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 	registerTool(server,
 		mcplib.NewTool("inbox_restore",
 			"Restore a discarded item back to open (undo an accidental discard; clears any stale claim). Done items are terminal — they belong to their plan.",
-			mcplib.String("item_id", "Item ID", mcplib.Required()),
+			itemRefToolParams()...,
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
-			if err := service.Restore(ctx, req.StringOr("item_id", "")); err != nil {
+			itemID, err := resolveItemID(ctx, service, req)
+			if err != nil {
+				return nil, toolError(err)
+			}
+			if err := service.Restore(ctx, itemID); err != nil {
 				return nil, toolError(err)
 			}
 			return mcplib.NewToolResponseJSON(map[string]any{"restored": true}), nil
@@ -235,10 +303,14 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 	registerTool(server,
 		mcplib.NewTool("inbox_discard",
 			"Discard an item (won't do / superseded). Terminal.",
-			mcplib.String("item_id", "Item ID", mcplib.Required()),
+			itemRefToolParams()...,
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
-			if err := service.Discard(ctx, req.StringOr("item_id", "")); err != nil {
+			itemID, err := resolveItemID(ctx, service, req)
+			if err != nil {
+				return nil, toolError(err)
+			}
+			if err := service.Discard(ctx, itemID); err != nil {
 				return nil, toolError(err)
 			}
 			return mcplib.NewToolResponseJSON(map[string]any{"discarded": true}), nil

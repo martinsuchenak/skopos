@@ -114,6 +114,36 @@ func (s *Service) GetItem(ctx context.Context, id string) (*Item, error) {
 	return item, nil
 }
 
+// ResolveByPriority turns a workspace + priority pair into the item it names —
+// the by-number reference for agents ("claim item #2 in <workspace>"). The
+// number addresses open/in_progress items (the renumbered set); a miss returns
+// not-found with a pointer to inbox_list, since numbers shift on every reorder.
+// The workspace is an explicit target: out-of-scope keeps the actionable 403
+// flavor, unlike by-id lookups' uniform 404.
+func (s *Service) ResolveByPriority(ctx context.Context, workspaceID string, priority int) (*Item, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace_id is required when addressing an item by priority", ErrInvalidInput)
+	}
+	if priority < 1 || priority > maxPriority {
+		return nil, fmt.Errorf("%w: priority must be between 1 and %d", ErrInvalidInput, maxPriority)
+	}
+	if err := auth.RequireWorkspace(ctx, workspaceID); err != nil {
+		return nil, err
+	}
+	items, err := s.store.ItemsByPriority(ctx, workspaceID, priority)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, fmt.Errorf("%w: no open or in-progress item with priority %d in this workspace — run inbox_list for current numbers (unprioritized items have no number)", ErrNotFound, priority)
+	}
+	if len(items) > 1 {
+		return nil, fmt.Errorf("%w: %d items share priority %d — address them by item_id", ErrInvalidInput, len(items), priority)
+	}
+	return &items[0], nil
+}
+
 // ListItems returns rows for the dashboard and agents: an excerpt instead of
 // the full content (detail is a GetItem away), plus the linked plan summary.
 func (s *Service) ListItems(ctx context.Context, workspaceID, status, tag, query string) ([]Item, error) {

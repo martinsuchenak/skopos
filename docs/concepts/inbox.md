@@ -88,8 +88,23 @@ set on any subset — items without one always sort after all prioritized
 items (newest first). Priorities are editable while a item is
 open/in_progress (the enrichment freeze applies). Surfaces: `priority` in
 create/PATCH (`0` clears), `POST /api/inbox/reorder {ids}` renumbers the
-ordered prefix 1..N, the dashboard's Pin/Unpin and drag ranking, and
+ordered prefix 1..N, the dashboard's Pin/Unpin and drag ranking (Pin/Unpin
+in every sort lens — the action is absolute, not positional), and
 `--priority N|clear` in the CLI.
+
+### Addressing an item by its number
+
+The priority number doubles as a short, speakable item reference for agents:
+every item-addressing MCP tool except `inbox_update` (whose `priority`
+param already sets the rank) accepts `workspace_id` + `priority` in place
+of `item_id` — "claim item #2 in github.com/org/repo" is
+`inbox_claim {workspace_id, priority: 2}`. The number names the
+open/in-progress item currently holding it (frozen converted/done/discarded
+items keep stale numbers and are never matched), `item_id` wins when both
+are passed, and a stale number returns not-found with a pointer to
+`inbox_list` — numbers shift on every reorder, so re-list after ranking
+changes. Unprioritized items have no number; address those by id, or pin
+them first.
 
 ## Unfiled items
 

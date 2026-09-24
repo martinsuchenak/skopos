@@ -830,10 +830,17 @@ const appState = () => ({
   },
   inboxStatusClass(s: string) { return { open: 'bg-amber-500/15 text-amber-300', in_progress: 'bg-cyan-500/15 text-cyan-300', converted: 'bg-violet-500/15 text-violet-300', done: 'bg-emerald-500/15 text-emerald-300', discarded: 'bg-zinc-700 text-zinc-400' }[s] ?? 'bg-zinc-700 text-zinc-200'; },
   inboxItemEditable(item: InboxItem): boolean { return item.status === 'open' || item.status === 'in_progress'; },
-  // Rank controls (Pin/Unpin) only in the rank-ordered view — pinning into a
-  // date lens lands invisibly (the view would not move). Row-level x-show:
-  // correct only because list rows re-create on sort change (composite :key).
-  inboxCanRank(item: InboxItem): boolean { return this.inboxItemEditable(item) && this.inboxSort === 'priority'; },
+  // Pin/Unpin in every lens — the action is absolute (rank first / clear),
+  // not positional, so it is meaningful even when the view is date-sorted
+  // (the row re-creates on priority change, so the #n badge shows). Rank
+  // DRAGGING stays priority-lens-only: dropOnLane/dropBeforeItem guard it.
+  inboxCanRank(item: InboxItem): boolean { return this.inboxItemEditable(item); },
+  // "updated 2m ago" beside the created age once the item has been touched
+  // (claim/convert/edit/reorder all bump updated_at; the bare age stays the
+  // created date). Untouched rows carry identical RFC3339Nano strings, so a
+  // strict compare decides — rows key on updated_at, so the label re-evaluates.
+  inboxShowUpdated(item: InboxItem): boolean { return !!item.updated_at && item.updated_at !== item.created_at; },
+  inboxUpdatedLabel(item: InboxItem): string { return 'updated ' + this.timeAgo(item.updated_at); },
 
   // ---- inbox board (swimlanes) ----
   inboxLanes(): { key: string; label: string }[] {

@@ -161,3 +161,63 @@ func TestInboxToolErrorsClassifiedAsClientMistakes(t *testing.T) {
 		t.Fatalf("claim conflict message: %s", conflict.Message)
 	}
 }
+
+// TestInboxPriorityAddressing drives the by-number reference: workspace_id +
+// priority stand in for item_id, a missing reference is invalid-params, and a
+// stale number (post-reorder) is not-found with a pointer to inbox_list.
+func TestInboxPriorityAddressing(t *testing.T) {
+	sqlDB := mustOpenDB(t)
+	h := NewMCPHandler(
+		status.NewService(status.NewStorage(sqlDB)),
+		blackboard.NewService(blackboard.NewStorage(sqlDB)),
+		plans.NewService(plans.NewStorage(sqlDB)),
+		inbox.NewService(inbox.NewStorage(sqlDB)),
+		nil, nil,
+	)
+	sid := initialize(t, h)
+
+	// Two prioritized items: #1 audit, #2 search.
+	callTool(t, h, sid, 2, "inbox_create", map[string]any{
+		"workspace_id": "ws-a", "title": "audit log", "author_agent_id": "t", "priority": 1,
+	})
+	callTool(t, h, sid, 3, "inbox_create", map[string]any{
+		"workspace_id": "ws-a", "title": "search notes", "author_agent_id": "t", "priority": 2,
+	})
+
+	// Read by number: #2 is the search item.
+	r := callTool(t, h, sid, 4, "inbox_read", map[string]any{"workspace_id": "ws-a", "priority": 2})
+	if r.Result.IsError || !strings.Contains(r.Result.Content[0].Text, "search notes") {
+		t.Fatalf("inbox_read by priority: %s", r.Result.Content[0].Text)
+	}
+
+	// Claim by number moves it to in_progress.
+	r = callTool(t, h, sid, 5, "inbox_claim", map[string]any{"workspace_id": "ws-a", "priority": 2, "agent_id": "agent-t"})
+	if r.Result.IsError || !strings.Contains(r.Result.Content[0].Text, "in_progress") {
+		t.Fatalf("inbox_claim by priority: %s", r.Result.Content[0].Text)
+	}
+
+	// No reference at all: invalid-params naming both addressing forms.
+	e := callToolExpectError(t, h, sid, 6, "inbox_read", map[string]any{})
+	if e.Code != -32602 || !strings.Contains(e.Message, "workspace_id + priority") {
+		t.Fatalf("missing reference: %d %s", e.Code, e.Message)
+	}
+
+	// Half a reference (priority without workspace) is the same error.
+	e = callToolExpectError(t, h, sid, 7, "inbox_read", map[string]any{"priority": 1})
+	if e.Code != -32602 {
+		t.Fatalf("half reference: %d %s", e.Code, e.Message)
+	}
+
+	// A number the board does not have is not-found with guidance.
+	e = callToolExpectError(t, h, sid, 8, "inbox_read", map[string]any{"workspace_id": "ws-a", "priority": 9})
+	if e.Code != -32602 || !strings.Contains(e.Message, "inbox_list") {
+		t.Fatalf("stale number: %d %s", e.Code, e.Message)
+	}
+
+	// item_id still wins when both forms are passed: the pair alone would
+	// have resolved to the audit item, but the unknown id is what answers.
+	e = callToolExpectError(t, h, sid, 9, "inbox_read", map[string]any{"item_id": "no-such-item", "workspace_id": "ws-a", "priority": 1})
+	if e.Code != -32602 || !strings.Contains(e.Message, "no-such-item") {
+		t.Fatalf("item_id precedence: %d %s", e.Code, e.Message)
+	}
+}

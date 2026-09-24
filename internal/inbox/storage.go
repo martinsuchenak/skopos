@@ -14,6 +14,10 @@ type Store interface {
 	CreateItem(ctx context.Context, item Item) error
 	GetItem(ctx context.Context, id string) (*Item, error)
 	ListItems(ctx context.Context, workspaceID, status, tag, query string) ([]Item, error)
+	// ItemsByPriority returns the open/in_progress items holding an exact
+	// priority in one workspace — the by-number item reference for agents.
+	// Normally exactly one row; more means duplicate numbers (defensive).
+	ItemsByPriority(ctx context.Context, workspaceID string, priority int) ([]Item, error)
 	ItemWorkspace(ctx context.Context, id string) (string, error)
 	PlanWorkspace(ctx context.Context, planID string) (string, error)
 	UpdateItem(ctx context.Context, id, workspace, title, content, tagsJSON string, priority *int, updatedAt time.Time) error
@@ -156,6 +160,31 @@ func (s *Storage) ListItems(ctx context.Context, workspaceID, status, tag, query
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing inbox items: %w", err)
+	}
+	defer rows.Close()
+	var items []Item
+	for rows.Next() {
+		item, err := scanItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+// ItemsByPriority implements Store.ItemsByPriority. The status restriction is
+// what makes the number a stable reference: reorder renumbers exactly the
+// open/in_progress set, while converted/done/discarded rows keep stale
+// priorities that may collide with live ones.
+func (s *Storage) ItemsByPriority(ctx context.Context, workspaceID string, priority int) ([]Item, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+itemColumns+`
+		FROM inbox_items i LEFT JOIN plans p ON p.id = i.plan_id
+		WHERE i.workspace_id = ? AND i.priority = ? AND i.status IN ('open', 'in_progress')
+	`, workspaceID, priority)
+	if err != nil {
+		return nil, fmt.Errorf("resolving inbox item by priority: %w", err)
 	}
 	defer rows.Close()
 	var items []Item

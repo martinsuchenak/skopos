@@ -19,6 +19,9 @@ func (s *noopInboxStore) GetItem(_ context.Context, _ string) (*inbox.Item, erro
 func (s *noopInboxStore) ListItems(context.Context, string, string, string, string) ([]inbox.Item, error) {
 	return nil, nil
 }
+func (s *noopInboxStore) ItemsByPriority(context.Context, string, int) ([]inbox.Item, error) {
+	return nil, nil
+}
 func (s *noopInboxStore) ItemWorkspace(_ context.Context, _ string) (string, error) {
 	return "", inbox.ErrNotFound
 }

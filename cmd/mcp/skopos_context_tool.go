@@ -135,10 +135,11 @@ func buildSnapshot(
 					break
 				}
 				out = append(out, map[string]any{
-					"id":     it.ID,
-					"title":  flattenText(it.Title),
-					"tags":   it.Tags,
-					"age":    coarseAge(it.CreatedAt),
+					"id":       it.ID,
+					"title":    flattenText(it.Title),
+					"tags":     it.Tags,
+					"priority": it.Priority,
+					"age":      coarseAge(it.CreatedAt),
 				})
 			}
 			snapshot["inbox"] = map[string]any{"open": len(items), "items": out}

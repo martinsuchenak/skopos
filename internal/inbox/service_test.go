@@ -393,6 +393,71 @@ func TestServiceReorder(t *testing.T) {
 	}
 }
 
+// TestServiceResolveByPriority pins the by-number item reference: a
+// workspace + priority pair names the open/in-progress item holding that
+// number, stale numbers on frozen items never collide with it, and the
+// workspace keeps explicit-target scope semantics (actionable 403, not the
+// by-id uniform 404).
+func TestServiceResolveByPriority(t *testing.T) {
+	svc := testService(t)
+	ctx := context.Background()
+	a := mustCreate(t, svc, ctx, "ra")
+	b := mustCreate(t, svc, ctx, "rb")
+	c := mustCreate(t, svc, ctx, "rc")
+	if err := svc.Reorder(ctx, ReorderInput{IDs: []string{a.ID, b.ID, c.ID}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Validation: workspace required, priority bounded.
+	if _, err := svc.ResolveByPriority(ctx, "", 1); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("missing workspace: %v", err)
+	}
+	if _, err := svc.ResolveByPriority(ctx, "ws-a", 0); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("priority 0: %v", err)
+	}
+	if _, err := svc.ResolveByPriority(ctx, "ws-a", 100001); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("priority cap: %v", err)
+	}
+
+	// #2 names rb.
+	item, err := svc.ResolveByPriority(ctx, "ws-a", 2)
+	if err != nil || item.ID != b.ID {
+		t.Fatalf("resolve #2: %v %+v", err, item)
+	}
+	// Numbers the board does not have are not-found with guidance.
+	if _, err := svc.ResolveByPriority(ctx, "ws-a", 9); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("resolve #9: %v", err)
+	}
+
+	// Explicit-target scoping: a foreign workspace is the actionable 403
+	// flavor, and an in-scope workspace resolves.
+	foreign, err := svc.CreateItem(ctx, CreateInput{WorkspaceID: "ws-x", Title: "foreign", AuthorAgentID: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = svc.Reorder(ctx, ReorderInput{IDs: []string{foreign.ID}})
+	if _, err := svc.ResolveByPriority(scopedCtx(), "ws-x", 1); !errors.Is(err, auth.ErrOutOfScope) {
+		t.Fatalf("scoped foreign workspace: %v", err)
+	}
+	if item, err := svc.ResolveByPriority(scopedCtx(), "ws-a", 1); err != nil || item.ID != a.ID {
+		t.Fatalf("scoped own workspace: %v %+v", err, item)
+	}
+
+	// Frozen rows keep stale numbers; resolution must skip them. Complete b
+	// (done rows keep their priority), then renumber the live set so c takes
+	// #2 — resolving #2 now names the LIVE item, never the done one.
+	if err := svc.Complete(ctx, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Reorder(ctx, ReorderInput{IDs: []string{a.ID, c.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	item, err = svc.ResolveByPriority(ctx, "ws-a", 2)
+	if err != nil || item.ID != c.ID {
+		t.Fatalf("resolve #2 after freeze: %v %+v", err, item)
+	}
+}
+
 func itemIDByTitle(t *testing.T, svc *Service, title string) string {
 	t.Helper()
 	items, err := svc.ListItems(context.Background(), "ws-a", "", "", title)
