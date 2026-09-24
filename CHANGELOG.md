@@ -4,6 +4,25 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.8.1] — 2026-09-24
+
+### Fixed
+
+- **Dashboard: kanban appeared empty after a redeploy** — two stacked
+  causes. While the server restarted, the 5s fallback poll's failed
+  fetches *blanked* the board (list rows were kept only by luck of
+  timing); `fetchInbox` now keeps the current rows on transient failures
+  (the header's connection pill already reports the outage). And after
+  recovery, every lane kept a stale "—" empty-state next to its cards:
+  the placeholder's `x-show` inside the lane `x-for` reads outer state,
+  which the Alpine CSP build never re-evaluates — placeholders are now
+  driven imperatively by `syncInboxLanes` (the `syncInboxExpansion`
+  pattern) after every items change.
+- **Dashboard: inbox card meta layout locked** — created + updated dates
+  are one non-breaking, right-anchored group (they previously split
+  across lines inconsistently depending on badge widths), and the
+  context badges (workspace, claiming agent, plan) wrap as whole units.
+
 ## [0.8.0] — 2026-09-24
 
 ### Added
