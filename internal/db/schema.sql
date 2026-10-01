@@ -222,3 +222,27 @@ CREATE TABLE IF NOT EXISTS api_key_groups (
 
 CREATE INDEX IF NOT EXISTS idx_workspace_group_members_workspace ON workspace_group_members(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_api_key_groups_group ON api_key_groups(group_id);
+
+-- Audit log: append-only record of mutations (docs/design/agent-pipeline.md §1,
+-- plan 01a0bf7c). Every row is written after a successful mutation; audit
+-- failures never block the mutation itself. The log outlives the data it
+-- describes — standard retention cleanup never touches it (a dedicated audit
+-- retention, default keep-forever, is the only pruner). Verbs are
+-- dot-namespaced domain.action strings; actors are rendered at write time
+-- (root, key <name>, agent <id>, system, migration) with the raw key id kept
+-- alongside. No MCP read surface (decision 2026-09-20).
+CREATE TABLE IF NOT EXISTS audit_log (
+    id            TEXT PRIMARY KEY,
+    workspace_id  TEXT,
+    entity_type   TEXT NOT NULL,
+    entity_id     TEXT NOT NULL,
+    action        TEXT NOT NULL,
+    actor         TEXT NOT NULL,
+    actor_key_id  TEXT,
+    via           TEXT NOT NULL DEFAULT '',
+    notes         TEXT NOT NULL DEFAULT '',
+    created_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_type, entity_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_workspace ON audit_log(workspace_id, created_at);
