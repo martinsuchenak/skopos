@@ -141,8 +141,16 @@ func (s *Storage) ListItems(ctx context.Context, workspaceID, status, tag, query
 		args = append(args, workspaceID)
 	}
 	if status != "" {
-		conds = append(conds, "i.status = ?")
-		args = append(args, status)
+		if status == "workflow" {
+			// The dashboard's aggregate chip: every agent-pipeline phase
+			// (agent-pipeline §1) in one filter.
+			conds = append(conds, "i.status IN (?, ?, ?, ?, ?, ?, ?, ?)")
+			args = append(args, string(StatusQueued), string(StatusPlanning), string(StatusAwaitingApproval),
+				string(StatusApproved), string(StatusImplementing), string(StatusInReview), string(StatusFailed), string(StatusBlocked))
+		} else {
+			conds = append(conds, "i.status = ?")
+			args = append(args, status)
+		}
 	}
 	if tag != "" {
 		conds = append(conds, `i.tags LIKE ? ESCAPE '\'`)

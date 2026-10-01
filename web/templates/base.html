@@ -42,6 +42,10 @@
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a4 4 0 11-8 0 4 4 0 018 0zm3 9a4 4 0 00-4-4H8a4 4 0 00-4 4v1h14v-1z"/></svg>
                 Keys
             </button>
+            <button type="button" @click="switchView('groups')" class="nav-item" x-show="whoamiIsRoot()" x-cloak :aria-current="activeView === 'groups' ? 'page' : null">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-1.13a4 4 0 10-4-6.93M16 3.13a4 4 0 010 7.75"/></svg>
+                Groups
+            </button>
         </nav>
         <div class="border-t border-zinc-800 p-4">
             <p class="text-center text-[11px] text-zinc-600">skopos {{.Version}}</p>
@@ -674,6 +678,61 @@
                         </li>
                     </template>
                 </ul>
+            </section>
+
+            <section x-show="activeView === 'groups'" x-cloak>
+                <div class="mb-6">
+                    <h2 class="mb-1 text-2xl font-semibold">Workspace groups</h2>
+                    <p class="text-sm text-zinc-500">
+                        A key's scope is its workspaces plus its groups' members plus workspaces matching the groups'
+                        patterns. Manage groups with <code class="text-zinc-400">skopos group</code>; this page is the
+                        read-side view.
+                    </p>
+                </div>
+                <div x-show="groupsLoading" class="text-sm text-zinc-500">Loading…</div>
+                <div x-show="!groupsLoading && groups.length === 0" class="rounded-lg border border-zinc-800 bg-zinc-900/50 p-6 text-sm text-zinc-500">
+                    No workspace groups yet. Create one with <code class="text-zinc-400">skopos group create</code>.
+                </div>
+                <ul class="space-y-3" x-show="!groupsLoading && groups.length > 0">
+                    <template x-for="g in groups" :key="g.id">
+                        <li class="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="font-medium text-zinc-100" x-text="g.name"></span>
+                                <span class="text-xs text-zinc-500" x-text="g.id"></span>
+                            </div>
+                            <p class="mt-1 text-sm text-zinc-500" x-show="g.description" x-text="g.description"></p>
+                            <div class="mt-2 flex flex-wrap gap-1.5">
+                                <template x-for="m in g.members" :key="'m|' + g.id + '|' + m">
+                                    <span class="badge bg-cyan-500/15 text-cyan-300" x-text="m"></span>
+                                </template>
+                                <template x-for="p in g.patterns" :key="'p|' + g.id + '|' + p">
+                                    <span class="badge bg-violet-500/15 text-violet-300" x-text="p"></span>
+                                </template>
+                            </div>
+                        </li>
+                    </template>
+                </ul>
+                <div class="mt-8 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+                    <h3 class="mb-2 text-sm font-semibold text-zinc-200">Who can access a workspace?</h3>
+                    <form class="flex flex-wrap gap-2" @submit.prevent="fetchWhoCan()">
+                        <label class="sr-only" for="who-can-ws">Workspace ID</label>
+                        <input id="who-can-ws" type="text" x-model="whoCanWorkspace" placeholder="github.com/owner/repo"
+                            class="input flex-1 min-w-48" />
+                        <button type="submit" class="btn">Ask</button>
+                    </form>
+                    <ul class="mt-3 space-y-1" x-show="whoCan.length > 0">
+                        <template x-for="r in whoCan" :key="r.key.id">
+                            <li class="text-sm text-zinc-300">
+                                <span class="text-zinc-100" x-text="r.key.name"></span>
+                                <span class="text-zinc-500" x-text="r.key.key_prefix"></span>
+                                — via <span class="text-cyan-300" x-text="r.via"></span>
+                            </li>
+                        </template>
+                    </ul>
+                    <p class="mt-3 text-sm text-zinc-600" x-show="whoCan.length === 0 && whoCanWorkspace">
+                        No active key reaches that workspace.
+                    </p>
+                </div>
             </section>
         </main>
     </div>

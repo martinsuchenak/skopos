@@ -17,7 +17,9 @@ type Bundle = { entries: Entry[]; markdown_bundle: string };
 type PlanItem = { id: string; plan_id: string; title: string; description?: string; phase?: string; status: string; position: number; claimed_by_agent_id?: string; depends_on?: string[] };
 type Plan = { id: string; name: string; branch_name?: string; workspace_id?: string; description?: string; status: string; author_agent_id: string; items?: PlanItem[]; depends_on?: string[]; created_at: string };
 type Toast = { id: number; message: string; type: 'success' | 'error' | 'info' };
-type ApiKey = { id: string; name: string; key_prefix: string; all_workspaces: boolean; workspaces: string[]; created_at: string; last_used_at?: string; revoked_at?: string };
+type ApiKey = { id: string; name: string; key_prefix: string; all_workspaces: boolean; approver?: boolean; workspaces: string[]; groups?: string[]; created_at: string; last_used_at?: string; revoked_at?: string };
+type KeyGroup = { id: string; name: string; description?: string; members: string[]; patterns: string[]; created_at: string };
+type KeyReach = { key: ApiKey; via: string };
 type Whoami = { root: boolean; key?: { id: string; name: string; all_workspaces: boolean; workspaces: string[] }; workspaces: { id: string; name: string }[] };
 type KeyForm = { name: string; all: boolean; workspaces: string[] };
 type EntryForm = { scope: 'project' | 'branch' | 'session'; entry_type: 'finding' | 'decision' | 'bug' | 'debt' | 'warning' | 'context'; title: string; content: string; code_ref: string; branch_name: string; session_id: string };
@@ -29,7 +31,7 @@ type InboxDetail = InboxItem & { content: string; content_html: string };
 type InboxForm = { id: string; title: string; tags: string; workspace: string };
 
 const UI_AUTHOR = 'ui';
-type View = 'sessions' | 'blackboard' | 'plans' | 'inbox' | 'index' | 'keys';
+type View = 'sessions' | 'blackboard' | 'plans' | 'inbox' | 'index' | 'keys' | 'groups';
 
 // The inbox markdown editor lives OUTSIDE Alpine's reactive state: deep-
 // proxying a live CodeMirror view breaks it. One instance per open modal.
@@ -71,7 +73,7 @@ const appState = () => ({
   inboxItems: [] as InboxItem[],
   inboxLoading: false,
   inboxLayout: (localStorage.getItem('skopos:inboxLayout') === 'lanes' ? 'lanes' : 'list'),
-  inboxStatus: 'open' as '' | 'open' | 'in_progress' | 'converted' | 'done' | 'discarded',
+  inboxStatus: 'open' as '' | 'open' | 'in_progress' | 'converted' | 'done' | 'discarded' | 'workflow',
   inboxTagFilter: '',
   inboxQuery: '',
   inboxSort: (['newest', 'oldest'].includes(localStorage.getItem('skopos:inboxSort') || '') ? localStorage.getItem('skopos:inboxSort') : 'priority') as 'priority' | 'newest' | 'oldest',
@@ -103,6 +105,10 @@ const appState = () => ({
   whoami: null as Whoami | null,
   keys: [] as ApiKey[],
   keysLoading: false,
+  groups: [] as KeyGroup[],
+  groupsLoading: false,
+  whoCan: [] as KeyReach[],
+  whoCanWorkspace: '',
   showNewKeyModal: false, keySaving: false,
   keyForm: { name: '', all: false, workspaces: [] as string[] } as KeyForm,
   keyErrors: {} as Record<string, string>,
@@ -337,6 +343,7 @@ const appState = () => ({
     if (v === 'inbox') this.fetchInbox();
     if (v === 'index') this.fetchIndexStatus();
     if (v === 'keys') this.fetchKeys();
+    if (v === 'groups') { this.fetchGroups(); this.whoCan = []; }
   },
   whoamiIsRoot(): boolean { return !!this.whoami && this.whoami.root; },
   setWorkspace(ws: string) {
@@ -527,6 +534,7 @@ const appState = () => ({
     else if (this.activeView === 'inbox') await this.fetchInbox();
     else if (this.activeView === 'index') await this.fetchIndexStatus();
     else if (this.activeView === 'keys') await this.fetchKeys();
+    else if (this.activeView === 'groups') await this.fetchGroups();
   },
   async selectSession(id: string) {
     this.selectedSessionId = id; localStorage.setItem('skopos:session', id);
@@ -774,6 +782,7 @@ const appState = () => ({
     return [
       { key: 'open', label: 'Open' },
       { key: 'in_progress', label: 'In progress' },
+      { key: 'workflow', label: 'Workflow' },
       { key: 'converted', label: 'Converted' },
       { key: 'done', label: 'Done' },
       { key: 'discarded', label: 'Discarded' },
@@ -833,7 +842,12 @@ const appState = () => ({
     });
     this.syncInboxExpansion();
   },
-  inboxStatusClass(s: string) { return { open: 'bg-amber-500/15 text-amber-300', in_progress: 'bg-cyan-500/15 text-cyan-300', converted: 'bg-violet-500/15 text-violet-300', done: 'bg-emerald-500/15 text-emerald-300', discarded: 'bg-zinc-700 text-zinc-400' }[s] ?? 'bg-zinc-700 text-zinc-200'; },
+  inboxStatusClass(s: string) {
+    return {
+      open: 'bg-amber-500/15 text-amber-300', in_progress: 'bg-cyan-500/15 text-cyan-300', converted: 'bg-violet-500/15 text-violet-300', done: 'bg-emerald-500/15 text-emerald-300', discarded: 'bg-zinc-700 text-zinc-400',
+      queued: 'bg-sky-500/15 text-sky-300', planning: 'bg-sky-500/15 text-sky-300', awaiting_approval: 'bg-orange-500/15 text-orange-300', approved: 'bg-lime-500/15 text-lime-300', implementing: 'bg-indigo-500/15 text-indigo-300', in_review: 'bg-teal-500/15 text-teal-300', failed: 'bg-rose-500/15 text-rose-300', blocked: 'bg-rose-500/15 text-rose-300',
+    }[s] ?? 'bg-zinc-700 text-zinc-200';
+  },
   inboxItemEditable(item: InboxItem): boolean { return item.status === 'open' || item.status === 'in_progress'; },
   // Pin/Unpin in every lens — the action is absolute (rank first / clear),
   // not positional, so it is meaningful even when the view is date-sorted
@@ -852,12 +866,21 @@ const appState = () => ({
     return [
       { key: 'open', label: 'Open' },
       { key: 'in_progress', label: 'In progress' },
+      { key: 'workflow', label: 'Agent workflow' },
       { key: 'converted', label: 'Converted' },
       { key: 'done', label: 'Done' },
       { key: 'discarded', label: 'Discarded' },
     ];
   },
-  laneItems(key: string): InboxItem[] { return this.sortInbox(this.inboxItems.filter((i: InboxItem) => i.status === key)); },
+  // Workflow statuses (agent-pipeline §1): the aggregate lane owns them, so
+  // no item can ever be without a lane — the no-invisibility guarantee.
+  isWorkflowStatus(s: string): boolean {
+    return s === 'queued' || s === 'planning' || s === 'awaiting_approval' || s === 'approved' || s === 'implementing' || s === 'in_review' || s === 'failed' || s === 'blocked';
+  },
+  laneItems(key: string): InboxItem[] {
+    if (key === 'workflow') return this.sortInbox(this.inboxItems.filter((i: InboxItem) => this.isWorkflowStatus(i.status)));
+    return this.sortInbox(this.inboxItems.filter((i: InboxItem) => i.status === key));
+  },
   // Imperative lane-placeholder sync: x-show inside x-for rows reading OUTER
   // state (inboxItems) never re-runs in the CSP build — method call or
   // compound expression alike (the syncInboxExpansion rationale). The "—"
@@ -878,6 +901,10 @@ const appState = () => ({
   laneAcceptsDrop(key: string): boolean {
     const from = this.inboxItems.find((i: InboxItem) => i.id === this.inboxDragId);
     if (!from) return false;
+    // Workflow items move only through the gated API actions — never by
+    // dragging (the human actions need the approver permission).
+    if (this.isWorkflowStatus(from.status)) return false;
+    if (key === 'workflow') return false;
     if (key === from.status) return true; // reorder within the lane
     if (key === 'in_progress' && from.status === 'open') return true;
     // Open takes back released, discarded (restore), and done (reopen).
@@ -1289,6 +1316,32 @@ const appState = () => ({
   },
 
   // ---- api keys ----
+  async fetchGroups() {
+    this.groupsLoading = true;
+    try {
+      const res = await this.authFetch('/api/groups');
+      if (!res.ok) {
+        this.groups = [];
+        if (res.status === 403) this.notify('Groups require the root key', 'error');
+        return;
+      }
+      this.groups = (await res.json()) ?? [];
+    } catch {
+      this.groups = [];
+    } finally {
+      this.groupsLoading = false;
+    }
+  },
+  async fetchWhoCan() {
+    const ws = this.whoCanWorkspace.trim();
+    if (!ws) return;
+    try {
+      const res = await this.authFetch('/api/keys/who-can?workspace=' + encodeURIComponent(ws));
+      this.whoCan = res.ok ? ((await res.json()) ?? []) : [];
+    } catch {
+      this.whoCan = [];
+    }
+  },
   async fetchKeys() {
     this.keysLoading = true;
     try {
