@@ -33,6 +33,9 @@ type Store interface {
 	ConvertItem(ctx context.Context, id, planID string, updatedAt time.Time) error
 	// SetItemPlan attaches a plan to a workflow item without a status change.
 	SetItemPlan(ctx context.Context, id, planID string, updatedAt time.Time) error
+	// ItemsByPlan returns every item linked to a plan (workflow link or
+	// manual convert) — the plans service's amendment and deletion guards.
+	ItemsByPlan(ctx context.Context, planID string) ([]Item, error)
 	SetStatus(ctx context.Context, id string, status Status, updatedAt time.Time) error
 	CompleteForPlan(ctx context.Context, planID string, updatedAt time.Time) (int64, error)
 	DeleteItem(ctx context.Context, id string) error
@@ -334,6 +337,27 @@ func (s *Storage) SetItemPlan(ctx context.Context, id, planID string, updatedAt 
 		return fmt.Errorf("%w: item %s", ErrNotFound, id)
 	}
 	return nil
+}
+
+// ItemsByPlan returns every item linked to a plan, by creation.
+func (s *Storage) ItemsByPlan(ctx context.Context, planID string) ([]Item, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+itemColumns+`
+		FROM inbox_items i LEFT JOIN plans p ON p.id = i.plan_id
+		WHERE i.plan_id = ? ORDER BY i.id`, planID)
+	if err != nil {
+		return nil, fmt.Errorf("listing items by plan: %w", err)
+	}
+	defer rows.Close()
+	var out []Item
+	for rows.Next() {
+		item, err := scanItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }
 
 // RestoreItem moves a discarded item back to open, clearing any stale claim.

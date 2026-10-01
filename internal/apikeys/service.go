@@ -97,8 +97,13 @@ func (s *Service) resolveGroups(ctx context.Context, refs []string) ([]Group, er
 	return out, nil
 }
 
-// Create mints a key. The plaintext secret is returned once and never stored.
+// Create mints a key. The plaintext secret is returned once and never
+// stored. Key management is root-only (service-level second layer, review
+// fix 10 — the handler gates as well).
 func (s *Service) Create(ctx context.Context, input CreateInput) (*CreateResult, error) {
+	if err := auth.RequireRoot(ctx); err != nil {
+		return nil, err
+	}
 	input.Name = strings.TrimSpace(input.Name)
 	if input.Name == "" {
 		return nil, fmt.Errorf("%w: name is required", ErrInvalidInput)
@@ -179,8 +184,12 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (*CreateResult,
 	return &CreateResult{Key: key, Secret: secret}, nil
 }
 
-// List returns every key including revoked ones (audit trail), newest first.
+// List returns every key including revoked ones (audit trail), newest
+// first. Root-only (service-level second layer, review fix 10).
 func (s *Service) List(ctx context.Context) ([]Key, error) {
+	if err := auth.RequireRoot(ctx); err != nil {
+		return nil, err
+	}
 	return s.storage.List(ctx)
 }
 
@@ -188,6 +197,9 @@ func (s *Service) List(ctx context.Context) ([]Key, error) {
 // A successful transition fires the revocation notifier (the event hub
 // terminates the key's open SSE streams).
 func (s *Service) Revoke(ctx context.Context, id string) error {
+	if err := auth.RequireRoot(ctx); err != nil {
+		return err
+	}
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return fmt.Errorf("%w: id is required", ErrInvalidInput)
@@ -215,6 +227,9 @@ type UpdateInput struct {
 // re-mint instead. Scope changes take effect on the next request (lookups are
 // not cached) and terminate the key's open SSE streams.
 func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (*Key, error) {
+	if err := auth.RequireRoot(ctx); err != nil {
+		return nil, err
+	}
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil, fmt.Errorf("%w: id is required", ErrInvalidInput)
@@ -323,6 +338,9 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (*Ke
 // streams terminate; hard-deleting an active key leaves its streams open
 // until they reconnect.
 func (s *Service) Delete(ctx context.Context, id string) error {
+	if err := auth.RequireRoot(ctx); err != nil {
+		return err
+	}
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return fmt.Errorf("%w: id is required", ErrInvalidInput)

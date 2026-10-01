@@ -81,3 +81,5 @@ func TestInboxCompleteAndPurgeRouteDispatch(t *testing.T) {
 }
 
 func (s *noopInboxStore) SetItemPlan(_ context.Context, _, _ string, _ time.Time) error { return nil }
+
+func (s *noopInboxStore) ItemsByPlan(_ context.Context, _ string) ([]inbox.Item, error) { return nil, nil }

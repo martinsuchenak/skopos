@@ -210,6 +210,10 @@ func serveCmd() *cli.Command {
 			inboxService.SetAuditRecorder(auditService)
 			inboxService.SetApprovalLog(approvalsService)
 			inboxService.SetPlanRevisions(plansService) // Approve locks the approved revision
+			// Review fix 2: amendments unlock content only through the
+			// workflow's pause, and plans with in-flight items survive.
+			plansService.SetAmendmentGuard(inboxService.RequireAmendable)
+			plansService.SetDeletionGuard(inboxService.PlanHasWorkflowItem)
 			inboxHandler := inbox.NewHandler(inboxService, authn)
 
 			// Completing a plan completes the inbox items it was converted

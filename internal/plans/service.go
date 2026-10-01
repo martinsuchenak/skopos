@@ -11,9 +11,15 @@ import (
 )
 
 type Service struct {
-	store     Store
-	now       func() time.Time
-	publisher events.Publisher
+	// amendmentGuard gates AmendRevision over a locked latest revision;
+	// deletionGuard refuses DeletePlan while a linked item runs the agent
+	// workflow. Both wired in serve.go to the inbox service (the workflow
+	// owns the item states that make either safe).
+	amendmentGuard func(planID string) error
+	deletionGuard  func(planID string) error
+	store          Store
+	now            func() time.Time
+	publisher      events.Publisher
 	// completionHook fires (post-commit, best-effort) whenever a plan
 	// transitions to completed — wired in serve to the inbox, whose converted
 	// items complete with their plan. Nil (the default) disables it.
@@ -34,6 +40,12 @@ func (s *Service) fireCompletion(planID string) {
 // SetPublisher installs the event bus; mutations publish with their plan's
 // authoritative workspace. Nil (the default) disables publishing.
 func (s *Service) SetPublisher(p events.Publisher) { s.publisher = p }
+
+// SetAmendmentGuard installs the amendment gate (see Service struct).
+func (s *Service) SetAmendmentGuard(fn func(planID string) error) { s.amendmentGuard = fn }
+
+// SetDeletionGuard installs the plan-deletion gate (see Service struct).
+func (s *Service) SetDeletionGuard(fn func(planID string) error) { s.deletionGuard = fn }
 
 // publishPlan emits the mutation event for a plan once the store write
 // succeeded; failures are silent (events are advisory).
@@ -200,6 +212,11 @@ func (s *Service) DeletePlan(ctx context.Context, id string) error {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return fmt.Errorf("%w: id is required", ErrInvalidInput)
+	}
+	if s.deletionGuard != nil {
+		if err := s.deletionGuard(id); err != nil {
+			return err
+		}
 	}
 	if err := s.store.DeletePlan(ctx, id); err != nil {
 		return err
@@ -444,6 +461,9 @@ func (s *Service) AddDependency(ctx context.Context, planID, itemID, dependsOnID
 
 func (s *Service) RemoveDependency(ctx context.Context, planID, itemID, dependsOnID string) error {
 	if err := s.requirePlanScopeQuiet(ctx, planID); err != nil {
+		return err
+	}
+	if err := s.requireEditable(ctx, planID); err != nil {
 		return err
 	}
 	planID = strings.TrimSpace(planID)

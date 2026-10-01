@@ -384,6 +384,9 @@ func (s *Service) Convert(ctx context.Context, itemID string, input ConvertInput
 		if item.PlanID != "" || item.Status == StatusConverted || item.Status == StatusDone {
 			return fmt.Errorf("%w (plan %s)", ErrAlreadyConverted, item.PlanID)
 		}
+		if err := refuseWorkflow(item); err != nil {
+			return err
+		}
 		if item.Status == StatusDiscarded {
 			return fmt.Errorf("%w: item is discarded", ErrInvalidInput)
 		}
@@ -450,6 +453,9 @@ func (s *Service) Discard(ctx context.Context, itemID string) error {
 		if err != nil {
 			return err
 		}
+		if err := refuseWorkflow(item); err != nil {
+			return err
+		}
 		switch item.Status {
 		case StatusDone, StatusDiscarded:
 			return fmt.Errorf("%w: item is %s (terminal)", ErrInvalidInput, statusLabel(item.Status))
@@ -478,6 +484,9 @@ func (s *Service) Complete(ctx context.Context, itemID string) error {
 	err := s.store.RunInTx(ctx, func(tx Store) error {
 		item, err := tx.GetItem(ctx, itemID)
 		if err != nil {
+			return err
+		}
+		if err := refuseWorkflow(item); err != nil {
 			return err
 		}
 		switch item.Status {
@@ -594,6 +603,17 @@ func editable(status Status) bool {
 	return status == StatusOpen || status == StatusInProgress
 }
 
+// refuseWorkflow is the manual path's guard against the agent workflow
+// (review fix 1): workflow items move only through the gated actions — the
+// manual complete/discard/convert would bypass both approval gates, and
+// agents hold the MCP tools for exactly these three.
+func refuseWorkflow(item *Item) error {
+	if IsWorkflowStatus(item.Status) {
+		return fmt.Errorf("%w: item is in the agent workflow (%s) — use the workflow actions (approve, reject, retry, transition)", ErrInvalidInput, statusLabel(item.Status))
+	}
+	return nil
+}
+
 // statusLabel renders a status for human-facing error messages ("in
 // progress"); messages that enumerate valid INPUT values keep the raw
 // slugs, since that is what callers must type.
@@ -618,9 +638,9 @@ func ValidStatus(s Status) bool {
 var tagPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._/-]*$`)
 
 const (
-	maxTags    = 10
-	maxTagLen  = 40
-	excerptMax = 200
+	maxTags     = 10
+	maxTagLen   = 40
+	excerptMax  = 200
 	maxPriority = 100000
 	maxReorder  = 500
 )

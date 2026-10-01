@@ -46,6 +46,13 @@ func (s *Service) Record(ctx context.Context, input RecordInput) (Entry, error) 
 		return Entry{}, fmt.Errorf("invalid approval input: a plan approval must name its subject (revision + base)")
 	}
 	p := auth.PrincipalFromContext(ctx)
+	via := strings.TrimSpace(input.Via)
+	if via != "" && via != "slack" && via != "dashboard" && via != "cli" {
+		via = "" // closed set (review fix 8); slack means an approver acted
+	}
+	if via == "slack" && p != nil && !p.Root && !p.Approver {
+		via = ""
+	}
 	e := Entry{
 		ID:          ids.New(),
 		WorkspaceID: input.WorkspaceID,
@@ -53,7 +60,7 @@ func (s *Service) Record(ctx context.Context, input RecordInput) (Entry, error) 
 		Gate:        input.Gate,
 		Subject:     input.Subject,
 		Decision:    input.Decision,
-		Via:         strings.TrimSpace(input.Via),
+		Via:         via,
 		Notes:       input.Notes,
 		CreatedAt:   s.now().UTC(),
 	}

@@ -24,6 +24,11 @@ import (
 // claim updates stay legal — execution must be able to progress.
 var ErrRevisionLocked = errors.New("plan revision is locked: structural changes require an amendment (a new revision)")
 
+// ErrStaleRevision is returned when an approval names a revision that is no
+// longer the latest, or whose snapshot no longer matches the plan's current
+// steps — approving would bind Martin to content he did not see.
+var ErrStaleRevision = errors.New("revision is stale: a newer revision exists or the plan changed since the snapshot")
+
 // RevisionStep is one step in the immutable snapshot. Status is deliberately
 // absent: it is execution state, not plan content.
 type RevisionStep struct {
@@ -49,13 +54,72 @@ type Revision struct {
 }
 
 // CreateRevision snapshots the plan's current items as a new revision.
-// Creating a revision over a locked one is the amendment path: the new
-// revision is unlocked and supersedes the old (the item's return to
-// awaiting_approval is the caller's workflow move).
+// Refused while the latest revision is locked (review fix 2): unlocking
+// approved content is the amendment path — the workflow moves the item back
+// to awaiting_approval first, then AmendRevision snapshots.
 func (s *Service) CreateRevision(ctx context.Context, planID, baseSHA string) (*Revision, error) {
 	if err := s.requirePlanScope(ctx, planID); err != nil {
 		return nil, err
 	}
+	if err := s.requireEditable(ctx, planID); err != nil {
+		return nil, err
+	}
+	return s.snapshot(ctx, planID, baseSHA)
+}
+
+// AmendRevision snapshots over a LOCKED latest revision — the amendment
+// path. Gated by the amendment guard (wired in serve.go to the inbox
+// workflow): the linked item must already be back in awaiting_approval,
+// which only the executor's amendment transition can do. A stray caller
+// with any in-scope key cannot unlock approved content.
+func (s *Service) AmendRevision(ctx context.Context, planID, baseSHA string) (*Revision, error) {
+	if err := s.requirePlanScope(ctx, planID); err != nil {
+		return nil, err
+	}
+	latest, err := s.store.LatestRevision(ctx, strings.TrimSpace(planID))
+	if err != nil {
+		return nil, err
+	}
+	if latest.LockedAt == nil {
+		// Nothing to amend over — a plain snapshot suffices.
+		return s.snapshot(ctx, planID, baseSHA)
+	}
+	if s.amendmentGuard != nil {
+		if err := s.amendmentGuard(strings.TrimSpace(planID)); err != nil {
+			return nil, err
+		}
+	}
+	return s.snapshot(ctx, planID, baseSHA)
+}
+
+// VerifyRevisionCurrent checks the latest revision's snapshot against the
+// plan's current steps: an approval may only bind to content that still
+// matches what the planner snapshot (review fix 3).
+func (s *Service) VerifyRevisionCurrent(ctx context.Context, planID string) (*Revision, error) {
+	planID = strings.TrimSpace(planID)
+	latest, err := s.store.LatestRevision(ctx, planID)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := s.store.GetPlan(ctx, planID)
+	if err != nil {
+		return nil, err
+	}
+	steps := make([]RevisionStep, 0, len(plan.Items))
+	for _, it := range plan.Items {
+		steps = append(steps, RevisionStep{ID: it.ID, Title: it.Title, Description: it.Description, Phase: it.Phase, Position: it.Position})
+	}
+	hash, err := hashSteps(steps)
+	if err != nil {
+		return nil, err
+	}
+	if hash != latest.ContentHash {
+		return nil, ErrStaleRevision
+	}
+	return latest, nil
+}
+
+func (s *Service) snapshot(ctx context.Context, planID, baseSHA string) (*Revision, error) {
 	planID = strings.TrimSpace(planID)
 	plan, err := s.store.GetPlan(ctx, planID)
 	if err != nil {

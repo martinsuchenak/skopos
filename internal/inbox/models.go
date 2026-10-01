@@ -56,16 +56,20 @@ const (
 // workflowEdges is the frozen transition matrix (docs/design/agent-pipeline.md
 // §1, diagram "Item workflow statuses"). failed shares blocked's edges.
 var workflowEdges = map[Status]map[Status]TransitionActor{
-	StatusOpen:             {StatusQueued: ActorHuman},
-	StatusQueued:           {StatusPlanning: ActorSystem},
-	StatusPlanning:         {StatusAwaitingApproval: ActorSystem, StatusDiscarded: ActorHuman},
+	StatusOpen:       {StatusQueued: ActorHuman},
+	StatusInProgress: {StatusQueued: ActorHuman}, // queue implies release (review fix 11)
+	StatusQueued:     {StatusPlanning: ActorSystem, StatusDiscarded: ActorHuman},
+	// Planning runs block too (review fix 5): a planner needing clarification
+	// pauses exactly like an implementer.
+	StatusPlanning:         {StatusAwaitingApproval: ActorSystem, StatusBlocked: ActorSystem, StatusFailed: ActorSystem, StatusDiscarded: ActorHuman},
 	StatusAwaitingApproval: {StatusApproved: ActorHuman, StatusPlanning: ActorHuman, StatusDiscarded: ActorHuman},
 	StatusApproved:         {StatusImplementing: ActorSystem, StatusDiscarded: ActorHuman},
 	StatusImplementing:     {StatusAwaitingApproval: ActorSystem, StatusInReview: ActorSystem, StatusBlocked: ActorSystem, StatusFailed: ActorSystem, StatusDiscarded: ActorHuman},
 	// Retry (with an answer) is Martin's action — the answer feeds the next
-	// run's prompt, like request-changes does for planning.
-	StatusBlocked:  {StatusImplementing: ActorHuman, StatusDiscarded: ActorHuman},
-	StatusFailed:   {StatusImplementing: ActorHuman, StatusDiscarded: ActorHuman},
+	// run's prompt. The target is the phase the item was blocked from:
+	// implementing when a revision is locked, planning otherwise (Retry).
+	StatusBlocked:  {StatusImplementing: ActorHuman, StatusPlanning: ActorHuman, StatusDiscarded: ActorHuman},
+	StatusFailed:   {StatusImplementing: ActorHuman, StatusPlanning: ActorHuman, StatusDiscarded: ActorHuman},
 	StatusInReview: {StatusImplementing: ActorHuman, StatusDone: ActorHuman, StatusDiscarded: ActorHuman},
 }
 
@@ -124,7 +128,11 @@ type PlanSummary struct {
 }
 
 var (
-	ErrInvalidInput     = errors.New("invalid inbox input")
+	ErrInvalidInput = errors.New("invalid inbox input")
+	// ErrStaleRevision mirrors plans.ErrStaleRevision for the inbox surface
+	// (approve naming content that changed since Martin saw it) — handlers
+	// map it to 409 so clients re-show the plan.
+	ErrStaleRevision    = errors.New("revision is stale: a newer revision exists or the plan changed since the snapshot")
 	ErrNotFound         = errors.New("not found")
 	ErrClaimConflict    = errors.New("item already claimed by another agent")
 	ErrAlreadyConverted = errors.New("item already converted to a plan")

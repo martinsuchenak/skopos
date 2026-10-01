@@ -1,9 +1,9 @@
 package plans
 
 import (
-	"strings"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/martinsuchenak/skopos/internal/auth"

@@ -475,7 +475,6 @@ func titles(items []Item) []string {
 	return out
 }
 
-
 func TestServiceFileUnfiled(t *testing.T) {
 	svc := testService(t)
 	ctx := context.Background()

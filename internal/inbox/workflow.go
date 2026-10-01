@@ -23,10 +23,13 @@ type AuditRecorder interface {
 }
 
 // PlanRevisions gives the workflow actions access to plan revisions (the
-// plans service satisfies it); used to lock the approved revision.
+// plans service satisfies it); used to bind approvals and lock them.
 type PlanRevisions interface {
 	LatestRevision(ctx context.Context, planID string) (*plans.Revision, error)
 	LockRevision(ctx context.Context, revisionID string) error
+	VerifyRevisionCurrent(ctx context.Context, planID string) (*plans.Revision, error)
+	AmendRevision(ctx context.Context, planID, baseSHA string) (*plans.Revision, error)
+	CreateRevision(ctx context.Context, planID, baseSHA string) (*plans.Revision, error)
 }
 
 // ApprovalLog records human decisions; internal/approvals.Service satisfies it.
@@ -101,58 +104,124 @@ func (s *Service) Queue(ctx context.Context, itemID, via string) (*Item, error) 
 	return s.transition(ctx, itemID, StatusQueued, ActorHuman, "inbox.queue", via, "", "")
 }
 
-// Approve records Martin's plan approval (awaiting_approval → approved).
-// Notes may carry overrides (wr, runner, tags). When the item links a plan
-// with revisions, the approval names the latest revision plus its base as
-// its subject and locks that revision — approving is approving exactly that
-// content on exactly that base (agent-pipeline §4).
-func (s *Service) Approve(ctx context.Context, itemID, notes, via string) (*Item, error) {
-	item, err := s.transition(ctx, itemID, StatusApproved, ActorHuman, "inbox.approve", via, notes, "")
+// ApproveInput binds an approval to exactly what Martin saw (review fix 3):
+// the revision id his client rendered, and optionally its content hash.
+type ApproveInput struct {
+	Notes       string
+	Via         string
+	RevisionID  string
+	ContentHash string
+}
+
+// Approve records Martin's plan approval (awaiting_approval → approved),
+// bound to the plan revision he actually saw. The item must link a plan with
+// a revision (no silent ungated approvals — R3); the named revision must
+// still be the latest, and its snapshot must still match the plan's current
+// steps (nothing slipped in after the screenshot). On success the revision
+// locks, the approval names it plus its base, and the item moves.
+func (s *Service) Approve(ctx context.Context, itemID string, input ApproveInput) (*Item, error) {
+	if err := auth.RequireApprover(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.requireItemScopeQuiet(ctx, itemID); err != nil {
+		return nil, err
+	}
+	item, err := s.store.GetItem(ctx, strings.TrimSpace(itemID))
 	if err != nil {
 		return nil, err
 	}
-	if s.approvals != nil && item.PlanID != "" {
-		subject := ""
-		if s.plans != nil {
-			if rev, revErr := s.plans.LatestRevision(ctx, item.PlanID); revErr == nil && rev != nil {
-				subject = rev.ID + "+" + rev.BaseSHA
-				if lockErr := s.plans.LockRevision(ctx, rev.ID); lockErr == nil {
-					s.auditItem(ctx, itemID, "plan.lock_revision", via, rev.ID, "")
-				}
-			}
-		}
-		if subject != "" {
-			_, _ = s.approvals.Record(ctx, approvals.RecordInput{
-				WorkspaceID: item.WorkspaceID,
-				ItemID:      item.ID,
-				Gate:        approvals.GatePlan,
-				Subject:     subject,
-				Decision:    approvals.DecisionApproved,
-				Via:         via,
-				Notes:       notes,
-			})
+	if item.PlanID == "" {
+		return nil, fmt.Errorf("%w: item has no linked plan — nothing to approve", ErrInvalidInput)
+	}
+	if s.plans == nil {
+		return nil, fmt.Errorf("%w: plan revisions are not configured", ErrInvalidInput)
+	}
+	rev, err := s.plans.LatestRevision(ctx, item.PlanID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: item has no plan revision — the planner must snapshot before approval", ErrInvalidInput)
+	}
+	if input.RevisionID != "" && input.RevisionID != rev.ID {
+		return nil, ErrStaleRevision
+	}
+	if input.ContentHash != "" && input.ContentHash != rev.ContentHash {
+		return nil, ErrStaleRevision
+	}
+	// The snapshot must still describe the plan as it stands: steps edited
+	// after the snapshot make the approval stale (re-show, re-approve).
+	verified, err := s.plans.VerifyRevisionCurrent(ctx, item.PlanID)
+	if err != nil {
+		return nil, err
+	}
+	// Order matters (review fix 3): every gate's bookkeeping happens BEFORE
+	// the status change — lock, approval record, then transition. A failure
+	// at any earlier step leaves the item unapproved rather than approved
+	// with nothing bound. The residual race (item mutated between the read
+	// above and the transition's own tx) is caught by the transition's
+	// matrix check.
+	if err := s.plans.LockRevision(ctx, rev.ID); err != nil {
+		return nil, err
+	}
+	s.auditItem(ctx, item.ID, "plan.lock_revision", input.Via, rev.ID, "")
+	if s.approvals != nil {
+		if _, err := s.approvals.Record(ctx, approvals.RecordInput{
+			WorkspaceID: item.WorkspaceID,
+			ItemID:      item.ID,
+			Gate:        approvals.GatePlan,
+			Subject:     rev.ID + "+" + rev.BaseSHA,
+			Decision:    approvals.DecisionApproved,
+			Via:         input.Via,
+			Notes:       input.Notes,
+		}); err != nil {
+			return nil, fmt.Errorf("recording approval: %w", err)
 		}
 	}
-	return item, nil
+	_ = verified
+	return s.transition(ctx, item.ID, StatusApproved, ActorHuman, "inbox.approve", input.Via, input.Notes, "")
 }
 
-// RequestChanges sends the item back one phase with Martin's notes
-// (awaiting_approval → planning, or in_review → implementing). The notes are
+// RequestChanges sends the item back one phase with Martin's notes. The
+// target is picked from the current status inside the matrix (review fix 6):
+// awaiting_approval → planning, in_review → implementing. The notes are
 // passed into the next run's prompt.
 func (s *Service) RequestChanges(ctx context.Context, itemID, notes, via string) (*Item, error) {
-	return s.transition(ctx, itemID, StatusPlanning, ActorHuman, "inbox.request_changes", via, notes, "")
+	if err := s.requireItemScopeQuiet(ctx, itemID); err != nil {
+		return nil, err
+	}
+	item, err := s.store.GetItem(ctx, strings.TrimSpace(itemID))
+	if err != nil {
+		return nil, err
+	}
+	var target Status
+	switch item.Status {
+	case StatusAwaitingApproval:
+		target = StatusPlanning
+	case StatusInReview:
+		target = StatusImplementing
+	default:
+		return nil, fmt.Errorf("%w: request-changes applies to awaiting_approval or in_review items (item is %s)", ErrInvalidInput, statusLabel(item.Status))
+	}
+	return s.transition(ctx, item.ID, target, ActorHuman, "inbox.request_changes", via, notes, "")
 }
 
-// RequestChangesInReview is RequestChanges from the review phase
-// (in_review → implementing).
-func (s *Service) RequestChangesInReview(ctx context.Context, itemID, notes, via string) (*Item, error) {
-	return s.transition(ctx, itemID, StatusImplementing, ActorHuman, "inbox.request_changes", via, notes, "")
-}
-
-// Retry answers a blocked or failed item and returns it to implementing
-// (the answer feeds the next run's prompt, like request-changes).
+// Retry answers a blocked or failed item and returns it to the phase it was
+// blocked from: implementing when a revision is locked (an approved plan
+// exists), otherwise planning (review fix 5). The answer feeds the next
+// run's prompt, like request-changes.
 func (s *Service) Retry(ctx context.Context, itemID, answer, via string) (*Item, error) {
-	return s.transition(ctx, itemID, StatusImplementing, ActorHuman, "inbox.retry", via, answer, "")
+	if err := s.requireItemScopeQuiet(ctx, itemID); err != nil {
+		return nil, err
+	}
+	item, err := s.store.GetItem(ctx, strings.TrimSpace(itemID))
+	if err != nil {
+		return nil, err
+	}
+	target := StatusPlanning
+	if item.PlanID != "" && s.plans != nil {
+		if rev, revErr := s.plans.LatestRevision(ctx, item.PlanID); revErr == nil && rev != nil && rev.LockedAt != nil {
+			target = StatusImplementing
+		}
+	}
+	return s.transition(ctx, item.ID, target, ActorHuman, "inbox.retry", via, answer, "")
 }
 
 // Reject discards the item from any workflow phase that allows it.
@@ -160,21 +229,25 @@ func (s *Service) Reject(ctx context.Context, itemID, notes, via string) (*Item,
 	return s.transition(ctx, itemID, StatusDiscarded, ActorHuman, "inbox.reject", via, notes, "")
 }
 
-// MarkDone completes the reviewed item (in_review → done). headSHA, when the
-// caller knows it, becomes the review approval's subject — the review names
-// exactly the commit Martin looked at, and any later commit would not match
-// it (stale by comparison).
+// MarkDone completes the reviewed item (in_review → done). headSHA is
+// REQUIRED (review fix 4): the review approval names exactly the commit
+// Martin looked at, and any later commit would not match it (stale by
+// comparison). The executor always knows the head it pushed.
 func (s *Service) MarkDone(ctx context.Context, itemID, headSHA, via string) (*Item, error) {
+	headSHA = strings.TrimSpace(headSHA)
+	if headSHA == "" {
+		return nil, fmt.Errorf("%w: head_sha is required — the review approval names the commit being approved", ErrInvalidInput)
+	}
 	item, err := s.transition(ctx, itemID, StatusDone, ActorHuman, "inbox.mark_done", via, "", "")
 	if err != nil {
 		return nil, err
 	}
-	if s.approvals != nil && headSHA != "" {
+	if s.approvals != nil {
 		_, _ = s.approvals.Record(ctx, approvals.RecordInput{
 			WorkspaceID: item.WorkspaceID,
 			ItemID:      item.ID,
 			Gate:        approvals.GateReview,
-			Subject:     strings.TrimSpace(headSHA),
+			Subject:     headSHA,
 			Decision:    approvals.DecisionApproved,
 			Via:         via,
 		})
@@ -256,6 +329,55 @@ func (s *Service) LinkPlan(ctx context.Context, itemID, planID string) (*Item, e
 // blocked / failed. agentID names the acting agent for the audit record.
 func (s *Service) SystemTransition(ctx context.Context, itemID string, to Status, reason, agentID, via string) (*Item, error) {
 	return s.transition(ctx, itemID, to, ActorSystem, "inbox.transition", via, reason, agentID)
+}
+
+// AmendPlan is the amendment path (review fix 2): pause the run
+// (implementing → awaiting_approval), then snapshot the amended plan over
+// the locked revision. Doing both here makes the item's return to the gate
+// inseparable from unlocking the plan content.
+func (s *Service) AmendPlan(ctx context.Context, itemID, baseSHA string) (*Item, error) {
+	item, err := s.transition(ctx, itemID, StatusAwaitingApproval, ActorSystem, "inbox.transition", "worker", "amendment", "")
+	if err != nil {
+		return nil, err
+	}
+	if item.PlanID != "" && s.plans != nil {
+		if _, err := s.plans.AmendRevision(ctx, item.PlanID, baseSHA); err != nil {
+			return nil, err
+		}
+	}
+	return item, nil
+}
+
+// RequireAmendable is the plans service's amendment guard: the linked item
+// must be back at the gate (awaiting_approval) — only AmendPlan's
+// system transition puts it there.
+func (s *Service) RequireAmendable(planID string) error {
+	items, err := s.store.ItemsByPlan(context.Background(), planID)
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		if items[i].Status == StatusAwaitingApproval {
+			return nil
+		}
+	}
+	return plans.ErrRevisionLocked
+}
+
+// PlanHasWorkflowItem is the plans service's deletion guard: refuse deleting
+// a plan whose linked item still runs the workflow (its locked revisions
+// are what approvals point at).
+func (s *Service) PlanHasWorkflowItem(planID string) error {
+	items, err := s.store.ItemsByPlan(context.Background(), planID)
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		if IsWorkflowStatus(items[i].Status) {
+			return fmt.Errorf("%w: plan has an item in the agent workflow (%s) — finish or reject the item first", ErrInvalidInput, statusLabel(items[i].Status))
+		}
+	}
+	return nil
 }
 
 // Timeline is the item's workflow history: the audit log filtered to this

@@ -14,11 +14,14 @@ import (
 // ErrApproverRequired → 403, ErrOutOfScope-shaped not-found → 404.
 
 type actionRequest struct {
-	Notes   string `json:"notes"`
-	Answer  string `json:"answer"`
-	Reason  string `json:"reason"`
-	HeadSHA string `json:"head_sha"` // review gate subject on mark-done
-	PlanID  string `json:"plan_id"`  // link-plan
+	Notes       string `json:"notes"`
+	Answer      string `json:"answer"`
+	Reason      string `json:"reason"`
+	HeadSHA     string `json:"head_sha"`     // review gate subject on mark-done (required)
+	PlanID      string `json:"plan_id"`      // link-plan
+	RevisionID  string `json:"revision_id"`  // approve: bind to the revision Martin saw
+	ContentHash string `json:"content_hash"` // approve: optional stronger binding
+	BaseSHA     string `json:"base_sha"`     // amend-plan
 }
 
 type transitionRequest struct {
@@ -74,8 +77,15 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req actionRequest
-	_ = rest.DecodeJSON(w, r, &req) // empty body is fine
-	item, err := h.service.Approve(r.Context(), r.PathValue("id"), req.Notes, viaFrom(r, ""))
+	_ = rest.DecodeJSON(w, r, &req) // empty body is fine; revision binding optional but recommended
+	item, err := h.service.Approve(r.Context(), r.PathValue("id"), ApproveInput{
+		Notes: req.Notes, Via: viaFrom(r, ""),
+		RevisionID: req.RevisionID, ContentHash: req.ContentHash,
+	})
+	if errors.Is(err, ErrStaleRevision) {
+		rest.RespondError(w, http.StatusConflict, err.Error())
+		return
+	}
 	h.respondTransition(w, item, err)
 }
 
@@ -186,6 +196,19 @@ func (h *Handler) Transition(w http.ResponseWriter, r *http.Request) {
 	h.respondTransition(w, item, err)
 }
 
+// AmendPlan handles POST /api/inbox/{id}/amend-plan: pause the run and
+// snapshot the amended plan over the locked revision (executor path).
+func (h *Handler) AmendPlan(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req actionRequest
+	_ = rest.DecodeJSON(w, r, &req)
+	item, err := h.service.AmendPlan(r.Context(), r.PathValue("id"), req.BaseSHA)
+	h.respondTransition(w, item, err)
+}
+
 // Timeline is the item's audit-log view: every transition with actor, via,
 // notes and time.
 func (h *Handler) Timeline(w http.ResponseWriter, r *http.Request) {
@@ -209,7 +232,9 @@ func (h *Handler) Timeline(w http.ResponseWriter, r *http.Request) {
 }
 
 type migrateRequest struct {
-	DryRun bool `json:"dry_run"`
+	WorkspaceID string        `json:"workspace_id"`
+	DryRun      bool          `json:"dry_run"`
+	Links       []MigrateLink `json:"links"`
 }
 
 // MigrateWorkflow handles POST /api/inbox/migrate-workflow: the one-time
@@ -220,8 +245,10 @@ func (h *Handler) MigrateWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req migrateRequest
-	_ = rest.DecodeJSON(w, r, &req) // empty body = apply
-	report, err := h.service.MigrateWorkflow(r.Context(), req.DryRun)
+	_ = rest.DecodeJSON(w, r, &req)
+	report, err := h.service.MigrateWorkflow(r.Context(), MigrateInput{
+		WorkspaceID: req.WorkspaceID, DryRun: req.DryRun, Links: req.Links,
+	})
 	if err != nil {
 		if errors.Is(err, auth.ErrRootRequired) {
 			rest.RespondError(w, http.StatusForbidden, err.Error())

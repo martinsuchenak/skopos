@@ -286,3 +286,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_type, entity_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_workspace ON audit_log(workspace_id, created_at);
+
+-- Review fix 9: revision numbers are unique per plan; the read-then-insert
+-- race in CreateRevision can no longer produce ambiguous LatestRevision
+-- ordering (the constraint makes the loser fail loudly).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_revisions_no ON plan_revisions(plan_id, revision_no);

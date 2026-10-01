@@ -45,24 +45,62 @@ func (s *Service) Record(ctx context.Context, input RecordInput) error {
 		EntityType:  input.EntityType,
 		EntityID:    input.EntityID,
 		Action:      input.Action,
-		Via:         strings.TrimSpace(input.Via),
+		Via:         sanitizeVia(input.Via, p),
 		Notes:       input.Notes,
 		CreatedAt:   s.now().UTC(),
 	}
 	switch {
-	case input.Via == ViaMigration:
+	case p == nil && e.Via == ViaMigration:
 		e.Actor = ViaMigration
 	case input.AgentID != "":
+		// Agent attribution wins for any principal (the trial's agents run
+		// under the root key — "root" would hide which agent acted).
 		e.Actor = "agent " + input.AgentID
+		if p != nil && !p.Root {
+			e.ActorKeyID = p.KeyID
+		}
 	case p == nil:
 		e.Actor = "system"
 	case p.Root:
 		e.Actor = "root"
 	default:
 		e.Actor = "key " + p.Name
+		// Always kept (review fix 8): the raw key id is the attribution the
+		// threat model leans on, whatever the via label says.
 		e.ActorKeyID = p.KeyID
 	}
 	return s.storage.Write(ctx, e)
+}
+
+// validVia is the closed set callers may name (review fix 8): migration is
+// reserved for internal callers and system for the server itself.
+func validVia(v string) bool {
+	switch v {
+	case ViaDashboard, ViaSlack, ViaCLI, ViaMCP, ViaWorker, ViaSystem, "":
+		return true
+	}
+	return false
+}
+
+// sanitizeVia validates and rights the label: unknown labels drop to empty
+// (never trusted), migration is stripped from caller-supplied values, and
+// slack requires an approver principal — the threat model's "via: slack"
+// means Martin himself.
+func sanitizeVia(via string, p *auth.Principal) string {
+	via = strings.TrimSpace(via)
+	if via == ViaMigration {
+		if p == nil {
+			return via // internal caller: the one legitimate migration writer
+		}
+		return ""
+	}
+	if !validVia(via) {
+		return ""
+	}
+	if via == ViaSlack && p != nil && !p.Root && !p.Approver {
+		return ""
+	}
+	return via
 }
 
 // List reads entries, scoped like every domain read: root (and internal)

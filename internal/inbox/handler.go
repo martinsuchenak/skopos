@@ -190,13 +190,13 @@ func (h *Handler) Discard(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := h.service.Discard(r.Context(), id); err != nil {
 		switch {
-			case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
-				rest.RespondError(w, http.StatusNotFound, err.Error())
-			case errors.Is(err, ErrInvalidInput):
-				rest.RespondError(w, http.StatusBadRequest, err.Error())
-			default:
-				rest.InternalError(w, err)
-			}
+		case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
+			rest.RespondError(w, http.StatusNotFound, err.Error())
+		case errors.Is(err, ErrInvalidInput):
+			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		default:
+			rest.InternalError(w, err)
+		}
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -244,7 +244,6 @@ func (h *Handler) Reorder(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-
 
 // Restore brings a discarded item back to open.
 func (h *Handler) Restore(w http.ResponseWriter, r *http.Request) {

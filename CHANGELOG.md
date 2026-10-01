@@ -57,6 +57,20 @@ versions follow [Semantic Versioning](https://semver.org/).
   query. Backed by `GET/PUT /api/workspaces/{id}/groups` (root-only), which
   replaces a workspace's explicit group allocations atomically and drops the
   SSE streams of keys in any touched group.
+- **Code-review hardening (2026-10-01)** — the approval gate cannot be
+  bypassed: manual complete/discard/convert refuse workflow items; a locked
+  revision unlocks only through the amendment path (`amend-plan`: pause +
+  superseding snapshot, inseparably), `DeletePlan` refuses while a linked
+  item is in flight; approve binds to the revision Martin saw
+  (`revision_id`/`content_hash`, hash re-verified against the plan, 409 when
+  stale) and refuses items without a linked plan or revision; mark-done
+  requires `head_sha`. Planning can block (retry returns to the blocked-from
+  phase), request-changes picks its target by status, queued items can be
+  rejected and claimed items queued. The migration is workspace-scoped,
+  strips trial tags (idempotent), and can link plans + snapshot revisions.
+  Audit `via` is validated (migration is internal-only, slack requires the
+  approver), `actor_key_id` is always kept, and key management enforces
+  root at the service layer as well.
 - **One-time agent-trial cutover** — `POST /api/inbox/migrate-workflow` and
   `skopos inbox migrate-workflow [--dry-run]`: the frozen tag→status table,
   idempotent, with audit backfill (`via: migration`); discarded trial items

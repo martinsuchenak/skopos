@@ -1233,8 +1233,8 @@ paths:
 
   /api/inbox/{id}/approve:
     post:
-      summary: Approve the plan under review (approver permission required)
-      description: awaiting_approval → approved. Notes may carry overrides (wr, runner, tags).
+      summary: Approve the plan under review, bound to the revision Martin saw (approver permission required)
+      description: awaiting_approval → approved. The item must link a plan with a revision; revision_id/content_hash bind the approval to what was shown (409 when stale). Notes may carry overrides (wr, runner, tags).
       operationId: approveInboxItem
       security: [{ BearerAuth: [] }]
       parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
@@ -1246,16 +1246,19 @@ paths:
               type: object
               properties:
                 notes: { type: string }
+                revision_id: { type: string, description: The revision the approving client rendered }
+                content_hash: { type: string }
       responses:
         "200":
           description: Approved item
           content:
             application/json:
               schema: { $ref: "#/components/schemas/InboxItem" }
-        "400": { description: Illegal transition }
+        "400": { description: Illegal transition, no linked plan, or no revision }
         "401": { description: Unauthorized }
         "403": { description: Approver permission required }
         "404": { description: Not found }
+        "409": { description: Stale revision }
 
   /api/inbox/{id}/request-changes:
     post:
@@ -1401,6 +1404,31 @@ paths:
         "401": { description: Unauthorized }
         "404": { description: Not found }
 
+  /api/inbox/{id}/amend-plan:
+    post:
+      summary: Pause the run and snapshot the amended plan over the locked revision (executor path)
+      description: implementing → awaiting_approval plus a new superseding revision, inseparably — the only way to unlock approved content.
+      operationId: amendInboxPlan
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                base_sha: { type: string }
+      responses:
+        "200":
+          description: Item back at the gate
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InboxItem" }
+        "400": { description: Item not implementing }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+
   /api/inbox/{id}/link-plan:
     post:
       summary: Attach the planner's plan to a workflow item (executor path; workspace scope required)
@@ -1503,8 +1531,8 @@ paths:
 
   /api/inbox/migrate-workflow:
     post:
-      summary: One-time agent-trial cutover — migrate tag state to workflow statuses (root only)
-      description: Applies the frozen tag→status table; every moved item gets one audit entry (via=migration). Idempotent; dry_run reports without writing.
+      summary: One-time agent-trial cutover — migrate tag state to workflow statuses (root only, workspace-scoped)
+      description: Applies the frozen tag→status table within one workspace (the trial's); trial tags are stripped so reruns are no-ops. Optional links attach plans and snapshot revisions (approved items get a via:migration approval). dry_run reports without writing.
       operationId: migrateInboxWorkflow
       security: [{ BearerAuth: [] }]
       requestBody:

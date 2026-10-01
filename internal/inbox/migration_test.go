@@ -2,6 +2,7 @@ package inbox
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/martinsuchenak/skopos/internal/audit"
@@ -30,8 +31,12 @@ func TestMigrateWorkflow(t *testing.T) {
 	waiting := mustTagged("c", "approved", "agent-waiting-quota")
 	plain := mustCreate(t, svc, root, "no tags")
 
+	// Unscoped migration is refused (review fix 7).
+	if _, err := svc.MigrateWorkflow(root, MigrateInput{DryRun: true}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("unscoped migration must refuse: %v", err)
+	}
 	// Dry run: reports, writes nothing.
-	report, err := svc.MigrateWorkflow(root, true)
+	report, err := svc.MigrateWorkflow(root, MigrateInput{WorkspaceID: "ws-a", DryRun: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,12 +48,12 @@ func TestMigrateWorkflow(t *testing.T) {
 	}
 
 	// Scoped keys cannot migrate.
-	if _, err := svc.MigrateWorkflow(scopedCtx(), false); err == nil {
+	if _, err := svc.MigrateWorkflow(scopedCtx(), MigrateInput{WorkspaceID: "ws-a"}); err == nil {
 		t.Fatal("scoped key must not migrate")
 	}
 
 	// Apply.
-	report, err = svc.MigrateWorkflow(root, false)
+	report, err = svc.MigrateWorkflow(root, MigrateInput{WorkspaceID: "ws-a"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,9 +84,10 @@ func TestMigrateWorkflow(t *testing.T) {
 		t.Fatalf("migration entry wrong: %+v", timeline[0])
 	}
 
-	// Second run is a no-op (migrated items plus the untagged one).
-	report, err = svc.MigrateWorkflow(root, false)
-	if err != nil || len(report.Migrated) != 0 || report.Unchanged != 4 { // 3 migrated + the untagged item
+	// Second run is a no-op: trial tags were stripped, so nothing matches
+	// (not even the discarded backfill — the original report had one).
+	report, err = svc.MigrateWorkflow(root, MigrateInput{WorkspaceID: "ws-a"})
+	if err != nil || len(report.Migrated) != 0 {
 		t.Fatalf("second run must be a no-op: %+v err %v", report, err)
 	}
 }
@@ -91,10 +97,14 @@ func TestMigrateWorkflowDiscarded(t *testing.T) {
 	svc, _, _ := fullStack(t)
 	root := context.Background()
 	item := mustCreate(t, svc, root, "rejected")
+	tags := []string{"plan-review"}
+	if err := svc.UpdateItem(root, item.ID, UpdateInput{Tags: &tags}); err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.Discard(root, item.ID); err != nil {
 		t.Fatal(err)
 	}
-	report, err := svc.MigrateWorkflow(root, false)
+	report, err := svc.MigrateWorkflow(root, MigrateInput{WorkspaceID: "ws-a"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -222,12 +222,18 @@ func TestIntegrationMigrationDryRun(t *testing.T) {
 	root := bearerClient{ts, "root-secret"}
 	mustStatus(t, root.do("POST", "/api/workspaces", `{"id":"ws-a","name":"a"}`), 201, "workspace")
 
-	ready := createItem(t, root)
-	_ = ready
+	// Capture the item in the migration's workspace (createItem defaults to
+	// another workspace).
+	created := mustStatus(t, root.do("POST", "/api/inbox", `{"workspace_id":"ws-a","title":"trial item","author_agent_id":"agent-trial"}`), 201, "create item")
+	var item struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(created.Body.Bytes(), &item)
+	ready := item.ID
 	// Tag it like the trial would.
 	mustStatus(t, root.do("PATCH", "/api/inbox/"+ready, `{"tags":["ready"]}`), 204, "tag ready")
 
-	dry := mustStatus(t, root.do("POST", "/api/inbox/migrate-workflow", `{"dry_run":true}`), 200, "dry run")
+	dry := mustStatus(t, root.do("POST", "/api/inbox/migrate-workflow", `{"workspace_id":"ws-a","dry_run":true}`), 200, "dry run")
 	if !strings.Contains(dry.Body.String(), `"ready"`) {
 		t.Fatalf("dry run must report the ready item: %s", dry.Body.String())
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/db"
+	"github.com/martinsuchenak/skopos/internal/plans"
 	_ "modernc.org/sqlite"
 )
 
@@ -39,26 +40,52 @@ func approverCtx() context.Context {
 
 // The full happy path from the design's end-to-end flow: queue → plan →
 // approve → implement → review → done, with every transition audited.
-func TestWorkflowHappyPath(t *testing.T) {
-	svc, _ := testServiceWithAudit(t)
+// mustReadyForApproval walks an item to awaiting_approval with a linked
+// plan and a snapshot revision — the precondition Approve now enforces.
+func mustReadyForApproval(t *testing.T, svc *Service, plansSvc *plans.Service, title string) *Item {
+	t.Helper()
 	root := context.Background()
-	item := mustCreate(t, svc, root, "workflow item")
+	item := mustCreate(t, svc, root, title)
+	if _, err := svc.Queue(approverCtx(), item.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SystemTransition(root, item.ID, StatusPlanning, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := plansSvc.CreatePlan(root, plans.CreatePlanInput{WorkspaceID: "ws-a", Name: "p-" + title, AuthorAgentID: "planner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plansSvc.AddItem(root, plan.ID, plans.CreateItemInput{Title: "step 1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.LinkPlan(root, item.ID, plan.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plansSvc.CreateRevision(root, plan.ID, "d2ce73dfdd1"); err != nil {
+		t.Fatal(err)
+	}
+	gated, err := svc.SystemTransition(root, item.ID, StatusAwaitingApproval, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return gated
+}
+
+func TestWorkflowHappyPath(t *testing.T) {
+	svc, plansSvc, _ := fullStack(t)
+	root := context.Background()
+	item := mustReadyForApproval(t, svc, plansSvc, "workflow item")
 
 	steps := []struct {
 		name string
 		run  func() error
 		want Status
 	}{
-		{"queue", func() error { _, err := svc.Queue(approverCtx(), item.ID, audit.ViaSlack); return err }, StatusQueued},
-		{"plan run", func() error {
-			_, err := svc.SystemTransition(root, item.ID, StatusPlanning, "", "agent-1", audit.ViaWorker)
+		{"approve", func() error {
+			_, err := svc.Approve(approverCtx(), item.ID, ApproveInput{Notes: "wr=108900", Via: audit.ViaSlack})
 			return err
-		}, StatusPlanning},
-		{"plan ready", func() error {
-			_, err := svc.SystemTransition(root, item.ID, StatusAwaitingApproval, "", "agent-1", audit.ViaWorker)
-			return err
-		}, StatusAwaitingApproval},
-		{"approve", func() error { _, err := svc.Approve(approverCtx(), item.ID, "wr=108900", audit.ViaSlack); return err }, StatusApproved},
+		}, StatusApproved},
 		{"implement", func() error {
 			_, err := svc.SystemTransition(root, item.ID, StatusImplementing, "", "agent-1", audit.ViaWorker)
 			return err
@@ -67,7 +94,7 @@ func TestWorkflowHappyPath(t *testing.T) {
 			_, err := svc.SystemTransition(root, item.ID, StatusInReview, "", "agent-1", audit.ViaWorker)
 			return err
 		}, StatusInReview},
-		{"done", func() error { _, err := svc.MarkDone(approverCtx(), item.ID, "", audit.ViaSlack); return err }, StatusDone},
+		{"done", func() error { _, err := svc.MarkDone(approverCtx(), item.ID, "abc123", audit.ViaSlack); return err }, StatusDone},
 	}
 	for _, step := range steps {
 		if err := step.run(); err != nil {
@@ -79,12 +106,13 @@ func TestWorkflowHappyPath(t *testing.T) {
 		}
 	}
 
-	// The timeline carries every transition, newest-first, with actors.
+	// The timeline carries every transition, newest-first, with actors
+	// (helper-walk transitions included).
 	entries, err := svc.Timeline(root, item.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != len(steps) {
+	if len(entries) < len(steps) {
 		t.Fatalf("timeline must have one entry per transition: %d", len(entries))
 	}
 	if entries[0].Action != "inbox.mark_done" || entries[0].Actor != "key relay" || entries[0].Via != "slack" {
@@ -108,31 +136,21 @@ func TestWorkflowHappyPath(t *testing.T) {
 // The five human actions (plus retry) are approver-gated: a plain scoped key
 // is rejected; an approver key passes. Root passes implicitly.
 func TestWorkflowApproverGating(t *testing.T) {
-	svc, _ := testServiceWithAudit(t)
-	root := context.Background()
-	item := mustCreate(t, svc, root, "gated")
-
-	// Walk the item to awaiting_approval as root/system so every human
-	// action has a legal edge available somewhere in the test.
-	if _, err := svc.Queue(root, item.ID, ""); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.SystemTransition(root, item.ID, StatusPlanning, "", "", ""); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.SystemTransition(root, item.ID, StatusAwaitingApproval, "", "", ""); err != nil {
-		t.Fatal(err)
-	}
+	svc, plansSvc, _ := fullStack(t)
+	item := mustReadyForApproval(t, svc, plansSvc, "gated")
 
 	calls := map[string]func(context.Context, string) error{
-		"queue":   func(ctx context.Context, id string) error { _, err := svc.Queue(ctx, id, ""); return err },
-		"approve": func(ctx context.Context, id string) error { _, err := svc.Approve(ctx, id, "", ""); return err },
+		"queue": func(ctx context.Context, id string) error { _, err := svc.Queue(ctx, id, ""); return err },
+		"approve": func(ctx context.Context, id string) error {
+			_, err := svc.Approve(ctx, id, ApproveInput{Notes: "", Via: ""})
+			return err
+		},
 		"request_changes": func(ctx context.Context, id string) error {
 			_, err := svc.RequestChanges(ctx, id, "notes", "")
 			return err
 		},
 		"reject":    func(ctx context.Context, id string) error { _, err := svc.Reject(ctx, id, "", ""); return err },
-		"mark_done": func(ctx context.Context, id string) error { _, err := svc.MarkDone(ctx, id, "", ""); return err },
+		"mark_done": func(ctx context.Context, id string) error { _, err := svc.MarkDone(ctx, id, "abc", ""); return err },
 		"retry":     func(ctx context.Context, id string) error { _, err := svc.Retry(ctx, id, "answer", ""); return err },
 	}
 	for name, call := range calls {
@@ -141,7 +159,7 @@ func TestWorkflowApproverGating(t *testing.T) {
 		}
 	}
 	// The approver key performs a legal action successfully.
-	if _, err := svc.Approve(approverCtx(), item.ID, "", ""); err != nil {
+	if _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{}); err != nil {
 		t.Fatalf("approve by approver key: %v", err)
 	}
 }
@@ -149,12 +167,12 @@ func TestWorkflowApproverGating(t *testing.T) {
 // Illegal moves are rejected with the matrix's verdict: wrong actor class or
 // no edge at all.
 func TestWorkflowIllegalTransitions(t *testing.T) {
-	svc, _ := testServiceWithAudit(t)
+	svc, plansSvc, _ := fullStack(t)
 	root := context.Background()
 	item := mustCreate(t, svc, root, "matrix")
 
 	// Human actions on non-workflow states have no edge.
-	if _, err := svc.Approve(root, item.ID, "", ""); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.Approve(root, item.ID, ApproveInput{Notes: "", Via: ""}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("approve from open: %v", err)
 	}
 	// System cannot perform human edges.
@@ -165,7 +183,7 @@ func TestWorkflowIllegalTransitions(t *testing.T) {
 	if _, err := svc.Queue(root, item.ID, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Approve(root, item.ID, "", ""); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.Approve(root, item.ID, ApproveInput{Notes: "", Via: ""}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("human planning: %v", err)
 	}
 	// Skips are illegal: queued → implementing has no edge.
@@ -173,15 +191,27 @@ func TestWorkflowIllegalTransitions(t *testing.T) {
 		t.Fatalf("skip to implementing: %v", err)
 	}
 
-	// Amendment loop: implementing → awaiting_approval (system) →
-	// request_changes back to planning (human).
+	// Amendment loop: link a plan + revision, approve, then amend.
+	plan2, err := plansSvc.CreatePlan(root, plans.CreatePlanInput{WorkspaceID: "ws-a", Name: "p-matrix", AuthorAgentID: "planner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plansSvc.AddItem(root, plan2.ID, plans.CreateItemInput{Title: "step 1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.LinkPlan(root, item.ID, plan2.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plansSvc.CreateRevision(root, plan2.ID, ""); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := svc.SystemTransition(root, item.ID, StatusPlanning, "", "", ""); err != nil {
 		t.Fatalf("walk to planning: %v", err)
 	}
 	if _, err := svc.SystemTransition(root, item.ID, StatusAwaitingApproval, "", "", ""); err != nil {
 		t.Fatalf("walk to awaiting_approval: %v", err)
 	}
-	if _, err := svc.Approve(root, item.ID, "", ""); err != nil {
+	if _, err := svc.Approve(root, item.ID, ApproveInput{}); err != nil {
 		t.Fatalf("approve (human): %v", err)
 	}
 	if _, err := svc.SystemTransition(root, item.ID, StatusImplementing, "", "", ""); err != nil {
@@ -201,7 +231,7 @@ func TestWorkflowIllegalTransitions(t *testing.T) {
 	if _, err := svc.SystemTransition(root, item.ID, StatusAwaitingApproval, "", "", ""); err != nil { // planning → awaiting_approval
 		t.Fatalf("walk to awaiting_approval: %v", err)
 	}
-	if _, err := svc.Approve(root, item.ID, "", ""); err != nil { // human
+	if _, err := svc.Approve(root, item.ID, ApproveInput{Notes: "", Via: ""}); err != nil { // human
 		t.Fatalf("approve: %v", err)
 	}
 	if _, err := svc.SystemTransition(root, item.ID, StatusImplementing, "", "", ""); err != nil {
@@ -219,7 +249,7 @@ func TestWorkflowIllegalTransitions(t *testing.T) {
 			t.Fatalf("walk to %s: %v", to, err)
 		}
 	}
-	if _, err := svc.RequestChangesInReview(approverCtx(), item.ID, "rename the label", ""); err != nil {
+	if _, err := svc.RequestChanges(approverCtx(), item.ID, "rename the label", ""); err != nil {
 		t.Fatalf("in-review request changes: %v", err)
 	}
 	if got, _ := svc.GetItem(root, item.ID); got.Status != StatusImplementing {

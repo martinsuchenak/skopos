@@ -35,6 +35,8 @@ func fullStack(t *testing.T) (*Service, *plans.Service, *approvals.Service) {
 	svc.SetAuditRecorder(auditSvc)
 	svc.SetApprovalLog(approvalsSvc)
 	svc.SetPlanRevisions(plansSvc)
+	plansSvc.SetAmendmentGuard(svc.RequireAmendable)
+	plansSvc.SetDeletionGuard(svc.PlanHasWorkflowItem)
 	return svc, plansSvc, approvalsSvc
 }
 
@@ -88,7 +90,7 @@ func TestApproveLocksRevisionAndRecordsApproval(t *testing.T) {
 	}
 
 	// Approve: the revision locks and the approval names it.
-	if _, err := svc.Approve(approverCtx(), item.ID, "wr=108900", "slack"); err != nil {
+	if _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{Notes: "wr=108900", Via: "slack"}); err != nil {
 		t.Fatal(err)
 	}
 	latest, err := plansSvc.LatestRevision(root, planID)
@@ -118,16 +120,64 @@ func TestApproveLocksRevisionAndRecordsApproval(t *testing.T) {
 		t.Fatalf("status update on locked revision must pass: %v", err)
 	}
 
-	// Amendment: a new snapshot supersedes the lock and edits flow again.
-	rev2, err := plansSvc.CreateRevision(root, planID, "")
-	if err != nil {
-		t.Fatal(err)
+	// A direct snapshot over the lock is refused — the amendment path is
+	// the orchestrated one (pause + snapshot).
+	if _, err := plansSvc.CreateRevision(root, planID, ""); !errors.Is(err, plans.ErrRevisionLocked) {
+		t.Fatalf("direct snapshot over lock must refuse: %v", err)
 	}
-	if rev2.RevisionNo != 2 || rev2.LockedAt != nil {
-		t.Fatalf("amendment revision wrong: %+v", rev2)
+	// AmendPlan: the run pauses (implementing → awaiting_approval) and the
+	// new revision supersedes the lock; edits flow again.
+	if _, err := svc.SystemTransition(root, item.ID, StatusImplementing, "", "", ""); err != nil {
+		t.Fatalf("walk to implementing: %v", err)
+	}
+	amended, err := svc.AmendPlan(root, item.ID, "")
+	if err != nil {
+		t.Fatalf("amend plan: %v", err)
+	}
+	if amended.Status != StatusAwaitingApproval {
+		t.Fatalf("amendment must return the item to the gate: %s", amended.Status)
+	}
+	rev2, err := plansSvc.LatestRevision(root, planID)
+	if err != nil || rev2.RevisionNo != 2 || rev2.LockedAt != nil {
+		t.Fatalf("amendment revision wrong: %+v err %v", rev2, err)
 	}
 	if _, err := plansSvc.AddItem(root, planID, plans.CreateItemInput{Title: "step 3"}); err != nil {
 		t.Fatalf("add after amendment: %v", err)
+	}
+}
+
+// Approve binds to what Martin saw (review fix 3): a stale revision id or a
+// plan edited after the snapshot is a 409-class refusal, and an item with no
+// plan or no revision never approves.
+func TestApproveBindsToRevision(t *testing.T) {
+	svc, plansSvc, _ := fullStack(t)
+	root := context.Background()
+	item := mustReadyForApproval(t, svc, plansSvc, "binding")
+
+	// Wrong revision id: stale.
+	if _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{RevisionID: "bogus"}); !errors.Is(err, ErrStaleRevision) {
+		t.Fatalf("wrong revision id: %v", err)
+	}
+	// Edit the plan after the snapshot: the hash no longer matches — stale.
+	plan, _ := plansSvc.GetPlan(root, item.PlanID)
+	if _, err := plansSvc.AddItem(root, item.PlanID, plans.CreateItemInput{Title: "sneaky step"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{}); !errors.Is(err, plans.ErrStaleRevision) {
+		t.Fatalf("plan edited after snapshot must be stale: %v", err)
+	}
+	_ = plan
+	// Fresh snapshot, then approve binds to it.
+	rev, err := plansSvc.CreateRevision(root, item.PlanID, "base1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	approved, err := svc.Approve(approverCtx(), item.ID, ApproveInput{RevisionID: rev.ID})
+	if err != nil {
+		t.Fatalf("approve with current revision: %v", err)
+	}
+	if approved.Status != StatusApproved {
+		t.Fatalf("status after approve: %s", approved.Status)
 	}
 }
 
@@ -171,18 +221,12 @@ func TestRevisionHash(t *testing.T) {
 
 // The review gate names the head commit; MarkDone records it.
 func TestMarkDoneRecordsReviewApproval(t *testing.T) {
-	svc, _, _ := fullStack(t)
+	svc, plansSvc, _ := fullStack(t)
 	root := context.Background()
-	item := mustCreate(t, svc, root, "review gate")
+	item := mustReadyForApproval(t, svc, plansSvc, "review gate")
 
 	steps := []func() error{
-		func() error { _, err := svc.Queue(approverCtx(), item.ID, ""); return err },
-		func() error { _, err := svc.SystemTransition(root, item.ID, StatusPlanning, "", "", ""); return err },
-		func() error {
-			_, err := svc.SystemTransition(root, item.ID, StatusAwaitingApproval, "", "", "")
-			return err
-		},
-		func() error { _, err := svc.Approve(approverCtx(), item.ID, "", ""); return err },
+		func() error { _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{}); return err },
 		func() error {
 			_, err := svc.SystemTransition(root, item.ID, StatusImplementing, "", "", "")
 			return err
@@ -201,11 +245,16 @@ func TestMarkDoneRecordsReviewApproval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("expected the review approval only (no plan linked): %+v", entries)
+	// Both gates recorded: the plan approval from the walk, and the review
+	// approval naming the head commit (newest first).
+	if len(entries) != 2 {
+		t.Fatalf("expected plan + review approvals: %+v", entries)
 	}
 	if entries[0].Gate != approvals.GateReview || entries[0].Subject != "abc123head" {
 		t.Fatalf("review approval wrong: %+v", entries[0])
+	}
+	if entries[1].Gate != approvals.GatePlan {
+		t.Fatalf("plan approval missing: %+v", entries[1])
 	}
 }
 
