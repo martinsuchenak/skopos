@@ -4,6 +4,57 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added — agent pipeline, Phase 1a (docs/design/agent-pipeline.md)
+
+- **Workspace groups for API keys** — a key's scope is its explicit
+  workspaces plus its groups' members plus registered workspaces matching
+  the groups' `path.Match` patterns (`*` never crosses `/`; no `**`).
+  Resolved inside `LookupKey` on every request, so group edits apply
+  immediately and newly registered matching workspaces join a key's scope
+  straight away. Scope changes terminate the affected keys' SSE streams
+  (group member/pattern edits, key scope edits, group deletion, and
+  workspace registration that matches a pattern). Root-only
+  `POST/GET/PATCH/DELETE /api/groups`; `skopos group create/list/add`;
+  `skopos key create --group`, `key edit --group/--clear-groups`;
+  `GET /api/keys/who-can?workspace=` reverse query; `whoami` explains each
+  workspace with `via` (`explicit`, `group:<name>`,
+  `pattern:<group>:<pattern>`).
+- **Approver permission** — `api_keys.approver` (root implies it; agent and
+  worker keys never get it) gates the workflow's human-only actions through
+  `auth.RequireApprover`. `skopos key create --approver`,
+  `key edit --approver/--no-approver`; `whoami` reports it.
+- **Audit log (internal/audit, plan 01a0bf7c core)** — append-only record of
+  mutations: dot-namespaced verbs (`inbox.queue`), `entity_type`+`entity_id`
+  with workspace scoping, actors rendered at write time (`root`,
+  `key <name>`, `agent <id>`, `system`, `migration`), and a `via` surface
+  label. Retention outlives the data it describes (standard cleanup never
+  touches it). No MCP read surface (by decision).
+- **Inbox workflow (agent-pipeline §1)** — eight new statuses (`queued`,
+  `planning`, `awaiting_approval`, `approved`, `implementing`, `in_review`,
+  `failed`, `blocked`) behind the frozen transition matrix: human actions
+  (`queue`, `approve`, `request-changes`, `retry`, `reject`, `mark-done`)
+  are approver-gated; system transitions
+  (`POST /api/inbox/{id}/transition`) are the executor's path. Every
+  transition is audit-logged; `GET /api/inbox/{id}/timeline` is the item's
+  workflow history.
+- **Plan revisions and locking (§4)** — immutable step snapshots with a
+  content hash and the planner's `base_sha` (`plan_revisions`). Approving
+  locks the revision: structural edits (add/remove item, dependency
+  changes) return 409 until an amendment snapshots a new revision; status
+  and claim updates always pass. `POST/GET /api/plans/{id}/revisions`,
+  `POST …/revisions/{id}/lock`.
+- **Approvals (§4)** — append-only decisions naming immutable subjects:
+  plan gate `<revision_id>+<base_sha>` (recorded and locked by `approve`),
+  review gate `<head_sha>` (recorded by `mark-done` with `head_sha`).
+  `GET /api/inbox/{id}/approvals`. `POST /api/inbox/{id}/link-plan`
+  attaches the planner's plan mid-workflow.
+- **One-time agent-trial cutover** — `POST /api/inbox/migrate-workflow` and
+  `skopos inbox migrate-workflow [--dry-run]`: the frozen tag→status table,
+  idempotent, with audit backfill (`via: migration`); discarded trial items
+  keep their status with backfilled history.
+
 ## [0.8.1] — 2026-09-24
 
 ### Fixed

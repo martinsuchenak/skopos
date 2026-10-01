@@ -30,14 +30,16 @@ main.go → cmd/register.go → cmd/serve.go
 internal/
   ├── status/     handler → service → storage   (agent status, sessions, events)
   ├── blackboard/ handler → service → storage   (scoped knowledge entries)
-  ├── plans/      handler → service → storage   (plans, items, dependencies)
-  ├── inbox/      handler → service → storage   (workspace inbox: capture → enrich → convert-to-plan)
+  ├── plans/      handler → service → storage   (plans, items, dependencies, revisions+locking)
+  ├── inbox/      handler → service → storage   (workspace inbox: capture → enrich → convert-to-plan, agent-pipeline workflow)
   ├── workspaces/ handler → service → storage   (workspace registry, auto-register)
   ├── events/     in-process SSE hub + middleware (publishes named events on mutations)
   ├── codeindex/  code index (parse → storage → service → handler; per-workspace SQLite DBs)
   ├── install/    skopos install — wires MCP config into AI agent configs (+ Claude Code hook suite in assets/hooks/)
-  ├── auth/       principals + root/scoped API key auth (Bearer); scoping enforced in services
-  ├── apikeys/    scoped API key domain (handler → service → storage; sk_ keys, sha256-hashed)
+  ├── auth/       principals + root/scoped API key auth (Bearer); scoping enforced in services; approver permission gate
+  ├── apikeys/    scoped API key domain (handler → service → storage; sk_ keys, sha256-hashed; workspace groups)
+  ├── audit/      append-only mutation log (actor/via rendering, entity index, scoped reads; plan 01a0bf7c)
+  ├── approvals/  append-only approvals tied to immutable subjects (plan revision+base, review head)
   ├── health/     background goroutine: stuck-agent detection
   ├── cleanup/    background goroutine: data retention cleanup
   ├── db/         SQLite connection + schema.sql migrations
@@ -59,6 +61,9 @@ Every domain package follows `handler → service → storage` layering. Storage
 - The dashboard subscribes to `/api/events/stream` (SSE) for real-time updates; the `events` package's middleware publishes named events on successful mutations.
 - Workspaces are strict-scoped: blackboard entries and plans require an exact `workspace_id` match when filtered — and writes require `workspace_id` for every principal (root included). Unscoped reads for a scoped key return exactly its slice; by-id access to foreign objects 404s. Session-derived workspaces are auto-registered (system privilege) so they persist.
 - API keys: root key from config + DB-backed scoped keys (internal/apikeys). The principal travels in the request context (internal/auth, ctxkeys.PrincipalKey); nil principal = internal/background caller (registrar, health ticker, refresher).
+- Workspace groups: a key's scope = explicit workspaces + group members + registered workspaces matching group `path.Match` patterns. Resolved inside `LookupKey` on every request (no cache); scope changes and pattern-matching workspace registrations drop the affected keys' SSE streams. Root-only management (`skopos group …`, `/api/groups`); `skopos key who-can <workspace>` is the reverse query.
+- Approver permission: `auth.RequireApprover` gates the inbox workflow's human actions; root and nil (internal) pass, plain scoped keys get `ErrApproverRequired`. Agent and worker keys never hold it.
+- Agent-pipeline workflow (docs/design/agent-pipeline.md): inbox statuses + frozen transition matrix in `internal/inbox/models.go` — human actions approver-gated, system transitions (`/api/inbox/{id}/transition`) executor-only; every transition audit-logged; `plan_revisions` lock on approve (structural edits then 409 `ErrRevisionLocked` until an amendment); approvals name immutable subjects (`<revision>+<base_sha>` / `<head_sha>`). One-time cutover: `skopos inbox migrate-workflow`.
 
 ## Blackboard
 
