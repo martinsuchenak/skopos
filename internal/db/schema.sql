@@ -184,3 +184,37 @@ CREATE TABLE IF NOT EXISTS api_key_workspaces (
     workspace_id TEXT NOT NULL,
     PRIMARY KEY (api_key_id, workspace_id)
 );
+
+-- Workspace groups: a key's scope is its explicit workspaces plus its groups'
+-- members plus registered workspaces matching its groups' patterns
+-- (docs/design/agent-pipeline.md §3). Patterns are Go path.Match — `*` matches
+-- one path segment and never crosses `/`. Group members must be registered
+-- workspaces (validated at write time); pattern matches resolve against the
+-- registry at lookup time, so new repos are picked up on the next request.
+CREATE TABLE IF NOT EXISTS workspace_groups (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workspace_group_members (
+    group_id     TEXT NOT NULL REFERENCES workspace_groups(id) ON DELETE CASCADE,
+    workspace_id TEXT NOT NULL,
+    PRIMARY KEY (group_id, workspace_id)
+);
+
+CREATE TABLE IF NOT EXISTS workspace_group_patterns (
+    group_id TEXT NOT NULL REFERENCES workspace_groups(id) ON DELETE CASCADE,
+    pattern  TEXT NOT NULL,
+    PRIMARY KEY (group_id, pattern)
+);
+
+CREATE TABLE IF NOT EXISTS api_key_groups (
+    api_key_id TEXT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+    group_id   TEXT NOT NULL REFERENCES workspace_groups(id) ON DELETE CASCADE,
+    PRIMARY KEY (api_key_id, group_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_group_members_workspace ON workspace_group_members(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_api_key_groups_group ON api_key_groups(group_id);

@@ -127,10 +127,10 @@ func serveCmd() *cli.Command {
 				EnvVars:    []string{"SKOPOS_QDRANT_API_KEY"},
 			},
 			&cli.BoolFlag{
-				Name:         "mcp-lean-tools",
-				Usage:        "Hide non-core MCP tools from tools/list behind tool_search (halves per-step schema weight; tools stay callable via tool_search/execute_tool)",
-				ConfigPath:   []string{"mcp.lean_tools"},
-				EnvVars:      []string{"SKOPOS_MCP_LEAN_TOOLS"},
+				Name:       "mcp-lean-tools",
+				Usage:      "Hide non-core MCP tools from tools/list behind tool_search (halves per-step schema weight; tools stay callable via tool_search/execute_tool)",
+				ConfigPath: []string{"mcp.lean_tools"},
+				EnvVars:    []string{"SKOPOS_MCP_LEAN_TOOLS"},
 			},
 			&cli.StringFlag{
 				Name:         "refresh-interval",
@@ -366,6 +366,19 @@ func serveCmd() *cli.Command {
 			codeIndexHandler.SetPublisher(hub)
 			apiKeysHandler.SetPublisher(hub)
 			apiKeysService.SetRevocationNotifier(hub.DropKey)
+
+			// Workspace groups (agent pipeline 1a): scope changes terminate
+			// the affected keys' streams, and a newly registered workspace
+			// that matches a group pattern widens every key holding it —
+			// both re-evaluate scope on reconnect.
+			apiKeysService.SetScopeNotifier(func(keyIDs []string) {
+				for _, id := range keyIDs {
+					hub.DropKey(id)
+				}
+			})
+			workspacesService.SetCreateNotifier(func(wsID string) {
+				apiKeysService.OnWorkspaceRegistered(context.Background(), wsID)
+			})
 
 			webMux := http.NewServeMux()
 			apiMux := http.NewServeMux()

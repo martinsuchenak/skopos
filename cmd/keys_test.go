@@ -155,8 +155,8 @@ func TestGenerateSecret(t *testing.T) {
 }
 
 func TestKeyCmdsExist(t *testing.T) {
-	if key := keyCmd(); key == nil || len(key.Commands) != 6 {
-		t.Fatalf("key command must exist with six subcommands, got %d", len(key.Commands))
+	if key := keyCmd(); key == nil || len(key.Commands) != 7 {
+		t.Fatalf("key command must exist with seven subcommands, got %d", len(key.Commands))
 	}
 }
 

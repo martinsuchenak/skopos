@@ -223,14 +223,18 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              properties:
-                name: { type: string }
-                workspaces:
-                  description: Exact workspace ids, or ["*"] for all workspaces; omitted = unchanged
-                  type: array
-                  items: { type: string }
+              schema:
+                type: object
+                properties:
+                  name: { type: string }
+                  workspaces:
+                    description: Exact workspace ids, or ["*"] for all workspaces; omitted = unchanged
+                    type: array
+                    items: { type: string }
+                  groups:
+                    description: Workspace group names or ids; omitted = unchanged, [] clears
+                    type: array
+                    items: { type: string }
       responses:
         "200":
           description: Updated key
@@ -259,6 +263,124 @@ paths:
         "401": { description: Unauthorized }
         "403": { description: Root key required }
         "404": { description: Unknown key }
+
+  /api/keys/who-can:
+    get:
+      summary: Which active keys can access a workspace, and how (root only)
+      description: Reverse view of scope — explicit rows, group members, and group pattern matches.
+      operationId: whoCanAccess
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: workspace
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Keys reaching the workspace, each with a via field ("explicit", "group:<name>" or "pattern:<group>:<pattern>")
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/KeyReach" }
+        "400": { description: Missing workspace, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "401": { description: Unauthorized }
+        "403": { description: Root key required }
+
+  /api/groups:
+    post:
+      summary: Create a workspace group (root only)
+      operationId: createWorkspaceGroup
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GroupInput" }
+      responses:
+        "201":
+          description: Group created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        "400": { description: Invalid input (patterns are path.Match; no **), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "401": { description: Unauthorized }
+        "403": { description: Root key required }
+        "409": { description: Group name already exists }
+    get:
+      summary: List workspace groups (root only)
+      operationId: listWorkspaceGroups
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: Groups with members and patterns
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Group" }
+        "401": { description: Unauthorized }
+        "403": { description: Root key required }
+
+  /api/groups/{id}:
+    get:
+      summary: Get a workspace group (root only)
+      operationId: getWorkspaceGroup
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Group
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        "401": { description: Unauthorized }
+        "403": { description: Root key required }
+        "404": { description: Unknown group }
+    patch:
+      summary: Edit a group's fields; omitted lists stay unchanged (root only)
+      description: Member or pattern changes terminate the SSE streams of every key holding the group.
+      operationId: updateWorkspaceGroup
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GroupInput" }
+      responses:
+        "200":
+          description: Updated group
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        "400": { description: Invalid input, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "401": { description: Unauthorized }
+        "403": { description: Root key required }
+        "404": { description: Unknown group }
+        "409": { description: Group name already exists }
+    delete:
+      summary: Delete a group (root only); keys holding it lose that slice of scope
+      operationId: deleteWorkspaceGroup
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Deleted }
+        "401": { description: Unauthorized }
+        "403": { description: Root key required }
+        "404": { description: Unknown group }
 
   /api/workspaces:
     post:
@@ -1095,17 +1217,49 @@ components:
         key_prefix: { type: string }
         all_workspaces: { type: boolean }
         workspaces: { type: array, items: { type: string } }
+        groups: { type: array, items: { type: string }, description: Names of workspace groups the key holds }
         created_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time, nullable: true }
         revoked_at: { type: string, format: date-time, nullable: true }
 
+    KeyReach:
+      type: object
+      properties:
+        key: { $ref: "#/components/schemas/ApiKey" }
+        via:
+          type: string
+          description: '"explicit", "group:<name>" or "pattern:<group>:<pattern>"'
+
+    Group:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        members: { type: array, items: { type: string }, description: Explicit workspace ids }
+        patterns: { type: array, items: { type: string }, description: "path.Match patterns; * matches one segment and never crosses /" }
+        created_at: { type: string, format: date-time }
+
+    GroupInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        members: { type: array, items: { type: string } }
+        patterns: { type: array, items: { type: string } }
+
     ApiKeyCreateInput:
       type: object
-      required: [name, workspaces]
+      required: [name]
       properties:
         name: { type: string }
         workspaces:
-          description: Exact workspace ids, or ["*"] for all workspaces
+          description: Exact workspace ids, or ["*"] for all workspaces; optional when groups are given
+          type: array
+          items: { type: string }
+        groups:
+          description: Workspace group names or ids; cannot be combined with "*"
           type: array
           items: { type: string }
 

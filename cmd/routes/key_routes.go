@@ -25,6 +25,15 @@ func registerKeyRoutes(mux *http.ServeMux, h *apikeys.Handler) {
 	mux.HandleFunc("GET /api/whoami", h.Whoami)
 	mux.HandleFunc("POST /api/keys", h.Create)
 	mux.HandleFunc("GET /api/keys", h.List)
+	mux.HandleFunc("GET /api/keys/who-can", h.WhoCan)
 	mux.HandleFunc("DELETE /api/keys/{id}", h.Revoke)
 	mux.HandleFunc("PATCH /api/keys/{id}", h.Update)
+
+	// Workspace groups (docs/design/agent-pipeline.md §3). Root-only,
+	// enforced in the handler and the service.
+	mux.HandleFunc("POST /api/groups", h.CreateGroup)
+	mux.HandleFunc("GET /api/groups", h.ListGroups)
+	mux.HandleFunc("GET /api/groups/{id}", h.GetGroup)
+	mux.HandleFunc("PATCH /api/groups/{id}", h.UpdateGroup)
+	mux.HandleFunc("DELETE /api/groups/{id}", h.DeleteGroup)
 }

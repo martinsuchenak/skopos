@@ -28,6 +28,7 @@ func keyCmd() *cli.Command {
 			keyRevokeCmd(),
 			keyDeleteCmd(),
 			keyGenerateRootCmd(),
+			keyWhoCanCmd(),
 		},
 	}
 }
@@ -46,6 +47,7 @@ func keyCreateCmd() *cli.Command {
 		Flags: append(keyClientFlags(),
 			&cli.StringFlag{Name: "name", Usage: "Key name (e.g. ci, zcode-laptop)"},
 			&cli.StringSliceFlag{Name: "workspace", Usage: "Workspace ID the key can access (repeat or comma-separate)"},
+			&cli.StringSliceFlag{Name: "group", Usage: "Workspace group name or id the key holds (repeat or comma-separate)"},
 			&cli.BoolFlag{Name: "all-workspaces", Usage: "Grant access to every workspace"},
 		),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
@@ -54,21 +56,28 @@ func keyCreateCmd() *cli.Command {
 				return fmt.Errorf("--name is required")
 			}
 			workspaces := cmd.GetStringSlice("workspace")
+			groups := cmd.GetStringSlice("group")
 			all := cmd.GetBool("all-workspaces")
-			if !all && len(workspaces) == 0 {
-				return fmt.Errorf("pass --workspace <id> (repeatable) or --all-workspaces")
+			if !all && len(workspaces) == 0 && len(groups) == 0 {
+				return fmt.Errorf("pass --workspace <id>, --group <name>, or --all-workspaces")
 			}
 			if all {
 				workspaces = []string{"*"}
 			}
+			body := map[string]any{"name": name, "workspaces": workspaces}
+			if len(groups) > 0 {
+				body["groups"] = groups
+			}
 			var result apikeys.CreateResult
-			if err := keysCall(ctx, cmd, http.MethodPost, "/api/keys",
-				map[string]any{"name": name, "workspaces": workspaces}, &result); err != nil {
+			if err := keysCall(ctx, cmd, http.MethodPost, "/api/keys", body, &result); err != nil {
 				return err
 			}
 			fmt.Println("API key created — store it now, it is shown only once:")
 			fmt.Printf("  %s\n", result.Secret)
 			fmt.Printf("  id: %s  name: %s  scope: %s\n", result.Key.ID, result.Key.Name, scopeLabel(result.Key))
+			if len(result.Key.Groups) > 0 {
+				fmt.Printf("  groups: %s\n", strings.Join(result.Key.Groups, ", "))
+			}
 			return nil
 		},
 	}
@@ -127,16 +136,23 @@ func whoamiCmd() *cli.Command {
 		Flags: keyClientFlags(),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			var who struct {
-				Root       bool `json:"root"`
-				Key        *struct {
+				Root bool `json:"root"`
+				Key  *struct {
 					ID            string   `json:"id"`
 					Name          string   `json:"name"`
 					AllWorkspaces bool     `json:"all_workspaces"`
 					Workspaces    []string `json:"workspaces"`
 				} `json:"key"`
+				Groups []struct {
+					ID       string   `json:"id"`
+					Name     string   `json:"name"`
+					Members  []string `json:"members"`
+					Patterns []string `json:"patterns"`
+				} `json:"groups"`
 				Workspaces []struct {
 					ID   string `json:"id"`
 					Name string `json:"name"`
+					Via  string `json:"via"`
 				} `json:"workspaces"`
 			}
 			if err := keysCall(ctx, cmd, http.MethodGet, "/api/whoami", nil, &who); err != nil {
@@ -147,13 +163,26 @@ func whoamiCmd() *cli.Command {
 			} else if who.Key != nil {
 				fmt.Printf("key %s (%s) — scope: %s\n", who.Key.ID, who.Key.Name, scopeLabelKey(who.Key.AllWorkspaces, who.Key.Workspaces))
 			}
+			for _, g := range who.Groups {
+				fmt.Printf("  group: %s", g.Name)
+				if len(g.Members) > 0 {
+					fmt.Printf("  members: %s", strings.Join(g.Members, ", "))
+				}
+				if len(g.Patterns) > 0 {
+					fmt.Printf("  patterns: %s", strings.Join(g.Patterns, ", "))
+				}
+				fmt.Println()
+			}
 			for _, ws := range who.Workspaces {
 				name := ws.Name
-				if name == ws.ID {
-					fmt.Printf("  workspace: %s\n", ws.ID)
-				} else {
-					fmt.Printf("  workspace: %s (%s)\n", ws.ID, name)
+				line := ws.ID
+				if name != "" && name != ws.ID {
+					line = fmt.Sprintf("%s (%s)", ws.ID, name)
 				}
+				if ws.Via != "" {
+					line += " — via " + ws.Via
+				}
+				fmt.Printf("  workspace: %s\n", line)
 			}
 			return nil
 		},
@@ -168,12 +197,14 @@ func keyEditCmd() *cli.Command {
 		Flags: append(keyClientFlags(),
 			&cli.StringFlag{Name: "name", Usage: "New key name"},
 			&cli.StringSliceFlag{Name: "workspace", Usage: "Workspace IDs the key can access (repeat or comma-separate; replaces the current list)"},
+			&cli.StringSliceFlag{Name: "group", Usage: "Workspace group names or ids the key holds (replaces the current list)"},
+			&cli.BoolFlag{Name: "clear-groups", Usage: "Remove the key from every group"},
 			&cli.BoolFlag{Name: "all-workspaces", Usage: "Grant access to every workspace (replaces the list)"},
 		),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			args := cmd.GetArgs()
 			if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
-				return fmt.Errorf("usage: skopos key edit <id> [--name n] [--workspace id] | --all-workspaces")
+				return fmt.Errorf("usage: skopos key edit <id> [--name n] [--workspace id] [--group name] | --all-workspaces")
 			}
 			body := map[string]any{}
 			if name := strings.TrimSpace(cmd.GetString("name")); name != "" {
@@ -184,14 +215,23 @@ func keyEditCmd() *cli.Command {
 			} else if workspaces := cmd.GetStringSlice("workspace"); len(workspaces) > 0 {
 				body["workspaces"] = workspaces
 			}
+			switch {
+			case cmd.GetBool("clear-groups"):
+				body["groups"] = []string{}
+			case len(cmd.GetStringSlice("group")) > 0:
+				body["groups"] = cmd.GetStringSlice("group")
+			}
 			if len(body) == 0 {
-				return fmt.Errorf("nothing to edit: pass --name, --workspace, or --all-workspaces")
+				return fmt.Errorf("nothing to edit: pass --name, --workspace, --group, or --all-workspaces")
 			}
 			var key apikeys.Key
 			if err := keysCall(ctx, cmd, http.MethodPatch, "/api/keys/"+strings.TrimSpace(args[0]), body, &key); err != nil {
 				return err
 			}
 			fmt.Printf("updated %s  name: %s  scope: %s\n", key.ID, key.Name, scopeLabel(key))
+			if len(key.Groups) > 0 {
+				fmt.Printf("  groups: %s\n", strings.Join(key.Groups, ", "))
+			}
 			return nil
 		},
 	}
