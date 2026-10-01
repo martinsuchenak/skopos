@@ -662,6 +662,7 @@
                                     <span class="font-medium" x-text="k.name"></span>
                                     <span class="font-mono text-xs text-zinc-500" x-text="k.key_prefix + '…'"></span>
                                     <span class="rounded bg-zinc-800 px-1.5 py-0.5 text-[11px] text-zinc-300" x-text="keyScope(k)"></span>
+                                    <span x-show="keyIsApprover(k)" class="rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] text-amber-300">approver</span>
                                     <span x-show="k.revoked_at" class="rounded bg-rose-500/15 px-1.5 py-0.5 text-[11px] text-rose-300">revoked</span>
                                 </div>
                                 <div class="mt-0.5 text-xs text-zinc-600">
@@ -700,9 +701,12 @@
                                         <span class="truncate font-medium text-zinc-100" x-text="ws.name || ws.id"></span>
                                         <span class="text-xs text-zinc-500" x-text="ws.id"></span>
                                     </div>
-                                    <div class="mt-1.5 flex flex-wrap gap-1.5" x-show="wsGroupsOf(ws.id).length > 0">
+                                    <div class="mt-1.5 flex flex-wrap gap-1.5">
                                         <template x-for="g in wsGroupsOf(ws.id)" :key="'ws|' + ws.id + '|' + g.id">
                                             <span class="badge bg-violet-500/15 text-violet-300" x-text="g.name"></span>
+                                        </template>
+                                        <template x-for="k in wsKeys(ws.id)" :key="'wsk|' + ws.id + '|' + k.id">
+                                            <span class="badge bg-emerald-500/15 text-emerald-300" x-text="'🔑 ' + k.name"></span>
                                         </template>
                                     </div>
                                 </div>
@@ -747,6 +751,9 @@
                                         <template x-for="p in g.patterns" :key="'p|' + g.id + '|' + p">
                                             <span class="badge bg-violet-500/15 text-violet-300" x-text="p"></span>
                                         </template>
+                                        <template x-for="k in groupKeys(g)" :key="'gk|' + g.id + '|' + k.id">
+                                            <span class="badge bg-emerald-500/15 text-emerald-300" x-text="'🔑 ' + k.name"></span>
+                                        </template>
                                     </div>
                                 </div>
                                 <button type="button" @click="openEditGroupModal(g)" x-show="whoamiIsRoot()" x-cloak
@@ -756,27 +763,6 @@
                     </template>
                 </ul>
 
-                <div class="mt-8 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4" x-show="whoamiIsRoot()" x-cloak>
-                    <h3 class="mb-2 text-sm font-semibold text-zinc-200">Who can access a workspace?</h3>
-                    <form class="flex flex-wrap gap-2" @submit.prevent="fetchWhoCan()">
-                        <label class="sr-only" for="who-can-ws">Workspace ID</label>
-                        <input id="who-can-ws" type="text" x-model="whoCanWorkspace" placeholder="github.com/owner/repo"
-                            class="input flex-1 min-w-48" />
-                        <button type="submit" class="btn">Ask</button>
-                    </form>
-                    <ul class="mt-3 space-y-1" x-show="whoCan.length > 0">
-                        <template x-for="r in whoCan" :key="r.key.id">
-                            <li class="text-sm text-zinc-300">
-                                <span class="text-zinc-100" x-text="r.key.name"></span>
-                                <span class="text-zinc-500" x-text="r.key.key_prefix"></span>
-                                — via <span class="text-cyan-300" x-text="r.via"></span>
-                            </li>
-                        </template>
-                    </ul>
-                    <p class="mt-3 text-sm text-zinc-600" x-show="whoCan.length === 0 && whoCanWorkspace">
-                        No active key reaches that workspace.
-                    </p>
-                </div>
             </section>
 
 
@@ -894,6 +880,19 @@
                 </div>
                 <p x-show="keyErrors.workspaces" class="mt-1 text-xs text-rose-400" x-text="keyErrors.workspaces"></p>
             </div>
+            <div class="mt-3" x-show="!keyForm.all">
+                <span class="lbl">Groups</span>
+                <div class="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900/60 p-2">
+                    <p class="px-1.5 py-1 text-xs text-zinc-500" x-show="groups.length === 0">No groups yet — manage them under Workspaces.</p>
+                    <template x-for="g in groups" :key="'kg|' + g.id">
+                        <label class="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm text-zinc-200 hover:bg-zinc-800/60">
+                            <input type="checkbox" :checked="keyForm.groups.indexOf(g.name) >= 0" @change="toggleKeyGroup(g.name)" class="h-4 w-4 rounded border-zinc-700 bg-zinc-900" />
+                            <span class="truncate" x-text="g.name"></span>
+                        </label>
+                    </template>
+                </div>
+                <p class="mt-1 text-xs text-zinc-500">Group members and pattern matches widen the key's scope.</p>
+            </div>
             <div class="mt-6 flex justify-end gap-2">
                 <button type="button" @click="closeNewKeyModal()" class="btn btn-ghost">Cancel</button>
                 <button type="button" @click="submitKey()" class="btn btn-primary" :disabled="keySaving" x-text="keySaving ? 'Creating…' : 'Create key'"></button>
@@ -927,6 +926,18 @@
                     </template>
                 </div>
                 <p x-show="editKeyErrors.workspaces" class="mt-1 text-xs text-rose-400" x-text="editKeyErrors.workspaces"></p>
+            </div>
+            <div class="mt-3" x-show="!editKeyForm.all">
+                <span class="lbl">Groups</span>
+                <div class="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900/60 p-2">
+                    <p class="px-1.5 py-1 text-xs text-zinc-500" x-show="groups.length === 0">No groups yet — manage them under Workspaces.</p>
+                    <template x-for="g in groups" :key="'ekg|' + g.id">
+                        <label class="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm text-zinc-200 hover:bg-zinc-800/60">
+                            <input type="checkbox" :checked="editKeyForm.groups.indexOf(g.name) >= 0" @change="toggleEditKeyGroup(g.name)" class="h-4 w-4 rounded border-zinc-700 bg-zinc-900" />
+                            <span class="truncate" x-text="g.name"></span>
+                        </label>
+                    </template>
+                </div>
             </div>
             <div class="mt-6 flex justify-end gap-2">
                 <button type="button" @click="closeEditKeyModal()" class="btn btn-ghost">Cancel</button>

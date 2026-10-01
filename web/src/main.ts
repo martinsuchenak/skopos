@@ -108,8 +108,7 @@ const appState = () => ({
   keysLoading: false,
   groups: [] as KeyGroup[],
   groupsLoading: false,
-  whoCan: [] as KeyReach[],
-  whoCanWorkspace: '',
+
   showWsModal: false,
   wsModalMode: 'create' as 'create' | 'edit',
   wsSaving: false,
@@ -121,11 +120,11 @@ const appState = () => ({
   groupErrors: {} as Record<string, string>,
   groupForm: { id: '', name: '', description: '', patterns: '', members: [] as string[] },
   showNewKeyModal: false, keySaving: false,
-  keyForm: { name: '', all: false, workspaces: [] as string[] } as KeyForm,
+  keyForm: { name: '', all: false, workspaces: [] as string[], groups: [] as string[] } as KeyForm & { groups: string[] },
   keyErrors: {} as Record<string, string>,
   showSecretModal: false, newSecret: '', newSecretName: '', secretCopied: false,
   showEditKeyModal: false, editKeySaving: false,
-  editKeyForm: { id: '', name: '', all: false, workspaces: [] as string[] },
+  editKeyForm: { id: '', name: '', all: false, workspaces: [] as string[], groups: [] as string[] },
   editKeyErrors: {} as Record<string, string>,
 
   // toasts
@@ -354,7 +353,7 @@ const appState = () => ({
     if (v === 'inbox') this.fetchInbox();
     if (v === 'index') this.fetchIndexStatus();
     if (v === 'keys') this.fetchKeys();
-    if (v === 'workspaces') { this.fetchWorkspaces(); this.fetchGroups(); this.whoCan = []; }
+    if (v === 'workspaces') { this.fetchWorkspaces(); this.fetchGroups(); if (this.whoamiIsRoot()) this.fetchKeys(); }
   },
   whoamiIsRoot(): boolean { return !!this.whoami && this.whoami.root; },
   setWorkspace(ws: string) {
@@ -545,7 +544,7 @@ const appState = () => ({
     else if (this.activeView === 'inbox') await this.fetchInbox();
     else if (this.activeView === 'index') await this.fetchIndexStatus();
     else if (this.activeView === 'keys') await this.fetchKeys();
-    else if (this.activeView === 'workspaces') { await this.fetchWorkspaces(); await this.fetchGroups(); }
+    else if (this.activeView === 'workspaces') { await this.fetchWorkspaces(); await this.fetchGroups(); if (this.whoamiIsRoot()) await this.fetchKeys(); }
   },
   async selectSession(id: string) {
     this.selectedSessionId = id; localStorage.setItem('skopos:session', id);
@@ -1428,15 +1427,30 @@ const appState = () => ({
       this.groupsLoading = false;
     }
   },
-  async fetchWhoCan() {
-    const ws = this.whoCanWorkspace.trim();
-    if (!ws) return;
-    try {
-      const res = await this.authFetch('/api/keys/who-can?workspace=' + encodeURIComponent(ws));
-      this.whoCan = res.ok ? ((await res.json()) ?? []) : [];
-    } catch {
-      this.whoCan = [];
-    }
+  // Key reach, computed client-side from the root-only keys list: exact
+  // scope, group membership, or a group pattern match — the same three ways
+  // the server resolves a key's scope.
+  wsKeys(id: string): ApiKey[] {
+    return this.keys.filter((k: ApiKey) => !k.revoked_at && (k.all_workspaces
+      || (k.workspaces || []).indexOf(id) >= 0
+      || (k.groups || []).some((gn: string) => {
+        const g = this.groups.find((x: KeyGroup) => x.name === gn);
+        return !!g && ((g.members || []).indexOf(id) >= 0 || (g.patterns || []).some((p: string) => this.patternMatches(p, id)));
+      })));
+  },
+  groupKeys(g: KeyGroup): ApiKey[] {
+    return this.keys.filter((k: ApiKey) => !k.revoked_at && (k.groups || []).indexOf(g.name) >= 0);
+  },
+  // path.Match semantics: * matches exactly one segment, never crosses /.
+  patternMatches(pattern: string, id: string): boolean {
+    const ps = pattern.split('/');
+    const is = id.split('/');
+    if (ps.length !== is.length) return false;
+    return ps.every((seg: string, i: number) => {
+      if (seg === '*') return true;
+      const rx = new RegExp('^' + seg.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*') + '$');
+      return rx.test(is[i]);
+    });
   },
   async fetchKeys() {
     this.keysLoading = true;
@@ -1455,10 +1469,14 @@ const appState = () => ({
     }
   },
   keyScope(k: ApiKey): string {
-    return k.all_workspaces ? '* (all workspaces)' : (k.workspaces || []).join(', ');
+    if (k.all_workspaces) return '* (all workspaces)';
+    const parts: string[] = [...(k.workspaces || [])];
+    for (const gn of k.groups || []) parts.push('@' + gn);
+    return parts.join(', ') || 'no scope';
   },
+  keyIsApprover(k: ApiKey): boolean { return !!k.approver; },
   openNewKeyModal() {
-    this.keyForm = { name: '', all: false, workspaces: [] };
+    this.keyForm = { name: '', all: false, workspaces: [], groups: [] };
     this.keyErrors = {};
     this.showNewKeyModal = true;
   },
@@ -1472,12 +1490,13 @@ const appState = () => ({
     const f = this.keyForm;
     const errs: Record<string, string> = {};
     if (!f.name.trim()) errs.name = 'Name is required.';
-    if (!f.all && f.workspaces.length === 0) errs.workspaces = 'Select at least one workspace, or all workspaces.';
+    if (!f.all && f.workspaces.length === 0 && f.groups.length === 0) errs.workspaces = 'Select at least one workspace or group, or all workspaces.';
     this.keyErrors = errs;
     if (Object.keys(errs).length) return;
     this.keySaving = true;
     try {
       const body: Record<string, unknown> = { name: f.name.trim(), workspaces: f.all ? ['*'] : f.workspaces };
+      if (!f.all && f.groups.length) body.groups = f.groups;
       const res = await this.authFetch('/api/keys', { method: 'POST', body: JSON.stringify(body) });
       if (!await this.handleBad(res, 'Key not created')) return;
       const data = await res.json();
@@ -1510,7 +1529,7 @@ const appState = () => ({
 
   // ---- edit key ----
   openEditKeyModal(k: ApiKey) {
-    this.editKeyForm = { id: k.id, name: k.name, all: k.all_workspaces, workspaces: [...(k.workspaces || [])] };
+    this.editKeyForm = { id: k.id, name: k.name, all: k.all_workspaces, workspaces: [...(k.workspaces || [])], groups: [...(k.groups || [])] };
     this.editKeyErrors = {};
     this.showEditKeyModal = true;
   },
@@ -1520,16 +1539,29 @@ const appState = () => ({
     if (i >= 0) this.editKeyForm.workspaces.splice(i, 1);
     else this.editKeyForm.workspaces.push(id);
   },
+  toggleKeyGroup(name: string) {
+    const f = this.keyForm;
+    const i = f.groups.indexOf(name);
+    if (i >= 0) f.groups.splice(i, 1);
+    else f.groups.push(name);
+  },
+  toggleEditKeyGroup(name: string) {
+    const f = this.editKeyForm;
+    const i = f.groups.indexOf(name);
+    if (i >= 0) f.groups.splice(i, 1);
+    else f.groups.push(name);
+  },
   async submitEditKey() {
     const f = this.editKeyForm;
     const errs: Record<string, string> = {};
     if (!f.name.trim()) errs.name = 'Name is required.';
-    if (!f.all && f.workspaces.length === 0) errs.workspaces = 'Select at least one workspace, or all workspaces.';
+    if (!f.all && f.workspaces.length === 0 && f.groups.length === 0) errs.workspaces = 'Select at least one workspace or group, or all workspaces.';
     this.editKeyErrors = errs;
     if (Object.keys(errs).length) return;
     this.editKeySaving = true;
     try {
       const body: Record<string, unknown> = { name: f.name.trim(), workspaces: f.all ? ['*'] : f.workspaces };
+      if (!f.all) body.groups = f.groups; // [] clears; absent = unchanged
       const res = await this.authFetch(`/api/keys/${encodeURIComponent(f.id)}`, { method: 'PATCH', body: JSON.stringify(body) });
       if (!await this.handleBad(res, 'Key not updated')) return;
       this.notify('Key updated', 'success');
