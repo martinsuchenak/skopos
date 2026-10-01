@@ -9,6 +9,7 @@ type Key struct {
 	Name          string     `json:"name"`
 	Prefix        string     `json:"key_prefix"`
 	AllWorkspaces bool       `json:"all_workspaces"`
+	Approver      bool       `json:"approver"` // may perform human-only workflow actions (agent-pipeline §2)
 	Workspaces    []string   `json:"workspaces"`
 	Groups        []string   `json:"groups"` // group names (unique) the key holds
 	CreatedAt     time.Time  `json:"created_at"`

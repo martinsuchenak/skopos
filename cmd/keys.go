@@ -49,6 +49,7 @@ func keyCreateCmd() *cli.Command {
 			&cli.StringSliceFlag{Name: "workspace", Usage: "Workspace ID the key can access (repeat or comma-separate)"},
 			&cli.StringSliceFlag{Name: "group", Usage: "Workspace group name or id the key holds (repeat or comma-separate)"},
 			&cli.BoolFlag{Name: "all-workspaces", Usage: "Grant access to every workspace"},
+			&cli.BoolFlag{Name: "approver", Usage: "Grant the approver permission (human-only workflow actions; never for agent or worker keys)"},
 		),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			name := strings.TrimSpace(cmd.GetString("name"))
@@ -64,7 +65,7 @@ func keyCreateCmd() *cli.Command {
 			if all {
 				workspaces = []string{"*"}
 			}
-			body := map[string]any{"name": name, "workspaces": workspaces}
+			body := map[string]any{"name": name, "workspaces": workspaces, "approver": cmd.GetBool("approver")}
 			if len(groups) > 0 {
 				body["groups"] = groups
 			}
@@ -74,7 +75,11 @@ func keyCreateCmd() *cli.Command {
 			}
 			fmt.Println("API key created — store it now, it is shown only once:")
 			fmt.Printf("  %s\n", result.Secret)
-			fmt.Printf("  id: %s  name: %s  scope: %s\n", result.Key.ID, result.Key.Name, scopeLabel(result.Key))
+			label := scopeLabel(result.Key)
+			if result.Key.Approver {
+				label += "  [approver]"
+			}
+			fmt.Printf("  id: %s  name: %s  scope: %s\n", result.Key.ID, result.Key.Name, label)
 			if len(result.Key.Groups) > 0 {
 				fmt.Printf("  groups: %s\n", strings.Join(result.Key.Groups, ", "))
 			}
@@ -141,6 +146,7 @@ func whoamiCmd() *cli.Command {
 					ID            string   `json:"id"`
 					Name          string   `json:"name"`
 					AllWorkspaces bool     `json:"all_workspaces"`
+					Approver      bool     `json:"approver"`
 					Workspaces    []string `json:"workspaces"`
 				} `json:"key"`
 				Groups []struct {
@@ -161,7 +167,11 @@ func whoamiCmd() *cli.Command {
 			if who.Root {
 				fmt.Println("root key — full access")
 			} else if who.Key != nil {
-				fmt.Printf("key %s (%s) — scope: %s\n", who.Key.ID, who.Key.Name, scopeLabelKey(who.Key.AllWorkspaces, who.Key.Workspaces))
+				label := scopeLabelKey(who.Key.AllWorkspaces, who.Key.Workspaces)
+				if who.Key.Approver {
+					label += "  [approver]"
+				}
+				fmt.Printf("key %s (%s) — scope: %s\n", who.Key.ID, who.Key.Name, label)
 			}
 			for _, g := range who.Groups {
 				fmt.Printf("  group: %s", g.Name)
@@ -200,6 +210,8 @@ func keyEditCmd() *cli.Command {
 			&cli.StringSliceFlag{Name: "group", Usage: "Workspace group names or ids the key holds (replaces the current list)"},
 			&cli.BoolFlag{Name: "clear-groups", Usage: "Remove the key from every group"},
 			&cli.BoolFlag{Name: "all-workspaces", Usage: "Grant access to every workspace (replaces the list)"},
+			&cli.BoolFlag{Name: "approver", Usage: "Grant the approver permission"},
+			&cli.BoolFlag{Name: "no-approver", Usage: "Remove the approver permission"},
 		),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			args := cmd.GetArgs()
@@ -221,14 +233,24 @@ func keyEditCmd() *cli.Command {
 			case len(cmd.GetStringSlice("group")) > 0:
 				body["groups"] = cmd.GetStringSlice("group")
 			}
+			switch {
+			case cmd.GetBool("no-approver"):
+				body["approver"] = false
+			case cmd.GetBool("approver"):
+				body["approver"] = true
+			}
 			if len(body) == 0 {
-				return fmt.Errorf("nothing to edit: pass --name, --workspace, --group, or --all-workspaces")
+				return fmt.Errorf("nothing to edit: pass --name, --workspace, --group, --approver, or --all-workspaces")
 			}
 			var key apikeys.Key
 			if err := keysCall(ctx, cmd, http.MethodPatch, "/api/keys/"+strings.TrimSpace(args[0]), body, &key); err != nil {
 				return err
 			}
-			fmt.Printf("updated %s  name: %s  scope: %s\n", key.ID, key.Name, scopeLabel(key))
+			label := scopeLabel(key)
+			if key.Approver {
+				label += "  [approver]"
+			}
+			fmt.Printf("updated %s  name: %s  scope: %s\n", key.ID, key.Name, label)
 			if len(key.Groups) > 0 {
 				fmt.Printf("  groups: %s\n", strings.Join(key.Groups, ", "))
 			}

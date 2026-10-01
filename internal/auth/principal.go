@@ -23,8 +23,9 @@ import (
 type Principal struct {
 	Root          bool
 	KeyID, Name   string
-	AllWorkspaces bool                 // "*" scope
-	Workspaces    map[string]struct{}  // explicit scope
+	AllWorkspaces bool                // "*" scope
+	Workspaces    map[string]struct{} // explicit scope
+	Approver      bool                // may perform human-only workflow actions (agent-pipeline §2)
 }
 
 // CanAccess reports whether the principal may read/write workspace ws.
@@ -56,6 +57,7 @@ func (p *Principal) WorkspaceList() []string {
 type KeyInfo struct {
 	ID, Name      string
 	AllWorkspaces bool
+	Approver      bool
 	Workspaces    []string
 }
 
@@ -126,6 +128,7 @@ func (a *Authenticator) Authenticate(r *http.Request) *Principal {
 		KeyID:         info.ID,
 		Name:          info.Name,
 		AllWorkspaces: info.AllWorkspaces,
+		Approver:      info.Approver,
 		Workspaces:    make(map[string]struct{}, len(info.Workspaces)),
 	}
 	for _, w := range info.Workspaces {
@@ -186,8 +189,9 @@ func PrincipalFromContext(ctx context.Context) *Principal {
 // operations, avoiding a cross-tenant existence oracle); MCP maps both to
 // invalid-params.
 var (
-	ErrOutOfScope   = errors.New("workspace out of scope for this credential")
-	ErrRootRequired = errors.New("this operation requires the root key")
+	ErrOutOfScope       = errors.New("workspace out of scope for this credential")
+	ErrRootRequired     = errors.New("this operation requires the root key")
+	ErrApproverRequired = errors.New("this operation requires the approver permission")
 )
 
 // RequireWorkspace enforces the caller's scope for an explicit workspace.
@@ -222,6 +226,19 @@ func RequireRoot(ctx context.Context) error {
 		return nil
 	}
 	return ErrRootRequired
+}
+
+// RequireApprover enforces human-only workflow actions (inbox_queue,
+// inbox_approve, inbox_request_changes, inbox_reject, inbox_mark_done —
+// docs/design/agent-pipeline.md §2). Root passes implicitly; internal
+// callers (nil principal) pass like RequireRoot; every other key needs the
+// approver permission, which agent and worker keys never hold.
+func RequireApprover(ctx context.Context) error {
+	p := PrincipalFromContext(ctx)
+	if p == nil || p.Root || p.Approver {
+		return nil
+	}
+	return ErrApproverRequired
 }
 
 // ScopedContext reports whether the caller is a workspace-scoped key (not

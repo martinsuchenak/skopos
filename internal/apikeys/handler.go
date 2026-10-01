@@ -45,6 +45,7 @@ type createRequest struct {
 	Name       string   `json:"name"`
 	Workspaces []string `json:"workspaces"` // exact ids, or ["*"] for all
 	Groups     []string `json:"groups"`     // group names or ids
+	Approver   bool     `json:"approver"`
 }
 
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
@@ -60,6 +61,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		Name:       req.Name,
 		Workspaces: req.Workspaces,
 		Groups:     req.Groups,
+		Approver:   req.Approver,
 	})
 	if err != nil {
 		if errors.Is(err, ErrInvalidInput) {
@@ -94,6 +96,7 @@ type updateRequest struct {
 	Name       *string   `json:"name"`
 	Workspaces *[]string `json:"workspaces"`
 	Groups     *[]string `json:"groups"`
+	Approver   *bool     `json:"approver"`
 }
 
 // Update handles PATCH /api/keys/{id}: partial edit of name and/or scope.
@@ -106,7 +109,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	input := UpdateInput{Name: req.Name}
+	input := UpdateInput{Name: req.Name, Approver: req.Approver}
 	if req.Workspaces != nil {
 		input.Workspaces = *req.Workspaces
 	}
@@ -224,6 +227,7 @@ func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 			"id":             p.KeyID,
 			"name":           p.Name,
 			"all_workspaces": p.AllWorkspaces,
+			"approver":       p.Approver,
 			"workspaces":     p.WorkspaceList(),
 		}
 		if resolution != nil {

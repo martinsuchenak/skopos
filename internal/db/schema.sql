@@ -166,12 +166,16 @@ CREATE INDEX IF NOT EXISTS idx_inbox_plan ON inbox_items(plan_id);
 -- API keys: scoped credentials replacing the single shared root key
 -- (docs/design/api-keys.md). Plaintext keys are never stored — only the
 -- SHA-256 hash and a display prefix. Revocation is soft (audit trail).
+-- approver marks keys that may perform human-only workflow actions
+-- (docs/design/agent-pipeline.md §2); root implies it, and agent/worker
+-- keys never get it.
 CREATE TABLE IF NOT EXISTS api_keys (
     id             TEXT PRIMARY KEY,
     name           TEXT NOT NULL,
     key_hash       TEXT NOT NULL UNIQUE,
     key_prefix     TEXT NOT NULL,
     all_workspaces INTEGER NOT NULL DEFAULT 0,
+    approver       INTEGER NOT NULL DEFAULT 0,
     created_at     TEXT NOT NULL,
     last_used_at   TEXT,
     revoked_at     TEXT

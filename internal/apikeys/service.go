@@ -64,6 +64,7 @@ type CreateInput struct {
 	Workspaces    []string // exact ids, or a single "*" for all workspaces
 	Groups        []string // group names or ids (docs/design/agent-pipeline.md §3)
 	AllWorkspaces bool
+	Approver      bool // may perform human-only workflow actions (agent-pipeline §2); root-only to grant
 }
 
 // resolveGroups turns group refs (id first, then unique name) into rows,
@@ -167,6 +168,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (*CreateResult,
 		Name:          input.Name,
 		Prefix:        secret[:14],
 		AllWorkspaces: input.AllWorkspaces,
+		Approver:      input.Approver,
 		Workspaces:    workspaces,
 		Groups:        groupNames,
 		CreatedAt:     now,
@@ -206,6 +208,7 @@ type UpdateInput struct {
 	Name       *string
 	Workspaces []string // nil = unchanged; ["*"] or explicit ids otherwise
 	Groups     []string // nil = unchanged; names or ids, [] clears
+	Approver   *bool    // nil = unchanged
 }
 
 // Update edits a key's name and/or workspace scope. Revoked keys are frozen —
@@ -297,7 +300,11 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (*Ke
 	if !all && len(workspaces) == 0 && effectiveGroups == 0 && (input.Workspaces != nil || input.Groups != nil) {
 		return nil, fmt.Errorf("%w: workspaces must be a list of workspace ids, group names, or \"*\"", ErrInvalidInput)
 	}
-	if err := s.storage.Update(ctx, id, name, all, workspaces, groupIDs); err != nil {
+	approver := existing.Approver
+	if input.Approver != nil {
+		approver = *input.Approver
+	}
+	if err := s.storage.Update(ctx, id, name, all, approver, workspaces, groupIDs); err != nil {
 		return nil, err
 	}
 	// A scope change re-shapes what the key's open SSE streams may see.

@@ -235,6 +235,9 @@ paths:
                     description: Workspace group names or ids; omitted = unchanged, [] clears
                     type: array
                     items: { type: string }
+                  approver:
+                    type: boolean
+                    description: Approver permission; omitted = unchanged
       responses:
         "200":
           description: Updated key
@@ -1216,6 +1219,7 @@ components:
         name: { type: string }
         key_prefix: { type: string }
         all_workspaces: { type: boolean }
+        approver: { type: boolean, description: May perform human-only workflow actions; root implies it }
         workspaces: { type: array, items: { type: string } }
         groups: { type: array, items: { type: string }, description: Names of workspace groups the key holds }
         created_at: { type: string, format: date-time }
@@ -1262,6 +1266,7 @@ components:
           description: Workspace group names or ids; cannot be combined with "*"
           type: array
           items: { type: string }
+        approver: { type: boolean, description: Grant the approver permission (human-only workflow actions) }
 
     ApiKeyCreateResult:
       type: object

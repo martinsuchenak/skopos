@@ -107,6 +107,9 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "workspaces", "git_url", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := ensureColumn(db, "api_keys", "approver", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 	return nil
 }
 
