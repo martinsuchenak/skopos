@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/martinsuchenak/skopos/internal/plans"
 )
@@ -85,3 +86,15 @@ func (s *noopPlansStore) RunInTx(_ context.Context, fn func(plans.Store) error) 
 }
 
 func (s *noopPlansStore) PlanWorkspace(_ context.Context, _ string) (string, error) { return "", nil }
+
+func (s *noopPlansStore) CreateRevision(_ context.Context, _ plans.Revision) error { return nil }
+func (s *noopPlansStore) LatestRevision(_ context.Context, _ string) (*plans.Revision, error) {
+	return nil, plans.ErrNotFound
+}
+func (s *noopPlansStore) GetRevision(_ context.Context, _ string) (*plans.Revision, error) {
+	return nil, plans.ErrNotFound
+}
+func (s *noopPlansStore) ListRevisions(_ context.Context, _ string) ([]plans.Revision, error) {
+	return nil, nil
+}
+func (s *noopPlansStore) LockRevision(_ context.Context, _ string, _ time.Time) error { return nil }

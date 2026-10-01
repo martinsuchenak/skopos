@@ -133,6 +133,46 @@ CREATE INDEX IF NOT EXISTS idx_item_deps_dep   ON plan_item_dependencies(depends
 CREATE INDEX IF NOT EXISTS idx_plan_deps_plan  ON plan_dependencies(plan_id);
 CREATE INDEX IF NOT EXISTS idx_plan_deps_dep   ON plan_dependencies(depends_on_plan_id);
 
+-- Plan revisions (docs/design/agent-pipeline.md §4): immutable snapshots of a
+-- plan's steps plus the base commit the planner read. Interactive plans keep
+-- working unchanged (no revisions, no gate); workflow plans snapshot when the
+-- plan is ready for review. An approved revision is LOCKED: only step status
+-- (and claims) may change afterwards — any structural deviation becomes a new
+-- revision (amendment) and the item returns to awaiting_approval.
+CREATE TABLE IF NOT EXISTS plan_revisions (
+    id            TEXT PRIMARY KEY,
+    plan_id       TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+    workspace_id  TEXT NOT NULL DEFAULT '',
+    revision_no   INTEGER NOT NULL,
+    steps_json    TEXT NOT NULL,
+    content_hash  TEXT NOT NULL,
+    base_sha      TEXT NOT NULL DEFAULT '',
+    created_at    TEXT NOT NULL,
+    locked_at     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_revisions_plan ON plan_revisions(plan_id, revision_no DESC);
+
+-- Approvals (docs/design/agent-pipeline.md §4): every human decision names an
+-- immutable subject — a plan revision plus its base commit (gate=plan) or a
+-- branch head (gate=review). Append-only; a new commit after a review
+-- approval makes that review stale by comparison, not by deletion.
+CREATE TABLE IF NOT EXISTS approvals (
+    id           TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    item_id      TEXT NOT NULL,
+    gate         TEXT NOT NULL,
+    subject      TEXT NOT NULL,
+    decision     TEXT NOT NULL,
+    actor        TEXT NOT NULL,
+    actor_key_id TEXT,
+    via          TEXT NOT NULL DEFAULT '',
+    notes        TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_approvals_item ON approvals(item_id, created_at);
+
 CREATE TABLE IF NOT EXISTS workspaces (
     id         TEXT PRIMARY KEY,
     name       TEXT NOT NULL DEFAULT '',

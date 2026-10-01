@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/martinsuchenak/skopos/internal/approvals"
 	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
+	"github.com/martinsuchenak/skopos/internal/plans"
 )
 
 // The agent-pipeline workflow on inbox items (docs/design/agent-pipeline.md
@@ -18,6 +20,19 @@ import (
 type AuditRecorder interface {
 	Record(ctx context.Context, input audit.RecordInput) error
 	Timeline(ctx context.Context, entityType, entityID string) ([]audit.Entry, error)
+}
+
+// PlanRevisions gives the workflow actions access to plan revisions (the
+// plans service satisfies it); used to lock the approved revision.
+type PlanRevisions interface {
+	LatestRevision(ctx context.Context, planID string) (*plans.Revision, error)
+	LockRevision(ctx context.Context, revisionID string) error
+}
+
+// ApprovalLog records human decisions; internal/approvals.Service satisfies it.
+type ApprovalLog interface {
+	Record(ctx context.Context, input approvals.RecordInput) (approvals.Entry, error)
+	List(ctx context.Context, itemID string) ([]approvals.Entry, error)
 }
 
 const auditEntityItem = "inbox_item"
@@ -87,10 +102,38 @@ func (s *Service) Queue(ctx context.Context, itemID, via string) (*Item, error) 
 }
 
 // Approve records Martin's plan approval (awaiting_approval → approved).
-// Notes may carry overrides (wr, runner, tags) — plan revisions and the
-// approvals table land with items 4–5.
+// Notes may carry overrides (wr, runner, tags). When the item links a plan
+// with revisions, the approval names the latest revision plus its base as
+// its subject and locks that revision — approving is approving exactly that
+// content on exactly that base (agent-pipeline §4).
 func (s *Service) Approve(ctx context.Context, itemID, notes, via string) (*Item, error) {
-	return s.transition(ctx, itemID, StatusApproved, ActorHuman, "inbox.approve", via, notes, "")
+	item, err := s.transition(ctx, itemID, StatusApproved, ActorHuman, "inbox.approve", via, notes, "")
+	if err != nil {
+		return nil, err
+	}
+	if s.approvals != nil && item.PlanID != "" {
+		subject := ""
+		if s.plans != nil {
+			if rev, revErr := s.plans.LatestRevision(ctx, item.PlanID); revErr == nil && rev != nil {
+				subject = rev.ID + "+" + rev.BaseSHA
+				if lockErr := s.plans.LockRevision(ctx, rev.ID); lockErr == nil {
+					s.auditItem(ctx, itemID, "plan.lock_revision", via, rev.ID, "")
+				}
+			}
+		}
+		if subject != "" {
+			_, _ = s.approvals.Record(ctx, approvals.RecordInput{
+				WorkspaceID: item.WorkspaceID,
+				ItemID:      item.ID,
+				Gate:        approvals.GatePlan,
+				Subject:     subject,
+				Decision:    approvals.DecisionApproved,
+				Via:         via,
+				Notes:       notes,
+			})
+		}
+	}
+	return item, nil
 }
 
 // RequestChanges sends the item back one phase with Martin's notes
@@ -117,12 +160,95 @@ func (s *Service) Reject(ctx context.Context, itemID, notes, via string) (*Item,
 	return s.transition(ctx, itemID, StatusDiscarded, ActorHuman, "inbox.reject", via, notes, "")
 }
 
-// MarkDone completes the reviewed item (in_review → done).
-func (s *Service) MarkDone(ctx context.Context, itemID, via string) (*Item, error) {
-	return s.transition(ctx, itemID, StatusDone, ActorHuman, "inbox.mark_done", via, "", "")
+// MarkDone completes the reviewed item (in_review → done). headSHA, when the
+// caller knows it, becomes the review approval's subject — the review names
+// exactly the commit Martin looked at, and any later commit would not match
+// it (stale by comparison).
+func (s *Service) MarkDone(ctx context.Context, itemID, headSHA, via string) (*Item, error) {
+	item, err := s.transition(ctx, itemID, StatusDone, ActorHuman, "inbox.mark_done", via, "", "")
+	if err != nil {
+		return nil, err
+	}
+	if s.approvals != nil && headSHA != "" {
+		_, _ = s.approvals.Record(ctx, approvals.RecordInput{
+			WorkspaceID: item.WorkspaceID,
+			ItemID:      item.ID,
+			Gate:        approvals.GateReview,
+			Subject:     strings.TrimSpace(headSHA),
+			Decision:    approvals.DecisionApproved,
+			Via:         via,
+		})
+	}
+	return item, nil
+}
+
+// Approvals lists the item's recorded decisions, newest-first, scoped to the
+// caller like the timeline.
+func (s *Service) Approvals(ctx context.Context, itemID string) ([]approvals.Entry, error) {
+	if err := s.requireItemScopeQuiet(ctx, itemID); err != nil {
+		return nil, err
+	}
+	if s.approvals == nil {
+		return nil, fmt.Errorf("%w: approvals are not configured", ErrInvalidInput)
+	}
+	entries, err := s.approvals.List(ctx, strings.TrimSpace(itemID))
+	if err != nil {
+		return nil, err
+	}
+	if entries == nil {
+		entries = []approvals.Entry{}
+	}
+	return entries, nil
 }
 
 // --- system transitions (the executor's path; scope-checked, not approver-gated) ---
+
+// LinkPlan attaches a plan to a workflow item without moving it to
+// converted (the manual path's Convert stays untouched): the planner's plan
+// becomes the item's plan while the item runs the workflow. The plan must
+// live in the item's workspace.
+func (s *Service) LinkPlan(ctx context.Context, itemID, planID string) (*Item, error) {
+	if err := s.requireItemScopeQuiet(ctx, itemID); err != nil {
+		return nil, err
+	}
+	itemID = strings.TrimSpace(itemID)
+	planID = strings.TrimSpace(planID)
+	if planID == "" {
+		return nil, fmt.Errorf("%w: plan_id is required", ErrInvalidInput)
+	}
+	err := s.store.RunInTx(ctx, func(tx Store) error {
+		item, err := tx.GetItem(ctx, itemID)
+		if err != nil {
+			return err
+		}
+		if !IsWorkflowStatus(item.Status) {
+			return fmt.Errorf("%w: only workflow items can link a plan mid-flight (item is %s)", ErrInvalidInput, statusLabel(item.Status))
+		}
+		if item.PlanID != "" {
+			return fmt.Errorf("%w (plan %s)", ErrAlreadyConverted, item.PlanID)
+		}
+		if item.WorkspaceID == "" {
+			return fmt.Errorf("%w: file the item into a workspace first", ErrInvalidInput)
+		}
+		planWS, err := tx.PlanWorkspace(ctx, planID)
+		if err != nil {
+			return err
+		}
+		if err := auth.RequireWorkspaceQuiet(ctx, planWS); err != nil {
+			return fmt.Errorf("%w: plan %s", ErrNotFound, planID)
+		}
+		if planWS != item.WorkspaceID {
+			return fmt.Errorf("%w: plan %s belongs to a different workspace than the item", ErrInvalidInput, planID)
+		}
+		return tx.SetItemPlan(ctx, itemID, planID, s.now().UTC())
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.publishItem(ctx, itemID)
+	s.auditItem(ctx, itemID, "inbox.link_plan", "", "plan "+planID, "")
+	return s.store.GetItem(ctx, itemID)
+}
 
 // SystemTransition moves an item along the machine phases as a side effect
 // of a run: queued → planning, planning → awaiting_approval, approved →

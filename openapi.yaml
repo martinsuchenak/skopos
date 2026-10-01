@@ -1351,6 +1351,106 @@ paths:
         "401": { description: Unauthorized }
         "404": { description: Not found }
 
+  /api/inbox/{id}/link-plan:
+    post:
+      summary: Attach the planner's plan to a workflow item (executor path; workspace scope required)
+      description: Sets plan_id without moving the item to converted — the workflow keeps its own statuses.
+      operationId: linkInboxPlan
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_id]
+              properties:
+                plan_id: { type: string }
+      responses:
+        "200":
+          description: Updated item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InboxItem" }
+        "400": { description: Not a workflow item, already linked, or workspace mismatch }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+
+  /api/inbox/{id}/approvals:
+    get:
+      summary: The item's recorded decisions (plan and review gates), newest-first
+      operationId: inboxItemApprovals
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      responses:
+        "200":
+          description: Approval entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ApprovalEntry" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+
+  /api/plans/{id}/revisions:
+    post:
+      summary: Snapshot the plan's current steps as a new revision
+      description: Revision 1 for a fresh plan; a later snapshot over a locked revision is the amendment path.
+      operationId: createPlanRevision
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PlanId" }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                base_sha: { type: string, description: The commit the planner read }
+      responses:
+        "201":
+          description: Created revision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlanRevision" }
+        "400": { description: Plan has no steps }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+    get:
+      summary: List the plan's revisions, newest first
+      operationId: listPlanRevisions
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PlanId" }]
+      responses:
+        "200":
+          description: Revisions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PlanRevision" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+
+  /api/plans/{id}/revisions/{revision_id}/lock:
+    post:
+      summary: Lock a revision against structural edits (idempotent)
+      description: Normally called by the approve action; structural changes then require a new revision (amendment).
+      operationId: lockPlanRevision
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PlanId" }
+        - name: revision_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Locked }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+
 components:
   parameters:
     SessionId:  { name: id, in: path, required: true, schema: { type: string } }
@@ -1688,6 +1788,43 @@ components:
         actor: { type: string, description: '"root", "key <name>", "agent <id>", "system" or "migration"' }
         actor_key_id: { type: string }
         via: { type: string, description: "dashboard, slack, cli, mcp, worker, migration, system" }
+        notes: { type: string }
+        created_at: { type: string, format: date-time }
+
+    PlanRevision:
+      type: object
+      properties:
+        id: { type: string }
+        plan_id: { type: string }
+        workspace_id: { type: string }
+        revision_no: { type: integer }
+        steps:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              title: { type: string }
+              description: { type: string }
+              phase: { type: string }
+              position: { type: integer }
+        content_hash: { type: string, description: SHA-256 of the canonical steps encoding }
+        base_sha: { type: string, description: The commit the planner read }
+        created_at: { type: string, format: date-time }
+        locked_at: { type: string, format: date-time, nullable: true }
+
+    ApprovalEntry:
+      type: object
+      properties:
+        id: { type: string }
+        workspace_id: { type: string }
+        item_id: { type: string }
+        gate: { type: string, enum: [plan, review] }
+        subject: { type: string, description: '"<revision_id>+<base_sha>" for plan, "<head_sha>" for review' }
+        decision: { type: string, enum: [approved, rejected, changes_requested] }
+        actor: { type: string }
+        actor_key_id: { type: string }
+        via: { type: string }
         notes: { type: string }
         created_at: { type: string, format: date-time }
 

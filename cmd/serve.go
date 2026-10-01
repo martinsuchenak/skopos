@@ -18,6 +18,7 @@ import (
 	"github.com/martinsuchenak/skopos/cmd/mcp"
 	"github.com/martinsuchenak/skopos/cmd/routes"
 	"github.com/martinsuchenak/skopos/internal/apikeys"
+	"github.com/martinsuchenak/skopos/internal/approvals"
 	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
@@ -204,8 +205,11 @@ func serveCmd() *cli.Command {
 			// (docs/design/agent-pipeline.md §1) audited through the
 			// append-only log (plan 01a0bf7c).
 			auditService := audit.NewService(audit.NewStorage(sqlDB))
+			approvalsService := approvals.NewService(approvals.NewStorage(sqlDB))
 			inboxService := inbox.NewService(inbox.NewStorage(sqlDB))
 			inboxService.SetAuditRecorder(auditService)
+			inboxService.SetApprovalLog(approvalsService)
+			inboxService.SetPlanRevisions(plansService) // Approve locks the approved revision
 			inboxHandler := inbox.NewHandler(inboxService, authn)
 
 			// Completing a plan completes the inbox items it was converted

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 )
 
 type fakeStore struct {
@@ -13,16 +14,68 @@ type fakeStore struct {
 	items     map[string]*Item
 	deps      map[string][]string
 	planDeps  map[string][]string
+	revisions map[string]*Revision
 	createErr error
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		plans:    make(map[string]*Plan),
-		items:    make(map[string]*Item),
-		deps:     make(map[string][]string),
-		planDeps: make(map[string][]string),
+		plans:     make(map[string]*Plan),
+		items:     make(map[string]*Item),
+		deps:      make(map[string][]string),
+		planDeps:  make(map[string][]string),
+		revisions: make(map[string]*Revision),
 	}
+}
+
+func (f *fakeStore) CreateRevision(_ context.Context, r Revision) error {
+	f.revisions[r.ID] = &r
+	return nil
+}
+
+func (f *fakeStore) LatestRevision(_ context.Context, planID string) (*Revision, error) {
+	var latest *Revision
+	for _, r := range f.revisions {
+		if r.PlanID != planID {
+			continue
+		}
+		if latest == nil || r.RevisionNo > latest.RevisionNo {
+			latest = r
+		}
+	}
+	if latest == nil {
+		return nil, fmt.Errorf("%w: no revision for plan %s", ErrNotFound, planID)
+	}
+	return latest, nil
+}
+
+func (f *fakeStore) GetRevision(_ context.Context, id string) (*Revision, error) {
+	r, ok := f.revisions[id]
+	if !ok {
+		return nil, fmt.Errorf("%w: revision %s", ErrNotFound, id)
+	}
+	return r, nil
+}
+
+func (f *fakeStore) ListRevisions(_ context.Context, planID string) ([]Revision, error) {
+	var out []Revision
+	for _, r := range f.revisions {
+		if r.PlanID == planID {
+			out = append(out, *r)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) LockRevision(_ context.Context, id string, at time.Time) error {
+	r, ok := f.revisions[id]
+	if !ok {
+		return fmt.Errorf("%w: revision %s", ErrNotFound, id)
+	}
+	if r.LockedAt == nil {
+		r.LockedAt = &at
+	}
+	return nil
 }
 
 func (f *fakeStore) CreatePlan(_ context.Context, plan Plan) error {

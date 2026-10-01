@@ -14,9 +14,11 @@ import (
 // ErrApproverRequired → 403, ErrOutOfScope-shaped not-found → 404.
 
 type actionRequest struct {
-	Notes  string `json:"notes"`
-	Answer string `json:"answer"`
-	Reason string `json:"reason"`
+	Notes   string `json:"notes"`
+	Answer  string `json:"answer"`
+	Reason  string `json:"reason"`
+	HeadSHA string `json:"head_sha"` // review gate subject on mark-done
+	PlanID  string `json:"plan_id"`  // link-plan
 }
 
 type transitionRequest struct {
@@ -121,8 +123,47 @@ func (h *Handler) MarkDone(w http.ResponseWriter, r *http.Request) {
 		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	item, err := h.service.MarkDone(r.Context(), r.PathValue("id"), viaFrom(r, ""))
+	var req actionRequest
+	_ = rest.DecodeJSON(w, r, &req) // empty body is fine; head_sha optional
+	item, err := h.service.MarkDone(r.Context(), r.PathValue("id"), req.HeadSHA, viaFrom(r, ""))
 	h.respondTransition(w, item, err)
+}
+
+// LinkPlan attaches the planner's plan to a workflow item (executor path,
+// like transition: workspace scope, not approver-gated).
+func (h *Handler) LinkPlan(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req actionRequest
+	if err := rest.DecodeJSON(w, r, &req); err != nil {
+		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	item, err := h.service.LinkPlan(r.Context(), r.PathValue("id"), req.PlanID)
+	h.respondTransition(w, item, err)
+}
+
+// Approvals lists the item's recorded decisions (plan and review gates).
+func (h *Handler) Approvals(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	entries, err := h.service.Approvals(r.Context(), r.PathValue("id"))
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
+			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrNotFound):
+			rest.RespondError(w, http.StatusNotFound, err.Error())
+		default:
+			rest.InternalError(w, err)
+		}
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, entries)
 }
 
 // Transition is the executor's system path (worker keys; scope-checked, not

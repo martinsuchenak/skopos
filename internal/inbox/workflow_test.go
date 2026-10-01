@@ -67,7 +67,7 @@ func TestWorkflowHappyPath(t *testing.T) {
 			_, err := svc.SystemTransition(root, item.ID, StatusInReview, "", "agent-1", audit.ViaWorker)
 			return err
 		}, StatusInReview},
-		{"done", func() error { _, err := svc.MarkDone(approverCtx(), item.ID, audit.ViaSlack); return err }, StatusDone},
+		{"done", func() error { _, err := svc.MarkDone(approverCtx(), item.ID, "", audit.ViaSlack); return err }, StatusDone},
 	}
 	for _, step := range steps {
 		if err := step.run(); err != nil {
@@ -132,7 +132,7 @@ func TestWorkflowApproverGating(t *testing.T) {
 			return err
 		},
 		"reject":    func(ctx context.Context, id string) error { _, err := svc.Reject(ctx, id, "", ""); return err },
-		"mark_done": func(ctx context.Context, id string) error { _, err := svc.MarkDone(ctx, id, ""); return err },
+		"mark_done": func(ctx context.Context, id string) error { _, err := svc.MarkDone(ctx, id, "", ""); return err },
 		"retry":     func(ctx context.Context, id string) error { _, err := svc.Retry(ctx, id, "answer", ""); return err },
 	}
 	for name, call := range calls {

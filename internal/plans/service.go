@@ -220,6 +220,11 @@ func (s *Service) AddItem(ctx context.Context, planID string, input CreateItemIn
 	if input.Title == "" {
 		return nil, fmt.Errorf("%w: title is required", ErrInvalidInput)
 	}
+	// A locked latest revision means approved content: adding a step is an
+	// amendment (a new revision), never an in-place edit.
+	if err := s.requireEditable(ctx, planID); err != nil {
+		return nil, err
+	}
 
 	var item Item
 	err := s.store.RunInTx(ctx, func(tx Store) error {
@@ -387,6 +392,9 @@ func (s *Service) AddDependency(ctx context.Context, planID, itemID, dependsOnID
 	if err := s.requirePlanScopeQuiet(ctx, planID); err != nil {
 		return err
 	}
+	if err := s.requireEditable(ctx, planID); err != nil {
+		return err
+	}
 	planID = strings.TrimSpace(planID)
 	itemID = strings.TrimSpace(itemID)
 	dependsOnID = strings.TrimSpace(dependsOnID)
@@ -466,6 +474,9 @@ func (s *Service) DeleteItem(ctx context.Context, planID, itemID string) error {
 		return fmt.Errorf("%w: item_id is required", ErrInvalidInput)
 	}
 	if err := s.requirePlanScopeQuiet(ctx, planID); err != nil {
+		return err
+	}
+	if err := s.requireEditable(ctx, planID); err != nil {
 		return err
 	}
 	if err := s.store.DeleteItem(ctx, planID, itemID); err != nil {

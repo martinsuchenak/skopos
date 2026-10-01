@@ -317,3 +317,73 @@ func (h *Handler) RemovePlanDependency(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// --- revisions (agent-pipeline §4) ---
+
+type createRevisionRequest struct {
+	BaseSHA string `json:"base_sha"`
+}
+
+// CreateRevision handles POST /api/plans/{id}/revisions: snapshot the plan's
+// current steps as a new revision (revision 1, or an amendment when a locked
+// revision exists).
+func (h *Handler) CreateRevision(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req createRevisionRequest
+	_ = rest.DecodeJSON(w, r, &req) // empty body allowed: base_sha optional
+	rev, err := h.service.CreateRevision(r.Context(), r.PathValue("id"), req.BaseSHA)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
+			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
+			rest.RespondError(w, http.StatusNotFound, err.Error())
+		default:
+			rest.InternalError(w, err)
+		}
+		return
+	}
+	rest.RespondJSON(w, http.StatusCreated, rev)
+}
+
+// ListRevisions handles GET /api/plans/{id}/revisions, newest first.
+func (h *Handler) ListRevisions(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	revs, err := h.service.ListRevisions(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope) {
+			rest.RespondError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		rest.InternalError(w, err)
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, revs)
+}
+
+// LockRevision handles POST /api/plans/{id}/revisions/{revision_id}/lock —
+// normally called by the approve action; exposed for the executor flow.
+func (h *Handler) LockRevision(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if err := h.service.LockRevision(r.Context(), r.PathValue("revision_id")); err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
+			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
+			rest.RespondError(w, http.StatusNotFound, err.Error())
+		default:
+			rest.InternalError(w, err)
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

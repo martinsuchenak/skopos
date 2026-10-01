@@ -17,6 +17,8 @@ type Service struct {
 	now       func() time.Time
 	publisher events.Publisher
 	auditSink AuditRecorder
+	plans     PlanRevisions
+	approvals ApprovalLog
 }
 
 func NewService(store Store) *Service {
@@ -31,6 +33,14 @@ func (s *Service) SetPublisher(p events.Publisher) { s.publisher = p }
 // transitions are audit-logged through it; the manual path adopts it with the
 // remaining services in plan 01a0bf7c. Nil disables workflow auditing.
 func (s *Service) SetAuditRecorder(a AuditRecorder) { s.auditSink = a }
+
+// SetPlanRevisions installs plan-revision access: Approve locks the item's
+// current revision (docs/design/agent-pipeline.md §4). Nil skips locking
+// (items without revisions approve without a gate subject).
+func (s *Service) SetPlanRevisions(p PlanRevisions) { s.plans = p }
+
+// SetApprovalLog installs the approvals sink (internal/approvals.Service).
+func (s *Service) SetApprovalLog(a ApprovalLog) { s.approvals = a }
 
 // publishItem emits the mutation event for an item once the store write
 // succeeded; failures are silent (events are advisory).

@@ -36,6 +36,13 @@ type Store interface {
 	SetPlanStatus(ctx context.Context, planID string, status PlanStatus) error
 	PlanExists(ctx context.Context, planID string) (bool, error)
 	AllItemsDone(ctx context.Context, planID string) (bool, error)
+	// Revisions (agent-pipeline §4): immutable snapshots; ErrNotFound from
+	// LatestRevision means the plan has none (interactive plans).
+	CreateRevision(ctx context.Context, r Revision) error
+	LatestRevision(ctx context.Context, planID string) (*Revision, error)
+	GetRevision(ctx context.Context, id string) (*Revision, error)
+	ListRevisions(ctx context.Context, planID string) ([]Revision, error)
+	LockRevision(ctx context.Context, id string, at time.Time) error
 	// RunInTx executes fn inside a single SQL transaction. The Store passed to
 	// fn is bound to the transaction, so all operations are atomic. If fn is
 	// called on a store already inside a transaction, fn runs inline (no nesting).

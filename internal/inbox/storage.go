@@ -31,6 +31,8 @@ type Store interface {
 	ClaimItem(ctx context.Context, id, agentID string, updatedAt time.Time) error
 	ReleaseItem(ctx context.Context, id string, updatedAt time.Time) error
 	ConvertItem(ctx context.Context, id, planID string, updatedAt time.Time) error
+	// SetItemPlan attaches a plan to a workflow item without a status change.
+	SetItemPlan(ctx context.Context, id, planID string, updatedAt time.Time) error
 	SetStatus(ctx context.Context, id string, status Status, updatedAt time.Time) error
 	CompleteForPlan(ctx context.Context, planID string, updatedAt time.Time) (int64, error)
 	DeleteItem(ctx context.Context, id string) error
@@ -302,6 +304,22 @@ func (s *Storage) ConvertItem(ctx context.Context, id, planID string, updatedAt 
 	`, string(StatusConverted), planID, formatTime(updatedAt), id)
 	if err != nil {
 		return fmt.Errorf("converting inbox item: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("%w: item %s", ErrNotFound, id)
+	}
+	return nil
+}
+
+// SetItemPlan attaches a plan to a workflow item without a status change —
+// the planner's plan becomes the item's plan mid-workflow (agent-pipeline §1).
+func (s *Storage) SetItemPlan(ctx context.Context, id, planID string, updatedAt time.Time) error {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE inbox_items SET plan_id = ?, updated_at = ? WHERE id = ?
+	`, planID, formatTime(updatedAt), id)
+	if err != nil {
+		return fmt.Errorf("linking plan to inbox item: %w", err)
 	}
 	n, _ := result.RowsAffected()
 	if n == 0 {

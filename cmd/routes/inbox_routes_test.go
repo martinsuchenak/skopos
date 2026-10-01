@@ -32,8 +32,8 @@ func (s *noopInboxStore) UpdateItem(context.Context, string, string, string, str
 	return nil
 }
 func (s *noopInboxStore) ReorderItems(context.Context, []string, time.Time) error { return nil }
-func (s *noopInboxStore) RestoreItem(context.Context, string, time.Time) error { return nil }
-func (s *noopInboxStore) ReopenItem(context.Context, string, time.Time) error { return nil }
+func (s *noopInboxStore) RestoreItem(context.Context, string, time.Time) error    { return nil }
+func (s *noopInboxStore) ReopenItem(context.Context, string, time.Time) error     { return nil }
 func (s *noopInboxStore) ClaimItem(context.Context, string, string, time.Time) error {
 	return nil
 }
@@ -79,3 +79,5 @@ func TestInboxCompleteAndPurgeRouteDispatch(t *testing.T) {
 		t.Fatalf("expected 200 from purge route, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func (s *noopInboxStore) SetItemPlan(_ context.Context, _, _ string, _ time.Time) error { return nil }
