@@ -36,6 +36,8 @@ func (h *Handler) CreatePlan(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrRevisionLocked):
+			rest.RespondError(w, http.StatusConflict, err.Error())
 		case errors.Is(err, auth.ErrOutOfScope):
 			rest.RespondError(w, http.StatusForbidden, err.Error())
 		default:
@@ -103,6 +105,8 @@ func (h *Handler) UpdatePlan(w http.ResponseWriter, r *http.Request) {
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrRevisionLocked):
+			rest.RespondError(w, http.StatusConflict, err.Error())
 		default:
 			rest.InternalError(w, err)
 		}
@@ -146,6 +150,8 @@ func (h *Handler) AddItem(w http.ResponseWriter, r *http.Request) {
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrRevisionLocked):
+			rest.RespondError(w, http.StatusConflict, err.Error())
 		default:
 			rest.InternalError(w, err)
 		}
@@ -172,6 +178,8 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrRevisionLocked):
+			rest.RespondError(w, http.StatusConflict, err.Error())
 		case errors.Is(err, ErrClaimConflict):
 			rest.RespondError(w, http.StatusConflict, err.Error())
 		default:
@@ -220,6 +228,8 @@ func (h *Handler) AddDependency(w http.ResponseWriter, r *http.Request) {
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrRevisionLocked):
+			rest.RespondError(w, http.StatusConflict, err.Error())
 		case errors.Is(err, ErrCycleDetected):
 			rest.RespondError(w, http.StatusConflict, err.Error())
 		default:
@@ -255,6 +265,8 @@ func (h *Handler) RemoveDependency(w http.ResponseWriter, r *http.Request) {
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrRevisionLocked):
+			rest.RespondError(w, http.StatusConflict, err.Error())
 		default:
 			rest.InternalError(w, err)
 		}
@@ -282,6 +294,8 @@ func (h *Handler) AddPlanDependency(w http.ResponseWriter, r *http.Request) {
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrRevisionLocked):
+			rest.RespondError(w, http.StatusConflict, err.Error())
 		case errors.Is(err, ErrCycleDetected):
 			rest.RespondError(w, http.StatusConflict, err.Error())
 		default:
@@ -310,6 +324,8 @@ func (h *Handler) RemovePlanDependency(w http.ResponseWriter, r *http.Request) {
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrRevisionLocked):
+			rest.RespondError(w, http.StatusConflict, err.Error())
 		default:
 			rest.InternalError(w, err)
 		}
@@ -339,6 +355,8 @@ func (h *Handler) CreateRevision(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrRevisionLocked):
+			rest.RespondError(w, http.StatusConflict, err.Error())
 		case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 		default:
@@ -378,6 +396,8 @@ func (h *Handler) LockRevision(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrRevisionLocked):
+			rest.RespondError(w, http.StatusConflict, err.Error())
 		case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 		default:
