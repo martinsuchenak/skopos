@@ -823,11 +823,22 @@
             <p x-show="groupErrors.name" class="mt-1 text-xs text-rose-400" x-text="groupErrors.name"></p>
             <label class="lbl mt-4" for="group-desc">Description</label>
             <input id="group-desc" type="text" x-model="groupForm.description" class="fld" placeholder="Optional" autocomplete="off" />
-            <label class="lbl mt-4" for="group-patterns">Patterns (one per line)</label>
+            <div class="mt-4">
+                <span class="lbl">Member workspaces</span>
+                <div class="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900/60 p-2">
+                    <p class="px-1.5 py-1 text-xs text-zinc-500" x-show="registeredWorkspaces.length === 0">No workspaces registered yet.</p>
+                    <template x-for="ws in registeredWorkspaces" :key="'gm|' + groupForm.id + '|' + ws.id">
+                        <label class="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm text-zinc-200 hover:bg-zinc-800/60">
+                            <input type="checkbox" :checked="groupForm.members.indexOf(ws.id) >= 0" @change="toggleGroupMember(ws.id)" class="h-4 w-4 rounded border-zinc-700 bg-zinc-900" />
+                            <span class="truncate" x-text="ws.name || ws.id"></span>
+                        </label>
+                    </template>
+                </div>
+            </div>
+            <label class="lbl mt-4" for="group-patterns">Patterns (one per line, optional)</label>
             <textarea id="group-patterns" rows="3" x-model="groupForm.patterns" class="fld font-mono text-xs" placeholder="github.com/fortix/*"></textarea>
-            <p class="mt-1 text-xs text-zinc-500">path.Match — * matches one segment, never crosses /; no **.</p>
-            <p x-show="groupErrors.patterns" class="mt-1 text-xs text-rose-400" x-text="groupErrors.patterns"></p>
-            <p class="mt-3 text-xs text-zinc-500">Members are allocated per workspace (Edit workspace), not here.</p>
+            <p class="mt-1 text-xs text-zinc-500">path.Match — * matches one segment, never crosses /; no **. A group needs at least one member or pattern.</p>
+            <p x-show="groupErrors.patterns || groupErrors.form" class="mt-1 text-xs text-rose-400" x-text="groupErrors.patterns || groupErrors.form"></p>
             <div class="mt-6 flex justify-end gap-2">
                 <button type="button" @click="closeGroupModal()" class="btn btn-ghost">Cancel</button>
                 <button type="button" @click="saveGroup()" class="btn btn-primary" :disabled="groupSaving" x-text="groupSaving ? 'Saving…' : (groupModalMode === 'create' ? 'Create group' : 'Save')"></button>

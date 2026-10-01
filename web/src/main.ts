@@ -119,7 +119,7 @@ const appState = () => ({
   groupModalMode: 'create' as 'create' | 'edit',
   groupSaving: false,
   groupErrors: {} as Record<string, string>,
-  groupForm: { id: '', name: '', description: '', patterns: '' },
+  groupForm: { id: '', name: '', description: '', patterns: '', members: [] as string[] },
   showNewKeyModal: false, keySaving: false,
   keyForm: { name: '', all: false, workspaces: [] as string[] } as KeyForm,
   keyErrors: {} as Record<string, string>,
@@ -1374,36 +1374,43 @@ const appState = () => ({
   },
   openNewGroupModal() {
     this.groupModalMode = 'create';
-    this.groupForm = { id: '', name: '', description: '', patterns: '' };
+    this.groupForm = { id: '', name: '', description: '', patterns: '', members: [] };
     this.groupErrors = {};
     this.showGroupModal = true;
   },
   openEditGroupModal(g: KeyGroup) {
     this.groupModalMode = 'edit';
-    this.groupForm = { id: g.id, name: g.name, description: g.description || '', patterns: (g.patterns || []).join('\n') };
+    this.groupForm = { id: g.id, name: g.name, description: g.description || '', patterns: (g.patterns || []).join('\n'), members: [...(g.members || [])] };
     this.groupErrors = {};
     this.showGroupModal = true;
   },
   closeGroupModal() { this.showGroupModal = false; },
+  toggleGroupMember(id: string) {
+    const i = this.groupForm.members.indexOf(id);
+    if (i >= 0) this.groupForm.members.splice(i, 1);
+    else this.groupForm.members.push(id);
+  },
   async saveGroup() {
     this.groupErrors = {};
     if (!this.groupForm.name.trim()) { this.groupErrors.name = 'Name is required'; return; }
     this.groupSaving = true;
     try {
       const patterns = this.groupForm.patterns.split('\n').map((p: string) => p.trim()).filter(Boolean);
-      const body = JSON.stringify({ name: this.groupForm.name.trim(), description: this.groupForm.description.trim(), patterns });
+      const body = JSON.stringify({ name: this.groupForm.name.trim(), description: this.groupForm.description.trim(), patterns, members: this.groupForm.members });
       const res = this.groupModalMode === 'create'
         ? await this.authFetch('/api/groups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
         : await this.authFetch('/api/groups/' + encodeURIComponent(this.groupForm.id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body });
       if (!res.ok) {
         if (res.status === 409) this.groupErrors.name = 'A group with that name already exists';
-        else if (res.status === 403) this.groupErrors.name = 'Group management requires the root key';
-        else this.groupErrors.patterns = (await res.json().catch(() => ({ error: 'Saving the group failed' }))).error;
+        else if (res.status === 403) this.groupErrors.form = 'Group management requires the root key';
+        else this.groupErrors.form = (await res.json().catch(() => ({ error: 'Saving the group failed' }))).error;
         return;
       }
       this.showGroupModal = false;
+      // Members may have changed: refresh both sides so badges stay honest.
       await this.fetchGroups();
-    } catch { this.groupErrors.name = 'Network error'; } finally { this.groupSaving = false; }
+      await this.fetchWorkspaces();
+    } catch { this.groupErrors.form = 'Network error'; } finally { this.groupSaving = false; }
   },
   async fetchGroups() {
     this.groupsLoading = true;
