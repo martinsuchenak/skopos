@@ -39,6 +39,7 @@ func inboxCmd() *cli.Command {
 			inboxReopenCmd(),
 			inboxPurgeCmd(),
 			inboxDeleteCmd(),
+			inboxMigrateWorkflowCmd(),
 		},
 	}
 }
@@ -704,4 +705,30 @@ func inboxDelete(ctx context.Context, serverURL, apiKey, id string) error {
 		return fmt.Errorf("%s", apiErrorMessage("deleting item", resp))
 	}
 	return nil
+}
+
+func inboxMigrateWorkflowCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "migrate-workflow",
+		Usage: "One-time agent-trial cutover: migrate tag state to workflow statuses (root key required)",
+		Flags: append(keyClientFlags(), &cli.BoolFlag{Name: "dry-run", Usage: "Report what would migrate without writing"}),
+		Run: func(ctx context.Context, cmd *cli.Command) error {
+			var report inbox.MigrationReport
+			body := map[string]any{"dry_run": cmd.GetBool("dry-run")}
+			if err := keysCall(ctx, cmd, http.MethodPost, "/api/inbox/migrate-workflow", body, &report); err != nil {
+				return err
+			}
+			fmt.Println(report.Summary())
+			for _, row := range report.Migrated {
+				fmt.Printf("  %s  %s -> %s  (tag %s)\n", row.ItemID, row.From, row.To, row.Tag)
+			}
+			for _, skip := range report.Skipped {
+				fmt.Printf("  skipped %s: %s\n", skip.ItemID, skip.Reason)
+			}
+			for _, wq := range report.WaitingQuota {
+				fmt.Printf("  quota-paused %s: %s\n", wq.ItemID, wq.Reason)
+			}
+			return nil
+		},
+	}
 }

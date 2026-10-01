@@ -1451,6 +1451,29 @@ paths:
         "401": { description: Unauthorized }
         "404": { description: Not found }
 
+  /api/inbox/migrate-workflow:
+    post:
+      summary: One-time agent-trial cutover — migrate tag state to workflow statuses (root only)
+      description: Applies the frozen tag→status table; every moved item gets one audit entry (via=migration). Idempotent; dry_run reports without writing.
+      operationId: migrateInboxWorkflow
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dry_run: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Migration report
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MigrationReport" }
+        "401": { description: Unauthorized }
+        "403": { description: Root key required }
+
 components:
   parameters:
     SessionId:  { name: id, in: path, required: true, schema: { type: string } }
@@ -1827,6 +1850,37 @@ components:
         via: { type: string }
         notes: { type: string }
         created_at: { type: string, format: date-time }
+
+    MigrationReport:
+      type: object
+      properties:
+        dry_run: { type: boolean }
+        migrated:
+          type: array
+          items:
+            type: object
+            properties:
+              item_id: { type: string }
+              from: { type: string }
+              to: { type: string }
+              tag: { type: string }
+        skipped:
+          type: array
+          items:
+            type: object
+            properties:
+              item_id: { type: string }
+              status: { type: string }
+              tags: { type: array, items: { type: string } }
+              reason: { type: string }
+        unchanged: { type: integer }
+        waiting_quota:
+          type: array
+          items:
+            type: object
+            properties:
+              item_id: { type: string }
+              reason: { type: string }
 
     InboxItem:
       type: object

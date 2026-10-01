@@ -207,3 +207,28 @@ func (h *Handler) Timeline(w http.ResponseWriter, r *http.Request) {
 	}
 	rest.RespondJSON(w, http.StatusOK, entries)
 }
+
+type migrateRequest struct {
+	DryRun bool `json:"dry_run"`
+}
+
+// MigrateWorkflow handles POST /api/inbox/migrate-workflow: the one-time
+// agent-trial tag→status migration (root-only).
+func (h *Handler) MigrateWorkflow(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req migrateRequest
+	_ = rest.DecodeJSON(w, r, &req) // empty body = apply
+	report, err := h.service.MigrateWorkflow(r.Context(), req.DryRun)
+	if err != nil {
+		if errors.Is(err, auth.ErrRootRequired) {
+			rest.RespondError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		rest.InternalError(w, err)
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, report)
+}
