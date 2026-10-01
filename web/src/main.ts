@@ -20,6 +20,7 @@ type Toast = { id: number; message: string; type: 'success' | 'error' | 'info' }
 type ApiKey = { id: string; name: string; key_prefix: string; all_workspaces: boolean; approver?: boolean; workspaces: string[]; groups?: string[]; created_at: string; last_used_at?: string; revoked_at?: string };
 type KeyGroup = { id: string; name: string; description?: string; members: string[]; patterns: string[]; created_at: string };
 type KeyReach = { key: ApiKey; via: string };
+type WorkspaceRow = { id: string; name?: string; git_url?: string; created_at: string };
 type Whoami = { root: boolean; key?: { id: string; name: string; all_workspaces: boolean; workspaces: string[] }; workspaces: { id: string; name: string }[] };
 type KeyForm = { name: string; all: boolean; workspaces: string[] };
 type EntryForm = { scope: 'project' | 'branch' | 'session'; entry_type: 'finding' | 'decision' | 'bug' | 'debt' | 'warning' | 'context'; title: string; content: string; code_ref: string; branch_name: string; session_id: string };
@@ -31,7 +32,7 @@ type InboxDetail = InboxItem & { content: string; content_html: string };
 type InboxForm = { id: string; title: string; tags: string; workspace: string };
 
 const UI_AUTHOR = 'ui';
-type View = 'sessions' | 'blackboard' | 'plans' | 'inbox' | 'index' | 'keys' | 'groups';
+type View = 'sessions' | 'blackboard' | 'plans' | 'inbox' | 'index' | 'keys' | 'workspaces';
 
 // The inbox markdown editor lives OUTSIDE Alpine's reactive state: deep-
 // proxying a live CodeMirror view breaks it. One instance per open modal.
@@ -109,6 +110,16 @@ const appState = () => ({
   groupsLoading: false,
   whoCan: [] as KeyReach[],
   whoCanWorkspace: '',
+  showWsModal: false,
+  wsModalMode: 'create' as 'create' | 'edit',
+  wsSaving: false,
+  wsErrors: {} as Record<string, string>,
+  wsForm: { id: '', name: '', git_url: '', groups: [] as string[] },
+  showGroupModal: false,
+  groupModalMode: 'create' as 'create' | 'edit',
+  groupSaving: false,
+  groupErrors: {} as Record<string, string>,
+  groupForm: { id: '', name: '', description: '', patterns: '' },
   showNewKeyModal: false, keySaving: false,
   keyForm: { name: '', all: false, workspaces: [] as string[] } as KeyForm,
   keyErrors: {} as Record<string, string>,
@@ -343,7 +354,7 @@ const appState = () => ({
     if (v === 'inbox') this.fetchInbox();
     if (v === 'index') this.fetchIndexStatus();
     if (v === 'keys') this.fetchKeys();
-    if (v === 'groups') { this.fetchGroups(); this.whoCan = []; }
+    if (v === 'workspaces') { this.fetchWorkspaces(); this.fetchGroups(); this.whoCan = []; }
   },
   whoamiIsRoot(): boolean { return !!this.whoami && this.whoami.root; },
   setWorkspace(ws: string) {
@@ -534,7 +545,7 @@ const appState = () => ({
     else if (this.activeView === 'inbox') await this.fetchInbox();
     else if (this.activeView === 'index') await this.fetchIndexStatus();
     else if (this.activeView === 'keys') await this.fetchKeys();
-    else if (this.activeView === 'groups') await this.fetchGroups();
+    else if (this.activeView === 'workspaces') { await this.fetchWorkspaces(); await this.fetchGroups(); }
   },
   async selectSession(id: string) {
     this.selectedSessionId = id; localStorage.setItem('skopos:session', id);
@@ -1316,6 +1327,84 @@ const appState = () => ({
   },
 
   // ---- api keys ----
+  wsGroupsOf(id: string): KeyGroup[] { return this.groups.filter((g: KeyGroup) => (g.members || []).indexOf(id) >= 0); },
+  openNewWorkspaceModal() {
+    this.wsModalMode = 'create';
+    this.wsForm = { id: '', name: '', git_url: '', groups: [] };
+    this.wsErrors = {};
+    this.showWsModal = true;
+  },
+  openEditWorkspaceModal(ws: WorkspaceRow) {
+    this.wsModalMode = 'edit';
+    this.wsForm = { id: ws.id, name: ws.name || '', git_url: ws.git_url || '', groups: this.wsGroupsOf(ws.id).map((g: KeyGroup) => g.name) };
+    this.wsErrors = {};
+    this.showWsModal = true;
+  },
+  closeWsModal() { this.showWsModal = false; },
+  toggleWsGroup(name: string) {
+    const i = this.wsForm.groups.indexOf(name);
+    if (i >= 0) this.wsForm.groups.splice(i, 1);
+    else this.wsForm.groups.push(name);
+  },
+  async saveWorkspace() {
+    this.wsErrors = {};
+    const id = this.wsForm.id.trim();
+    if (!id) { this.wsErrors.id = 'Workspace id is required'; return; }
+    this.wsSaving = true;
+    try {
+      const res = await this.authFetch('/api/workspaces', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, name: this.wsForm.name.trim(), git_url: this.wsForm.git_url.trim() }),
+      });
+      if (!res.ok) {
+        this.wsErrors.id = res.status === 403 ? 'Registering workspaces requires the root key' : 'Saving the workspace failed';
+        return;
+      }
+      const groupsRes = await this.authFetch('/api/workspaces/' + encodeURIComponent(id) + '/groups', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ groups: this.wsForm.groups }),
+      });
+      if (!groupsRes.ok) { this.wsErrors.groups = 'Group allocation failed (unknown group?)'; return; }
+      this.showWsModal = false;
+      await this.fetchWorkspaces();
+      await this.fetchGroups();
+    } catch { this.wsErrors.id = 'Network error'; } finally { this.wsSaving = false; }
+  },
+  openNewGroupModal() {
+    this.groupModalMode = 'create';
+    this.groupForm = { id: '', name: '', description: '', patterns: '' };
+    this.groupErrors = {};
+    this.showGroupModal = true;
+  },
+  openEditGroupModal(g: KeyGroup) {
+    this.groupModalMode = 'edit';
+    this.groupForm = { id: g.id, name: g.name, description: g.description || '', patterns: (g.patterns || []).join('\n') };
+    this.groupErrors = {};
+    this.showGroupModal = true;
+  },
+  closeGroupModal() { this.showGroupModal = false; },
+  async saveGroup() {
+    this.groupErrors = {};
+    if (!this.groupForm.name.trim()) { this.groupErrors.name = 'Name is required'; return; }
+    this.groupSaving = true;
+    try {
+      const patterns = this.groupForm.patterns.split('\n').map((p: string) => p.trim()).filter(Boolean);
+      const body = JSON.stringify({ name: this.groupForm.name.trim(), description: this.groupForm.description.trim(), patterns });
+      const res = this.groupModalMode === 'create'
+        ? await this.authFetch('/api/groups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
+        : await this.authFetch('/api/groups/' + encodeURIComponent(this.groupForm.id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body });
+      if (!res.ok) {
+        if (res.status === 409) this.groupErrors.name = 'A group with that name already exists';
+        else if (res.status === 403) this.groupErrors.name = 'Group management requires the root key';
+        else this.groupErrors.patterns = (await res.json().catch(() => ({ error: 'Saving the group failed' }))).error;
+        return;
+      }
+      this.showGroupModal = false;
+      await this.fetchGroups();
+    } catch { this.groupErrors.name = 'Network error'; } finally { this.groupSaving = false; }
+  },
   async fetchGroups() {
     this.groupsLoading = true;
     try {

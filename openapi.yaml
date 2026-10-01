@@ -385,6 +385,56 @@ paths:
         "403": { description: Root key required }
         "404": { description: Unknown group }
 
+  /api/workspaces/{id}/groups:
+    get:
+      summary: Groups holding the workspace as an explicit member (root only)
+      operationId: workspaceGroups
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Groups
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Group" }
+        "401": { description: Unauthorized }
+        "403": { description: Root key required }
+    put:
+      summary: Replace the workspace's group allocations (root only)
+      description: Names or ids; keys in any touched group re-evaluate their SSE scope.
+      operationId: setWorkspaceGroups
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                groups: { type: array, items: { type: string } }
+      responses:
+        "200":
+          description: The workspace's groups after the change
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Group" }
+        "400": { description: Unknown workspace or group, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "401": { description: Unauthorized }
+        "403": { description: Root key required }
+
   /api/workspaces:
     post:
       summary: Register a workspace (upserts the display name)

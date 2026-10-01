@@ -50,6 +50,13 @@ versions follow [Semantic Versioning](https://semver.org/).
   review gate `<head_sha>` (recorded by `mark-done` with `head_sha`).
   `GET /api/inbox/{id}/approvals`. `POST /api/inbox/{id}/link-plan`
   attaches the planner's plan mid-workflow.
+- **Dashboard: Workspaces section** — a new top-level menu item combines
+  workspace management and groups: registry list with group badges,
+  create/edit dialogs (id, name, git URL) with group allocation checkboxes,
+  group create/edit (name, description, patterns), and the who-can reverse
+  query. Backed by `GET/PUT /api/workspaces/{id}/groups` (root-only), which
+  replaces a workspace's explicit group allocations atomically and drops the
+  SSE streams of keys in any touched group.
 - **One-time agent-trial cutover** — `POST /api/inbox/migrate-workflow` and
   `skopos inbox migrate-workflow [--dry-run]`: the frozen tag→status table,
   idempotent, with audit backfill (`via: migration`); discarded trial items

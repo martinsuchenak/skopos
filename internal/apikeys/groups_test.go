@@ -574,3 +574,75 @@ func TestWorkspaceRegistrationTriggersScopeDrop(t *testing.T) {
 		t.Fatalf("re-registering an existing workspace must not drop: %v", dropped)
 	}
 }
+
+// Workspace-centric allocation: set/get a workspace's groups, with stream
+// drops for keys in touched groups.
+func TestWorkspaceGroupAllocation(t *testing.T) {
+	st := testStorage(t)
+	svc := NewService(st)
+	ctx := context.Background()
+	seedWorkspace(t, st, "ws-a")
+	seedWorkspace(t, st, "ws-b")
+
+	g1, err := svc.CreateGroup(ctx, GroupInput{Name: "work", Members: []string{"ws-b"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateGroup(ctx, GroupInput{Name: "personal", Patterns: []string{"personal/*"}}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.Create(ctx, CreateInput{Name: "k", Groups: []string{"work"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var dropped []string
+	svc.SetScopeNotifier(func(keyIDs []string) { dropped = append(dropped, keyIDs...) })
+
+	// Allocate ws-a to work + personal.
+	groups, err := svc.SetWorkspaceGroups(ctx, "ws-a", []string{"work", "personal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 groups after allocation, got %d", len(groups))
+	}
+	// The work-group key's scope widened: its stream must drop.
+	if len(dropped) != 1 || dropped[0] != result.Key.ID {
+		t.Fatalf("allocation must drop touched keys, got %v", dropped)
+	}
+
+	// Reads return exactly the allocation.
+	groups, err = svc.WorkspaceGroups(ctx, "ws-a")
+	if err != nil || len(groups) != 2 {
+		t.Fatalf("read back: %+v err %v", groups, err)
+	}
+
+	// De-allocating drops touched keys again (work left, personal left).
+	dropped = nil
+	if _, err := svc.SetWorkspaceGroups(ctx, "ws-a", nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(dropped) != 1 || dropped[0] != result.Key.ID {
+		t.Fatalf("de-allocation must drop touched keys, got %v", dropped)
+	}
+	if groups, _ = svc.WorkspaceGroups(ctx, "ws-a"); len(groups) != 0 {
+		t.Fatalf("de-allocated workspace must have no groups, got %+v", groups)
+	}
+	_ = g1
+
+	// Unknown workspaces and groups are rejected; scoped keys are locked out.
+	if _, err := svc.SetWorkspaceGroups(ctx, "nope", []string{"work"}); !errorsIsInvalid(err) {
+		t.Fatalf("unknown workspace: %v", err)
+	}
+	if _, err := svc.SetWorkspaceGroups(ctx, "ws-a", []string{"nope"}); !errorsIsInvalid(err) {
+		t.Fatalf("unknown group: %v", err)
+	}
+	if _, err := svc.SetWorkspaceGroups(scopedCtx(), "ws-a", nil); !errors.Is(err, auth.ErrRootRequired) {
+		t.Fatalf("scoped set: %v", err)
+	}
+}
+
+func errorsIsInvalid(err error) bool {
+	return err != nil && strings.Contains(err.Error(), ErrInvalidInput.Error())
+}

@@ -42,9 +42,9 @@
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a4 4 0 11-8 0 4 4 0 018 0zm3 9a4 4 0 00-4-4H8a4 4 0 00-4 4v1h14v-1z"/></svg>
                 Keys
             </button>
-            <button type="button" @click="switchView('groups')" class="nav-item" x-show="whoamiIsRoot()" x-cloak :aria-current="activeView === 'groups' ? 'page' : null">
-                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-1.13a4 4 0 10-4-6.93M16 3.13a4 4 0 010 7.75"/></svg>
-                Groups
+            <button type="button" @click="switchView('workspaces')" class="nav-item" :aria-current="activeView === 'workspaces' ? 'page' : null">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21"/></svg>
+                Workspaces
             </button>
         </nav>
         <div class="border-t border-zinc-800 p-4">
@@ -680,39 +680,83 @@
                 </ul>
             </section>
 
-            <section x-show="activeView === 'groups'" x-cloak>
-                <div class="mb-6">
-                    <h2 class="mb-1 text-2xl font-semibold">Workspace groups</h2>
-                    <p class="text-sm text-zinc-500">
-                        A key's scope is its workspaces plus its groups' members plus workspaces matching the groups'
-                        patterns. Manage groups with <code class="text-zinc-400">skopos group</code>; this page is the
-                        read-side view.
+            <section x-show="activeView === 'workspaces'" x-cloak>
+                <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                        <h2 class="mb-1 text-2xl font-semibold">Workspaces</h2>
+                        <p class="text-sm text-zinc-500">
+                            The registry every domain scopes by. Allocate workspaces to groups here — a key's scope is
+                            its workspaces plus its groups' members and pattern matches.
+                        </p>
+                    </div>
+                    <button type="button" @click="openNewWorkspaceModal()" class="btn" x-show="whoamiIsRoot()" x-cloak>New workspace</button>
+                </div>
+                <div class="rounded-lg border border-zinc-800 bg-zinc-900/50">
+                    <ul class="divide-y divide-zinc-800">
+                        <template x-for="ws in registeredWorkspaces" :key="ws.id">
+                            <li class="flex flex-wrap items-start justify-between gap-3 p-4">
+                                <div class="min-w-0 flex-1">
+                                    <div class="flex flex-wrap items-baseline gap-2">
+                                        <span class="truncate font-medium text-zinc-100" x-text="ws.name || ws.id"></span>
+                                        <span class="text-xs text-zinc-500" x-text="ws.id"></span>
+                                    </div>
+                                    <div class="mt-1.5 flex flex-wrap gap-1.5" x-show="wsGroupsOf(ws.id).length > 0">
+                                        <template x-for="g in wsGroupsOf(ws.id)" :key="'ws|' + ws.id + '|' + g.id">
+                                            <span class="badge bg-violet-500/15 text-violet-300" x-text="g.name"></span>
+                                        </template>
+                                    </div>
+                                </div>
+                                <button type="button" @click="openEditWorkspaceModal(ws)" x-show="whoamiIsRoot()" x-cloak
+                                    class="btn btn-sm border-zinc-700 text-zinc-200 hover:border-zinc-500">Edit</button>
+                            </li>
+                        </template>
+                    </ul>
+                    <p class="p-4 text-sm text-zinc-500" x-show="registeredWorkspaces.length === 0">
+                        No workspaces registered yet. Workspaces appear as agents report sessions, or register one above.
                     </p>
+                </div>
+
+                <div class="mb-6 mt-10 flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                        <h3 class="mb-1 text-xl font-semibold">Groups</h3>
+                        <p class="text-sm text-zinc-500">
+                            Named bundles of workspaces (explicit members plus pattern matches). Members are allocated
+                            from the workspace side; patterns and names live here.
+                        </p>
+                    </div>
+                    <button type="button" @click="openNewGroupModal()" class="btn" x-show="whoamiIsRoot()" x-cloak>New group</button>
                 </div>
                 <div x-show="groupsLoading" class="text-sm text-zinc-500">Loading…</div>
                 <div x-show="!groupsLoading && groups.length === 0" class="rounded-lg border border-zinc-800 bg-zinc-900/50 p-6 text-sm text-zinc-500">
-                    No workspace groups yet. Create one with <code class="text-zinc-400">skopos group create</code>.
+                    No workspace groups yet. Create one to give keys access to many workspaces at once.
                 </div>
                 <ul class="space-y-3" x-show="!groupsLoading && groups.length > 0">
                     <template x-for="g in groups" :key="g.id">
                         <li class="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
-                            <div class="flex flex-wrap items-center gap-2">
-                                <span class="font-medium text-zinc-100" x-text="g.name"></span>
-                                <span class="text-xs text-zinc-500" x-text="g.id"></span>
-                            </div>
-                            <p class="mt-1 text-sm text-zinc-500" x-show="g.description" x-text="g.description"></p>
-                            <div class="mt-2 flex flex-wrap gap-1.5">
-                                <template x-for="m in g.members" :key="'m|' + g.id + '|' + m">
-                                    <span class="badge bg-cyan-500/15 text-cyan-300" x-text="m"></span>
-                                </template>
-                                <template x-for="p in g.patterns" :key="'p|' + g.id + '|' + p">
-                                    <span class="badge bg-violet-500/15 text-violet-300" x-text="p"></span>
-                                </template>
+                            <div class="flex flex-wrap items-start justify-between gap-2">
+                                <div class="min-w-0">
+                                    <div class="flex flex-wrap items-baseline gap-2">
+                                        <span class="font-medium text-zinc-100" x-text="g.name"></span>
+                                        <span class="text-xs text-zinc-500" x-text="g.id"></span>
+                                    </div>
+                                    <p class="mt-1 text-sm text-zinc-500" x-show="g.description" x-text="g.description"></p>
+                                    <div class="mt-2 flex flex-wrap gap-1.5">
+                                        <template x-for="m in g.members" :key="'m|' + g.id + '|' + m">
+                                            <span class="badge bg-cyan-500/15 text-cyan-300" x-text="m"></span>
+                                        </template>
+                                        <template x-for="p in g.patterns" :key="'p|' + g.id + '|' + p">
+                                            <span class="badge bg-violet-500/15 text-violet-300" x-text="p"></span>
+                                        </template>
+                                    </div>
+                                </div>
+                                <button type="button" @click="openEditGroupModal(g)" x-show="whoamiIsRoot()" x-cloak
+                                    class="btn btn-sm border-zinc-700 text-zinc-200 hover:border-zinc-500">Edit</button>
                             </div>
                         </li>
                     </template>
                 </ul>
-                <div class="mt-8 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+
+                <div class="mt-8 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4" x-show="whoamiIsRoot()" x-cloak>
                     <h3 class="mb-2 text-sm font-semibold text-zinc-200">Who can access a workspace?</h3>
                     <form class="flex flex-wrap gap-2" @submit.prevent="fetchWhoCan()">
                         <label class="sr-only" for="who-can-ws">Workspace ID</label>
@@ -734,6 +778,63 @@
                     </p>
                 </div>
             </section>
+
+
+    <!-- Workspace create/edit: id, name, git URL, group allocation. -->
+    <div x-show="showWsModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="ws-modal-title" @keydown.escape.window="closeWsModal()" x-trap="showWsModal">
+        <div class="fixed inset-0 bg-black/60" @click="closeWsModal()" aria-hidden="true"></div>
+        <div class="card relative w-full max-w-md p-6 shadow-2xl">
+            <h2 id="ws-modal-title" class="mb-4 text-lg font-semibold" x-text="wsModalMode === 'create' ? 'New workspace' : 'Edit workspace'"></h2>
+            <label class="lbl" for="ws-id">Workspace ID</label>
+            <input id="ws-id" type="text" x-model="wsForm.id" class="fld" placeholder="github.com/owner/repo" autocomplete="off"
+                :disabled="wsModalMode === 'edit'" :aria-invalid="!!wsErrors.id" />
+            <p x-show="wsErrors.id" class="mt-1 text-xs text-rose-400" x-text="wsErrors.id"></p>
+            <label class="lbl mt-4" for="ws-name">Display name</label>
+            <input id="ws-name" type="text" x-model="wsForm.name" class="fld" placeholder="Optional" autocomplete="off" />
+            <label class="lbl mt-4" for="ws-git">Git URL</label>
+            <input id="ws-git" type="text" x-model="wsForm.git_url" class="fld" placeholder="Optional" autocomplete="off" />
+            <div class="mt-4">
+                <span class="lbl">Group allocation</span>
+                <div class="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900/60 p-2">
+                    <p class="px-1.5 py-1 text-xs text-zinc-500" x-show="groups.length === 0">No groups yet — create one below first.</p>
+                    <template x-for="g in groups" :key="'wsg|' + g.id">
+                        <label class="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm text-zinc-200 hover:bg-zinc-800/60">
+                            <input type="checkbox" :checked="wsForm.groups.indexOf(g.name) >= 0" @change="toggleWsGroup(g.name)" class="h-4 w-4 rounded border-zinc-700 bg-zinc-900" />
+                            <span class="truncate" x-text="g.name"></span>
+                        </label>
+                    </template>
+                </div>
+                <p x-show="wsErrors.groups" class="mt-1 text-xs text-rose-400" x-text="wsErrors.groups"></p>
+            </div>
+            <div class="mt-6 flex justify-end gap-2">
+                <button type="button" @click="closeWsModal()" class="btn btn-ghost">Cancel</button>
+                <button type="button" @click="saveWorkspace()" class="btn btn-primary" :disabled="wsSaving" x-text="wsSaving ? 'Saving…' : (wsModalMode === 'create' ? 'Create workspace' : 'Save')"></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Group create/edit: name, description, patterns (members come from workspace allocation). -->
+    <div x-show="showGroupModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="group-modal-title" @keydown.escape.window="closeGroupModal()" x-trap="showGroupModal">
+        <div class="fixed inset-0 bg-black/60" @click="closeGroupModal()" aria-hidden="true"></div>
+        <div class="card relative w-full max-w-md p-6 shadow-2xl">
+            <h2 id="group-modal-title" class="mb-4 text-lg font-semibold" x-text="groupModalMode === 'create' ? 'New group' : 'Edit group'"></h2>
+            <label class="lbl" for="group-name">Name</label>
+            <input id="group-name" type="text" x-model="groupForm.name" class="fld" placeholder="work, personal, …" autocomplete="off" :aria-invalid="!!groupErrors.name" />
+            <p x-show="groupErrors.name" class="mt-1 text-xs text-rose-400" x-text="groupErrors.name"></p>
+            <label class="lbl mt-4" for="group-desc">Description</label>
+            <input id="group-desc" type="text" x-model="groupForm.description" class="fld" placeholder="Optional" autocomplete="off" />
+            <label class="lbl mt-4" for="group-patterns">Patterns (one per line)</label>
+            <textarea id="group-patterns" rows="3" x-model="groupForm.patterns" class="fld font-mono text-xs" placeholder="github.com/fortix/*"></textarea>
+            <p class="mt-1 text-xs text-zinc-500">path.Match — * matches one segment, never crosses /; no **.</p>
+            <p x-show="groupErrors.patterns" class="mt-1 text-xs text-rose-400" x-text="groupErrors.patterns"></p>
+            <p class="mt-3 text-xs text-zinc-500">Members are allocated per workspace (Edit workspace), not here.</p>
+            <div class="mt-6 flex justify-end gap-2">
+                <button type="button" @click="closeGroupModal()" class="btn btn-ghost">Cancel</button>
+                <button type="button" @click="saveGroup()" class="btn btn-primary" :disabled="groupSaving" x-text="groupSaving ? 'Saving…' : (groupModalMode === 'create' ? 'Create group' : 'Save')"></button>
+            </div>
+        </div>
+    </div>
+
         </main>
     </div>
 

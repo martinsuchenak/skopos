@@ -389,6 +389,44 @@ func (h *Handler) respondGroupError(w http.ResponseWriter, err error) {
 	}
 }
 
+// WorkspaceGroups handles GET /api/workspaces/{id}/groups: the groups
+// holding the workspace as an explicit member. Root-only.
+func (h *Handler) WorkspaceGroups(w http.ResponseWriter, r *http.Request) {
+	if h.requireRoot(w, r) == nil {
+		return
+	}
+	groups, err := h.service.WorkspaceGroups(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.respondGroupError(w, err)
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, groups)
+}
+
+// SetWorkspaceGroups handles PUT /api/workspaces/{id}/groups: replace the
+// workspace's group allocations (names or ids). Root-only.
+func (h *Handler) SetWorkspaceGroups(w http.ResponseWriter, r *http.Request) {
+	if h.requireRoot(w, r) == nil {
+		return
+	}
+	var req struct {
+		Groups []string `json:"groups"`
+	}
+	if err := rest.DecodeJSON(w, r, &req); err != nil {
+		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	groups, err := h.service.SetWorkspaceGroups(r.Context(), r.PathValue("id"), req.Groups)
+	if err != nil {
+		h.respondGroupError(w, err)
+		return
+	}
+	if h.publish != nil {
+		h.publish.Publish(events.Event{Type: events.TypeChange})
+	}
+	rest.RespondJSON(w, http.StatusOK, groups)
+}
+
 func deref(s *string) string {
 	if s == nil {
 		return ""

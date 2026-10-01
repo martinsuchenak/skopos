@@ -597,6 +597,84 @@ func (s *Service) WhoCan(ctx context.Context, wsID string) ([]KeyReach, error) {
 	return reach, nil
 }
 
+// WorkspaceGroups lists the groups holding wsID as an explicit member
+// (root-only, like every group read).
+func (s *Service) WorkspaceGroups(ctx context.Context, wsID string) ([]Group, error) {
+	if err := auth.RequireRoot(ctx); err != nil {
+		return nil, err
+	}
+	wsID = strings.TrimSpace(wsID)
+	if wsID == "" {
+		return nil, fmt.Errorf("%w: workspace is required", ErrInvalidInput)
+	}
+	groups, err := s.storage.GroupsOfWorkspace(ctx, wsID)
+	if err != nil {
+		return nil, err
+	}
+	if groups == nil {
+		groups = []Group{}
+	}
+	return groups, nil
+}
+
+// SetWorkspaceGroups replaces a workspace's explicit group allocations —
+// the workspace-centric counterpart of editing a group's members. Keys in
+// any touched group (joined or left) re-evaluate their SSE scope.
+func (s *Service) SetWorkspaceGroups(ctx context.Context, wsID string, refs []string) ([]Group, error) {
+	if err := auth.RequireRoot(ctx); err != nil {
+		return nil, err
+	}
+	wsID = strings.TrimSpace(wsID)
+	if wsID == "" {
+		return nil, fmt.Errorf("%w: workspace is required", ErrInvalidInput)
+	}
+	exists, err := s.storage.WorkspaceExists(ctx, wsID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, fmt.Errorf("%w: workspace %s is not registered", ErrInvalidInput, wsID)
+	}
+	before, err := s.storage.GroupIDsOfWorkspace(ctx, wsID)
+	if err != nil {
+		return nil, err
+	}
+	groups, err := s.resolveGroups(ctx, refs)
+	if err != nil {
+		return nil, err
+	}
+	after := make([]string, 0, len(groups))
+	for _, g := range groups {
+		after = append(after, g.ID)
+	}
+	if err := s.storage.SetWorkspaceGroups(ctx, wsID, after); err != nil {
+		return nil, err
+	}
+	// Scope changed for keys holding any touched group (before ∪ after).
+	touched := map[string]struct{}{}
+	for _, gid := range before {
+		touched[gid] = struct{}{}
+	}
+	for _, gid := range after {
+		touched[gid] = struct{}{}
+	}
+	drop := map[string]struct{}{}
+	for gid := range touched {
+		keyIDs, err := s.storage.KeysInGroup(ctx, gid)
+		if err == nil {
+			for _, id := range keyIDs {
+				drop[id] = struct{}{}
+			}
+		}
+	}
+	list := make([]string, 0, len(drop))
+	for id := range drop {
+		list = append(list, id)
+	}
+	s.dropKeys(list)
+	return s.storage.GroupsOfWorkspace(ctx, wsID)
+}
+
 // ResolveScope explains a key's effective scope for whoami: the groups it
 // holds and how each reachable workspace is reached. Pattern matches are
 // evaluated against the current registry.

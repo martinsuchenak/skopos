@@ -36,4 +36,8 @@ func registerKeyRoutes(mux *http.ServeMux, h *apikeys.Handler) {
 	mux.HandleFunc("GET /api/groups/{id}", h.GetGroup)
 	mux.HandleFunc("PATCH /api/groups/{id}", h.UpdateGroup)
 	mux.HandleFunc("DELETE /api/groups/{id}", h.DeleteGroup)
+
+	// Workspace-centric group allocation: which groups hold a workspace.
+	mux.HandleFunc("GET /api/workspaces/{id}/groups", h.WorkspaceGroups)
+	mux.HandleFunc("PUT /api/workspaces/{id}/groups", h.SetWorkspaceGroups)
 }

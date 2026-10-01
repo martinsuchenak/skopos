@@ -704,6 +704,83 @@ func (s *Storage) writeKeyGroups(ctx context.Context, keyID string, groupIDs []s
 	return nil
 }
 
+// GroupsOfWorkspace lists the groups holding wsID as an explicit member,
+// with their members and patterns.
+func (s *Storage) GroupsOfWorkspace(ctx context.Context, wsID string) ([]Group, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT g.id, g.name, g.description, g.created_at
+		FROM workspace_groups g
+		JOIN workspace_group_members m ON m.group_id = g.id
+		WHERE m.workspace_id = ? ORDER BY g.name`, wsID)
+	if err != nil {
+		return nil, fmt.Errorf("listing groups of workspace: %w", err)
+	}
+	var out []Group
+	for rows.Next() {
+		var g Group
+		var createdAt string
+		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &createdAt); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		g.CreatedAt = parseTime(createdAt)
+		out = append(out, g)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	for i := range out {
+		if out[i].Members, err = s.groupMembers(ctx, out[i].ID); err != nil {
+			return nil, err
+		}
+		if out[i].Patterns, err = s.groupPatterns(ctx, out[i].ID); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// SetWorkspaceGroups replaces wsID's explicit group memberships in one
+// transaction: it is removed from groups not listed and added to the rest.
+func (s *Storage) SetWorkspaceGroups(ctx context.Context, wsID string, groupIDs []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM workspace_group_members WHERE workspace_id = ?`, wsID); err != nil {
+		return fmt.Errorf("clearing workspace groups: %w", err)
+	}
+	for _, gid := range groupIDs {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO workspace_group_members (group_id, workspace_id) VALUES (?, ?)`, gid, wsID); err != nil {
+			return fmt.Errorf("inserting group member: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// GroupIDsOfWorkspace lists just the ids (scope-change bookkeeping).
+func (s *Storage) GroupIDsOfWorkspace(ctx context.Context, wsID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT group_id FROM workspace_group_members WHERE workspace_id = ? ORDER BY group_id`, wsID)
+	if err != nil {
+		return nil, fmt.Errorf("listing group ids of workspace: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // KeysInGroup lists the ids of active (non-revoked) keys holding a group.
 func (s *Storage) KeysInGroup(ctx context.Context, groupID string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `
