@@ -1163,6 +1163,194 @@ paths:
         "401": { description: Unauthorized }
         "404": { description: Not found }
 
+  /api/inbox/{id}/queue:
+    post:
+      summary: Queue an open item for agent work (approver permission required)
+      description: First human action of the agent pipeline (agent-pipeline §1); moves open → queued.
+      operationId: queueInboxItem
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      responses:
+        "200":
+          description: Queued item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InboxItem" }
+        "400": { description: Illegal transition }
+        "401": { description: Unauthorized }
+        "403": { description: Approver permission required }
+        "404": { description: Not found }
+
+  /api/inbox/{id}/approve:
+    post:
+      summary: Approve the plan under review (approver permission required)
+      description: awaiting_approval → approved. Notes may carry overrides (wr, runner, tags).
+      operationId: approveInboxItem
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                notes: { type: string }
+      responses:
+        "200":
+          description: Approved item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InboxItem" }
+        "400": { description: Illegal transition }
+        "401": { description: Unauthorized }
+        "403": { description: Approver permission required }
+        "404": { description: Not found }
+
+  /api/inbox/{id}/request-changes:
+    post:
+      summary: Send the item back one phase with review notes (approver permission required)
+      description: awaiting_approval → planning; the notes feed the next run's prompt.
+      operationId: requestInboxChanges
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [notes]
+              properties:
+                notes: { type: string }
+      responses:
+        "200":
+          description: Item returned to planning
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InboxItem" }
+        "400": { description: Illegal transition }
+        "401": { description: Unauthorized }
+        "403": { description: Approver permission required }
+        "404": { description: Not found }
+
+  /api/inbox/{id}/retry:
+    post:
+      summary: Answer a blocked or failed item and resume it (approver permission required)
+      description: blocked/failed → implementing; the answer feeds the next run's prompt.
+      operationId: retryInboxItem
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [answer]
+              properties:
+                answer: { type: string }
+      responses:
+        "200":
+          description: Item back to implementing
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InboxItem" }
+        "400": { description: Illegal transition }
+        "401": { description: Unauthorized }
+        "403": { description: Approver permission required }
+        "404": { description: Not found }
+
+  /api/inbox/{id}/reject:
+    post:
+      summary: Discard the item from any workflow phase (approver permission required)
+      operationId: rejectInboxItem
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                notes: { type: string }
+      responses:
+        "200":
+          description: Discarded item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InboxItem" }
+        "400": { description: Illegal transition }
+        "401": { description: Unauthorized }
+        "403": { description: Approver permission required }
+        "404": { description: Not found }
+
+  /api/inbox/{id}/mark-done:
+    post:
+      summary: Complete the reviewed item (approver permission required)
+      description: in_review → done, the workflow's terminal human action.
+      operationId: markInboxItemDone
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      responses:
+        "200":
+          description: Completed item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InboxItem" }
+        "400": { description: Illegal transition }
+        "401": { description: Unauthorized }
+        "403": { description: Approver permission required }
+        "404": { description: Not found }
+
+  /api/inbox/{id}/transition:
+    post:
+      summary: System transition along the machine phases (executor path; workspace scope required, not approver-gated)
+      description: queued → planning, planning → awaiting_approval, approved → implementing, implementing → in_review / awaiting_approval (amendment) / blocked / failed.
+      operationId: transitionInboxItem
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to:
+                  type: string
+                  enum: [planning, awaiting_approval, implementing, in_review, blocked, failed]
+                reason: { type: string }
+                via: { type: string, description: Audit label (worker, cli, …) }
+      responses:
+        "200":
+          description: Updated item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InboxItem" }
+        "400": { description: Illegal transition }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+
+  /api/inbox/{id}/timeline:
+    get:
+      summary: The item's workflow history (audit log filtered to this item)
+      operationId: inboxItemTimeline
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      responses:
+        "200":
+          description: Audit entries, newest-first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AuditEntry" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+
 components:
   parameters:
     SessionId:  { name: id, in: path, required: true, schema: { type: string } }
@@ -1489,6 +1677,20 @@ components:
           type: string
           nullable: true
           description: "null = leave unchanged, empty = release claim, set = claim."
+    AuditEntry:
+      type: object
+      properties:
+        id: { type: string }
+        workspace_id: { type: string }
+        entity_type: { type: string }
+        entity_id: { type: string }
+        action: { type: string, description: "dot-namespaced domain.verb, e.g. inbox.queue" }
+        actor: { type: string, description: '"root", "key <name>", "agent <id>", "system" or "migration"' }
+        actor_key_id: { type: string }
+        via: { type: string, description: "dashboard, slack, cli, mcp, worker, migration, system" }
+        notes: { type: string }
+        created_at: { type: string, format: date-time }
+
     InboxItem:
       type: object
       properties:

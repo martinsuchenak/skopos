@@ -16,6 +16,7 @@ type Service struct {
 	store     Store
 	now       func() time.Time
 	publisher events.Publisher
+	auditSink AuditRecorder
 }
 
 func NewService(store Store) *Service {
@@ -25,6 +26,11 @@ func NewService(store Store) *Service {
 // SetPublisher installs the event bus; mutations publish with their item's
 // authoritative workspace. Nil (the default) disables publishing.
 func (s *Service) SetPublisher(p events.Publisher) { s.publisher = p }
+
+// SetAuditRecorder installs the audit sink (internal/audit.Service). Workflow
+// transitions are audit-logged through it; the manual path adopts it with the
+// remaining services in plan 01a0bf7c. Nil disables workflow auditing.
+func (s *Service) SetAuditRecorder(a AuditRecorder) { s.auditSink = a }
 
 // publishItem emits the mutation event for an item once the store write
 // succeeded; failures are silent (events are advisory).

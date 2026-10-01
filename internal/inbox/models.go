@@ -5,22 +5,93 @@ import (
 	"time"
 )
 
-// Status is an inbox item's lifecycle state (docs/design/inbox.md):
+// Status is an inbox item's lifecycle state. The manual path (docs/design/
+// inbox.md) uses open/in_progress/converted/done/discarded; the agent
+// workflow (docs/design/agent-pipeline.md §1) adds the machine phases:
 //
-//	open         captured, unprocessed
-//	in_progress  claimed by an agent, being enriched
-//	converted    linked to a plan (plan_id set); completes with the plan
-//	done         the linked plan completed (terminal)
-//	discarded    rejected / won't do (terminal, retention-cleaned)
+//	open              captured, unprocessed
+//	in_progress       claimed by an agent, being enriched
+//	queued            Martin queued it for agent work (human-only action)
+//	planning          a planner run owns it (system transition)
+//	awaiting_approval the plan revision waits for Martin
+//	approved          the revision is approved and locked (system continues)
+//	implementing      a worker implements the approved revision
+//	in_review         branch pushed; Martin reviews the head commit
+//	converted         linked to a plan (plan_id set); completes with the plan
+//	done              the linked plan completed / Martin marked it done (terminal)
+//	discarded         rejected / won't do (terminal, retention-cleaned)
+//	failed, blocked   terminal-ish run outcomes with a reason; both return
+//	                  to their phase on retry or discard on reject
 type Status string
 
 const (
 	StatusOpen       Status = "open"
 	StatusInProgress Status = "in_progress"
-	StatusConverted  Status = "converted"
-	StatusDone       Status = "done"
-	StatusDiscarded  Status = "discarded"
+	// Workflow statuses (agent-pipeline §1). System transitions
+	// (planning, implementing, in_review, failed, blocked) happen only as a
+	// side effect of runs — never from the human actions.
+	StatusQueued           Status = "queued"
+	StatusPlanning         Status = "planning"
+	StatusAwaitingApproval Status = "awaiting_approval"
+	StatusApproved         Status = "approved"
+	StatusImplementing     Status = "implementing"
+	StatusInReview         Status = "in_review"
+	StatusFailed           Status = "failed"
+	StatusBlocked          Status = "blocked"
+	StatusConverted        Status = "converted"
+	StatusDone             Status = "done"
+	StatusDiscarded        Status = "discarded"
 )
+
+// Transition classes: who may perform a status change. Human actions
+// additionally require the approver permission; system transitions are the
+// executor's (runs in 1b, agent-trial in 1a) and record a reason.
+type TransitionActor string
+
+const (
+	ActorHuman  TransitionActor = "human"
+	ActorSystem TransitionActor = "system"
+)
+
+// workflowEdges is the frozen transition matrix (docs/design/agent-pipeline.md
+// §1, diagram "Item workflow statuses"). failed shares blocked's edges.
+var workflowEdges = map[Status]map[Status]TransitionActor{
+	StatusOpen:             {StatusQueued: ActorHuman},
+	StatusQueued:           {StatusPlanning: ActorSystem},
+	StatusPlanning:         {StatusAwaitingApproval: ActorSystem, StatusDiscarded: ActorHuman},
+	StatusAwaitingApproval: {StatusApproved: ActorHuman, StatusPlanning: ActorHuman, StatusDiscarded: ActorHuman},
+	StatusApproved:         {StatusImplementing: ActorSystem, StatusDiscarded: ActorHuman},
+	StatusImplementing:     {StatusAwaitingApproval: ActorSystem, StatusInReview: ActorSystem, StatusBlocked: ActorSystem, StatusFailed: ActorSystem, StatusDiscarded: ActorHuman},
+	// Retry (with an answer) is Martin's action — the answer feeds the next
+	// run's prompt, like request-changes does for planning.
+	StatusBlocked:  {StatusImplementing: ActorHuman, StatusDiscarded: ActorHuman},
+	StatusFailed:   {StatusImplementing: ActorHuman, StatusDiscarded: ActorHuman},
+	StatusInReview: {StatusImplementing: ActorHuman, StatusDone: ActorHuman, StatusDiscarded: ActorHuman},
+}
+
+// WorkflowTransition reports who may move an item from one workflow status
+// to another, and whether the edge exists at all (ok false = illegal move).
+// Non-workflow statuses (open, in_progress, converted, done, discarded) have
+// no workflow edges; their transitions stay on the manual path (claim,
+// convert, discard, …) and are not governed by this matrix.
+func WorkflowTransition(from, to Status) (actor TransitionActor, ok bool) {
+	edges, exists := workflowEdges[from]
+	if !exists {
+		return "", false
+	}
+	actor, ok = edges[to]
+	return actor, ok
+}
+
+// IsWorkflowStatus reports whether s is one of the agent-pipeline phases.
+func IsWorkflowStatus(s Status) bool {
+	switch s {
+	case StatusQueued, StatusPlanning, StatusAwaitingApproval, StatusApproved,
+		StatusImplementing, StatusInReview, StatusFailed, StatusBlocked:
+		return true
+	}
+	return false
+}
 
 type Item struct {
 	ID               string    `json:"id"`

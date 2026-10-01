@@ -18,6 +18,7 @@ import (
 	"github.com/martinsuchenak/skopos/cmd/mcp"
 	"github.com/martinsuchenak/skopos/cmd/routes"
 	"github.com/martinsuchenak/skopos/internal/apikeys"
+	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/cleanup"
@@ -199,8 +200,12 @@ func serveCmd() *cli.Command {
 			plansHandler := plans.NewHandler(plansService, authn)
 
 			// Inbox: workspace-scoped captures of unprocessed work
-			// (docs/design/inbox.md).
+			// (docs/design/inbox.md), with the agent-pipeline workflow
+			// (docs/design/agent-pipeline.md §1) audited through the
+			// append-only log (plan 01a0bf7c).
+			auditService := audit.NewService(audit.NewStorage(sqlDB))
 			inboxService := inbox.NewService(inbox.NewStorage(sqlDB))
+			inboxService.SetAuditRecorder(auditService)
 			inboxHandler := inbox.NewHandler(inboxService, authn)
 
 			// Completing a plan completes the inbox items it was converted
