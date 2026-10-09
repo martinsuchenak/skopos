@@ -4,6 +4,17 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.9.1] — 2026-10-09
+
+### Fixed
+
+- **CLI: `skopos inbox migrate-workflow` was missing its `--workspace`
+  flag.** The review-fix that scoped the migration to the trial's workspace
+  landed in the server (the endpoint validates and requires
+  `workspace_id`) but the CLI patch failed to apply silently — the released
+  0.9.0 binary still sent the old request body and rejected `--workspace`.
+  The command now takes `--workspace <id>` (required) and sends it.
+
 ## [0.9.0] — 2026-10-01
 
 ### Added — agent pipeline, Phase 1a (docs/design/agent-pipeline.md)

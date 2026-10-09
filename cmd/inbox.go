@@ -710,11 +710,18 @@ func inboxDelete(ctx context.Context, serverURL, apiKey, id string) error {
 func inboxMigrateWorkflowCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "migrate-workflow",
-		Usage: "One-time agent-trial cutover: migrate tag state to workflow statuses (root key required)",
-		Flags: append(keyClientFlags(), &cli.BoolFlag{Name: "dry-run", Usage: "Report what would migrate without writing"}),
+		Usage: "One-time agent-trial cutover: migrate tag state to workflow statuses (root key required; scoped to the trial's workspace)",
+		Flags: append(keyClientFlags(),
+			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID the trial ran in (required)"},
+			&cli.BoolFlag{Name: "dry-run", Usage: "Report what would migrate without writing"},
+		),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
+			ws := strings.TrimSpace(cmd.GetString("workspace"))
+			if ws == "" {
+				return fmt.Errorf("--workspace is required (the migration is scoped to the trial's workspace)")
+			}
 			var report inbox.MigrationReport
-			body := map[string]any{"dry_run": cmd.GetBool("dry-run")}
+			body := map[string]any{"workspace_id": ws, "dry_run": cmd.GetBool("dry-run")}
 			if err := keysCall(ctx, cmd, http.MethodPost, "/api/inbox/migrate-workflow", body, &report); err != nil {
 				return err
 			}
