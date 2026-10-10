@@ -50,6 +50,10 @@ func (h *Handler) respondTransition(w http.ResponseWriter, item *Item, err error
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
 		case errors.Is(err, ErrNotFound):
 			rest.RespondError(w, http.StatusNotFound, err.Error())
+		case errors.Is(err, ErrAlreadyConverted):
+			// Already-linked items answer link-plan with a 409-class refusal,
+			// not a 500 (an unmapped sentinel leaked as one, live).
+			rest.RespondError(w, http.StatusConflict, err.Error())
 		case errors.Is(err, auth.ErrApproverRequired):
 			rest.RespondError(w, http.StatusForbidden, err.Error())
 		case errors.Is(err, auth.ErrOutOfScope):
