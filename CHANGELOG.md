@@ -4,6 +4,23 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.9.4] — 2026-10-10
+
+### Fixed
+
+- **Dashboard: inbox preview modal** — a View button on every card and list
+  row opens the full item detail (status, tags, workspace, linked plan,
+  rendered content) for ANY status. Workflow items previously had no detail
+  view at all: the kanban never expanded and the Edit button hides for
+  frozen items.
+- **Frontend build: `web/public/` is copied to dist again** — the
+  rolldown-backed vite build stopped copying it with its defaults, so
+  `theme.js` silently vanished from the bundle after `emptyOutDir` wiped the
+  stale copy.
+- **Dashboard render errors surface as 500** — an unchecked
+  `ExecuteTemplate` error rendered a 200 with a completely empty body (one
+  malformed attribute blanked the whole page; found live).
+
 ## [0.9.3] — 2026-10-10
 
 ### Fixed
