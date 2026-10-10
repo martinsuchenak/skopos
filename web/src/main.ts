@@ -82,6 +82,9 @@ const appState = () => ({
   workspaceSearch: '',
   workspaceHighlightId: '',
   expandedInboxId: '',
+  showInboxPreview: false,
+  previewLoading: false,
+  previewItem: null as InboxDetail | null,
   expandedInbox: null as InboxDetail | null,
   // id of the card being dragged (HTML5 DnD; same-window only, so state is
   // the transport — dataTransfer.setData exists for Firefox's sake)
@@ -852,6 +855,25 @@ const appState = () => ({
     });
     this.syncInboxExpansion();
   },
+  // Preview modal: full item detail without expanding (workflow cards are
+  // frozen for inline editing; the modal is the universal read view).
+  async openInboxPreview(item: InboxItem) {
+    this.showInboxPreview = true;
+    this.previewLoading = true;
+    this.previewItem = null;
+    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(item.id));
+    if (!this.showInboxPreview) return; // closed while fetching
+    this.previewLoading = false;
+    if (!res.ok) { this.notify('Could not load the item', 'error'); this.closeInboxPreview(); return; }
+    this.previewItem = (await res.json()) as InboxDetail;
+    // CSP: same imperative injection pattern as the expansion rows — the
+    // sanitized content_html goes into the modal's data attribute node.
+    const html = this.previewItem.content_html;
+    this.$nextTick(() => {
+      document.querySelectorAll('[data-md-preview]').forEach((el) => { el.innerHTML = html; });
+    });
+  },
+  closeInboxPreview() { this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; },
   inboxStatusClass(s: string) {
     return {
       open: 'bg-amber-500/15 text-amber-300', in_progress: 'bg-cyan-500/15 text-cyan-300', converted: 'bg-violet-500/15 text-violet-300', done: 'bg-emerald-500/15 text-emerald-300', discarded: 'bg-zinc-700 text-zinc-400',

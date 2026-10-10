@@ -481,6 +481,7 @@
                                                     <span class="text-sm font-medium text-zinc-100" x-text="item.title"></span>
                                                 </div>
                                                 <div class="flex shrink-0 items-center gap-1">
+                                                    <button type="button" @click.stop="openInboxPreview(item)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Preview item ' + item.title">View</button>
                                                     <button type="button" x-show="item.status === 'discarded'" @click.stop="restoreInboxItem(item.id)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs">Restore</button>
                                                     <button type="button" x-show="item.status === 'done'" @click.stop="reopenInboxItem(item.id)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Reopen item ' + item.title + ' back to open'">Reopen</button>
                                                     <button type="button" x-show="inboxItemEditable(item)" @click.stop="openInboxEditModal(item)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Edit item ' + item.title">Edit</button>
@@ -568,6 +569,7 @@
                                     <button type="button" x-show="item.status === 'open'" @click.stop="claimInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Claim item ' + item.title">Claim</button>
                                     <button type="button" x-show="item.status === 'in_progress'" @click.stop="releaseInboxItem(item.id)" class="btn btn-sm btn-ghost">Release</button>
                                     <button type="button" x-show="item.status !== 'done' && item.status !== 'discarded'" @click.stop="completeInboxItem(item.id)" class="btn btn-sm btn-ghost text-emerald-300" :aria-label="'Mark item ' + item.title + ' done'">Done</button>
+                                    <button type="button" @click.stop="openInboxPreview(item)" class="btn btn-sm btn-ghost" :aria-label="'Preview item ' + item.title">View</button>
                                     <button type="button" x-show="item.workspace_id && (item.status === 'open' || item.status === 'in_progress')" @click.stop="convertInboxItem(item)" class="btn btn-sm btn-ghost text-violet-300" :aria-label="'Convert item ' + item.title + ' to a plan'">Convert</button>
                                     <button type="button" x-show="item.status !== 'done' && item.status !== 'discarded'" @click.stop="discardInboxItem(item.id)" class="btn btn-sm btn-ghost">Discard</button>
                                     <button type="button" @click.stop="requestDelete('inboxitem', item.id, item.title)" class="btn btn-sm btn-ghost text-rose-400" :aria-label="'Delete item ' + item.title">Delete</button>
@@ -832,6 +834,45 @@
         </div>
     </div>
 
+    <!-- Inbox preview modal: the universal read view (workflow items are
+         frozen for inline editing; this works for every status). -->
+    <div x-show="showInboxPreview" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="preview-modal-title" @keydown.escape.window="closeInboxPreview()" x-trap="showInboxPreview">
+        <div class="fixed inset-0 bg-black/60" @click="closeInboxPreview()" aria-hidden="true"></div>
+        <div class="card relative flex max-h-[85vh] w-full max-w-2xl flex-col p-6 shadow-2xl">
+            <div x-show="previewLoading" class="text-sm text-zinc-500">Loading&hellip;</div>
+            <template x-if="previewItem">
+                <div class="flex min-h-0 flex-1 flex-col">
+                    <div class="mb-3 flex items-start justify-between gap-3">
+                        <div class="min-w-0">
+                            <h2 id="preview-modal-title" class="text-lg font-semibold leading-tight" x-text="previewItem.title"></h2>
+                            <div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
+                                <span class="badge" :class="inboxStatusClass(previewItem.status)" x-text="previewItem.status"></span>
+                                <span x-show="previewItem.workspace_id" class="badge max-w-48 truncate bg-sky-500/15 text-sky-300" :title="previewItem.workspace_id" x-text="workspaceLabel(previewItem.workspace_id)"></span>
+                                <span x-show="!previewItem.workspace_id" class="badge bg-amber-500/15 text-amber-300">unfiled</span>
+                                <span x-show="previewItem.claimed_by_agent_id" x-text="previewItem.claimed_by_agent_id"></span>
+                                <span x-show="previewItem.plan_id" class="badge max-w-40 truncate bg-violet-500/15 text-violet-300" x-text="'\\u2192 ' + (previewItem.plan && previewItem.plan.name ? previewItem.plan.name : 'plan')"></span>
+                                <span x-text="timeAgo(previewItem.created_at)"></span>
+                            </div>
+                            <div class="mt-1.5 flex flex-wrap gap-1" x-show="(previewItem.tags || []).length > 0">
+                                <template x-for="t in previewItem.tags" :key="'pt|' + previewItem.id + '|' + t">
+                                    <span class="badge bg-zinc-800 text-zinc-400" x-text="t"></span>
+                                </template>
+                            </div>
+                        </div>
+                        <div class="flex shrink-0 items-center gap-2">
+                            <button type="button" x-show="inboxItemEditable(previewItem)" @click="closeInboxPreview(); openInboxEditModal(previewItem)" class="btn btn-sm">Edit</button>
+                            <button type="button" @click="closeInboxPreview()" class="btn btn-ghost btn-sm">Close</button>
+                        </div>
+                    </div>
+                    <div class="md-body min-h-0 flex-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950/50 p-4" data-md-preview aria-live="polite"></div>
+                    <p x-show="previewItem && !previewItem.content" class="mt-2 text-sm text-zinc-500">No content.</p>
+                </div>
+            </template>
+            <div class="mt-4 flex justify-end" x-show="!previewLoading && !previewItem">
+                <button type="button" @click="closeInboxPreview()" class="btn btn-ghost">Close</button>
+            </div>
+        </div>
+    </div>
         </main>
     </div>
 
