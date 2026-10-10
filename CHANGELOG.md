@@ -4,6 +4,17 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.9.2] — 2026-10-10
+
+### Fixed
+
+- **Inbox list rejected the workflow statuses as a filter** — `GET /api/inbox?status=queued`
+  (and every other workflow phase, plus the dashboard's `status=workflow` chip)
+  returned 400: the filter validator still only knew the manual-path statuses.
+  Found live: agent-trial's worker polls `status=queued`, silently saw nothing,
+  and queued items never started. All workflow phases and the aggregate
+  `workflow` filter are now accepted.
+
 ## [0.9.1] — 2026-10-09
 
 ### Fixed

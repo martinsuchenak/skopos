@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/martinsuchenak/skopos/internal/audit"
@@ -282,4 +283,37 @@ func TestWorkflowScope(t *testing.T) {
 	if _, err := svc.Queue(scopedCtx(), item.ID, ""); !errors.Is(err, auth.ErrApproverRequired) {
 		t.Fatalf("in-scope queue without approver: %v", err)
 	}
+}
+
+// The list filter accepts the workflow phases and the aggregate chip — the
+// executor polls status=queued every tick (found live: the 400 starved the
+// worker of work while HasWork swallowed the error).
+func TestListWorkflowStatusFilters(t *testing.T) {
+	svc, _, _ := fullStack(t)
+	root := context.Background()
+	item := mustCreate(t, svc, root, "filter probe")
+	if _, err := svc.Queue(approverCtx(), item.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []string{"queued", "planning", "awaiting_approval", "approved",
+		"implementing", "in_review", "failed", "blocked", "workflow"} {
+		items, err := svc.ListItems(root, "ws-a", status, "", "")
+		if err != nil {
+			t.Fatalf("status=%s: %v", status, err)
+		}
+		if status == "queued" && len(items) != 1 {
+			t.Fatalf("status=queued should list the item, got %d", len(items))
+		}
+	}
+	if _, err := svc.ListItems(root, "ws-a", "bogus", "", ""); !errorsIsInvalidInput(err) {
+		t.Fatalf("bogus status still refused: %v", err)
+	}
+}
+
+func errorsIsInvalidInput(err error) bool {
+	if err == nil {
+		return false
+	}
+	type unwrapper interface{ Unwrap() error }
+	return strings.Contains(err.Error(), "invalid inbox input")
 }
