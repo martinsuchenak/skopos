@@ -600,7 +600,11 @@ func (s *Service) CompleteForPlan(ctx context.Context, planID string) (int64, er
 }
 
 func editable(status Status) bool {
-	return status == StatusOpen || status == StatusInProgress
+	// Workflow items stay editable for content: enrichment, review notes and
+	// change requests travel on the item through the run (agent-pipeline §1)
+	// — UpdateItem never changes status, and the workflow actions are the
+	// only way its status moves. The terminal manual states stay frozen.
+	return status == StatusOpen || status == StatusInProgress || IsWorkflowStatus(status)
 }
 
 // refuseWorkflow is the manual path's guard against the agent workflow

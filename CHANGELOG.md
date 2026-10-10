@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.9.3] — 2026-10-10
+
+### Fixed
+
+- **Workflow items rejected content edits** — `PATCH /api/inbox/{id}` 400'd
+  for any workflow status: the manual-path `editable()` guard predated the
+  workflow, but enrichment, review notes and change requests legitimately
+  travel on the item content through a run. Content/tags/title edits are now
+  allowed in every workflow phase (UpdateItem never changes status; the
+  gated actions remain the only way status moves). Found live: the
+  executor's post-plan enrichment append failed and stranded an item in
+  planning.
+
 ## [0.9.2] — 2026-10-10
 
 ### Fixed

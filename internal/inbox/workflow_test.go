@@ -317,3 +317,32 @@ func errorsIsInvalidInput(err error) bool {
 	type unwrapper interface{ Unwrap() error }
 	return strings.Contains(err.Error(), "invalid inbox input")
 }
+
+// Workflow items accept content edits (enrichment, review notes, change
+// requests ride on the item through the run — found live: the executor's
+// post-plan append 400'd and stranded the item in planning). Terminal
+// manual states stay frozen.
+func TestWorkflowItemsEditable(t *testing.T) {
+	svc, _, _ := fullStack(t)
+	root := context.Background()
+	item := mustCreate(t, svc, root, "edit probe")
+	if _, err := svc.Queue(approverCtx(), item.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	tags := []string{"enriched"}
+	if err := svc.UpdateItem(root, item.ID, UpdateInput{Content: "plus enrichment", Tags: &tags}); err != nil {
+		t.Fatalf("content edit on queued item: %v", err)
+	}
+	after, _ := svc.GetItem(root, item.ID)
+	if after.Content != "plus enrichment" || after.Status != StatusQueued {
+		t.Fatalf("edit must not change status: %+v", after)
+	}
+	// Terminal manual states remain frozen.
+	done := mustCreate(t, svc, root, "frozen probe")
+	if err := svc.Complete(root, done.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.UpdateItem(root, done.ID, UpdateInput{Content: "x"}); err == nil {
+		t.Fatal("done item must stay frozen")
+	}
+}
