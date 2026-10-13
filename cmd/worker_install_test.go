@@ -143,11 +143,20 @@ func TestRunWorkerChecks(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "skopos-config.toml")
 
+	// A private bin dir with a claude stub: the CLI lookup is deterministic
+	// (the runner's real PATH has no claude — this failed v0.11.0's first
+	// CI build).
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pathEnv := binDir + string(os.PathListSeparator) + "/usr/bin:/bin"
+
 	// Scaffolded-but-unedited: placeholders everywhere.
 	if err := runWorkerInit(&strings.Builder{}, cfgPath, "https://skopos.example.com", []string{"github.com/you/repo"}); err != nil {
 		t.Fatal(err)
 	}
-	problems, err := runWorkerChecks(cfgPath, "", os.Getenv("PATH"), "/home/tester")
+	problems, err := runWorkerChecks(cfgPath, "", pathEnv, "/home/tester")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,20 +180,21 @@ func TestRunWorkerChecks(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("SKOPOS_API_KEY", "sk_real")
-	problems, err = runWorkerChecks(cfgPath, "", os.Getenv("PATH"), "/home/tester")
+	problems, err = runWorkerChecks(cfgPath, "", pathEnv, "/home/tester")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The agent CLI check is environment-dependent — drop it before asserting.
-	var rest []string
-	for _, p := range problems {
-		if strings.Contains(p, "not on PATH") {
-			continue
-		}
-		rest = append(rest, p)
+	if len(problems) != 0 {
+		t.Fatalf("filled config must pass checks (incl. the CLI on the service PATH), got %v", problems)
 	}
-	if len(rest) != 0 {
-		t.Fatalf("filled config must pass checks, got %v", rest)
+
+	// Without the stub on the PATH, the CLI problem is reported.
+	problems, err = runWorkerChecks(cfgPath, "", "/usr/bin:/bin", "/home/tester")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(problems) != 1 || !strings.Contains(problems[0], "not on the service PATH") {
+		t.Fatalf("missing CLI on PATH must be the single problem, got %v", problems)
 	}
 }
 
