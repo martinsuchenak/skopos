@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/BurntSushi/toml"
 	"github.com/martinsuchenak/skopos/internal/worker"
 	"github.com/paularlott/cli"
 )
@@ -29,7 +30,7 @@ func workerCmd() *cli.Command {
 			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
 			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key (worker scope)", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "worker-id", Usage: "Worker identity (defaults to worker-<hostname>)", EnvVars: []string{"SKOPOS_WORKER_ID"}},
-			&cli.StringFlag{Name: "state-dir", Usage: "Worktrees, logs and session state", EnvVars: []string{"SKOPOS_WORKER_STATE"}, DefaultValue: "~/.local/state/skopos-worker"},
+			&cli.StringFlag{Name: "state-dir", Usage: "Worktrees, logs and session state", EnvVars: []string{"SKOPOS_WORKER_STATE"}, DefaultValue: defaultStateDir},
 			&cli.StringSliceFlag{Name: "workspace", Usage: "Workspace ID this worker serves (repeatable; must have a local clone configured)"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
@@ -43,9 +44,8 @@ func workerCmd() *cli.Command {
 				StateDir:   expandTilde(cmd.GetString("state-dir"), home),
 				Workspaces: cmd.GetStringSlice("workspace"),
 			}
-			// Single-runner default: claude with the ambient login. The
-			// TOML [worker] section (accounts, repos, timeouts) rides on
-			// top when present.
+			// Flags carry the minimum; the TOML [worker] section (repos,
+			// accounts, timeouts, MCP deny) rides on top when present.
 			if err := loadWorkerConfigFile(cfg, cmd.GetString("config")); err != nil {
 				return err
 			}
@@ -76,11 +76,59 @@ func expandTilde(p, home string) string {
 }
 
 // loadWorkerConfigFile reads the optional [worker] TOML section (repos,
-// accounts, timeouts) from the skopos config file. Missing file/section is
-// fine — the flags carry the minimum.
+// accounts, timeouts, MCP deny) from the skopos config file. Missing
+// file/section is fine — the flags carry the minimum. Without this the
+// daemon claims runs it cannot execute (review finding 3).
 func loadWorkerConfigFile(cfg *worker.Config, path string) error {
-	// The full TOML loader lives with the server config; for the worker we
-	// accept the documented YAML-free subset via env/flags plus this hook.
-	// Parsing a TOML [worker] table is added when the config shape settles.
+	if path == "" {
+		path = "skopos-config.toml"
+	}
+	if _, err := os.Stat(path); err != nil {
+		return nil // absent config: flags only
+	}
+	var file struct {
+		Worker *worker.Config `toml:"worker"`
+	}
+	if _, err := toml.DecodeFile(path, &file); err != nil {
+		return fmt.Errorf("parsing %s: %w", path, err)
+	}
+	if file.Worker == nil {
+		return nil
+	}
+	w := file.Worker
+	if cfg.ID == "" {
+		cfg.ID = w.ID
+	}
+	if cfg.StateDir == "" || cfg.StateDir == defaultStateDir {
+		cfg.StateDir = w.StateDir
+	}
+	if len(w.Runners) > 0 {
+		cfg.Runners = w.Runners
+	}
+	if len(w.Workspaces) > 0 {
+		cfg.Workspaces = w.Workspaces
+	}
+	if w.PollEvery > 0 {
+		cfg.PollEvery = w.PollEvery
+	}
+	cfg.Repos = w.Repos
+	cfg.Accounts = w.Accounts
+	if w.Bin != "" {
+		cfg.Bin = w.Bin
+	}
+	if w.PlanTimeout > 0 {
+		cfg.PlanTimeout = w.PlanTimeout
+	}
+	if w.ImplTimeout > 0 {
+		cfg.ImplTimeout = w.ImplTimeout
+	}
+	if len(w.MCPDeny) > 0 {
+		cfg.MCPDeny = w.MCPDeny
+	}
+	if len(w.MCPServers) > 0 {
+		cfg.MCPServers = w.MCPServers
+	}
 	return nil
 }
+
+const defaultStateDir = "~/.local/state/skopos-worker"

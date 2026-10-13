@@ -148,6 +148,9 @@ func (s *Service) Heartbeat(ctx context.Context, id, workerID string) error {
 	if id == "" || strings.TrimSpace(workerID) == "" {
 		return fmt.Errorf("%w: id and worker_id are required", ErrInvalidInput)
 	}
+	if err := s.checkScope(ctx, id); err != nil {
+		return err
+	}
 	return s.storage.Heartbeat(ctx, id, workerID, s.lease, s.now().UTC())
 }
 
@@ -163,39 +166,43 @@ func (s *Service) Report(ctx context.Context, id string, in ReportInput) (*Run, 
 	default:
 		return nil, fmt.Errorf("%w: report status must be succeeded or failed", ErrInvalidInput)
 	}
-	if err := auth.RequireWorkspaceQuiet(ctx, ""); err == nil {
-		// no-op: quiet check just validates a principal exists
+	// Scope BEFORE the write: the storage layer trusts the request's
+	// worker_id for ownership, so the caller's workspace scope is the only
+	// real gate on who may mutate a run (review finding 1).
+	if err := s.checkScope(ctx, id); err != nil {
+		return nil, err
 	}
 	run, err := s.storage.Report(ctx, id, in.WorkerID, in, s.now().UTC())
 	if err != nil {
 		return nil, err
 	}
-	// Scope: the reporting worker must hold the run (checked by storage) and
-	// the run's workspace must be in the caller's scope.
-	if err := auth.RequireWorkspaceQuiet(ctx, run.WorkspaceID); err != nil {
-		return nil, fmt.Errorf("%w: run %s", ErrNotFound, id)
-	}
-
 	s.chain(ctx, run, in)
 	return run, nil
 }
 
-// chain applies the item-side consequence of a finished run.
+// chain applies the item-side consequence of a finished run. Item-move
+// failures are recorded on the run (the worker's report stays truthful
+// about the stage; the chain outcome lands in fail_reason for diagnosis).
 func (s *Service) chain(ctx context.Context, run *Run, in ReportInput) {
 	if s.itemTransition == nil {
 		return
 	}
+	move := func(to, reason string) {
+		if err := s.itemTransition(ctx, run.ItemID, to, reason, "worker:"+run.WorkerID); err != nil {
+			s.chainNote(ctx, run, "item move to "+to+" failed: "+err.Error())
+		}
+	}
 	switch run.Status {
 	case StatusFailed:
-		_ = s.itemTransition(ctx, run.ItemID, "blocked", "run failed: "+firstLine(in.Reason, in.Summary), "worker:"+run.WorkerID)
+		move("blocked", "run failed: "+firstLine(in.Reason, in.Summary))
 	case StatusSucceeded:
 		switch run.Stage {
 		case StagePlan:
 			// The worker wrote the revision and enrichment. The item may
 			// still be queued (the plan run IS its planning phase), so walk
 			// the matrix: queued -> planning -> awaiting_approval.
-			_ = s.itemTransition(ctx, run.ItemID, "planning", "", "worker:"+run.WorkerID)
-			_ = s.itemTransition(ctx, run.ItemID, "awaiting_approval", "", "worker:"+run.WorkerID)
+			move("planning", "")
+			move("awaiting_approval", "")
 		case StageImplement, StageReview, StageQA:
 			next := s.nextStage(run.WorkspaceID, run.Stage)
 			// Review/QA run only when the workspace prefers a runner for
@@ -289,6 +296,12 @@ func (s *Service) checkScope(ctx context.Context, id string) error {
 		return fmt.Errorf("%w: run %s", ErrNotFound, id)
 	}
 	return nil
+}
+
+// chainNote records a chain failure on the run (best-effort; serves as the
+// diagnosable trail when the item and run disagree).
+func (s *Service) chainNote(ctx context.Context, run *Run, note string) {
+	_ = s.storage.Note(ctx, run.ID, note)
 }
 
 func firstLine(xs ...string) string {

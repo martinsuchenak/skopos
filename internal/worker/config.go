@@ -33,6 +33,10 @@ type Config struct {
 	// production writes + scriptling stores). Applied on top of the
 	// hard-coded git/network denials.
 	MCPDeny []string `toml:"mcp_deny"`
+	// MCPServers are allowlisted server prefixes for agent runs (the plan
+	// prompt references the skopos MCP tools; without these the allowlist
+	// denies them).
+	MCPServers []string `toml:"mcp_servers"`
 }
 
 // Repo is one workspace's local clone: worktrees are cut from it per run.
@@ -158,8 +162,22 @@ func (c *Config) RunnerBin(runner string) string {
 	return c.Bin
 }
 
-// normalizeBranch makes a safe branch name from an item title.
-func normalizeBranch(title, prefix string) string {
+// normalizeBranch makes a safe, collision-free branch name: the item id's
+// tail guarantees uniqueness (two same-titled items must never share a
+// branch or worktree — review finding 5), then a readable slug.
+func normalizeBranch(itemID, title, prefix string) string {
+	slug := branchSlug(title)
+	// Last TWO segments of the UUIDv7 text id: enough to be unique and
+	// time-recognizable without the full 36 chars.
+	segs := strings.Split(itemID, "-")
+	tail := itemID
+	if len(segs) >= 2 {
+		tail = segs[len(segs)-2] + "-" + segs[len(segs)-1]
+	}
+	return prefix + tail + "-" + slug
+}
+
+func branchSlug(title string) string {
 	s := strings.ToLower(title)
 	var b strings.Builder
 	lastDash := false
@@ -176,11 +194,11 @@ func normalizeBranch(title, prefix string) string {
 		}
 	}
 	out := strings.Trim(b.String(), "-")
-	if len(out) > 40 {
-		out = out[:40]
+	if len(out) > 30 { // keep branch readable: tail (~13) + slug (<=30)
+		out = out[:30]
 	}
 	if out == "" {
 		out = "item"
 	}
-	return prefix + out
+	return out
 }

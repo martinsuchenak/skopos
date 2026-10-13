@@ -206,10 +206,8 @@ func (s *Slack) handleEvent(ctx context.Context, ws wsConn, body json.RawMessage
 		return
 	}
 	e := ev.Event
-	if e.Type != "message" || e.User == "" || e.User == s.martinID == false {
-		if e.User != s.martinID {
-			return // only Martin's replies count
-		}
+	if e.Type != "message" || e.User != s.martinID {
+		return // only Martin's replies count
 	}
 	s.mu.Lock()
 	itemID := s.threads[e.ThreadTS]

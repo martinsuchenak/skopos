@@ -2,10 +2,10 @@ package notify
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -22,8 +22,14 @@ func dialWS(ctx context.Context, rawURL string) (wsConn, error) {
 	}
 	host := u.Host
 	path := u.RequestURI()
-	d := net.Dialer{Timeout: 15 * time.Second}
-	conn, err := d.DialContext(ctx, "tcp", host)
+	// wss:// endpoints require TLS — a plaintext dial would leak the
+	// handshake and fail (review finding 2).
+	var conn net.Conn
+	if u.Scheme == "wss" {
+		conn, err = tls.DialWithDialer(&net.Dialer{Timeout: 15 * time.Second}, "tcp", host, nil)
+	} else {
+		conn, err = (&net.Dialer{Timeout: 15 * time.Second}).DialContext(ctx, "tcp", host)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -171,4 +177,3 @@ func ioReadFull(c net.Conn, buf []byte) (int, error) {
 	return total, nil
 }
 
-var _ = http.MethodGet

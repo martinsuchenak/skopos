@@ -62,7 +62,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 		})
 	}
 
-	branch := normalizeBranch(item.Title, repo.BranchPrefix)
+	branch := normalizeBranch(item.ID, item.Title, repo.BranchPrefix)
 	plan, err := w.client.CreatePlan(ctx, run.WorkspaceID, pr.Title, branch, w.cfg.ID)
 	if err != nil {
 		return err
@@ -113,7 +113,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 
 	branch := run.Branch
 	if branch == "" {
-		branch = normalizeBranch(item.Title, repo.BranchPrefix)
+		branch = normalizeBranch(item.ID, item.Title, repo.BranchPrefix)
 	}
 	worktree := filepath.Join(w.cfg.StateDir, "worktrees", filepath.Base(repo.Path), strings.ReplaceAll(branch, "/", "-"))
 	if _, err := git(ctx, repo.Path, "worktree", "list", "--porcelain"); err == nil {

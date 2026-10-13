@@ -354,3 +354,10 @@ func (s *Storage) CancelItem(ctx context.Context, itemID, reason string, now tim
 	}
 	return ids, nil
 }
+
+// Note appends a chain-failure note to a run's fail_reason (best-effort).
+func (s *Storage) Note(ctx context.Context, id, note string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE runs SET fail_reason = CASE WHEN fail_reason = '' THEN ? ELSE fail_reason END WHERE id = ?`, note, id)
+	return err
+}

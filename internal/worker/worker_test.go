@@ -41,18 +41,22 @@ func TestAccountPool(t *testing.T) {
 
 // Branch naming: safe, prefixed, truncated.
 func TestNormalizeBranch(t *testing.T) {
-	cases := map[string]string{
-		"Extend DataApi with request/response logging": "agent/extend-dataapi-with-request-response-log",
-		"  Ünïcödé & SPECIAL!!  ":                      "agent/n-c-d-special",
-		"":                                             "agent/item",
+	cases := []struct{ id, title, want string }{
+		{"01a125c9-bc98-7300", "Extend DataApi with request/response logging", "agent/bc98-7300-extend-dataapi-with-request-re"},
+		{"01a125c9-bc98-7300", "  Ünïcödé & SPECIAL!!  ", "agent/bc98-7300-n-c-d-special"},
+		{"01a125c9-bc98-7300", "", "agent/bc98-7300-item"},
 	}
-	for in, want := range cases {
-		if got := normalizeBranch(in, "agent/"); got != want {
-			t.Errorf("normalizeBranch(%q) = %q want %q", in, got, want)
+	for _, c := range cases {
+		if got := normalizeBranch(c.id, c.title, "agent/"); got != c.want {
+			t.Errorf("normalizeBranch(%q,%q) = %q want %q", c.id, c.title, got, c.want)
 		}
 	}
-	long := normalizeBranch(makeLongTitle(), "agent/")
-	if len(long) > len("agent/")+40 {
+	// Same-titled items never collide: the id tail differs.
+	if normalizeBranch("01a0-aaaa", "Same Title", "agent/") == normalizeBranch("01a0-bbbb", "Same Title", "agent/") {
+		t.Fatal("branch collision on same-titled items")
+	}
+	long := normalizeBranch("01a0-long", makeLongTitle(), "agent/")
+	if len(long) > len("agent/")+45 {
 		t.Errorf("branch not truncated: %s", long)
 	}
 }

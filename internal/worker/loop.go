@@ -29,13 +29,25 @@ const implSchema = `{"type":"object","properties":{"status":{"type":"string","en
 // beats any allow.
 var guardSettings = `{"permissions":{"deny":["Bash(git push:*)","Bash(git remote:*)","Bash(git config:*)","Bash(git branch:*)","Bash(git checkout:*)","Bash(git switch:*)","Bash(git reset --hard:*)","Bash(git rebase:*)","Bash(git worktree:*)","Bash(gh:*)","Bash(tea:*)","Bash(curl:*)","Bash(wget:*)","Bash(ssh:*)","Bash(scp:*)","Bash(rm -rf:*)","Bash(sudo:*)"]}}`
 
-var planTools = []string{"Read", "Glob", "Grep"}
+var basePlanTools = []string{"Read", "Glob", "Grep"}
+var planTools = basePlanTools
 
-var implTools = []string{"Read", "Edit", "Write", "MultiEdit", "Glob", "Grep", "TodoWrite",
+var baseImplTools = []string{"Read", "Edit", "Write", "MultiEdit", "Glob", "Grep", "TodoWrite",
 	"Bash(git add:*)", "Bash(git commit:*)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)",
 	"Bash(git show:*)", "Bash(git restore:*)", "Bash(ls:*)", "Bash(find:*)", "Bash(grep:*)", "Bash(rg:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(mkdir:*)"}
+var implTools = baseImplTools
 
 var reviewTools = []string{"Read", "Glob", "Grep", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)"}
+
+// ApplyMCPServers extends the tool allowlists with the configured MCP
+// servers (the agent may use them; the deny list still wins per tool).
+func (w *Worker) ApplyMCPServers() {
+	if len(w.cfg.MCPServers) == 0 {
+		return
+	}
+	planTools = append(append([]string{}, basePlanTools...), w.cfg.MCPServers...)
+	implTools = append(append([]string{}, baseImplTools...), w.cfg.MCPServers...)
+}
 
 // settingsJSON merges the hard guards with the deployment's MCP deny list.
 func settingsJSON(mcpDeny []string) string {
@@ -55,13 +67,17 @@ type Worker struct {
 	cfg    *Config
 	client *Client
 	log    *slog.Logger
-	// sessionState persists per-run agent session ids (stickiness: a
-	// re-claimed run resumes its own session).
+	// sessions persists per-run agent session ids and accounts (stickiness:
+	// a re-claimed run resumes its own session on its own account).
 	sessions map[string]string
+	accounts map[string]string
 }
 
 func New(cfg *Config, client *Client, log *slog.Logger) *Worker {
-	return &Worker{cfg: cfg, client: client, log: log, sessions: map[string]string{}}
+	w := &Worker{cfg: cfg, client: client, log: log, sessions: map[string]string{}, accounts: map[string]string{}}
+	w.loadSessions()
+	w.ApplyMCPServers()
+	return w
 }
 
 // Loop runs until the context is cancelled: claim, execute, report; pause on
@@ -135,10 +151,18 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 	}
 	if q, ok := err.(*quotaError); ok {
 		// Quota: pause (affinity keeps the run); the pool marks the
-		// account exhausted until the reset.
+		// account exhausted until the reset. Then BACK OFF — affinity
+		// would hand the same run straight back on the next claim, and
+		// claim->quota->pause in a tight loop hammers the CLI (review
+		// finding 4).
 		reason := "quota: " + q.detail
 		_ = w.client.Pause(ctx, run.ID, w.cfg.ID, reason)
-		log.Warn("quota pause", "until", q.resetAt, "detail", q.detail)
+		wait := time.Until(q.resetAt)
+		if wait <= 0 || wait > 30*time.Minute {
+			wait = 30 * time.Minute
+		}
+		log.Warn("quota pause", "until", q.resetAt, "backoff", wait, "detail", q.detail)
+		sleepCtx(ctx, wait)
 		return
 	}
 	_ = w.client.ReportResult(ctx, run.ID, w.cfg.ID, false, map[string]any{"reason": err.Error()})
@@ -153,9 +177,18 @@ type quotaError struct {
 
 func (e *quotaError) Error() string { return "quota: " + e.detail }
 
-// pickAccount selects the credential for a NEW run on the stage's runner;
-// resume runs reuse the account recorded with their session (stickiness).
+// pickAccount selects the credential for a run on the stage's runner.
+// Stickiness first (review finding 6): a resumed run reuses the account
+// that owns its session — recorded when the session was created. Rotation
+// happens only for genuinely new runs.
 func (w *Worker) pickAccount(run *Run, log *slog.Logger) *Account {
+	if name := w.accounts[run.ID]; name != "" {
+		for _, a := range w.cfg.Accounts {
+			if a.Name == name {
+				return a
+			}
+		}
+	}
 	runner := run.Runner
 	if runner == "" {
 		runner = "claude"
@@ -176,6 +209,7 @@ func (w *Worker) pickAccount(run *Run, log *slog.Logger) *Account {
 }
 
 func (w *Worker) agentRun(bin, dir, prompt, schema string, tools []string, timeout time.Duration, account *Account, run *Run, phase string) AgentRun {
+	w.rememberAccount(run, account)
 	sessionKey := run.ID + ":" + phase
 	sess := w.sessions[sessionKey]
 	return AgentRun{
@@ -194,16 +228,34 @@ func (w *Worker) saveSession(run *Run, phase, sessionID string) {
 		return
 	}
 	w.sessions[run.ID+":"+phase] = sessionID
+	_ = sessionID
 	// Persist lightly: sessions survive worker restarts for affinity runs.
 	b, _ := json.Marshal(w.sessions)
 	_ = os.MkdirAll(filepath.Dir(filepath.Join(w.cfg.StateDir, "sessions.json")), 0o700)
 	_ = os.WriteFile(filepath.Join(w.cfg.StateDir, "sessions.json"), b, 0o600)
 }
 
+func (w *Worker) rememberAccount(run *Run, a *Account) {
+	if a == nil {
+		return
+	}
+	if w.accounts[run.ID] == "" {
+		w.accounts[run.ID] = a.Name
+		b, _ := json.Marshal(map[string]map[string]string{"sessions": w.sessions, "accounts": w.accounts})
+		_ = os.WriteFile(filepath.Join(w.cfg.StateDir, "sessions.json"), b, 0o600)
+	}
+}
+
 func (w *Worker) loadSessions() {
 	b, err := os.ReadFile(filepath.Join(w.cfg.StateDir, "sessions.json"))
 	if err == nil {
-		_ = json.Unmarshal(b, &w.sessions)
+		var state struct {
+			Sessions map[string]string `json:"sessions"`
+			Accounts map[string]string `json:"accounts"`
+		}
+		if json.Unmarshal(b, &state) == nil {
+			w.sessions, w.accounts = state.Sessions, state.Accounts
+		}
 	}
 }
 
