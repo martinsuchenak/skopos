@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.10.0] — 2026-10-13
 
 ### Added — agent pipeline, lean 1b (docs/design/agent-pipeline.md)
 
@@ -17,7 +17,20 @@ versions follow [Semantic Versioning](https://semver.org/).
   (`--run-stage <workspace>:<stage>=<runner>`) — one axis, no tag engine.
   Success chains the next configured stage (or moves the item through the
   workflow matrix to `in_review`); failure blocks the item with the reason.
-  REST: claim/heartbeat/report/pause/resume/get/list.
+  REST: claim/heartbeat/report/pause/get/list.
+- **Lease fencing** — every claim mints a 128-bit token (only its SHA-256
+  is stored; the plain token appears once, in the claim response).
+  Heartbeat, report, pause and cancel must present it (`X-Skopos-Lease`)
+  and match the claiming key: a stuck old process or a second key sharing
+  the workspace cannot touch a run it no longer owns (409). Quota pauses
+  carry a dedicated `resume_after` — the owner reclaims the run via any
+  claim once it passes; amendment pauses re-arm only on approval.
+- **Atomic plan writes** — one transactional replace operation for both
+  the first plan and every re-plan (`POST /api/plans/{id}/replan`, guarded
+  by the planning phase) and for amendments (`/amend`, guarded by the
+  amendment guard). The server owns the trailing "Review and push" step;
+  worker steps are `implement`/`amendment` by mode, so the review step
+  survives amendments.
 - **`skopos worker`** — the execution plane as a subcommand of the same
   binary (the nomad/consul pattern). Deployment-agnostic daemon: needs only
   skopos over HTTP, a local clone per repo, and the agent CLIs on the host.
@@ -25,6 +38,10 @@ versions follow [Semantic Versioning](https://semver.org/).
   quota/transient/auth classification, guarded worktrees, scrubbed agent
   environments (no SSH agent, no tokens, SSH git disabled, deny rules), and
   the only-push path (validated refspec, env-only token, never force).
+  Worker ids must carry the `worker-` prefix (the default is
+  `worker-<hostname>`); it marks worker-created plans so the retention
+  cleaner's orphan delete (empty, unlinked, a day old) never touches
+  hand-made ones.
 - **Account pool (placement, worker-side)** — credentials picked at RUN
   START; quota deaths mark the account until the reset and fall to the
   next; stickiness is the run's affinity (a session belongs to the account
@@ -36,6 +53,15 @@ versions follow [Semantic Versioning](https://semver.org/).
   applied. The interim approver key stays with agent-trial until that
   lands. Envs `SKOPOS_SLACK_BOT_TOKEN` / `SKOPOS_SLACK_APP_TOKEN` /
   `SKOPOS_SLACK_USER_ID`.
+
+### Upgrade notes (from 0.9.x)
+
+- Database changes are additive and migrate on `serve` (new `runs` table,
+  `resume_after` column); no manual migration step. Back up `skopos.db`
+  before swapping the binary as usual.
+- No MCP tool or dashboard changes; the API surface only grows. (The runs
+  `resume` endpoint from early 1b notes was removed before release — quota
+  reclaims go through `resume_after`, amendment pauses through approval.)
 
 ## [0.9.4] — 2026-10-10
 
