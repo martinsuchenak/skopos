@@ -135,6 +135,16 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 		string(StatusInterrupted), ResumeSession, formatTime(now.Add(-takeoverGrace))); err != nil {
 		return nil, fmt.Errorf("grace flip: %w", err)
 	}
+	// Round-4 low: an overdue QUOTA pause whose owner never returns also
+	// ages into a branch takeover (amendment pauses carry no
+	// lease_expires_at and stay approval-gated).
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE runs SET status = ?, resume_kind = ?, updated_at = ?
+		WHERE status = ? AND lease_expires_at != '' AND lease_expires_at < ?`,
+		string(StatusInterrupted), ResumeBranch, formatTime(now),
+		string(StatusPaused), formatTime(now.Add(-takeoverGrace))); err != nil {
+		return nil, fmt.Errorf("quota grace flip: %w", err)
+	}
 
 	// Re-read candidates inside the transaction. Paused runs are NOT
 	// candidates EXCEPT quota pauses past their resume_after (A2): an

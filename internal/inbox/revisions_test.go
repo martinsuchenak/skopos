@@ -146,42 +146,86 @@ func TestApproveLocksRevisionAndRecordsApproval(t *testing.T) {
 	}
 }
 
-// Round-3 T1/A1: the atomic amend replaces the pending steps (not append),
-// orders them before the review step, and carries the plan's workspace.
-func TestAmendReplacesPendingSteps(t *testing.T) {
+// Round-4 R1+R2: amend on a REAL plan shape (done implement step, pending
+// implement step, review step) — the pending step is replaced, the review
+// step stays last, the snapshot hash matches the live plan (so approve
+// works), and the amendment approves cleanly.
+func TestAmendReplaceSnapshotAndApprove(t *testing.T) {
 	svc, plansSvc, _ := fullStack(t)
 	root := context.Background()
-	item := mustReadyForApproval(t, svc, plansSvc, "amend probe")
-	if _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{}); err != nil {
+	item := mustCreate(t, svc, root, "amend probe")
+	if _, err := svc.Queue(approverCtx(), item.ID, ""); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := svc.SystemTransition(root, item.ID, StatusPlanning, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	// A plan shaped like a mid-run amendment: done + pending + review.
+	plan, err := plansSvc.CreatePlan(root, plans.CreatePlanInput{WorkspaceID: "ws-a", Name: "p", AuthorAgentID: "w"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doneStep, _ := plansSvc.AddItem(root, plan.ID, plans.CreateItemInput{Title: "done step", Phase: "implement"})
+	if _, err := plansSvc.UpdateItem(root, plan.ID, doneStep.ID, plans.UpdateItemInput{Status: plans.ItemDone}); err != nil {
+		t.Fatal(err)
+	}
+	pendingStep, _ := plansSvc.AddItem(root, plan.ID, plans.CreateItemInput{Title: "pending step", Phase: "implement"})
+	_ = pendingStep
+	reviewStep, _ := plansSvc.AddItem(root, plan.ID, plans.CreateItemInput{Title: "Review and push (Martin)", Phase: "review"})
+	_ = reviewStep
+	if _, err := svc.LinkPlan(root, item.ID, plan.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plansSvc.CreateRevision(root, plan.ID, "base-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SystemTransition(root, item.ID, StatusAwaitingApproval, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{}); err != nil {
+		t.Fatal(err) // revision 1 approves (baseline)
 	}
 	if _, err := svc.SystemTransition(root, item.ID, StatusImplementing, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	// Amend with the guard satisfied (implementing).
+
+	// The amendment: replace the pending step with two new ones.
 	steps := []plans.RevisionStep{
-		{Title: "amended step one", Description: "new way"},
-		{Title: "amended step two", Description: "other"},
+		{Title: "amended one", Description: "new way"},
+		{Title: "amended two", Description: "other"},
 	}
-	rev, err := plansSvc.Amend(root, item.PlanID, steps, "base-xyz")
+	rev2, err := plansSvc.Amend(root, plan.ID, steps, "base-2")
 	if err != nil {
 		t.Fatalf("amend: %v", err)
 	}
-	if rev.BaseSHA != "base-xyz" {
-		t.Fatalf("amend must carry the given base: %+v", rev)
+	if rev2.BaseSHA != "base-2" || rev2.RevisionNo != 2 {
+		t.Fatalf("amend revision wrong: %+v", rev2)
 	}
-	plan, err := plansSvc.GetPlan(root, item.PlanID)
+	after, err := plansSvc.GetPlan(root, plan.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var titles []string
-	for _, pi := range plan.Items {
+	for _, pi := range after.Items {
 		titles = append(titles, pi.Title)
 	}
-	// done + amended steps — the original pending steps replaced, not
-	// appended. (mustReadyForApproval creates one step and no review step.)
-	if len(titles) != 3 || titles[0] != "step 1" || titles[1] != "amended step one" || titles[2] != "amended step two" {
-		t.Fatalf("amended plan items wrong: %v", titles)
+	// done + amended (replacing the pending) + review, in that order.
+	want := []string{"done step", "amended one", "amended two", "Review and push (Martin)"}
+	if len(titles) != len(want) {
+		t.Fatalf("amended items: %v want %v", titles, want)
+	}
+	for i := range want {
+		if titles[i] != want[i] {
+			t.Fatalf("amended items: %v want %v", titles, want)
+		}
+	}
+
+	// R1: the amendment approves — the snapshot hash matches the live plan.
+	if _, err := svc.SystemTransition(root, item.ID, StatusAwaitingApproval, "amendment", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{}); err != nil {
+		t.Fatalf("approve after amend (R1): %v", err)
 	}
 }
 

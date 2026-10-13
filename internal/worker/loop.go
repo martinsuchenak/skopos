@@ -190,7 +190,13 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 		// claimable, so nobody else will. Without the self-resume the run
 		// and its item were stuck for good.
 		reason := "quota: " + q.detail
-		_ = w.client.Pause(ctx, run.ID, w.cfg.ID, reason, q.resetAt)
+		resumeAt := q.resetAt
+		if resumeAt.IsZero() {
+			// R4: no parsed reset — the same 30-minute back-off the sleep
+			// uses, but SERVER-side, so the pause survives a restart.
+			resumeAt = time.Now().Add(30 * time.Minute)
+		}
+		_ = w.client.Pause(ctx, run.ID, w.cfg.ID, reason, resumeAt)
 		wait := time.Until(q.resetAt)
 		if wait <= 0 || wait > 30*time.Minute {
 			wait = 30 * time.Minute

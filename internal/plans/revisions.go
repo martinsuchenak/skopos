@@ -391,30 +391,21 @@ func (s *Storage) AmendTx(ctx context.Context, planID string, steps []RevisionSt
 		planID); err != nil {
 		return fmt.Errorf("superseding pending steps: %w", err)
 	}
-	// Re-read positions: amended steps go just before the review step.
-	var reviewPos sql.NullInt64
-	if err := tx.QueryRowContext(ctx,
-		`SELECT MIN(position) FROM plan_items WHERE plan_id = ? AND phase = 'review'`, planID).Scan(&reviewPos); err != nil {
-		return fmt.Errorf("review position: %w", err)
+	// Positions (round-4 R3): the amended steps start AFTER the max
+	// position of the remaining non-review items (the done steps), and the
+	// review step (with anything after it) shifts past the last new one —
+	// no overlap with done positions, ORDER BY position stays unambiguous.
+	var base int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(position), 0) FROM plan_items
+		WHERE plan_id = ? AND (phase IS NULL OR phase != 'review')`, planID).Scan(&base); err != nil {
+		return fmt.Errorf("base position: %w", err)
 	}
-	pos := int(0)
-	if reviewPos.Valid {
-		pos = int(reviewPos.Int64) - len(steps)
-		if pos < 0 {
-			pos = 0
-		}
-		// Push the review step (and anything after it) past the new steps.
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE plan_items SET position = position + ? WHERE plan_id = ? AND position >= ?`,
-			len(steps), planID, int(reviewPos.Int64)); err != nil {
-			return fmt.Errorf("shifting review step: %w", err)
-		}
-	} else {
-		var maxPos sql.NullInt64
-		if err := tx.QueryRowContext(ctx,
-			`SELECT MAX(position) FROM plan_items WHERE plan_id = ?`, planID).Scan(&maxPos); err == nil && maxPos.Valid {
-			pos = int(maxPos.Int64)
-		}
+	pos := base
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE plan_items SET position = position + ? WHERE plan_id = ? AND phase = 'review'`,
+		len(steps), planID); err != nil {
+		return fmt.Errorf("shifting review step: %w", err)
 	}
 	for _, st := range steps {
 		pos++
@@ -450,7 +441,7 @@ func (s *Storage) AmendTx(ctx context.Context, planID string, steps []RevisionSt
 
 func txItems(ctx context.Context, tx *sql.Tx, planID string) ([]Item, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT id, title, COALESCE(phase, ''), position FROM plan_items WHERE plan_id = ? ORDER BY position`, planID)
+		SELECT id, title, description, COALESCE(phase, ''), position FROM plan_items WHERE plan_id = ? ORDER BY position`, planID)
 	if err != nil {
 		return nil, fmt.Errorf("listing items for snapshot: %w", err)
 	}
@@ -458,7 +449,7 @@ func txItems(ctx context.Context, tx *sql.Tx, planID string) ([]Item, error) {
 	var out []Item
 	for rows.Next() {
 		var it Item
-		if err := rows.Scan(&it.ID, &it.Title, &it.Description, &it.Position); err != nil {
+		if err := rows.Scan(&it.ID, &it.Title, &it.Description, &it.Phase, &it.Position); err != nil {
 			return nil, err
 		}
 		out = append(out, it)
