@@ -419,9 +419,12 @@ func (s *Storage) ReplaceTx(ctx context.Context, planID string, steps []Revision
 		return fmt.Errorf("plan workspace: %w", err)
 	}
 	if mode == "plan" {
-		// Planning: nothing is done yet — replace every non-review item.
+		// Planning: nothing is approved or executing yet — replace
+		// EVERYTHING. The server-owned review step is re-created below, so a
+		// re-plan still ends with exactly one (a non-review-only delete would
+		// stack a second one on every re-plan).
 		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM plan_items WHERE plan_id = ? AND (phase IS NULL OR phase != 'review')`,
+			DELETE FROM plan_items WHERE plan_id = ?`,
 			planID); err != nil {
 			return fmt.Errorf("replacing items: %w", err)
 		}
@@ -452,13 +455,30 @@ func (s *Storage) ReplaceTx(ctx context.Context, planID string, steps []Revision
 		len(steps), planID); err != nil {
 		return fmt.Errorf("shifting review step: %w", err)
 	}
+	// F3: the phase follows the mode — plan-mode steps (and a server-created
+	// review step) are 'implement'/'review'; amendment-mode steps are
+	// 'amendment'. The worker stops sending its own review step.
+	phase := "amendment"
+	if mode == "plan" {
+		phase = "implement"
+	}
 	for _, st := range steps {
 		pos++
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO plan_items (id, plan_id, title, description, phase, status, position, created_at, updated_at)
-			VALUES (?, ?, ?, ?, 'amendment', 'pending', ?, ?, ?)`,
-			ids.New(), planID, st.Title, st.Description, pos, formatTime(now), formatTime(now)); err != nil {
+			VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+			ids.New(), planID, st.Title, st.Description, phase, pos, formatTime(now), formatTime(now)); err != nil {
 			return fmt.Errorf("inserting amended step: %w", err)
+		}
+	}
+	if mode == "plan" {
+		// Exactly one review step at the end, owned by the server.
+		pos++
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO plan_items (id, plan_id, title, description, phase, status, position, created_at, updated_at)
+			VALUES (?, ?, 'Review and push (Martin)', 'Martin reviews the branch and pushes it onward himself.', 'review', 'pending', ?, ?, ?)`,
+			ids.New(), planID, pos, formatTime(now), formatTime(now)); err != nil {
+			return fmt.Errorf("inserting review step: %w", err)
 		}
 	}
 	// Snapshot the plan's CURRENT items (the amended set) as the new revision.

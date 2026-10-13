@@ -92,6 +92,24 @@ func (c *Cleaner) clean(ctx context.Context) error {
 	}
 	agentsDeleted, _ := agentsResult.RowsAffected()
 
+	// Worker stage-plan orphans (round-6 F4): a plan created but never
+	// linked (a crash between CreatePlan and LinkPlan) carries nothing —
+	// no items, no revisions, no linked inbox item. Older than a day, it is
+	// garbage. A plan that ever got content or a link is never touched.
+	orphanCutoff := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339Nano)
+	orphanResult, err := c.db.ExecContext(ctx, `
+		DELETE FROM plans
+		WHERE created_at < ?
+		  AND NOT EXISTS (SELECT 1 FROM plan_items WHERE plan_items.plan_id = plans.id)
+		  AND NOT EXISTS (SELECT 1 FROM plan_revisions WHERE plan_revisions.plan_id = plans.id)
+		  AND NOT EXISTS (SELECT 1 FROM inbox_items WHERE inbox_items.plan_id = plans.id)`,
+		orphanCutoff)
+	if err != nil {
+		return fmt.Errorf("deleting orphaned plans: %w", err)
+	}
+	orphanDeleted, _ := orphanResult.RowsAffected()
+	plansDeleted += orphanDeleted
+
 	total := eventsDeleted + sessionsDeleted + bbDeleted + plansDeleted + inboxDeleted + agentsDeleted
 	if total > 0 && c.log != nil {
 		c.log.Info("cleanup completed",

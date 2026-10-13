@@ -201,10 +201,11 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 		if wait <= 0 || wait > 30*time.Minute {
 			wait = 30 * time.Minute
 		}
+		// No self-Resume (round-6 F1): resume_after on the paused run is
+		// server-side, so the owner's next claim reclaims it — and a
+		// restart mid-sleep loses nothing.
 		log.Warn("quota pause", "until", q.resetAt, "backoff", wait, "detail", q.detail)
-		if sleepCtx(ctx, wait) {
-			_ = w.client.Resume(ctx, run.ID, w.cfg.ID)
-		}
+		sleepCtx(ctx, wait)
 		return
 	}
 	_ = w.client.ReportResult(ctx, run.ID, w.cfg.ID, false, map[string]any{"reason": err.Error()})

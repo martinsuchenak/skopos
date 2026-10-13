@@ -307,14 +307,14 @@ func hashLeaseToken(tok string) string {
 
 // Heartbeat extends the lease of a run the worker holds; first heartbeat
 // after a claim also flips claimed -> running.
-func (s *Storage) Heartbeat(ctx context.Context, id, workerID, tokenHash string, lease time.Duration, now time.Time) error {
+func (s *Storage) Heartbeat(ctx context.Context, id, workerID, keyID, tokenHash string, lease time.Duration, now time.Time) error {
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE runs SET lease_expires_at = ?,
 			status = CASE WHEN status = ? THEN ? ELSE status END,
 			updated_at = ?
-		WHERE id = ? AND worker_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
+		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
 		formatTime(now.Add(lease)), string(StatusClaimed), string(StatusRunning), formatTime(now),
-		id, workerID, tokenHash, string(StatusClaimed), string(StatusRunning), string(StatusPaused))
+		id, workerID, keyID, tokenHash, string(StatusClaimed), string(StatusRunning), string(StatusPaused))
 	if err != nil {
 		return fmt.Errorf("heartbeat: %w", err)
 	}
@@ -325,7 +325,7 @@ func (s *Storage) Heartbeat(ctx context.Context, id, workerID, tokenHash string,
 }
 
 // Report writes the worker's result. Lease must still belong to the worker.
-func (s *Storage) Report(ctx context.Context, id, workerID, tokenHash string, in ReportInput, now time.Time) (*Run, error) {
+func (s *Storage) Report(ctx context.Context, id, workerID, keyID, tokenHash string, in ReportInput, now time.Time) (*Run, error) {
 	checks, err := json.Marshal(in.Checks)
 	if err != nil {
 		checks = []byte("[]")
@@ -335,10 +335,10 @@ func (s *Storage) Report(ctx context.Context, id, workerID, tokenHash string, in
 			log_ref = ?, fail_reason = ?, branch = CASE WHEN ? != '' THEN ? ELSE branch END,
 			base_sha = CASE WHEN ? != '' THEN ? ELSE base_sha END,
 			lease_expires_at = '', updated_at = ?
-		WHERE id = ? AND worker_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
+		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
 		string(in.Status), in.Summary, in.HeadSHA, in.Diffstat, string(checks),
 		in.LogRef, in.Reason, in.Branch, in.Branch, in.BaseSHA, in.BaseSHA,
-		formatTime(now), id, workerID, tokenHash, string(StatusClaimed), string(StatusRunning), string(StatusPaused))
+		formatTime(now), id, workerID, keyID, tokenHash, string(StatusClaimed), string(StatusRunning), string(StatusPaused))
 	if err != nil {
 		return nil, fmt.Errorf("reporting run: %w", err)
 	}
@@ -352,16 +352,16 @@ func (s *Storage) Report(ctx context.Context, id, workerID, tokenHash string, in
 // Pause keeps affinity: the run stays with its worker, no lease pressure.
 // A non-empty resumeAfter (quota pauses) lets Claim hand the run back to
 // its owner once that time passes — restart-safe (A2).
-func (s *Storage) Pause(ctx context.Context, id, workerID, reason string, resumeAfter time.Time, tokenHash string, now time.Time) error {
+func (s *Storage) Pause(ctx context.Context, id, workerID, reason string, resumeAfter time.Time, keyID, tokenHash string, now time.Time) error {
 	expires := ""
 	if !resumeAfter.IsZero() {
 		expires = formatTime(resumeAfter)
 	}
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE runs SET status = ?, fail_reason = ?, lease_expires_at = ?, updated_at = ?
-		WHERE id = ? AND worker_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
+		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
 		string(StatusPaused), reason, expires, formatTime(now),
-		id, workerID, tokenHash, string(StatusClaimed), string(StatusRunning), string(StatusPaused))
+		id, workerID, keyID, tokenHash, string(StatusClaimed), string(StatusRunning), string(StatusPaused))
 	if err != nil {
 		return fmt.Errorf("pausing run: %w", err)
 	}
@@ -425,12 +425,12 @@ func (s *Storage) CancelItem(ctx context.Context, itemID, reason string, now tim
 }
 
 // CancelOne retires a single run by id (targeted compensation, review N1).
-func (s *Storage) CancelOne(ctx context.Context, id, workerID, reason, tokenHash string, now time.Time) error {
+func (s *Storage) CancelOne(ctx context.Context, id, workerID, reason, keyID, tokenHash string, now time.Time) error {
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE runs SET status = ?, fail_reason = ?, updated_at = ?
-		WHERE id = ? AND worker_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?, ?)`,
+		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?, ?)`,
 		string(StatusCancelled), reason, formatTime(now),
-		id, workerID, tokenHash, string(StatusQueued), string(StatusClaimed), string(StatusRunning), string(StatusPaused))
+		id, workerID, keyID, tokenHash, string(StatusQueued), string(StatusClaimed), string(StatusRunning), string(StatusPaused))
 	if err != nil {
 		return fmt.Errorf("cancelling run: %w", err)
 	}

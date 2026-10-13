@@ -132,7 +132,11 @@ func (c *Client) ReportResult(ctx context.Context, runID, workerID string, succe
 	for k, v := range fields {
 		body[k] = v
 	}
-	return c.doHeader(ctx, http.MethodPost, "/api/runs/"+runID+"/report", body, nil, "X-Skopos-Lease", c.leaseHeader(runID))
+	err := c.doHeader(ctx, http.MethodPost, "/api/runs/"+runID+"/report", body, nil, "X-Skopos-Lease", c.leaseHeader(runID))
+	if err == nil {
+		c.dropLease(runID) // succeeded/failed are terminal — the token is spent
+	}
+	return err
 }
 
 func (c *Client) Pause(ctx context.Context, runID, workerID, reason string, resumeAfter time.Time) error {
@@ -144,11 +148,19 @@ func (c *Client) Pause(ctx context.Context, runID, workerID, reason string, resu
 }
 
 func (c *Client) CancelRun(ctx context.Context, runID, workerID, reason string) error {
-	return c.doHeader(ctx, http.MethodPost, "/api/runs/"+runID+"/cancel", map[string]string{"worker_id": workerID, "reason": reason}, nil, "X-Skopos-Lease", c.leaseHeader(runID))
+	err := c.doHeader(ctx, http.MethodPost, "/api/runs/"+runID+"/cancel", map[string]string{"worker_id": workerID, "reason": reason}, nil, "X-Skopos-Lease", c.leaseHeader(runID))
+	if err == nil {
+		c.dropLease(runID)
+	}
+	return err
 }
 
-func (c *Client) Resume(ctx context.Context, runID, workerID string) error {
-	return c.do(ctx, http.MethodPost, "/api/runs/"+runID+"/resume", map[string]string{"worker_id": workerID}, nil)
+// dropLease forgets a run's fencing token once it reaches a terminal state
+// (round-6 F4: the map leaked an entry per run on long-lived workers).
+func (c *Client) dropLease(runID string) {
+	c.mu.Lock()
+	delete(c.leases, runID)
+	c.mu.Unlock()
 }
 
 // GetItem fetches a full inbox item (list rows carry excerpts only).

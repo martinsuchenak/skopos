@@ -142,6 +142,10 @@ func phaseForStage(stage string) string {
 // scope and stage preference, then branch-resumable takeovers.
 func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 	in.WorkerID = strings.TrimSpace(in.WorkerID)
+	// F2 (round 6): record the claiming key — the fenced mutations later
+	// match on it, so a second key sharing the workspace cannot touch the
+	// run even with the right worker_id and token.
+	in.KeyID = callerKeyID(ctx)
 	if in.WorkerID == "" {
 		return nil, fmt.Errorf("%w: worker_id is required", ErrInvalidInput)
 	}
@@ -174,7 +178,8 @@ func (s *Service) Heartbeat(ctx context.Context, id, workerID, leaseToken string
 	if err := s.checkScope(ctx, id); err != nil {
 		return err
 	}
-	return s.storage.Heartbeat(ctx, id, workerID, hashLeaseToken(leaseToken), s.lease, s.now().UTC())
+	keyID := callerKeyID(ctx)
+	return s.storage.Heartbeat(ctx, id, workerID, keyID, hashLeaseToken(leaseToken), s.lease, s.now().UTC())
 }
 
 // Report ends a run and chains: success queues the next configured stage or
@@ -195,7 +200,7 @@ func (s *Service) Report(ctx context.Context, id string, in ReportInput, leaseTo
 	if err := s.checkScope(ctx, id); err != nil {
 		return nil, err
 	}
-	run, err := s.storage.Report(ctx, id, in.WorkerID, hashLeaseToken(leaseToken), in, s.now().UTC())
+	run, err := s.storage.Report(ctx, id, in.WorkerID, callerKeyID(ctx), hashLeaseToken(leaseToken), in, s.now().UTC())
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +261,7 @@ func (s *Service) Pause(ctx context.Context, id, workerID, reason string, resume
 	if err := s.checkScope(ctx, id); err != nil {
 		return err
 	}
-	return s.storage.Pause(ctx, id, workerID, reason, resumeAfter, hashLeaseToken(leaseToken), s.now().UTC())
+	return s.storage.Pause(ctx, id, workerID, reason, resumeAfter, callerKeyID(ctx), hashLeaseToken(leaseToken), s.now().UTC())
 }
 
 // CancelOwn lets the owning worker retire its own run (abandoned stages —
@@ -276,19 +281,7 @@ func (s *Service) CancelOwn(ctx context.Context, id, workerID, reason, leaseToke
 	if r.WorkerID != workerID {
 		return ErrLeaseHeld
 	}
-	return s.storage.CancelOne(ctx, id, workerID, reason, hashLeaseToken(leaseToken), s.now().UTC())
-}
-
-// Resume returns a paused run to its owner.
-func (s *Service) Resume(ctx context.Context, id, workerID string) error {
-	id = strings.TrimSpace(id)
-	if id == "" || strings.TrimSpace(workerID) == "" {
-		return fmt.Errorf("%w: id and worker_id are required", ErrInvalidInput)
-	}
-	if err := s.checkScope(ctx, id); err != nil {
-		return err
-	}
-	return s.storage.Resume(ctx, id, workerID, s.lease, s.now().UTC())
+	return s.storage.CancelOne(ctx, id, workerID, reason, callerKeyID(ctx), hashLeaseToken(leaseToken), s.now().UTC())
 }
 
 // CancelItem retires an item's active runs (item rejected or done).
@@ -354,10 +347,10 @@ func (s *Service) QueueStage(ctx context.Context, itemID, workspaceID, stage, pl
 
 // CancelRun cancels one run by id (targeted compensation, review N1). It
 // only ever targets a run THIS service just queued (unclaimed: empty
-// worker/token), which the fenced match permits; claimed runs belong to
+// worker/key/token), which the fenced match permits; claimed runs belong to
 // their worker's CancelOwn.
 func (s *Service) CancelRun(ctx context.Context, id, reason string) error {
-	return s.storage.CancelOne(ctx, strings.TrimSpace(id), "", reason, "", s.now().UTC())
+	return s.storage.CancelOne(ctx, strings.TrimSpace(id), "", reason, "", "", s.now().UTC())
 }
 
 // Get and List are the read surface (dashboard, tests).
@@ -389,6 +382,15 @@ func (s *Service) List(ctx context.Context, status Status, itemID string) ([]Run
 		return out, nil
 	}
 	return s.storage.List(ctx, status, itemID)
+}
+
+// callerKeyID is the requesting key ("" for root/internal callers), recorded
+// at claim time and matched by every fenced mutation (F2).
+func callerKeyID(ctx context.Context) string {
+	if p := auth.PrincipalFromContext(ctx); p != nil {
+		return p.KeyID
+	}
+	return ""
 }
 
 func (s *Service) checkScope(ctx context.Context, id string) error {

@@ -77,11 +77,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 			return err // empty unlinked plan at worst — harmless, GC-able
 		}
 	}
-	replanSteps := append(append([]Step{}, pr.Steps...), Step{
-		Title:       "Review and push (Martin)",
-		Description: "Martin reviews the branch and pushes it onward himself.",
-	})
-	rev, err := w.client.Replan(ctx, planID, baseSHA, replanSteps)
+	rev, err := w.client.Replan(ctx, planID, baseSHA, pr.Steps)
 	if err != nil {
 		return err
 	}

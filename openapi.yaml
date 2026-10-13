@@ -471,6 +471,41 @@ paths:
         "404": { description: Unknown plan }
         "409": { description: Locked (guard) }
 
+  /api/plans/{id}/replan:
+    post:
+      summary: Atomic re-plan — replace all non-review steps and snapshot (executor path)
+      description: Guarded by the planning guard (the linked item in planning); requires an unlocked latest revision. The FIRST plan and every re-plan both go through this call.
+      operationId: replanPlan
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PlanId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [steps]
+              properties:
+                base_sha: { type: string }
+                steps:
+                  type: array
+                  items:
+                    type: object
+                    required: [title]
+                    properties:
+                      title: { type: string }
+                      description: { type: string }
+      responses:
+        "200":
+          description: The new revision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlanRevision" }
+        "400": { description: Invalid steps }
+        "401": { description: Unauthorized }
+        "404": { description: Unknown plan }
+        "409": { description: Revision locked or item not planning }
+
   /api/workspaces:
     post:
       summary: Register a workspace (upserts the display name)
@@ -1720,27 +1755,6 @@ paths:
                 resume_after: { type: string, format: date-time, description: Quota resets — the owner reclaims the run via any claim once past this time (restart-safe) }
       responses:
         "204": { description: Paused }
-        "401": { description: Unauthorized }
-        "404": { description: Unknown run }
-        "409": { description: Lease held by another worker }
-
-  /api/runs/{id}/resume:
-    post:
-      summary: Resume a paused run (owner only — the session lives there)
-      operationId: resumeRun
-      security: [{ BearerAuth: [] }]
-      parameters: [{ $ref: "#/components/parameters/RunId" }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [worker_id]
-              properties:
-                worker_id: { type: string }
-      responses:
-        "204": { description: Resumed (re-claimed) }
         "401": { description: Unauthorized }
         "404": { description: Unknown run }
         "409": { description: Lease held by another worker }

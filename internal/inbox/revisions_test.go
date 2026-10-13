@@ -36,6 +36,7 @@ func fullStack(t *testing.T) (*Service, *plans.Service, *approvals.Service) {
 	svc.SetApprovalLog(approvalsSvc)
 	svc.SetPlanRevisions(plansSvc)
 	plansSvc.SetAmendmentGuard(svc.RequireAmendable)
+	plansSvc.SetPlannableGuard(svc.RequirePlannable)
 	plansSvc.SetDeletionGuard(svc.PlanHasWorkflowItem)
 	return svc, plansSvc, approvalsSvc
 }
@@ -169,32 +170,138 @@ func TestReplanAtomic(t *testing.T) {
 	if _, err := plansSvc.AddItem(root, plan.ID, plans.CreateItemInput{Title: "stale step", Phase: "implement"}); err != nil {
 		t.Fatal(err)
 	}
+	// Worker-shaped steps (F3): the planner sends NO review step — the
+	// server owns it and appends it.
 	rev, err := plansSvc.Replan(root, plan.ID, []plans.RevisionStep{
 		{Title: "step one", Description: "first"},
 		{Title: "step two", Description: "second"},
-		{Title: "Review and push (Martin)", Description: "Martin reviews and pushes."},
 	}, "base-r")
 	if err != nil {
 		t.Fatalf("replan: %v", err)
 	}
+	if rev.RevisionNo != 1 || len(rev.Steps) != 3 || rev.Steps[2].Phase != "review" {
+		t.Fatalf("replan revision must snapshot the server review step: %+v", rev.Steps)
+	}
 	after, _ := plansSvc.GetPlan(root, plan.ID)
 	var titles []string
 	for _, pi := range after.Items {
-		titles = append(titles, pi.Title)
+		titles = append(titles, pi.Title+"/"+pi.Phase)
 	}
-	if len(titles) != 3 || titles[0] != "step one" || titles[1] != "step two" || titles[2] != "Review and push (Martin)" {
-		t.Fatalf("replan items wrong: %v", titles)
+	want := []string{"step one/implement", "step two/implement", "Review and push (Martin)/review"}
+	if len(titles) != len(want) {
+		t.Fatalf("replan items wrong: %v want %v", titles, want)
 	}
+	for i := range want {
+		if titles[i] != want[i] {
+			t.Fatalf("replan items wrong: %v want %v", titles, want)
+		}
+	}
+	// A re-plan replaces everything again and still ends with exactly one
+	// review step (the server re-creates it — no stacking).
+	rev2, err := plansSvc.Replan(root, plan.ID, []plans.RevisionStep{{Title: "reshaped"}}, "base-r2")
+	if err != nil {
+		t.Fatalf("re-plan: %v", err)
+	}
+	mustEndWithReviewStep(t, plansSvc, plan.ID)
 	// Approvable: the snapshot matches the live plan.
 	if _, err := svc.SystemTransition(root, item.ID, StatusAwaitingApproval, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{RevisionID: rev.ID}); err != nil {
+	if _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{RevisionID: rev2.ID}); err != nil {
 		t.Fatalf("approve after replan: %v", err)
 	}
 	// Refused once the revision is locked (planning is over).
 	if _, err := plansSvc.Replan(root, plan.ID, []plans.RevisionStep{{Title: "nope"}}, ""); !errors.Is(err, plans.ErrRevisionLocked) {
 		t.Fatalf("replan on a locked plan must refuse: %v", err)
+	}
+}
+
+// Round-6 F3, the real worker path end to end: replan (worker-shaped, no
+// review step) -> approve -> implementing -> amend -> approve. The
+// server-owned review step must survive the amendment — last, phase review,
+// exactly one.
+func TestReviewStepSurvivesAmendment(t *testing.T) {
+	svc, plansSvc, _ := fullStack(t)
+	root := context.Background()
+	item := mustCreate(t, svc, root, "review step survival")
+	if _, err := svc.Queue(approverCtx(), item.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SystemTransition(root, item.ID, StatusPlanning, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := plansSvc.CreatePlan(root, plans.CreatePlanInput{WorkspaceID: "ws-a", Name: "p", AuthorAgentID: "w"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.LinkPlan(root, item.ID, plan.ID); err != nil {
+		t.Fatal(err)
+	}
+	rev, err := plansSvc.Replan(root, plan.ID, []plans.RevisionStep{
+		{Title: "step one", Description: "first"},
+		{Title: "step two", Description: "second"},
+	}, "base-1")
+	if err != nil {
+		t.Fatalf("replan: %v", err)
+	}
+	mustEndWithReviewStep(t, plansSvc, plan.ID)
+
+	// Approve locks revision 1; implementation runs; the agent amends.
+	if _, err := svc.SystemTransition(root, item.ID, StatusAwaitingApproval, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{RevisionID: rev.ID}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if _, err := svc.SystemTransition(root, item.ID, StatusImplementing, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plansSvc.Amend(root, plan.ID, []plans.RevisionStep{
+		{Title: "amended one", Description: "revised"},
+	}, "base-2"); err != nil {
+		t.Fatalf("amend: %v", err)
+	}
+	mustEndWithReviewStep(t, plansSvc, plan.ID)
+	if _, err := svc.SystemTransition(root, item.ID, StatusAwaitingApproval, "amendment", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{}); err != nil {
+		t.Fatalf("approve after amend: %v", err)
+	}
+	// The amendment's snapshot still carries the review step last.
+	latest, err := plansSvc.LatestRevision(root, plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastStep := latest.Steps[len(latest.Steps)-1]
+	if lastStep.Phase != "review" || lastStep.Title != "Review and push (Martin)" {
+		t.Fatalf("revision snapshot must end with the review step: %+v", lastStep)
+	}
+}
+
+// mustEndWithReviewStep asserts the plan ends with exactly one server-owned
+// review step.
+func mustEndWithReviewStep(t *testing.T, plansSvc *plans.Service, planID string) {
+	t.Helper()
+	after, err := plansSvc.GetPlan(context.Background(), planID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Items) == 0 {
+		t.Fatal("plan has no steps")
+	}
+	last := after.Items[len(after.Items)-1]
+	if last.Phase != "review" || last.Title != "Review and push (Martin)" {
+		t.Fatalf("plan must end with the review step: %+v", last)
+	}
+	n := 0
+	for _, pi := range after.Items {
+		if pi.Phase == "review" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("exactly one review step allowed, got %d: %+v", n, after.Items)
 	}
 }
 

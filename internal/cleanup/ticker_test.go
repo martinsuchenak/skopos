@@ -112,3 +112,54 @@ func TestCleanerPublishesEvents(t *testing.T) {
 		t.Fatal("expected a sessions event after deleting old sessions/events")
 	}
 }
+
+// Round-6 F4: empty, unlinked, day-old plans are garbage (worker crashes
+// between CreatePlan and LinkPlan); anything with content or a link survives.
+func TestCleanerOrphanPlans(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	old := time.Now().UTC().Add(-48 * time.Hour).Format(time.RFC3339Nano)
+	fresh := time.Now().UTC().Format(time.RFC3339Nano)
+
+	mkPlan := func(id, created string) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO plans (id, workspace_id, name, author_agent_id, created_at, updated_at) VALUES (?, 'ws', ?, 'w', ?, ?)`,
+			id, id, created, created); err != nil {
+			t.Fatalf("insert plan %s: %v", id, err)
+		}
+	}
+	// The orphan: empty, unlinked, old — dies.
+	mkPlan("orphan", old)
+	// Fresh but otherwise identical — kept (younger than the grace).
+	mkPlan("fresh-empty", fresh)
+	// Old and empty, but LINKED to an inbox item — kept.
+	mkPlan("linked", old)
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO inbox_items (id, title, author_agent_id, plan_id, created_at, updated_at) VALUES ('i1', 't', 'w', 'linked', ?, ?)`,
+		old, old); err != nil {
+		t.Fatalf("insert inbox item: %v", err)
+	}
+	// Old and unlinked, but has an item — kept.
+	mkPlan("has-items", old)
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO plan_items (id, plan_id, title, created_at, updated_at) VALUES ('pi1', 'has-items', 'step', ?, ?)`,
+		old, old); err != nil {
+		t.Fatalf("insert plan item: %v", err)
+	}
+
+	cleaner := NewCleaner(db, 24*time.Hour, nil, nil)
+	if err := cleaner.RunOnce(ctx); err != nil {
+		t.Fatalf("clean: %v", err)
+	}
+	for _, id := range []string{"fresh-empty", "linked", "has-items"} {
+		var one int
+		if err := db.QueryRowContext(ctx, `SELECT 1 FROM plans WHERE id = ?`, id).Scan(&one); err != nil {
+			t.Fatalf("plan %s must survive: %v", id, err)
+		}
+	}
+	var one int
+	if err := db.QueryRowContext(ctx, `SELECT 1 FROM plans WHERE id = 'orphan'`).Scan(&one); err == nil {
+		t.Fatal("orphan plan must be deleted")
+	}
+}

@@ -128,22 +128,6 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// Resume handles POST /api/runs/{id}/resume.
-func (h *Handler) Resume(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		WorkerID string `json:"worker_id"`
-	}
-	if err := rest.DecodeJSON(w, r, &in); err != nil {
-		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if err := h.service.Resume(r.Context(), r.PathValue("id"), in.WorkerID); err != nil {
-		h.respondRunError(w, err, "resume")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // Get handles GET /api/runs/{id}.
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	run, err := h.service.Get(r.Context(), r.PathValue("id"))

@@ -109,7 +109,7 @@ func TestAffinity(t *testing.T) {
 	if _, err := s.storage.db.ExecContext(ctx, `UPDATE runs SET lease_expires_at = ? WHERE id = ?`, formatTime(longGone), r.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.storage.Pause(ctx, r.ID, "w1", "quota", time.Time{}, hashLeaseToken(run3.LeaseToken), time.Now().UTC()); err != nil {
+	if err := s.storage.Pause(ctx, r.ID, "w1", "quota", time.Time{}, "", hashLeaseToken(run3.LeaseToken), time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	// flip to interrupted+branch directly (the takeover marking)
@@ -123,8 +123,9 @@ func TestAffinity(t *testing.T) {
 	}
 }
 
-// Pause keeps affinity; resume is owner-only; heartbeats flip claimed ->
-// running and extend the lease.
+// Heartbeats flip claimed -> running and are fenced by worker AND token.
+// (The REST resume is gone — round-6 F1: quota pauses re-arm server-side via
+// resume_after, amendment pauses via ResumeItem on approve.)
 func TestPauseHeartbeatResume(t *testing.T) {
 	s := testService(t)
 	ctx := rootCtx()
@@ -138,30 +139,23 @@ func TestPauseHeartbeatResume(t *testing.T) {
 	if got.Status != StatusRunning {
 		t.Fatalf("heartbeat must flip to running: %s", got.Status)
 	}
-	// Wrong worker cannot heartbeat or resume.
+	// Wrong worker or wrong token cannot heartbeat.
 	if err := s.Heartbeat(ctx, run.ID, "w2", run.LeaseToken); !errors.Is(err, ErrLeaseHeld) {
 		t.Fatalf("foreign heartbeat: %v", err)
 	}
+	if err := s.Heartbeat(ctx, run.ID, "w1", "not-the-token"); !errors.Is(err, ErrLeaseHeld) {
+		t.Fatalf("wrong token heartbeat: %v", err)
+	}
+	// A pause still fences on the token, and stays put: only resume_after
+	// (quota) or ResumeItem (approve) re-arms it — see the reclaim tests.
 	if err := s.Pause(ctx, run.ID, "w1", "quota", time.Time{}, run.LeaseToken); err != nil {
 		t.Fatalf("pause: %v", err)
 	}
-	if err := s.Resume(ctx, run.ID, "w2"); !errors.Is(err, ErrLeaseHeld) {
-		t.Fatalf("foreign resume must refuse: %v", err)
+	if r, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}}); r != nil {
+		t.Fatalf("amendment-style pause must not be claimable: %+v", r)
 	}
-	if err := s.Resume(ctx, run.ID, "w1"); err != nil {
-		t.Fatalf("owner resume: %v", err)
-	}
-	got, _ = s.Get(ctx, run.ID)
-	// N7: resume makes the run owner-claimable (interrupted+session), not
-	// straight-claimed — a claimed run was invisible to Claim until its
-	// lease expired.
-	if got.Status != StatusInterrupted || got.ResumeKind != ResumeSession {
-		t.Fatalf("resume must re-arm as interrupted/session: %s/%s", got.Status, got.ResumeKind)
-	}
-	// The owner's next claim picks it up immediately.
-	again, err := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
-	if err != nil || again == nil || again.ID != run.ID {
-		t.Fatalf("owner must re-claim after resume: %+v err %v", again, err)
+	if err := s.Heartbeat(ctx, run.ID, "w1", "spent-token"); !errors.Is(err, ErrLeaseHeld) {
+		t.Fatalf("wrong token must not reach a paused run: %v", err)
 	}
 }
 
@@ -406,6 +400,30 @@ func TestLeaseFencing(t *testing.T) {
 	got, _ := s.Get(ctx, run.ID)
 	if got.LeaseToken != "" {
 		t.Fatal("GET must not expose the lease token")
+	}
+}
+
+// F2 (round 6): the claiming key binds the lease. Another key in the same
+// workspace, presenting the right worker_id AND the right token, is still
+// fenced out of the run.
+func TestKeyBinding(t *testing.T) {
+	s := testService(t)
+	k1 := scopedCtx("ws-a")
+	k2 := auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: "k2", Name: "other-key", Workspaces: map[string]struct{}{"ws-a": {}}})
+	mustQueue(t, s, k1, "ws-a", "item-1", StagePlan)
+	run, err := s.ClaimNext(k1, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	if err != nil || run == nil {
+		t.Fatalf("claim: %+v err %v", run, err)
+	}
+	got, _ := s.Get(k1, run.ID)
+	if got.ClaimedKeyID != "k1" {
+		t.Fatalf("claim must record the claiming key: %q", got.ClaimedKeyID)
+	}
+	if _, err := s.Report(k2, run.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded}, run.LeaseToken); !errors.Is(err, ErrLeaseHeld) {
+		t.Fatalf("foreign key with the right token must be fenced out: %v", err)
+	}
+	if _, err := s.Report(k1, run.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded, Summary: "ok"}, run.LeaseToken); err != nil {
+		t.Fatalf("owning key report: %v", err)
 	}
 }
 
