@@ -29,10 +29,13 @@ versions follow [Semantic Versioning](https://semver.org/).
   START; quota deaths mark the account until the reset and fall to the
   next; stickiness is the run's affinity (a session belongs to the account
   that created it). Placement is worker policy — skopos knows nothing of it.
-- **Notification module** — a provider interface with Slack Socket Mode
-  first (outbound-only, no public URL; a second provider like Telegram is a
-  config swap). Envs `SKOPOS_SLACK_BOT_TOKEN` / `SKOPOS_SLACK_APP_TOKEN` /
-  `SKOPOS_SLACK_USER_ID` enable it.
+- **Notification module (scaffold)** — a provider interface with Slack
+  Socket Mode transport (outbound-only, TLS, Martin's user id only). The
+  sending path and reply filtering work; the command relay (replies driving
+  approvals) is NOT wired yet — notifications go out, replies are not
+  applied. The interim approver key stays with agent-trial until that
+  lands. Envs `SKOPOS_SLACK_BOT_TOKEN` / `SKOPOS_SLACK_APP_TOKEN` /
+  `SKOPOS_SLACK_USER_ID`.
 
 ## [0.9.4] — 2026-10-10
 

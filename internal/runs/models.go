@@ -52,6 +52,10 @@ const (
 	ResumeBranch  = "branch"  // any worker, fresh context from the pushed branch
 )
 
+// takeoverGrace: an interrupted run becomes branch-resumable after this long
+// without its owner reclaiming it (review M1).
+const takeoverGrace = 30 * time.Minute
+
 // Run is one stage of one item's lifecycle on the queue.
 type Run struct {
 	ID            string    `json:"id"`

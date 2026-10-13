@@ -59,18 +59,33 @@ type AgentResult struct {
 	Detail     string
 }
 
-// scrubEnv removes credentials an agent must never use (the worker's own
-// secrets, SSH agents, forge tokens); SSH git is disabled outright.
+// scrubEnv removes credentials an agent must never use. Beyond the fixed
+// names, every configured push-token variable and every *TOKEN* / *SECRET* /
+// *_KEY variable is dropped UNLESS it is one the runner explicitly injects
+// for its account (review H5: a custom token_env name sailed through the
+// fixed list into the agent's environment).
 func scrubEnv(extra map[string]string) []string {
 	drop := map[string]bool{
 		"SSH_AUTH_SOCK": true, "SSH_AGENT_PID": true, "GH_TOKEN": true, "GITHUB_TOKEN": true,
 		"GITEA_TOKEN": true, "SLACK_BOT_TOKEN": true, "SKOPOS_API_KEY": true,
 		"SKOPOS_APPROVER_KEY": true, "GIT_ASKPASS": true, "SSH_ASKPASS": true,
 	}
+	for _, tok := range configuredTokenEnvs {
+		drop[tok] = true
+	}
+	keep := map[string]bool{}
+	for k := range extra {
+		keep[k] = true
+	}
 	var env []string
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
 		if drop[k] || strings.HasPrefix(k, "GIT_CONFIG") {
+			continue
+		}
+		// Pattern sweep: any credential-looking variable not explicitly
+		// injected for the account is dropped.
+		if (strings.Contains(k, "TOKEN") || strings.Contains(k, "SECRET") || strings.HasSuffix(k, "_KEY")) && !keep[k] {
 			continue
 		}
 		env = append(env, kv)
@@ -84,6 +99,9 @@ func scrubEnv(extra map[string]string) []string {
 		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=credential.helper", "GIT_CONFIG_VALUE_0=",
 	)
 }
+
+// configuredTokenEnvs is set by the worker from repos.*.push.token_env.
+var configuredTokenEnvs []string
 
 type claudeJSON struct {
 	Type             string          `json:"type"`

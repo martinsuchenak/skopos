@@ -413,6 +413,7 @@ func serveCmd() *cli.Command {
 				return err
 			})
 			inboxService.SetRunQueuer(runsService)
+			inboxService.SetRunLister(runsListerAdapter{runs: runsService})
 			runsHandler := runs.NewHandler(runsService)
 
 			// Notification module (lean 1b item 4): Slack Socket Mode when
@@ -585,3 +586,17 @@ func (r inboxRelay) Apply(ctx context.Context, itemID, text string) bool {
 }
 
 func (r inboxRelay) ItemForThread(parent string) string { return "" }
+
+type runsListerAdapter struct{ runs *runs.Service }
+
+func (a runsListerAdapter) ListRuns(ctx context.Context, itemID string) ([]inbox.RunSummary, error) {
+	rs, err := a.runs.ListRuns(ctx, itemID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]inbox.RunSummary, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, inbox.RunSummary{ID: r.ID, Stage: r.Stage, Status: r.Status})
+	}
+	return out, nil
+}

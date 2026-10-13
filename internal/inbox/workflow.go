@@ -39,11 +39,15 @@ type ApprovalLog interface {
 }
 
 // RunQueuer is the run-queue hook (internal/runs.Service satisfies it):
-// queueing an item queues its plan run; approving queues the implement run;
-// reject/done cancel the item's active runs. Nil disables (pure 1a mode).
+// queueing an item queues its plan run; approving queues the implement run
+// bound to the approved revision and base; request-changes and retry queue
+// the stage they return the item to; reject/done cancel the item's active
+// runs; approving an amendment resumes the paused run it froze. Nil
+// disables (pure 1a mode).
 type RunQueuer interface {
-	QueueItem(ctx context.Context, itemID, workspaceID, stage string) error
+	QueueStage(ctx context.Context, itemID, workspaceID, stage, planRevID, baseSHA, branch string) error
 	CancelItem(ctx context.Context, itemID, reason string) error
+	ResumeItem(ctx context.Context, itemID string) error
 }
 
 const auditEntityItem = "inbox_item"
@@ -108,18 +112,23 @@ func (s *Service) transition(ctx context.Context, itemID string, to Status, clas
 // --- human actions (approver-gated; agent and worker keys never pass) ---
 
 // Queue moves an open item into the agent workflow (R1) and queues its plan
-// run when the run hook is installed.
+// run. The run is queued BEFORE the status change and cancelled if the
+// change fails, so a failure is cleanly retryable (review M3).
 func (s *Service) Queue(ctx context.Context, itemID, via string) (*Item, error) {
-	item, err := s.transition(ctx, itemID, StatusQueued, ActorHuman, "inbox.queue", via, "", "")
+	cur, err := s.store.GetItem(ctx, strings.TrimSpace(itemID))
 	if err != nil {
 		return nil, err
 	}
 	if s.runQueuer != nil {
-		if qErr := s.runQueuer.QueueItem(ctx, item.ID, item.WorkspaceID, "plan"); qErr != nil {
-			return nil, qErr // the item is queued but unrunnable — surface it
+		if qErr := s.runQueuer.QueueStage(ctx, cur.ID, cur.WorkspaceID, "plan", "", "", ""); qErr != nil {
+			return nil, qErr
 		}
 	}
-	return item, nil
+	item, err := s.transition(ctx, itemID, StatusQueued, ActorHuman, "inbox.queue", via, "", "")
+	if err != nil && s.runQueuer != nil {
+		_ = s.runQueuer.CancelItem(ctx, cur.ID, "queue transition failed: "+err.Error())
+	}
+	return item, err
 }
 
 // ApproveInput binds an approval to exactly what Martin saw (review fix 3):
@@ -194,17 +203,21 @@ func (s *Service) Approve(ctx context.Context, itemID string, input ApproveInput
 		}
 	}
 	_ = verified
-	item, terr := s.transition(ctx, item.ID, StatusApproved, ActorHuman, "inbox.approve", input.Via, input.Notes, "")
-	if err != nil {
-		return nil, err
-	}
-	if terr != nil {
-		return nil, terr
-	}
+	// Queue the implement run bound to the approved revision and its base
+	// (review H3) BEFORE the status change; a paused run (an approved
+	// amendment) is resumed instead (H4).
 	if s.runQueuer != nil {
-		if qErr := s.runQueuer.QueueItem(ctx, item.ID, item.WorkspaceID, "implement"); qErr != nil {
+		if s.hasPausedRun(ctx, item.ID) {
+			if rErr := s.runQueuer.ResumeItem(ctx, item.ID); rErr != nil {
+				return nil, rErr
+			}
+		} else if qErr := s.runQueuer.QueueStage(ctx, item.ID, item.WorkspaceID, "implement", rev.ID, rev.BaseSHA, ""); qErr != nil {
 			return nil, qErr
 		}
+	}
+	item, terr := s.transition(ctx, item.ID, StatusApproved, ActorHuman, "inbox.approve", input.Via, input.Notes, "")
+	if terr != nil {
+		return nil, terr
 	}
 	return item, nil
 }
@@ -222,15 +235,35 @@ func (s *Service) RequestChanges(ctx context.Context, itemID, notes, via string)
 		return nil, err
 	}
 	var target Status
+	stage := ""
 	switch item.Status {
 	case StatusAwaitingApproval:
-		target = StatusPlanning
+		target, stage = StatusPlanning, "plan"
 	case StatusInReview:
-		target = StatusImplementing
+		target, stage = StatusImplementing, "implement"
 	default:
 		return nil, fmt.Errorf("%w: request-changes applies to awaiting_approval or in_review items (item is %s)", ErrInvalidInput, statusLabel(item.Status))
 	}
+	revID, baseSHA := s.approvedRevision(ctx, item)
+	if s.runQueuer != nil {
+		if qErr := s.runQueuer.QueueStage(ctx, item.ID, item.WorkspaceID, stage, revID, baseSHA, ""); qErr != nil {
+			return nil, qErr
+		}
+	}
 	return s.transition(ctx, item.ID, target, ActorHuman, "inbox.request_changes", via, notes, "")
+}
+
+// approvedRevision returns the locked revision id and base for an item, when
+// one exists (retry and change-request runs carry the approved binding).
+func (s *Service) approvedRevision(ctx context.Context, item *Item) (string, string) {
+	if item.PlanID == "" || s.plans == nil {
+		return "", ""
+	}
+	rev, err := s.plans.LatestRevision(ctx, item.PlanID)
+	if err != nil || rev == nil || rev.LockedAt == nil {
+		return "", ""
+	}
+	return rev.ID, rev.BaseSHA
 }
 
 // Retry answers a blocked or failed item and returns it to the phase it was
@@ -246,9 +279,17 @@ func (s *Service) Retry(ctx context.Context, itemID, answer, via string) (*Item,
 		return nil, err
 	}
 	target := StatusPlanning
+	stage := "plan"
+	revID, baseSHA := "", ""
 	if item.PlanID != "" && s.plans != nil {
 		if rev, revErr := s.plans.LatestRevision(ctx, item.PlanID); revErr == nil && rev != nil && rev.LockedAt != nil {
-			target = StatusImplementing
+			target, stage = StatusImplementing, "implement"
+			revID, baseSHA = rev.ID, rev.BaseSHA
+		}
+	}
+	if s.runQueuer != nil {
+		if qErr := s.runQueuer.QueueStage(ctx, item.ID, item.WorkspaceID, stage, revID, baseSHA, ""); qErr != nil {
+			return nil, qErr
 		}
 	}
 	return s.transition(ctx, item.ID, target, ActorHuman, "inbox.retry", via, answer, "")
@@ -438,4 +479,22 @@ func (s *Service) Timeline(ctx context.Context, itemID string) ([]audit.Entry, e
 		entries = []audit.Entry{}
 	}
 	return entries, nil
+}
+
+// hasPausedRun reports whether the item has a run parked by an amendment —
+// approving the amendment re-arms that run instead of queueing a new one.
+func (s *Service) hasPausedRun(ctx context.Context, itemID string) bool {
+	if s.runLister == nil {
+		return false
+	}
+	runs, err := s.runLister.ListRuns(ctx, itemID)
+	if err != nil {
+		return false
+	}
+	for _, r := range runs {
+		if r.Status == "paused" {
+			return true
+		}
+	}
+	return false
 }

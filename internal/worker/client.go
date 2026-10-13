@@ -122,6 +122,12 @@ func (c *Client) AppendSection(ctx context.Context, id, heading, body string) er
 
 // CreatePlan, AddPlanItem, CreateRevision, LinkPlan, Transition: the writes
 // the stage executors need. Plan item text is immutable server-side.
+func (c *Client) GetPlan(ctx context.Context, id string) (*Plan, error) {
+	var p Plan
+	err := c.do(ctx, http.MethodGet, "/api/plans/"+id, nil, &p)
+	return &p, err
+}
+
 func (c *Client) CreatePlan(ctx context.Context, workspace, name, branch, agent string) (*Plan, error) {
 	var p Plan
 	err := c.do(ctx, http.MethodPost, "/api/plans", map[string]string{

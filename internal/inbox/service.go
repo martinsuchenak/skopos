@@ -20,6 +20,7 @@ type Service struct {
 	plans     PlanRevisions
 	approvals ApprovalLog
 	runQueuer RunQueuer
+	runLister RunLister
 }
 
 func NewService(store Store) *Service {
@@ -44,9 +45,24 @@ func (s *Service) SetPlanRevisions(p PlanRevisions) { s.plans = p }
 func (s *Service) SetApprovalLog(a ApprovalLog) { s.approvals = a }
 
 // SetRunQueuer installs the run-queue hook (internal/runs.Service): queueing
-// an item queues its plan run; approve queues the implement run; reject and
-// mark-done cancel active runs. Nil keeps pure 1a behavior.
+// an item queues its plan run; approve queues the implement run; request
+// changes and retry queue their stage; reject and mark-done cancel active
+// runs. Nil keeps pure 1a behavior.
 func (s *Service) SetRunQueuer(r RunQueuer) { s.runQueuer = r }
+
+// RunLister reads an item's runs (the amendment-paused check).
+type RunLister interface {
+	ListRuns(ctx context.Context, itemID string) ([]RunSummary, error)
+}
+
+// RunSummary is the inbox-facing slice of a run.
+type RunSummary struct {
+	ID     string `json:"id"`
+	Stage  string `json:"stage"`
+	Status string `json:"status"`
+}
+
+func (s *Service) SetRunLister(l RunLister) { s.runLister = l }
 
 // publishItem emits the mutation event for an item once the store write
 // succeeded; failures are silent (events are advisory).

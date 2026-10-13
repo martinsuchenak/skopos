@@ -63,30 +63,46 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	}
 
 	branch := normalizeBranch(item.ID, item.Title, repo.BranchPrefix)
-	plan, err := w.client.CreatePlan(ctx, run.WorkspaceID, pr.Title, branch, w.cfg.ID)
-	if err != nil {
-		return err
-	}
-	for _, s := range pr.Steps {
-		if _, err := w.client.AddPlanItem(ctx, plan.ID, s.Title, s.Description, "implement"); err != nil {
+	var planID string
+	if item.PlanID != "" {
+		// Re-plan (review H2): reuse the linked plan — replace its items,
+		// then snapshot a new revision. Linking a second plan would bounce
+		// off the 1a already-linked refusal.
+		planID = item.PlanID
+		existing, err := w.client.GetPlan(ctx, planID)
+		if err != nil {
+			return err
+		}
+		for _, pi := range existing.Items {
+			_ = w.client.DeletePlanItem(ctx, planID, pi.ID)
+		}
+	} else {
+		plan, err := w.client.CreatePlan(ctx, run.WorkspaceID, pr.Title, branch, w.cfg.ID)
+		if err != nil {
+			return err
+		}
+		planID = plan.ID
+		if err := w.client.LinkPlan(ctx, run.ItemID, planID); err != nil {
 			return err
 		}
 	}
-	if _, err := w.client.AddPlanItem(ctx, plan.ID, "Review and push (Martin)", "Martin reviews the branch and pushes it onward himself.", "review"); err != nil {
+	for _, s := range pr.Steps {
+		if _, err := w.client.AddPlanItem(ctx, planID, s.Title, s.Description, "implement"); err != nil {
+			return err
+		}
+	}
+	if _, err := w.client.AddPlanItem(ctx, planID, "Review and push (Martin)", "Martin reviews the branch and pushes it onward himself.", "review"); err != nil {
 		return err
 	}
-	if err := w.client.LinkPlan(ctx, run.ItemID, plan.ID); err != nil {
-		return err
-	}
-	rev, err := w.client.CreateRevision(ctx, plan.ID, baseSHA)
+	rev, err := w.client.CreateRevision(ctx, planID, baseSHA)
 	if err != nil {
 		return err
 	}
 	enrich := fmt.Sprintf("**Plan:** %s · **Size:** %s · **Branch:** `%s` · **Base:** `%s` · **Revision:** %s\n\n%s\n\n### Steps\n\n%s",
-		plan.ID, pr.Size, branch, baseSHA[:min(10, len(baseSHA))], rev.ID, pr.Summary, numberedSteps(pr.Steps))
+		planID, pr.Size, branch, baseSHA[:min(10, len(baseSHA))], rev.ID, pr.Summary, numberedSteps(pr.Steps))
 	_ = w.client.AppendSection(ctx, run.ItemID, "Enrichment — skopos worker", enrich)
 
-	log.Info("plan ready", "plan", plan.ID, "revision", rev.ID, "steps", len(pr.Steps), "cost_usd", res.CostUSD)
+	log.Info("plan ready", "plan", planID, "revision", rev.ID, "steps", len(pr.Steps), "cost_usd", res.CostUSD)
 	return w.client.ReportResult(ctx, run.ID, w.cfg.ID, true, map[string]any{
 		"summary": "plan ready: " + pr.Summary, "branch": branch, "base_sha": baseSHA,
 	})
@@ -115,23 +131,37 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	if branch == "" {
 		branch = normalizeBranch(item.ID, item.Title, repo.BranchPrefix)
 	}
+	// H3: the run carries the approved revision and base. Branch from the
+	// approved base_sha — "what runs is exactly what was approved" — not
+	// the default branch's moving tip.
+	baseRef := run.BaseSHA
+	if baseRef == "" {
+		baseRef = "origin/" + repo.DefaultBranch
+	}
+	// H3: the steps come from the linked plan (the revision snapshot), not
+	// scraped from item content — after a revise the content holds several
+	// Enrichment sections and the agent could implement an older plan.
+	planDetail, perr := w.client.GetPlan(ctx, item.PlanID)
+	steps := []Step{}
+	if perr == nil {
+		for i, pi := range planDetail.Items {
+			if pi.Title == "Review and push (Martin)" {
+				continue
+			}
+			steps = append(steps, Step{Title: pi.Title, Description: fmt.Sprintf("plan item %d", i+1)})
+		}
+	}
 	worktree := filepath.Join(w.cfg.StateDir, "worktrees", filepath.Base(repo.Path), strings.ReplaceAll(branch, "/", "-"))
-	if _, err := git(ctx, repo.Path, "worktree", "list", "--porcelain"); err == nil {
-		// reuse an existing worktree for this branch (resume) if present
-		if !dirExists(worktree) {
-			if err := createWorktree(ctx, repo.Path, worktree, branch, repo.DefaultBranch); err != nil {
-				return fmt.Errorf("worktree: %w", err)
-			}
-			if err := runSetup(ctx, worktree, repo.Setup, repo.Path, 10*time.Minute); err != nil {
-				removeWorktree(ctx, repo.Path, worktree)
-				return err
-			}
+	if !dirExists(worktree) {
+		if err := createWorktreeAt(ctx, repo.Path, worktree, branch, baseRef); err != nil {
+			return fmt.Errorf("worktree: %w", err)
+		}
+		if err := runSetup(ctx, worktree, repo.Setup, repo.Path, 10*time.Minute); err != nil {
+			removeWorktree(ctx, repo.Path, worktree)
+			return err
 		}
 	}
 
-	// The approved plan: read from the item's enrichment (the locked
-	// revision content rides on the item after planning).
-	steps := numberedFromContent(item.Content)
 	prompt, err := renderPrompt("implement.md", map[string]any{
 		"Branch": branch, "Base": repo.DefaultBranch, "Title": item.Title,
 		"Content": item.Content, "Steps": steps, "Notes": lastSection(item.Content, "## Change requests"),
@@ -152,8 +182,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	}
 	switch ir.Status {
 	case "amendment":
-		_ = w.client.AppendSection(ctx, run.ItemID, "Amendment proposed — worker", bullets([]string{ir.Reason}))
-		return w.pauseForAmendment(ctx, run, ir)
+		return w.proposeAmendment(ctx, run, item, ir)
 	case "blocked":
 		reason := ir.Reason
 		if reason == "" {
@@ -174,7 +203,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		if token == "" {
 			return fmt.Errorf("push token env %s is empty", repo.Push.TokenEnv)
 		}
-		if err := pushBranch(ctx, worktree, repo.Push.RemoteURL, token, repo.Push.Kind, branch, repo.Protected); err != nil {
+		if err := pushBranch(ctx, worktree, repo.Push.RemoteURL, token, repo.Push.Kind, branch, repo.BranchPrefix, repo.Protected); err != nil {
 			return fmt.Errorf("push: %w", err)
 		}
 	}
@@ -186,43 +215,102 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	})
 }
 
-// stageReview: a second opinion over the diff (the review/QA stages — the
-// account pool makes this a DIFFERENT agent than the implementer).
+// reviewSchema makes the verdict machine-checkable (review H6: a substring
+// test let "2 issues found." pass).
+const reviewSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","fail"]},"summary":{"type":"string"},"issues":{"type":"array","items":{"type":"string"}}},"required":["verdict","summary"]}`
+
+type reviewResult struct {
+	Verdict string   `json:"verdict"`
+	Summary string   `json:"summary"`
+	Issues  []string `json:"issues"`
+}
+
+// stageReview: a second opinion over the pushed branch (the review/QA
+// stages — the account pool makes this a DIFFERENT agent than the
+// implementer). Always reviews a fresh checkout of the pushed branch, never
+// the clone's default branch where the diff would be empty.
 func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) error {
 	repo := w.cfg.Repos[run.WorkspaceID]
 	if repo == nil {
 		return w.failNoRepo(run.WorkspaceID)
 	}
+	if run.Branch == "" {
+		return fmt.Errorf("review run has no branch to review")
+	}
 	account := w.pickAccount(run, log)
 	if account == nil {
 		return &quotaError{detail: "no available account for review"}
 	}
-	worktree := filepath.Join(w.cfg.StateDir, "worktrees", filepath.Base(repo.Path), strings.ReplaceAll(orDefault(run.Branch, "review"), "/", "-"))
+	// Fresh checkout of the pushed branch: fetch, then a detached worktree
+	// at origin/<branch>. If the fetch finds nothing the review fails — an
+	// empty diff is not a pass.
+	wt := filepath.Join(w.cfg.StateDir, "worktrees", filepath.Base(repo.Path), strings.ReplaceAll(run.Branch, "/", "-")+"-review")
+	removeWorktree(ctx, repo.Path, wt)
+	if _, err := git(ctx, repo.Path, "fetch", "--quiet", "origin", run.Branch); err != nil {
+		return fmt.Errorf("review: branch %s not pushed: %w", run.Branch, err)
+	}
+	if err := createDetached(ctx, repo.Path, wt, "origin/"+run.Branch); err != nil {
+		return fmt.Errorf("review worktree: %w", err)
+	}
+	defer removeWorktree(ctx, repo.Path, wt)
+
 	prompt, err := renderPrompt("review.md", map[string]any{
 		"Base": repo.DefaultBranch, "Stage": run.Stage,
 	})
 	if err != nil {
 		return err
 	}
-	dir := worktree
-	if !dirExists(dir) {
-		dir = repo.Path
-	}
-	log.Info("reviewing", "account", account.Name, "stage", run.Stage)
-	res := runClaude(ctx, w.agentRun(w.cfg.RunnerBin(run.Runner), dir, prompt, "", reviewTools, w.cfg.PlanTimeout, account, run, run.Stage))
+	log.Info("reviewing", "account", account.Name, "stage", run.Stage, "branch", run.Branch)
+	res := runClaude(ctx, w.agentRun(w.cfg.RunnerBin(run.Runner), wt, prompt, reviewSchema, reviewTools, w.cfg.PlanTimeout, account, run, run.Stage))
 	if err := w.handleAgentOutcome(ctx, run, res, account, run.Stage); err != nil {
 		return err
 	}
-	verdict := firstLine(res.Text)
-	_ = w.client.AppendSection(ctx, run.ItemID, strings.Title(run.Stage)+" — "+account.Name, res.Text)
-	passed := !strings.Contains(strings.ToLower(res.Text), "fail") || strings.Contains(strings.ToLower(verdict), "pass")
-	log.Info("review finished", "verdict", verdict, "cost_usd", res.CostUSD)
-	return w.client.ReportResult(ctx, run.ID, w.cfg.ID, passed, map[string]any{
-		"summary": verdict, "checks": []Check{{Name: run.Stage + ":" + account.Name, Passed: passed, Output: verdict}},
+	var rr reviewResult
+	if err := json.Unmarshal(res.Structured, &rr); err != nil || rr.Verdict == "" {
+		return fmt.Errorf("review returned no verdict: %s", firstLine(res.Text))
+	}
+	passed := rr.Verdict == "pass"
+	_ = w.client.AppendSection(ctx, run.ItemID, run.Stage+" — "+account.Name,
+		fmt.Sprintf("**Verdict:** %s\n\n%s", rr.Verdict, rr.Summary))
+	log.Info("review finished", "verdict", rr.Verdict, "issues", len(rr.Issues), "cost_usd", res.CostUSD)
+	if !passed {
+		return w.client.ReportResult(ctx, run.ID, w.cfg.ID, false, map[string]any{
+			"reason": "review failed: " + rr.Summary, "summary": rr.Summary,
+		})
+	}
+	return w.client.ReportResult(ctx, run.ID, w.cfg.ID, true, map[string]any{
+		"summary": rr.Summary, "checks": []Check{{Name: run.Stage + ":" + account.Name, Passed: true, Output: rr.Summary}},
 	})
 }
 
-func (w *Worker) pauseForAmendment(ctx context.Context, run *Run, ir implResult) error {
+// proposeAmendment is the amendment gate (review H4): the item returns to
+// awaiting_approval with the amended steps snapshotted over the locked
+// revision, and the run STAYS PAUSED — it is never auto-reclaimed. Martin's
+// approve resumes it (the inbox hook calls ResumeItem).
+func (w *Worker) proposeAmendment(ctx context.Context, run *Run, item *Item, ir implResult) error {
+	if ir.Reason == "" {
+		ir.Reason = ir.Summary
+	}
+	_ = w.client.AppendSection(ctx, run.ItemID, "Amendment proposed — worker", bullets([]string{ir.Reason}))
+	// Item to the gate FIRST (AmendRevision's guard requires it).
+	if err := w.client.Transition(ctx, run.ItemID, "awaiting_approval", "amendment: "+firstLine(ir.Reason)); err != nil {
+		return err
+	}
+	// Amend the plan: append the amended remaining steps, snapshot over the
+	// lock.
+	var amended []Step
+	_ = json.Unmarshal(nil, &amended)
+	if len(ir.AmendedSteps) > 0 {
+		for _, st := range ir.AmendedSteps {
+			if _, err := w.client.AddPlanItem(ctx, item.PlanID, st.Title, st.Description, "amendment"); err != nil {
+				return err
+			}
+		}
+	}
+	baseSHA, _ := git(ctx, w.cfg.Repos[run.WorkspaceID].Path, "rev-parse", "origin/"+w.cfg.Repos[run.WorkspaceID].DefaultBranch)
+	if _, err := w.client.AmendRevision(ctx, item.PlanID, strings.TrimSpace(baseSHA)); err != nil {
+		return err
+	}
 	return w.client.Pause(ctx, run.ID, w.cfg.ID, "amendment proposed: "+firstLine(ir.Reason))
 }
 
@@ -248,9 +336,10 @@ type planResult struct {
 }
 
 type implResult struct {
-	Status  string `json:"status"`
-	Reason  string `json:"reason"`
-	Summary string `json:"summary"`
+	Status       string `json:"status"`
+	Reason       string `json:"reason"`
+	Summary      string `json:"summary"`
+	AmendedSteps []Step `json:"amended_steps"`
 }
 
 // --- small helpers ---

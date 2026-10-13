@@ -70,6 +70,34 @@ func createWorktree(ctx context.Context, clone, worktree, branch, base string) e
 	return err
 }
 
+// createWorktreeAt cuts a worktree on a new branch from an explicit ref
+// (the approved base_sha — review H3), no upstream.
+func createWorktreeAt(ctx context.Context, clone, worktree, branch, ref string) error {
+	if !reBranch.MatchString(branch) {
+		return fmt.Errorf("refusing branch name %q", branch)
+	}
+	if _, err := git(ctx, clone, "cat-file", "-e", ref); err != nil {
+		// Not local: fetch the branch refs so a base_sha/branch from origin resolves.
+		if _, ferr := git(ctx, clone, "fetch", "--quiet", "origin"); ferr != nil {
+			return fmt.Errorf("base ref %q not found: %w", ref, err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
+		return err
+	}
+	_, err := git(ctx, clone, "worktree", "add", "--quiet", "--no-track", "-b", branch, worktree, ref)
+	return err
+}
+
+// createDetached checks out a ref without creating a branch (review stage).
+func createDetached(ctx context.Context, clone, worktree, ref string) error {
+	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
+		return err
+	}
+	_, err := git(ctx, clone, "worktree", "add", "--quiet", "--detach", worktree, ref)
+	return err
+}
+
 func removeWorktree(ctx context.Context, clone, worktree string) {
 	if worktree != "" {
 		_, _ = git(ctx, clone, "worktree", "remove", "--force", worktree)
@@ -83,9 +111,12 @@ func headSHA(ctx context.Context, dir string) string {
 
 // pushBranch: validated destination, explicit refspec, token via env-only
 // git config, never force. remoteAuthKind selects the header flavor.
-func pushBranch(ctx context.Context, worktree, remoteURL, token, authKind, branch string, protected []string) error {
+func pushBranch(ctx context.Context, worktree, remoteURL, token, authKind, branch, prefix string, protected []string) error {
 	if !reBranch.MatchString(branch) {
 		return fmt.Errorf("push refused: %q is not a safe branch name", branch)
+	}
+	if prefix != "" && !strings.HasPrefix(branch, prefix) {
+		return fmt.Errorf("push refused: %q does not carry the configured prefix %q", branch, prefix)
 	}
 	if isProtected(branch, protected) {
 		return fmt.Errorf("push refused: %q matches a protected pattern", branch)

@@ -467,4 +467,6 @@ Sources: [awesome-agent-orchestrators](https://github.com/andyrewlee/awesome-age
 | 2026-09-24 | Skopos is the control plane and phantom the execution plane |
 | 2026-09-24 | Slack runs over Socket Mode, because Skopos can't be reached from the internet |
 | 2026-09-24 | Planning always runs on Claude; implementation is routed |
+| 2026-10-13 | Lean 1b (code review 2): routing is one axis — per-workspace stage runner preference, no tag engine; capacity deferred (one run per worker); Slack pulled into 1b as a provider interface (transport done, command relay open); P10 run-event forwarding and the routing preview deferred; stages are plan/implement/review/qa (LLM review replaces Copilot) |
+| 2026-10-13 | Lean 1b review fixes: the item enters its phase on run CLAIM (failures block from valid edges); paused runs are never auto-reclaimed (the amendment gate was bypassable); interrupted runs become branch-resumable after a 30-minute grace (affinity's escape hatch); request-changes and retry queue their stage; the implement run carries the approved revision + base_sha and branches from it; re-plans reuse the linked plan; scrubbed agent env drops every *TOKEN*/*SECRET*/*_KEY plus configured push-token vars |
 | 2026-09-24 | Go for new tooling |

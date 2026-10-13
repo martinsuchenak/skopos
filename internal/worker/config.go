@@ -136,6 +136,11 @@ func (c *Config) Default(home string) error {
 			c.Workspaces = append(c.Workspaces, ws)
 		}
 	}
+	for _, r := range c.Repos {
+		if r.Push.TokenEnv != "" {
+			configuredTokenEnvs = append(configuredTokenEnvs, r.Push.TokenEnv)
+		}
+	}
 	for ws, r := range c.Repos {
 		if r.DefaultBranch == "" {
 			r.DefaultBranch = "main"
@@ -144,7 +149,7 @@ func (c *Config) Default(home string) error {
 			r.BranchPrefix = "agent/"
 		}
 		if len(r.Protected) == 0 {
-			r.Protected = []string{"PROD", "main", "master", "develop", "release/*", "hotfix/*"}
+			r.Protected = []string{"PROD", "main", "master", "develop", "release/**", "hotfix/**"}
 		}
 		if r.Push.TokenEnv == "" && r.Push.Kind != "" && r.Push.Kind != "none" {
 			return fmt.Errorf("repo %s: push.token_env is required (tokens come from the environment)", ws)

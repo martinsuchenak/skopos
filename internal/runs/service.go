@@ -123,9 +123,23 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 	return &r, nil
 }
 
+// phaseForStage is the item status a run's stage corresponds to: a plan
+// run IS the item's planning phase, an implement/review/qa run its
+// implementing phase. The item moves in on claim so a mid-run failure
+// blocks from a valid edge (review H1).
+func phaseForStage(stage string) string {
+	switch stage {
+	case StagePlan:
+		return "planning"
+	case StageImplement, StageReview, StageQA:
+		return "implementing"
+	}
+	return ""
+}
+
 // ClaimNext hands the worker its next run, or nil when it has nothing to do.
-// Affinity first (its own paused/interrupted runs), then the queue filtered
-// by scope and stage preference, then branch-resumable takeovers.
+// Affinity first (its own interrupted runs), then the queue filtered by
+// scope and stage preference, then branch-resumable takeovers.
 func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 	in.WorkerID = strings.TrimSpace(in.WorkerID)
 	if in.WorkerID == "" {
@@ -139,7 +153,16 @@ func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 			return nil, fmt.Errorf("%w: workspace scope", ErrNotFound)
 		}
 	}
-	return s.storage.Claim(ctx, in, s.prefs, s.lease, s.now().UTC())
+	run, err := s.storage.Claim(ctx, in, s.prefs, s.lease, s.now().UTC())
+	if err != nil || run == nil {
+		return run, err
+	}
+	// The item enters the run's phase on claim (H1). Re-claims of an item
+	// already in phase fail the matrix quietly — that is fine.
+	if to := phaseForStage(run.Stage); to != "" && s.itemTransition != nil {
+		_ = s.itemTransition(ctx, run.ItemID, to, "run claimed: "+run.ID, "worker:"+run.WorkerID)
+	}
+	return run, nil
 }
 
 // Heartbeat extends the worker's lease; the first flips claimed -> running.
@@ -253,6 +276,52 @@ func (s *Service) CancelItem(ctx context.Context, itemID, reason string) error {
 		return fmt.Errorf("%w: item is required", ErrInvalidInput)
 	}
 	_, err := s.storage.CancelItem(ctx, itemID, reason, s.now().UTC())
+	return err
+}
+
+// ResumeItem resumes an item's paused run back to its owner (system action:
+// approving an amendment re-arms the run it paused; review H4).
+func (s *Service) ResumeItem(ctx context.Context, itemID string) error {
+	runs, err := s.storage.List(ctx, StatusPaused, strings.TrimSpace(itemID))
+	if err != nil {
+		return err
+	}
+	for i := range runs {
+		_ = s.storage.Resume(ctx, runs[i].ID, runs[i].WorkerID, s.lease, s.now().UTC())
+	}
+	return nil
+}
+
+// RunSummary is the inbox-facing slice of a run.
+type RunSummary struct {
+	ID     string `json:"id"`
+	Stage  string `json:"stage"`
+	Status string `json:"status"`
+}
+
+// ListRuns is the inbox-facing read (amendment-paused check).
+func (s *Service) ListRuns(ctx context.Context, itemID string) ([]RunSummary, error) {
+	all, err := s.storage.List(ctx, "", strings.TrimSpace(itemID))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]RunSummary, 0, len(all))
+	for _, r := range all {
+		out = append(out, RunSummary{ID: r.ID, Stage: r.Stage, Status: string(r.Status)})
+	}
+	return out, nil
+}
+
+// QueueStage is the inbox hook for a stage with the approved revision bound
+// (review H3): the implement run carries plan_rev_id and base_sha.
+func (s *Service) QueueStage(ctx context.Context, itemID, workspaceID, stage, planRevID, baseSHA, branch string) error {
+	_, err := s.Queue(ctx, QueueInput{
+		WorkspaceID: workspaceID, ItemID: itemID, Stage: stage,
+		PlanRevID: planRevID, BaseSHA: baseSHA, Branch: branch,
+	})
+	if err != nil && strings.Contains(err.Error(), "already has an active") {
+		return nil
+	}
 	return err
 }
 

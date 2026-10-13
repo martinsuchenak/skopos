@@ -69,12 +69,13 @@ type Worker struct {
 	log    *slog.Logger
 	// sessions persists per-run agent session ids and accounts (stickiness:
 	// a re-claimed run resumes its own session on its own account).
-	sessions map[string]string
-	accounts map[string]string
+	sessions  map[string]string
+	accounts  map[string]string
+	transient map[string]int
 }
 
 func New(cfg *Config, client *Client, log *slog.Logger) *Worker {
-	w := &Worker{cfg: cfg, client: client, log: log, sessions: map[string]string{}, accounts: map[string]string{}}
+	w := &Worker{cfg: cfg, client: client, log: log, sessions: map[string]string{}, accounts: map[string]string{}, transient: map[string]int{}}
 	w.loadSessions()
 	w.ApplyMCPServers()
 	return w
@@ -149,6 +150,21 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 	if err == nil {
 		return // the stage reported its own outcome
 	}
+	if tr, ok := err.(*transientError); ok {
+		// Transient (overloaded / 5xx / network): retry with back-off
+		// instead of failing the run and blocking the item (review M4).
+		// The run stays claimed by us throughout.
+		w.transient[run.ID]++
+		if w.transient[run.ID] >= 3 {
+			delete(w.transient, run.ID)
+			_ = w.client.ReportResult(ctx, run.ID, w.cfg.ID, false, map[string]any{"reason": "transient x3: " + tr.detail})
+			return
+		}
+		w.log.Warn("transient failure, retrying", "attempt", w.transient[run.ID], "detail", tr.detail)
+		sleepCtx(ctx, time.Duration(w.transient[run.ID])*30*time.Second)
+		w.execute(ctx, run)
+		return
+	}
 	if q, ok := err.(*quotaError); ok {
 		// Quota: pause (affinity keeps the run); the pool marks the
 		// account exhausted until the reset. Then BACK OFF — affinity
@@ -176,6 +192,10 @@ type quotaError struct {
 }
 
 func (e *quotaError) Error() string { return "quota: " + e.detail }
+
+type transientError struct{ detail string }
+
+func (e *transientError) Error() string { return "transient: " + e.detail }
 
 // pickAccount selects the credential for a run on the stage's runner.
 // Stickiness first (review finding 6): a resumed run reuses the account
@@ -227,11 +247,28 @@ func (w *Worker) saveSession(run *Run, phase, sessionID string) {
 	if sessionID == "" {
 		return
 	}
+	if w.sessions == nil {
+		w.sessions = map[string]string{}
+	}
 	w.sessions[run.ID+":"+phase] = sessionID
-	_ = sessionID
-	// Persist lightly: sessions survive worker restarts for affinity runs.
-	b, _ := json.Marshal(w.sessions)
-	_ = os.MkdirAll(filepath.Dir(filepath.Join(w.cfg.StateDir, "sessions.json")), 0o700)
+	w.persist()
+}
+
+// persist writes sessions AND accounts in one format (review H7: a flat
+// sessions-only write followed by a nested reload nil'd both maps and
+// crashed the worker on its next save — a crash loop under systemd).
+func (w *Worker) persist() {
+	if w.sessions == nil {
+		w.sessions = map[string]string{}
+	}
+	if w.accounts == nil {
+		w.accounts = map[string]string{}
+	}
+	b, err := json.Marshal(map[string]map[string]string{"sessions": w.sessions, "accounts": w.accounts})
+	if err != nil {
+		return
+	}
+	_ = os.MkdirAll(w.cfg.StateDir, 0o700)
 	_ = os.WriteFile(filepath.Join(w.cfg.StateDir, "sessions.json"), b, 0o600)
 }
 
@@ -239,23 +276,41 @@ func (w *Worker) rememberAccount(run *Run, a *Account) {
 	if a == nil {
 		return
 	}
+	if w.accounts == nil {
+		w.accounts = map[string]string{}
+	}
 	if w.accounts[run.ID] == "" {
 		w.accounts[run.ID] = a.Name
-		b, _ := json.Marshal(map[string]map[string]string{"sessions": w.sessions, "accounts": w.accounts})
-		_ = os.WriteFile(filepath.Join(w.cfg.StateDir, "sessions.json"), b, 0o600)
+		w.persist()
 	}
 }
 
 func (w *Worker) loadSessions() {
+	// Nil-safe for BOTH formats: the nested {sessions, accounts} shape and
+	// the legacy flat map (which carried sessions only).
 	b, err := os.ReadFile(filepath.Join(w.cfg.StateDir, "sessions.json"))
-	if err == nil {
-		var state struct {
-			Sessions map[string]string `json:"sessions"`
-			Accounts map[string]string `json:"accounts"`
+	if err != nil {
+		w.sessions, w.accounts = map[string]string{}, map[string]string{}
+		return
+	}
+	var state struct {
+		Sessions map[string]string `json:"sessions"`
+		Accounts map[string]string `json:"accounts"`
+	}
+	if json.Unmarshal(b, &state) == nil && state.Sessions != nil {
+		w.sessions = state.Sessions
+		w.accounts = state.Accounts
+	} else {
+		var flat map[string]string
+		if json.Unmarshal(b, &flat) == nil && flat != nil {
+			w.sessions = flat
 		}
-		if json.Unmarshal(b, &state) == nil {
-			w.sessions, w.accounts = state.Sessions, state.Accounts
-		}
+	}
+	if w.sessions == nil {
+		w.sessions = map[string]string{}
+	}
+	if w.accounts == nil {
+		w.accounts = map[string]string{}
 	}
 }
 
@@ -272,7 +327,7 @@ func (w *Worker) handleAgentOutcome(ctx context.Context, run *Run, res AgentResu
 		}
 		return &quotaError{detail: res.Detail, resetAt: res.ResetAt, account: account}
 	case OutcomeTransient:
-		return fmt.Errorf("transient: %s", res.Detail)
+		return &transientError{detail: res.Detail}
 	case OutcomeAuth:
 		return fmt.Errorf("auth (fix the account login): %s", res.Detail)
 	default:

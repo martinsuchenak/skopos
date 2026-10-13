@@ -211,6 +211,76 @@ func TestChaining(t *testing.T) {
 	assertMoved(t, moved, "item-2:in_review:", "item-3:in_review:", "item-4:blocked:run failed: tests exploded")
 }
 
+// H1: the item enters its phase on CLAIM, so a failure blocks from a valid
+// edge even when the run was claimed from queued/approved.
+func TestClaimMovesItemPhase(t *testing.T) {
+	var moves []string
+	s := testService(t)
+	s.SetItemTransition(func(ctx context.Context, itemID, to, reason, agentID string) error {
+		moves = append(moves, to)
+		return nil
+	})
+	ctx := rootCtx()
+	mustQueue(t, s, ctx, "ws-a", "item-1", StagePlan)
+	run, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	if run == nil {
+		t.Fatal("claim failed")
+	}
+	assertMoved(t, moves, "planning")
+	// Failure now blocks from planning — a valid edge.
+	moves = nil
+	_, _ = s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusFailed, Reason: "boom"})
+	assertMoved(t, moves, "blocked")
+}
+
+// H4: paused runs are NEVER auto-claimed (the amendment gate); interrupted
+// ones still return to their owner.
+func TestPausedNotReclaimed(t *testing.T) {
+	s := testService(t)
+	ctx := rootCtx()
+	mustQueue(t, s, ctx, "ws-a", "item-1", StageImplement)
+	run, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	if err := s.Pause(ctx, run.ID, "w1", "amendment"); err != nil {
+		t.Fatal(err)
+	}
+	// The same worker claims: nothing (paused is not a candidate).
+	if r, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}}); r != nil {
+		t.Fatalf("paused run must not be reclaimed: %+v", r)
+	}
+	// Explicit resume re-arms it for the owner.
+	if err := s.ResumeItem(ctx, "item-1"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get(ctx, run.ID)
+	if got.Status != StatusClaimed {
+		t.Fatalf("resume must re-arm: %s", got.Status)
+	}
+}
+
+// M2: CancelItem retires interrupted runs too.
+func TestCancelInterrupted(t *testing.T) {
+	s := testService(t)
+	ctx := rootCtx()
+	mustQueue(t, s, ctx, "ws-a", "item-1", StagePlan)
+	run, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	// Force the lease to expire, then let another claim sweep it to interrupted.
+	time.Sleep(80 * time.Millisecond)
+	if _, err := s.ClaimNext(ctx, ClaimInput{WorkerID: "w2", Workspaces: []string{"ws-a"}}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get(ctx, run.ID)
+	if got.Status != StatusInterrupted {
+		t.Fatalf("expected interrupted after lease expiry, got %s", got.Status)
+	}
+	if err := s.CancelItem(ctx, "item-1", "rejected"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.Get(ctx, run.ID)
+	if got.Status != StatusCancelled {
+		t.Fatalf("interrupted run must cancel with the item: %s", got.Status)
+	}
+}
+
 // Queue guards: duplicates refused, unknown stages refused, scope enforced.
 func TestQueueGuards(t *testing.T) {
 	s := testService(t)

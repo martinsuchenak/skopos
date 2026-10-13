@@ -113,27 +113,32 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 	defer tx.Rollback()
 
 	// Expire stale leases first so their runs re-enter the candidate pool
-	// (as interrupted, affinity kept).
+	// (as interrupted, affinity kept). Runs expired longer than the
+	// takeover grace become branch-resumable: the owner's session is
+	// presumed gone, so any worker may take over from the pushed branch.
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE runs SET status = ?, resume_kind = ?, updated_at = ?
+		UPDATE runs SET status = ?,
+			resume_kind = CASE WHEN lease_expires_at < ? THEN ? ELSE ? END,
+			updated_at = ?
 		WHERE status IN (?, ?) AND lease_expires_at != '' AND lease_expires_at < ?`,
-		string(StatusInterrupted), ResumeSession, formatTime(now),
+		string(StatusInterrupted), formatTime(now.Add(-takeoverGrace)), ResumeBranch, ResumeSession, formatTime(now),
 		string(StatusClaimed), string(StatusRunning), formatTime(now)); err != nil {
 		return nil, fmt.Errorf("expiring leases: %w", err)
 	}
 
-	// Re-read candidates inside the transaction.
+	// Re-read candidates inside the transaction. Paused runs are NOT
+	// candidates: a pause means someone must decide (amendment approval,
+	// quota reset) — auto-reclaiming them bypassed the amendment gate
+	// (review H4).
 	var cand *Run
-	for _, status := range []Status{StatusPaused, StatusInterrupted} {
+	{
 		row := tx.QueryRowContext(ctx, `
 			SELECT `+runColumns+` FROM runs WHERE worker_id = ? AND status = ?
-			ORDER BY created_at ASC LIMIT 1`, in.WorkerID, string(status))
+			ORDER BY created_at ASC LIMIT 1`, in.WorkerID, string(StatusInterrupted))
 		r, err := scanRun(row)
 		if err == nil {
 			cand = r
-			break
-		}
-		if !errors.Is(err, ErrNotFound) {
+		} else if !errors.Is(err, ErrNotFound) {
 			return nil, err
 		}
 	}
@@ -218,13 +223,17 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 		}
 	}
 	if cand == nil {
-		return nil, nil // nothing for this worker
+		// Commit even with no candidate: the lease-expiry sweep above must
+		// persist (it was silently rolled back here, so runs only ever
+		// expired inside a successful claim — review found it via the
+		// cancel-interrupted test).
+		return nil, tx.Commit()
 	}
 
 	attempt := cand.Attempt
 	resumeKind := cand.ResumeKind
-	if cand.Status == StatusPaused || cand.Status == StatusInterrupted {
-		attempt++ // a resumed run is a new attempt
+	if cand.Status == StatusInterrupted {
+		attempt++ // a takeover/re-claim is a new attempt
 	} else {
 		resumeKind = ResumeSession // first claim: only the owner may resume
 	}
@@ -327,8 +336,8 @@ func (s *Storage) Resume(ctx context.Context, id, workerID string, lease time.Du
 // Cancel retires runs of an item that are still queued/paused (item rejected
 // or done). Returns the ids cancelled.
 func (s *Storage) CancelItem(ctx context.Context, itemID, reason string, now time.Time) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM runs WHERE item_id = ? AND status IN (?, ?, ?, ?)`,
-		itemID, string(StatusQueued), string(StatusPaused), string(StatusClaimed), string(StatusRunning))
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM runs WHERE item_id = ? AND status IN (?, ?, ?, ?, ?)`,
+		itemID, string(StatusQueued), string(StatusPaused), string(StatusClaimed), string(StatusRunning), string(StatusInterrupted))
 	if err != nil {
 		return nil, fmt.Errorf("cancelling runs: %w", err)
 	}
