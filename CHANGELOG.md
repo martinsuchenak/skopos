@@ -21,6 +21,13 @@ versions follow [Semantic Versioning](https://semver.org/).
   expansion handles only the `${NAME}` form (literal `$` survives), and a
   leading `~` expands in account env values too; repo check commands scrub
   configured push-token envs; the temp-build warning is no longer dropped.
+  Round 3 lows: `worker check` under `sudo --system` expands `~` against
+  the target user's home (`user.Lookup`), the login-PATH capture survives
+  chatty shell profiles (sentinel-prefixed line), and a deliberate behavior
+  change is now documented — a bare `skopos worker` no longer picks up
+  `[client]` from `~/.config/skopos` (the global config holds a personal
+  key, not a worker key; services pass an absolute `--config` and are
+  unaffected).
 
 - **The documented macOS install path now works end to end** (review round on
   68651bc): `SKOPOS_API_KEY` (and the other env vars) in `skopos-worker.env`

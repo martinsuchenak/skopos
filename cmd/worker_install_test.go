@@ -239,3 +239,32 @@ func TestEnvFileBeatsConfigForClient(t *testing.T) {
 		t.Fatalf("config must be the fallback: %q", got)
 	}
 }
+
+// Round-3 lows: the checker expands ~ against the PASSED home (the target
+// user's under sudo --system), and the login-PATH sentinel survives
+// profile banners.
+func TestCheckUsesProvidedHomeAndLoginPathParsing(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skopos-config.toml")
+	t.Setenv("SKOPOS_API_KEY", "sk_real")
+	cfg := "[client]\nserver_url = \"https://skopos.real.com\"\n\n[worker]\nid = \"worker-t\"\n\n[worker.repos.\"ws\"]\npath = \"~/clones/ws\"\n\n[[worker.accounts]]\nname = \"a\"\nrunner = \"claude\"\nenv = { ANTHROPIC_API_KEY = \"k\" }\n"
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	problems, err := runWorkerChecks(cfgPath, "", "/usr/bin:/bin", "/home/target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(problems, "\n")
+	if !strings.Contains(joined, "/home/target/clones/ws") {
+		t.Fatalf("checker must expand ~ against the provided home, got:\n%s", joined)
+	}
+
+	p, err := extractLoginPath("Welcome to the box (motd)\nnvm banner noise\n__P=/home/u/.local/bin:/usr/bin\n")
+	if err != nil || p != "/home/u/.local/bin:/usr/bin" {
+		t.Fatalf("sentinel parse: %q err %v", p, err)
+	}
+	if _, err := extractLoginPath("no marker at all\n"); err == nil {
+		t.Fatal("missing marker must error")
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -172,7 +173,16 @@ func runWorkerInstall(out io.Writer, o installOptions) error {
 			}
 		}
 	}
-	problems, err := runWorkerChecks(o.config, defaultWorkerEnvFile(o.config, o.envFile), pathEnv, home)
+	// The checker must expand ~ against the TARGET user's home (under sudo
+	// --system, this process's home is /root; the daemon runs as the target
+	// user, so only the check would be wrong — in the cautious direction).
+	checkHome := home
+	if userGroup[0] != "" {
+		if u, uerr := user.Lookup(userGroup[0]); uerr == nil && u.HomeDir != "" {
+			checkHome = u.HomeDir
+		}
+	}
+	problems, err := runWorkerChecks(o.config, defaultWorkerEnvFile(o.config, o.envFile), pathEnv, checkHome)
 	if err != nil {
 		return err
 	}
@@ -364,15 +374,28 @@ func onPath(bin, pathEnv string) bool {
 }
 
 // userLoginPath resolves a user's login-shell PATH (under sudo, the
-// installer's own PATH is secure_path, not the user's).
-func userLoginPath(user string) (string, error) {
-	outB, err := exec.Command("sudo", "-u", user, "-i", "sh", "-c", "echo $PATH").Output()
+// installer's own PATH is secure_path, not the user's). The sentinel prefix
+// survives profiles that echo banners — only the __P= line is the PATH.
+func userLoginPath(userName string) (string, error) {
+	outB, err := exec.Command("sudo", "-u", userName, "-i", "sh", "-c", `printf '__P=%s\n' "$PATH"`).Output()
 	if err != nil {
 		return "", err
 	}
-	p := strings.TrimSpace(string(outB))
+	return extractLoginPath(string(outB))
+}
+
+// extractLoginPath pulls the last __P=-prefixed line out of login-shell
+// output (earlier lines may be MOTD or profile banners).
+func extractLoginPath(out string) (string, error) {
+	p := ""
+	for _, l := range strings.Split(out, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimRight(l, "\r"), "__P="); ok {
+			p = v
+		}
+	}
+	p = strings.TrimSpace(p)
 	if p == "" {
-		return "", fmt.Errorf("empty PATH")
+		return "", fmt.Errorf("no __P= marker in login shell output")
 	}
 	return p, nil
 }
