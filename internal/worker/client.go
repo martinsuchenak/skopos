@@ -92,8 +92,16 @@ func (c *Client) ReportResult(ctx context.Context, runID, workerID string, succe
 	return c.do(ctx, http.MethodPost, "/api/runs/"+runID+"/report", body, nil)
 }
 
-func (c *Client) Pause(ctx context.Context, runID, workerID, reason string) error {
-	return c.do(ctx, http.MethodPost, "/api/runs/"+runID+"/pause", map[string]string{"worker_id": workerID, "reason": reason}, nil)
+func (c *Client) Pause(ctx context.Context, runID, workerID, reason string, resumeAfter time.Time) error {
+	body := map[string]any{"worker_id": workerID, "reason": reason}
+	if !resumeAfter.IsZero() {
+		body["resume_after"] = resumeAfter.UTC().Format(time.RFC3339Nano)
+	}
+	return c.do(ctx, http.MethodPost, "/api/runs/"+runID+"/pause", body, nil)
+}
+
+func (c *Client) CancelRun(ctx context.Context, runID, workerID, reason string) error {
+	return c.do(ctx, http.MethodPost, "/api/runs/"+runID+"/cancel", map[string]string{"worker_id": workerID, "reason": reason}, nil)
 }
 
 func (c *Client) Resume(ctx context.Context, runID, workerID string) error {

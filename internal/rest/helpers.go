@@ -1,8 +1,8 @@
 package rest
 
 import (
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"

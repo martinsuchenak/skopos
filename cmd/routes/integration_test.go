@@ -23,8 +23,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-
-
 func integrationSetup(t *testing.T, apiKey string) *http.ServeMux {
 	t.Helper()
 	// A temp-file DB through db.Connect gets the production DSN pragmas

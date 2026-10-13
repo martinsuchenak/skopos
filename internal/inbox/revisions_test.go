@@ -146,6 +146,45 @@ func TestApproveLocksRevisionAndRecordsApproval(t *testing.T) {
 	}
 }
 
+// Round-3 T1/A1: the atomic amend replaces the pending steps (not append),
+// orders them before the review step, and carries the plan's workspace.
+func TestAmendReplacesPendingSteps(t *testing.T) {
+	svc, plansSvc, _ := fullStack(t)
+	root := context.Background()
+	item := mustReadyForApproval(t, svc, plansSvc, "amend probe")
+	if _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SystemTransition(root, item.ID, StatusImplementing, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	// Amend with the guard satisfied (implementing).
+	steps := []plans.RevisionStep{
+		{Title: "amended step one", Description: "new way"},
+		{Title: "amended step two", Description: "other"},
+	}
+	rev, err := plansSvc.Amend(root, item.PlanID, steps, "base-xyz")
+	if err != nil {
+		t.Fatalf("amend: %v", err)
+	}
+	if rev.BaseSHA != "base-xyz" {
+		t.Fatalf("amend must carry the given base: %+v", rev)
+	}
+	plan, err := plansSvc.GetPlan(root, item.PlanID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var titles []string
+	for _, pi := range plan.Items {
+		titles = append(titles, pi.Title)
+	}
+	// done + amended steps — the original pending steps replaced, not
+	// appended. (mustReadyForApproval creates one step and no review step.)
+	if len(titles) != 3 || titles[0] != "step 1" || titles[1] != "amended step one" || titles[2] != "amended step two" {
+		t.Fatalf("amended plan items wrong: %v", titles)
+	}
+}
+
 // Approve binds to what Martin saw (review fix 3): a stale revision id or a
 // plan edited after the snapshot is a 409-class refusal, and an item with no
 // plan or no revision never approves.

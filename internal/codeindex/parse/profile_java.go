@@ -17,7 +17,6 @@ func init() {
 	registerProfile(&base)
 }
 
-
 // javaDefName reads the variable name for field declarations (the generic
 // first-identifier lookup would return the type).
 func javaDefName(n *gts.Node, lang *gts.Language, src []byte) (string, bool) {

@@ -176,4 +176,3 @@ func ioReadFull(c net.Conn, buf []byte) (int, error) {
 	}
 	return total, nil
 }
-

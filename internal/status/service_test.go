@@ -30,7 +30,7 @@ func (s *fakeStore) ListEvents(ctx context.Context, sessionID string) ([]Event, 
 	return nil, nil
 }
 
-func (s *fakeStore) DeleteSession(_ context.Context, _ string) error           { return nil }
+func (s *fakeStore) DeleteSession(_ context.Context, _ string) error { return nil }
 func (s *fakeStore) DeleteAllSessions(_ context.Context, _ string) (int64, error) {
 	s.deletedAll++
 	return 2, nil

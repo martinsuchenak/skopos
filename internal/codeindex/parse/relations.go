@@ -149,7 +149,6 @@ func goRelations() map[string]func(n *gts.Node, lang *gts.Language, src []byte) 
 	}
 }
 
-
 // ---- type references ----
 
 // primitiveTypeNames are skipped when recording type references: nobody
@@ -308,7 +307,6 @@ func importName(n *gts.Node, lang *gts.Language, src []byte) string {
 	}
 	return found
 }
-
 
 // phpInstanceofRef: `$x instanceof Foo` types the target as a bare name
 // under a binary_expression; the instanceof token gates the extraction.

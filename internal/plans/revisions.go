@@ -115,7 +115,11 @@ func (s *Service) Amend(ctx context.Context, planID string, steps []RevisionStep
 			return nil, err
 		}
 	}
-	if err := s.store.(AmendTxer).AmendTx(ctx, planID, steps, strings.TrimSpace(baseSHA), s.now().UTC()); err != nil {
+	amender, ok := s.store.(AmendTxer)
+	if !ok {
+		return nil, fmt.Errorf("%w: storage does not support amendments", ErrInvalidInput)
+	}
+	if err := amender.AmendTx(ctx, planID, steps, strings.TrimSpace(baseSHA), s.now().UTC()); err != nil {
 		return nil, err
 	}
 	s.publishPlan(ctx, planID)
@@ -373,19 +377,45 @@ func (s *Storage) AmendTx(ctx context.Context, planID string, steps []RevisionSt
 		`SELECT COALESCE(MAX(revision_no), 0) + 1 FROM plan_revisions WHERE plan_id = ?`, planID).Scan(&next); err != nil {
 		return fmt.Errorf("next revision number: %w", err)
 	}
-	posRow, err := tx.QueryContext(ctx,
-		`SELECT COALESCE(MAX(position), 0) FROM plan_items WHERE plan_id = ?`, planID)
-	if err != nil {
-		return fmt.Errorf("positions: %w", err)
+	var wsID string
+	if err := tx.QueryRowContext(ctx, `SELECT workspace_id FROM plans WHERE id = ?`, planID).Scan(&wsID); err != nil {
+		return fmt.Errorf("plan workspace: %w", err)
 	}
-	var pos int
-	if posRow.Next() {
-		if err := posRow.Scan(&pos); err != nil {
-			posRow.Close()
-			return err
+	// A1: the amended steps REPLACE the remaining pending implementation
+	// steps (the prompt contract: "the full proposed list of remaining
+	// steps"), not append after them. Done steps and the review step keep
+	// their positions; the new steps land between them.
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM plan_items
+		WHERE plan_id = ? AND status = 'pending' AND phase IN ('implement', 'amendment')`,
+		planID); err != nil {
+		return fmt.Errorf("superseding pending steps: %w", err)
+	}
+	// Re-read positions: amended steps go just before the review step.
+	var reviewPos sql.NullInt64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT MIN(position) FROM plan_items WHERE plan_id = ? AND phase = 'review'`, planID).Scan(&reviewPos); err != nil {
+		return fmt.Errorf("review position: %w", err)
+	}
+	pos := int(0)
+	if reviewPos.Valid {
+		pos = int(reviewPos.Int64) - len(steps)
+		if pos < 0 {
+			pos = 0
+		}
+		// Push the review step (and anything after it) past the new steps.
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE plan_items SET position = position + ? WHERE plan_id = ? AND position >= ?`,
+			len(steps), planID, int(reviewPos.Int64)); err != nil {
+			return fmt.Errorf("shifting review step: %w", err)
+		}
+	} else {
+		var maxPos sql.NullInt64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT MAX(position) FROM plan_items WHERE plan_id = ?`, planID).Scan(&maxPos); err == nil && maxPos.Valid {
+			pos = int(maxPos.Int64)
 		}
 	}
-	posRow.Close()
 	for _, st := range steps {
 		pos++
 		if _, err := tx.ExecContext(ctx, `
@@ -412,7 +442,7 @@ func (s *Storage) AmendTx(ctx context.Context, planID string, steps []RevisionSt
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO plan_revisions (id, plan_id, workspace_id, revision_no, steps_json, content_hash, base_sha, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		ids.New(), planID, "", next, string(checks), hash, baseSHA, formatTime(now)); err != nil {
+		ids.New(), planID, wsID, next, string(checks), hash, baseSHA, formatTime(now)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -420,7 +450,7 @@ func (s *Storage) AmendTx(ctx context.Context, planID string, steps []RevisionSt
 
 func txItems(ctx context.Context, tx *sql.Tx, planID string) ([]Item, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT id, title, description, phase, position FROM plan_items WHERE plan_id = ? ORDER BY position`, planID)
+		SELECT id, title, COALESCE(phase, ''), position FROM plan_items WHERE plan_id = ? ORDER BY position`, planID)
 	if err != nil {
 		return nil, fmt.Errorf("listing items for snapshot: %w", err)
 	}
@@ -428,7 +458,7 @@ func txItems(ctx context.Context, tx *sql.Tx, planID string) ([]Item, error) {
 	var out []Item
 	for rows.Next() {
 		var it Item
-		if err := rows.Scan(&it.ID, &it.Title, &it.Description, &it.Phase, &it.Position); err != nil {
+		if err := rows.Scan(&it.ID, &it.Title, &it.Description, &it.Position); err != nil {
 			return nil, err
 		}
 		out = append(out, it)

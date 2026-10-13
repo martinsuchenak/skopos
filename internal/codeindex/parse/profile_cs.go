@@ -16,7 +16,7 @@ func init() {
 	base := *commonProfile
 	base.name = "c_sharp"
 	base.defs = map[string]string{
-		"field_declaration": "field",
+		"field_declaration":       "field",
 		"class_declaration":       "class",
 		"struct_declaration":      "struct",
 		"interface_declaration":   "interface",

@@ -320,6 +320,12 @@ func (s *Service) Retry(ctx context.Context, itemID, answer, via string) (*Item,
 	if err := auth.RequireApprover(ctx); err != nil {
 		return nil, err
 	}
+	switch item.Status {
+	case StatusBlocked, StatusFailed:
+		// admissible
+	default:
+		return nil, fmt.Errorf("%w: retry applies to blocked or failed items (item is %s)", ErrInvalidInput, statusLabel(item.Status))
+	}
 	target := StatusPlanning
 	stage := "plan"
 	revID, baseSHA := "", ""

@@ -439,46 +439,46 @@ export function validateResetToken(tok) {}
 func TestModifierExtraction(t *testing.T) {
 	cases := []struct {
 		name, file, src, sym string
-		wantMods []string
-		wantAttrSubstrings []string
+		wantMods             []string
+		wantAttrSubstrings   []string
 	}{
 		{
 			name: "php attributes and modifiers",
 			file: "t.php", sym: "handle",
-			src: "<?php\nclass A {\n  #[Route('/reset', name: 'reset')]\n  public static function handle($r): void {}\n}\n",
-			wantMods: []string{"public", "static"},
+			src:                "<?php\nclass A {\n  #[Route('/reset', name: 'reset')]\n  public static function handle($r): void {}\n}\n",
+			wantMods:           []string{"public", "static"},
 			wantAttrSubstrings: []string{"Route('/reset', name: 'reset')"},
 		},
 		{
 			name: "php abstract protected",
 			file: "t.php", sym: "make",
-			src: "<?php\nabstract class A {\n  abstract protected function make();\n}\n",
+			src:      "<?php\nabstract class A {\n  abstract protected function make();\n}\n",
 			wantMods: []string{"abstract", "protected"},
 		},
 		{
 			name: "typescript accessibility and keywords",
 			file: "t.ts", sym: "run",
-			src: "class A {\n  private static async run(): Promise<void> {}\n}\n",
+			src:      "class A {\n  private static async run(): Promise<void> {}\n}\n",
 			wantMods: []string{"private", "static", "async"},
 		},
 		{
 			name: "csharp modifier nodes and attributes",
 			file: "t.cs", sym: "Get",
-			src: "public class A {\n  [HttpGet(\"/users\")]\n  public static async Task<int> Get() { return 1; }\n}\n",
-			wantMods: []string{"public", "static", "async"},
+			src:                "public class A {\n  [HttpGet(\"/users\")]\n  public static async Task<int> Get() { return 1; }\n}\n",
+			wantMods:           []string{"public", "static", "async"},
 			wantAttrSubstrings: []string{"HttpGet(\"/users\")"},
 		},
 		{
 			name: "python decorators",
 			file: "t.py", sym: "list_users",
-			src: "@app.route('/users', methods=['GET'])\n@cache.cached(60)\ndef list_users():\n    return []\n",
+			src:                "@app.route('/users', methods=['GET'])\n@cache.cached(60)\ndef list_users():\n    return []\n",
 			wantAttrSubstrings: []string{"@app.route('/users'", "@cache.cached(60)"},
 		},
 		{
 			name: "java annotations in modifiers node",
 			file: "t.java", sym: "run",
-			src: "public class A {\n  @Override\n  @SuppressWarnings(\"x\")\n  public static void run() {}\n}\n",
-			wantMods: []string{"public", "static"},
+			src:                "public class A {\n  @Override\n  @SuppressWarnings(\"x\")\n  public static void run() {}\n}\n",
+			wantMods:           []string{"public", "static"},
 			wantAttrSubstrings: []string{"@Override", "@SuppressWarnings(\"x\")"},
 		},
 	}
@@ -617,7 +617,6 @@ func TestNewExpressionJS(t *testing.T) {
 	}
 }
 
-
 func TestTypeRelations(t *testing.T) {
 	cases := []struct {
 		name, file, src, caller string
@@ -626,37 +625,37 @@ func TestTypeRelations(t *testing.T) {
 		{
 			name: "php extends implements trait",
 			file: "t.php", caller: "Foo",
-			src: "<?php\nclass Foo extends Base implements Iface1, Iface2 {\n  use CacheTrait;\n}\n",
+			src:  "<?php\nclass Foo extends Base implements Iface1, Iface2 {\n  use CacheTrait;\n}\n",
 			want: map[string]string{"Base": "extends", "Iface1": "implements", "Iface2": "implements", "CacheTrait": "uses"},
 		},
 		{
 			name: "typescript extends implements",
 			file: "t.ts", caller: "Foo",
-			src: "class Foo extends Base implements Iface {}\n",
+			src:  "class Foo extends Base implements Iface {}\n",
 			want: map[string]string{"Base": "extends", "Iface": "implements"},
 		},
 		{
 			name: "csharp base list",
 			file: "t.cs", caller: "Foo",
-			src: "public class Foo : Base, IFace {}\n",
+			src:  "public class Foo : Base, IFace {}\n",
 			want: map[string]string{"Base": "extends", "IFace": "implements"},
 		},
 		{
 			name: "java superclass interfaces",
 			file: "t.java", caller: "Foo",
-			src: "public class Foo extends Base implements Iface {}\n",
+			src:  "public class Foo extends Base implements Iface {}\n",
 			want: map[string]string{"Base": "extends", "Iface": "implements"},
 		},
 		{
 			name: "python base classes",
 			file: "t.py", caller: "Foo",
-			src: "class Foo(Base, Mixin):\n    pass\n",
+			src:  "class Foo(Base, Mixin):\n    pass\n",
 			want: map[string]string{"Base": "extends", "Mixin": "extends"},
 		},
 		{
 			name: "go struct embedding",
 			file: "t.go", caller: "Foo",
-			src: "package p\ntype Foo struct {\n\tBase\n\tName string\n}\n",
+			src:  "package p\ntype Foo struct {\n\tBase\n\tName string\n}\n",
 			want: map[string]string{"Base": "embeds"},
 		},
 	}

@@ -600,7 +600,6 @@ func SplitIdentifier(name string) string {
 	return strings.Join(parts, " ")
 }
 
-
 // firstCallArgument returns the first identifier-ish argument of a call
 // (Ruby include/extend targets are constants).
 func firstCallArgument(n *gts.Node, lang *gts.Language, src []byte) string {

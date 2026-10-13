@@ -27,7 +27,7 @@ func withPrincipal(r *http.Request, p *auth.Principal) *http.Request {
 }
 
 var (
-	rootPrin  = &auth.Principal{Root: true}
+	rootPrin   = &auth.Principal{Root: true}
 	scopedPrin = &auth.Principal{KeyID: "k1", Name: "ci", Workspaces: map[string]struct{}{"github.com/o/a": {}}}
 )
 
@@ -89,8 +89,8 @@ func TestHandlerKeyLifecycle(t *testing.T) {
 	}
 	var created struct {
 		Key struct {
-			ID     string `json:"id"`
-			Name   string `json:"name"`
+			ID   string `json:"id"`
+			Name string `json:"name"`
 		} `json:"key"`
 		Secret string `json:"key_secret"`
 	}
@@ -129,8 +129,8 @@ func TestHandlerWhoami(t *testing.T) {
 		t.Fatalf("whoami: %d", w.Code)
 	}
 	var resp struct {
-		Root       bool `json:"root"`
-		Key        struct {
+		Root bool `json:"root"`
+		Key  struct {
 			AllWorkspaces bool     `json:"all_workspaces"`
 			Workspaces    []string `json:"workspaces"`
 		} `json:"key"`

@@ -158,7 +158,10 @@ func TestEmbedTextSplitsIdentifiers(t *testing.T) {
 
 // linearEmbedder maps a fixed query string to a fixed vector: exact control
 // over similarities in SemanticSearch tests.
-type linearEmbedder struct{ q string; vec []float32 }
+type linearEmbedder struct {
+	q   string
+	vec []float32
+}
 
 func (l *linearEmbedder) Model() string { return "linear-test" }
 func (l *linearEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {

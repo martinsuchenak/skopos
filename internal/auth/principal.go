@@ -3,15 +3,15 @@ package auth
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
-	"fmt"
-	"sync"
-	"time"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/martinsuchenak/skopos/internal/ctxkeys"
 )

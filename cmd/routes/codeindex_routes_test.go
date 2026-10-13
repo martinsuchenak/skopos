@@ -19,8 +19,6 @@ import (
 	"github.com/martinsuchenak/skopos/internal/codeindex/parse"
 )
 
-
-
 func codeindexSetup(t *testing.T, apiKey string) (*httptest.Server, string) {
 	t.Helper()
 	dir := t.TempDir()

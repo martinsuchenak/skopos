@@ -1,12 +1,11 @@
 package codeindex
 
 import (
-
-	"github.com/martinsuchenak/skopos/internal/auth"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/martinsuchenak/skopos/internal/auth"
 	"os"
 	"os/exec"
 	"path/filepath"

@@ -105,19 +105,17 @@ func (w *Worker) Loop(ctx context.Context) error {
 		// N5: the run's stage must match the item's phase. A queued-then-
 		// rejected item, a bypassed authorization, a stale resume — the
 		// claim-time move is best-effort, so the worker verifies.
-		if it, ierr := w.client.GetItem(ctx, run.ItemID); ierr == nil && !phaseAdmissible(it.Status, run.Stage) {
+		if it, ierr := w.client.GetItem(ctx, run.ItemID); ierr == nil && !PhaseAdmissible(it.Status, run.Stage) {
 			w.log.Warn("abandoning run: item not in its phase", "run", run.ID, "stage", run.Stage, "item_status", it.Status)
-			_ = w.client.ReportResult(ctx, run.ID, w.cfg.ID, false, map[string]any{
-				"reason": fmt.Sprintf("item is %s, not admissible for a %s run", it.Status, run.Stage),
-			})
+			_ = w.client.CancelRun(ctx, run.ID, w.cfg.ID, fmt.Sprintf("item is %s, not admissible for a %s run", it.Status, run.Stage))
 			continue
 		}
 		w.execute(ctx, run)
 	}
 }
 
-// phaseAdmissible: the item statuses under which a stage's run may execute.
-func phaseAdmissible(itemStatus, stage string) bool {
+// PhaseAdmissible: the item statuses under which a stage's run may execute.
+func PhaseAdmissible(itemStatus, stage string) bool {
 	switch stage {
 	case "plan":
 		return itemStatus == "queued" || itemStatus == "planning"
@@ -192,7 +190,7 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 		// claimable, so nobody else will. Without the self-resume the run
 		// and its item were stuck for good.
 		reason := "quota: " + q.detail
-		_ = w.client.Pause(ctx, run.ID, w.cfg.ID, reason)
+		_ = w.client.Pause(ctx, run.ID, w.cfg.ID, reason, q.resetAt)
 		wait := time.Until(q.resetAt)
 		if wait <= 0 || wait > 30*time.Minute {
 			wait = 30 * time.Minute

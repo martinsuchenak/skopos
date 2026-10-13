@@ -11,8 +11,8 @@ import (
 )
 
 type Service struct {
-	store    Store
-	now      func() time.Time
+	store     Store
+	now       func() time.Time
 	publisher events.Publisher
 }
 

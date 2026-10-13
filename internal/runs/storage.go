@@ -137,14 +137,16 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 	}
 
 	// Re-read candidates inside the transaction. Paused runs are NOT
-	// candidates: a pause means someone must decide (amendment approval,
-	// quota reset) — auto-reclaiming them bypassed the amendment gate
-	// (review H4).
+	// candidates EXCEPT quota pauses past their resume_after (A2): an
+	// amendment pause has no resume_after and only its approval re-arms it
+	// (H4).
 	var cand *Run
 	{
 		row := tx.QueryRowContext(ctx, `
-			SELECT `+runColumns+` FROM runs WHERE worker_id = ? AND status = ?
-			ORDER BY created_at ASC LIMIT 1`, in.WorkerID, string(StatusInterrupted))
+			SELECT `+runColumns+` FROM runs
+			WHERE worker_id = ? AND (status = ? OR (status = ? AND lease_expires_at != '' AND lease_expires_at <= ?))
+			ORDER BY created_at ASC LIMIT 1`,
+			in.WorkerID, string(StatusInterrupted), string(StatusPaused), formatTime(now))
 		r, err := scanRun(row)
 		if err == nil {
 			cand = r
@@ -312,11 +314,17 @@ func (s *Storage) Report(ctx context.Context, id, workerID string, in ReportInpu
 }
 
 // Pause keeps affinity: the run stays with its worker, no lease pressure.
-func (s *Storage) Pause(ctx context.Context, id, workerID, reason string, now time.Time) error {
+// A non-empty resumeAfter (quota pauses) lets Claim hand the run back to
+// its owner once that time passes — restart-safe (A2).
+func (s *Storage) Pause(ctx context.Context, id, workerID, reason string, resumeAfter time.Time, now time.Time) error {
+	expires := ""
+	if !resumeAfter.IsZero() {
+		expires = formatTime(resumeAfter)
+	}
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE runs SET status = ?, fail_reason = ?, lease_expires_at = '', updated_at = ?
+		UPDATE runs SET status = ?, fail_reason = ?, lease_expires_at = ?, updated_at = ?
 		WHERE id = ? AND worker_id = ? AND status IN (?, ?, ?)`,
-		string(StatusPaused), reason, formatTime(now),
+		string(StatusPaused), reason, expires, formatTime(now),
 		id, workerID, string(StatusClaimed), string(StatusRunning), string(StatusPaused))
 	if err != nil {
 		return fmt.Errorf("pausing run: %w", err)
@@ -332,10 +340,13 @@ func (s *Storage) Pause(ctx context.Context, id, workerID, reason string, now ti
 // invisible to Claim until the lease expired — an approved amendment took
 // ~10 minutes to re-arm).
 func (s *Storage) Resume(ctx context.Context, id, workerID string, lease time.Duration, now time.Time) error {
+	// lease_expires_at = now: resumed runs keep aging into the branch
+	// grace like any other interrupted run (A3 — an empty lease exempted
+	// them forever).
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE runs SET status = ?, resume_kind = ?, lease_expires_at = '', updated_at = ?
+		UPDATE runs SET status = ?, resume_kind = ?, lease_expires_at = ?, updated_at = ?
 		WHERE id = ? AND worker_id = ? AND status = ?`,
-		string(StatusInterrupted), ResumeSession, formatTime(now),
+		string(StatusInterrupted), ResumeSession, formatTime(now), formatTime(now),
 		id, workerID, string(StatusPaused))
 	if err != nil {
 		return fmt.Errorf("resuming run: %w", err)

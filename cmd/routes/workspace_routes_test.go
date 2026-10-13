@@ -7,8 +7,6 @@ import (
 	"github.com/martinsuchenak/skopos/internal/workspaces"
 )
 
-
-
 func TestRegisterWorkspaceRoutes(t *testing.T) {
 	mux := http.NewServeMux()
 	registerWorkspaceRoutes(mux, workspaces.NewHandler(workspaces.NewService(nil), testAuth("")))

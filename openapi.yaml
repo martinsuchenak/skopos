@@ -1717,6 +1717,7 @@ paths:
               properties:
                 worker_id: { type: string }
                 reason: { type: string }
+                resume_after: { type: string, format: date-time, description: Quota resets — the owner reclaims the run via any claim once past this time (restart-safe) }
       responses:
         "204": { description: Paused }
         "401": { description: Unauthorized }
@@ -1743,6 +1744,28 @@ paths:
         "401": { description: Unauthorized }
         "404": { description: Unknown run }
         "409": { description: Lease held by another worker }
+
+  /api/runs/{id}/cancel:
+    post:
+      summary: The owning worker retires its own run (an abandoned stage is a cancellation, not a failure)
+      operationId: cancelRun
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/RunId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [worker_id]
+              properties:
+                worker_id: { type: string }
+                reason: { type: string }
+      responses:
+        "204": { description: Cancelled }
+        "401": { description: Unauthorized }
+        "404": { description: Unknown run }
+        "409": { description: Not this worker's run }
 
   /api/runs/{id}:
     get:

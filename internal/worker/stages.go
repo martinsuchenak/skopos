@@ -298,19 +298,22 @@ func (w *Worker) proposeAmendment(ctx context.Context, run *Run, item *Item, ir 
 		ir.Reason = ir.Summary
 	}
 	_ = w.client.AppendSection(ctx, run.ItemID, "Amendment proposed — worker", bullets([]string{ir.Reason}))
-	// Item to the gate first (the amendment guard accepts implementing).
-	if err := w.client.Transition(ctx, run.ItemID, "awaiting_approval", "amendment: "+firstLine(ir.Reason)); err != nil {
-		return err
-	}
 	base := run.BaseSHA
 	if base == "" {
 		base, _ = git(ctx, w.cfg.Repos[run.WorkspaceID].Path, "rev-parse", "origin/"+w.cfg.Repos[run.WorkspaceID].DefaultBranch)
 		base = strings.TrimSpace(base)
 	}
+	// Amend FIRST (the guard accepts implementing), THEN move the item to
+	// the gate: an amend failure no longer strands the item at the gate
+	// with the old revision (round-3 low) — the run reports failed from
+	// implementing, a valid edge.
 	if _, err := w.client.Amend(ctx, item.PlanID, base, ir.AmendedSteps); err != nil {
 		return err
 	}
-	return w.client.Pause(ctx, run.ID, w.cfg.ID, "amendment proposed: "+firstLine(ir.Reason))
+	if err := w.client.Transition(ctx, run.ItemID, "awaiting_approval", "amendment: "+firstLine(ir.Reason)); err != nil {
+		return err
+	}
+	return w.client.Pause(ctx, run.ID, w.cfg.ID, "amendment proposed: "+firstLine(ir.Reason), time.Time{})
 }
 
 func (w *Worker) failNoRepo(workspaceID string) error {

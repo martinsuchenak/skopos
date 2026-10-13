@@ -18,28 +18,28 @@ func init() {
 			"variable_declarator": jsConditionalDefs,
 		}
 		base.defs = cloneDefs(commonDefs)
-	base.qualifyCallee = jsQualifyCallee
-	base.typeRefNodes = map[string]func(n *gts.Node, lang *gts.Language, src []byte) []string{
-		"type_annotation": typeRefFunc(true),
-	}
-	base.relationNodes = jstsRelations()
-	base.importNodes = map[string]bool{"import_statement": true}
-	// Class fields only: outside a class body the same node types cover
-	// local `const w = ...` declarators, which are not fields.
-	if base.conditionalDefs == nil {
-		base.conditionalDefs = map[string]func(n *gts.Node, lang *gts.Language) (string, bool){}
-	}
-	for _, nt := range []string{"public_field_definition", "field_definition", "property_definition"} {
-		base.conditionalDefs[nt] = func(n *gts.Node, lang *gts.Language) (string, bool) {
-			if p := n.Parent(); p != nil && p.Type(lang) == "class_body" {
-				return "property", true
-			}
-			return "", false
+		base.qualifyCallee = jsQualifyCallee
+		base.typeRefNodes = map[string]func(n *gts.Node, lang *gts.Language, src []byte) []string{
+			"type_annotation": typeRefFunc(true),
 		}
-	}
-	base.defs["enum_assignment"] = "case"
-	base.defs["enum_member"] = "case"
-	registerProfile(&base)
+		base.relationNodes = jstsRelations()
+		base.importNodes = map[string]bool{"import_statement": true}
+		// Class fields only: outside a class body the same node types cover
+		// local `const w = ...` declarators, which are not fields.
+		if base.conditionalDefs == nil {
+			base.conditionalDefs = map[string]func(n *gts.Node, lang *gts.Language) (string, bool){}
+		}
+		for _, nt := range []string{"public_field_definition", "field_definition", "property_definition"} {
+			base.conditionalDefs[nt] = func(n *gts.Node, lang *gts.Language) (string, bool) {
+				if p := n.Parent(); p != nil && p.Type(lang) == "class_body" {
+					return "property", true
+				}
+				return "", false
+			}
+		}
+		base.defs["enum_assignment"] = "case"
+		base.defs["enum_member"] = "case"
+		registerProfile(&base)
 	}
 }
 

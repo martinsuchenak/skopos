@@ -79,6 +79,7 @@ func Middleware(log logger.Logger, next http.Handler) http.Handler {
 		}
 	})
 }
+
 // statusRecorder captures the response status. It proxies Flush so streaming
 // handlers (SSE) still work when wrapped.
 type statusRecorder struct {

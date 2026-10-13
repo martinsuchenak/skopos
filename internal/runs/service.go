@@ -244,9 +244,11 @@ func (s *Service) chain(ctx context.Context, run *Run, in ReportInput) {
 	}
 }
 
-// Pause keeps the run with its worker (amendment, quota) — affinity means
-// the resume lands where the session lives.
-func (s *Service) Pause(ctx context.Context, id, workerID, reason string) error {
+// Pause keeps the run with its worker — affinity means the resume lands
+// where the session lives. A non-zero resumeAfter (quota: the allowance
+// reset) makes the pause restart-safe: the owner reclaims it via any claim
+// once the time passes, even after a worker restart (A2).
+func (s *Service) Pause(ctx context.Context, id, workerID, reason string, resumeAfter time.Time) error {
 	id = strings.TrimSpace(id)
 	if id == "" || strings.TrimSpace(workerID) == "" {
 		return fmt.Errorf("%w: id and worker_id are required", ErrInvalidInput)
@@ -254,7 +256,27 @@ func (s *Service) Pause(ctx context.Context, id, workerID, reason string) error 
 	if err := s.checkScope(ctx, id); err != nil {
 		return err
 	}
-	return s.storage.Pause(ctx, id, workerID, reason, s.now().UTC())
+	return s.storage.Pause(ctx, id, workerID, reason, resumeAfter, s.now().UTC())
+}
+
+// CancelOwn lets the owning worker retire its own run (abandoned stages —
+// A4: an unexecuted run are a cancellation, not a failure).
+func (s *Service) CancelOwn(ctx context.Context, id, workerID, reason string) error {
+	id = strings.TrimSpace(id)
+	if id == "" || strings.TrimSpace(workerID) == "" {
+		return fmt.Errorf("%w: id and worker_id are required", ErrInvalidInput)
+	}
+	r, err := s.storage.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := auth.RequireWorkspaceQuiet(ctx, r.WorkspaceID); err != nil {
+		return fmt.Errorf("%w: run %s", ErrNotFound, id)
+	}
+	if r.WorkerID != workerID {
+		return ErrLeaseHeld
+	}
+	return s.storage.CancelOne(ctx, id, reason, s.now().UTC())
 }
 
 // Resume returns a paused run to its owner.

@@ -3,11 +3,11 @@ package status
 import (
 	"sort"
 
-	"github.com/martinsuchenak/skopos/internal/auth"
-	"github.com/martinsuchenak/skopos/internal/events"
 	"context"
 	"errors"
 	"fmt"
+	"github.com/martinsuchenak/skopos/internal/auth"
+	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/martinsuchenak/skopos/internal/ids"
 	"strings"
 	"time"

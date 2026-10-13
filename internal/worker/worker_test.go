@@ -173,6 +173,23 @@ func TestReviewVerdictStrict(t *testing.T) {
 	}
 }
 
+// T1/round-3: the phase truth table for run execution.
+func TestPhaseAdmissible(t *testing.T) {
+	cases := []struct {
+		item, stage string
+		ok          bool
+	}{
+		{"queued", "plan", true}, {"planning", "plan", true}, {"approved", "plan", false},
+		{"approved", "implement", true}, {"implementing", "implement", true}, {"queued", "implement", false},
+		{"implementing", "review", true}, {"discarded", "implement", false}, {"in_review", "implement", false},
+	}
+	for _, c := range cases {
+		if got := PhaseAdmissible(c.item, c.stage); got != c.ok {
+			t.Errorf("PhaseAdmissible(%q,%q) = %v want %v", c.item, c.stage, got, c.ok)
+		}
+	}
+}
+
 func makeLongTitle() string {
 	b := make([]byte, 200)
 	for i := range b {

@@ -92,7 +92,7 @@ func TestHubFailsClosedForScopedSubscribers(t *testing.T) {
 
 	hub.Publish(Event{Type: "blackboard", Workspace: "ws-b"}) // foreign: nobody scoped
 	hub.Publish(Event{Type: "blackboard", Workspace: "ws-a"}) // own
-	hub.Publish(Event{Type: "change"})                         // unattributed: root only
+	hub.Publish(Event{Type: "change"})                        // unattributed: root only
 
 	drain := func(ch <-chan Event) []Event {
 		var out []Event

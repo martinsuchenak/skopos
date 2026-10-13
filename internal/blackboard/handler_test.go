@@ -12,8 +12,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-
-
 func testHandler(t *testing.T, apiKey string) *Handler {
 	t.Helper()
 	sqlDB, err := sql.Open("sqlite", ":memory:")

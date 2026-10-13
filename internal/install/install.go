@@ -832,7 +832,7 @@ func installZCodeHooks(o Options, actions *[]string) error {
 			{event: "PreToolUse", matcher: "Bash", script: "skopos-pre-tool.sh"},
 		},
 		"PostToolUse": {{event: "PostToolUse", matcher: "Edit|Write", script: "skopos-post-tool.sh"}},
-		"Stop":           {{event: "Stop", script: "skopos-stop.sh"}},
+		"Stop":        {{event: "Stop", script: "skopos-stop.sh"}},
 	}
 	return mergeZCodeHookConfig(scopePath(o.Scope, filepath.Join(home, ".zcode", "cli", "config.json"), filepath.Join(".zcode", "config.json")), hooksDir, events, o, actions)
 }

@@ -103,7 +103,7 @@ func TestAffinity(t *testing.T) {
 		t.Fatalf("re-claim must increment attempt: %+v", run3)
 	}
 	// A branch-resumable interrupted run is claimable by anyone.
-	if err := s.storage.Pause(ctx, r.ID, "w1", "quota", time.Now().UTC()); err != nil {
+	if err := s.storage.Pause(ctx, r.ID, "w1", "quota", time.Time{}, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	// flip to interrupted+branch directly (the takeover marking)
@@ -136,7 +136,7 @@ func TestPauseHeartbeatResume(t *testing.T) {
 	if err := s.Heartbeat(ctx, run.ID, "w2"); !errors.Is(err, ErrLeaseHeld) {
 		t.Fatalf("foreign heartbeat: %v", err)
 	}
-	if err := s.Pause(ctx, run.ID, "w1", "quota"); err != nil {
+	if err := s.Pause(ctx, run.ID, "w1", "quota", time.Time{}); err != nil {
 		t.Fatalf("pause: %v", err)
 	}
 	if err := s.Resume(ctx, run.ID, "w2"); !errors.Is(err, ErrLeaseHeld) {
@@ -248,7 +248,7 @@ func TestPausedNotReclaimed(t *testing.T) {
 	ctx := rootCtx()
 	mustQueue(t, s, ctx, "ws-a", "item-1", StageImplement)
 	run, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
-	if err := s.Pause(ctx, run.ID, "w1", "amendment"); err != nil {
+	if err := s.Pause(ctx, run.ID, "w1", "amendment", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	// The same worker claims: nothing (paused is not a candidate).
@@ -340,6 +340,29 @@ func TestGraceFlipOnSweep(t *testing.T) {
 	}
 	if r2.ResumeKind != ResumeBranch {
 		t.Fatalf("takeover must be branch-kind: %s", r2.ResumeKind)
+	}
+}
+
+// A2: a quota pause with resume_after is reclaimable by its owner once the
+// time passes (restart-safe); an amendment pause (no resume_after) is not.
+func TestQuotaPauseReclaim(t *testing.T) {
+	s := testService(t)
+	ctx := rootCtx()
+	mustQueue(t, s, ctx, "ws-a", "item-1", StageImplement)
+	run, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	// Quota pause until 50ms from now.
+	if err := s.Pause(ctx, run.ID, "w1", "quota: limit", time.Now().UTC().Add(50*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	// Before the reset: the owner gets nothing (paused, not yet due).
+	if r, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}}); r != nil {
+		t.Fatalf("quota run must not be reclaimed before the reset: %+v", r)
+	}
+	time.Sleep(80 * time.Millisecond)
+	// After the reset: the owner reclaims it — no Resume call needed.
+	r, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	if r == nil || r.ID != run.ID {
+		t.Fatalf("quota run must be reclaimable after the reset: %+v", r)
 	}
 }
 

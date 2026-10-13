@@ -1,13 +1,12 @@
 package codeindex
 
 import (
-
-	"github.com/martinsuchenak/skopos/internal/auth"
 	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/martinsuchenak/skopos/internal/auth"
 	"math"
 	"math/rand"
 	"net/http"
@@ -272,7 +271,10 @@ func (s *Service) EmbedPending(ctx context.Context, workspace string, embedder E
 	// ~minutes on large repos for no benefit.
 	const batch = 64
 	const workers = 4
-	type result struct{ n int; err error }
+	type result struct {
+		n   int
+		err error
+	}
 	results := make(chan result, (len(texts)+batch-1)/batch)
 	jobs := make(chan [2]int)
 	var wg sync.WaitGroup
