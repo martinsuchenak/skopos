@@ -178,7 +178,7 @@ func runChecks(ctx context.Context, worktree string, checks []string) []Check {
 	for _, c := range checks {
 		cmd := exec.CommandContext(ctx, "sh", "-c", c)
 		cmd.Dir = worktree
-		cmd.Env = scrubEnv(nil)
+		cmd.Env = scrubEnv(nil, nil)
 		outBytes, err := cmd.CombinedOutput()
 		out = append(out, Check{Name: c, Passed: err == nil, Output: tail(string(outBytes), 2000)})
 	}

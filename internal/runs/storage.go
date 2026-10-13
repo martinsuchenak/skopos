@@ -30,15 +30,15 @@ func parseTime(s string) time.Time {
 }
 
 const runColumns = `id, workspace_id, item_id, plan_rev_id, stage, runner, worker_id, status,
-	resume_kind, lease_expires_at, attempt, branch, base_sha, head_sha,
+	resume_kind, lease_expires_at, resume_after, attempt, branch, base_sha, head_sha,
 	result_summary, diffstat, checks, log_ref, fail_reason, lease_token_hash, claimed_key_id, created_at, updated_at`
 
 func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	var r Run
-	var lease, createdAt, updatedAt string
+	var lease, resumeAfter, createdAt, updatedAt string
 	var checks string
 	if err := row.Scan(&r.ID, &r.WorkspaceID, &r.ItemID, &r.PlanRevID, &r.Stage, &r.Runner, &r.WorkerID, &r.Status,
-		&r.ResumeKind, &lease, &r.Attempt, &r.Branch, &r.BaseSHA, &r.HeadSHA,
+		&r.ResumeKind, &lease, &resumeAfter, &r.Attempt, &r.Branch, &r.BaseSHA, &r.HeadSHA,
 		&r.ResultSummary, &r.Diffstat, &checks, &r.LogRef, &r.FailReason, &r.LeaseTokenHash, &r.ClaimedKeyID, &createdAt, &updatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -46,6 +46,7 @@ func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 		return nil, fmt.Errorf("scanning run: %w", err)
 	}
 	r.LeaseExpires = parseTime(lease)
+	r.ResumeAfter = parseTime(resumeAfter)
 	r.CreatedAt = parseTime(createdAt)
 	r.UpdatedAt = parseTime(updatedAt)
 	if checks != "" && checks != "[]" {
@@ -140,11 +141,11 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 		return nil, fmt.Errorf("grace flip: %w", err)
 	}
 	// Round-4 low: an overdue QUOTA pause whose owner never returns also
-	// ages into a branch takeover (amendment pauses carry no
-	// lease_expires_at and stay approval-gated).
+	// ages into a branch takeover (amendment pauses carry no resume_after
+	// and stay approval-gated).
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE runs SET status = ?, resume_kind = ?, updated_at = ?
-		WHERE status = ? AND lease_expires_at != '' AND lease_expires_at < ?`,
+		WHERE status = ? AND resume_after != '' AND resume_after < ?`,
 		string(StatusInterrupted), ResumeBranch, formatTime(now),
 		string(StatusPaused), formatTime(now.Add(-takeoverGrace))); err != nil {
 		return nil, fmt.Errorf("quota grace flip: %w", err)
@@ -158,7 +159,7 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 	{
 		row := tx.QueryRowContext(ctx, `
 			SELECT `+runColumns+` FROM runs
-			WHERE worker_id = ? AND (status = ? OR (status = ? AND lease_expires_at != '' AND lease_expires_at <= ?))
+			WHERE worker_id = ? AND (status = ? OR (status = ? AND resume_after != '' AND resume_after <= ?))
 			ORDER BY created_at ASC LIMIT 1`,
 			in.WorkerID, string(StatusInterrupted), string(StatusPaused), formatTime(now))
 		r, err := scanRun(row)
@@ -268,7 +269,7 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 	token := newLeaseToken()
 	tokenHash := hashLeaseToken(token)
 	res, err := tx.ExecContext(ctx, `
-		UPDATE runs SET status = ?, worker_id = ?, resume_kind = ?, lease_expires_at = ?,
+		UPDATE runs SET status = ?, worker_id = ?, resume_kind = ?, lease_expires_at = ?, resume_after = '',
 			attempt = ?, lease_token_hash = ?, claimed_key_id = ?, updated_at = ?
 		WHERE id = ? AND status = ?`,
 		string(StatusClaimed), in.WorkerID, resumeKind, formatTime(now.Add(lease)),
@@ -334,7 +335,7 @@ func (s *Storage) Report(ctx context.Context, id, workerID, keyID, tokenHash str
 		UPDATE runs SET status = ?, result_summary = ?, head_sha = ?, diffstat = ?, checks = ?,
 			log_ref = ?, fail_reason = ?, branch = CASE WHEN ? != '' THEN ? ELSE branch END,
 			base_sha = CASE WHEN ? != '' THEN ? ELSE base_sha END,
-			lease_expires_at = '', updated_at = ?
+			lease_expires_at = '', resume_after = '', updated_at = ?
 		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
 		string(in.Status), in.Summary, in.HeadSHA, in.Diffstat, string(checks),
 		in.LogRef, in.Reason, in.Branch, in.Branch, in.BaseSHA, in.BaseSHA,
@@ -353,14 +354,16 @@ func (s *Storage) Report(ctx context.Context, id, workerID, keyID, tokenHash str
 // A non-empty resumeAfter (quota pauses) lets Claim hand the run back to
 // its owner once that time passes — restart-safe (A2).
 func (s *Storage) Pause(ctx context.Context, id, workerID, reason string, resumeAfter time.Time, keyID, tokenHash string, now time.Time) error {
-	expires := ""
+	// Round 7: the quota reset lives in resume_after; a paused run carries
+	// no lease deadline (sweeps only age claimed/running leases).
+	resume := ""
 	if !resumeAfter.IsZero() {
-		expires = formatTime(resumeAfter)
+		resume = formatTime(resumeAfter)
 	}
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE runs SET status = ?, fail_reason = ?, lease_expires_at = ?, updated_at = ?
+		UPDATE runs SET status = ?, fail_reason = ?, lease_expires_at = '', resume_after = ?, updated_at = ?
 		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
-		string(StatusPaused), reason, expires, formatTime(now),
+		string(StatusPaused), reason, resume, formatTime(now),
 		id, workerID, keyID, tokenHash, string(StatusClaimed), string(StatusRunning), string(StatusPaused))
 	if err != nil {
 		return fmt.Errorf("pausing run: %w", err)
@@ -380,7 +383,7 @@ func (s *Storage) Resume(ctx context.Context, id, workerID string, lease time.Du
 	// grace like any other interrupted run (A3 — an empty lease exempted
 	// them forever).
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE runs SET status = ?, resume_kind = ?, lease_expires_at = ?, updated_at = ?
+		UPDATE runs SET status = ?, resume_kind = ?, lease_expires_at = ?, resume_after = '', updated_at = ?
 		WHERE id = ? AND worker_id = ? AND status = ?`,
 		string(StatusInterrupted), ResumeSession, formatTime(now), formatTime(now),
 		id, workerID, string(StatusPaused))

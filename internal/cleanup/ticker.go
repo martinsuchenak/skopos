@@ -92,14 +92,17 @@ func (c *Cleaner) clean(ctx context.Context) error {
 	}
 	agentsDeleted, _ := agentsResult.RowsAffected()
 
-	// Worker stage-plan orphans (round-6 F4): a plan created but never
-	// linked (a crash between CreatePlan and LinkPlan) carries nothing —
-	// no items, no revisions, no linked inbox item. Older than a day, it is
-	// garbage. A plan that ever got content or a link is never touched.
+	// Worker stage-plan orphans (round-6 F4, tightened round 7): a plan
+	// created but never linked (a crash between CreatePlan and LinkPlan)
+	// carries nothing — no items, no revisions, no linked inbox item.
+	// Older than a day AND worker-created (the worker-id prefix the config
+	// enforces), a hand-made empty plan is never touched. Dependent rows
+	// (plan_items, plan_revisions, plan_dependencies) go via the schema's
+	// ON DELETE CASCADE — the server DSN enables foreign_keys.
 	orphanCutoff := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339Nano)
 	orphanResult, err := c.db.ExecContext(ctx, `
 		DELETE FROM plans
-		WHERE created_at < ?
+		WHERE created_at < ? AND author_agent_id LIKE 'worker-%'
 		  AND NOT EXISTS (SELECT 1 FROM plan_items WHERE plan_items.plan_id = plans.id)
 		  AND NOT EXISTS (SELECT 1 FROM plan_revisions WHERE plan_revisions.plan_id = plans.id)
 		  AND NOT EXISTS (SELECT 1 FROM inbox_items WHERE inbox_items.plan_id = plans.id)`,

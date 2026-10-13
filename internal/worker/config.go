@@ -102,6 +102,11 @@ func (c *Config) Default(home string) error {
 	if c.ID == "" {
 		h, _ := os.Hostname()
 		c.ID = "worker-" + h
+	} else if !strings.HasPrefix(c.ID, "worker-") {
+		// The prefix marks worker-created plans (author_agent_id) so the
+		// server's orphan cleanup only ever deletes those, never a plan
+		// someone made by hand.
+		return fmt.Errorf("worker id must start with %q", "worker-")
 	}
 	if c.StateDir == "" {
 		c.StateDir = filepath.Join(home, ".local", "state", "skopos-worker")
@@ -136,11 +141,6 @@ func (c *Config) Default(home string) error {
 			c.Workspaces = append(c.Workspaces, ws)
 		}
 	}
-	for _, r := range c.Repos {
-		if r.Push.TokenEnv != "" {
-			configuredTokenEnvs = append(configuredTokenEnvs, r.Push.TokenEnv)
-		}
-	}
 	for ws, r := range c.Repos {
 		if r.DefaultBranch == "" {
 			r.DefaultBranch = "main"
@@ -165,6 +165,18 @@ func (c *Config) Default(home string) error {
 // now; per-runner bins land with more runner types).
 func (c *Config) RunnerBin(runner string) string {
 	return c.Bin
+}
+
+// TokenEnvs lists the configured push-token env vars (repos.*.push.token_env)
+// — scrubbed from every agent environment.
+func (c *Config) TokenEnvs() []string {
+	var out []string
+	for _, r := range c.Repos {
+		if r.Push.TokenEnv != "" {
+			out = append(out, r.Push.TokenEnv)
+		}
+	}
+	return out
 }
 
 // normalizeBranch makes a safe, collision-free branch name: the item id's

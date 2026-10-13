@@ -43,6 +43,10 @@ type AgentRun struct {
 	Settings     string // settings JSON (deny rules); deny beats allow
 	Timeout      time.Duration
 	LogFile      string
+	// TokenEnvs are the deployment's configured push-token variables —
+	// passed in, not package state (round 7), so scrubbing has no hidden
+	// config dependency.
+	TokenEnvs []string
 	// Env carries the account's credentials (API key/config dir) — injected
 	// per run by the placement pool; scrubbing still strips tool secrets.
 	Env map[string]string
@@ -64,13 +68,13 @@ type AgentResult struct {
 // *_KEY variable is dropped UNLESS it is one the runner explicitly injects
 // for its account (review H5: a custom token_env name sailed through the
 // fixed list into the agent's environment).
-func scrubEnv(extra map[string]string) []string {
+func scrubEnv(extra map[string]string, tokenEnvs []string) []string {
 	drop := map[string]bool{
 		"SSH_AUTH_SOCK": true, "SSH_AGENT_PID": true, "GH_TOKEN": true, "GITHUB_TOKEN": true,
 		"GITEA_TOKEN": true, "SLACK_BOT_TOKEN": true, "SKOPOS_API_KEY": true,
 		"SKOPOS_APPROVER_KEY": true, "GIT_ASKPASS": true, "SSH_ASKPASS": true,
 	}
-	for _, tok := range configuredTokenEnvs {
+	for _, tok := range tokenEnvs {
 		drop[tok] = true
 	}
 	keep := map[string]bool{}
@@ -99,9 +103,6 @@ func scrubEnv(extra map[string]string) []string {
 		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=credential.helper", "GIT_CONFIG_VALUE_0=",
 	)
 }
-
-// configuredTokenEnvs is set by the worker from repos.*.push.token_env.
-var configuredTokenEnvs []string
 
 type claudeJSON struct {
 	Type             string          `json:"type"`
@@ -139,7 +140,7 @@ func runClaude(ctx context.Context, r AgentRun) AgentResult {
 	defer cancel()
 	cmd := exec.CommandContext(cctx, r.Bin, args...)
 	cmd.Dir = r.Dir
-	cmd.Env = scrubEnv(r.Env)
+	cmd.Env = scrubEnv(r.Env, r.TokenEnvs)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()

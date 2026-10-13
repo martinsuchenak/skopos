@@ -116,6 +116,9 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "runs", "claimed_key_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := ensureColumn(db, "runs", "resume_after", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	return nil
 }
 

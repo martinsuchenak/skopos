@@ -432,7 +432,8 @@ func TestQueueGuards(t *testing.T) {
 	s := testService(t)
 	ctx := rootCtx()
 	mustQueue(t, s, ctx, "ws-a", "item-1", StagePlan)
-	if _, err := s.Queue(ctx, QueueInput{WorkspaceID: "ws-a", ItemID: "item-1", Stage: StagePlan}); !errors.Is(err, ErrInvalidInput) {
+	// Duplicates refuse with the typed error (round 7), not text matching.
+	if _, err := s.Queue(ctx, QueueInput{WorkspaceID: "ws-a", ItemID: "item-1", Stage: StagePlan}); !errors.Is(err, ErrDuplicateActive) {
 		t.Fatalf("duplicate active run must refuse: %v", err)
 	}
 	if _, err := s.Queue(ctx, QueueInput{WorkspaceID: "ws-a", ItemID: "item-1", Stage: "deploy"}); !errors.Is(err, ErrInvalidInput) {

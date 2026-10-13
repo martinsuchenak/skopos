@@ -310,6 +310,7 @@ CREATE TABLE IF NOT EXISTS runs (
     status           TEXT NOT NULL,              -- queued|claimed|running|paused|succeeded|failed|interrupted|cancelled
     resume_kind      TEXT NOT NULL DEFAULT '',   -- session|branch (how a takeover may continue)
     lease_expires_at TEXT NOT NULL DEFAULT '',
+    resume_after     TEXT NOT NULL DEFAULT '',   -- quota reset: a paused run past it is owner-reclaimable
     attempt          INTEGER NOT NULL DEFAULT 1,
     branch           TEXT NOT NULL DEFAULT '',
     base_sha         TEXT NOT NULL DEFAULT '',

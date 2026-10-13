@@ -2,6 +2,7 @@ package runs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -72,7 +73,7 @@ func defaultStageSequence(_, stage string) string {
 // guards) but surfaces real failures.
 func (s *Service) QueueItem(ctx context.Context, itemID, workspaceID, stage string) error {
 	_, err := s.Queue(ctx, QueueInput{WorkspaceID: workspaceID, ItemID: itemID, Stage: stage})
-	if err != nil && strings.Contains(err.Error(), "already has an active") {
+	if err != nil && errors.Is(err, ErrDuplicateActive) {
 		return nil
 	}
 	return err
@@ -101,7 +102,7 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 	}
 	for _, r := range existing {
 		if r.Stage == in.Stage && (r.Status == StatusQueued || r.Status == StatusClaimed || r.Status == StatusRunning || r.Status == StatusPaused) {
-			return nil, fmt.Errorf("%w: item already has an active %s run (%s)", ErrInvalidInput, in.Stage, r.ID)
+			return nil, fmt.Errorf("%w: %s (%s)", ErrDuplicateActive, in.Stage, r.ID)
 		}
 	}
 	now := s.now().UTC()
@@ -337,7 +338,7 @@ func (s *Service) QueueStage(ctx context.Context, itemID, workspaceID, stage, pl
 		PlanRevID: planRevID, BaseSHA: baseSHA, Branch: branch,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "already has an active") {
+		if errors.Is(err, ErrDuplicateActive) {
 			return "", nil
 		}
 		return "", err

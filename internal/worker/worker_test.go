@@ -99,7 +99,7 @@ func TestScrubEnv(t *testing.T) {
 	t.Setenv("SKOPOS_API_KEY", "sk_secret")
 	t.Setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
 	t.Setenv("HARMLESS", "yes")
-	env := scrubEnv(map[string]string{"ANTHROPIC_API_KEY": "acct-key"})
+	env := scrubEnv(map[string]string{"ANTHROPIC_API_KEY": "acct-key"}, nil)
 	joined := ""
 	for _, e := range env {
 		joined += e + "\n"
@@ -121,9 +121,7 @@ func TestScrubEnv(t *testing.T) {
 func TestScrubCustomTokenEnv(t *testing.T) {
 	t.Setenv("MY_GITEA_PUSH_TOKEN", "tok_secret")
 	t.Setenv("SOME_API_KEY", "k")
-	configuredTokenEnvs = append(configuredTokenEnvs, "MY_GITEA_PUSH_TOKEN")
-	defer func() { configuredTokenEnvs = nil }()
-	env := scrubEnv(map[string]string{"ANTHROPIC_API_KEY": "acct"})
+	env := scrubEnv(map[string]string{"ANTHROPIC_API_KEY": "acct"}, []string{"MY_GITEA_PUSH_TOKEN"})
 	joined := ""
 	for _, e := range env {
 		joined += e + "\n"

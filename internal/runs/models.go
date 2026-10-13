@@ -11,6 +11,10 @@ var (
 	// ErrLeaseHeld is returned when a report or transition arrives for a run
 	// whose lease another worker now holds (the previous owner timed out).
 	ErrLeaseHeld = errors.New("run lease held by another worker")
+	// ErrDuplicateActive is returned when queueing a stage an item already
+	// has an active (queued/claimed/running/paused) run for — the inbox
+	// hooks treat it as a no-op (idempotent re-queue).
+	ErrDuplicateActive = errors.New("item already has an active run for that stage")
 )
 
 // Status is a run's lifecycle state.
@@ -74,17 +78,22 @@ type Run struct {
 	Status         Status    `json:"status"`
 	ResumeKind     string    `json:"resume_kind,omitempty"`
 	LeaseExpires   time.Time `json:"lease_expires_at,omitzero"`
-	Attempt        int       `json:"attempt"`
-	Branch         string    `json:"branch,omitempty"`
-	BaseSHA        string    `json:"base_sha,omitempty"`
-	HeadSHA        string    `json:"head_sha,omitempty"`
-	ResultSummary  string    `json:"result_summary,omitempty"`
-	Diffstat       string    `json:"diffstat,omitempty"`
-	Checks         []Check   `json:"checks,omitempty"`
-	LogRef         string    `json:"log_ref,omitempty"`
-	FailReason     string    `json:"fail_reason,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	// ResumeAfter is the quota reset (round 7): a paused run with a
+	// resume_after is reclaimable by its owner via any claim once it
+	// passes. Deliberately separate from LeaseExpires — one column, one
+	// meaning; the sweep reads were dual-purpose before.
+	ResumeAfter   time.Time `json:"resume_after,omitzero"`
+	Attempt       int       `json:"attempt"`
+	Branch        string    `json:"branch,omitempty"`
+	BaseSHA       string    `json:"base_sha,omitempty"`
+	HeadSHA       string    `json:"head_sha,omitempty"`
+	ResultSummary string    `json:"result_summary,omitempty"`
+	Diffstat      string    `json:"diffstat,omitempty"`
+	Checks        []Check   `json:"checks,omitempty"`
+	LogRef        string    `json:"log_ref,omitempty"`
+	FailReason    string    `json:"fail_reason,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // Check is one verification result reported by the worker.

@@ -69,13 +69,12 @@ type Worker struct {
 	log    *slog.Logger
 	// sessions persists per-run agent session ids and accounts (stickiness:
 	// a re-claimed run resumes its own session on its own account).
-	sessions  map[string]string
-	accounts  map[string]string
-	transient map[string]int
+	sessions map[string]string
+	accounts map[string]string
 }
 
 func New(cfg *Config, client *Client, log *slog.Logger) *Worker {
-	w := &Worker{cfg: cfg, client: client, log: log, sessions: map[string]string{}, accounts: map[string]string{}, transient: map[string]int{}}
+	w := &Worker{cfg: cfg, client: client, log: log, sessions: map[string]string{}, accounts: map[string]string{}}
 	w.loadSessions()
 	w.ApplyMCPServers()
 	return w
@@ -155,40 +154,47 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 	}()
 	defer hbStop()
 
-	var err error
-	switch run.Stage {
-	case "plan":
-		err = w.stagePlan(ctx, run, log)
-	case "implement":
-		err = w.stageImplement(ctx, run, log)
-	case "review", "qa":
-		err = w.stageReview(ctx, run, log)
-	default:
-		err = fmt.Errorf("unknown stage %q", run.Stage)
-	}
-	if err == nil {
-		return // the stage reported its own outcome
-	}
-	if tr, ok := err.(*transientError); ok {
-		// Transient (overloaded / 5xx / network): retry with back-off
-		// instead of failing the run and blocking the item (review M4).
-		// The run stays claimed by us throughout.
-		w.transient[run.ID]++
-		if w.transient[run.ID] >= 3 {
-			delete(w.transient, run.ID)
-			_ = w.client.ReportResult(ctx, run.ID, w.cfg.ID, false, map[string]any{"reason": "transient x3: " + tr.detail})
-			return
+	// Transient failures retry in-place (round 7: a loop, not recursion —
+	// one heartbeat goroutine for the whole stage, no nested stacks).
+	const maxTransient = 3
+	for attempt := 0; ; attempt++ {
+		var err error
+		switch run.Stage {
+		case "plan":
+			err = w.stagePlan(ctx, run, log)
+		case "implement":
+			err = w.stageImplement(ctx, run, log)
+		case "review", "qa":
+			err = w.stageReview(ctx, run, log)
+		default:
+			err = fmt.Errorf("unknown stage %q", run.Stage)
 		}
-		w.log.Warn("transient failure, retrying", "attempt", w.transient[run.ID], "detail", tr.detail)
-		sleepCtx(ctx, time.Duration(w.transient[run.ID])*30*time.Second)
-		w.execute(ctx, run)
+		if err == nil {
+			return // the stage reported its own outcome
+		}
+		if tr, ok := err.(*transientError); ok {
+			// Transient (overloaded / 5xx / network): retry with back-off
+			// instead of failing the run and blocking the item (review M4).
+			// The run stays claimed by us throughout.
+			if attempt+1 >= maxTransient {
+				_ = w.client.ReportResult(ctx, run.ID, w.cfg.ID, false, map[string]any{"reason": fmt.Sprintf("transient x%d: %s", maxTransient, tr.detail)})
+				return
+			}
+			log.Warn("transient failure, retrying", "attempt", attempt+1, "detail", tr.detail)
+			sleepCtx(ctx, time.Duration(attempt+1)*30*time.Second)
+			continue
+		}
+		w.finish(ctx, run, log, err)
 		return
 	}
+}
+
+// finish applies a non-transient stage outcome: quota pauses the run (the
+// server's resume_after brings it back), anything else is a failed report.
+func (w *Worker) finish(ctx context.Context, run *Run, log *slog.Logger, err error) {
 	if q, ok := err.(*quotaError); ok {
-		// Quota (round-2 N3): pause (affinity keeps the run), back off to
-		// the reset, then RESUME OUR OWN run — paused runs are never
-		// claimable, so nobody else will. Without the self-resume the run
-		// and its item were stuck for good.
+		// Quota (round-2 N3): pause, keeping affinity. The owner reclaims
+		// the run through resume_after on any claim once the reset passes.
 		reason := "quota: " + q.detail
 		resumeAt := q.resetAt
 		if resumeAt.IsZero() {
@@ -201,9 +207,6 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 		if wait <= 0 || wait > 30*time.Minute {
 			wait = 30 * time.Minute
 		}
-		// No self-Resume (round-6 F1): resume_after on the paused run is
-		// server-side, so the owner's next claim reclaims it — and a
-		// restart mid-sleep loses nothing.
 		log.Warn("quota pause", "until", q.resetAt, "backoff", wait, "detail", q.detail)
 		sleepCtx(ctx, wait)
 		return
@@ -263,10 +266,11 @@ func (w *Worker) agentRun(bin, dir, prompt, schema string, tools []string, timeo
 		Bin: bin, Dir: dir, Prompt: prompt,
 		SessionID: sess, Resume: sess != "",
 		Schema: schema, AllowedTools: tools,
-		Settings: settingsJSON(w.cfg.MCPDeny),
-		Timeout:  timeout,
-		LogFile:  filepath.Join(w.cfg.StateDir, "runs", run.ID, phase+".log"),
-		Env:      account.Env,
+		Settings:  settingsJSON(w.cfg.MCPDeny),
+		Timeout:   timeout,
+		LogFile:   filepath.Join(w.cfg.StateDir, "runs", run.ID, phase+".log"),
+		Env:       account.Env,
+		TokenEnvs: w.cfg.TokenEnvs(),
 	}
 }
 

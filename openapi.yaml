@@ -2136,6 +2136,7 @@ components:
         status: { type: string, enum: [queued, claimed, running, paused, succeeded, failed, interrupted, cancelled] }
         resume_kind: { type: string, enum: ["", session, branch] }
         lease_expires_at: { type: string, format: date-time }
+        resume_after: { type: string, format: date-time, description: Quota reset — a paused run past it is reclaimable by its owner via any claim }
         attempt: { type: integer }
         branch: { type: string }
         base_sha: { type: string }
