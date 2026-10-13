@@ -40,6 +40,9 @@ internal/
   ├── apikeys/    scoped API key domain (handler → service → storage; sk_ keys, sha256-hashed; workspace groups)
   ├── audit/      append-only mutation log (actor/via rendering, entity index, scoped reads; plan 01a0bf7c)
   ├── approvals/  append-only approvals tied to immutable subjects (plan revision+base, review head)
+  ├── runs/       run queue: stages, affinity leases, chaining (agent-pipeline lean 1b)
+  ├── worker/     `skopos worker`: execution plane — claim/execute/report loop, agent runner, account pool
+  ├── notify/     notification module: provider interface (Slack Socket Mode first)
   ├── health/     background goroutine: stuck-agent detection
   ├── cleanup/    background goroutine: data retention cleanup
   ├── db/         SQLite connection + schema.sql migrations
@@ -64,6 +67,8 @@ Every domain package follows `handler → service → storage` layering. Storage
 - Workspace groups: a key's scope = explicit workspaces + group members + registered workspaces matching group `path.Match` patterns. Resolved inside `LookupKey` on every request (no cache); scope changes and pattern-matching workspace registrations drop the affected keys' SSE streams. Root-only management (`skopos group …`, `/api/groups`); `skopos key who-can <workspace>` is the reverse query.
 - Approver permission: `auth.RequireApprover` gates the inbox workflow's human actions; root and nil (internal) pass, plain scoped keys get `ErrApproverRequired`. Agent and worker keys never hold it.
 - Agent-pipeline workflow (docs/design/agent-pipeline.md): inbox statuses + frozen transition matrix in `internal/inbox/models.go` — human actions approver-gated, system transitions (`/api/inbox/{id}/transition`) executor-only; every transition audit-logged; `plan_revisions` lock on approve (structural edits then 409 `ErrRevisionLocked` until an amendment); approvals name immutable subjects (`<revision>+<base_sha>` / `<head_sha>`). One-time cutover: `skopos inbox migrate-workflow`.
+- Run queue (lean 1b): a run is one stage (plan/implement/review/qa) of one item, claimed by one worker in a single transaction. Affinity is first-class: an interrupted run re-claims to its owner (its session lives there); takeover only via `resume_kind: branch`. Routing is per-workspace stage preference (`--run-stage <ws>:<stage>=<runner>`) — no tag engine. Chaining walks the item through the workflow matrix on success; failure blocks with the reason. Placement (accounts, quota) is worker-side policy, never skopos-core.
+- `skopos worker`: deployment-agnostic execution daemon (systemd/container/Nomad — needs only skopos over HTTP, a local clone per repo, agent CLIs). Account pool picks a credential at RUN START only (sessions are account-bound); quota deaths mark the account until reset and pause the run with affinity. Agent processes run scrubbed (no SSH agent/tokens, SSH git disabled, deny rules). The push path is the only push: validated refspec, env-only token, never force.
 
 ## Blackboard
 

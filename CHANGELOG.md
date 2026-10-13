@@ -4,6 +4,36 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added — agent pipeline, lean 1b (docs/design/agent-pipeline.md)
+
+- **Run queue** — a run is one stage (plan/implement/review/qa) of one
+  item's lifecycle. Claims are single-transaction (two workers can never
+  hold the same run); heartbeats extend leases; an expired lease re-queues
+  as `interrupted` (not failed) **keeping affinity** — the run re-claims to
+  the worker that owns it, and another worker takes over only via
+  `resume_kind: branch`. Routing is a per-workspace stage preference
+  (`--run-stage <workspace>:<stage>=<runner>`) — one axis, no tag engine.
+  Success chains the next configured stage (or moves the item through the
+  workflow matrix to `in_review`); failure blocks the item with the reason.
+  REST: claim/heartbeat/report/pause/resume/get/list.
+- **`skopos worker`** — the execution plane as a subcommand of the same
+  binary (the nomad/consul pattern). Deployment-agnostic daemon: needs only
+  skopos over HTTP, a local clone per repo, and the agent CLIs on the host.
+  Extracted from the live-proven agent-trial executor: claude runner with
+  quota/transient/auth classification, guarded worktrees, scrubbed agent
+  environments (no SSH agent, no tokens, SSH git disabled, deny rules), and
+  the only-push path (validated refspec, env-only token, never force).
+- **Account pool (placement, worker-side)** — credentials picked at RUN
+  START; quota deaths mark the account until the reset and fall to the
+  next; stickiness is the run's affinity (a session belongs to the account
+  that created it). Placement is worker policy — skopos knows nothing of it.
+- **Notification module** — a provider interface with Slack Socket Mode
+  first (outbound-only, no public URL; a second provider like Telegram is a
+  config swap). Envs `SKOPOS_SLACK_BOT_TOKEN` / `SKOPOS_SLACK_APP_TOKEN` /
+  `SKOPOS_SLACK_USER_ID` enable it.
+
 ## [0.9.4] — 2026-10-10
 
 ### Fixed

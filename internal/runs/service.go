@@ -191,8 +191,10 @@ func (s *Service) chain(ctx context.Context, run *Run, in ReportInput) {
 	case StatusSucceeded:
 		switch run.Stage {
 		case StagePlan:
-			// The worker wrote the revision and enrichment; the item goes to
-			// the gate (the workflow matrix owns the edge).
+			// The worker wrote the revision and enrichment. The item may
+			// still be queued (the plan run IS its planning phase), so walk
+			// the matrix: queued -> planning -> awaiting_approval.
+			_ = s.itemTransition(ctx, run.ItemID, "planning", "", "worker:"+run.WorkerID)
 			_ = s.itemTransition(ctx, run.ItemID, "awaiting_approval", "", "worker:"+run.WorkerID)
 		case StageImplement, StageReview, StageQA:
 			next := s.nextStage(run.WorkspaceID, run.Stage)
@@ -206,6 +208,7 @@ func (s *Service) chain(ctx context.Context, run *Run, in ReportInput) {
 					return
 				}
 			}
+			_ = s.itemTransition(ctx, run.ItemID, "implementing", "", "worker:"+run.WorkerID)
 			_ = s.itemTransition(ctx, run.ItemID, "in_review", "", "worker:"+run.WorkerID)
 		}
 	}
