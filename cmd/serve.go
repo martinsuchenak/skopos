@@ -30,6 +30,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/rest"
+	"github.com/martinsuchenak/skopos/internal/runs"
 	"github.com/martinsuchenak/skopos/internal/status"
 	"github.com/martinsuchenak/skopos/internal/workspaces"
 	appweb "github.com/martinsuchenak/skopos/web"
@@ -140,6 +141,10 @@ func serveCmd() *cli.Command {
 				ConfigPath:   []string{"codeindex.refresh_interval"},
 				EnvVars:      []string{"SKOPOS_REFRESH_INTERVAL"},
 				DefaultValue: "0",
+			},
+			&cli.StringSliceFlag{
+				Name:  "run-stage",
+				Usage: "Per-workspace stage runner preference, <workspace>:<stage>=<runner> (repeatable; the lean routing engine)",
 			},
 			&cli.IntFlag{
 				Name:         "cleanup-retention-days",
@@ -393,9 +398,25 @@ func serveCmd() *cli.Command {
 				apiKeysService.OnWorkspaceRegistered(context.Background(), wsID)
 			})
 
+			// Run queue (agent-pipeline lean 1b): workers claim stages of an
+			// item's lifecycle; chaining moves the item through the workflow
+			// via the system transitions.
+			runsService := runs.NewService(runs.NewStorage(sqlDB))
+			runsService.SetPrefs(runWorkspacePrefs(cmd))
+			runsService.SetItemTransition(func(ctx context.Context, itemID, to, reason, agentID string) error {
+				toStatus := inbox.Status(to)
+				if !inbox.IsWorkflowStatus(toStatus) {
+					return fmt.Errorf("chained transition %q is not a workflow status", to)
+				}
+				_, err := inboxService.SystemTransition(ctx, itemID, toStatus, reason, agentID, audit.ViaWorker)
+				return err
+			})
+			inboxService.SetRunQueuer(runsService)
+			runsHandler := runs.NewHandler(runsService)
+
 			webMux := http.NewServeMux()
 			apiMux := http.NewServeMux()
-			routes.RegisterRoutes(webMux, apiMux, statusHandler, blackboardHandler, plansHandler, inboxHandler, workspacesHandler, codeIndexHandler, apiKeysHandler)
+			routes.RegisterRoutes(webMux, apiMux, statusHandler, blackboardHandler, plansHandler, inboxHandler, workspacesHandler, codeIndexHandler, apiKeysHandler, runsHandler)
 			mux := http.NewServeMux()
 			// Longest-pattern wins: the exact SSE route below overrides /api/.
 			mux.Handle("/api/", authn.Middleware(apiMux))
@@ -506,4 +527,26 @@ func hostAllowed(serverHost string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// runWorkspacePrefs parses --run-stage <workspace>:<stage>=<runner> flags
+// into per-workspace stage preferences (the whole routing engine: one axis,
+// per workspace, per stage).
+func runWorkspacePrefs(cmd *cli.Command) map[string]*runs.WorkspacePrefs {
+	prefs := map[string]*runs.WorkspacePrefs{}
+	for _, spec := range cmd.GetStringSlice("run-stage") {
+		ws, rest, ok := strings.Cut(spec, ":")
+		if !ok {
+			continue
+		}
+		stage, runner, ok := strings.Cut(rest, "=")
+		if !ok || ws == "" || stage == "" || runner == "" {
+			continue
+		}
+		if prefs[ws] == nil {
+			prefs[ws] = &runs.WorkspacePrefs{Stages: map[string]string{}}
+		}
+		prefs[ws].Stages[stage] = runner
+	}
+	return prefs
 }

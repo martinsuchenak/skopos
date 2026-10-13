@@ -16,6 +16,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/rest"
+	"github.com/martinsuchenak/skopos/internal/runs"
 	"github.com/martinsuchenak/skopos/internal/status"
 	"github.com/martinsuchenak/skopos/internal/workspaces"
 	appweb "github.com/martinsuchenak/skopos/web"
@@ -60,7 +61,7 @@ func RegisterCodeIndex(fn func(*http.ServeMux, *codeindex.Handler)) {
 // webMux and the authenticated API on apiMux. The caller wraps apiMux with
 // auth (see cmd.serve: the principal must reach services via the request
 // context, so authentication lives in middleware, not in each handler).
-func RegisterRoutes(webMux, apiMux *http.ServeMux, statusHandler *status.Handler, blackboardHandler *blackboard.Handler, plansHandler *plans.Handler, inboxHandler *inbox.Handler, workspacesHandler *workspaces.Handler, codeIndexHandler *codeindex.Handler, keysHandler *apikeys.Handler) {
+func RegisterRoutes(webMux, apiMux *http.ServeMux, statusHandler *status.Handler, blackboardHandler *blackboard.Handler, plansHandler *plans.Handler, inboxHandler *inbox.Handler, workspacesHandler *workspaces.Handler, codeIndexHandler *codeindex.Handler, keysHandler *apikeys.Handler, runsHandler *runs.Handler) {
 	webMux.HandleFunc("GET /health", healthHandler)
 	registerWebRoutes(webMux)
 
@@ -90,6 +91,10 @@ func RegisterRoutes(webMux, apiMux *http.ServeMux, statusHandler *status.Handler
 
 	for _, fn := range keysRegistrations {
 		fn(apiMux, keysHandler)
+	}
+
+	for _, fn := range runsRegistrations {
+		fn(apiMux, runsHandler)
 	}
 }
 

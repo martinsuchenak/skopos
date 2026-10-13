@@ -1552,6 +1552,177 @@ paths:
         "401": { description: Unauthorized }
         "403": { description: Root key required }
 
+  /api/runs:
+    get:
+      summary: List runs (filtered by status and/or item_id)
+      operationId: listRuns
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [queued, claimed, running, paused, succeeded, failed, interrupted, cancelled] }
+        - name: item_id
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Runs, newest first (scoped keys see their slice)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Run" }
+        "401": { description: Unauthorized }
+
+  /api/runs/claim:
+    post:
+      summary: A worker polls for its next run (affinity first, then the queue by scope and stage preference)
+      description: 204 when nothing matches — the honest empty, so an idle worker distinguishes an empty queue from an error.
+      operationId: claimRun
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [worker_id, workspaces]
+              properties:
+                worker_id: { type: string }
+                runners: { type: array, items: { type: string } }
+                workspaces: { type: array, items: { type: string } }
+      responses:
+        "200":
+          description: The claimed run (lease started)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        "204": { description: Nothing for this worker }
+        "400": { description: Invalid input }
+        "401": { description: Unauthorized }
+        "404": { description: Workspace out of scope }
+
+  /api/runs/{id}/heartbeat:
+    post:
+      summary: Extend the lease (first heartbeat flips claimed to running)
+      operationId: heartbeatRun
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/RunId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [worker_id]
+              properties:
+                worker_id: { type: string }
+      responses:
+        "204": { description: Lease extended }
+        "401": { description: Unauthorized }
+        "404": { description: Unknown run }
+        "409": { description: Lease held by another worker }
+
+  /api/runs/{id}/report:
+    post:
+      summary: Report the stage result; success chains the next configured stage or moves the item forward, failure blocks the item
+      operationId: reportRun
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/RunId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [worker_id, status]
+              properties:
+                worker_id: { type: string }
+                status: { type: string, enum: [succeeded, failed] }
+                summary: { type: string }
+                head_sha: { type: string }
+                diffstat: { type: string }
+                checks:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name: { type: string }
+                      passed: { type: boolean }
+                      output: { type: string }
+                log_ref: { type: string }
+                reason: { type: string, description: On failure }
+                branch: { type: string }
+                base_sha: { type: string }
+      responses:
+        "200":
+          description: The finished run
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        "400": { description: Invalid status }
+        "401": { description: Unauthorized }
+        "404": { description: Unknown run }
+        "409": { description: Lease held by another worker }
+
+  /api/runs/{id}/pause:
+    post:
+      summary: Pause the run keeping affinity (amendment, quota) — the owner resumes it
+      operationId: pauseRun
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/RunId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [worker_id]
+              properties:
+                worker_id: { type: string }
+                reason: { type: string }
+      responses:
+        "204": { description: Paused }
+        "401": { description: Unauthorized }
+        "404": { description: Unknown run }
+        "409": { description: Lease held by another worker }
+
+  /api/runs/{id}/resume:
+    post:
+      summary: Resume a paused run (owner only — the session lives there)
+      operationId: resumeRun
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/RunId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [worker_id]
+              properties:
+                worker_id: { type: string }
+      responses:
+        "204": { description: Resumed (re-claimed) }
+        "401": { description: Unauthorized }
+        "404": { description: Unknown run }
+        "409": { description: Lease held by another worker }
+
+  /api/runs/{id}:
+    get:
+      summary: Get one run
+      operationId: getRun
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/RunId" }]
+      responses:
+        "200":
+          description: The run
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        "401": { description: Unauthorized }
+        "404": { description: Unknown run }
+
 components:
   parameters:
     SessionId:  { name: id, in: path, required: true, schema: { type: string } }
@@ -1559,6 +1730,7 @@ components:
     PlanId:     { name: id, in: path, required: true, schema: { type: string } }
     ItemId:     { name: item_id, in: path, required: true, schema: { type: string } }
     InboxItemId: { name: id, in: path, required: true, schema: { type: string } }
+    RunId:       { name: id, in: path, required: true, schema: { type: string } }
   securitySchemes:
     BearerAuth:
       type: http
@@ -1878,6 +2050,38 @@ components:
           type: string
           nullable: true
           description: "null = leave unchanged, empty = release claim, set = claim."
+    Run:
+      type: object
+      properties:
+        id: { type: string }
+        workspace_id: { type: string }
+        item_id: { type: string }
+        plan_rev_id: { type: string }
+        stage: { type: string, enum: [plan, implement, review, qa] }
+        runner: { type: string, description: The resolved stage preference at queue time }
+        worker_id: { type: string, description: Affinity owner }
+        status: { type: string, enum: [queued, claimed, running, paused, succeeded, failed, interrupted, cancelled] }
+        resume_kind: { type: string, enum: ["", session, branch] }
+        lease_expires_at: { type: string, format: date-time }
+        attempt: { type: integer }
+        branch: { type: string }
+        base_sha: { type: string }
+        head_sha: { type: string }
+        result_summary: { type: string }
+        diffstat: { type: string }
+        checks:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              passed: { type: boolean }
+              output: { type: string }
+        log_ref: { type: string }
+        fail_reason: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
     AuditEntry:
       type: object
       properties:

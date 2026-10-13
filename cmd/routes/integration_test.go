@@ -50,7 +50,7 @@ func integrationSetup(t *testing.T, apiKey string) *http.ServeMux {
 
 	webMux := http.NewServeMux()
 	apiMux := http.NewServeMux()
-	RegisterRoutes(webMux, apiMux, st, bb, pl, inbox.NewHandler(inbox.NewService(inbox.NewStorage(sqlDB)), testAuth(apiKey)), ws, nil, nil)
+	RegisterRoutes(webMux, apiMux, st, bb, pl, inbox.NewHandler(inbox.NewService(inbox.NewStorage(sqlDB)), testAuth(apiKey)), ws, nil, nil, nil)
 	authn := auth.NewAuthenticator(apiKey, apikeys.NewStorage(sqlDB))
 	root := http.NewServeMux()
 	root.Handle("/api/", authn.Middleware(apiMux))

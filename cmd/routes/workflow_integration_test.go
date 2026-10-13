@@ -76,7 +76,7 @@ func workflowIntegrationSetup(t *testing.T) *httptest.Server {
 
 	webMux := http.NewServeMux()
 	apiMux := http.NewServeMux()
-	RegisterRoutes(webMux, apiMux, st, bb, pl, ib, ws, nil, apiKeysHandler)
+	RegisterRoutes(webMux, apiMux, st, bb, pl, ib, ws, nil, apiKeysHandler, nil)
 	root := http.NewServeMux()
 	root.Handle("/api/", authn.Middleware(apiMux))
 	root.Handle("/", webMux)

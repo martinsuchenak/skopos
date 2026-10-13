@@ -38,6 +38,14 @@ type ApprovalLog interface {
 	List(ctx context.Context, itemID string) ([]approvals.Entry, error)
 }
 
+// RunQueuer is the run-queue hook (internal/runs.Service satisfies it):
+// queueing an item queues its plan run; approving queues the implement run;
+// reject/done cancel the item's active runs. Nil disables (pure 1a mode).
+type RunQueuer interface {
+	QueueItem(ctx context.Context, itemID, workspaceID, stage string) error
+	CancelItem(ctx context.Context, itemID, reason string) error
+}
+
 const auditEntityItem = "inbox_item"
 
 // auditItem records one transition, best-effort: an audit failure never
@@ -99,9 +107,19 @@ func (s *Service) transition(ctx context.Context, itemID string, to Status, clas
 
 // --- human actions (approver-gated; agent and worker keys never pass) ---
 
-// Queue moves an open item into the agent workflow (R1).
+// Queue moves an open item into the agent workflow (R1) and queues its plan
+// run when the run hook is installed.
 func (s *Service) Queue(ctx context.Context, itemID, via string) (*Item, error) {
-	return s.transition(ctx, itemID, StatusQueued, ActorHuman, "inbox.queue", via, "", "")
+	item, err := s.transition(ctx, itemID, StatusQueued, ActorHuman, "inbox.queue", via, "", "")
+	if err != nil {
+		return nil, err
+	}
+	if s.runQueuer != nil {
+		if qErr := s.runQueuer.QueueItem(ctx, item.ID, item.WorkspaceID, "plan"); qErr != nil {
+			return nil, qErr // the item is queued but unrunnable — surface it
+		}
+	}
+	return item, nil
 }
 
 // ApproveInput binds an approval to exactly what Martin saw (review fix 3):
@@ -176,7 +194,19 @@ func (s *Service) Approve(ctx context.Context, itemID string, input ApproveInput
 		}
 	}
 	_ = verified
-	return s.transition(ctx, item.ID, StatusApproved, ActorHuman, "inbox.approve", input.Via, input.Notes, "")
+	item, terr := s.transition(ctx, item.ID, StatusApproved, ActorHuman, "inbox.approve", input.Via, input.Notes, "")
+	if err != nil {
+		return nil, err
+	}
+	if terr != nil {
+		return nil, terr
+	}
+	if s.runQueuer != nil {
+		if qErr := s.runQueuer.QueueItem(ctx, item.ID, item.WorkspaceID, "implement"); qErr != nil {
+			return nil, qErr
+		}
+	}
+	return item, nil
 }
 
 // RequestChanges sends the item back one phase with Martin's notes. The
@@ -224,9 +254,17 @@ func (s *Service) Retry(ctx context.Context, itemID, answer, via string) (*Item,
 	return s.transition(ctx, item.ID, target, ActorHuman, "inbox.retry", via, answer, "")
 }
 
-// Reject discards the item from any workflow phase that allows it.
+// Reject discards the item from any workflow phase that allows it and
+// cancels its active runs.
 func (s *Service) Reject(ctx context.Context, itemID, notes, via string) (*Item, error) {
-	return s.transition(ctx, itemID, StatusDiscarded, ActorHuman, "inbox.reject", via, notes, "")
+	item, err := s.transition(ctx, itemID, StatusDiscarded, ActorHuman, "inbox.reject", via, notes, "")
+	if err != nil {
+		return nil, err
+	}
+	if s.runQueuer != nil {
+		_ = s.runQueuer.CancelItem(ctx, item.ID, "item rejected")
+	}
+	return item, nil
 }
 
 // MarkDone completes the reviewed item (in_review → done). headSHA is
@@ -251,6 +289,9 @@ func (s *Service) MarkDone(ctx context.Context, itemID, headSHA, via string) (*I
 			Decision:    approvals.DecisionApproved,
 			Via:         via,
 		})
+	}
+	if s.runQueuer != nil {
+		_ = s.runQueuer.CancelItem(ctx, item.ID, "item done")
 	}
 	return item, nil
 }

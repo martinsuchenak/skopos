@@ -19,6 +19,7 @@ type Service struct {
 	auditSink AuditRecorder
 	plans     PlanRevisions
 	approvals ApprovalLog
+	runQueuer RunQueuer
 }
 
 func NewService(store Store) *Service {
@@ -41,6 +42,11 @@ func (s *Service) SetPlanRevisions(p PlanRevisions) { s.plans = p }
 
 // SetApprovalLog installs the approvals sink (internal/approvals.Service).
 func (s *Service) SetApprovalLog(a ApprovalLog) { s.approvals = a }
+
+// SetRunQueuer installs the run-queue hook (internal/runs.Service): queueing
+// an item queues its plan run; approve queues the implement run; reject and
+// mark-done cancel active runs. Nil keeps pure 1a behavior.
+func (s *Service) SetRunQueuer(r RunQueuer) { s.runQueuer = r }
 
 // publishItem emits the mutation event for an item once the store write
 // succeeded; failures are silent (events are advisory).

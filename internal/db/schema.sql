@@ -291,3 +291,38 @@ CREATE INDEX IF NOT EXISTS idx_audit_workspace ON audit_log(workspace_id, create
 -- race in CreateRevision can no longer produce ambiguous LatestRevision
 -- ordering (the constraint makes the loser fail loudly).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_revisions_no ON plan_revisions(plan_id, revision_no);
+
+-- Runs (agent-pipeline lean 1b): the job queue. A run is one stage of one
+-- item's lifecycle (plan, implement, review, qa), claimed by exactly one
+-- worker at a time. Affinity is a first-class property: a run interrupted
+-- mid-flight re-claims to the worker that owns it (its session lives there);
+-- another worker takes over only via resume_kind "branch" (fresh context
+-- from the pushed branch). Stage routing is per-workspace config (which
+-- runner each stage prefers); no tag engine, no capacity matrix.
+CREATE TABLE IF NOT EXISTS runs (
+    id               TEXT PRIMARY KEY,
+    workspace_id     TEXT NOT NULL,
+    item_id          TEXT NOT NULL,
+    plan_rev_id      TEXT NOT NULL DEFAULT '',
+    stage            TEXT NOT NULL,              -- plan | implement | review | qa
+    runner           TEXT NOT NULL DEFAULT '',   -- the runner preference resolved at queue time
+    worker_id        TEXT NOT NULL DEFAULT '',   -- affinity: the worker that claimed it
+    status           TEXT NOT NULL,              -- queued|claimed|running|paused|succeeded|failed|interrupted|cancelled
+    resume_kind      TEXT NOT NULL DEFAULT '',   -- session|branch (how a takeover may continue)
+    lease_expires_at TEXT NOT NULL DEFAULT '',
+    attempt          INTEGER NOT NULL DEFAULT 1,
+    branch           TEXT NOT NULL DEFAULT '',
+    base_sha         TEXT NOT NULL DEFAULT '',
+    head_sha         TEXT NOT NULL DEFAULT '',
+    result_summary   TEXT NOT NULL DEFAULT '',
+    diffstat         TEXT NOT NULL DEFAULT '',
+    checks           TEXT NOT NULL DEFAULT '[]',
+    log_ref          TEXT NOT NULL DEFAULT '',
+    fail_reason      TEXT NOT NULL DEFAULT '',
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_runs_queue ON runs(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_runs_item ON runs(item_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_runs_worker ON runs(worker_id, status);

@@ -50,7 +50,7 @@ func keysTestServer(t *testing.T, rootKey string) *httptest.Server {
 		plans.NewHandler(plans.NewService(plans.NewStorage(sqlDB)), testAuth(rootKey)),
 		inbox.NewHandler(inbox.NewService(inbox.NewStorage(sqlDB)), testAuth(rootKey)),
 		workspaces.NewHandler(workspaces.NewService(wsStorage), testAuth(rootKey)),
-		nil, handler)
+		nil, handler, nil)
 	root := http.NewServeMux()
 	root.Handle("/api/", auth.NewAuthenticator(rootKey, keyStorage).Middleware(apiMux))
 	root.Handle("/", webMux)

@@ -70,7 +70,7 @@ func TestSSEAttributionThroughProductionWiring(t *testing.T) {
 		plans.NewHandler(plansSvc, authn),
 		inbox.NewHandler(inboxSvc, authn),
 		workspaces.NewHandler(workspacesSvc, authn),
-		nil, nil)
+		nil, nil, nil)
 	root := http.NewServeMux()
 	root.Handle("/api/", authn.Middleware(apiMux))
 	root.Handle("/", webMux)
