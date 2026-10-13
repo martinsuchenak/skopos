@@ -146,8 +146,16 @@ func TestPauseHeartbeatResume(t *testing.T) {
 		t.Fatalf("owner resume: %v", err)
 	}
 	got, _ = s.Get(ctx, run.ID)
-	if got.Status != StatusClaimed {
-		t.Fatalf("resume returns to claimed: %s", got.Status)
+	// N7: resume makes the run owner-claimable (interrupted+session), not
+	// straight-claimed — a claimed run was invisible to Claim until its
+	// lease expired.
+	if got.Status != StatusInterrupted || got.ResumeKind != ResumeSession {
+		t.Fatalf("resume must re-arm as interrupted/session: %s/%s", got.Status, got.ResumeKind)
+	}
+	// The owner's next claim picks it up immediately.
+	again, err := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	if err != nil || again == nil || again.ID != run.ID {
+		t.Fatalf("owner must re-claim after resume: %+v err %v", again, err)
 	}
 }
 
@@ -247,13 +255,14 @@ func TestPausedNotReclaimed(t *testing.T) {
 	if r, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}}); r != nil {
 		t.Fatalf("paused run must not be reclaimed: %+v", r)
 	}
-	// Explicit resume re-arms it for the owner.
+	// Explicit resume re-arms it for the owner (N7: as an immediately
+	// claimable interrupted run).
 	if err := s.ResumeItem(ctx, "item-1"); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := s.Get(ctx, run.ID)
-	if got.Status != StatusClaimed {
-		t.Fatalf("resume must re-arm: %s", got.Status)
+	again, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	if again == nil || again.ID != run.ID {
+		t.Fatalf("owner must re-claim after ResumeItem: %+v", again)
 	}
 }
 
@@ -278,6 +287,59 @@ func TestCancelInterrupted(t *testing.T) {
 	got, _ = s.Get(ctx, run.ID)
 	if got.Status != StatusCancelled {
 		t.Fatalf("interrupted run must cancel with the item: %s", got.Status)
+	}
+}
+
+// N1: a run queued by an action whose transition then fails (the
+// non-approver path) is cancelled BY ID — and only that run.
+func TestTargetedCancelOnFailedTransition(t *testing.T) {
+	s := testService(t)
+	ctx := rootCtx()
+	// An unrelated active run on another item — must survive.
+	mustQueue(t, s, ctx, "ws-a", "item-other", StagePlan)
+	var queued string
+	r, err := s.QueueStage(ctx, "item-1", "ws-a", StagePlan, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued = r
+	if queued == "" {
+		t.Fatal("QueueStage must return the run id")
+	}
+	if err := s.CancelRun(ctx, queued, "transition failed"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get(ctx, queued)
+	if got.Status != StatusCancelled {
+		t.Fatalf("targeted run must be cancelled: %s", got.Status)
+	}
+	other, _ := s.List(ctx, StatusQueued, "item-other")
+	if len(other) != 1 {
+		t.Fatalf("unrelated run must survive: %+v", other)
+	}
+}
+
+// N4: interrupted runs age into branch-resumable once past the grace —
+// re-evaluated by every sweep, not only at expiry time.
+func TestGraceFlipOnSweep(t *testing.T) {
+	s := testService(t)
+	ctx := rootCtx()
+	mustQueue(t, s, ctx, "ws-a", "item-1", StageImplement)
+	run, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	// Expire the lease with a time far past the grace.
+	longGone := time.Now().UTC().Add(-2 * takeoverGrace)
+	if _, err := s.storage.db.ExecContext(ctx,
+		`UPDATE runs SET lease_expires_at = ? WHERE id = ?`, formatTime(longGone), run.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Any worker's claim sweeps: the run flips to branch, and the foreign
+	// worker CAN now take it over.
+	r2, err := s.ClaimNext(ctx, ClaimInput{WorkerID: "w2", Workspaces: []string{"ws-a"}})
+	if err != nil || r2 == nil || r2.ID != run.ID {
+		t.Fatalf("grace flip must allow takeover: %+v err %v", r2, err)
+	}
+	if r2.ResumeKind != ResumeBranch {
+		t.Fatalf("takeover must be branch-kind: %s", r2.ResumeKind)
 	}
 }
 

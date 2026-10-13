@@ -313,16 +313,26 @@ func (s *Service) ListRuns(ctx context.Context, itemID string) ([]RunSummary, er
 }
 
 // QueueStage is the inbox hook for a stage with the approved revision bound
-// (review H3): the implement run carries plan_rev_id and base_sha.
-func (s *Service) QueueStage(ctx context.Context, itemID, workspaceID, stage, planRevID, baseSHA, branch string) error {
-	_, err := s.Queue(ctx, QueueInput{
+// (review H3): the implement run carries plan_rev_id and base_sha. It
+// returns the run id so a failed follow-up can cancel exactly that run
+// (review N1: item-wide CancelItem as compensation killed unrelated runs).
+func (s *Service) QueueStage(ctx context.Context, itemID, workspaceID, stage, planRevID, baseSHA, branch string) (string, error) {
+	r, err := s.Queue(ctx, QueueInput{
 		WorkspaceID: workspaceID, ItemID: itemID, Stage: stage,
 		PlanRevID: planRevID, BaseSHA: baseSHA, Branch: branch,
 	})
-	if err != nil && strings.Contains(err.Error(), "already has an active") {
-		return nil
+	if err != nil {
+		if strings.Contains(err.Error(), "already has an active") {
+			return "", nil
+		}
+		return "", err
 	}
-	return err
+	return r.ID, nil
+}
+
+// CancelRun cancels one run by id (targeted compensation, review N1).
+func (s *Service) CancelRun(ctx context.Context, id, reason string) error {
+	return s.storage.CancelOne(ctx, strings.TrimSpace(id), reason, s.now().UTC())
 }
 
 // Get and List are the read surface (dashboard, tests).

@@ -102,8 +102,29 @@ func (w *Worker) Loop(ctx context.Context) error {
 			}
 			continue
 		}
+		// N5: the run's stage must match the item's phase. A queued-then-
+		// rejected item, a bypassed authorization, a stale resume — the
+		// claim-time move is best-effort, so the worker verifies.
+		if it, ierr := w.client.GetItem(ctx, run.ItemID); ierr == nil && !phaseAdmissible(it.Status, run.Stage) {
+			w.log.Warn("abandoning run: item not in its phase", "run", run.ID, "stage", run.Stage, "item_status", it.Status)
+			_ = w.client.ReportResult(ctx, run.ID, w.cfg.ID, false, map[string]any{
+				"reason": fmt.Sprintf("item is %s, not admissible for a %s run", it.Status, run.Stage),
+			})
+			continue
+		}
 		w.execute(ctx, run)
 	}
+}
+
+// phaseAdmissible: the item statuses under which a stage's run may execute.
+func phaseAdmissible(itemStatus, stage string) bool {
+	switch stage {
+	case "plan":
+		return itemStatus == "queued" || itemStatus == "planning"
+	case "implement", "review", "qa":
+		return itemStatus == "approved" || itemStatus == "implementing"
+	}
+	return false
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) bool {
@@ -166,11 +187,10 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 		return
 	}
 	if q, ok := err.(*quotaError); ok {
-		// Quota: pause (affinity keeps the run); the pool marks the
-		// account exhausted until the reset. Then BACK OFF — affinity
-		// would hand the same run straight back on the next claim, and
-		// claim->quota->pause in a tight loop hammers the CLI (review
-		// finding 4).
+		// Quota (round-2 N3): pause (affinity keeps the run), back off to
+		// the reset, then RESUME OUR OWN run — paused runs are never
+		// claimable, so nobody else will. Without the self-resume the run
+		// and its item were stuck for good.
 		reason := "quota: " + q.detail
 		_ = w.client.Pause(ctx, run.ID, w.cfg.ID, reason)
 		wait := time.Until(q.resetAt)
@@ -178,7 +198,9 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 			wait = 30 * time.Minute
 		}
 		log.Warn("quota pause", "until", q.resetAt, "backoff", wait, "detail", q.detail)
-		sleepCtx(ctx, wait)
+		if sleepCtx(ctx, wait) {
+			_ = w.client.Resume(ctx, run.ID, w.cfg.ID)
+		}
 		return
 	}
 	_ = w.client.ReportResult(ctx, run.ID, w.cfg.ID, false, map[string]any{"reason": err.Error()})

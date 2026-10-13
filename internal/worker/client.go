@@ -166,6 +166,15 @@ func (c *Client) AmendRevision(ctx context.Context, planID, baseSHA string) (*Re
 	return &rev, err
 }
 
+// Amend is the atomic amendment (append steps + snapshot past the lock).
+func (c *Client) Amend(ctx context.Context, planID, baseSHA string, steps []Step) (*Revision, error) {
+	var rev Revision
+	err := c.do(ctx, http.MethodPost, "/api/plans/"+planID+"/amend", map[string]any{
+		"base_sha": baseSHA, "steps": steps,
+	}, &rev)
+	return &rev, err
+}
+
 func (c *Client) LinkPlan(ctx context.Context, itemID, planID string) error {
 	return c.do(ctx, http.MethodPost, "/api/inbox/"+itemID+"/link-plan", map[string]string{"plan_id": planID}, nil)
 }
@@ -211,9 +220,10 @@ type Plan struct {
 }
 
 type PlanItem struct {
-	ID     string `json:"id"`
-	Title  string `json:"title"`
-	Status string `json:"status"`
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
 }
 
 type Revision struct {

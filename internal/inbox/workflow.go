@@ -45,7 +45,8 @@ type ApprovalLog interface {
 // runs; approving an amendment resumes the paused run it froze. Nil
 // disables (pure 1a mode).
 type RunQueuer interface {
-	QueueStage(ctx context.Context, itemID, workspaceID, stage, planRevID, baseSHA, branch string) error
+	QueueStage(ctx context.Context, itemID, workspaceID, stage, planRevID, baseSHA, branch string) (string, error)
+	CancelRun(ctx context.Context, runID, reason string) error
 	CancelItem(ctx context.Context, itemID, reason string) error
 	ResumeItem(ctx context.Context, itemID string) error
 }
@@ -115,18 +116,33 @@ func (s *Service) transition(ctx context.Context, itemID string, to Status, clas
 // run. The run is queued BEFORE the status change and cancelled if the
 // change fails, so a failure is cleanly retryable (review M3).
 func (s *Service) Queue(ctx context.Context, itemID, via string) (*Item, error) {
+	// N1: authorize and matrix-validate BEFORE any side effect — queueing
+	// first let a non-approver mint runs whose transition then failed.
+	if err := auth.RequireApprover(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.requireItemScopeQuiet(ctx, itemID); err != nil {
+		return nil, err
+	}
 	cur, err := s.store.GetItem(ctx, strings.TrimSpace(itemID))
 	if err != nil {
 		return nil, err
 	}
+	if _, ok := WorkflowTransition(cur.Status, StatusQueued); !ok {
+		return nil, fmt.Errorf("%w: %s cannot be queued (item is %s)", ErrInvalidInput, statusLabel(cur.Status), statusLabel(cur.Status))
+	}
+	var queuedRun string
 	if s.runQueuer != nil {
-		if qErr := s.runQueuer.QueueStage(ctx, cur.ID, cur.WorkspaceID, "plan", "", "", ""); qErr != nil {
+		id, qErr := s.runQueuer.QueueStage(ctx, cur.ID, cur.WorkspaceID, "plan", "", "", "")
+		if qErr != nil {
 			return nil, qErr
 		}
+		queuedRun = id
 	}
 	item, err := s.transition(ctx, itemID, StatusQueued, ActorHuman, "inbox.queue", via, "", "")
-	if err != nil && s.runQueuer != nil {
-		_ = s.runQueuer.CancelItem(ctx, cur.ID, "queue transition failed: "+err.Error())
+	if err != nil && s.runQueuer != nil && queuedRun != "" {
+		// Targeted compensation (N1): cancel only the run this call made.
+		_ = s.runQueuer.CancelRun(ctx, queuedRun, "queue transition failed")
 	}
 	return item, err
 }
@@ -162,6 +178,9 @@ func (s *Service) Approve(ctx context.Context, itemID string, input ApproveInput
 	}
 	if s.plans == nil {
 		return nil, fmt.Errorf("%w: plan revisions are not configured", ErrInvalidInput)
+	}
+	if item.Status != StatusAwaitingApproval {
+		return nil, fmt.Errorf("%w: only awaiting_approval items can be approved (item is %s)", ErrInvalidInput, statusLabel(item.Status))
 	}
 	rev, err := s.plans.LatestRevision(ctx, item.PlanID)
 	if err != nil {
@@ -206,16 +225,24 @@ func (s *Service) Approve(ctx context.Context, itemID string, input ApproveInput
 	// Queue the implement run bound to the approved revision and its base
 	// (review H3) BEFORE the status change; a paused run (an approved
 	// amendment) is resumed instead (H4).
+	var queuedRun string
 	if s.runQueuer != nil {
 		if s.hasPausedRun(ctx, item.ID) {
 			if rErr := s.runQueuer.ResumeItem(ctx, item.ID); rErr != nil {
 				return nil, rErr
 			}
-		} else if qErr := s.runQueuer.QueueStage(ctx, item.ID, item.WorkspaceID, "implement", rev.ID, rev.BaseSHA, ""); qErr != nil {
-			return nil, qErr
+		} else {
+			id, qErr := s.runQueuer.QueueStage(ctx, item.ID, item.WorkspaceID, "implement", rev.ID, rev.BaseSHA, "")
+			if qErr != nil {
+				return nil, qErr
+			}
+			queuedRun = id
 		}
 	}
 	item, terr := s.transition(ctx, item.ID, StatusApproved, ActorHuman, "inbox.approve", input.Via, input.Notes, "")
+	if terr != nil && s.runQueuer != nil && queuedRun != "" {
+		_ = s.runQueuer.CancelRun(ctx, queuedRun, "approve transition failed")
+	}
 	if terr != nil {
 		return nil, terr
 	}
@@ -234,6 +261,11 @@ func (s *Service) RequestChanges(ctx context.Context, itemID, notes, via string)
 	if err != nil {
 		return nil, err
 	}
+	// N1: authorize and validate BEFORE queueing (a non-approver key used
+	// to mint the run, then fail the transition, leaving it to run).
+	if err := auth.RequireApprover(ctx); err != nil {
+		return nil, err
+	}
 	var target Status
 	stage := ""
 	switch item.Status {
@@ -245,12 +277,19 @@ func (s *Service) RequestChanges(ctx context.Context, itemID, notes, via string)
 		return nil, fmt.Errorf("%w: request-changes applies to awaiting_approval or in_review items (item is %s)", ErrInvalidInput, statusLabel(item.Status))
 	}
 	revID, baseSHA := s.approvedRevision(ctx, item)
+	var queuedRun string
 	if s.runQueuer != nil {
-		if qErr := s.runQueuer.QueueStage(ctx, item.ID, item.WorkspaceID, stage, revID, baseSHA, ""); qErr != nil {
+		id, qErr := s.runQueuer.QueueStage(ctx, item.ID, item.WorkspaceID, stage, revID, baseSHA, "")
+		if qErr != nil {
 			return nil, qErr
 		}
+		queuedRun = id
 	}
-	return s.transition(ctx, item.ID, target, ActorHuman, "inbox.request_changes", via, notes, "")
+	out, err := s.transition(ctx, item.ID, target, ActorHuman, "inbox.request_changes", via, notes, "")
+	if err != nil && s.runQueuer != nil && queuedRun != "" {
+		_ = s.runQueuer.CancelRun(ctx, queuedRun, "request-changes transition failed")
+	}
+	return out, err
 }
 
 // approvedRevision returns the locked revision id and base for an item, when
@@ -278,6 +317,9 @@ func (s *Service) Retry(ctx context.Context, itemID, answer, via string) (*Item,
 	if err != nil {
 		return nil, err
 	}
+	if err := auth.RequireApprover(ctx); err != nil {
+		return nil, err
+	}
 	target := StatusPlanning
 	stage := "plan"
 	revID, baseSHA := "", ""
@@ -287,12 +329,19 @@ func (s *Service) Retry(ctx context.Context, itemID, answer, via string) (*Item,
 			revID, baseSHA = rev.ID, rev.BaseSHA
 		}
 	}
+	var queuedRun string
 	if s.runQueuer != nil {
-		if qErr := s.runQueuer.QueueStage(ctx, item.ID, item.WorkspaceID, stage, revID, baseSHA, ""); qErr != nil {
+		id, qErr := s.runQueuer.QueueStage(ctx, item.ID, item.WorkspaceID, stage, revID, baseSHA, "")
+		if qErr != nil {
 			return nil, qErr
 		}
+		queuedRun = id
 	}
-	return s.transition(ctx, item.ID, target, ActorHuman, "inbox.retry", via, answer, "")
+	out, err := s.transition(ctx, item.ID, target, ActorHuman, "inbox.retry", via, answer, "")
+	if err != nil && s.runQueuer != nil && queuedRun != "" {
+		_ = s.runQueuer.CancelRun(ctx, queuedRun, "retry transition failed")
+	}
+	return out, err
 }
 
 // Reject discards the item from any workflow phase that allows it and
@@ -439,7 +488,9 @@ func (s *Service) RequireAmendable(planID string) error {
 		return err
 	}
 	for i := range items {
-		if items[i].Status == StatusAwaitingApproval {
+		// implementing: an in-flight amendment (the worker's call);
+		// awaiting_approval: a re-amendment at the gate.
+		if items[i].Status == StatusImplementing || items[i].Status == StatusAwaitingApproval {
 			return nil
 		}
 	}

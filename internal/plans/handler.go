@@ -3,6 +3,7 @@ package plans
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/rest"
@@ -383,6 +384,53 @@ func (h *Handler) ListRevisions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rest.RespondJSON(w, http.StatusOK, revs)
+}
+
+// Amend handles POST /api/plans/{id}/amend: atomic amendment (append steps
+// + snapshot past the lock), guarded by the amendment guard.
+func (h *Handler) Amend(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req struct {
+		BaseSHA string `json:"base_sha"`
+		Steps   []struct {
+			Title       string `json:"title"`
+			Description string `json:"description"`
+		} `json:"steps"`
+	}
+	if err := rest.DecodeJSON(w, r, &req); err != nil {
+		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(req.Steps) == 0 {
+		rest.RespondError(w, http.StatusBadRequest, "steps must not be empty")
+		return
+	}
+	steps := make([]RevisionStep, 0, len(req.Steps))
+	for _, st := range req.Steps {
+		if strings.TrimSpace(st.Title) == "" {
+			rest.RespondError(w, http.StatusBadRequest, "step titles are required")
+			return
+		}
+		steps = append(steps, RevisionStep{Title: st.Title, Description: st.Description})
+	}
+	rev, err := h.service.Amend(r.Context(), r.PathValue("id"), steps, req.BaseSHA)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
+			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
+			rest.RespondError(w, http.StatusNotFound, err.Error())
+		case errors.Is(err, ErrRevisionLocked):
+			rest.RespondError(w, http.StatusConflict, err.Error())
+		default:
+			rest.InternalError(w, err)
+		}
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, rev)
 }
 
 // LockRevision handles POST /api/plans/{id}/revisions/{revision_id}/lock —

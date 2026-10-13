@@ -144,11 +144,11 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	planDetail, perr := w.client.GetPlan(ctx, item.PlanID)
 	steps := []Step{}
 	if perr == nil {
-		for i, pi := range planDetail.Items {
+		for _, pi := range planDetail.Items {
 			if pi.Title == "Review and push (Martin)" {
 				continue
 			}
-			steps = append(steps, Step{Title: pi.Title, Description: fmt.Sprintf("plan item %d", i+1)})
+			steps = append(steps, Step{Title: pi.Title, Description: pi.Description})
 		}
 	}
 	worktree := filepath.Join(w.cfg.StateDir, "worktrees", filepath.Base(repo.Path), strings.ReplaceAll(branch, "/", "-"))
@@ -254,6 +254,11 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 	}
 	defer removeWorktree(ctx, repo.Path, wt)
 
+	// Cheap pre-check (round-2 low): an empty diff fails without an
+	// agent run.
+	if _, err := git(ctx, wt, "diff", "--quiet", "origin/"+repo.DefaultBranch+"...HEAD"); err == nil {
+		return fmt.Errorf("review: empty diff on %s", run.Branch)
+	}
 	prompt, err := renderPrompt("review.md", map[string]any{
 		"Base": repo.DefaultBranch, "Stage": run.Stage,
 	})
@@ -283,32 +288,26 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 	})
 }
 
-// proposeAmendment is the amendment gate (review H4): the item returns to
-// awaiting_approval with the amended steps snapshotted over the locked
-// revision, and the run STAYS PAUSED — it is never auto-reclaimed. Martin's
-// approve resumes it (the inbox hook calls ResumeItem).
+// proposeAmendment is the amendment gate (1b round-2 N2): the item returns
+// to awaiting_approval with the amended steps snapshotted over the locked
+// revision in ONE server transaction, and the run STAYS PAUSED — never
+// auto-reclaimed. Martin's approve resumes it. The amendment names the
+// RUN's base, not the default branch tip.
 func (w *Worker) proposeAmendment(ctx context.Context, run *Run, item *Item, ir implResult) error {
 	if ir.Reason == "" {
 		ir.Reason = ir.Summary
 	}
 	_ = w.client.AppendSection(ctx, run.ItemID, "Amendment proposed — worker", bullets([]string{ir.Reason}))
-	// Item to the gate FIRST (AmendRevision's guard requires it).
+	// Item to the gate first (the amendment guard accepts implementing).
 	if err := w.client.Transition(ctx, run.ItemID, "awaiting_approval", "amendment: "+firstLine(ir.Reason)); err != nil {
 		return err
 	}
-	// Amend the plan: append the amended remaining steps, snapshot over the
-	// lock.
-	var amended []Step
-	_ = json.Unmarshal(nil, &amended)
-	if len(ir.AmendedSteps) > 0 {
-		for _, st := range ir.AmendedSteps {
-			if _, err := w.client.AddPlanItem(ctx, item.PlanID, st.Title, st.Description, "amendment"); err != nil {
-				return err
-			}
-		}
+	base := run.BaseSHA
+	if base == "" {
+		base, _ = git(ctx, w.cfg.Repos[run.WorkspaceID].Path, "rev-parse", "origin/"+w.cfg.Repos[run.WorkspaceID].DefaultBranch)
+		base = strings.TrimSpace(base)
 	}
-	baseSHA, _ := git(ctx, w.cfg.Repos[run.WorkspaceID].Path, "rev-parse", "origin/"+w.cfg.Repos[run.WorkspaceID].DefaultBranch)
-	if _, err := w.client.AmendRevision(ctx, item.PlanID, strings.TrimSpace(baseSHA)); err != nil {
+	if _, err := w.client.Amend(ctx, item.PlanID, base, ir.AmendedSteps); err != nil {
 		return err
 	}
 	return w.client.Pause(ctx, run.ID, w.cfg.ID, "amendment proposed: "+firstLine(ir.Reason))

@@ -92,6 +92,36 @@ func (s *Service) AmendRevision(ctx context.Context, planID, baseSHA string) (*R
 	return s.snapshot(ctx, planID, baseSHA)
 }
 
+// Amend is the atomic amendment operation (1b review round 2, N2): append
+// the amended steps and snapshot the new revision past the lock, in ONE
+// transaction — the piecemeal path (AddPlanItem under a locked revision)
+// was refused by requireEditable and left the item looping at the gate.
+// Guarded by the amendment guard: the linked item must be implementing (an
+// in-flight amendment) or awaiting_approval.
+func (s *Service) Amend(ctx context.Context, planID string, steps []RevisionStep, baseSHA string) (*Revision, error) {
+	if err := s.requirePlanScope(ctx, planID); err != nil {
+		return nil, err
+	}
+	planID = strings.TrimSpace(planID)
+	latest, err := s.store.LatestRevision(ctx, planID)
+	if err != nil {
+		return nil, err
+	}
+	if latest.LockedAt == nil {
+		return nil, fmt.Errorf("%w: plan has no locked revision to amend", ErrInvalidInput)
+	}
+	if s.amendmentGuard != nil {
+		if err := s.amendmentGuard(planID); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.store.(AmendTxer).AmendTx(ctx, planID, steps, strings.TrimSpace(baseSHA), s.now().UTC()); err != nil {
+		return nil, err
+	}
+	s.publishPlan(ctx, planID)
+	return s.store.LatestRevision(ctx, planID)
+}
+
 // VerifyRevisionCurrent checks the latest revision's snapshot against the
 // plan's current steps: an approval may only bind to content that still
 // matches what the planner snapshot (review fix 3).
@@ -323,4 +353,85 @@ func (st *Storage) LockRevision(ctx context.Context, id string, at time.Time) er
 		}
 	}
 	return nil
+}
+
+// AmendTx appends the amended steps and snapshots the new revision in one
+// transaction, past the lock (1b review round 2, N2).
+// AmendTxer is the storage capability Amend needs (implemented by Storage).
+type AmendTxer interface {
+	AmendTx(ctx context.Context, planID string, steps []RevisionStep, baseSHA string, now time.Time) error
+}
+
+func (s *Storage) AmendTx(ctx context.Context, planID string, steps []RevisionStep, baseSHA string, now time.Time) error {
+	tx, err := s.db.(*sql.DB).BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+	var next int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(revision_no), 0) + 1 FROM plan_revisions WHERE plan_id = ?`, planID).Scan(&next); err != nil {
+		return fmt.Errorf("next revision number: %w", err)
+	}
+	posRow, err := tx.QueryContext(ctx,
+		`SELECT COALESCE(MAX(position), 0) FROM plan_items WHERE plan_id = ?`, planID)
+	if err != nil {
+		return fmt.Errorf("positions: %w", err)
+	}
+	var pos int
+	if posRow.Next() {
+		if err := posRow.Scan(&pos); err != nil {
+			posRow.Close()
+			return err
+		}
+	}
+	posRow.Close()
+	for _, st := range steps {
+		pos++
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO plan_items (id, plan_id, title, description, phase, status, position, created_at, updated_at)
+			VALUES (?, ?, ?, ?, 'amendment', 'pending', ?, ?, ?)`,
+			ids.New(), planID, st.Title, st.Description, pos, formatTime(now), formatTime(now)); err != nil {
+			return fmt.Errorf("inserting amended step: %w", err)
+		}
+	}
+	// Snapshot the plan's CURRENT items (the amended set) as the new revision.
+	items, err := txItems(ctx, tx, planID)
+	if err != nil {
+		return err
+	}
+	snap := make([]RevisionStep, 0, len(items))
+	for _, it := range items {
+		snap = append(snap, RevisionStep{ID: it.ID, Title: it.Title, Description: it.Description, Phase: it.Phase, Position: it.Position})
+	}
+	hash, err := hashSteps(snap)
+	if err != nil {
+		return err
+	}
+	checks, _ := json.Marshal(snap)
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO plan_revisions (id, plan_id, workspace_id, revision_no, steps_json, content_hash, base_sha, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		ids.New(), planID, "", next, string(checks), hash, baseSHA, formatTime(now)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func txItems(ctx context.Context, tx *sql.Tx, planID string) ([]Item, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, title, description, phase, position FROM plan_items WHERE plan_id = ? ORDER BY position`, planID)
+	if err != nil {
+		return nil, fmt.Errorf("listing items for snapshot: %w", err)
+	}
+	defer rows.Close()
+	var out []Item
+	for rows.Next() {
+		var it Item
+		if err := rows.Scan(&it.ID, &it.Title, &it.Description, &it.Phase, &it.Position); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
 }

@@ -435,6 +435,42 @@ paths:
         "401": { description: Unauthorized }
         "403": { description: Root key required }
 
+  /api/plans/{id}/amend:
+    post:
+      summary: Atomic amendment — append amended steps and snapshot a new revision past the lock (executor path)
+      description: Guarded by the amendment guard (the linked item implementing or awaiting_approval); appends items and snapshots the new revision in one transaction. The worker then pauses its run; Martin's approve resumes it.
+      operationId: amendPlan
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PlanId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [steps]
+              properties:
+                base_sha: { type: string }
+                steps:
+                  type: array
+                  items:
+                    type: object
+                    required: [title]
+                    properties:
+                      title: { type: string }
+                      description: { type: string }
+      responses:
+        "200":
+          description: The new revision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlanRevision" }
+        "400": { description: No locked revision / invalid steps }
+        "401": { description: Unauthorized }
+        "403": { description: Guard refused (item not amending) }
+        "404": { description: Unknown plan }
+        "409": { description: Locked (guard) }
+
   /api/workspaces:
     post:
       summary: Register a workspace (upserts the display name)

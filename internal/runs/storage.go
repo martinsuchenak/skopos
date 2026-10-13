@@ -125,6 +125,16 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 		string(StatusClaimed), string(StatusRunning), formatTime(now)); err != nil {
 		return nil, fmt.Errorf("expiring leases: %w", err)
 	}
+	// N4: runs already interrupted keep aging — the grace is re-evaluated on
+	// every sweep, so a worker that dies for good has its runs released to
+	// branch takeovers after takeoverGrace regardless of polling cadence.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE runs SET resume_kind = ?, updated_at = ?
+		WHERE status = ? AND resume_kind = ? AND lease_expires_at != '' AND lease_expires_at < ?`,
+		ResumeBranch, formatTime(now),
+		string(StatusInterrupted), ResumeSession, formatTime(now.Add(-takeoverGrace))); err != nil {
+		return nil, fmt.Errorf("grace flip: %w", err)
+	}
 
 	// Re-read candidates inside the transaction. Paused runs are NOT
 	// candidates: a pause means someone must decide (amendment approval,
@@ -317,12 +327,15 @@ func (s *Storage) Pause(ctx context.Context, id, workerID, reason string, now ti
 	return nil
 }
 
-// Resume flips a paused run back to claimed for its owner.
+// Resume returns a paused run to its owner as an owner-claimable
+// interrupted run (review N7: setting it straight to claimed made it
+// invisible to Claim until the lease expired — an approved amendment took
+// ~10 minutes to re-arm).
 func (s *Storage) Resume(ctx context.Context, id, workerID string, lease time.Duration, now time.Time) error {
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE runs SET status = ?, lease_expires_at = ?, updated_at = ?
+		UPDATE runs SET status = ?, resume_kind = ?, lease_expires_at = '', updated_at = ?
 		WHERE id = ? AND worker_id = ? AND status = ?`,
-		string(StatusClaimed), formatTime(now.Add(lease)), formatTime(now),
+		string(StatusInterrupted), ResumeSession, formatTime(now),
 		id, workerID, string(StatusPaused))
 	if err != nil {
 		return fmt.Errorf("resuming run: %w", err)
@@ -362,6 +375,22 @@ func (s *Storage) CancelItem(ctx context.Context, itemID, reason string, now tim
 		}
 	}
 	return ids, nil
+}
+
+// CancelOne retires a single run by id (targeted compensation, review N1).
+func (s *Storage) CancelOne(ctx context.Context, id, reason string, now time.Time) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE runs SET status = ?, fail_reason = ?, updated_at = ?
+		WHERE id = ? AND status IN (?, ?, ?, ?)`,
+		string(StatusCancelled), reason, formatTime(now),
+		id, string(StatusQueued), string(StatusClaimed), string(StatusRunning), string(StatusPaused))
+	if err != nil {
+		return fmt.Errorf("cancelling run: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // Note appends a chain-failure note to a run's fail_reason (best-effort).
