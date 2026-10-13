@@ -59,17 +59,30 @@ func TestSystemdUnit(t *testing.T) {
 		{true, "multi-user.target", [2]string{"martin", "staff"}, "User=martin\nGroup=staff\n"},
 	} {
 		u := systemdUnit("skopos-worker", "/opt/bin/skopos", "/home/some dir/skopos-config.toml", "/usr/bin:/bin:100%/x", tc.system, tc.userGroup)
+		unitPart, servicePart := splitUnitSections(u)
+		for _, want := range []string{
+			"StartLimitIntervalSec=300",
+			"StartLimitBurst=5",
+		} {
+			if !strings.Contains(unitPart, want) {
+				t.Errorf("[Unit] missing %q:\n%s", want, u)
+			}
+		}
+		if !strings.Contains(u, "WantedBy="+tc.target) {
+			t.Errorf("unit missing WantedBy=%s:\n%s", tc.target, u)
+		}
 		for _, want := range []string{
 			`ExecStart="/opt/bin/skopos" worker --config "/home/some dir/skopos-config.toml"`,
 			`Environment="PATH=/usr/bin:/bin:100%%/x"`,
 			"WorkingDirectory=/home/some dir",
 			"Restart=on-failure",
-			"StartLimitBurst=5",
-			"WantedBy=" + tc.target,
 		} {
-			if !strings.Contains(u, want) {
-				t.Errorf("unit missing %q:\n%s", want, u)
+			if !strings.Contains(servicePart, want) {
+				t.Errorf("[Service] missing %q:\n%s", want, u)
 			}
+		}
+		if strings.Contains(servicePart, "StartLimit") {
+			t.Errorf("start limits must live in [Unit] since systemd 230:\n%s", u)
 		}
 		if tc.userLines != "" && !strings.Contains(u, tc.userLines) {
 			t.Errorf("unit missing user lines %q:\n%s", tc.userLines, u)
@@ -82,7 +95,7 @@ func TestInstallDryRunWritesNothing(t *testing.T) {
 	home := t.TempDir()
 	cfg := filepath.Join(home, "skopos-config.toml")
 
-	actions, err := installLaunchd(installOptions{label: "w", dryRun: true}, home, "/bin/skopos", cfg, filepath.Join(home, "state"), nil)
+	actions, err := installLaunchd(installOptions{label: "w", dryRun: true}, home, "/bin/skopos", cfg, filepath.Join(home, "state"), "/usr/bin:/bin", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +106,7 @@ func TestInstallDryRunWritesNothing(t *testing.T) {
 		t.Fatalf("dry-run must not write the plist (err=%v)", err)
 	}
 
-	actions, err = installSystemd(installOptions{label: "w", dryRun: true}, home, "/bin/skopos", cfg, filepath.Join(home, "state"), nil)
+	actions, err = installSystemd(installOptions{label: "w", dryRun: true}, home, "/bin/skopos", cfg, filepath.Join(home, "state"), "/usr/bin:/bin", [2]string{"", ""}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +124,7 @@ func TestInstallDoesNotStartUnreadyConfig(t *testing.T) {
 	home := t.TempDir()
 	cfg := filepath.Join(home, "skopos-config.toml")
 
-	actions, err := installLaunchd(installOptions{label: "w"}, home, "/bin/skopos", cfg, filepath.Join(home, "state"), []string{"no API key"})
+	actions, err := installLaunchd(installOptions{label: "w"}, home, "/bin/skopos", cfg, filepath.Join(home, "state"), "/usr/bin:/bin", []string{"no API key"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +147,7 @@ func TestRunWorkerChecks(t *testing.T) {
 	if err := runWorkerInit(&strings.Builder{}, cfgPath, "https://skopos.example.com", []string{"github.com/you/repo"}); err != nil {
 		t.Fatal(err)
 	}
-	problems, err := runWorkerChecks(cfgPath, os.Getenv("PATH"))
+	problems, err := runWorkerChecks(cfgPath, "", os.Getenv("PATH"), "/home/tester")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +171,7 @@ func TestRunWorkerChecks(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("SKOPOS_API_KEY", "sk_real")
-	problems, err = runWorkerChecks(cfgPath, os.Getenv("PATH"))
+	problems, err = runWorkerChecks(cfgPath, "", os.Getenv("PATH"), "/home/tester")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,5 +185,57 @@ func TestRunWorkerChecks(t *testing.T) {
 	}
 	if len(rest) != 0 {
 		t.Fatalf("filled config must pass checks, got %v", rest)
+	}
+}
+
+// splitUnitSections splits a unit file into its [Unit] and [Service] bodies.
+func splitUnitSections(u string) (unit, service string) {
+	cur := ""
+	for _, l := range strings.Split(u, "\n") {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "[") && strings.HasSuffix(t, "]") {
+			cur = t
+			continue
+		}
+		switch cur {
+		case "[Unit]":
+			unit += l + "\n"
+		case "[Service]":
+			service += l + "\n"
+		}
+	}
+	return unit, service
+}
+
+// N1: when the config and the env file disagree, the env file wins — the
+// daemon and check must resolve identically.
+func TestEnvFileBeatsConfigForClient(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skopos-config.toml")
+	envPath := filepath.Join(dir, "skopos-worker.env")
+	if err := os.WriteFile(cfgPath, []byte("[client]\nserver_url = \"https://skopos.config.example\"\napi_key = \"sk_from_config\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(envPath, []byte("SKOPOS_SERVER_URL=https://skopos.envfile.real\nSKOPOS_API_KEY=sk_from_envfile\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Unsetenv("SKOPOS_SERVER_URL")
+	defer os.Unsetenv("SKOPOS_API_KEY")
+	if _, _, err := loadWorkerEnvFile(envPath); err != nil {
+		t.Fatal(err)
+	}
+	cc, err := readClientSection(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveClientSetting("", "SKOPOS_SERVER_URL", "http://localhost:8080", cc.ServerURL); got != "https://skopos.envfile.real" {
+		t.Fatalf("env file must beat config for the URL: %q", got)
+	}
+	if got := resolveClientSetting("", "SKOPOS_API_KEY", "", cc.APIKey); got != "sk_from_envfile" {
+		t.Fatalf("env file must beat config for the key: %q", got)
+	}
+	// Without the env file, the config applies.
+	if got := resolveClientSetting("", "SKOPOS_SERVER_URL_UNSET_X", "http://localhost:8080", cc.ServerURL); got != "https://skopos.config.example" {
+		t.Fatalf("config must be the fallback: %q", got)
 	}
 }

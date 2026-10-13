@@ -177,7 +177,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	if commitCount(ctx, worktree, repo.DefaultBranch) == 0 {
 		return fmt.Errorf("agent reported done but made no commits")
 	}
-	checks := runChecks(ctx, worktree, repo.Checks, w.envFileKeys)
+	checks := runChecks(ctx, worktree, repo.Checks, w.cfg.TokenEnvs(), w.envFileKeys)
 	head := headSHA(ctx, worktree)
 
 	// The push: validated refspec, env-only token, never force.

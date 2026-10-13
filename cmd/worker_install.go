@@ -37,6 +37,8 @@ func workerInstallCmd() *cli.Command {
 			&cli.BoolFlag{Name: "system", Usage: "Linux: install a system unit under /etc/systemd/system (runs as a non-root user; requires root to install)"},
 			&cli.StringFlag{Name: "user", Usage: "Linux --system: the user the worker runs as (default: $SUDO_USER)"},
 			&cli.BoolFlag{Name: "allow-root", Usage: "Linux --system: permit running the worker as root (agents get root too — not recommended)"},
+			&cli.StringFlag{Name: "path", Usage: "PATH the service gets (default: this shell's; under --system the target user's login PATH)"},
+			&cli.StringFlag{Name: "env-file", Usage: "Env file the checks load (default: skopos-worker.env next to the config)", EnvVars: []string{"SKOPOS_WORKER_ENV"}},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			return runWorkerInstall(os.Stdout, installOptions{
@@ -46,6 +48,8 @@ func workerInstallCmd() *cli.Command {
 				system:    cmd.GetBool("system"),
 				allowRoot: cmd.GetBool("allow-root"),
 				user:      cmd.GetString("user"),
+				path:      cmd.GetString("path"),
+				envFile:   cmd.GetString("env-file"),
 				config:    configFileFor(cmd),
 			})
 		},
@@ -59,8 +63,13 @@ func workerCheckCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "check",
 		Usage: "Validate the worker config: key, repo clones, accounts, agent CLI — what install checks before starting",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "env-file", Usage: "Env file to load (default: skopos-worker.env next to the config)", EnvVars: []string{"SKOPOS_WORKER_ENV"}},
+		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			problems, err := runWorkerChecks(configFileFor(cmd), os.Getenv("PATH"))
+			cfgPath := configFileFor(cmd)
+			home, _ := os.UserHomeDir()
+			problems, err := runWorkerChecks(cfgPath, defaultWorkerEnvFile(cfgPath, cmd.GetString("env-file")), os.Getenv("PATH"), home)
 			if err != nil {
 				return err
 			}
@@ -103,6 +112,8 @@ type installOptions struct {
 	system    bool
 	allowRoot bool
 	user      string
+	path      string
+	envFile   string
 	config    string
 }
 
@@ -140,18 +151,41 @@ func runWorkerInstall(out io.Writer, o installOptions) error {
 		return err
 	}
 
-	problems, err := runWorkerChecks(o.config, os.Getenv("PATH"))
+	// N4: the service's PATH must be one the TARGET context owns — under
+	// sudo that is not this process's PATH (secure_path). An explicit
+	// --path wins; --system resolves the target user's login PATH.
+	userGroup := [2]string{"", ""}
+	if o.system && runtime.GOOS == "linux" {
+		userGroup, err = resolveSystemUser(o)
+		if err != nil {
+			return err
+		}
+	}
+	pathEnv := o.path
+	if pathEnv == "" {
+		pathEnv = os.Getenv("PATH")
+		if userGroup[0] != "" {
+			if p, perr := userLoginPath(userGroup[0]); perr == nil {
+				pathEnv = p
+			} else {
+				fmt.Fprintf(out, "NOTE: could not resolve %s's login PATH (%v) — using this shell's; pass --path if the agent CLI lives elsewhere\n", userGroup[0], perr)
+			}
+		}
+	}
+	problems, err := runWorkerChecks(o.config, defaultWorkerEnvFile(o.config, o.envFile), pathEnv, home)
 	if err != nil {
 		return err
 	}
 
 	var actions []string
-	actions = append(actions, exeWarns...)
+	actions = append(actions, exeWarns...) // N5: not replaced below
+	var platformActions []string
 	if runtime.GOOS == "darwin" {
-		actions, err = installLaunchd(o, home, exe, configPath, cfg.StateDir, problems)
+		platformActions, err = installLaunchd(o, home, exe, configPath, cfg.StateDir, pathEnv, problems)
 	} else {
-		actions, err = installSystemd(o, home, exe, configPath, cfg.StateDir, problems)
+		platformActions, err = installSystemd(o, home, exe, configPath, cfg.StateDir, pathEnv, userGroup, problems)
 	}
+	actions = append(actions, platformActions...)
 	if err != nil {
 		return err
 	}
@@ -159,7 +193,11 @@ func runWorkerInstall(out io.Writer, o installOptions) error {
 		fmt.Fprintln(out, a)
 	}
 	if len(problems) > 0 {
-		fmt.Fprint(out, "\nNOT STARTED — the config is not ready (see above). Fix it, verify with 'skopos worker check', then start:\n")
+		fmt.Fprint(out, "\nConfig problems (skopos worker check):\n")
+		for _, p := range problems {
+			fmt.Fprintln(out, "  - "+p)
+		}
+		fmt.Fprint(out, "\nNOT STARTED — fix the above, verify with 'skopos worker check', then start (a previously installed service may still be RUNNING the old definition):\n")
 		if runtime.GOOS == "darwin" {
 			fmt.Fprintf(out, "  launchctl bootstrap gui/%s %s\n", strconv.Itoa(os.Getuid()), filepath.Join(home, "Library", "LaunchAgents", o.label+".plist"))
 		} else if o.system {
@@ -242,10 +280,10 @@ func placeholderish(v string) bool {
 // resolves (after the env file), repo paths are git clones, no placeholders
 // remain, an account exists, and the agent CLI is on PATH. It mirrors the
 // daemon's resolution order exactly.
-func runWorkerChecks(configPath, pathEnv string) ([]string, error) {
+func runWorkerChecks(configPath, envFile, pathEnv, home string) ([]string, error) {
 	// Same env-file side effects as the daemon, so the key check agrees.
-	if envPath := filepath.Join(filepath.Dir(configPath), "skopos-worker.env"); fileExists(envPath) {
-		if _, _, err := loadWorkerEnvFile(envPath); err != nil {
+	if envFile != "" {
+		if _, _, err := loadWorkerEnvFile(envFile); err != nil {
 			return nil, err
 		}
 	}
@@ -261,24 +299,23 @@ func runWorkerChecks(configPath, pathEnv string) ([]string, error) {
 	}
 	var problems []string
 
-	key := os.Getenv("SKOPOS_API_KEY") // includes the env file now
-	if key == "" {
-		key = file.Client.APIKey
-	}
+	// The SAME precedence the daemon uses (review N1): environment (which
+	// now includes the env file), then [client].
+	key := resolveClientSetting("", "SKOPOS_API_KEY", "", file.Client.APIKey)
 	if key == "" {
 		problems = append(problems, "no API key: set [client].api_key or SKOPOS_API_KEY in skopos-worker.env")
 	} else if placeholderish(key) {
 		problems = append(problems, "API key looks like a placeholder")
 	}
-	if u := os.Getenv("SKOPOS_SERVER_URL"); u != "" && placeholderish(u) || u == "" && placeholderish(file.Client.ServerURL) {
-		problems = append(problems, "server URL looks like a placeholder: "+firstNonEmpty(u, file.Client.ServerURL))
+	serverURL := resolveClientSetting("", "SKOPOS_SERVER_URL", "http://localhost:8080", file.Client.ServerURL)
+	if placeholderish(serverURL) {
+		problems = append(problems, "server URL looks like a placeholder: "+serverURL)
 	}
 
 	ws := file.Worker
 	if ws == nil {
 		return append(problems, "no [worker] section — run 'skopos worker init'"), nil
 	}
-	home, _ := os.UserHomeDir()
 	if err := ws.Default(home); err != nil {
 		problems = append(problems, err.Error())
 	}
@@ -311,10 +348,33 @@ func runWorkerChecks(configPath, pathEnv string) ([]string, error) {
 	if ws.Bin == "" {
 		ws.Bin = "claude"
 	}
-	if _, err := exec.LookPath(ws.Bin); err != nil {
-		problems = append(problems, fmt.Sprintf("agent CLI %q not on PATH — the service captures this shell's PATH at install time", ws.Bin))
+	// Look the CLI up on the PATH the SERVICE will have, not the
+	// installer's (sudo's secure_path is not the target user's).
+	if !onPath(ws.Bin, pathEnv) {
+		problems = append(problems, fmt.Sprintf("agent CLI %q not on the service PATH (%s)", ws.Bin, pathEnv))
 	}
 	return problems, nil
+}
+
+// onPath resolves bin within the given PATH only.
+func onPath(bin, pathEnv string) bool {
+	cmd := exec.Command("sh", "-c", `command -v "$1"`, "sh", bin)
+	cmd.Env = []string{"PATH=" + pathEnv}
+	return cmd.Run() == nil
+}
+
+// userLoginPath resolves a user's login-shell PATH (under sudo, the
+// installer's own PATH is secure_path, not the user's).
+func userLoginPath(user string) (string, error) {
+	outB, err := exec.Command("sudo", "-u", user, "-i", "sh", "-c", "echo $PATH").Output()
+	if err != nil {
+		return "", err
+	}
+	p := strings.TrimSpace(string(outB))
+	if p == "" {
+		return "", fmt.Errorf("empty PATH")
+	}
+	return p, nil
 }
 
 func fileExists(p string) bool {
@@ -333,9 +393,9 @@ func firstNonEmpty(xs ...string) string {
 
 // --- launchd (macOS) ---
 
-func installLaunchd(o installOptions, home, exe, configPath, stateDir string, problems []string) ([]string, error) {
+func installLaunchd(o installOptions, home, exe, configPath, stateDir, pathEnv string, problems []string) ([]string, error) {
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", o.label+".plist")
-	content := launchdPlist(o.label, exe, configPath, stateDir, os.Getenv("PATH"))
+	content := launchdPlist(o.label, exe, configPath, stateDir, pathEnv)
 	if o.dryRun {
 		actions := []string{
 			fmt.Sprintf("would write %s", plistPath),
@@ -442,25 +502,19 @@ func launchdPlist(label, exe, configPath, stateDir, pathEnv string) string {
 
 // --- systemd (Linux) ---
 
-func installSystemd(o installOptions, home, exe, configPath, stateDir string, problems []string) ([]string, error) {
+func installSystemd(o installOptions, home, exe, configPath, stateDir, pathEnv string, userGroup [2]string, problems []string) ([]string, error) {
 	var unitPath string
 	systemctl := []string{"systemctl", "--user"}
-	userGroup := [2]string{"", ""}
 	if o.system {
 		if os.Geteuid() != 0 {
 			return nil, fmt.Errorf("--system installs into /etc/systemd/system — re-run with sudo, or drop --system for a user unit")
-		}
-		var err error
-		userGroup, err = resolveSystemUser(o)
-		if err != nil {
-			return nil, err
 		}
 		unitPath = filepath.Join("/etc/systemd/system", o.label+".service")
 		systemctl = []string{"systemctl"}
 	} else {
 		unitPath = filepath.Join(home, ".config/systemd/user", o.label+".service")
 	}
-	content := systemdUnit(o.label, exe, configPath, os.Getenv("PATH"), o.system, userGroup)
+	content := systemdUnit(o.label, exe, configPath, pathEnv, o.system, userGroup)
 
 	if o.dryRun {
 		actions := []string{
@@ -567,6 +621,10 @@ func systemdUnit(label, exe, configPath, pathEnv string, system bool, userGroup 
 Description=skopos worker (` + label + `)
 Wants=network-online.target
 After=network-online.target
+# Start limits live in [Unit] since systemd 230; in [Service] the interval
+# key is ignored and the default 10s window never trips (review N3).
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 ` + userLines + `ExecStart="` + exe + `" worker --config "` + configPath + `"
@@ -574,8 +632,6 @@ WorkingDirectory=` + filepath.Dir(configPath) + `
 Environment="PATH=` + strings.ReplaceAll(pathEnv, "%", "%%") + `"
 Restart=on-failure
 RestartSec=5
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 [Install]
 WantedBy=` + target + `

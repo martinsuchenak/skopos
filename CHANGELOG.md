@@ -8,6 +8,20 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Review round 2 on the worker commands:** one precedence everywhere for
+  the server URL and API key — flag > environment (incl. the env file) >
+  `[client]` config (the CLI library's config binding made the config
+  silently beat the env file, while `check` assumed the opposite);
+  `worker install` now prints the config problems it found before the
+  "NOT STARTED" line (and warns a previously installed service may still be
+  running the old definition); the systemd start limits moved to `[Unit]`
+  where they actually apply; `--system` resolves the target user's login
+  PATH (sudo's secure_path is not it) with a `--path` override, and the
+  agent-CLI check runs against the PATH the service gets. Account env
+  expansion handles only the `${NAME}` form (literal `$` survives), and a
+  leading `~` expands in account env values too; repo check commands scrub
+  configured push-token envs; the temp-build warning is no longer dropped.
+
 - **The documented macOS install path now works end to end** (review round on
   68651bc): `SKOPOS_API_KEY` (and the other env vars) in `skopos-worker.env`
   are actually seen by the daemon — the file loads before any value is

@@ -31,8 +31,12 @@ func workerCmd() *cli.Command {
 		Name:  "worker",
 		Usage: "Run the execution worker: claim run stages from skopos and execute them (long-running daemon)",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
-			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key (worker scope)", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
+			// No ConfigPath on these two (review N1): the CLI library cannot
+			// tell a config value from an explicit flag, which made the
+			// config silently beat the env file. The command resolves
+			// flag -> environment (incl. the env file) -> [client] itself.
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL (also read from [client] as the last fallback)", EnvVars: []string{"SKOPOS_SERVER_URL"}},
+			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key, worker scope (also read from [client] as the last fallback)", EnvVars: []string{"SKOPOS_API_KEY"}},
 			&cli.StringFlag{Name: "worker-id", Usage: "Worker identity (defaults to worker-<hostname>)", EnvVars: []string{"SKOPOS_WORKER_ID"}},
 			&cli.StringFlag{Name: "state-dir", Usage: "Worktrees, logs and session state", EnvVars: []string{"SKOPOS_WORKER_STATE"}, DefaultValue: defaultStateDir},
 			&cli.StringSliceFlag{Name: "workspace", Usage: "Workspace ID this worker serves (repeatable; must have a local clone configured)"},
@@ -52,7 +56,11 @@ func workerCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			key := resolveWorkerSetting(cmd.GetString("api-key"), "SKOPOS_API_KEY", "")
+			clientCfg, err := readClientSection(cmd.GetString("config"))
+			if err != nil {
+				return err
+			}
+			key := resolveClientSetting(cmd.GetString("api-key"), "SKOPOS_API_KEY", "", clientCfg.APIKey)
 			if key == "" {
 				return fmt.Errorf("--api-key or SKOPOS_API_KEY is required (mint a worker-scoped key: skopos key create --name <host> --workspace <id>)")
 			}
@@ -80,7 +88,7 @@ func workerCmd() *cli.Command {
 			for _, warn := range warnings {
 				log.Warn(warn)
 			}
-			serverURL := resolveWorkerSetting(cmd.GetString("server-url"), "SKOPOS_SERVER_URL", "http://localhost:8080")
+			serverURL := resolveClientSetting(cmd.GetString("server-url"), "SKOPOS_SERVER_URL", "http://localhost:8080", clientCfg.ServerURL)
 			client := worker.NewClient(expandTilde(serverURL, home), key)
 			w := worker.New(cfg, client, log)
 			// Env-file values never reach agent runs (review low): the
@@ -122,14 +130,59 @@ func resolveWorkerSetting(flagVal, envName, flagDefault string) string {
 // skopos-worker.env next to the config when it exists (the service installs
 // never embed secrets in the unit/plist — the daemon pulls them in itself).
 func workerEnvFileFlag(cmd *cli.Command) string {
-	if p := cmd.GetString("env-file"); p != "" {
-		return p
+	return defaultWorkerEnvFile(configFileFor(cmd), cmd.GetString("env-file"))
+}
+
+// defaultWorkerEnvFile is the shared lookup for the daemon, check and
+// install (review N1 low: a custom --env-file must not make them disagree).
+func defaultWorkerEnvFile(configPath, explicit string) string {
+	if explicit != "" {
+		return explicit
 	}
-	p := filepath.Join(filepath.Dir(configFileFor(cmd)), "skopos-worker.env")
+	p := filepath.Join(filepath.Dir(configPath), "skopos-worker.env")
 	if _, err := os.Stat(p); err == nil {
 		return p
 	}
 	return ""
+}
+
+// readClientSection reads [client] from the config file (the last fallback
+// for the server URL and API key).
+func readClientSection(configPath string) (struct{ ServerURL, APIKey string }, error) {
+	var out struct{ ServerURL, APIKey string }
+	var file struct {
+		Client struct {
+			ServerURL string `toml:"server_url"`
+			APIKey    string `toml:"api_key"`
+		}
+	}
+	if _, err := toml.DecodeFile(configPath, &file); err != nil {
+		if os.IsNotExist(err) {
+			return out, nil
+		}
+		return out, fmt.Errorf("parsing %s: %w", configPath, err)
+	}
+	out.ServerURL, out.APIKey = file.Client.ServerURL, file.Client.APIKey
+	return out, nil
+}
+
+// resolveClientSetting is the ONE precedence chain for settings that can
+// also come from [client]: explicit flag, then environment (which includes
+// the env file by the time this runs), then the config, then the default.
+func resolveClientSetting(flagVal, envName, flagDefault, cfgVal string) string {
+	if flagVal != "" && flagVal != flagDefault {
+		return flagVal
+	}
+	if v := os.Getenv(envName); v != "" {
+		return v
+	}
+	if cfgVal != "" {
+		return cfgVal
+	}
+	if flagVal != "" {
+		return flagVal
+	}
+	return flagDefault
 }
 
 // loadWorkerEnvFile applies KEY=VALUE lines via os.Setenv for keys not

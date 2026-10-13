@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -167,10 +168,24 @@ func (c *Config) Default(home string) error {
 	}
 	for _, a := range c.Accounts {
 		for k, v := range a.Env {
-			a.Env[k] = os.Expand(v, os.Getenv)
+			// ${NAME} only: os.Expand rewrites every $, silently mangling
+			// literal values that merely contain one. Unset names expand
+			// empty — the checker flags that. A leading ~ expands too
+			// (CLAUDE_CONFIG_DIR = "~/.claude" in the template comment).
+			v = expandEnvRefs(v)
+			a.Env[k] = expandHome(v, home)
 		}
 	}
 	return nil
+}
+
+var reEnvRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+
+// expandEnvRefs expands only the ${NAME} form from the environment.
+func expandEnvRefs(s string) string {
+	return reEnvRef.ReplaceAllStringFunc(s, func(m string) string {
+		return os.Getenv(m[2 : len(m)-1])
+	})
 }
 
 // expandHome expands a leading ~ (never ~user) against home.

@@ -224,7 +224,12 @@ func TestDefaultExpandsPathsAndEnv(t *testing.T) {
 			"github.com/x/y": {Path: "~/clones/y"},
 		},
 		Accounts: []*Account{
-			{Name: "a", Runner: "claude", Env: map[string]string{"ANTHROPIC_API_KEY": "${CLAUDE_TEST_KEY}"}},
+			{Name: "a", Runner: "claude", Env: map[string]string{
+				"ANTHROPIC_API_KEY": "${CLAUDE_TEST_KEY}",
+				"PASSWORD":          "pa$ssword", // literal $ must survive
+				"CLAUDE_CONFIG_DIR": "~/.claude", // leading ~ expands
+				"UNSET_REF":         "${DEFINITELY_UNSET_XY}",
+			}},
 		},
 	}
 	if err := c.Default("/home/tester"); err != nil {
@@ -238,5 +243,14 @@ func TestDefaultExpandsPathsAndEnv(t *testing.T) {
 	}
 	if got := c.Accounts[0].Env["ANTHROPIC_API_KEY"]; got != "sk-real" {
 		t.Fatalf("account env not expanded: %q", got)
+	}
+	if got := c.Accounts[0].Env["PASSWORD"]; got != "pa$ssword" {
+		t.Fatalf("literal $ must not be rewritten: %q", got)
+	}
+	if got := c.Accounts[0].Env["CLAUDE_CONFIG_DIR"]; got != "/home/tester/.claude" {
+		t.Fatalf("~ in account env must expand: %q", got)
+	}
+	if got := c.Accounts[0].Env["UNSET_REF"]; got != "" {
+		t.Fatalf("unset ${NAME} expands empty (the checker flags it): %q", got)
 	}
 }

@@ -64,7 +64,8 @@ config) and restarts — safe.
 No secrets live in the service definition. The daemon loads
 `skopos-worker.env` (next to the config) before parsing the config:
 
-- `KEY=VALUE` lines, `#` comments, values never quoted-parsed beyond `=`
+- `KEY=VALUE` lines, `#` comments, `KEY="v"` and `export KEY=` forms
+- precedence everywhere: flags > real environment > env file > `[client]` in the TOML
 - the real environment always wins over the file
 - put `SKOPOS_API_KEY` and each repo's `push.token_env` value there
 
