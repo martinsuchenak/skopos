@@ -74,6 +74,30 @@ url = "new"
 	}
 }
 
+// ReplaceTOMLSection must treat array tables ([[worker.accounts]]) as part of
+// the [worker] section when replacing (worker init re-runs).
+func TestReplaceTOMLSectionCoversArrayTables(t *testing.T) {
+	content := `[client]
+server_url = "https://skopos.example"
+
+[worker]
+id = "worker-old"
+
+[[worker.accounts]]
+name = "stale"
+`
+	out := ReplaceTOMLSection(content, "worker", "[worker]\nid = \"worker-new\"\n")
+	if strings.Contains(out, "stale") || strings.Contains(out, "worker-old") {
+		t.Errorf("old worker section (incl. array tables) must be replaced:\n%s", out)
+	}
+	if !strings.Contains(out, `[client]`) || !strings.Contains(out, "skopos.example") {
+		t.Errorf("client section must be preserved:\n%s", out)
+	}
+	if !strings.Contains(out, `id = "worker-new"`) || strings.Count(out, "[[worker.") != 0 {
+		t.Errorf("new section missing or old array table leaked:\n%s", out)
+	}
+}
+
 func TestMCEntryShapes(t *testing.T) {
 	const url = "http://localhost:8080/mcp"
 	claude := mcpEntry("claude-code", url, "k")

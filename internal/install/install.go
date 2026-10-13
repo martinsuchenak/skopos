@@ -591,10 +591,22 @@ func mergeCodexTOML(path string, o Options, actions *[]string) error {
 // setTOMLSection replaces the [mcp_servers.skopos] block (including its .headers
 // subtable) with block, or appends it if absent. Everything else is preserved.
 func setTOMLSection(content, block string) string {
+	return ReplaceTOMLSection(content, "mcp_servers.skopos", block)
+}
+
+// ReplaceTOMLSection replaces the `[section]` block — including its dotted
+// sub-tables ([section.x]) and array tables ([[section.x]]) — with block, or
+// appends it if absent. Everything else in the file is preserved.
+func ReplaceTOMLSection(content, section, block string) string {
+	owns := func(line string) bool {
+		t := strings.TrimSpace(line)
+		return t == "["+section+"]" || t == "[["+section+"]]" ||
+			strings.HasPrefix(t, "["+section+".") || strings.HasPrefix(t, "[["+section+".")
+	}
 	lines := strings.Split(content, "\n")
 	start := -1
 	for i, l := range lines {
-		if strings.TrimSpace(l) == "[mcp_servers.skopos]" {
+		if owns(l) {
 			start = i
 			break
 		}
@@ -608,7 +620,7 @@ func setTOMLSection(content, block string) string {
 	end := start + 1
 	for end < len(lines) {
 		t := strings.TrimSpace(lines[end])
-		if strings.HasPrefix(t, "[") && !strings.HasPrefix(t, "[mcp_servers.skopos") {
+		if strings.HasPrefix(t, "[") && !owns(lines[end]) {
 			break
 		}
 		end++

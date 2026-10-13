@@ -44,6 +44,24 @@ automatically; flags and `SKOPOS_SERVER_URL`/`SKOPOS_API_KEY` override it.
 | `client.server_url` | `SKOPOS_SERVER_URL` | (empty = local index) | Remote skopos URL for index/query commands |
 | `client.api_key` | `SKOPOS_API_KEY` | (empty) | API key for the remote server |
 
+### Worker
+
+The `[worker]` section configures the execution plane (`skopos worker`).
+Scaffold it with `skopos worker init` (which also writes a `skopos-worker.env`
+for secrets). See [deployment/worker.md](deployment/worker.md) for the full
+walkthrough.
+
+| Config path | Flag | Default | Description |
+|-------------|------|---------|-------------|
+| `worker.id` | `--worker-id` | `worker-<hostname>` | Worker identity — must keep the `worker-` prefix |
+| `worker.state_dir` | `--state-dir` | `~/.local/state/skopos-worker` | Worktrees, logs, session state |
+| `worker.runners` | — | `["claude"]` | Runners this worker offers (must cover the workspaces' stage preferences) |
+| `worker.workspaces` | `--workspace` | (from repos) | Workspace IDs this worker serves |
+| `worker.poll_every` | — | `30s` | Idle claim interval |
+| `worker.repos."<workspace-id>"` | — | — | Per-workspace local clone: `path`, `default_branch`, `branch_prefix`, `setup`, `checks`, `protected_branches`, and `push.{kind,remote_url,token_env}` |
+| `worker.accounts` | — | — | Credential pool: `name`, `runner`, `priority`, `env` (injected into agent runs only) |
+| — | `--env-file` | `<config-dir>/skopos-worker.env` when present | `KEY=VALUE` secrets loaded before the config (real environment wins) |
+
 ## Agent identity (all surfaces)
 
 These environment variables affect how agents identify themselves — to the

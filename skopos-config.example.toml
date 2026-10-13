@@ -54,4 +54,36 @@ model = ""
 vector_store = "sqlite"
 # qdrant_url = "https://qdrant.example.com"
 # qdrant_api_key = ""
+
+[worker]
+# The execution plane (`skopos worker`). Scaffold with: skopos worker init.
+# id must keep the "worker-" prefix (marks worker-created plans so the
+# server's orphan cleanup never touches hand-made ones).
+# id = "worker-<hostname>"
+state_dir = "~/.local/state/skopos-worker"
+runners = ["claude"]
+workspaces = []
+poll_every = "30s"
+
+# One block per workspace this worker serves — ids contain '/', so the table
+# key is quoted. Worktrees are cut from the local clone per run.
+# [worker.repos."github.com/you/repo"]
+# path = "/srv/clones/repo"
+# default_branch = "main"
+# branch_prefix = "agent/"
+# setup = []
+# checks = ["task test"]
+# protected_branches = ["PROD", "main", "master", "develop", "release/**"]
+# [worker.repos."github.com/you/repo".push]
+# kind = "gitea"                   # gitea | github | none
+# remote_url = "https://git.example.com/you/repo.git"
+# token_env = "GITEA_PUSH_TOKEN"   # set the value in skopos-worker.env, never here
+
+# The credential pool: picked at run start; a session stays on the account
+# that created it. env values are injected into the agent run only.
+# [[worker.accounts]]
+# name = "claude-1"
+# runner = "claude"
+# priority = 1
+# env = { ANTHROPIC_API_KEY = "sk-ant-..." }
 # go-scaffolder:config-sections

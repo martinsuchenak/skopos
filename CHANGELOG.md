@@ -4,6 +4,24 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Worker lifecycle commands** — `skopos worker init` scaffolds the
+  annotated `[worker]` config section (plus a `skopos-worker.env` for
+  secrets; refuses to overwrite an existing section, preserves the rest of
+  the file). `skopos worker install` / `uninstall` manage the daemon as a
+  platform service: a launchd LaunchAgent on macOS, a systemd user unit on
+  Linux (`--system` for a root system unit), with `--dry-run`/`--no-start`.
+  Service definitions carry no secrets — the daemon loads
+  `skopos-worker.env` (`--env-file`, default next to the config; the real
+  environment wins) before parsing the config, so push tokens and the worker
+  key live in one chmod-600 file on every platform. The generated unit
+  captures the installing shell's PATH so the agent CLI is found inside the
+  service. Docs: docs/deployment/worker.md; the example config gained a
+  `[worker]` section.
+
 ## [0.10.0] — 2026-10-13
 
 ### Added — agent pipeline, lean 1b (docs/design/agent-pipeline.md)
