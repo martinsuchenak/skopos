@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -40,24 +41,31 @@ func workerCmd() *cli.Command {
 		Commands: []*cli.Command{
 			workerInitCmd(),
 			workerInstallCmd(),
+			workerCheckCmd(),
 			workerUninstallCmd(),
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			key := cmd.GetString("api-key")
+			// The env file loads FIRST (review H1): flag env vars were
+			// resolved at parse time, so anything it provides must be
+			// picked up explicitly below, flag → environment → config.
+			fileKeys, warnings, err := loadWorkerEnvFile(workerEnvFileFlag(cmd))
+			if err != nil {
+				return err
+			}
+			key := resolveWorkerSetting(cmd.GetString("api-key"), "SKOPOS_API_KEY", "")
 			if key == "" {
 				return fmt.Errorf("--api-key or SKOPOS_API_KEY is required (mint a worker-scoped key: skopos key create --name <host> --workspace <id>)")
 			}
 			home, _ := os.UserHomeDir()
-			if err := loadWorkerEnvFile(workerEnvFileFlag(cmd)); err != nil {
-				return err
-			}
 			cfg := &worker.Config{
-				ID:         cmd.GetString("worker-id"),
-				StateDir:   expandTilde(cmd.GetString("state-dir"), home),
+				ID:         resolveWorkerSetting(cmd.GetString("worker-id"), "SKOPOS_WORKER_ID", ""),
+				StateDir:   resolveWorkerSetting(cmd.GetString("state-dir"), "SKOPOS_WORKER_STATE", defaultStateDir),
 				Workspaces: cmd.GetStringSlice("workspace"),
 			}
 			// Flags carry the minimum; the TOML [worker] section (repos,
 			// accounts, timeouts, MCP deny) rides on top when present.
+			// StateDir stays unexpanded here so the config comparison sees
+			// the flag default — Default() expands ~ for everything (H2).
 			if err := loadWorkerConfigFile(cfg, cmd.GetString("config")); err != nil {
 				return err
 			}
@@ -69,15 +77,45 @@ func workerCmd() *cli.Command {
 			}
 
 			log := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("worker", cfg.ID)
-			client := worker.NewClient(expandTilde(cmd.GetString("server-url"), home), key)
+			for _, warn := range warnings {
+				log.Warn(warn)
+			}
+			serverURL := resolveWorkerSetting(cmd.GetString("server-url"), "SKOPOS_SERVER_URL", "http://localhost:8080")
+			client := worker.NewClient(expandTilde(serverURL, home), key)
 			w := worker.New(cfg, client, log)
+			// Env-file values never reach agent runs (review low): the
+			// scrubber drops every key the file provided.
+			w.SetEnvFileKeys(fileKeys)
 
 			runCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			log.Info("worker starting", "workspaces", cfg.Workspaces, "runners", cfg.Runners, "state", cfg.StateDir)
-			return w.Loop(runCtx)
+			// A cancelled context is a clean stop (SIGTERM from the service
+			// manager) — exit 0 so Restart=on-failure stays quiet.
+			if err := w.Loop(runCtx); err != nil && !errors.Is(err, context.Canceled) {
+				return err
+			}
+			return nil
 		},
 	}
+}
+
+// resolveWorkerSetting picks the flag value when one was given explicitly,
+// else the environment (which now includes the env file), else the flag's
+// default. Flag values equal to the default cannot be distinguished from
+// unset — an explicit flag matching the default loses to the environment,
+// which is the safe direction (nobody types the default on purpose).
+func resolveWorkerSetting(flagVal, envName, flagDefault string) string {
+	if flagVal != "" && flagVal != flagDefault {
+		return flagVal
+	}
+	if v := os.Getenv(envName); v != "" {
+		return v
+	}
+	if flagVal != "" {
+		return flagVal
+	}
+	return flagDefault
 }
 
 // workerEnvFileFlag resolves the env file: an explicit --env-file, else the
@@ -94,30 +132,43 @@ func workerEnvFileFlag(cmd *cli.Command) string {
 	return ""
 }
 
-// loadWorkerEnvFile applies KEY=VALUE lines (# comments) via os.Setenv for
-// keys not already set — the real environment always wins.
-func loadWorkerEnvFile(path string) error {
+// loadWorkerEnvFile applies KEY=VALUE lines via os.Setenv for keys not
+// already set — the real environment always wins. It accepts the usual
+// dotenv forms (quoted values, `export` prefixes, spaces around `=`) and
+// returns the keys it set (the scrubber drops them from agent runs) plus
+// warnings (a group/world-readable file holds secrets).
+func loadWorkerEnvFile(path string) (keys []string, warnings []string, err error) {
 	if path == "" {
-		return nil
+		return nil, nil, nil
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("reading env file: %w", err)
+		return nil, nil, fmt.Errorf("reading env file: %w", err)
+	}
+	if st, serr := os.Stat(path); serr == nil && st.Mode().Perm()&0o077 != 0 {
+		warnings = append(warnings, fmt.Sprintf("%s is group/world readable (chmod 600 %s) — it holds secrets", path, path))
 	}
 	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+		line = strings.TrimPrefix(line, "export ")
 		k, v, ok := strings.Cut(line, "=")
 		if !ok {
-			return fmt.Errorf("%s: not KEY=VALUE: %q", path, line)
+			return nil, nil, fmt.Errorf("%s: not KEY=VALUE: %q", path, line)
 		}
-		if _, exists := os.LookupEnv(strings.TrimSpace(k)); !exists {
-			_ = os.Setenv(strings.TrimSpace(k), v)
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
+			v = v[1 : len(v)-1]
+		}
+		if _, exists := os.LookupEnv(k); !exists {
+			_ = os.Setenv(k, v)
+			keys = append(keys, k)
 		}
 	}
-	return nil
+	return keys, warnings, nil
 }
 
 func expandTilde(p, home string) string {

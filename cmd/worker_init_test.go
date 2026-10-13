@@ -87,9 +87,48 @@ func TestWorkerInitAppendsToExisting(t *testing.T) {
 	if file.Worker == nil {
 		t.Fatal("[worker] missing after append")
 	}
+	// The template protects the full default set (hotfix/** included — a
+	// narrower list would protect LESS than an unconfigured worker).
+	if !strings.Contains(string(raw), "hotfix/**") {
+		t.Errorf("protected_branches must include hotfix/**:\n%s", raw)
+	}
 	// Re-run: the section holds operator edits by now — refuse.
 	if err := runWorkerInit(&out, cfgPath, "", nil); err == nil || !strings.Contains(err.Error(), "already has a [worker] section") {
 		t.Fatalf("re-run must refuse: %v", err)
+	}
+}
+
+// --server-url on an existing config without [client] adds the section; an
+// existing [client] wins.
+func TestWorkerInitServerURLOnExisting(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skopos-config.toml")
+	if err := os.WriteFile(cfgPath, []byte("[server]\nport = 8080\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := runWorkerInit(&out, cfgPath, "https://skopos.real.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(cfgPath)
+	if !strings.Contains(string(raw), "[client]") || !strings.Contains(string(raw), "skopos.real.com") {
+		t.Fatalf("--server-url must add [client] when absent:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), "[server]") {
+		t.Fatalf("existing sections must survive:\n%s", raw)
+	}
+
+	// An existing [client] is left alone.
+	other := filepath.Join(dir, "other.toml")
+	if err := os.WriteFile(other, []byte("[client]\nserver_url = \"https://chosen.example\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runWorkerInit(&bytes.Buffer{}, other, "https://ignored.example", nil); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = os.ReadFile(other)
+	if strings.Contains(string(raw), "ignored.example") || !strings.Contains(string(raw), "chosen.example") {
+		t.Fatalf("existing [client] must win over --server-url:\n%s", raw)
 	}
 }
 

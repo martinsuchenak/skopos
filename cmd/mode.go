@@ -17,8 +17,8 @@ func init() {
 // in local mode the CLI is the interface.
 func modeCmd() *cli.Command {
 	return &cli.Command{
-		Name:   "mode",
-		Usage:  "Print the resolved workflow: local, or remote <server-url>",
+		Name:  "mode",
+		Usage: "Print the resolved workflow: local, or remote <server-url>",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:       "server-url",

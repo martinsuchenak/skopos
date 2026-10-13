@@ -22,7 +22,7 @@ func workerInitCmd() *cli.Command {
 		Usage: "Write an annotated [worker] config section (and skopos-worker.env) — the starting point for a worker install",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "server-url", Usage: "Prefill [client] server_url (the skopos server this worker polls)"},
-			&cli.StringSliceFlag{Name: "workspace", Usage: "Workspace ID to emit a [worker.repos.<id>] block for (repeatable; stays commented until filled in)"},
+			&cli.StringSliceFlag{Name: "workspace", Usage: "Workspace ID to emit a [worker.repos.<id>] block for (repeatable; placeholder values to fill in)"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			return runWorkerInit(os.Stdout, configFileFor(cmd), cmd.GetString("server-url"), cmd.GetStringSlice("workspace"))
@@ -42,6 +42,12 @@ func runWorkerInit(out io.Writer, configPath, serverURL string, workspaces []str
 			return fmt.Errorf("%s already has a [worker] section — edit it directly", configPath)
 		}
 		updated := install.ReplaceTOMLSection(string(raw), "worker", section)
+		// --server-url is honored when the file has no [client] yet; an
+		// existing [client] wins (it may hold a deliberately chosen URL).
+		if serverURL != "" && !hasTOMLSection(updated, "client") {
+			updated = install.ReplaceTOMLSection(updated, "client", clientSectionTOML(serverURL))
+			fmt.Fprintf(out, "Added a [client] section (no server URL was configured before)\n")
+		}
 		mode := statMode(configPath, 0o600)
 		if err := os.WriteFile(configPath, []byte(updated), mode); err != nil {
 			return fmt.Errorf("writing %s: %w", configPath, err)
@@ -86,6 +92,7 @@ func writeWorkerEnvFile(out io.Writer, configPath string) error {
 # The push token for repos.*.push.token_env lives HERE, never in the TOML.
 
 # SKOPOS_API_KEY=sk_...
+# CLAUDE_1_API_KEY=sk-ant-...   # for [[worker.accounts]] env = { ANTHROPIC_API_KEY = "${CLAUDE_1_API_KEY}" }
 # GITEA_PUSH_TOKEN=...
 `
 	if err := os.WriteFile(envPath, []byte(content), 0o600); err != nil {
@@ -134,7 +141,7 @@ default_branch = "main"
 branch_prefix = "agent/"           # agent branches: agent/<item>-<slug>
 setup = []                        # commands run in every fresh worktree ({clone} expands)
 checks = []                       # verification commands, e.g. ["task test"]
-protected_branches = ["PROD", "main", "master", "develop", "release/**"]
+protected_branches = ["PROD", "main", "master", "develop", "release/**", "hotfix/**"]
 
 [worker.repos.%s.push]
 kind = "none"                     # gitea | github | none
@@ -154,11 +161,14 @@ poll_every = "30s"
 
 [[worker.accounts]]
 # The credential pool: picked at run start; a session stays on the account
-# that created it. env values are injected into the agent run only.
+# that created it. env values are injected into the agent run only, and
+# ${VAR} expands from the daemon's environment — so the SECRET lives in
+# skopos-worker.env, never in this file. Subscription auth instead of an
+# API key: env = { CLAUDE_CONFIG_DIR = "~/.claude" }.
 name = "claude-1"
 runner = "claude"
 priority = 1
-env = { ANTHROPIC_API_KEY = "sk-ant-..." }
+env = { ANTHROPIC_API_KEY = "${CLAUDE_1_API_KEY}" }
 
 # Repos: one block per workspace this worker serves.%s
 `, workerID, quotedList(workspaces), repoBlocks)

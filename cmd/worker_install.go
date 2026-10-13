@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"os"
@@ -11,34 +13,66 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/martinsuchenak/skopos/internal/worker"
 	"github.com/paularlott/cli"
 )
 
 // workerInstallCmd installs `skopos worker` as a platform service: a launchd
 // LaunchAgent on macOS, a systemd user unit on Linux (—system for a system
-// unit). The unit carries no secrets — the daemon loads skopos-worker.env
-// itself. PATH is captured from the installing shell so the agent CLI
-// (claude, ...) is found inside the service.
+// unit, run as a non-root user). The unit carries no secrets — the daemon
+// loads skopos-worker.env itself. PATH is captured from the installing shell
+// so the agent CLI (claude, ...) is found inside the service. The config is
+// checked first; a config that isn't ready gets the unit written but NOT
+// started (a placeholder config would otherwise restart-loop and claim runs
+// it cannot execute).
 func workerInstallCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "install",
-		Usage: "Install the worker as a service (launchd on macOS, systemd on Linux) and start it",
+		Usage: "Install the worker as a service (launchd on macOS, systemd on Linux); starts it only when the config passes 'worker check'",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "label", DefaultValue: "skopos-worker", Usage: "Service name (launchd label / systemd unit prefix)"},
 			&cli.BoolFlag{Name: "dry-run", Usage: "Print what would be done, write and execute nothing"},
 			&cli.BoolFlag{Name: "no-start", Usage: "Write the service definition without enabling/starting it"},
-			&cli.BoolFlag{Name: "system", Usage: "Linux: install a system unit under /etc/systemd/system (requires root) instead of a user unit"},
+			&cli.BoolFlag{Name: "system", Usage: "Linux: install a system unit under /etc/systemd/system (runs as a non-root user; requires root to install)"},
+			&cli.StringFlag{Name: "user", Usage: "Linux --system: the user the worker runs as (default: $SUDO_USER)"},
+			&cli.BoolFlag{Name: "allow-root", Usage: "Linux --system: permit running the worker as root (agents get root too — not recommended)"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			return runWorkerInstall(os.Stdout,
-				installOptions{
-					label:   cmd.GetString("label"),
-					dryRun:  cmd.GetBool("dry-run"),
-					noStart: cmd.GetBool("no-start"),
-					system:  cmd.GetBool("system"),
-					config:  configFileFor(cmd),
-				})
+			return runWorkerInstall(os.Stdout, installOptions{
+				label:     cmd.GetString("label"),
+				dryRun:    cmd.GetBool("dry-run"),
+				noStart:   cmd.GetBool("no-start"),
+				system:    cmd.GetBool("system"),
+				allowRoot: cmd.GetBool("allow-root"),
+				user:      cmd.GetString("user"),
+				config:    configFileFor(cmd),
+			})
+		},
+	}
+}
+
+// workerCheckCmd validates that the config is startable: the key resolves,
+// repo paths are real git clones, no placeholder values remain, and the agent
+// CLI is findable. Install runs the same checks before starting.
+func workerCheckCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "check",
+		Usage: "Validate the worker config: key, repo clones, accounts, agent CLI — what install checks before starting",
+		Run: func(ctx context.Context, cmd *cli.Command) error {
+			problems, err := runWorkerChecks(configFileFor(cmd), os.Getenv("PATH"))
+			if err != nil {
+				return err
+			}
+			if len(problems) == 0 {
+				fmt.Println("config OK — the worker can start")
+				return nil
+			}
+			fmt.Println("config not ready:")
+			for _, p := range problems {
+				fmt.Println("  - " + p)
+			}
+			return fmt.Errorf("%d problem(s) — fix them before starting the worker", len(problems))
 		},
 	}
 }
@@ -63,11 +97,13 @@ func workerUninstallCmd() *cli.Command {
 }
 
 type installOptions struct {
-	label   string
-	dryRun  bool
-	noStart bool
-	system  bool
-	config  string
+	label     string
+	dryRun    bool
+	noStart   bool
+	system    bool
+	allowRoot bool
+	user      string
+	config    string
 }
 
 func runWorkerInstall(out io.Writer, o installOptions) error {
@@ -81,11 +117,8 @@ func runWorkerInstall(out io.Writer, o installOptions) error {
 	if o.label == "" {
 		return fmt.Errorf("--label is required")
 	}
-	exe, err := os.Executable()
+	exe, exeWarns, err := resolveWorkerExe()
 	if err != nil {
-		return err
-	}
-	if exe, err = filepath.EvalSymlinks(exe); err != nil {
 		return err
 	}
 	configPath, err := filepath.Abs(o.config)
@@ -97,7 +130,7 @@ func runWorkerInstall(out io.Writer, o installOptions) error {
 	}
 
 	// The service logs into the state dir; resolve it from the config the
-	// same way the daemon will.
+	// same way the daemon will (including ~ expansion, review H2).
 	home, _ := os.UserHomeDir()
 	cfg := &worker.Config{}
 	if err := loadWorkerConfigFile(cfg, o.config); err != nil {
@@ -107,11 +140,17 @@ func runWorkerInstall(out io.Writer, o installOptions) error {
 		return err
 	}
 
+	problems, err := runWorkerChecks(o.config, os.Getenv("PATH"))
+	if err != nil {
+		return err
+	}
+
 	var actions []string
+	actions = append(actions, exeWarns...)
 	if runtime.GOOS == "darwin" {
-		actions, err = installLaunchd(o, home, exe, configPath, cfg.StateDir)
+		actions, err = installLaunchd(o, home, exe, configPath, cfg.StateDir, problems)
 	} else {
-		actions, err = installSystemd(o, home, exe, configPath, cfg.StateDir)
+		actions, err = installSystemd(o, home, exe, configPath, cfg.StateDir, problems)
 	}
 	if err != nil {
 		return err
@@ -119,11 +158,24 @@ func runWorkerInstall(out io.Writer, o installOptions) error {
 	for _, a := range actions {
 		fmt.Fprintln(out, a)
 	}
+	if len(problems) > 0 {
+		fmt.Fprint(out, "\nNOT STARTED — the config is not ready (see above). Fix it, verify with 'skopos worker check', then start:\n")
+		if runtime.GOOS == "darwin" {
+			fmt.Fprintf(out, "  launchctl bootstrap gui/%s %s\n", strconv.Itoa(os.Getuid()), filepath.Join(home, "Library", "LaunchAgents", o.label+".plist"))
+		} else if o.system {
+			fmt.Fprintf(out, "  systemctl enable --now %s\n", o.label)
+		} else {
+			fmt.Fprintf(out, "  systemctl --user enable --now %s\n", o.label)
+		}
+		return nil
+	}
 	restart := "systemctl --user restart " + o.label
 	if runtime.GOOS == "darwin" {
 		restart = "launchctl kickstart -k gui/" + strconv.Itoa(os.Getuid()) + "/" + o.label
+	} else if o.system {
+		restart = "systemctl restart " + o.label
 	}
-	fmt.Fprintf(out, "\nNext steps:\n  - fill in the config (repos, accounts) and skopos-worker.env, then restart: %s\n  - logs: state-dir/service.log (launchd) or journalctl --user -u %s (systemd)\n  - queue an item and watch it walk queued -> planning -> awaiting_approval\n", restart, o.label)
+	fmt.Fprintf(out, "\nNext steps:\n  - edit the config or skopos-worker.env, then restart: %s\n  - logs: state-dir/service.log (launchd) or journalctl -u %s (systemd)\n  - queue an item and watch it walk queued -> planning -> awaiting_approval\n", restart, o.label)
 	return nil
 }
 
@@ -148,17 +200,151 @@ func runWorkerUninstall(out io.Writer, o installOptions) error {
 	return nil
 }
 
+// resolveWorkerExe picks the binary path for the service. A stable wrapper on
+// PATH (homebrew's /opt/homebrew/bin/skopos) beats os.Executable's resolved
+// path: the versioned Caskroom/Cellar directory dies on the next upgrade and
+// launchd would retry a dead path forever (review H3).
+func resolveWorkerExe() (string, []string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", nil, err
+	}
+	if lp, lerr := exec.LookPath("skopos"); lerr == nil {
+		if same, serr := sameFile(lp, exe); serr == nil && same {
+			exe = lp
+		}
+	}
+	var warns []string
+	if strings.Contains(exe, "go-build") || strings.HasPrefix(exe, os.TempDir()) {
+		warns = append(warns, fmt.Sprintf("NOTE: %s looks like a temporary build — put the binary somewhere stable before relying on the service", exe))
+	}
+	return exe, warns, nil
+}
+
+func sameFile(a, b string) (bool, error) {
+	ia, err := os.Stat(a)
+	if err != nil {
+		return false, err
+	}
+	ib, err := os.Stat(b)
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(ia, ib), nil
+}
+
+// placeholderish catches template values that were never filled in.
+func placeholderish(v string) bool {
+	return strings.ContainsAny(v, "<>") || strings.Contains(v, "...") || strings.Contains(v, "example.com")
+}
+
+// runWorkerChecks validates that the config can actually run: the key
+// resolves (after the env file), repo paths are git clones, no placeholders
+// remain, an account exists, and the agent CLI is on PATH. It mirrors the
+// daemon's resolution order exactly.
+func runWorkerChecks(configPath, pathEnv string) ([]string, error) {
+	// Same env-file side effects as the daemon, so the key check agrees.
+	if envPath := filepath.Join(filepath.Dir(configPath), "skopos-worker.env"); fileExists(envPath) {
+		if _, _, err := loadWorkerEnvFile(envPath); err != nil {
+			return nil, err
+		}
+	}
+	var file struct {
+		Client struct {
+			APIKey    string `toml:"api_key"`
+			ServerURL string `toml:"server_url"`
+		}
+		Worker *worker.Config
+	}
+	if _, err := toml.DecodeFile(configPath, &file); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", configPath, err)
+	}
+	var problems []string
+
+	key := os.Getenv("SKOPOS_API_KEY") // includes the env file now
+	if key == "" {
+		key = file.Client.APIKey
+	}
+	if key == "" {
+		problems = append(problems, "no API key: set [client].api_key or SKOPOS_API_KEY in skopos-worker.env")
+	} else if placeholderish(key) {
+		problems = append(problems, "API key looks like a placeholder")
+	}
+	if u := os.Getenv("SKOPOS_SERVER_URL"); u != "" && placeholderish(u) || u == "" && placeholderish(file.Client.ServerURL) {
+		problems = append(problems, "server URL looks like a placeholder: "+firstNonEmpty(u, file.Client.ServerURL))
+	}
+
+	ws := file.Worker
+	if ws == nil {
+		return append(problems, "no [worker] section — run 'skopos worker init'"), nil
+	}
+	home, _ := os.UserHomeDir()
+	if err := ws.Default(home); err != nil {
+		problems = append(problems, err.Error())
+	}
+	if len(ws.Accounts) == 0 {
+		problems = append(problems, "no [[worker.accounts]] configured — every run would fail for lack of a credential")
+	}
+	for _, a := range ws.Accounts {
+		for k, v := range a.Env {
+			if placeholderish(v) {
+				problems = append(problems, fmt.Sprintf("account %s: env %s looks like a placeholder", a.Name, k))
+			} else if v == "" {
+				// Default() already expanded ${VAR}; empty means the variable
+				// is not set anywhere the daemon would see it.
+				problems = append(problems, fmt.Sprintf("account %s: env %s resolved empty — set the ${VAR} it references in skopos-worker.env", a.Name, k))
+			}
+		}
+	}
+	for id, r := range ws.Repos {
+		if r.Path == "" || placeholderish(r.Path) {
+			problems = append(problems, fmt.Sprintf("repo %s: path is not filled in", id))
+			continue
+		}
+		if !fileExists(filepath.Join(r.Path, ".git")) {
+			problems = append(problems, fmt.Sprintf("repo %s: %s is not a git clone", id, r.Path))
+		}
+		if placeholderish(r.Push.RemoteURL) || placeholderish(r.Push.TokenEnv) {
+			problems = append(problems, fmt.Sprintf("repo %s: push config still has placeholders", id))
+		}
+	}
+	if ws.Bin == "" {
+		ws.Bin = "claude"
+	}
+	if _, err := exec.LookPath(ws.Bin); err != nil {
+		problems = append(problems, fmt.Sprintf("agent CLI %q not on PATH — the service captures this shell's PATH at install time", ws.Bin))
+	}
+	return problems, nil
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+func firstNonEmpty(xs ...string) string {
+	for _, x := range xs {
+		if x != "" {
+			return x
+		}
+	}
+	return ""
+}
+
 // --- launchd (macOS) ---
 
-func installLaunchd(o installOptions, home, exe, configPath, stateDir string) ([]string, error) {
+func installLaunchd(o installOptions, home, exe, configPath, stateDir string, problems []string) ([]string, error) {
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", o.label+".plist")
 	content := launchdPlist(o.label, exe, configPath, stateDir, os.Getenv("PATH"))
-	var actions []string
 	if o.dryRun {
-		return []string{
+		actions := []string{
 			fmt.Sprintf("would write %s", plistPath),
 			"would run: launchctl bootstrap gui/" + strconv.Itoa(os.Getuid()) + " " + plistPath,
-		}, nil
+		}
+		if len(problems) > 0 {
+			actions = append(actions, "would NOT start — config not ready (skopos worker check)")
+		}
+		return actions, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
 		return nil, err
@@ -166,35 +352,39 @@ func installLaunchd(o installOptions, home, exe, configPath, stateDir string) ([
 	if err := os.WriteFile(plistPath, []byte(content), 0o644); err != nil {
 		return nil, fmt.Errorf("writing %s: %w", plistPath, err)
 	}
-	actions = append(actions, "wrote "+plistPath)
+	actions := []string{"wrote " + plistPath}
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, err
 	}
-	if !o.noStart {
-		gui := "gui/" + strconv.Itoa(os.Getuid())
-		// bootout first: re-installing over a loaded agent is the common case.
-		_ = exec.Command("launchctl", "bootout", gui+"/"+o.label).Run()
-		if out, err := exec.Command("launchctl", "bootstrap", gui, plistPath).CombinedOutput(); err != nil {
-			actions = append(actions, fmt.Sprintf("NOTE: launchctl bootstrap failed (%v) — start manually: launchctl bootstrap %s %s", firstOutputLine(out), gui, plistPath))
-		} else {
-			actions = append(actions, "started (launchd will keep it alive)")
-		}
+	if o.noStart {
+		return actions, nil
 	}
-	actions = append(actions, "NOTE: if the skopos server is on your LOCAL network and the service cannot connect, that is macOS Local Network permission — see docs/deployment/worker.md")
+	if len(problems) > 0 {
+		return actions, nil // written, deliberately not started
+	}
+	gui := "gui/" + strconv.Itoa(os.Getuid())
+	// bootout first: re-installing over a loaded agent is the common case.
+	_ = exec.Command("launchctl", "bootout", gui+"/"+o.label).Run()
+	if outB, err := exec.Command("launchctl", "bootstrap", gui, plistPath).CombinedOutput(); err != nil {
+		actions = append(actions, fmt.Sprintf("NOTE: launchctl bootstrap failed (%v) — start manually: launchctl bootstrap %s %s", firstOutputLine(outB), gui, plistPath))
+	} else {
+		actions = append(actions, "started (launchd will keep it alive)")
+	}
+	actions = append(actions, "NOTE: if the skopos server is on your LOCAL network, the Local Network permission resets with every binary upgrade — see docs/deployment/worker.md")
 	return actions, nil
 }
 
 func uninstallLaunchd(o installOptions, home string) ([]string, error) {
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", o.label+".plist")
-	var actions []string
 	if o.dryRun {
 		return []string{fmt.Sprintf("would stop and remove %s", plistPath)}, nil
 	}
 	gui := "gui/" + strconv.Itoa(os.Getuid())
-	if out, err := exec.Command("launchctl", "bootout", gui+"/"+o.label).CombinedOutput(); err == nil {
+	var actions []string
+	if outB, err := exec.Command("launchctl", "bootout", gui+"/"+o.label).CombinedOutput(); err == nil {
 		actions = append(actions, "stopped")
 	} else {
-		actions = append(actions, "NOTE: bootout: "+firstOutputLine(out))
+		actions = append(actions, "NOTE: bootout: "+firstOutputLine(outB))
 	}
 	if err := os.Remove(plistPath); err != nil && !os.IsNotExist(err) {
 		return actions, err
@@ -204,24 +394,32 @@ func uninstallLaunchd(o installOptions, home string) ([]string, error) {
 }
 
 // launchdPlist is the LaunchAgent definition, modeled on the production-proven
-// agent-trial plist: KeepAlive (it is a daemon, not a tick), Background
-// priority, children die via the daemon's own context (AbandonProcessGroup).
+// agent-trial plist: KeepAlive with a throttle (a broken config must not
+// spin), Background priority, children die via the daemon's own context
+// (AbandonProcessGroup). All values are XML-escaped.
 func launchdPlist(label, exe, configPath, stateDir, pathEnv string) string {
+	esc := func(s string) string {
+		var b bytes.Buffer
+		_ = xml.EscapeText(&b, []byte(s))
+		return b.String()
+	}
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>` + label + `</string>
+  <string>` + esc(label) + `</string>
   <key>ProgramArguments</key>
   <array>
-    <string>` + exe + `</string>
+    <string>` + esc(exe) + `</string>
     <string>worker</string>
     <string>--config</string>
-    <string>` + configPath + `</string>
+    <string>` + esc(configPath) + `</string>
   </array>
   <key>KeepAlive</key>
   <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
   <key>RunAtLoad</key>
   <true/>
   <key>ProcessType</key>
@@ -231,12 +429,12 @@ func launchdPlist(label, exe, configPath, stateDir, pathEnv string) string {
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>` + pathEnv + `</string>
+    <string>` + esc(pathEnv) + `</string>
   </dict>
   <key>StandardOutPath</key>
-  <string>` + filepath.Join(stateDir, "service.log") + `</string>
+  <string>` + esc(filepath.Join(stateDir, "service.log")) + `</string>
   <key>StandardErrorPath</key>
-  <string>` + filepath.Join(stateDir, "service.log") + `</string>
+  <string>` + esc(filepath.Join(stateDir, "service.log")) + `</string>
 </dict>
 </plist>
 `
@@ -244,25 +442,38 @@ func launchdPlist(label, exe, configPath, stateDir, pathEnv string) string {
 
 // --- systemd (Linux) ---
 
-func installSystemd(o installOptions, home, exe, configPath, stateDir string) ([]string, error) {
+func installSystemd(o installOptions, home, exe, configPath, stateDir string, problems []string) ([]string, error) {
 	var unitPath string
 	systemctl := []string{"systemctl", "--user"}
+	userGroup := [2]string{"", ""}
 	if o.system {
 		if os.Geteuid() != 0 {
 			return nil, fmt.Errorf("--system installs into /etc/systemd/system — re-run with sudo, or drop --system for a user unit")
+		}
+		var err error
+		userGroup, err = resolveSystemUser(o)
+		if err != nil {
+			return nil, err
 		}
 		unitPath = filepath.Join("/etc/systemd/system", o.label+".service")
 		systemctl = []string{"systemctl"}
 	} else {
 		unitPath = filepath.Join(home, ".config/systemd/user", o.label+".service")
 	}
-	content := systemdUnit(o.label, exe, configPath, os.Getenv("PATH"), o.system)
+	content := systemdUnit(o.label, exe, configPath, os.Getenv("PATH"), o.system, userGroup)
 
 	if o.dryRun {
-		actions := []string{fmt.Sprintf("would write %s", unitPath)}
-		actions = append(actions, "would run: "+strings.Join(append(append([]string{}, systemctl...), "enable", "--now", o.label), " "))
+		actions := []string{
+			fmt.Sprintf("would write %s", unitPath),
+			"would run: " + strings.Join(append(append([]string{}, systemctl...), "daemon-reload"), " "),
+		}
+		enable := append(append([]string{}, systemctl[1:]...), "enable", "--now", o.label)
+		actions = append(actions, "would run: "+systemctl[0]+" "+strings.Join(enable, " "))
 		if !o.system {
 			actions = append(actions, "would ensure linger is enabled (loginctl enable-linger)")
+		}
+		if len(problems) > 0 {
+			actions = append(actions, "would NOT start — config not ready (skopos worker check)")
 		}
 		return actions, nil
 	}
@@ -273,23 +484,45 @@ func installSystemd(o installOptions, home, exe, configPath, stateDir string) ([
 		return nil, fmt.Errorf("writing %s: %w", unitPath, err)
 	}
 	actions := []string{"wrote " + unitPath}
+	if o.noStart || len(problems) > 0 {
+		return actions, nil // written, deliberately not started
+	}
 	if !o.system {
 		// A user unit only runs (and survives logout) with linger enabled.
 		if err := exec.Command("loginctl", "enable-linger").Run(); err != nil {
 			actions = append(actions, "NOTE: could not enable linger — run: sudo loginctl enable-linger $USER (the unit stops when you log out otherwise)")
 		}
 	}
-	if !o.noStart {
-		if outB, err := exec.Command(systemctl[0], append(systemctl[1:], "daemon-reload")...).CombinedOutput(); err != nil {
-			return actions, fmt.Errorf("systemctl daemon-reload: %v: %s", err, firstOutputLine(outB))
-		}
-		args := append(append([]string{}, systemctl[1:]...), "enable", "--now", o.label)
-		if outB, err := exec.Command(systemctl[0], args...).CombinedOutput(); err != nil {
-			return actions, fmt.Errorf("systemctl enable --now: %v: %s", err, firstOutputLine(outB))
-		}
-		actions = append(actions, "enabled and started")
+	if outB, err := exec.Command(systemctl[0], append(append([]string{}, systemctl[1:]...), "daemon-reload")...).CombinedOutput(); err != nil {
+		return actions, fmt.Errorf("systemctl daemon-reload: %v: %s", err, firstOutputLine(outB))
 	}
+	args := append(append([]string{}, systemctl[1:]...), "enable", "--now", o.label)
+	if outB, err := exec.Command(systemctl[0], args...).CombinedOutput(); err != nil {
+		return actions, fmt.Errorf("systemctl enable --now: %v: %s", err, firstOutputLine(outB))
+	}
+	actions = append(actions, "enabled and started")
 	return actions, nil
+}
+
+// resolveSystemUser picks the user/group a --system unit runs as. Default is
+// $SUDO_USER (the human who invoked sudo); root is refused unless
+// --allow-root — the agents the worker starts inherit it (review M1).
+func resolveSystemUser(o installOptions) ([2]string, error) {
+	user := o.user
+	if user == "" {
+		user = os.Getenv("SUDO_USER")
+	}
+	if user == "" || user == "root" {
+		if !o.allowRoot {
+			return [2]string{}, fmt.Errorf("refusing to run the worker as root (its agent runs would be root too) — pass --user <name>, or --allow-root to override")
+		}
+		return [2]string{"", ""}, nil // root: no User=/Group= lines
+	}
+	outB, err := exec.Command("id", "-gn", user).Output()
+	if err != nil {
+		return [2]string{}, fmt.Errorf("resolving group for %s: %v", user, err)
+	}
+	return [2]string{user, strings.TrimSpace(string(outB))}, nil
 }
 
 func uninstallSystemd(o installOptions, home string) ([]string, error) {
@@ -317,13 +550,18 @@ func uninstallSystemd(o installOptions, home string) ([]string, error) {
 	return actions, nil
 }
 
-// systemdUnit: the daemon restarts on failure; PATH from the installing shell
-// so the agent CLI is found; secrets come from skopos-worker.env via the
-// daemon itself, never from the unit.
-func systemdUnit(label, exe, configPath, pathEnv string, system bool) string {
+// systemdUnit: the daemon restarts on failure with a start limit (a broken
+// config must not spin), PATH from the installing shell so the agent CLI is
+// found, secrets via skopos-worker.env through the daemon, never the unit.
+// PATH is quoted and %-escaped per systemd's specifier syntax.
+func systemdUnit(label, exe, configPath, pathEnv string, system bool, userGroup [2]string) string {
 	target := "default.target"
 	if system {
 		target = "multi-user.target"
+	}
+	var userLines string
+	if userGroup[0] != "" {
+		userLines = "User=" + userGroup[0] + "\nGroup=" + userGroup[1] + "\n"
 	}
 	return `[Unit]
 Description=skopos worker (` + label + `)
@@ -331,11 +569,13 @@ Wants=network-online.target
 After=network-online.target
 
 [Service]
-	ExecStart="` + exe + `" worker --config "` + configPath + `"
+` + userLines + `ExecStart="` + exe + `" worker --config "` + configPath + `"
 WorkingDirectory=` + filepath.Dir(configPath) + `
-Environment=PATH=` + pathEnv + `
-Restart=always
+Environment="PATH=` + strings.ReplaceAll(pathEnv, "%", "%%") + `"
+Restart=on-failure
 RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Install]
 WantedBy=` + target + `

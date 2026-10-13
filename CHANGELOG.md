@@ -6,6 +6,33 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The documented macOS install path now works end to end** (review round on
+  68651bc): `SKOPOS_API_KEY` (and the other env vars) in `skopos-worker.env`
+  are actually seen by the daemon — the file loads before any value is
+  resolved, flag → environment → config; `~` in `state_dir` and repo paths is
+  expanded in one place (`Config.Default`) so install and the daemon agree on
+  the state directory and launchd gets an openable log path; the service
+  points at the stable binary on `PATH` (homebrew's `/opt/homebrew/bin`) —
+  `filepath.EvalSymlinks` pinned the versioned Caskroom path, which dies on
+  the next upgrade.
+- Env-file parsing accepts the usual dotenv forms (`KEY="v"`, `export`,
+  spaces) and warns when the file is group/world-readable. Everything the
+  env file provides is dropped from agent environments — the file is the
+  daemon's secret channel wholesale, not a pattern list.
+- `worker install --system` writes `User=`/`Group=` (default `$SUDO_USER`)
+  and refuses root without `--allow-root` — agent runs inherit the user.
+- The plist is XML-escaped and throttled (`ThrottleInterval`); the unit gets
+  `Restart=on-failure` with start limits, quoted `%%`-escaped `Environment=`,
+  and no leading tabs; `--no-start` no longer enables linger; dry-run lists
+  `daemon-reload`.
+- Template: `protected_branches` includes `hotfix/**` (the scaffold protected
+  less than the default); account credentials are `env = { ANTHROPIC_API_KEY
+  = "${CLAUDE_1_API_KEY}" }` — `${VAR}` expands from the daemon environment
+  (the env file), so secret values stay out of the TOML; `--server-url` on an
+  existing config adds `[client]` when absent. Clean SIGTERM exits 0.
+
 ### Added
 
 - **Worker lifecycle commands** — `skopos worker init` scaffolds the
@@ -19,7 +46,10 @@ versions follow [Semantic Versioning](https://semver.org/).
   environment wins) before parsing the config, so push tokens and the worker
   key live in one chmod-600 file on every platform. The generated unit
   captures the installing shell's PATH so the agent CLI is found inside the
-  service. Docs: docs/deployment/worker.md; the example config gained a
+  service. `skopos worker check` validates a config (key, repo clones,
+  accounts, agent CLI) and install only starts the service when it passes —
+  a placeholder config would otherwise restart-loop or claim runs it cannot
+  execute. Docs: docs/deployment/worker.md; the example config gained a
   `[worker]` section.
 
 ## [0.10.0] — 2026-10-13

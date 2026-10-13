@@ -12,7 +12,7 @@ func init() {
 }
 
 func registerBlackboardReadTool(server *mcplib.Server, service *blackboard.Service) {
-	registerTool(server, 
+	registerTool(server,
 		mcplib.NewTool("blackboard_read", "Read the Skopos blackboard Knowledge Bundle",
 			wsParam(),
 			mcplib.String("branch", "Branch name to filter branch-scoped entries"),

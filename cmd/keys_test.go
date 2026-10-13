@@ -21,8 +21,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-
-
 func keysTestServer(t *testing.T, rootKey string) *httptest.Server {
 	t.Helper()
 	dsn := filepath.Join(t.TempDir(), "test.db") + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)&_txlock=immediate"

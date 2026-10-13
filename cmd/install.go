@@ -42,9 +42,9 @@ func installCmd() *cli.Command {
 				EnvVars:      []string{"SKOPOS_INSTALL_PROFILE"},
 			},
 			&cli.StringFlag{
-				Name:         "workflow",
-				Usage:        "Client workflow for this agent: remote (default connection in ~/.config/skopos + this agent's key baked into its hooks) or local (per-repo indexing, nothing written)",
-				EnvVars:      []string{"SKOPOS_INSTALL_WORKFLOW"},
+				Name:    "workflow",
+				Usage:   "Client workflow for this agent: remote (default connection in ~/.config/skopos + this agent's key baked into its hooks) or local (per-repo indexing, nothing written)",
+				EnvVars: []string{"SKOPOS_INSTALL_WORKFLOW"},
 			},
 			&cli.StringFlag{
 				Name:         "scope",

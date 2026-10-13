@@ -97,7 +97,12 @@ func (a *Account) MarkExhausted(until time.Time, defaultBackoff time.Duration, n
 	a.exhaustedUntil = until
 }
 
-// Default fills unset fields with working defaults.
+// Default fills unset fields with working defaults. It also normalizes
+// operator-facing paths: `~` prefixes are expanded (StateDir and repo Path —
+// the config template writes ~/... and neither launchd nor git expand it),
+// and ${VAR} in account env values is expanded from the process environment
+// (the env file has been loaded by then) so token VALUES stay out of the
+// TOML (review M4).
 func (c *Config) Default(home string) error {
 	if c.ID == "" {
 		h, _ := os.Hostname()
@@ -111,6 +116,7 @@ func (c *Config) Default(home string) error {
 	if c.StateDir == "" {
 		c.StateDir = filepath.Join(home, ".local", "state", "skopos-worker")
 	}
+	c.StateDir = expandHome(c.StateDir, home)
 	if c.PollEvery == 0 {
 		c.PollEvery = 30 * time.Second
 	}
@@ -142,6 +148,7 @@ func (c *Config) Default(home string) error {
 		}
 	}
 	for ws, r := range c.Repos {
+		r.Path = expandHome(r.Path, home)
 		if r.DefaultBranch == "" {
 			r.DefaultBranch = "main"
 		}
@@ -158,7 +165,20 @@ func (c *Config) Default(home string) error {
 			r.Push.Kind = "none"
 		}
 	}
+	for _, a := range c.Accounts {
+		for k, v := range a.Env {
+			a.Env[k] = os.Expand(v, os.Getenv)
+		}
+	}
 	return nil
+}
+
+// expandHome expands a leading ~ (never ~user) against home.
+func expandHome(p, home string) string {
+	if len(p) > 1 && p[0] == '~' {
+		return filepath.Join(home, p[1:])
+	}
+	return p
 }
 
 // RunnerBin resolves the binary for a runner name (first runner wins for

@@ -45,8 +45,10 @@ type AgentRun struct {
 	LogFile      string
 	// TokenEnvs are the deployment's configured push-token variables —
 	// passed in, not package state (round 7), so scrubbing has no hidden
-	// config dependency.
-	TokenEnvs []string
+	// config dependency. FileEnvKeys are everything the env file provided;
+	// all of it is dropped from the agent environment.
+	TokenEnvs   []string
+	FileEnvKeys []string
 	// Env carries the account's credentials (API key/config dir) — injected
 	// per run by the placement pool; scrubbing still strips tool secrets.
 	Env map[string]string
@@ -68,7 +70,7 @@ type AgentResult struct {
 // *_KEY variable is dropped UNLESS it is one the runner explicitly injects
 // for its account (review H5: a custom token_env name sailed through the
 // fixed list into the agent's environment).
-func scrubEnv(extra map[string]string, tokenEnvs []string) []string {
+func scrubEnv(extra map[string]string, tokenEnvs, fileEnvKeys []string) []string {
 	drop := map[string]bool{
 		"SSH_AUTH_SOCK": true, "SSH_AGENT_PID": true, "GH_TOKEN": true, "GITHUB_TOKEN": true,
 		"GITEA_TOKEN": true, "SLACK_BOT_TOKEN": true, "SKOPOS_API_KEY": true,
@@ -76,6 +78,11 @@ func scrubEnv(extra map[string]string, tokenEnvs []string) []string {
 	}
 	for _, tok := range tokenEnvs {
 		drop[tok] = true
+	}
+	// Env-file values are the daemon's secrets wholesale (a GITEA_PASS-style
+	// name matches no pattern) — nothing from the file reaches the agent.
+	for _, k := range fileEnvKeys {
+		drop[k] = true
 	}
 	keep := map[string]bool{}
 	for k := range extra {
@@ -140,7 +147,7 @@ func runClaude(ctx context.Context, r AgentRun) AgentResult {
 	defer cancel()
 	cmd := exec.CommandContext(cctx, r.Bin, args...)
 	cmd.Dir = r.Dir
-	cmd.Env = scrubEnv(r.Env, r.TokenEnvs)
+	cmd.Env = scrubEnv(r.Env, r.TokenEnvs, r.FileEnvKeys)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()

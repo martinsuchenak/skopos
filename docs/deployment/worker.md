@@ -27,10 +27,14 @@ skopos key create --name worker-vm1 --workspace github.com/you/repo \
 #    - skopos-config.toml: clone paths, push remote, account env
 #    - skopos-worker.env: SKOPOS_API_KEY and the push token_env values
 
-# 4. Install and start the service (launchd on macOS, systemd on Linux)
+# 4. Validate the config (what install checks before starting)
+skopos worker check
+
+# 5. Install and start the service (launchd on macOS, systemd on Linux)
+#    A config that fails the checks gets the unit written but NOT started.
 skopos worker install
 
-# 5. Watch the first item: queue one and follow
+# 6. Watch the first item: queue one and follow
 #    queued -> planning -> awaiting_approval (you approve) -> implementing -> in_review
 ```
 
@@ -68,14 +72,24 @@ The TOML holds no token values by design; `token_env` names the variable.
 
 ## macOS note: Local Network permission
 
-macOS gates processes that connect to LAN-private addresses. A worker running
-under launchd that reaches a server on your local network (an RFC1918 address)
-inherits the permission state of the `skopos` binary — launchd-spawned
-processes cannot show the consent prompt. A worker against a public HTTPS
-server (e.g. `https://skopos.example.com`) is unaffected. If you must reach a
-LAN server from launchd, grant Local Network permission to the `skopos`
-binary in System Settings (Privacy & Security → Local Network) after the
-first connection attempt, or front the server with a public endpoint.
+macOS gates processes that connect to LAN-private addresses, and
+launchd-spawned processes cannot show the consent prompt. A worker against a
+public HTTPS endpoint is unaffected. If your skopos server resolves to a LAN
+address (a split-horizon domain counts), know the hard-won lessons from the
+agent-trial predecessor:
+
+- the permission attaches to the exact binary, so **every upgrade resets it**
+  (each Homebrew Cask version is a new file) — the service will silently fail
+  to connect after `brew upgrade` until the permission is re-granted in
+  System Settings → Privacy & Security → Local Network;
+- a bare CLI binary sometimes never gets the grant at all — agent-trial ended
+  up with a small stable **launcher** binary (embedded Info.plist, ad-hoc
+  codesigned, never rebuilt) that holds the permission and execs the real
+  binary; that pattern applies here too if you hit it.
+
+The robust setups, in order: run workers on Linux VMs against the public
+endpoint; front the server with a public endpoint; or use the launcher
+pattern for a Mac worker against a LAN server.
 
 ## Unattended operation
 

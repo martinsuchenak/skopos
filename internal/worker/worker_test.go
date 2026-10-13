@@ -99,7 +99,7 @@ func TestScrubEnv(t *testing.T) {
 	t.Setenv("SKOPOS_API_KEY", "sk_secret")
 	t.Setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
 	t.Setenv("HARMLESS", "yes")
-	env := scrubEnv(map[string]string{"ANTHROPIC_API_KEY": "acct-key"}, nil)
+	env := scrubEnv(map[string]string{"ANTHROPIC_API_KEY": "acct-key"}, nil, nil)
 	joined := ""
 	for _, e := range env {
 		joined += e + "\n"
@@ -121,7 +121,7 @@ func TestScrubEnv(t *testing.T) {
 func TestScrubCustomTokenEnv(t *testing.T) {
 	t.Setenv("MY_GITEA_PUSH_TOKEN", "tok_secret")
 	t.Setenv("SOME_API_KEY", "k")
-	env := scrubEnv(map[string]string{"ANTHROPIC_API_KEY": "acct"}, []string{"MY_GITEA_PUSH_TOKEN"})
+	env := scrubEnv(map[string]string{"ANTHROPIC_API_KEY": "acct"}, []string{"MY_GITEA_PUSH_TOKEN"}, nil)
 	joined := ""
 	for _, e := range env {
 		joined += e + "\n"
@@ -209,4 +209,34 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+// Default() normalizes operator paths and account secrets: ~ expands against
+// home (launchd/git never expand it themselves — review H2) and ${VAR} in
+// account env values expands from the environment (values stay out of the
+// TOML — review M4).
+func TestDefaultExpandsPathsAndEnv(t *testing.T) {
+	t.Setenv("CLAUDE_TEST_KEY", "sk-real")
+	c := &Config{
+		ID:       "worker-t",
+		StateDir: "~/.local/state/skopos-worker",
+		Repos: map[string]*Repo{
+			"github.com/x/y": {Path: "~/clones/y"},
+		},
+		Accounts: []*Account{
+			{Name: "a", Runner: "claude", Env: map[string]string{"ANTHROPIC_API_KEY": "${CLAUDE_TEST_KEY}"}},
+		},
+	}
+	if err := c.Default("/home/tester"); err != nil {
+		t.Fatal(err)
+	}
+	if c.StateDir != "/home/tester/.local/state/skopos-worker" {
+		t.Fatalf("state dir not expanded: %q", c.StateDir)
+	}
+	if got := c.Repos["github.com/x/y"].Path; got != "/home/tester/clones/y" {
+		t.Fatalf("repo path not expanded: %q", got)
+	}
+	if got := c.Accounts[0].Env["ANTHROPIC_API_KEY"]; got != "sk-real" {
+		t.Fatalf("account env not expanded: %q", got)
+	}
 }

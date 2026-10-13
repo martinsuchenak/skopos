@@ -293,12 +293,12 @@ func codeWhoCallsCmd() *cli.Command {
 				},
 				func(svc *codeindex.Service, ws, branch string) (codeindex.GraphResults, error) {
 					var kinds []string
-				for _, k := range strings.Split(cmd.GetString("kinds"), ",") {
-					if k = strings.TrimSpace(k); k != "" {
-						kinds = append(kinds, k)
+					for _, k := range strings.Split(cmd.GetString("kinds"), ",") {
+						if k = strings.TrimSpace(k); k != "" {
+							kinds = append(kinds, k)
+						}
 					}
-				}
-				r, err := svc.CallersOfKinds(ctx, ws, branch, name, cmd.GetString("path"), 0, kinds)
+					r, err := svc.CallersOfKinds(ctx, ws, branch, name, cmd.GetString("path"), 0, kinds)
 					if err != nil {
 						return codeindex.GraphResults{}, err
 					}
@@ -381,9 +381,9 @@ func codeOutlineCmd() *cli.Command {
 					lastContainer = "" // back to top level
 				}
 				fmt.Printf("%5d  %s%-9s %s\n", h.Line, indent, h.Kind, h.Name)
-			if d := firstDocLine(h.Doc); d != "" {
-				fmt.Printf("       %s    // %s\n", indent, d)
-			}
+				if d := firstDocLine(h.Doc); d != "" {
+					fmt.Printf("       %s    // %s\n", indent, d)
+				}
 				if h.Signature != "" && h.Qualified != "" {
 					fmt.Printf("       %s  %s\n", indent, clipSignature(h.Signature))
 				}
@@ -491,9 +491,9 @@ func codeDeadCmd() *cli.Command {
 
 func codeDepsCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "deps",
-		Usage:   "List each file's imports (module dependency graph)",
-		Flags:   queryFlags(),
+		Name:  "deps",
+		Usage: "List each file's imports (module dependency graph)",
+		Flags: queryFlags(),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			res, err := queryTarget[[]codeindex.FileDeps](ctx, cmd,
 				func(ws, branch string) string {

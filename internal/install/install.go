@@ -594,9 +594,11 @@ func setTOMLSection(content, block string) string {
 	return ReplaceTOMLSection(content, "mcp_servers.skopos", block)
 }
 
-// ReplaceTOMLSection replaces the `[section]` block — including its dotted
-// sub-tables ([section.x]) and array tables ([[section.x]]) — with block, or
-// appends it if absent. Everything else in the file is preserved.
+// ReplaceTOMLSection replaces the FIRST contiguous `[section]` block —
+// including its dotted sub-tables ([section.x]) and array tables
+// ([[section.x]) — with block, or appends it if absent. Everything else in
+// the file is preserved. Non-contiguous later tables of the same section
+// survive; callers today only append, never replace scattered sections.
 func ReplaceTOMLSection(content, section, block string) string {
 	owns := func(line string) bool {
 		t := strings.TrimSpace(line)

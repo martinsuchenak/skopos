@@ -28,8 +28,8 @@ func setupCmd() *cli.Command {
 		Usage: "Interactive setup: choose a local-only or remote workflow, configure it, and index your first repo",
 		Flags: []cli.Flag{
 			&cli.BoolFlag{
-				Name:   "global",
-				Usage:  "Write the client config to ~/.config/skopos instead of this repo (applies to every checkout)",
+				Name:  "global",
+				Usage: "Write the client config to ~/.config/skopos instead of this repo (applies to every checkout)",
 			},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {

@@ -590,7 +590,6 @@ func indexDropWorkspaceCmd() *cli.Command {
 	}
 }
 
-
 func indexCacheCleanCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "cache-clean",
@@ -626,5 +625,5 @@ func indexCacheCleanCmd() *cli.Command {
 
 type cacheStoreAdapter struct{ st *codeindex.Store }
 
-func (c cacheStoreAdapter) Wipe(ctx context.Context) error  { return c.st.CacheWipe(ctx) }
+func (c cacheStoreAdapter) Wipe(ctx context.Context) error           { return c.st.CacheWipe(ctx) }
 func (c cacheStoreAdapter) Prune(ctx context.Context) (int64, error) { return c.st.CachePrune(ctx) }

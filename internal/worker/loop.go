@@ -71,6 +71,10 @@ type Worker struct {
 	// a re-claimed run resumes its own session on its own account).
 	sessions map[string]string
 	accounts map[string]string
+	// envFileKeys are the variables the env file provided (review): the
+	// scrubber drops them from every agent environment — env-file values
+	// are the daemon's secrets, not the agent's.
+	envFileKeys []string
 }
 
 func New(cfg *Config, client *Client, log *slog.Logger) *Worker {
@@ -271,8 +275,14 @@ func (w *Worker) agentRun(bin, dir, prompt, schema string, tools []string, timeo
 		LogFile:   filepath.Join(w.cfg.StateDir, "runs", run.ID, phase+".log"),
 		Env:       account.Env,
 		TokenEnvs: w.cfg.TokenEnvs(),
+
+		FileEnvKeys: w.envFileKeys,
 	}
 }
+
+// SetEnvFileKeys records which variables came from the env file (the CLI
+// loads it before the daemon starts).
+func (w *Worker) SetEnvFileKeys(keys []string) { w.envFileKeys = keys }
 
 func (w *Worker) saveSession(run *Run, phase, sessionID string) {
 	if sessionID == "" {

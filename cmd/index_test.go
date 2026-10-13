@@ -18,7 +18,6 @@ import (
 // cliIndexServer runs a real codeindex handler (no full skopos serve) for
 // CLI protocol tests.
 
-
 func cliIndexServer(t *testing.T, apiKey string) *httptest.Server {
 	t.Helper()
 	store, err := codeindex.NewStore(filepath.Join(t.TempDir(), "idx"))
