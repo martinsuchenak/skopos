@@ -40,7 +40,8 @@ func TestIntegrationStubWorkerRoundTrip(t *testing.T) {
 	approverKey := mint(t, root, `{"name":"relay","workspaces":["github.com/fortix/freedom3"],"approver":true}`)
 	workerKey := mint(t, root, `{"name":"worker-1","workspaces":["github.com/fortix/freedom3"]}`)
 	approver := workerClient{base: baseURL, key: approverKey}
-	worker := workerClient{base: baseURL, key: workerKey}
+	leases := map[string]string{}
+	worker := workerClient{base: baseURL, key: workerKey, lease: leases}
 
 	// The item enters the workflow.
 	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"github.com/fortix/freedom3","title":"stub item","author_agent_id":"martin"}`), 201).(map[string]any)
@@ -61,8 +62,8 @@ func TestIntegrationStubWorkerRoundTrip(t *testing.T) {
 	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/items", `{"title":"do the thing"}`), 201)
 	mustDo(t, worker.req("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+planID+`"}`), 200)
 	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"d2ce73d"}`), 201)
-	mustDo(t, worker.req("POST", "/api/runs/"+runID+"/heartbeat", `{"worker_id":"w1"}`), 204)
-	mustDo(t, worker.req("POST", "/api/runs/"+runID+"/report", `{"worker_id":"w1","status":"succeeded","summary":"plan ready","branch":"agent/stub-item"}`), 200)
+	mustDo(t, worker.reqH("POST", "/api/runs/"+runID+"/heartbeat", `{"worker_id":"w1"}`, leases[runID]), 204)
+	mustDo(t, worker.reqH("POST", "/api/runs/"+runID+"/report", `{"worker_id":"w1","status":"succeeded","summary":"plan ready","branch":"agent/stub-item"}`, leases[runID]), 200)
 
 	// Chaining moved the item to the gate.
 	got := mustJSON(t, root.req("GET", "/api/inbox/"+itemID, ""), 200).(map[string]any)
@@ -77,7 +78,7 @@ func TestIntegrationStubWorkerRoundTrip(t *testing.T) {
 		t.Fatalf("second claim should be implement, got %v", run["stage"])
 	}
 	runID = run["id"].(string)
-	mustDo(t, worker.req("POST", "/api/runs/"+runID+"/report", `{"worker_id":"w1","status":"succeeded","summary":"done","head_sha":"abc123","branch":"agent/stub-item"}`), 200)
+	mustDo(t, worker.reqH("POST", "/api/runs/"+runID+"/report", `{"worker_id":"w1","status":"succeeded","summary":"done","head_sha":"abc123","branch":"agent/stub-item"}`, leases[runID]), 200)
 
 	// No review preference configured: straight to in_review.
 	got = mustJSON(t, root.req("GET", "/api/inbox/"+itemID, ""), 200).(map[string]any)
@@ -109,7 +110,21 @@ func claim(t *testing.T, c workerClient, body string) map[string]any {
 	if resp.code != 200 {
 		t.Fatalf("claim: %d %s", resp.code, resp.body)
 	}
-	return jsonMap(t, resp.body)
+	m := jsonMap(t, resp.body)
+	if c.lease != nil {
+		if id, ok := m["id"].(string); ok {
+			if tok, ok := m["lease_token"].(string); ok {
+				c.lease[id] = tok
+			}
+		}
+	}
+	return m
+}
+
+func jsonMapOrNil(s string) map[string]any {
+	var m map[string]any
+	_ = json.Unmarshal([]byte(s), &m)
+	return m
 }
 
 func mint(t *testing.T, root workerClient, body string) string {
@@ -127,9 +142,16 @@ func jsonMap(t *testing.T, s string) map[string]any {
 	return m
 }
 
-type workerClient struct{ base, key string }
+type workerClient struct {
+	base, key string
+	lease     map[string]string // run id -> fencing token
+}
 
 func (c workerClient) req(method, path, body string) *stubResp {
+	return c.reqH(method, path, body, "")
+}
+
+func (c workerClient) reqH(method, path, body, leaseToken string) *stubResp {
 	var rd io.Reader
 	if body != "" {
 		rd = strings.NewReader(body)
@@ -139,12 +161,22 @@ func (c workerClient) req(method, path, body string) *stubResp {
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	if leaseToken != "" {
+		req.Header.Set("X-Skopos-Lease", leaseToken)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return &stubResp{code: 0, body: err.Error()}
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
+	if r := jsonMapOrNil(string(b)); r != nil {
+		if id, ok := r["id"].(string); ok {
+			if tok, ok := r["lease_token"].(string); ok && tok != "" && c.lease != nil {
+				c.lease[id] = tok
+			}
+		}
+	}
 	return &stubResp{code: resp.StatusCode, body: string(b)}
 }
 

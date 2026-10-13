@@ -110,6 +110,12 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "api_keys", "approver", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+	if err := ensureColumn(db, "runs", "lease_token_hash", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "runs", "claimed_key_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	return nil
 }
 

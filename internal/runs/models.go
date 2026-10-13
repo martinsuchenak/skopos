@@ -58,27 +58,33 @@ const takeoverGrace = 30 * time.Minute
 
 // Run is one stage of one item's lifecycle on the queue.
 type Run struct {
-	ID            string    `json:"id"`
-	WorkspaceID   string    `json:"workspace_id"`
-	ItemID        string    `json:"item_id"`
-	PlanRevID     string    `json:"plan_rev_id,omitempty"`
-	Stage         string    `json:"stage"`
-	Runner        string    `json:"runner,omitempty"`    // resolved preference at queue time
-	WorkerID      string    `json:"worker_id,omitempty"` // affinity owner
-	Status        Status    `json:"status"`
-	ResumeKind    string    `json:"resume_kind,omitempty"`
-	LeaseExpires  time.Time `json:"lease_expires_at,omitzero"`
-	Attempt       int       `json:"attempt"`
-	Branch        string    `json:"branch,omitempty"`
-	BaseSHA       string    `json:"base_sha,omitempty"`
-	HeadSHA       string    `json:"head_sha,omitempty"`
-	ResultSummary string    `json:"result_summary,omitempty"`
-	Diffstat      string    `json:"diffstat,omitempty"`
-	Checks        []Check   `json:"checks,omitempty"`
-	LogRef        string    `json:"log_ref,omitempty"`
-	FailReason    string    `json:"fail_reason,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
+	ItemID      string `json:"item_id"`
+	PlanRevID   string `json:"plan_rev_id,omitempty"`
+	Stage       string `json:"stage"`
+	Runner      string `json:"runner,omitempty"`    // resolved preference at queue time
+	WorkerID    string `json:"worker_id,omitempty"` // affinity owner
+	// LeaseToken is the fencing token (M5): set ONLY in the claim
+	// response, never stored or listed. LeaseTokenHash/ClaimedKeyID are
+	// the stored forms.
+	LeaseToken     string    `json:"lease_token,omitempty"`
+	LeaseTokenHash string    `json:"-"`
+	ClaimedKeyID   string    `json:"-"`
+	Status         Status    `json:"status"`
+	ResumeKind     string    `json:"resume_kind,omitempty"`
+	LeaseExpires   time.Time `json:"lease_expires_at,omitzero"`
+	Attempt        int       `json:"attempt"`
+	Branch         string    `json:"branch,omitempty"`
+	BaseSHA        string    `json:"base_sha,omitempty"`
+	HeadSHA        string    `json:"head_sha,omitempty"`
+	ResultSummary  string    `json:"result_summary,omitempty"`
+	Diffstat       string    `json:"diffstat,omitempty"`
+	Checks         []Check   `json:"checks,omitempty"`
+	LogRef         string    `json:"log_ref,omitempty"`
+	FailReason     string    `json:"fail_reason,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // Check is one verification result reported by the worker.
@@ -94,6 +100,7 @@ type ClaimInput struct {
 	WorkerID   string   `json:"worker_id"`
 	Runners    []string `json:"runners"`
 	Workspaces []string `json:"workspaces"`
+	KeyID      string   `json:"-"` // the claiming key (M5 binding)
 }
 
 // ReportInput is the worker's result for a claimed run.

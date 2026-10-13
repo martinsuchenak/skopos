@@ -433,6 +433,53 @@ func (h *Handler) Amend(w http.ResponseWriter, r *http.Request) {
 	rest.RespondJSON(w, http.StatusOK, rev)
 }
 
+// Replan handles POST /api/plans/{id}/replan: replace ALL non-review steps
+// and snapshot atomically (first plan and re-plans both).
+func (h *Handler) Replan(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req struct {
+		BaseSHA string `json:"base_sha"`
+		Steps   []struct {
+			Title       string `json:"title"`
+			Description string `json:"description"`
+		} `json:"steps"`
+	}
+	if err := rest.DecodeJSON(w, r, &req); err != nil {
+		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(req.Steps) == 0 {
+		rest.RespondError(w, http.StatusBadRequest, "steps must not be empty")
+		return
+	}
+	steps := make([]RevisionStep, 0, len(req.Steps))
+	for _, st := range req.Steps {
+		if strings.TrimSpace(st.Title) == "" {
+			rest.RespondError(w, http.StatusBadRequest, "step titles are required")
+			return
+		}
+		steps = append(steps, RevisionStep{Title: st.Title, Description: st.Description})
+	}
+	rev, err := h.service.Replan(r.Context(), r.PathValue("id"), steps, req.BaseSHA)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
+			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
+			rest.RespondError(w, http.StatusNotFound, err.Error())
+		case errors.Is(err, ErrRevisionLocked):
+			rest.RespondError(w, http.StatusConflict, err.Error())
+		default:
+			rest.InternalError(w, err)
+		}
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, rev)
+}
+
 // LockRevision handles POST /api/plans/{id}/revisions/{revision_id}/lock —
 // normally called by the approve action; exposed for the executor flow.
 func (h *Handler) LockRevision(w http.ResponseWriter, r *http.Request) {

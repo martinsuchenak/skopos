@@ -16,6 +16,7 @@ type Service struct {
 	// workflow. Both wired in serve.go to the inbox service (the workflow
 	// owns the item states that make either safe).
 	amendmentGuard func(planID string) error
+	plannableGuard func(planID string) error
 	deletionGuard  func(planID string) error
 	store          Store
 	now            func() time.Time

@@ -61,7 +61,7 @@ func (h *Handler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if err := h.service.Heartbeat(r.Context(), r.PathValue("id"), in.WorkerID); err != nil {
+	if err := h.service.Heartbeat(r.Context(), r.PathValue("id"), in.WorkerID, r.Header.Get("X-Skopos-Lease")); err != nil {
 		h.respondRunError(w, err, "heartbeat")
 		return
 	}
@@ -75,7 +75,7 @@ func (h *Handler) Report(w http.ResponseWriter, r *http.Request) {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	run, err := h.service.Report(r.Context(), r.PathValue("id"), in)
+	run, err := h.service.Report(r.Context(), r.PathValue("id"), in, r.Header.Get("X-Skopos-Lease"))
 	if err != nil {
 		h.respondRunError(w, err, "report")
 		return
@@ -102,7 +102,7 @@ func (h *Handler) Pause(w http.ResponseWriter, r *http.Request) {
 			resume = t
 		}
 	}
-	if err := h.service.Pause(r.Context(), r.PathValue("id"), in.WorkerID, in.Reason, resume); err != nil {
+	if err := h.service.Pause(r.Context(), r.PathValue("id"), in.WorkerID, in.Reason, resume, r.Header.Get("X-Skopos-Lease")); err != nil {
 		h.respondRunError(w, err, "pause")
 		return
 	}
@@ -121,7 +121,7 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if err := h.service.CancelOwn(r.Context(), r.PathValue("id"), in.WorkerID, in.Reason); err != nil {
+	if err := h.service.CancelOwn(r.Context(), r.PathValue("id"), in.WorkerID, in.Reason, r.Header.Get("X-Skopos-Lease")); err != nil {
 		h.respondRunError(w, err, "cancel")
 		return
 	}

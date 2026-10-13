@@ -28,6 +28,7 @@ func registerPlansRoutes(mux *http.ServeMux, h *plans.Handler) {
 	// worker snapshots when the plan is ready; approval locks it. Amend is
 	// the atomic amendment (1b round-2 N2).
 	mux.HandleFunc("POST /api/plans/{id}/amend", h.Amend)
+	mux.HandleFunc("POST /api/plans/{id}/replan", h.Replan)
 	mux.HandleFunc("POST /api/plans/{id}/revisions", h.CreateRevision)
 	mux.HandleFunc("GET /api/plans/{id}/revisions", h.ListRevisions)
 	mux.HandleFunc("POST /api/plans/{id}/revisions/{revision_id}/lock", h.LockRevision)

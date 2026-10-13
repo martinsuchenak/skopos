@@ -126,6 +126,37 @@ func (s *Service) Amend(ctx context.Context, planID string, steps []RevisionStep
 	return s.store.LatestRevision(ctx, planID)
 }
 
+// SetPlannableGuard wires the planning guard (the linked item must be in
+// its planning phase — the sibling of SetAmendmentGuard).
+func (s *Service) SetPlannableGuard(fn func(planID string) error) { s.plannableGuard = fn }
+
+// Replan replaces ALL non-review steps and snapshots atomically (round-5
+// M6): the first plan and every re-plan go through this one call. Requires
+// the latest revision to be unlocked (planning has nothing approved).
+func (s *Service) Replan(ctx context.Context, planID string, steps []RevisionStep, baseSHA string) (*Revision, error) {
+	if err := s.requirePlanScope(ctx, planID); err != nil {
+		return nil, err
+	}
+	planID = strings.TrimSpace(planID)
+	if latest, err := s.store.LatestRevision(ctx, planID); err == nil && latest != nil && latest.LockedAt != nil {
+		return nil, ErrRevisionLocked
+	}
+	if s.plannableGuard != nil {
+		if err := s.plannableGuard(planID); err != nil {
+			return nil, err
+		}
+	}
+	amender, ok := s.store.(AmendTxer)
+	if !ok {
+		return nil, fmt.Errorf("%w: storage does not support replacement", ErrInvalidInput)
+	}
+	if err := amender.ReplaceTx(ctx, planID, steps, strings.TrimSpace(baseSHA), "plan", s.now().UTC()); err != nil {
+		return nil, err
+	}
+	s.publishPlan(ctx, planID)
+	return s.store.LatestRevision(ctx, planID)
+}
+
 // VerifyRevisionCurrent checks the latest revision's snapshot against the
 // plan's current steps: an approval may only bind to content that still
 // matches what the planner snapshot (review fix 3).
@@ -361,12 +392,18 @@ func (st *Storage) LockRevision(ctx context.Context, id string, at time.Time) er
 
 // AmendTx appends the amended steps and snapshots the new revision in one
 // transaction, past the lock (1b review round 2, N2).
-// AmendTxer is the storage capability Amend needs (implemented by Storage).
+// AmendTxer is the storage capability Amend/Replan need (Storage impl).
 type AmendTxer interface {
 	AmendTx(ctx context.Context, planID string, steps []RevisionStep, baseSHA string, now time.Time) error
+	ReplaceTx(ctx context.Context, planID string, steps []RevisionStep, baseSHA string, mode string, now time.Time) error
 }
 
-func (s *Storage) AmendTx(ctx context.Context, planID string, steps []RevisionStep, baseSHA string, now time.Time) error {
+// ReplaceTx replaces a plan's steps and snapshots in one transaction.
+// mode "amend": keep done + review, replace pending implement/amendment
+// items (the locked-revision amendment path). mode "plan": replace ALL
+// non-review items and ensure exactly one review step (planning / re-plan —
+// requires an unlocked or absent latest revision, checked by the caller).
+func (s *Storage) ReplaceTx(ctx context.Context, planID string, steps []RevisionStep, baseSHA string, mode string, now time.Time) error {
 	tx, err := s.db.(*sql.DB).BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -381,15 +418,23 @@ func (s *Storage) AmendTx(ctx context.Context, planID string, steps []RevisionSt
 	if err := tx.QueryRowContext(ctx, `SELECT workspace_id FROM plans WHERE id = ?`, planID).Scan(&wsID); err != nil {
 		return fmt.Errorf("plan workspace: %w", err)
 	}
-	// A1: the amended steps REPLACE the remaining pending implementation
-	// steps (the prompt contract: "the full proposed list of remaining
-	// steps"), not append after them. Done steps and the review step keep
-	// their positions; the new steps land between them.
-	if _, err := tx.ExecContext(ctx, `
-		DELETE FROM plan_items
-		WHERE plan_id = ? AND status = 'pending' AND phase IN ('implement', 'amendment')`,
-		planID); err != nil {
-		return fmt.Errorf("superseding pending steps: %w", err)
+	if mode == "plan" {
+		// Planning: nothing is done yet — replace every non-review item.
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM plan_items WHERE plan_id = ? AND (phase IS NULL OR phase != 'review')`,
+			planID); err != nil {
+			return fmt.Errorf("replacing items: %w", err)
+		}
+	} else {
+		// Amend: the amended steps REPLACE the remaining pending
+		// implementation steps (the prompt contract), not append after
+		// them. Done steps and the review step keep their positions.
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM plan_items
+			WHERE plan_id = ? AND status = 'pending' AND phase IN ('implement', 'amendment')`,
+			planID); err != nil {
+			return fmt.Errorf("superseding pending steps: %w", err)
+		}
 	}
 	// Positions (round-4 R3): the amended steps start AFTER the max
 	// position of the remaining non-review items (the done steps), and the
@@ -437,6 +482,11 @@ func (s *Storage) AmendTx(ctx context.Context, planID string, steps []RevisionSt
 		return err
 	}
 	return tx.Commit()
+}
+
+// AmendTx keeps the round-2/3 call sites working (mode "amend").
+func (s *Storage) AmendTx(ctx context.Context, planID string, steps []RevisionStep, baseSHA string, now time.Time) error {
+	return s.ReplaceTx(ctx, planID, steps, baseSHA, "amend", now)
 }
 
 func txItems(ctx context.Context, tx *sql.Tx, planID string) ([]Item, error) {

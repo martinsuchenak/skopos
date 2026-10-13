@@ -146,6 +146,58 @@ func TestApproveLocksRevisionAndRecordsApproval(t *testing.T) {
 	}
 }
 
+// M6: the atomic replan — replaces ALL non-review steps (first plan and
+// re-plan in one call), guard-gated, and produces an approvable revision.
+func TestReplanAtomic(t *testing.T) {
+	svc, plansSvc, _ := fullStack(t)
+	root := context.Background()
+	item := mustCreate(t, svc, root, "replan probe")
+	if _, err := svc.Queue(approverCtx(), item.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SystemTransition(root, item.ID, StatusPlanning, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := plansSvc.CreatePlan(root, plans.CreatePlanInput{WorkspaceID: "ws-a", Name: "p", AuthorAgentID: "w"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.LinkPlan(root, item.ID, plan.ID); err != nil {
+		t.Fatal(err)
+	}
+	// A stale pending item from an earlier attempt — replan replaces it.
+	if _, err := plansSvc.AddItem(root, plan.ID, plans.CreateItemInput{Title: "stale step", Phase: "implement"}); err != nil {
+		t.Fatal(err)
+	}
+	rev, err := plansSvc.Replan(root, plan.ID, []plans.RevisionStep{
+		{Title: "step one", Description: "first"},
+		{Title: "step two", Description: "second"},
+		{Title: "Review and push (Martin)", Description: "Martin reviews and pushes."},
+	}, "base-r")
+	if err != nil {
+		t.Fatalf("replan: %v", err)
+	}
+	after, _ := plansSvc.GetPlan(root, plan.ID)
+	var titles []string
+	for _, pi := range after.Items {
+		titles = append(titles, pi.Title)
+	}
+	if len(titles) != 3 || titles[0] != "step one" || titles[1] != "step two" || titles[2] != "Review and push (Martin)" {
+		t.Fatalf("replan items wrong: %v", titles)
+	}
+	// Approvable: the snapshot matches the live plan.
+	if _, err := svc.SystemTransition(root, item.ID, StatusAwaitingApproval, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{RevisionID: rev.ID}); err != nil {
+		t.Fatalf("approve after replan: %v", err)
+	}
+	// Refused once the revision is locked (planning is over).
+	if _, err := plansSvc.Replan(root, plan.ID, []plans.RevisionStep{{Title: "nope"}}, ""); !errors.Is(err, plans.ErrRevisionLocked) {
+		t.Fatalf("replan on a locked plan must refuse: %v", err)
+	}
+}
+
 // Round-4 R1+R2: amend on a REAL plan shape (done implement step, pending
 // implement step, review step) — the pending step is replaced, the review
 // step stays last, the snapshot hash matches the live plan (so approve

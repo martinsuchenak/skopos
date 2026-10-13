@@ -503,6 +503,21 @@ func (s *Service) RequireAmendable(planID string) error {
 	return plans.ErrRevisionLocked
 }
 
+// RequirePlannable is the plans service's replan guard: the linked item
+// must be in its planning phase (nothing approved yet).
+func (s *Service) RequirePlannable(planID string) error {
+	items, err := s.store.ItemsByPlan(context.Background(), planID)
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		if items[i].Status == StatusPlanning {
+			return nil
+		}
+	}
+	return plans.ErrRevisionLocked
+}
+
 // PlanHasWorkflowItem is the plans service's deletion guard: refuse deleting
 // a plan whose linked item still runs the workflow (its locked revisions
 // are what approvals point at).

@@ -102,8 +102,14 @@ func TestAffinity(t *testing.T) {
 	if run3.Attempt != 2 {
 		t.Fatalf("re-claim must increment attempt: %+v", run3)
 	}
-	// A branch-resumable interrupted run is claimable by anyone.
-	if err := s.storage.Pause(ctx, r.ID, "w1", "quota", time.Time{}, time.Now().UTC()); err != nil {
+	// A branch-resumable interrupted run is claimable by anyone. (Expire
+	// run3's lease deterministically first — the pause matches on the
+	// token, but a slow test machine could otherwise race the 50ms lease.)
+	longGone := time.Now().UTC().Add(-time.Hour)
+	if _, err := s.storage.db.ExecContext(ctx, `UPDATE runs SET lease_expires_at = ? WHERE id = ?`, formatTime(longGone), r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.storage.Pause(ctx, r.ID, "w1", "quota", time.Time{}, hashLeaseToken(run3.LeaseToken), time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	// flip to interrupted+branch directly (the takeover marking)
@@ -125,7 +131,7 @@ func TestPauseHeartbeatResume(t *testing.T) {
 	run := mustQueue(t, s, ctx, "ws-a", "item-1", StageImplement)
 
 	run, _ = s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
-	if err := s.Heartbeat(ctx, run.ID, "w1"); err != nil {
+	if err := s.Heartbeat(ctx, run.ID, "w1", run.LeaseToken); err != nil {
 		t.Fatalf("heartbeat: %v", err)
 	}
 	got, _ := s.Get(ctx, run.ID)
@@ -133,10 +139,10 @@ func TestPauseHeartbeatResume(t *testing.T) {
 		t.Fatalf("heartbeat must flip to running: %s", got.Status)
 	}
 	// Wrong worker cannot heartbeat or resume.
-	if err := s.Heartbeat(ctx, run.ID, "w2"); !errors.Is(err, ErrLeaseHeld) {
+	if err := s.Heartbeat(ctx, run.ID, "w2", run.LeaseToken); !errors.Is(err, ErrLeaseHeld) {
 		t.Fatalf("foreign heartbeat: %v", err)
 	}
-	if err := s.Pause(ctx, run.ID, "w1", "quota", time.Time{}); err != nil {
+	if err := s.Pause(ctx, run.ID, "w1", "quota", time.Time{}, run.LeaseToken); err != nil {
 		t.Fatalf("pause: %v", err)
 	}
 	if err := s.Resume(ctx, run.ID, "w2"); !errors.Is(err, ErrLeaseHeld) {
@@ -179,7 +185,7 @@ func TestChaining(t *testing.T) {
 	// Plan success -> awaiting_approval.
 	_ = mustQueue(t, s, ctx, "ws-a", "item-1", StagePlan)
 	run, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
-	if _, err := s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded, Summary: "plan ready"}); err != nil {
+	if _, err := s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded, Summary: "plan ready"}, run.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
 	assertMoved(t, moved, "item-1:awaiting_approval:")
@@ -191,7 +197,7 @@ func TestChaining(t *testing.T) {
 	if run.Stage != StageImplement {
 		t.Fatalf("expected implement run, got %s", run.Stage)
 	}
-	if _, err := s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded, Summary: "done", HeadSHA: "abc"}); err != nil {
+	if _, err := s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded, Summary: "done", HeadSHA: "abc"}, run.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
 	// The review run exists, gemini-preferrred.
@@ -204,17 +210,17 @@ func TestChaining(t *testing.T) {
 	if run == nil || run.Stage != StageReview {
 		t.Fatalf("gemini worker should claim review: %+v", run)
 	}
-	_, _ = s.Report(ctx, run.ID, ReportInput{WorkerID: "w-gemini", Status: StatusSucceeded, Summary: "looks good"})
+	_, _ = s.Report(ctx, run.ID, ReportInput{WorkerID: "w-gemini", Status: StatusSucceeded, Summary: "looks good"}, run.LeaseToken)
 
 	// Implement success with NO reviewer -> straight to in_review.
 	_ = mustQueue(t, s, ctx, "ws-b", "item-3", StageImplement)
 	run, _ = s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-b"}})
-	_, _ = s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded})
+	_, _ = s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded}, run.LeaseToken)
 
 	// Failure blocks the item with the reason.
 	_ = mustQueue(t, s, ctx, "ws-b", "item-4", StageImplement)
 	run, _ = s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-b"}})
-	_, _ = s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusFailed, Reason: "tests exploded\nand more"})
+	_, _ = s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusFailed, Reason: "tests exploded\nand more"}, run.LeaseToken)
 
 	assertMoved(t, moved, "item-2:in_review:", "item-3:in_review:", "item-4:blocked:run failed: tests exploded")
 }
@@ -237,7 +243,7 @@ func TestClaimMovesItemPhase(t *testing.T) {
 	assertMoved(t, moves, "planning")
 	// Failure now blocks from planning — a valid edge.
 	moves = nil
-	_, _ = s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusFailed, Reason: "boom"})
+	_, _ = s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusFailed, Reason: "boom"}, run.LeaseToken)
 	assertMoved(t, moves, "blocked")
 }
 
@@ -248,7 +254,7 @@ func TestPausedNotReclaimed(t *testing.T) {
 	ctx := rootCtx()
 	mustQueue(t, s, ctx, "ws-a", "item-1", StageImplement)
 	run, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
-	if err := s.Pause(ctx, run.ID, "w1", "amendment", time.Time{}); err != nil {
+	if err := s.Pause(ctx, run.ID, "w1", "amendment", time.Time{}, run.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
 	// The same worker claims: nothing (paused is not a candidate).
@@ -351,7 +357,7 @@ func TestQuotaPauseReclaim(t *testing.T) {
 	mustQueue(t, s, ctx, "ws-a", "item-1", StageImplement)
 	run, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
 	// Quota pause until 50ms from now.
-	if err := s.Pause(ctx, run.ID, "w1", "quota: limit", time.Now().UTC().Add(50*time.Millisecond)); err != nil {
+	if err := s.Pause(ctx, run.ID, "w1", "quota: limit", time.Now().UTC().Add(50*time.Millisecond), run.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
 	// Before the reset: the owner gets nothing (paused, not yet due).
@@ -363,6 +369,43 @@ func TestQuotaPauseReclaim(t *testing.T) {
 	r, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
 	if r == nil || r.ID != run.ID {
 		t.Fatalf("quota run must be reclaimable after the reset: %+v", r)
+	}
+}
+
+// M5: the fencing token — a stale attempt's report is refused, and the
+// token never appears in GET.
+func TestLeaseFencing(t *testing.T) {
+	s := testService(t)
+	ctx := rootCtx()
+	mustQueue(t, s, ctx, "ws-a", "item-1", StagePlan)
+	run, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	if run.LeaseToken == "" {
+		t.Fatal("claim must issue a lease token")
+	}
+	if err := s.Heartbeat(ctx, run.ID, "w1", run.LeaseToken); err != nil {
+		t.Fatalf("fresh token heartbeat: %v", err)
+	}
+	// Force expiry, re-claim by the owner (a second attempt, new token).
+	longGone := time.Now().UTC().Add(-time.Hour)
+	if _, err := s.storage.db.ExecContext(ctx, `UPDATE runs SET lease_expires_at = ? WHERE id = ?`, formatTime(longGone), run.ID); err != nil {
+		t.Fatal(err)
+	}
+	run2, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	if run2 == nil || run2.ID != run.ID || run2.LeaseToken == "" || run2.LeaseToken == run.LeaseToken {
+		t.Fatalf("re-claim must rotate the token: %+v", run2)
+	}
+	// The OLD attempt's report is fenced out.
+	if _, err := s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded}, run.LeaseToken); !errors.Is(err, ErrLeaseHeld) {
+		t.Fatalf("stale token report must be refused: %v", err)
+	}
+	// The fresh token works.
+	if _, err := s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded, Summary: "ok"}, run2.LeaseToken); err != nil {
+		t.Fatalf("fresh token report: %v", err)
+	}
+	// The token never appears in reads.
+	got, _ := s.Get(ctx, run.ID)
+	if got.LeaseToken != "" {
+		t.Fatal("GET must not expose the lease token")
 	}
 }
 

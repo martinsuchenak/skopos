@@ -63,38 +63,25 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	}
 
 	branch := normalizeBranch(item.ID, item.Title, repo.BranchPrefix)
-	var planID string
-	if item.PlanID != "" {
-		// Re-plan (review H2): reuse the linked plan — replace its items,
-		// then snapshot a new revision. Linking a second plan would bounce
-		// off the 1a already-linked refusal.
-		planID = item.PlanID
-		existing, err := w.client.GetPlan(ctx, planID)
-		if err != nil {
-			return err
-		}
-		for _, pi := range existing.Items {
-			_ = w.client.DeletePlanItem(ctx, planID, pi.ID)
-		}
-	} else {
+	// Single atomic path (round-5 M6): ensure a linked plan exists, then
+	// ONE replan call replaces all steps and snapshots. No piecemeal
+	// Add/Delete — a failure can no longer gut the plan.
+	planID := item.PlanID
+	if planID == "" {
 		plan, err := w.client.CreatePlan(ctx, run.WorkspaceID, pr.Title, branch, w.cfg.ID)
 		if err != nil {
 			return err
 		}
 		planID = plan.ID
 		if err := w.client.LinkPlan(ctx, run.ItemID, planID); err != nil {
-			return err
+			return err // empty unlinked plan at worst — harmless, GC-able
 		}
 	}
-	for _, s := range pr.Steps {
-		if _, err := w.client.AddPlanItem(ctx, planID, s.Title, s.Description, "implement"); err != nil {
-			return err
-		}
-	}
-	if _, err := w.client.AddPlanItem(ctx, planID, "Review and push (Martin)", "Martin reviews the branch and pushes it onward himself.", "review"); err != nil {
-		return err
-	}
-	rev, err := w.client.CreateRevision(ctx, planID, baseSHA)
+	replanSteps := append(append([]Step{}, pr.Steps...), Step{
+		Title:       "Review and push (Martin)",
+		Description: "Martin reviews the branch and pushes it onward himself.",
+	})
+	rev, err := w.client.Replan(ctx, planID, baseSHA, replanSteps)
 	if err != nil {
 		return err
 	}

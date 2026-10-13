@@ -166,7 +166,7 @@ func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 }
 
 // Heartbeat extends the worker's lease; the first flips claimed -> running.
-func (s *Service) Heartbeat(ctx context.Context, id, workerID string) error {
+func (s *Service) Heartbeat(ctx context.Context, id, workerID, leaseToken string) error {
 	id = strings.TrimSpace(id)
 	if id == "" || strings.TrimSpace(workerID) == "" {
 		return fmt.Errorf("%w: id and worker_id are required", ErrInvalidInput)
@@ -174,12 +174,12 @@ func (s *Service) Heartbeat(ctx context.Context, id, workerID string) error {
 	if err := s.checkScope(ctx, id); err != nil {
 		return err
 	}
-	return s.storage.Heartbeat(ctx, id, workerID, s.lease, s.now().UTC())
+	return s.storage.Heartbeat(ctx, id, workerID, hashLeaseToken(leaseToken), s.lease, s.now().UTC())
 }
 
 // Report ends a run and chains: success queues the next configured stage or
 // moves the item forward; failure blocks the item with the reason.
-func (s *Service) Report(ctx context.Context, id string, in ReportInput) (*Run, error) {
+func (s *Service) Report(ctx context.Context, id string, in ReportInput, leaseToken string) (*Run, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil, fmt.Errorf("%w: id is required", ErrInvalidInput)
@@ -195,7 +195,7 @@ func (s *Service) Report(ctx context.Context, id string, in ReportInput) (*Run, 
 	if err := s.checkScope(ctx, id); err != nil {
 		return nil, err
 	}
-	run, err := s.storage.Report(ctx, id, in.WorkerID, in, s.now().UTC())
+	run, err := s.storage.Report(ctx, id, in.WorkerID, hashLeaseToken(leaseToken), in, s.now().UTC())
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +248,7 @@ func (s *Service) chain(ctx context.Context, run *Run, in ReportInput) {
 // where the session lives. A non-zero resumeAfter (quota: the allowance
 // reset) makes the pause restart-safe: the owner reclaims it via any claim
 // once the time passes, even after a worker restart (A2).
-func (s *Service) Pause(ctx context.Context, id, workerID, reason string, resumeAfter time.Time) error {
+func (s *Service) Pause(ctx context.Context, id, workerID, reason string, resumeAfter time.Time, leaseToken string) error {
 	id = strings.TrimSpace(id)
 	if id == "" || strings.TrimSpace(workerID) == "" {
 		return fmt.Errorf("%w: id and worker_id are required", ErrInvalidInput)
@@ -256,12 +256,12 @@ func (s *Service) Pause(ctx context.Context, id, workerID, reason string, resume
 	if err := s.checkScope(ctx, id); err != nil {
 		return err
 	}
-	return s.storage.Pause(ctx, id, workerID, reason, resumeAfter, s.now().UTC())
+	return s.storage.Pause(ctx, id, workerID, reason, resumeAfter, hashLeaseToken(leaseToken), s.now().UTC())
 }
 
 // CancelOwn lets the owning worker retire its own run (abandoned stages —
 // A4: an unexecuted run are a cancellation, not a failure).
-func (s *Service) CancelOwn(ctx context.Context, id, workerID, reason string) error {
+func (s *Service) CancelOwn(ctx context.Context, id, workerID, reason, leaseToken string) error {
 	id = strings.TrimSpace(id)
 	if id == "" || strings.TrimSpace(workerID) == "" {
 		return fmt.Errorf("%w: id and worker_id are required", ErrInvalidInput)
@@ -276,7 +276,7 @@ func (s *Service) CancelOwn(ctx context.Context, id, workerID, reason string) er
 	if r.WorkerID != workerID {
 		return ErrLeaseHeld
 	}
-	return s.storage.CancelOne(ctx, id, reason, s.now().UTC())
+	return s.storage.CancelOne(ctx, id, workerID, reason, hashLeaseToken(leaseToken), s.now().UTC())
 }
 
 // Resume returns a paused run to its owner.
@@ -352,9 +352,12 @@ func (s *Service) QueueStage(ctx context.Context, itemID, workspaceID, stage, pl
 	return r.ID, nil
 }
 
-// CancelRun cancels one run by id (targeted compensation, review N1).
+// CancelRun cancels one run by id (targeted compensation, review N1). It
+// only ever targets a run THIS service just queued (unclaimed: empty
+// worker/token), which the fenced match permits; claimed runs belong to
+// their worker's CancelOwn.
 func (s *Service) CancelRun(ctx context.Context, id, reason string) error {
-	return s.storage.CancelOne(ctx, strings.TrimSpace(id), reason, s.now().UTC())
+	return s.storage.CancelOne(ctx, strings.TrimSpace(id), "", reason, "", s.now().UTC())
 }
 
 // Get and List are the read surface (dashboard, tests).

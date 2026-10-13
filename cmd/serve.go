@@ -219,6 +219,7 @@ func serveCmd() *cli.Command {
 			// Review fix 2: amendments unlock content only through the
 			// workflow's pause, and plans with in-flight items survive.
 			plansService.SetAmendmentGuard(inboxService.RequireAmendable)
+			plansService.SetPlannableGuard(inboxService.RequirePlannable)
 			plansService.SetDeletionGuard(inboxService.PlanHasWorkflowItem)
 			inboxHandler := inbox.NewHandler(inboxService, authn)
 
