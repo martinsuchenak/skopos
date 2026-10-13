@@ -30,6 +30,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/rest"
+	"github.com/martinsuchenak/skopos/internal/notify"
 	"github.com/martinsuchenak/skopos/internal/runs"
 	"github.com/martinsuchenak/skopos/internal/status"
 	"github.com/martinsuchenak/skopos/internal/workspaces"
@@ -414,6 +415,18 @@ func serveCmd() *cli.Command {
 			inboxService.SetRunQueuer(runsService)
 			runsHandler := runs.NewHandler(runsService)
 
+			// Notification module (lean 1b item 4): Slack Socket Mode when
+			// tokens are configured; absent = disabled. Provider interface
+			// keeps a second surface (telegram) a config swap away.
+			if botTok := os.Getenv("SKOPOS_SLACK_BOT_TOKEN"); botTok != "" {
+				appTok := os.Getenv("SKOPOS_SLACK_APP_TOKEN")
+				martin := os.Getenv("SKOPOS_SLACK_USER_ID")
+				if appTok != "" && martin != "" {
+					notifySvc := notify.New(notify.NewSlack(botTok, appTok, martin), inboxRelay{inbox: inboxService, approverKey: os.Getenv("SKOPOS_APPROVER_KEY")})
+					go func() { _ = notifySvc.Run(context.Background()) }()
+				}
+			}
+
 			webMux := http.NewServeMux()
 			apiMux := http.NewServeMux()
 			routes.RegisterRoutes(webMux, apiMux, statusHandler, blackboardHandler, plansHandler, inboxHandler, workspacesHandler, codeIndexHandler, apiKeysHandler, runsHandler)
@@ -550,3 +563,25 @@ func runWorkspacePrefs(cmd *cli.Command) map[string]*runs.WorkspacePrefs {
 	}
 	return prefs
 }
+
+// inboxRelay adapts Slack replies onto the inbox workflow actions. Human
+// actions ride the interim approver key until the dashboard approval
+// surface lands; commands map 1:1 like agent-trial's relay did.
+type inboxRelay struct {
+	inbox       *inbox.Service
+	approverKey string
+}
+
+func (r inboxRelay) Apply(ctx context.Context, itemID, text string) bool {
+	// The relay speaks as Martin via the approver credential.
+	if r.approverKey != "" {
+		ctx = auth.WithPrincipal(ctx, &auth.Principal{KeyID: "slack-relay", Name: "slack", Approver: true})
+	}
+	_ = itemID
+	_ = text
+	// Command parsing lands with the Slack module's message wiring (the
+	// approve/revise/changes/done/retry/reject set, revision-bound approve).
+	return false
+}
+
+func (r inboxRelay) ItemForThread(parent string) string { return "" }
