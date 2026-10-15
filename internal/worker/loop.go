@@ -378,7 +378,10 @@ func (w *Worker) handleAgentOutcome(ctx context.Context, run *Run, res AgentResu
 
 func renderPrompt(name string, data any) (string, error) {
 	var b strings.Builder
-	if err := prompts.ExecuteTemplate(&b, "prompts/"+name, data); err != nil {
+	// ParseFS names templates by BASENAME (plan.md), not the glob path —
+	// looking up "prompts/plan.md" found nothing and no stage could render
+	// its prompt (the first live worker run found it).
+	if err := prompts.ExecuteTemplate(&b, name, data); err != nil {
 		return "", err
 	}
 	return b.String(), nil

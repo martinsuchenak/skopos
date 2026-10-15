@@ -2,6 +2,7 @@ package worker
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -252,5 +253,27 @@ func TestDefaultExpandsPathsAndEnv(t *testing.T) {
 	}
 	if got := c.Accounts[0].Env["UNSET_REF"]; got != "" {
 		t.Fatalf("unset ${NAME} expands empty (the checker flags it): %q", got)
+	}
+}
+
+// Every stage prompt must render — the template lookup used the glob path
+// ("prompts/plan.md") while ParseFS registers basenames, and no other test
+// exercised rendering (the first live worker run found it).
+func TestRenderPrompt(t *testing.T) {
+	data := map[string]any{
+		"Workspace": "ws", "Base": "main", "Branch": "agent/x", "Title": "t",
+		"Content": "c", "Notes": "", "Steps": []Step{}, "ApprovalNotes": "", "Stage": "review",
+	}
+	for _, name := range []string{"plan.md", "implement.md", "review.md"} {
+		out, err := renderPrompt(name, data)
+		if err != nil {
+			t.Fatalf("renderPrompt(%s): %v", name, err)
+		}
+		if strings.TrimSpace(out) == "" {
+			t.Fatalf("renderPrompt(%s) produced empty output", name)
+		}
+	}
+	if _, err := renderPrompt("nope.md", data); err == nil {
+		t.Fatal("unknown prompt must error")
 	}
 }

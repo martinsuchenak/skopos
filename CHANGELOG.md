@@ -4,6 +4,17 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.12.1] — 2026-10-15
+
+### Fixed
+
+- **Worker stage prompts never rendered** — the template lookup used the
+  glob path ("prompts/plan.md") while text/template's ParseFS registers
+  templates by basename ("plan.md"), so every plan/implement/review stage
+  failed at its first prompt render. Found by the first live worker run
+  after its git credentials were fixed; no test had ever rendered a
+  prompt. Regression test renders all three.
+
 ## [0.12.0] — 2026-10-15
 
 ### Added
