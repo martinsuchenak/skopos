@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.12.3] — 2026-10-15
+
+### Fixed
+
+- Dashboard preview modal's plan badge rendered the literal text `\u2192`
+  instead of an arrow (a doubled escape shipped with the modal in 0.9.4;
+  the list-row badge was always correct).
+
 ## [0.12.2] — 2026-10-15
 
 ### Fixed

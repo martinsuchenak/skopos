@@ -852,7 +852,7 @@
                                 <span x-show="previewItem.workspace_id" class="badge max-w-48 truncate bg-sky-500/15 text-sky-300" :title="previewItem.workspace_id" x-text="workspaceLabel(previewItem.workspace_id)"></span>
                                 <span x-show="!previewItem.workspace_id" class="badge bg-amber-500/15 text-amber-300">unfiled</span>
                                 <span x-show="previewItem.claimed_by_agent_id" x-text="previewItem.claimed_by_agent_id"></span>
-                                <span x-show="previewItem.plan_id" class="badge max-w-40 truncate bg-violet-500/15 text-violet-300" x-text="'\\u2192 ' + (previewItem.plan && previewItem.plan.name ? previewItem.plan.name : 'plan')"></span>
+                                <span x-show="previewItem.plan_id" class="badge max-w-40 truncate bg-violet-500/15 text-violet-300" x-text="'→ ' + (previewItem.plan && previewItem.plan.name ? previewItem.plan.name : 'plan')"></span>
                                 <span x-text="timeAgo(previewItem.created_at)"></span>
                             </div>
                             <div class="mt-1.5 flex flex-wrap gap-1" x-show="(previewItem.tags || []).length > 0">
