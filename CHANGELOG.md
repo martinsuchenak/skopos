@@ -4,6 +4,38 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.14.0] — 2026-10-15
+
+### Fixed
+
+- **Alpine expression errors on every card (`inboxItemEditable is not a
+  function`)** — a 0.12.2 edit accidentally deleted the method definition
+  while removing a duplicated block; Pin/file-into and every downstream
+  expression in those scopes silently never evaluated (much of the "data
+  won't load until devtools" perception).
+- **Kanban cards: the action buttons no longer eat half the card** — the
+  shrink-0 button cluster beside the title grew with the workflow
+  quick-action; titles now get the full card width and the buttons wrap
+  onto their own row.
+- **The workflow note input was invisible-grade** — it used a nonexistent
+  `.input` class (the design system's is `.fld`) as a single xs-height
+  line. It is now a labeled multi-line textarea sized for real retry
+  answers ("Answer to the blocker (sent to the agent)", required-input
+  gating unchanged).
+- **Stale dashboard after redeploys** — the HTML carried only
+  `Cache-Control: no-cache`; it now sends `no-store, must-revalidate` +
+  `Pragma: no-cache`, so a cached page can never pair an old asset set
+  with a new server.
+
+### Added
+
+- **Workers view** — a dashboard page deriving the execution fleet from
+  run history: per worker, active run (busy/idle), succeeded/failed
+  counts, workspaces served, stages executed, last activity. The server
+  has no worker registry (it learns a worker when it claims; runners and
+  versions need no registration to route) — the view states this honestly
+  and a registry remains future work.
+
 ## [0.13.6] — 2026-10-15
 
 ### Added

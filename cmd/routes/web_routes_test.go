@@ -28,7 +28,7 @@ func TestDashboardAssetVersioning(t *testing.T) {
 			t.Fatalf("asset %s is not content-versioned in the dashboard HTML", asset)
 		}
 	}
-	if w.Header().Get("Cache-Control") != "no-cache" {
+	if w.Header().Get("Cache-Control") != "no-store, must-revalidate" {
 		t.Fatalf("dashboard HTML must be revalidated every load, got %q", w.Header().Get("Cache-Control"))
 	}
 

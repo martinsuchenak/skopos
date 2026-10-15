@@ -163,7 +163,12 @@ func registerWebRoutes(mux *http.ServeMux) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		// The HTML is tiny and references versioned assets; it must always be
 		// revalidated so a new binary's asset URLs are picked up immediately.
-		w.Header().Set("Cache-Control", "no-cache")
+		// no-store, not just no-cache: the HTML names the hashed assets of
+		// ITS build — a cached page against a newer server serves stale JS
+		// that half-breaks (found live: "data won't load until devtools").
+		w.Header().Set("Cache-Control", "no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
 		version := build.Version
 		if build.Date != "unknown" {
 			version += " · " + build.Date

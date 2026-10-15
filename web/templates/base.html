@@ -46,6 +46,9 @@
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21"/></svg>
                 Workspaces
             </button>
+            <button type="button" @click="switchView('workers')" class="nav-item" :aria-current="activeView === 'workers' ? 'page' : null">
+              Workers
+            </button>
         </nav>
         <div class="border-t border-zinc-800 p-4">
             <p class="text-center text-[11px] text-zinc-600">skopos {{.Version}}</p>
@@ -475,12 +478,17 @@
                                             @dragstart="startInboxDrag(item, $event)"
                                             @drop.stop.prevent="dropBeforeItem(lane.key, item)"
                                             @dragover="cardDragOver(lane.key, item, $event)">
-                                            <div class="flex items-start justify-between gap-2">
-                                                <div class="min-w-0 flex-1">
+                                            <!-- Title gets the full card width; the action
+                                                 buttons wrap onto their own row below — a
+                                                 shrink-0 button cluster beside the title ate
+                                                 half the card once the workflow quick-action
+                                                 landed. -->
+                                            <div>
+                                                <div class="min-w-0">
                                                     <span x-show="item.priority != null" class="mr-1 rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] text-amber-300" x-text="'#' + item.priority"></span>
                                                     <span class="text-sm font-medium text-zinc-100" x-text="item.title"></span>
                                                 </div>
-                                                <div class="flex shrink-0 items-center gap-1">
+                                                <div class="mt-1 flex flex-wrap items-center gap-1">
                                                     <button type="button" @click.stop="openInboxPreview(item)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Preview item ' + item.title">View</button>
                                                     <button type="button" x-show="workflowQuickAction(item)" x-text="workflowQuickAction(item)" @click.stop="runQuickWorkflowAction(item)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs text-sky-300" :aria-label="'Workflow action for item ' + item.title"></button>
                                                     <button type="button" x-show="item.status === 'discarded'" @click.stop="restoreInboxItem(item.id)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs">Restore</button>
@@ -643,7 +651,37 @@
                 </div>
             </section>
             <!-- ===================== API KEYS ===================== -->
-            <section x-show="activeView === 'keys'" x-cloak>
+            <section x-show="activeView === 'workers'" x-cloak>
+                <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+                    <div>
+                        <h2 class="text-lg font-semibold">Workers</h2>
+                        <p class="mt-1 max-w-2xl text-sm text-zinc-500">Execution planes, derived from run history — the server learns a worker when it claims. Offered runners and versions need no registration to route, so they are not shown (yet).</p>
+                    </div>
+                    <button type="button" @click="fetchWorkers()" class="btn btn-ghost btn-sm">Refresh</button>
+                </div>
+                <p x-show="workersLoading" class="text-sm text-zinc-500">Loading…</p>
+                <p x-show="!workersLoading && workers.length === 0" class="text-sm text-zinc-500">No workers have claimed runs yet.</p>
+                <ul class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    <template x-for="w in workers" :key="w.id + '|' + w.lastActive">
+                        <li class="card p-4">
+                            <div class="flex items-start justify-between gap-2">
+                                <h3 class="min-w-0 break-all font-mono text-sm font-medium" x-text="w.id"></h3>
+                                <span class="badge shrink-0" :class="workerStatusClass(w)" x-text="workerStatusLabel(w)"></span>
+                            </div>
+                            <p class="mt-2 text-sm" x-show="w.active > 0" x-text="w.currentLabel"></p>
+                            <dl class="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+                                <div class="rounded-lg border border-zinc-800 p-2"><dt class="text-zinc-500">active</dt><dd class="font-mono text-sm" x-text="w.active"></dd></div>
+                                <div class="rounded-lg border border-zinc-800 p-2"><dt class="text-zinc-500">succeeded</dt><dd class="font-mono text-sm text-emerald-300" x-text="w.succeeded"></dd></div>
+                                <div class="rounded-lg border border-zinc-800 p-2"><dt class="text-zinc-500">failed</dt><dd class="font-mono text-sm text-rose-300" x-text="w.failed"></dd></div>
+                            </dl>
+                            <p class="mt-3 text-[11px] text-zinc-500"><span class="text-zinc-400">workspaces:</span> <span class="break-all" x-text="w.workspaces.join(', ')"></span></p>
+                            <p class="mt-1 text-[11px] text-zinc-500"><span class="text-zinc-400">stages:</span> <span x-text="w.stages.join(', ')"></span></p>
+                            <p class="mt-1 text-[11px] text-zinc-500">last active <span x-text="timeAgo(w.lastActive)"></span></p>
+                        </li>
+                    </template>
+                </ul>
+            </section>
+                        <section x-show="activeView === 'keys'" x-cloak>
                 <div class="mb-6 flex items-center justify-between gap-4">
                     <div>
                         <h2 class="mb-1 text-2xl font-semibold">API keys</h2>
@@ -897,7 +935,13 @@
                          status. The server authorizes (a non-approver key
                          gets the 403 as a toast). -->
                     <div class="mt-3 flex shrink-0 flex-wrap items-center gap-2" x-show="workflowShowQueue() || workflowShowApprove() || workflowShowRetry() || workflowShowMarkDone()">
-                        <input x-show="workflowShowInput()" x-model="workflowNote" type="text" class="input min-w-48 flex-1 !py-1 text-xs" :placeholder="workflowNotePlaceholder()" :aria-label="workflowNotePlaceholder()">
+                        <!-- Labeled, multi-line: retry answers and change
+                             requests carry real sentences, and the input was a
+                             single xs-height line with only a placeholder. -->
+                        <div class="flex min-w-56 flex-1 flex-col gap-1" x-show="workflowShowInput()">
+                            <label for="workflow-note" class="text-[11px] font-medium text-zinc-400" x-text="workflowNoteLabel()"></label>
+                            <textarea id="workflow-note" x-model="workflowNote" rows="3" class="fld w-full resize-y text-sm" :placeholder="workflowNotePlaceholder()" :aria-label="workflowNoteLabel()"></textarea>
+                        </div>
                         <button type="button" x-show="workflowShowQueue()" @click.stop="queueInboxItem(previewItem.id)" :disabled="!workflowActionReady('queue')" class="btn btn-sm text-sky-300" :aria-label="'Queue item ' + previewItem.title">Queue</button>
                         <button type="button" x-show="workflowShowApprove()" @click.stop="approveInboxItem(previewItem.id)" :disabled="!workflowActionReady('approve')" class="btn btn-sm text-emerald-300" :aria-label="'Approve item ' + previewItem.title">Approve</button>
                         <button type="button" x-show="workflowShowApprove()" @click.stop="requestChangesInboxItem(previewItem.id)" :disabled="!workflowActionReady('request_changes')" class="btn btn-sm btn-ghost text-orange-300" :aria-label="'Request changes on item ' + previewItem.title">Request changes</button>

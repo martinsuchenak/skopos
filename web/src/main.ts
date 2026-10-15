@@ -29,11 +29,13 @@ type ItemForm = { title: string; description: string; phase: string; depends_on:
 type InboxPlanSummary = { id: string; name: string; status: string };
 type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; created_at: string; updated_at: string; excerpt?: string };
 type InboxDetail = InboxItem & { content: string; content_html: string };
+type WorkerRow = { id: string; workspaces: string[]; stages: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string };
+
 type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; created_at: string; updated_at: string };
 type InboxForm = { id: string; title: string; tags: string; workspace: string };
 
 const UI_AUTHOR = 'ui';
-type View = 'sessions' | 'blackboard' | 'plans' | 'inbox' | 'index' | 'keys' | 'workspaces';
+type View = 'sessions' | 'blackboard' | 'plans' | 'inbox' | 'index' | 'keys' | 'workspaces' | 'workers';
 
 // The inbox markdown editor lives OUTSIDE Alpine's reactive state: deep-
 // proxying a live CodeMirror view breaks it. One instance per open modal.
@@ -94,6 +96,10 @@ const appState = () => ({
   // id of the card being dragged (HTML5 DnD; same-window only, so state is
   // the transport — dataTransfer.setData exists for Firefox's sake)
   inboxDragId: '',
+
+  // workers (derived from run history — no registry yet)
+  workers: [] as WorkerRow[],
+  workersLoading: false,
 
   // code index
   indexBranches: [] as { branch: string; head_sha?: string; built_at: string; source?: string; file_count: number; symbol_count: number }[],
@@ -373,6 +379,7 @@ const appState = () => ({
     if (v === 'index') this.fetchIndexStatus();
     if (v === 'keys') this.fetchKeys();
     if (v === 'workspaces') { this.fetchWorkspaces(); this.fetchGroups(); if (this.whoamiIsRoot()) this.fetchKeys(); }
+    if (v === 'workers') this.fetchWorkers();
   },
   whoamiIsRoot(): boolean { return !!this.whoami && this.whoami.root; },
   setWorkspace(ws: string) {
@@ -961,6 +968,12 @@ const appState = () => ({
   workflowShowRetry(): boolean { return !!this.previewItem && (this.previewItem.status === 'blocked' || this.previewItem.status === 'failed'); },
   workflowShowMarkDone(): boolean { return !!this.previewItem && this.previewItem.status === 'in_review'; },
   workflowShowInput(): boolean { return this.workflowShowApprove() || this.workflowShowRetry() || this.workflowShowMarkDone(); },
+  workflowNoteLabel(): string {
+    if (this.workflowShowRetry()) return 'Answer to the blocker (sent to the agent)';
+    if (this.workflowShowMarkDone()) return 'Head SHA being approved';
+    if (this.workflowShowApprove()) return 'Notes (required for Request changes)';
+    return '';
+  },
   workflowNotePlaceholder(): string {
     if (this.workflowShowRetry()) return 'answer to the blocker (required)';
     if (this.workflowShowMarkDone()) return 'head sha being approved (required)';
@@ -1005,6 +1018,34 @@ const appState = () => ({
     else if (item.status === 'awaiting_approval') this.approveInboxItem(item.id);
   },
 
+  // ---- workers (derived from run history) ----
+  // There is no worker registry yet: what the server knows is what runs
+  // reveal — who claimed what, when, and how it went. Offered runners and
+  // versions need a registration step (future work); this view is the
+  // honest projection of run history per worker.
+  async fetchWorkers() {
+    this.workersLoading = true;
+    const res = await this.authFetch('/api/runs');
+    this.workersLoading = false;
+    if (!res.ok) { this.notify('Could not load runs', 'error'); return; }
+    const runs = (await res.json()) as RunRow[];
+    const byWorker = new Map<string, WorkerRow>();
+    for (const run of runs) {
+      if (!run.worker_id) continue; // queued, never claimed
+      let w = byWorker.get(run.worker_id);
+      if (!w) { w = { id: run.worker_id, workspaces: [], stages: [], active: 0, succeeded: 0, failed: 0, lastActive: run.updated_at, currentLabel: '' }; byWorker.set(run.worker_id, w); }
+      if (run.workspace_id && !w.workspaces.includes(run.workspace_id)) w.workspaces.push(run.workspace_id);
+      if (run.stage && !w.stages.includes(run.stage)) w.stages.push(run.stage);
+      if (run.status === 'claimed' || run.status === 'running' || run.status === 'paused') { w.active++; w.currentLabel = run.stage + ' · ' + run.status + ' · ' + this.timeAgo(run.updated_at); }
+      if (run.status === 'succeeded') w.succeeded++;
+      if (run.status === 'failed') w.failed++;
+      if (run.updated_at > w.lastActive) w.lastActive = run.updated_at;
+    }
+    this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) => (a.lastActive < b.lastActive ? 1 : -1));
+  },
+  workerStatusLabel(w: WorkerRow): string { return w.active > 0 ? 'busy' : 'idle'; },
+  workerStatusClass(w: WorkerRow): string { return w.active > 0 ? 'bg-emerald-500/15 text-emerald-300' : 'bg-zinc-700 text-zinc-400'; },
+
   // ---- run rows (preview modal) ----
   runStatusClass(s: string) {
     return {
@@ -1037,6 +1078,7 @@ const appState = () => ({
   isWorkflowStatus(s: string): boolean {
     return s === 'queued' || s === 'planning' || s === 'awaiting_approval' || s === 'approved' || s === 'implementing' || s === 'in_review' || s === 'failed' || s === 'blocked';
   },
+  inboxItemEditable(item: InboxItem): boolean { return item.status === 'open' || item.status === 'in_progress'; },
   inboxContentEditable(item: InboxItem): boolean { return item.status !== 'done' && item.status !== 'discarded'; },
   laneItems(key: string): InboxItem[] {
     if (key === 'workflow') return this.sortInbox(this.inboxItems.filter((i: InboxItem) => this.isWorkflowStatus(i.status)));
