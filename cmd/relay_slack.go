@@ -51,9 +51,19 @@ func relayCtx() context.Context {
 	})
 }
 
-var reCmd = regexp.MustCompile(`(?is)^\s*([a-z]+)\s*:?\s*(.*)$`)
-var reNew = regexp.MustCompile(`(?is)^\s*new\s*:?\s*(.+)$`)
-var reSelector = regexp.MustCompile(`^([A-Za-z0-9._/~+-]+):\s+(.+)$`)
+// A command is the bare word (optionally ending in . or !) or `word: args`.
+// Anything else — "Done with lunch", "approve? not sure", "reject, wait" —
+// is conversation, not a command (review M1: the optional separator turned
+// casual replies into irreversible actions).
+var reCmd = regexp.MustCompile(`(?is)^\s*([a-z]+)(?:\s*[.!]?\s*|\s*:\s*(.*))$`)
+
+// reWord is the leading word of a reply that did not parse as a command —
+// used only to hint at the syntax when it names one.
+var reWord = regexp.MustCompile(`(?i)^\s*([a-z]+)`)
+
+// `new: <what>` or `new <what>`; "news: ..." / "newer ..." are not captures.
+var reNew = regexp.MustCompile(`(?is)^\s*new(?:\s*:\s*|\s+)(.+)$`)
+var reSelector = regexp.MustCompile(`(?s)^([A-Za-z0-9._/~+-]+):\s+(.+)$`)
 
 const slackHelp = "*skopos commands* — reply in an item's thread:\n" +
 	"• `new <workspace>: <what>` — capture into a specific workspace (suffix match, e.g. `new skopos: ...`)\n" +
@@ -83,7 +93,7 @@ func (r *slackRelay) TopLevel(ctx context.Context, text, ts string) bool {
 	// `new <workspace>: <what>` — the selector must resolve (exact id or a
 	// unique "/suffix" of one); unknown prefixes stay part of the title so
 	// `new fix: the login` keeps working.
-	if sel := reSelector.FindStringSubmatch(what); sel != nil {
+	if sel := reSelector.FindStringSubmatch(what); sel != nil && r.resolveWS != nil {
 		if id, ok := r.resolveWS(sel[1]); ok {
 			ws = id
 			what = strings.TrimSpace(sel[2])
@@ -107,7 +117,7 @@ func (r *slackRelay) TopLevel(ctx context.Context, text, ts string) bool {
 		r.post(ctx, "", "⚠️ Created but not queued: "+firstLine(qErr.Error()))
 	}
 	r.bindThread(ctx, item.ID, ts)
-	r.post(ctx, ts, "📥 Queued · planning starts within a minute. The plan will come back in this thread.")
+	r.post(ctx, ts, "📥 Queued in `"+ws+"` · planning starts within a minute. The plan will come back in this thread.")
 	return true
 }
 
@@ -117,15 +127,19 @@ func (r *slackRelay) TopLevel(ctx context.Context, text, ts string) bool {
 // guard survives). The outcome is posted in-thread either way.
 func (r *slackRelay) Apply(ctx context.Context, itemID, text string) bool {
 	m := reCmd.FindStringSubmatch(text)
-	if m == nil {
+	if m == nil || !isCommand(strings.ToLower(m[1])) {
+		// Not a command; leave un-acked. When it LEADS with a command word
+		// ("done with lunch", "approve? ..."), say how to issue the real
+		// one rather than silently ignoring what may have been meant.
+		if w := reWord.FindStringSubmatch(text); w != nil && isCommand(strings.ToLower(w[1])) {
+			if item, err := r.inbox.GetItem(relayCtx(), itemID); err == nil {
+				word := strings.ToLower(w[1])
+				r.post(ctx, item.SlackThreadTS, "🤔 Not applied — a command is the bare word (`"+word+"`) or `"+word+": <notes>` on its own.")
+			}
+		}
 		return false
 	}
 	cmd, arg := strings.ToLower(m[1]), strings.TrimSpace(m[2])
-	switch cmd {
-	case "approve", "approved", "lgtm", "revise", "changes", "done", "retry", "reject":
-	default:
-		return false // not a command; leave un-acked
-	}
 	item, err := r.inbox.GetItem(relayCtx(), itemID)
 	if err != nil {
 		return false
@@ -138,6 +152,15 @@ func (r *slackRelay) Apply(ctx context.Context, itemID, text string) bool {
 	// running agent waits for the run to finish (agent-trial semantics).
 	if item.Status == inbox.StatusPlanning || item.Status == inbox.StatusImplementing ||
 		item.Status == inbox.StatusQueued || item.Status == inbox.StatusApproved {
+		// Approvals are never buffered: a buffered approve/done would apply
+		// the instant the gate is reached — approving a plan or a head
+		// commit Martin has not seen (review H2). They wait for the gate
+		// message instead; the non-advancing replies still buffer.
+		if isApproval(cmd) {
+			r.post(ctx, item.SlackThreadTS, "⚠️ `"+cmd+"` applies at the gate — the item is "+statusWord(item.Status)+
+				". Reply to the gate message once it arrives.")
+			return true
+		}
 		r.buffer(itemID, text)
 		r.post(ctx, item.SlackThreadTS, "⏳ Got it — the item is mid-run; I'll apply it when the run finishes.")
 		return true
@@ -368,6 +391,25 @@ func (r *slackRelay) drainAll() {
 	for _, id := range ids {
 		r.drain(id)
 	}
+}
+
+// isCommand: the thread-reply vocabulary.
+func isCommand(w string) bool {
+	switch w {
+	case "approve", "approved", "lgtm", "revise", "changes", "done", "retry", "reject":
+		return true
+	}
+	return false
+}
+
+// isApproval: commands that approve a subject (a plan revision, a review
+// head) — they must answer a gate message, never a future state.
+func isApproval(cmd string) bool {
+	switch cmd {
+	case "approve", "approved", "lgtm", "done":
+		return true
+	}
+	return false
 }
 
 // bufferAdmissible: statuses where a buffered reply can be applied — the

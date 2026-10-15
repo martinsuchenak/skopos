@@ -900,6 +900,14 @@ const appState = () => ({
     this.fetchPreviewRuns(item.id);
   },
   closeInboxPreview() { this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.workflowNote = ''; this.workflowBusy = false; },
+  // Edit from the preview: capture the item BEFORE closing (close nulls
+  // previewItem). One method because the CSP build's expression parser
+  // accepts a single expression per handler — `a(); b()` throws.
+  editFromPreview() {
+    const item = this.previewItem;
+    this.closeInboxPreview();
+    if (item) this.openInboxEditModal(item);
+  },
   // Runs of the previewed item — "where is this processed": stage, worker,
   // attempt, branch, head. Refetched on every inbox SSE event while the
   // modal is open (workflow transitions publish inbox events), so the rows
@@ -1302,7 +1310,11 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
   // once the modal renders, hence the $nextTick mount.
   mountInboxEditor(initial: string) {
     this.$nextTick(() => {
-      const host = this.$refs.inboxEditorHost as HTMLElement | undefined;
+      // By id, not $refs: magics bind to the CALLING element, and Edit from
+      // the preview modal is called from a button its own x-if has already
+      // removed — a detached element's $refs finds no host, and the editor
+      // silently never mounted (empty content, Save would blank the item).
+      const host = document.getElementById('ib-content');
       if (!host) return;
       inboxEditor = destroyEditor(inboxEditor);
       inboxEditor = mountMarkdownEditor(host, initial, {

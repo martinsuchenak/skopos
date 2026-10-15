@@ -901,7 +901,7 @@
                             </div>
                         </div>
                         <div class="flex shrink-0 items-center gap-2">
-                            <button type="button" x-show="inboxContentEditable(previewItem)" @click="closeInboxPreview(); openInboxEditModal(previewItem)" class="btn btn-sm">Edit</button>
+                            <button type="button" x-show="inboxContentEditable(previewItem)" @click="editFromPreview()" class="btn btn-sm">Edit</button>
                             <button type="button" @click="closeInboxPreview()" class="btn btn-ghost btn-sm">Close</button>
                         </div>
                     </div>

@@ -4,6 +4,53 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Security
+
+- **Slack: other senders can no longer redirect the gate messages** — the
+  relay learned its outbound DM channel from *every* inbound event, before
+  the user check, so anyone who DMed the bot (or posted where the app
+  could see) became the recipient of every later plan, question and branch
+  message. Posts now go to the configured user id until that user's own
+  IM is learned, and only that user's `im` events are read at all. This
+  also fixes gate messages being dropped after every restart until the
+  user messaged the bot first.
+- **Slack: `approve` / `done` are no longer buffered mid-run** — a
+  buffered approval applied the instant the item reached the gate,
+  approving a plan or head commit nobody had seen. They are now refused
+  mid-run with a hint; `revise` / `changes` / `retry` / `reject` still
+  buffer.
+
+### Fixed
+
+- **Slack command parsing** — the separator was optional, so "Done with
+  lunch" marked an item done, "reject, wait no" rejected it, and "news: CI
+  green" captured and queued an item. A command is now the bare word or
+  `word: <text>`; replies that merely lead with a command word get a
+  syntax hint. Multi-line `new <ws>: …` captures honor the workspace
+  selector, and the confirmation names the workspace.
+- **`worker install --env-file` reached only the checks** — the service ran
+  without it, found no key and restart-looped. A non-default env file is
+  now passed to the service as `--env-file`.
+- **`worker check` passed on the installer's shell environment** — an
+  exported `SKOPOS_API_KEY` satisfied the check while the service never saw
+  it. Checks now run in the service's environment (PATH, HOME, env file)
+  and say so when only the shell has the key.
+- **"NOT STARTED" installs started anyway at the next login / boot** — the
+  plist is now written `Disabled` and the systemd unit `disable`d when the
+  service is not started.
+- **systemd re-install kept the old process** — `enable --now` on an active
+  unit is a no-op; install now restarts it, matching launchd. Install's
+  log hint uses `journalctl --user` for user units.
+- **Dashboard: Edit in the inbox preview modal did nothing** — the handler
+  had two statements (the CSP expression parser accepts one), and once
+  that parsed, the editor never mounted (its `$refs` lookup ran from the
+  button the modal's own `x-if` had removed), so Save would have blanked
+  the item. One `editFromPreview()` method; the editor mounts by id.
+- Slack ✅ reaction responses are now closed (a connection leaked per
+  handled message).
+
 ## [0.14.1] — 2026-10-15
 
 ### Added

@@ -12,7 +12,7 @@ import (
 // daemon invocation, keep-alive WITH a throttle, the captured PATH, and the
 // state-dir log.
 func TestLaunchdPlist(t *testing.T) {
-	p := launchdPlist("skopos-worker", "/usr/local/bin/skopos", "/etc/skopos/skopos-config.toml", "/var/lib/skopos-worker", "/opt/homebrew/bin:/usr/bin:/bin")
+	p := launchdPlist("skopos-worker", "/usr/local/bin/skopos", "/etc/skopos/skopos-config.toml", "", "/var/lib/skopos-worker", "/opt/homebrew/bin:/usr/bin:/bin", false)
 	if err := xml.Unmarshal([]byte(p), new(any)); err != nil {
 		t.Fatalf("plist must be valid XML: %v\n%s", err, p)
 	}
@@ -36,7 +36,7 @@ func TestLaunchdPlist(t *testing.T) {
 
 // Paths with XML-special characters must not produce a broken plist.
 func TestLaunchdPlistEscapes(t *testing.T) {
-	p := launchdPlist("w&<x>", "/bin/skopo&s", "/etc/a&b/config.toml", "/var/log&x", "/bin")
+	p := launchdPlist("w&<x>", "/bin/skopo&s", "/etc/a&b/config.toml", "/etc/a&b/w.env", "/var/log&x", "/bin", true)
 	if err := xml.Unmarshal([]byte(p), new(any)); err != nil {
 		t.Fatalf("plist with special chars must stay valid XML: %v\n%s", err, p)
 	}
@@ -58,7 +58,7 @@ func TestSystemdUnit(t *testing.T) {
 		{true, "multi-user.target", [2]string{"", ""}, ""},
 		{true, "multi-user.target", [2]string{"martin", "staff"}, "User=martin\nGroup=staff\n"},
 	} {
-		u := systemdUnit("skopos-worker", "/opt/bin/skopos", "/home/some dir/skopos-config.toml", "/usr/bin:/bin:100%/x", tc.system, tc.userGroup)
+		u := systemdUnit("skopos-worker", "/opt/bin/skopos", "/home/some dir/skopos-config.toml", "", "/usr/bin:/bin:100%/x", tc.system, tc.userGroup)
 		unitPart, servicePart := splitUnitSections(u)
 		for _, want := range []string{
 			"StartLimitIntervalSec=300",
@@ -95,7 +95,7 @@ func TestInstallDryRunWritesNothing(t *testing.T) {
 	home := t.TempDir()
 	cfg := filepath.Join(home, "skopos-config.toml")
 
-	actions, err := installLaunchd(installOptions{label: "w", dryRun: true}, home, "/bin/skopos", cfg, filepath.Join(home, "state"), "/usr/bin:/bin", nil)
+	actions, err := installLaunchd(installOptions{label: "w", dryRun: true}, home, "/bin/skopos", cfg, "", filepath.Join(home, "state"), "/usr/bin:/bin", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestInstallDryRunWritesNothing(t *testing.T) {
 		t.Fatalf("dry-run must not write the plist (err=%v)", err)
 	}
 
-	actions, err = installSystemd(installOptions{label: "w", dryRun: true}, home, "/bin/skopos", cfg, filepath.Join(home, "state"), "/usr/bin:/bin", [2]string{"", ""}, nil)
+	actions, err = installSystemd(installOptions{label: "w", dryRun: true}, home, "/bin/skopos", cfg, "", "/usr/bin:/bin", [2]string{"", ""}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestInstallDoesNotStartUnreadyConfig(t *testing.T) {
 	home := t.TempDir()
 	cfg := filepath.Join(home, "skopos-config.toml")
 
-	actions, err := installLaunchd(installOptions{label: "w"}, home, "/bin/skopos", cfg, filepath.Join(home, "state"), "/usr/bin:/bin", []string{"no API key"})
+	actions, err := installLaunchd(installOptions{label: "w"}, home, "/bin/skopos", cfg, "", filepath.Join(home, "state"), "/usr/bin:/bin", []string{"no API key"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,8 +179,24 @@ func TestRunWorkerChecks(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte(filled), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("SKOPOS_API_KEY", "sk_real")
+	// A key exported in the installer's shell is NOT what the service
+	// sees — the check must not pass on it (review M9).
+	t.Setenv("SKOPOS_API_KEY", "sk_ambient")
 	problems, err = runWorkerChecks(cfgPath, "", pathEnv, "/home/tester")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(problems) != 1 || !strings.Contains(problems[0], "no API key") || !strings.Contains(problems[0], "service will not see it") {
+		t.Fatalf("an ambient-only key must fail the check with a hint, got %v", problems)
+	}
+	if os.Getenv("SKOPOS_API_KEY") != "sk_ambient" {
+		t.Fatal("the check must restore the caller's environment")
+	}
+	envFile := filepath.Join(dir, "skopos-worker.env")
+	if err := os.WriteFile(envFile, []byte("SKOPOS_API_KEY=sk_real\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	problems, err = runWorkerChecks(cfgPath, envFile, pathEnv, "/home/tester")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +205,7 @@ func TestRunWorkerChecks(t *testing.T) {
 	}
 
 	// Without the stub on the PATH, the CLI problem is reported.
-	problems, err = runWorkerChecks(cfgPath, "", "/usr/bin:/bin", "/home/tester")
+	problems, err = runWorkerChecks(cfgPath, envFile, "/usr/bin:/bin", "/home/tester")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,8 +245,12 @@ func TestEnvFileBeatsConfigForClient(t *testing.T) {
 	if err := os.WriteFile(envPath, []byte("SKOPOS_SERVER_URL=https://skopos.envfile.real\nSKOPOS_API_KEY=sk_from_envfile\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Unsetenv("SKOPOS_SERVER_URL")
-	defer os.Unsetenv("SKOPOS_API_KEY")
+	// t.Setenv restores the host's values afterwards; Unsetenv makes the
+	// env file's keys apply (the real environment wins over the file).
+	for _, k := range []string{"SKOPOS_SERVER_URL", "SKOPOS_API_KEY"} {
+		t.Setenv(k, "")
+		_ = os.Unsetenv(k)
+	}
 	if _, _, err := loadWorkerEnvFile(envPath); err != nil {
 		t.Fatal(err)
 	}
@@ -256,12 +276,15 @@ func TestEnvFileBeatsConfigForClient(t *testing.T) {
 func TestCheckUsesProvidedHomeAndLoginPathParsing(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "skopos-config.toml")
-	t.Setenv("SKOPOS_API_KEY", "sk_real")
+	envFile := filepath.Join(dir, "skopos-worker.env")
+	if err := os.WriteFile(envFile, []byte("SKOPOS_API_KEY=sk_real\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	cfg := "[client]\nserver_url = \"https://skopos.real.com\"\n\n[worker]\nid = \"worker-t\"\n\n[worker.repos.\"ws\"]\npath = \"~/clones/ws\"\n\n[[worker.accounts]]\nname = \"a\"\nrunner = \"claude\"\nenv = { ANTHROPIC_API_KEY = \"k\" }\n"
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	problems, err := runWorkerChecks(cfgPath, "", "/usr/bin:/bin", "/home/target")
+	problems, err := runWorkerChecks(cfgPath, envFile, "/usr/bin:/bin", "/home/target")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,5 +299,35 @@ func TestCheckUsesProvidedHomeAndLoginPathParsing(t *testing.T) {
 	}
 	if _, err := extractLoginPath("no marker at all\n"); err == nil {
 		t.Fatal("missing marker must error")
+	}
+}
+
+// An explicit env file reaches the service definition (review H3), and a
+// not-started plist is parked Disabled so login does not start it (M10).
+func TestServiceCarriesEnvFileAndDisabled(t *testing.T) {
+	p := launchdPlist("w", "/bin/skopos", "/etc/s/c.toml", "/etc/s/w.env", "/var/s", "/bin", true)
+	if err := xml.Unmarshal([]byte(p), new(any)); err != nil {
+		t.Fatalf("plist must be valid XML: %v\n%s", err, p)
+	}
+	for _, want := range []string{"<string>--env-file</string>", "<string>/etc/s/w.env</string>", "<key>Disabled</key>"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("plist missing %q:\n%s", want, p)
+		}
+	}
+	if p := launchdPlist("w", "/bin/skopos", "/etc/s/c.toml", "", "/var/s", "/bin", false); strings.Contains(p, "Disabled") || strings.Contains(p, "--env-file") {
+		t.Errorf("a started plist with the default env file carries neither key:\n%s", p)
+	}
+	u := systemdUnit("w", "/bin/skopos", "/etc/s/c.toml", "/etc/s/w.env", "/bin", false, [2]string{"", ""})
+	if !strings.Contains(u, `ExecStart="/bin/skopos" worker --config "/etc/s/c.toml" --env-file "/etc/s/w.env"`) {
+		t.Errorf("unit must pass the env file:\n%s", u)
+	}
+
+	home := t.TempDir()
+	if _, err := installLaunchd(installOptions{label: "w"}, home, "/bin/skopos", "/etc/s/c.toml", "", filepath.Join(home, "state"), "/bin", []string{"no API key"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(home, "Library", "LaunchAgents", "w.plist"))
+	if err != nil || !strings.Contains(string(raw), "<key>Disabled</key>") {
+		t.Fatalf("an unready install must be written Disabled (err=%v):\n%s", err, raw)
 	}
 }

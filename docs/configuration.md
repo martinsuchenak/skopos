@@ -66,22 +66,31 @@ walkthrough.
 
 Enabled when all three `SKOPOS_SLACK_*` variables are set on `skopos serve`;
 absent = disabled. Socket Mode (outbound websocket — no public URL needed).
-The relay posts one thread per item (`new inbox_items.slack_thread_ts`
+The relay posts one thread per item (the `inbox_items.slack_thread_ts` column
 persists the binding) on every gate (plan ready / blocked / branch ready /
-done) and applies Martin's replies — user-id checked — onto the approver-gated
-workflow actions, audit-logged `via: slack`.
+done) in the bot's DM with the configured user, and applies that user's DM
+replies onto the approver-gated workflow actions, audit-logged `via: slack`.
+Only direct messages from `SKOPOS_SLACK_USER_ID` are read — other users and
+channels the app can see are ignored and cannot change where messages go.
+The Slack app needs the `chat:write`, `reactions:write` and `im:history` bot
+scopes and the `message.im` event subscription.
 
 | Env var | Meaning |
 |---------|---------|
 | `SKOPOS_SLACK_BOT_TOKEN` | Bot token (`xoxb-…`) — posting, reactions |
-| `SKOPOS_SLACK_APP_TOKEN` | App-level token (`xoxp-…`) — Socket Mode |
+| `SKOPOS_SLACK_APP_TOKEN` | App-level token (`xapp-…`) — Socket Mode |
 | `SKOPOS_SLACK_USER_ID` | The only user whose replies are honored |
 | `SKOPOS_SLACK_DEFAULT_WORKSPACE` | Workspace for `new: <what>` capture (unset disables capture) |
 
 Commands (replies in an item's thread): `approve` [`: <notes>`], `revise:
-<notes>`, `changes: <notes>`, `done`, `retry: <answer>`, `reject`. Top-level:
-`new: <what to do>`, `help`. Replies that arrive mid-run are buffered and
-applied when the run finishes (in-memory; a restart drops unapplied ones).
+<notes>`, `changes: <notes>`, `done`, `retry: <answer>`, `reject`. A command is
+the bare word or `word: <text>` on its own — "done with lunch" is not `done`
+(a reply that leads with a command word gets a syntax hint instead).
+Top-level: `new: <what to do>` or `new <workspace>: <what>` (exact id or a
+unique `/suffix`), `help`. Non-approving replies (`revise`, `changes`,
+`retry`, `reject`) that arrive mid-run are buffered and applied when the run
+finishes (in-memory; a restart drops unapplied ones); `approve` and `done`
+are refused mid-run — they answer the gate message they approve.
 
 ## Agent identity (all surfaces)
 

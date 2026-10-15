@@ -24,7 +24,11 @@ type Slack struct {
 	log      Logger
 	mu       sync.Mutex
 	threads  map[string]string // thread ts -> item id
-	ack      func(ts string)
+	// dm is the bot's IM channel with Martin. Until it is learned (from a
+	// send's response or one of HIS im events) posts go to his user id —
+	// chat.postMessage resolves that to the same IM, so the first message
+	// after a restart is never dropped and no other sender can redirect it.
+	dm atomicString
 }
 
 // Logger is the subset of slog the provider needs (keeps the package
@@ -55,7 +59,7 @@ func (s *Slack) Name() string { return "slack" }
 
 // Send posts a message via chat.postMessage; parent = thread_ts when set.
 func (s *Slack) Send(ctx context.Context, parent, text string) (string, error) {
-	form := url.Values{"channel": {dmChannel.Load()}, "text": {text}}
+	form := url.Values{"channel": {s.channel()}, "text": {text}}
 	if parent != "" {
 		form.Set("thread_ts", parent)
 	}
@@ -82,7 +86,7 @@ func (s *Slack) Send(ctx context.Context, parent, text string) (string, error) {
 		s.log.Warn("slack send rejected", "status", resp.StatusCode, "body", truncBody(body))
 		return "", fmtAPIError("slack post", resp.StatusCode, string(body))
 	}
-	setDMChannel(out.Channel)
+	s.dm.Set(out.Channel)
 	return out.TS, nil
 }
 
@@ -93,8 +97,13 @@ func truncBody(b []byte) string {
 	return string(b)
 }
 
-// dmChannel holds the bot's DM channel with Martin (resolved on first send).
-var dmChannel atomicString
+// channel is where posts go: the learned IM channel, else Martin's user id.
+func (s *Slack) channel() string {
+	if c := s.dm.Load(); c != "" {
+		return c
+	}
+	return s.martinID
+}
 
 type atomicString struct {
 	mu  sync.Mutex
@@ -112,8 +121,6 @@ func (a *atomicString) Set(v string) {
 	a.val = v
 	a.mu.Unlock()
 }
-
-func setDMChannel(id string) { dmChannel.Set(id) }
 
 // Start runs the Socket Mode loop: connect via the apps.connections.open
 // handshake, then read events. Messages from Martin in known item threads
@@ -275,28 +282,29 @@ func trunc80(s string) string {
 func (s *Slack) handleEvent(ctx context.Context, ws wsConn, body json.RawMessage, relay Relay, seen *seenSet) {
 	var ev struct {
 		Event struct {
-			Type     string `json:"type"`
-			User     string `json:"user"`
-			Text     string `json:"text"`
-			ThreadTS string `json:"thread_ts"`
-			TS       string `json:"ts"`
-			Channel  string `json:"channel"`
+			Type        string `json:"type"`
+			User        string `json:"user"`
+			Text        string `json:"text"`
+			ThreadTS    string `json:"thread_ts"`
+			TS          string `json:"ts"`
+			Channel     string `json:"channel"`
+			ChannelType string `json:"channel_type"`
 		} `json:"event"`
 	}
 	if json.Unmarshal(body, &ev) != nil {
 		return
 	}
 	e := ev.Event
-	s.log.Info("slack event", "type", e.Type, "user", e.User, "channel", e.Channel, "thread", e.ThreadTS, "ts", e.TS, "text", trunc80(e.Text))
-	// The DM channel id rides on every inbound event — learn it here, or
-	// the FIRST outbound post has no channel to post to (the id was only
-	// being learned from a successful send, which never happens without
-	// one: chicken and egg, and every relay reply silently failed).
-	if e.Channel != "" {
-		setDMChannel(e.Channel)
+	if e.Type != "message" || e.User != s.martinID || e.ChannelType != "im" {
+		// Only Martin's DMs count (bot echoes, other users and channels the
+		// app can see are ignored) — and nothing from them may touch the
+		// outbound channel, or anyone could redirect the gate messages.
+		s.log.Info("slack event ignored", "type", e.Type, "user", e.User, "channel", e.Channel, "channel_type", e.ChannelType)
+		return
 	}
-	if e.Type != "message" || e.User != s.martinID {
-		return // only Martin's messages count (bot echoes included)
+	s.log.Info("slack event", "channel", e.Channel, "thread", e.ThreadTS, "ts", e.TS, "text", trunc80(e.Text))
+	if e.Channel != "" {
+		s.dm.Set(e.Channel)
 	}
 	// Slack redelivers events that were slow to process — the ts dedup
 	// keeps a redelivered command from applying twice.
@@ -337,7 +345,13 @@ func (s *Slack) ackMessage(ctx context.Context, channel, ts string) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://slack.com/api/reactions.add", strings.NewReader(form.Encode()))
 	req.Header.Set("Authorization", "Bearer "+s.botToken)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	_, _ = s.http.Do(req)
+	resp, err := s.http.Do(req)
+	if err != nil {
+		s.log.Warn("slack reaction failed", "err", err)
+		return
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
 }
 
 // BindThread records which item a new thread belongs to.

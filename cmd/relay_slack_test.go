@@ -344,3 +344,96 @@ func TestRelayCaptureWorkspaceSelector(t *testing.T) {
 	}
 	_ = fake
 }
+
+// An approval sent mid-run is refused, never buffered: buffered, it would
+// apply the instant the gate is reached — approving a plan Martin has not
+// seen (review H2). Non-advancing replies (reject) still buffer.
+func TestRelayMidRunApprovalNotBuffered(t *testing.T) {
+	svc, _, _, fake, relay := relayStack(t)
+	root := context.Background()
+	item := mustRelayItem(t, svc, "early approve")
+	if _, err := svc.Queue(approverCtx(), item.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SystemTransition(root, item.ID, inbox.StatusPlanning, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, cmd := range []string{"approve", "lgtm: ship it", "done"} {
+		if !relay.Apply(root, item.ID, cmd) {
+			t.Fatalf("%q must be answered", cmd)
+		}
+		if !strings.Contains(fake.last().text, "applies at the gate") {
+			t.Fatalf("%q mid-run must be refused with a hint: %q", cmd, fake.last().text)
+		}
+	}
+	relay.mu.Lock()
+	n := len(relay.pending[item.ID])
+	relay.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("approvals must not be buffered: %d pending", n)
+	}
+}
+
+// Commands are the bare word or `word: args`; casual sentences that merely
+// start with a command word are not applied (review M1).
+func TestRelayCommandParsing(t *testing.T) {
+	cases := map[string]string{ // text -> parsed command ("" = not a command)
+		"approve":                        "approve",
+		"  LGTM!  ":                      "lgtm",
+		"done.":                          "done",
+		"approve: focus on tests":        "approve",
+		"retry:\nuse the v2 endpoint":    "retry",
+		"reject : dup of #12":            "reject",
+		"Done with lunch":                "",
+		"done?":                          "",
+		"approve? not sure about step 3": "",
+		"reject, wait no":                "",
+		"Approve-ish":                    "",
+		"what is the status?":            "",
+	}
+	for text, want := range cases {
+		got := ""
+		if m := reCmd.FindStringSubmatch(text); m != nil && isCommand(strings.ToLower(m[1])) {
+			got = strings.ToLower(m[1])
+		}
+		if got != want {
+			t.Errorf("%q parsed as %q, want %q", text, got, want)
+		}
+	}
+	// Capture needs `new:` or `new ` — "news: ..." is not a capture.
+	for text, want := range map[string]bool{
+		"new: fix it": true, "new fix it": true, "New skopos: x": true,
+		"news: CI is green": false, "newer build?": false,
+	} {
+		if got := reNew.MatchString(text); got != want {
+			t.Errorf("reNew(%q) = %v, want %v", text, got, want)
+		}
+	}
+}
+
+// A leading command word that does not parse gets a syntax hint, not an
+// action; a multi-line capture still honors the workspace selector.
+func TestRelayHintAndMultilineSelector(t *testing.T) {
+	svc, _, plansSvc, fake, relay := relayStack(t)
+	item := mustReachGate(t, svc, plansSvc, "hint")
+	if relay.Apply(context.Background(), item.ID, "approve? not sure about step 3") {
+		t.Fatal("a non-command must not be acked")
+	}
+	if got, _ := svc.GetItem(context.Background(), item.ID); got.Status != inbox.StatusAwaitingApproval {
+		t.Fatalf("a non-command must not approve: %s", got.Status)
+	}
+	if !strings.Contains(fake.last().text, "Not applied") {
+		t.Fatalf("expected a syntax hint: %q", fake.last().text)
+	}
+	relay.resolveWS = func(sel string) (string, bool) { return "github.com/x/skopos", sel == "skopos" }
+	if !relay.TopLevel(context.Background(), "new skopos: fix the parser\nmore detail here", "900.1") {
+		t.Fatal("capture must be handled")
+	}
+	items, err := svc.ListItems(context.Background(), "github.com/x/skopos", "", "slack-new", "")
+	if err != nil || len(items) != 1 {
+		t.Fatalf("multi-line capture must land in the selected workspace: %v err %v", items, err)
+	}
+	if !strings.Contains(fake.last().text, "github.com/x/skopos") {
+		t.Fatalf("confirmation must name the workspace: %q", fake.last().text)
+	}
+}

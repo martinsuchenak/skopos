@@ -31,7 +31,8 @@ skopos key create --name worker-vm1 --workspace github.com/you/repo \
 skopos worker check
 
 # 5. Install and start the service (launchd on macOS, systemd on Linux)
-#    A config that fails the checks gets the unit written but NOT started.
+#    A config that fails the checks gets the unit written DISABLED (not
+#    started now, nor at the next login/boot) — fix it and re-run install.
 skopos worker install
 
 # 6. Watch the first item: queue one and follow
@@ -52,12 +53,20 @@ skopos worker install
   Restart with `systemctl --user restart skopos-worker`; logs via
   `journalctl --user -u skopos-worker`.
 
-Flags: `--label <name>` (service name), `--dry-run`, `--no-start`.
-`skopos worker uninstall` stops and removes the service; the config, env file
-and state dir are kept.
+Flags: `--label <name>` (service name), `--dry-run`, `--no-start`,
+`--env-file <path>` (a non-default env file — checked, then passed to the
+service as `--env-file`), and on Linux `--system`, `--user <name>`,
+`--allow-root`, `--path <PATH>`. `--no-start` (or a failed check) writes the
+definition disabled: launchd `Disabled`, systemd `disable` — nothing starts
+it at login or boot. `skopos worker uninstall` stops and removes the service;
+the config, env file and state dir are kept.
 
 Re-running `install` overwrites the service definition (it is derived from the
-config) and restarts — safe.
+config) and restarts it on both platforms — safe.
+
+`skopos worker check` (and install's pre-start check) evaluates the config in
+the environment the service gets — its PATH, HOME and the env file — not your
+shell's: a `SKOPOS_API_KEY` exported in your shell does not count.
 
 ## Secrets
 
