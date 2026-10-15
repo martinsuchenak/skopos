@@ -3,6 +3,7 @@ package inbox
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -99,6 +100,12 @@ func TestPlanningBlocksAndRetryReturnsToOrigin(t *testing.T) {
 	after, err := svc.Retry(approverCtx(), item.ID, "the answer", "")
 	if err != nil || after.Status != StatusPlanning {
 		t.Fatalf("retry from planning-block must return to planning: %s err %v", after.Status, err)
+	}
+	// The answer feeds the next run: it must be IN the content (the planner
+	// prompt reads the item, not the audit trail).
+	got, err := svc.GetItem(root, item.ID)
+	if err != nil || !strings.Contains(got.Content, "## Answers") || !strings.Contains(got.Content, "the answer") {
+		t.Fatalf("retry answer must be appended to the content: err %v content %q", err, got.Content)
 	}
 
 	// Blocked during implementing (locked revision): retry returns to

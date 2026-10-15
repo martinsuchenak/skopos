@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.12.2] — 2026-10-15
+
+### Fixed
+
+- **Retry answers reach the planner** — the Retry answer was recorded in the
+  audit trail only; the agent prompt reads the item CONTENT, so a requeued
+  run re-read the same item and asked the same questions again. Retry now
+  appends the answer as an "## Answers" section before re-queuing, making
+  the dashboard Retry-with-note flow the complete Q&A loop.
+- **Edit works on workflow items** — the server has allowed title/tags/
+  content edits in every workflow phase since 0.9.3; the Edit button
+  finally follows (hidden only for done/discarded).
+
 ## [0.12.1] — 2026-10-15
 
 ### Fixed

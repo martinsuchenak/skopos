@@ -335,6 +335,15 @@ func (s *Service) Retry(ctx context.Context, itemID, answer, via string) (*Item,
 			revID, baseSHA = rev.ID, rev.BaseSHA
 		}
 	}
+	// The answer feeds the next run: the planner (and implementer) prompt
+	// reads the item CONTENT, so the answer is appended there — the audit
+	// trail alone would leave the agent asking the same questions again.
+	if answer = strings.TrimSpace(answer); answer != "" {
+		content := item.Content + "\n\n## Answers\n\n" + answer + "\n"
+		if err := s.store.UpdateItem(ctx, item.ID, item.WorkspaceID, item.Title, content, tagsJSON(item.Tags), item.Priority, s.now().UTC()); err != nil {
+			return nil, err
+		}
+	}
 	var queuedRun string
 	if s.runQueuer != nil {
 		id, qErr := s.runQueuer.QueueStage(ctx, item.ID, item.WorkspaceID, stage, revID, baseSHA, "")

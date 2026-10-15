@@ -485,7 +485,7 @@
                                                     <button type="button" x-show="workflowQuickAction(item)" x-text="workflowQuickAction(item)" @click.stop="runQuickWorkflowAction(item)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs text-sky-300" :aria-label="'Workflow action for item ' + item.title"></button>
                                                     <button type="button" x-show="item.status === 'discarded'" @click.stop="restoreInboxItem(item.id)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs">Restore</button>
                                                     <button type="button" x-show="item.status === 'done'" @click.stop="reopenInboxItem(item.id)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Reopen item ' + item.title + ' back to open'">Reopen</button>
-                                                    <button type="button" x-show="inboxItemEditable(item)" @click.stop="openInboxEditModal(item)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Edit item ' + item.title">Edit</button>
+                                                    <button type="button" x-show="inboxContentEditable(item)" @click.stop="openInboxEditModal(item)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Edit item ' + item.title">Edit</button>
                                                 </div>
                                             </div>
                                             <!-- Locked meta layout: context badges (workspace/
@@ -564,7 +564,7 @@
                                 <div class="flex flex-wrap items-center gap-1">
                                     <button type="button" x-show="!item.workspace_id && inboxItemEditable(item)" @click.stop="openFileModal(item)" class="btn btn-sm btn-ghost" :aria-label="'File item ' + item.title + ' into a workspace'">File into…</button>
                                     <button type="button" x-show="inboxCanRank(item)" @click.stop="item.priority != null ? inboxSetPriority(item.id, 0) : pinInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="item.priority != null ? 'Unpin item ' + item.title : 'Pin item ' + item.title + ' to top'" x-text="item.priority != null ? 'Unpin' : 'Pin'"></button>
-                                    <button type="button" x-show="inboxItemEditable(item)" @click.stop="openInboxEditModal(item)" class="btn btn-sm btn-ghost" :aria-label="'Edit item ' + item.title">Edit</button>
+                                    <button type="button" x-show="inboxContentEditable(item)" @click.stop="openInboxEditModal(item)" class="btn btn-sm btn-ghost" :aria-label="'Edit item ' + item.title">Edit</button>
                                     <button type="button" x-show="item.status === 'discarded'" @click.stop="restoreInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Restore item ' + item.title + ' to open'">Restore</button>
                                     <button type="button" x-show="item.status === 'done'" @click.stop="reopenInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Reopen item ' + item.title + ' back to open'">Reopen</button>
                                     <button type="button" x-show="item.status === 'open'" @click.stop="claimInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Claim item ' + item.title">Claim</button>
@@ -862,7 +862,7 @@
                             </div>
                         </div>
                         <div class="flex shrink-0 items-center gap-2">
-                            <button type="button" x-show="inboxItemEditable(previewItem)" @click="closeInboxPreview(); openInboxEditModal(previewItem)" class="btn btn-sm">Edit</button>
+                            <button type="button" x-show="inboxContentEditable(previewItem)" @click="closeInboxPreview(); openInboxEditModal(previewItem)" class="btn btn-sm">Edit</button>
                             <button type="button" @click="closeInboxPreview()" class="btn btn-ghost btn-sm">Close</button>
                         </div>
                     </div>

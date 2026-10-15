@@ -937,7 +937,7 @@ const appState = () => ({
       queued: 'bg-sky-500/15 text-sky-300', planning: 'bg-sky-500/15 text-sky-300', awaiting_approval: 'bg-orange-500/15 text-orange-300', approved: 'bg-lime-500/15 text-lime-300', implementing: 'bg-indigo-500/15 text-indigo-300', in_review: 'bg-teal-500/15 text-teal-300', failed: 'bg-rose-500/15 text-rose-300', blocked: 'bg-rose-500/15 text-rose-300',
     }[s] ?? 'bg-zinc-700 text-zinc-200';
   },
-  inboxItemEditable(item: InboxItem): boolean { return item.status === 'open' || item.status === 'in_progress'; },
+
   // Pin/Unpin in every lens — the action is absolute (rank first / clear),
   // not positional, so it is meaningful even when the view is date-sorted
   // (the row re-creates on priority change, so the #n badge shows). Rank
@@ -1037,6 +1037,7 @@ const appState = () => ({
   isWorkflowStatus(s: string): boolean {
     return s === 'queued' || s === 'planning' || s === 'awaiting_approval' || s === 'approved' || s === 'implementing' || s === 'in_review' || s === 'failed' || s === 'blocked';
   },
+  inboxContentEditable(item: InboxItem): boolean { return item.status !== 'done' && item.status !== 'discarded'; },
   laneItems(key: string): InboxItem[] {
     if (key === 'workflow') return this.sortInbox(this.inboxItems.filter((i: InboxItem) => this.isWorkflowStatus(i.status)));
     return this.sortInbox(this.inboxItems.filter((i: InboxItem) => i.status === key));
