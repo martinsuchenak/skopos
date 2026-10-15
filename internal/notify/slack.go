@@ -128,8 +128,12 @@ func (s *Slack) Start(ctx context.Context, relay Relay) error {
 		ws, err := s.connect(ctx)
 		if err != nil {
 			if se, ok := err.(staticErr); ok {
-				return se // config errors don't retry
+				// Config errors don't retry — and must not exit silently
+				// (a dead relay looks identical to a disabled one).
+				s.log.Warn("slack socket mode: fatal connect error, relay offline", "err", se.err.Error())
+				return se
 			}
+			s.log.Warn("slack socket mode connect failed, retrying", "err", err.Error(), "backoff", backoff.String())
 			if !sleep(ctx, backoff) {
 				return ctx.Err()
 			}

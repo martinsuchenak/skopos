@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.13.4] — 2026-10-15
+
+### Fixed
+
+- **The relay's enabled/disabled state is always logged at boot** — a
+  missing env var skipped silently, which read as "relay broken"; now
+  `slack relay disabled` names exactly which variables are missing.
+  Fatal Socket Mode connect errors (invalid app token) also log instead of
+  exiting quietly, and transient connect retries log with their backoff.
+
 ## [0.13.3] — 2026-10-15
 
 ### Fixed

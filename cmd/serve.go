@@ -422,18 +422,29 @@ func serveCmd() *cli.Command {
 			// provider) with via=slack on every workflow action; outbound
 			// gate notifications hook the inbox transitions.
 			// SKOPOS_SLACK_DEFAULT_WORKSPACE additionally enables `new:`
-			// capture.
-			if botTok := os.Getenv("SKOPOS_SLACK_BOT_TOKEN"); botTok != "" {
-				appTok := os.Getenv("SKOPOS_SLACK_APP_TOKEN")
-				martin := os.Getenv("SKOPOS_SLACK_USER_ID")
-				if appTok != "" && martin != "" {
-					relay := &slackRelay{inbox: inboxService, runs: runsService, defaultWS: os.Getenv("SKOPOS_SLACK_DEFAULT_WORKSPACE")}
-					notifySvc := notify.New(notify.NewSlack(botTok, appTok, martin, log), relay)
-					relay.SetNotifier(notifySvc)
-					inboxService.SetItemNotifier(relay)
-					go func() { _ = notifySvc.Run(context.Background()) }()
-					go func() { relay.Run(context.Background()) }()
+			// capture. The enabled/disabled state is ALWAYS logged at boot —
+			// a silent skip reads as "relay broken" from the outside.
+			botTok, appTok, martinID := os.Getenv("SKOPOS_SLACK_BOT_TOKEN"), os.Getenv("SKOPOS_SLACK_APP_TOKEN"), os.Getenv("SKOPOS_SLACK_USER_ID")
+			if missing := []string{}; botTok == "" || appTok == "" || martinID == "" {
+				if botTok == "" {
+					missing = append(missing, "SKOPOS_SLACK_BOT_TOKEN")
 				}
+				if appTok == "" {
+					missing = append(missing, "SKOPOS_SLACK_APP_TOKEN")
+				}
+				if martinID == "" {
+					missing = append(missing, "SKOPOS_SLACK_USER_ID")
+				}
+				log.Info("slack relay disabled", "missing", strings.Join(missing, ", "))
+			} else {
+				captureWS := os.Getenv("SKOPOS_SLACK_DEFAULT_WORKSPACE")
+				log.Info("slack relay enabled", "capture_workspace", captureWS)
+				relay := &slackRelay{inbox: inboxService, runs: runsService, defaultWS: captureWS}
+				notifySvc := notify.New(notify.NewSlack(botTok, appTok, martinID, log), relay)
+				relay.SetNotifier(notifySvc)
+				inboxService.SetItemNotifier(relay)
+				go func() { _ = notifySvc.Run(context.Background()) }()
+				go func() { relay.Run(context.Background()) }()
 			}
 
 			webMux := http.NewServeMux()
