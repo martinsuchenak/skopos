@@ -21,18 +21,35 @@ type Slack struct {
 	appToken string
 	martinID string
 	http     *http.Client
+	log      Logger
 	mu       sync.Mutex
 	threads  map[string]string // thread ts -> item id
 	ack      func(ts string)
 }
 
-func NewSlack(botToken, appToken, martinUserID string) *Slack {
+// Logger is the subset of slog the provider needs (keeps the package
+// testable without a logger wired).
+type Logger interface {
+	Info(msg string, args ...any)
+	Warn(msg string, args ...any)
+}
+
+func NewSlack(botToken, appToken, martinUserID string, log Logger) *Slack {
+	if log == nil {
+		log = nopLogger{}
+	}
 	return &Slack{
 		botToken: botToken, appToken: appToken, martinID: martinUserID,
 		http:    &http.Client{Timeout: 30 * time.Second},
+		log:     log,
 		threads: map[string]string{},
 	}
 }
+
+type nopLogger struct{}
+
+func (nopLogger) Info(msg string, args ...any) {}
+func (nopLogger) Warn(msg string, args ...any) {}
 
 func (s *Slack) Name() string { return "slack" }
 
@@ -50,6 +67,7 @@ func (s *Slack) Send(ctx context.Context, parent, text string) (string, error) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := s.http.Do(req)
 	if err != nil {
+		s.log.Warn("slack send failed", "err", err)
 		return "", err
 	}
 	defer resp.Body.Close()
@@ -61,10 +79,18 @@ func (s *Slack) Send(ctx context.Context, parent, text string) (string, error) {
 		Channel string `json:"channel"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil || !out.OK {
+		s.log.Warn("slack send rejected", "status", resp.StatusCode, "body", truncBody(body))
 		return "", fmtAPIError("slack post", resp.StatusCode, string(body))
 	}
 	setDMChannel(out.Channel)
 	return out.TS, nil
+}
+
+func truncBody(b []byte) string {
+	if len(b) > 200 {
+		return string(b[:200])
+	}
+	return string(b)
 }
 
 // dmChannel holds the bot's DM channel with Martin (resolved on first send).
@@ -111,8 +137,10 @@ func (s *Slack) Start(ctx context.Context, relay Relay) error {
 			continue
 		}
 		connected := time.Now()
+		s.log.Info("slack socket mode connected")
 		err = s.readLoop(ctx, ws, relay)
 		ws.Close()
+		s.log.Info("slack socket mode disconnected", "err", fmt.Sprint(err))
 		// Backoff resets only when a connection LIVED (a healthy socket
 		// that later dropped deserves a fast retry); a connect-then-drop
 		// cycle keeps growing the backoff instead of spinning.
@@ -199,7 +227,9 @@ func (s *Slack) readLoop(ctx context.Context, ws wsConn, relay Relay) error {
 		// Ack first, dispatch second: even unknown types are acked, so
 		// Slack never queues them for redelivery.
 		if env.EnvelopeID != "" {
-			_ = ws.Write(ctx, []byte(`{"envelope_id":`+strconv.Quote(env.EnvelopeID)+`}`))
+			if werr := ws.Write(ctx, []byte(`{"envelope_id":`+strconv.Quote(env.EnvelopeID)+`}`)); werr != nil {
+				s.log.Warn("slack ack write failed", "err", werr)
+			}
 		}
 		switch env.Type {
 		case "events_api":
@@ -231,6 +261,13 @@ func (s *seenSet) dup(ts string) bool {
 	return false
 }
 
+func trunc80(s string) string {
+	if len(s) > 80 {
+		return s[:80]
+	}
+	return s
+}
+
 func (s *Slack) handleEvent(ctx context.Context, ws wsConn, body json.RawMessage, relay Relay, seen *seenSet) {
 	var ev struct {
 		Event struct {
@@ -246,8 +283,16 @@ func (s *Slack) handleEvent(ctx context.Context, ws wsConn, body json.RawMessage
 		return
 	}
 	e := ev.Event
+	s.log.Info("slack event", "type", e.Type, "user", e.User, "channel", e.Channel, "thread", e.ThreadTS, "ts", e.TS, "text", trunc80(e.Text))
+	// The DM channel id rides on every inbound event — learn it here, or
+	// the FIRST outbound post has no channel to post to (the id was only
+	// being learned from a successful send, which never happens without
+	// one: chicken and egg, and every relay reply silently failed).
+	if e.Channel != "" {
+		setDMChannel(e.Channel)
+	}
 	if e.Type != "message" || e.User != s.martinID {
-		return // only Martin's replies count
+		return // only Martin's messages count (bot echoes included)
 	}
 	// Slack redelivers events that were slow to process — the ts dedup
 	// keeps a redelivered command from applying twice.

@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.13.3] — 2026-10-15
+
+### Fixed
+
+- **Slack relay could never send its first message** — the bot's DM channel
+  id was only learned from a successful send, which itself needs the
+  channel id: every outbound post (capture confirmations, gate
+  notifications) silently failed with channel_not_found. The channel id is
+  now learned from inbound events (every message event carries it).
+- **Slack events are now logged** like API traffic: connect/disconnect,
+  every inbound event (type, user, channel, thread, text head), send
+  rejections with Slack's error body — the relay is no longer a black box
+  when diagnosing "no response".
+
 ## [0.13.2] — 2026-10-15
 
 ### Fixed

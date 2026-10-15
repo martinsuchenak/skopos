@@ -428,7 +428,7 @@ func serveCmd() *cli.Command {
 				martin := os.Getenv("SKOPOS_SLACK_USER_ID")
 				if appTok != "" && martin != "" {
 					relay := &slackRelay{inbox: inboxService, runs: runsService, defaultWS: os.Getenv("SKOPOS_SLACK_DEFAULT_WORKSPACE")}
-					notifySvc := notify.New(notify.NewSlack(botTok, appTok, martin), relay)
+					notifySvc := notify.New(notify.NewSlack(botTok, appTok, martin, log), relay)
 					relay.SetNotifier(notifySvc)
 					inboxService.SetItemNotifier(relay)
 					go func() { _ = notifySvc.Run(context.Background()) }()

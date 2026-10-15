@@ -45,7 +45,7 @@ func TestCap(t *testing.T) {
 }
 
 func TestSlackBindAndFilter(t *testing.T) {
-	s := NewSlack("bot", "app", "U123")
+	s := NewSlack("bot", "app", "U123", nil)
 	s.BindThread("111.222", "item-1")
 	s.mu.Lock()
 	item := s.threads["111.222"]
@@ -72,7 +72,7 @@ func TestSlackBindAndFilter(t *testing.T) {
 // Top-level DMs route to TopLevel (capture/help); unknown-thread replies
 // consult ItemForThread (restart recovery) before being dropped.
 func TestSlackTopLevelAndRebind(t *testing.T) {
-	s := NewSlack("bot", "app", "U123")
+	s := NewSlack("bot", "app", "U123", nil)
 	relay := &fakeRelay{topLevel: map[string]string{}}
 	s.handleEvent(context.Background(), nil, []byte(`{"event":{"type":"message","user":"U123","text":"new: fix the thing","ts":"777","channel":"C"}}`), relay, &seenSet{})
 	if relay.topLevel["new: fix the thing"] != "777" {
@@ -120,7 +120,7 @@ func (f *fakeWS) Close() { close(f.done) }
 // included), redelivered events dedup by ts, and a disconnect notice ends
 // the connection for a clean reconnect.
 func TestReadLoopAcksAndDedups(t *testing.T) {
-	s := NewSlack("bot", "app", "U123")
+	s := NewSlack("bot", "app", "U123", nil)
 	s.BindThread("111.222", "item-1")
 	relay := &fakeRelay{}
 	ws := &fakeWS{done: make(chan struct{})}
