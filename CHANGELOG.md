@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.13.2] — 2026-10-15
+
+### Fixed
+
+- **Code-index GC pinned a CPU core after every restart** — the GC's
+  content-reclamation query probes `branch_files` by hash for every
+  symbols/edges/blobs row, but `branch_files` had no index on `hash` (its
+  primary key is branch+path): a full table scan per row, quadratic on
+  large indexes. A goroutine dump found the server spinning in
+  `sqlite3VdbeExec` at startup GC — it had coincided with the Slack relay
+  deploy and was misattributed to it. Adds `idx_branch_files_hash` (built
+  once on first open) with a regression test asserting the query plan uses
+  it. The 0.13.1 Socket Mode ack fix stands on its own merits.
+
 ## [0.13.1] — 2026-10-15
 
 ### Fixed

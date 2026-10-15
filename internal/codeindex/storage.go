@@ -57,6 +57,10 @@ CREATE TABLE IF NOT EXISTS branch_files (
   hash   TEXT NOT NULL,
   PRIMARY KEY (branch, path)
 );
+-- The GC joins every symbols/edges/blobs row against branch_files by hash;
+-- without this index that probe is a full table scan PER ROW (quadratic —
+-- pinned a CPU core for minutes on large indexes; goroutine dump found it).
+CREATE INDEX IF NOT EXISTS idx_branch_files_hash ON branch_files(hash);
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL

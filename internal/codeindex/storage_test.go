@@ -1245,3 +1245,40 @@ func TestDependenciesListsImports(t *testing.T) {
 		t.Fatalf("scoped deps: %v %+v", err, scoped)
 	}
 }
+
+// The GC's per-row probe of branch_files needs the hash index — without it
+// the correlated NOT EXISTS is a full scan per symbol (quadratic; found via
+// a production goroutine dump pinning a core in sqlite3VdbeExec).
+func TestGCBranchFilesHashIndex(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	db, err := store.DB("ws-ix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var name string
+	if err := db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type='index' AND name='idx_branch_files_hash'`).Scan(&name); err != nil {
+		t.Fatalf("branch_files(hash) index must exist after open: %v", err)
+	}
+	// And the query plan actually uses it (EXPLAIN QUERY PLAN yields
+	// id|parent|detail — the detail column carries the plan).
+	var plan strings.Builder
+	rows, err := db.QueryContext(ctx, `EXPLAIN QUERY PLAN SELECT s.id FROM symbols s WHERE NOT EXISTS (SELECT 1 FROM branch_files bf WHERE bf.hash = s.hash)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		_ = notUsed
+		if err := rows.Scan(&id, &parent, new(int), &detail); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		plan.WriteString(detail + "; ")
+	}
+	rows.Close()
+	if !strings.Contains(plan.String(), "idx_branch_files_hash") {
+		t.Fatalf("GC probe should use the hash index, plan: %s", plan.String())
+	}
+}
