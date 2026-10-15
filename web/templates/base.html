@@ -482,6 +482,7 @@
                                                 </div>
                                                 <div class="flex shrink-0 items-center gap-1">
                                                     <button type="button" @click.stop="openInboxPreview(item)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Preview item ' + item.title">View</button>
+                                                    <button type="button" x-show="workflowQuickAction(item)" x-text="workflowQuickAction(item)" @click.stop="runQuickWorkflowAction(item)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs text-sky-300" :aria-label="'Workflow action for item ' + item.title"></button>
                                                     <button type="button" x-show="item.status === 'discarded'" @click.stop="restoreInboxItem(item.id)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs">Restore</button>
                                                     <button type="button" x-show="item.status === 'done'" @click.stop="reopenInboxItem(item.id)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Reopen item ' + item.title + ' back to open'">Reopen</button>
                                                     <button type="button" x-show="inboxItemEditable(item)" @click.stop="openInboxEditModal(item)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Edit item ' + item.title">Edit</button>
@@ -568,8 +569,9 @@
                                     <button type="button" x-show="item.status === 'done'" @click.stop="reopenInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Reopen item ' + item.title + ' back to open'">Reopen</button>
                                     <button type="button" x-show="item.status === 'open'" @click.stop="claimInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Claim item ' + item.title">Claim</button>
                                     <button type="button" x-show="item.status === 'in_progress'" @click.stop="releaseInboxItem(item.id)" class="btn btn-sm btn-ghost">Release</button>
-                                    <button type="button" x-show="item.status !== 'done' && item.status !== 'discarded'" @click.stop="completeInboxItem(item.id)" class="btn btn-sm btn-ghost text-emerald-300" :aria-label="'Mark item ' + item.title + ' done'">Done</button>
+                                    <button type="button" x-show="!isWorkflowStatus(item.status) && item.status !== 'done' && item.status !== 'discarded'" @click.stop="completeInboxItem(item.id)" class="btn btn-sm btn-ghost text-emerald-300" :aria-label="'Mark item ' + item.title + ' done'">Done</button>
                                     <button type="button" @click.stop="openInboxPreview(item)" class="btn btn-sm btn-ghost" :aria-label="'Preview item ' + item.title">View</button>
+                                    <button type="button" x-show="workflowQuickAction(item)" x-text="workflowQuickAction(item)" @click.stop="runQuickWorkflowAction(item)" class="btn btn-sm btn-ghost text-sky-300" :aria-label="'Workflow action for item ' + item.title"></button>
                                     <button type="button" x-show="item.workspace_id && (item.status === 'open' || item.status === 'in_progress')" @click.stop="convertInboxItem(item)" class="btn btn-sm btn-ghost text-violet-300" :aria-label="'Convert item ' + item.title + ' to a plan'">Convert</button>
                                     <button type="button" x-show="item.status !== 'done' && item.status !== 'discarded'" @click.stop="discardInboxItem(item.id)" class="btn btn-sm btn-ghost">Discard</button>
                                     <button type="button" @click.stop="requestDelete('inboxitem', item.id, item.title)" class="btn btn-sm btn-ghost text-rose-400" :aria-label="'Delete item ' + item.title">Delete</button>
@@ -866,6 +868,42 @@
                     </div>
                     <div class="md-body min-h-0 flex-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950/50 p-4" data-md-preview aria-live="polite"></div>
                     <p x-show="previewItem && !previewItem.content" class="mt-2 text-sm text-zinc-500">No content.</p>
+                    <!-- Runs: where this item is (or was) processed — stage,
+                         worker, attempt, branch, head; live-refreshed on inbox
+                         SSE events while the modal is open. -->
+                    <div class="mt-3 shrink-0 rounded-lg border border-zinc-800">
+                        <div class="flex items-center justify-between border-b border-zinc-800 px-3 py-1.5">
+                            <span class="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Runs</span>
+                            <button type="button" @click.stop="refreshPreviewRuns()" class="btn btn-ghost btn-sm !min-h-6 !px-2 !py-0 text-xs" :disabled="previewRunsLoading" aria-label="Refresh runs">&#8635;</button>
+                        </div>
+                        <div class="max-h-40 overflow-y-auto">
+                            <p x-show="previewRunsLoading && previewRuns.length === 0" class="px-3 py-2 text-xs text-zinc-500">Loading&hellip;</p>
+                            <p x-show="!previewRunsLoading && previewRuns.length === 0" class="px-3 py-2 text-xs text-zinc-500">No runs yet &mdash; queue the item to start the pipeline.</p>
+                            <template x-for="run in previewRuns" :key="run.id + '|' + run.status + '|' + run.updated_at">
+                                <div class="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-zinc-800/60 px-3 py-1.5 text-[11px] last:border-b-0">
+                                    <span class="badge" :class="runStageClass(run.stage)" x-text="run.stage"></span>
+                                    <span class="badge" :class="runStatusClass(run.status)" x-text="run.status"></span>
+                                    <span x-show="run.worker_id" class="max-w-32 truncate text-zinc-400" :title="run.worker_id" x-text="run.worker_id"></span>
+                                    <span class="text-zinc-500" x-text="'try ' + run.attempt"></span>
+                                    <span x-show="run.branch" class="badge max-w-40 truncate bg-zinc-800 text-zinc-400" :title="run.branch" x-text="run.branch"></span>
+                                    <span x-show="run.head_sha" class="font-mono text-zinc-500" :title="run.head_sha" x-text="shortSha(run.head_sha)"></span>
+                                    <span class="ml-auto shrink-0 text-zinc-600" x-text="timeAgo(run.updated_at)"></span>
+                                    <p x-show="runHasFailed(run)" class="w-full text-rose-300" x-text="run.fail_reason"></p>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                    <!-- Workflow actions: the gated human moves, one set per
+                         status. The server authorizes (a non-approver key
+                         gets the 403 as a toast). -->
+                    <div class="mt-3 flex shrink-0 flex-wrap items-center gap-2" x-show="workflowShowQueue() || workflowShowApprove() || workflowShowRetry() || workflowShowMarkDone()">
+                        <input x-show="workflowShowInput()" x-model="workflowNote" type="text" class="input min-w-48 flex-1 !py-1 text-xs" :placeholder="workflowNotePlaceholder()" :aria-label="workflowNotePlaceholder()">
+                        <button type="button" x-show="workflowShowQueue()" @click.stop="queueInboxItem(previewItem.id)" :disabled="!workflowActionReady('queue')" class="btn btn-sm text-sky-300" :aria-label="'Queue item ' + previewItem.title">Queue</button>
+                        <button type="button" x-show="workflowShowApprove()" @click.stop="approveInboxItem(previewItem.id)" :disabled="!workflowActionReady('approve')" class="btn btn-sm text-emerald-300" :aria-label="'Approve item ' + previewItem.title">Approve</button>
+                        <button type="button" x-show="workflowShowApprove()" @click.stop="requestChangesInboxItem(previewItem.id)" :disabled="!workflowActionReady('request_changes')" class="btn btn-sm btn-ghost text-orange-300" :aria-label="'Request changes on item ' + previewItem.title">Request changes</button>
+                        <button type="button" x-show="workflowShowRetry()" @click.stop="retryInboxItem(previewItem.id)" :disabled="!workflowActionReady('retry')" class="btn btn-sm text-sky-300" :aria-label="'Retry item ' + previewItem.title">Retry</button>
+                        <button type="button" x-show="workflowShowMarkDone()" @click.stop="markDoneInboxItem(previewItem.id)" :disabled="!workflowActionReady('mark_done')" class="btn btn-sm text-emerald-300" :aria-label="'Mark item ' + previewItem.title + ' done'">Mark done</button>
+                    </div>
                 </div>
             </template>
             <div class="mt-4 flex justify-end" x-show="!previewLoading && !previewItem">

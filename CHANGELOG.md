@@ -4,6 +4,25 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Dashboard: workflow actions + run visibility** — the inbox preview modal
+  now carries the gated human moves with a contextual note input: Queue
+  (open), Approve / Request changes (awaiting_approval), Retry
+  (blocked/failed), Mark done (in_review — head sha prefilled from the
+  latest successful implement run). Cards and list rows gain the
+  input-free quick action (Queue / Approve). Every item's runs render in
+  the modal (stage, status, worker, attempt, branch, head) and live-update
+  over SSE at each workflow transition — the "where is this processed"
+  answer without a dedicated runs stream. Actions send X-Skopos-Via:
+  dashboard for the audit trail; server-side authorization stays
+  authoritative (a non-approver key gets the 403 as a toast). Also fixed:
+  the list Done button no longer renders for workflow items (/complete
+  refuses them), and succeeded runs no longer show chain-diagnostic notes
+  as red failure lines.
+
 ## [0.11.0] — 2026-10-13
 
 ### Fixed

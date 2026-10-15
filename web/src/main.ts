@@ -21,7 +21,7 @@ type ApiKey = { id: string; name: string; key_prefix: string; all_workspaces: bo
 type KeyGroup = { id: string; name: string; description?: string; members: string[]; patterns: string[]; created_at: string };
 type KeyReach = { key: ApiKey; via: string };
 type WorkspaceRow = { id: string; name?: string; git_url?: string; created_at: string };
-type Whoami = { root: boolean; key?: { id: string; name: string; all_workspaces: boolean; workspaces: string[] }; workspaces: { id: string; name: string }[] };
+type Whoami = { root: boolean; key?: { id: string; name: string; all_workspaces: boolean; approver?: boolean; workspaces: string[] }; workspaces: { id: string; name: string }[] };
 type KeyForm = { name: string; all: boolean; workspaces: string[] };
 type EntryForm = { scope: 'project' | 'branch' | 'session'; entry_type: 'finding' | 'decision' | 'bug' | 'debt' | 'warning' | 'context'; title: string; content: string; code_ref: string; branch_name: string; session_id: string };
 type PlanForm = { name: string; description: string; branch_name: string };
@@ -29,6 +29,7 @@ type ItemForm = { title: string; description: string; phase: string; depends_on:
 type InboxPlanSummary = { id: string; name: string; status: string };
 type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; created_at: string; updated_at: string; excerpt?: string };
 type InboxDetail = InboxItem & { content: string; content_html: string };
+type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; created_at: string; updated_at: string };
 type InboxForm = { id: string; title: string; tags: string; workspace: string };
 
 const UI_AUTHOR = 'ui';
@@ -85,6 +86,10 @@ const appState = () => ({
   showInboxPreview: false,
   previewLoading: false,
   previewItem: null as InboxDetail | null,
+  previewRuns: [] as RunRow[],
+  previewRunsLoading: false,
+  workflowNote: '',
+  workflowBusy: false,
   expandedInbox: null as InboxDetail | null,
   // id of the card being dragged (HTML5 DnD; same-window only, so state is
   // the transport — dataTransfer.setData exists for Firefox's sake)
@@ -251,7 +256,18 @@ const appState = () => ({
     if (type === 'sessions') this.refresh();
     else if (type === 'blackboard') { if (this.activeView === 'blackboard') this.fetchBundle(); }
     else if (type === 'plans') { if (this.activeView === 'plans') this.fetchPlans(); }
-    else if (type === 'inbox') { if (this.activeView === 'inbox') this.fetchInbox(); }
+    else if (type === 'inbox') {
+      if (this.activeView === 'inbox') this.fetchInbox();
+      // Workflow transitions publish inbox events at exactly the moments a
+      // run changes state (claim moves the phase, report chains). Refresh
+      // the open modal fully — status badge and action buttons stay
+      // current — EXCEPT while a note is being typed (reloadPreview would
+      // clobber the input); then only the run rows refresh.
+      if (this.showInboxPreview && this.previewItem) {
+        if (this.workflowNote) this.fetchPreviewRuns(this.previewItem.id);
+        else this.reloadPreview();
+      }
+    }
     else if (type === 'workspaces') this.fetchWorkspaces();
     else if (type === 'change') this.refresh();
   },
@@ -872,8 +888,49 @@ const appState = () => ({
     this.$nextTick(() => {
       document.querySelectorAll('[data-md-preview]').forEach((el) => { el.innerHTML = html; });
     });
+    this.workflowNote = '';
+    this.fetchPreviewRuns(item.id);
   },
-  closeInboxPreview() { this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; },
+  closeInboxPreview() { this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.workflowNote = ''; this.workflowBusy = false; },
+  // Runs of the previewed item — "where is this processed": stage, worker,
+  // attempt, branch, head. Refetched on every inbox SSE event while the
+  // modal is open (workflow transitions publish inbox events), so the rows
+  // follow the pipeline without a dedicated runs stream.
+  async fetchPreviewRuns(id: string) {
+    if (!this.showInboxPreview) return;
+    this.previewRunsLoading = true;
+    const res = await this.authFetch('/api/runs?item_id=' + encodeURIComponent(id));
+    if (!this.showInboxPreview || !this.previewItem || this.previewItem.id !== id) return;
+    this.previewRunsLoading = false;
+    if (!res.ok) { this.previewRuns = []; return; }
+    this.previewRuns = (await res.json()) as RunRow[];
+    this.autoFillWorkflowNote();
+  },
+  refreshPreviewRuns() { if (this.previewItem) this.fetchPreviewRuns(this.previewItem.id); },
+  // Mark-done names the head commit the review approves: prefill it from
+  // the latest successful implement run's pushed head.
+  autoFillWorkflowNote() {
+    if (!this.previewItem || this.previewItem.status !== 'in_review' || this.workflowNote) return;
+    const impl = this.previewRuns.find((r: RunRow) => r.stage === 'implement' && r.status === 'succeeded' && !!r.head_sha);
+    const fallback = this.previewRuns.find((r: RunRow) => r.status === 'succeeded' && !!r.head_sha);
+    const run = impl || fallback;
+    if (run) this.workflowNote = run.head_sha;
+  },
+  // Refresh the open modal after an action — the note input is KEPT (only
+  // openInboxPreview resets it), so an approve-with-notes flow survives.
+  async reloadPreview() {
+    if (!this.showInboxPreview || !this.previewItem) return;
+    const id = this.previewItem.id;
+    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(id));
+    if (!this.showInboxPreview) return;
+    if (!res.ok) { this.closeInboxPreview(); return; }
+    this.previewItem = (await res.json()) as InboxDetail;
+    const html = this.previewItem.content_html;
+    this.$nextTick(() => {
+      document.querySelectorAll('[data-md-preview]').forEach((el) => { el.innerHTML = html; });
+    });
+    this.fetchPreviewRuns(id);
+  },
   inboxStatusClass(s: string) {
     return {
       open: 'bg-amber-500/15 text-amber-300', in_progress: 'bg-cyan-500/15 text-cyan-300', converted: 'bg-violet-500/15 text-violet-300', done: 'bg-emerald-500/15 text-emerald-300', discarded: 'bg-zinc-700 text-zinc-400',
@@ -892,6 +949,77 @@ const appState = () => ({
   // strict compare decides — rows key on updated_at, so the label re-evaluates.
   inboxShowUpdated(item: InboxItem): boolean { return !!item.updated_at && item.updated_at !== item.created_at; },
   inboxUpdatedLabel(item: InboxItem): string { return 'updated ' + this.timeAgo(item.updated_at); },
+
+  // ---- agent-pipeline workflow actions (approver-gated server-side) ----
+  // The dashboard buttons render for every key; the server authorizes —
+  // a non-approver gets the 403 as a toast. Root is implicitly approver.
+  canApprove(): boolean {
+    return !!this.whoami && (this.whoami.root || !!(this.whoami.key && this.whoami.key.approver));
+  },
+  workflowShowQueue(): boolean { return !!this.previewItem && this.previewItem.status === 'open'; },
+  workflowShowApprove(): boolean { return !!this.previewItem && this.previewItem.status === 'awaiting_approval'; },
+  workflowShowRetry(): boolean { return !!this.previewItem && (this.previewItem.status === 'blocked' || this.previewItem.status === 'failed'); },
+  workflowShowMarkDone(): boolean { return !!this.previewItem && this.previewItem.status === 'in_review'; },
+  workflowShowInput(): boolean { return this.workflowShowApprove() || this.workflowShowRetry() || this.workflowShowMarkDone(); },
+  workflowNotePlaceholder(): string {
+    if (this.workflowShowRetry()) return 'answer to the blocker (required)';
+    if (this.workflowShowMarkDone()) return 'head sha being approved (required)';
+    if (this.workflowShowApprove()) return 'notes (required for Request changes)';
+    return '';
+  },
+  // Input requirement is per action: approve/queue take none, the rest
+  // require the note/answer/sha. Method call, never an inline expression —
+  // the :disabled-with-undefined CSP trap.
+  workflowActionReady(action: string): boolean {
+    if (this.workflowBusy) return false;
+    if (action === 'approve' || action === 'queue') return true;
+    return !!this.workflowNote && this.workflowNote.trim().length > 0;
+  },
+  async postWorkflowAction(id: string, action: string, body: Record<string, string> | null, okMessage: string) {
+    if (this.workflowBusy) return;
+    this.workflowBusy = true;
+    const opts: RequestInit = { method: 'POST', headers: { 'X-Skopos-Via': 'dashboard' } };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(id) + '/' + action, opts);
+    this.workflowBusy = false;
+    if (!await this.handleBad(res, 'Action failed')) return;
+    this.notify(okMessage, 'success');
+    this.workflowNote = '';
+    await this.fetchInbox();
+    await this.reloadPreview();
+  },
+  queueInboxItem(id: string) { this.postWorkflowAction(id, 'queue', null, 'Queued for the agent pipeline'); },
+  approveInboxItem(id: string) { this.postWorkflowAction(id, 'approve', this.workflowNote ? { notes: this.workflowNote } : null, 'Approved'); },
+  requestChangesInboxItem(id: string) { if (this.workflowNote.trim()) this.postWorkflowAction(id, 'request-changes', { notes: this.workflowNote }, 'Change requested'); },
+  retryInboxItem(id: string) { if (this.workflowNote.trim()) this.postWorkflowAction(id, 'retry', { answer: this.workflowNote }, 'Requeued'); },
+  markDoneInboxItem(id: string) { if (this.workflowNote.trim()) this.postWorkflowAction(id, 'mark-done', { head_sha: this.workflowNote }, 'Marked done'); },
+  // The quick action for a card/row is the one that needs no input; Retry
+  // and Mark done live in the modal (answer / head sha required).
+  workflowQuickAction(item: InboxItem): string {
+    if (item.status === 'open' && item.workspace_id) return 'Queue';
+    if (item.status === 'awaiting_approval') return 'Approve';
+    return '';
+  },
+  runQuickWorkflowAction(item: InboxItem) {
+    if (item.status === 'open') this.queueInboxItem(item.id);
+    else if (item.status === 'awaiting_approval') this.approveInboxItem(item.id);
+  },
+
+  // ---- run rows (preview modal) ----
+  runStatusClass(s: string) {
+    return {
+      queued: 'bg-zinc-700 text-zinc-300', claimed: 'bg-sky-500/15 text-sky-300', running: 'bg-indigo-500/15 text-indigo-300',
+      paused: 'bg-amber-500/15 text-amber-300', succeeded: 'bg-emerald-500/15 text-emerald-300', failed: 'bg-rose-500/15 text-rose-300',
+      interrupted: 'bg-orange-500/15 text-orange-300', cancelled: 'bg-zinc-700 text-zinc-400',
+    }[s] ?? 'bg-zinc-700 text-zinc-200';
+  },
+  runStageClass(s: string) {
+    return { plan: 'bg-violet-500/15 text-violet-300', implement: 'bg-cyan-500/15 text-cyan-300', review: 'bg-teal-500/15 text-teal-300', qa: 'bg-teal-500/15 text-teal-300' }[s] ?? 'bg-zinc-700 text-zinc-300';
+  },
+  shortSha(sha: string): string { return sha ? sha.slice(0, 7) : ''; },
+  // A succeeded run can still carry a chain NOTE in fail_reason (e.g. a
+  // quiet matrix skip) — that is diagnostics, not a failure line.
+  runHasFailed(run: RunRow): boolean { return !!run.fail_reason && run.status !== 'succeeded'; },
 
   // ---- inbox board (swimlanes) ----
   inboxLanes(): { key: string; label: string }[] {
