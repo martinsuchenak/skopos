@@ -98,13 +98,17 @@ func IsWorkflowStatus(s Status) bool {
 }
 
 type Item struct {
-	ID               string    `json:"id"`
-	WorkspaceID      string    `json:"workspace_id,omitempty"`
-	Title            string    `json:"title"`
-	Content          string    `json:"content,omitempty"`
-	Tags             []string  `json:"tags"`
-	Status           Status    `json:"status"`
-	Priority         *int      `json:"priority,omitempty"`
+	ID          string   `json:"id"`
+	WorkspaceID string   `json:"workspace_id,omitempty"`
+	Title       string   `json:"title"`
+	Content     string   `json:"content,omitempty"`
+	Tags        []string `json:"tags"`
+	Status      Status   `json:"status"`
+	Priority    *int     `json:"priority,omitempty"`
+	// SlackThreadTS is the relay's notification thread root for this item
+	// (empty = no thread yet). Persisted so a server restart re-binds the
+	// thread instead of stranding replies in a dead one.
+	SlackThreadTS    string    `json:"slack_thread_ts,omitempty"`
 	ClaimedByAgentID string    `json:"claimed_by_agent_id,omitempty"`
 	AuthorAgentID    string    `json:"author_agent_id"`
 	PlanID           string    `json:"plan_id,omitempty"`

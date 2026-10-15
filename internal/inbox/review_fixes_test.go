@@ -190,3 +190,44 @@ func TestQueueAndRejectEdges(t *testing.T) {
 		t.Fatalf("queue from in_progress: %s err %v", queued.Status, err)
 	}
 }
+
+// The notifier hook fires on transitions with from→to, and the Slack
+// thread binding persists on the item (relay restart recovery).
+func TestNotifierHookAndSlackThread(t *testing.T) {
+	svc, _, _ := fullStack(t)
+	root := context.Background()
+	var fired []string
+	svc.SetItemNotifier(fakeNotifier{record: &fired})
+
+	item := mustCreate(t, svc, root, "hooked")
+	if _, err := svc.Queue(approverCtx(), item.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(fired) != 1 || fired[0] != "open>queued" {
+		t.Fatalf("hook: %v", fired)
+	}
+	if _, err := svc.SystemTransition(root, item.ID, StatusPlanning, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(fired) != 2 || fired[1] != "queued>planning" {
+		t.Fatalf("hook: %v", fired)
+	}
+
+	if err := svc.SetSlackThread(root, item.ID, "111.222"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.GetItem(root, item.ID)
+	if err != nil || got.SlackThreadTS != "111.222" {
+		t.Fatalf("thread ts must persist: %q err %v", got.SlackThreadTS, err)
+	}
+	byThread, err := svc.ItemForSlackThread(root, "111.222")
+	if err != nil || byThread.ID != item.ID {
+		t.Fatalf("ItemForSlackThread: %+v err %v", byThread, err)
+	}
+}
+
+type fakeNotifier struct{ record *[]string }
+
+func (f fakeNotifier) NotifyItem(ctx context.Context, itemID string, from, to Status) {
+	*f.record = append(*f.record, string(from)+">"+string(to))
+}

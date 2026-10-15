@@ -417,15 +417,22 @@ func serveCmd() *cli.Command {
 			inboxService.SetRunLister(runsListerAdapter{runs: runsService})
 			runsHandler := runs.NewHandler(runsService)
 
-			// Notification module (lean 1b item 4): Slack Socket Mode when
-			// tokens are configured; absent = disabled. Provider interface
-			// keeps a second surface (telegram) a config swap away.
+			// Slack relay: Socket Mode when tokens are configured; absent =
+			// disabled. The relay acts as Martin (user-id checked by the
+			// provider) with via=slack on every workflow action; outbound
+			// gate notifications hook the inbox transitions.
+			// SKOPOS_SLACK_DEFAULT_WORKSPACE additionally enables `new:`
+			// capture.
 			if botTok := os.Getenv("SKOPOS_SLACK_BOT_TOKEN"); botTok != "" {
 				appTok := os.Getenv("SKOPOS_SLACK_APP_TOKEN")
 				martin := os.Getenv("SKOPOS_SLACK_USER_ID")
 				if appTok != "" && martin != "" {
-					notifySvc := notify.New(notify.NewSlack(botTok, appTok, martin), inboxRelay{inbox: inboxService, approverKey: os.Getenv("SKOPOS_APPROVER_KEY")})
+					relay := &slackRelay{inbox: inboxService, runs: runsService, defaultWS: os.Getenv("SKOPOS_SLACK_DEFAULT_WORKSPACE")}
+					notifySvc := notify.New(notify.NewSlack(botTok, appTok, martin), relay)
+					relay.SetNotifier(notifySvc)
+					inboxService.SetItemNotifier(relay)
 					go func() { _ = notifySvc.Run(context.Background()) }()
+					go func() { relay.Run(context.Background()) }()
 				}
 			}
 
@@ -565,28 +572,6 @@ func runWorkspacePrefs(cmd *cli.Command) map[string]*runs.WorkspacePrefs {
 	}
 	return prefs
 }
-
-// inboxRelay adapts Slack replies onto the inbox workflow actions. Human
-// actions ride the interim approver key until the dashboard approval
-// surface lands; commands map 1:1 like agent-trial's relay did.
-type inboxRelay struct {
-	inbox       *inbox.Service
-	approverKey string
-}
-
-func (r inboxRelay) Apply(ctx context.Context, itemID, text string) bool {
-	// The relay speaks as Martin via the approver credential.
-	if r.approverKey != "" {
-		ctx = auth.WithPrincipal(ctx, &auth.Principal{KeyID: "slack-relay", Name: "slack", Approver: true})
-	}
-	_ = itemID
-	_ = text
-	// Command parsing lands with the Slack module's message wiring (the
-	// approve/revise/changes/done/retry/reject set, revision-bound approve).
-	return false
-}
-
-func (r inboxRelay) ItemForThread(parent string) string { return "" }
 
 type runsListerAdapter struct{ runs *runs.Service }
 

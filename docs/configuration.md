@@ -62,6 +62,27 @@ walkthrough.
 | `worker.accounts` | — | — | Credential pool: `name`, `runner`, `priority`, `env` (injected into agent runs only) |
 | — | `--env-file` | `<config-dir>/skopos-worker.env` when present | `KEY=VALUE` secrets loaded before the config (real environment wins) |
 
+## Slack relay (server)
+
+Enabled when all three `SKOPOS_SLACK_*` variables are set on `skopos serve`;
+absent = disabled. Socket Mode (outbound websocket — no public URL needed).
+The relay posts one thread per item (`new inbox_items.slack_thread_ts`
+persists the binding) on every gate (plan ready / blocked / branch ready /
+done) and applies Martin's replies — user-id checked — onto the approver-gated
+workflow actions, audit-logged `via: slack`.
+
+| Env var | Meaning |
+|---------|---------|
+| `SKOPOS_SLACK_BOT_TOKEN` | Bot token (`xoxb-…`) — posting, reactions |
+| `SKOPOS_SLACK_APP_TOKEN` | App-level token (`xoxp-…`) — Socket Mode |
+| `SKOPOS_SLACK_USER_ID` | The only user whose replies are honored |
+| `SKOPOS_SLACK_DEFAULT_WORKSPACE` | Workspace for `new: <what>` capture (unset disables capture) |
+
+Commands (replies in an item's thread): `approve` [`: <notes>`], `revise:
+<notes>`, `changes: <notes>`, `done`, `retry: <answer>`, `reject`. Top-level:
+`new: <what to do>`, `help`. Replies that arrive mid-run are buffered and
+applied when the run finishes (in-memory; a restart drops unapplied ones).
+
 ## Agent identity (all surfaces)
 
 These environment variables affect how agents identify themselves — to the

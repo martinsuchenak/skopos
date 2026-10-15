@@ -88,11 +88,13 @@ func (s *Service) transition(ctx context.Context, itemID string, to Status, clas
 		return nil, err
 	}
 	itemID = strings.TrimSpace(itemID)
+	from := Status("")
 	err := s.store.RunInTx(ctx, func(tx Store) error {
 		item, err := tx.GetItem(ctx, itemID)
 		if err != nil {
 			return err
 		}
+		from = item.Status
 		actor, ok := WorkflowTransition(item.Status, to)
 		if !ok {
 			return fmt.Errorf("%w: %s is not a workflow transition from %s to %s", ErrInvalidInput, statusLabel(item.Status), item.Status, to)
@@ -107,6 +109,9 @@ func (s *Service) transition(ctx context.Context, itemID string, to Status, clas
 	}
 	s.publishItem(ctx, itemID)
 	s.auditItem(ctx, itemID, action, via, notes, agentID)
+	if s.itemNotifier != nil {
+		s.itemNotifier.NotifyItem(ctx, itemID, from, to)
+	}
 	return s.store.GetItem(ctx, itemID)
 }
 

@@ -308,11 +308,16 @@ func (s *Service) ResumeItem(ctx context.Context, itemID string) error {
 	return nil
 }
 
-// RunSummary is the inbox-facing slice of a run.
+// RunSummary is the inbox-facing slice of a run — enough for the Slack
+// relay's gate messages and the `done` command's head-sha lookup.
 type RunSummary struct {
-	ID     string `json:"id"`
-	Stage  string `json:"stage"`
-	Status string `json:"status"`
+	ID       string `json:"id"`
+	Stage    string `json:"stage"`
+	Status   string `json:"status"`
+	Branch   string `json:"branch,omitempty"`
+	HeadSHA  string `json:"head_sha,omitempty"`
+	Diffstat string `json:"diffstat,omitempty"`
+	Summary  string `json:"result_summary,omitempty"`
 }
 
 // ListRuns is the inbox-facing read (amendment-paused check).
@@ -323,7 +328,8 @@ func (s *Service) ListRuns(ctx context.Context, itemID string) ([]RunSummary, er
 	}
 	out := make([]RunSummary, 0, len(all))
 	for _, r := range all {
-		out = append(out, RunSummary{ID: r.ID, Stage: r.Stage, Status: string(r.Status)})
+		out = append(out, RunSummary{ID: r.ID, Stage: r.Stage, Status: string(r.Status),
+			Branch: r.Branch, HeadSHA: r.HeadSHA, Diffstat: r.Diffstat, Summary: r.ResultSummary})
 	}
 	return out, nil
 }

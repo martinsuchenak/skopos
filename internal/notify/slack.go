@@ -209,20 +209,41 @@ func (s *Slack) handleEvent(ctx context.Context, ws wsConn, body json.RawMessage
 	if e.Type != "message" || e.User != s.martinID {
 		return // only Martin's replies count
 	}
+	if e.ThreadTS == "" {
+		// Top-level DM: capture ("new: ...") and help. Handled ones get the
+		// same ✅ ack as thread replies.
+		if relay.TopLevel(ctx, e.Text, e.TS) {
+			s.ackMessage(ctx, e.Channel, e.TS)
+		}
+		return
+	}
 	s.mu.Lock()
 	itemID := s.threads[e.ThreadTS]
 	s.mu.Unlock()
 	if itemID == "" {
+		// Unknown thread root: after a restart the in-memory map is empty —
+		// ask the relay (it persists bindings) before dropping the reply.
+		itemID = relay.ItemForThread(e.ThreadTS)
+		if itemID != "" {
+			s.BindThread(e.ThreadTS, itemID)
+		}
+	}
+	if itemID == "" {
 		return
 	}
 	if relay.Apply(ctx, itemID, e.Text) {
-		// ack with a reaction so the reply is never processed twice
-		form := url.Values{"channel": {e.Channel}, "timestamp": {e.TS}, "name": {"white_check_mark"}}
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://slack.com/api/reactions.add", strings.NewReader(form.Encode()))
-		req.Header.Set("Authorization", "Bearer "+s.botToken)
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		_, _ = s.http.Do(req)
+		s.ackMessage(ctx, e.Channel, e.TS)
 	}
+}
+
+// ackMessage reacts with ✅ so a handled message is never processed twice
+// (the reaction lives on Slack's side — it survives restarts).
+func (s *Slack) ackMessage(ctx context.Context, channel, ts string) {
+	form := url.Values{"channel": {channel}, "timestamp": {ts}, "name": {"white_check_mark"}}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://slack.com/api/reactions.add", strings.NewReader(form.Encode()))
+	req.Header.Set("Authorization", "Bearer "+s.botToken)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	_, _ = s.http.Do(req)
 }
 
 // BindThread records which item a new thread belongs to.

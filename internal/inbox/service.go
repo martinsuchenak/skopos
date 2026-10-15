@@ -13,14 +13,15 @@ import (
 )
 
 type Service struct {
-	store     Store
-	now       func() time.Time
-	publisher events.Publisher
-	auditSink AuditRecorder
-	plans     PlanRevisions
-	approvals ApprovalLog
-	runQueuer RunQueuer
-	runLister RunLister
+	store        Store
+	now          func() time.Time
+	publisher    events.Publisher
+	auditSink    AuditRecorder
+	plans        PlanRevisions
+	approvals    ApprovalLog
+	runQueuer    RunQueuer
+	runLister    RunLister
+	itemNotifier ItemNotifier
 }
 
 func NewService(store Store) *Service {
@@ -63,6 +64,25 @@ type RunSummary struct {
 }
 
 func (s *Service) SetRunLister(l RunLister) { s.runLister = l }
+
+// ItemNotifier receives item status changes (the Slack relay implements
+// it; nil = notifications disabled). from is the previous status.
+type ItemNotifier interface {
+	NotifyItem(ctx context.Context, itemID string, from, to Status)
+}
+
+// SetItemNotifier wires the outbound notification hook.
+func (s *Service) SetItemNotifier(n ItemNotifier) { s.itemNotifier = n }
+
+// SetSlackThread records the item's Slack thread root (relay bookkeeping).
+func (s *Service) SetSlackThread(ctx context.Context, itemID, ts string) error {
+	return s.store.SetSlackThread(ctx, strings.TrimSpace(itemID), ts)
+}
+
+// ItemForSlackThread resolves an item by its Slack thread root.
+func (s *Service) ItemForSlackThread(ctx context.Context, ts string) (*Item, error) {
+	return s.store.ItemForSlackThread(ctx, strings.TrimSpace(ts))
+}
 
 // publishItem emits the mutation event for an item once the store write
 // succeeded; failures are silent (events are advisory).

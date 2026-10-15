@@ -28,6 +28,10 @@ func (s *noopInboxStore) ItemWorkspace(_ context.Context, _ string) (string, err
 func (s *noopInboxStore) PlanWorkspace(_ context.Context, _ string) (string, error) {
 	return "", inbox.ErrNotFound
 }
+func (s *noopInboxStore) SetSlackThread(context.Context, string, string) error { return nil }
+func (s *noopInboxStore) ItemForSlackThread(_ context.Context, _ string) (*inbox.Item, error) {
+	return nil, inbox.ErrNotFound
+}
 func (s *noopInboxStore) UpdateItem(context.Context, string, string, string, string, string, *int, time.Time) error {
 	return nil
 }

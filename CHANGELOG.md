@@ -4,6 +4,26 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.13.0] — 2026-10-15
+
+### Added
+
+- **Slack relay** — the agent pipeline's control surface in your DMs. Gate
+  notifications post one thread per item (plan ready with the plan summary
+  and questions, blocked with the reason, branch ready with branch/head/
+  diffstat, done), persisted in `inbox_items.slack_thread_ts` so a restart
+  re-binds instead of stranding replies. Martin's replies — user-id checked
+  by the Socket Mode provider — drive the approver-gated actions with
+  `via: slack`: `approve[: notes]`, `revise:`, `changes:`, `done` (head
+  taken from the item's latest successful implement run), `retry:`,
+  `reject`. Top-level `new: <what to do>` creates + queues an item in the
+  workspace from `SKOPOS_SLACK_DEFAULT_WORKSPACE`; `help` lists commands.
+  Replies that arrive mid-run are buffered and applied when the run
+  finishes. The interim `SKOPOS_APPROVER_KEY` gate is gone — the relay acts
+  in-process as an approver principal. Ported from the live-proven
+  agent-trial executor; the agent-trial launchd job can be retired once
+  this is deployed and verified.
+
 ## [0.12.3] — 2026-10-15
 
 ### Fixed

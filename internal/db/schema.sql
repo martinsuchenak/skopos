@@ -196,6 +196,7 @@ CREATE TABLE IF NOT EXISTS inbox_items (
     claimed_by_agent_id TEXT,
     author_agent_id     TEXT NOT NULL,
     plan_id             TEXT,
+    slack_thread_ts     TEXT NOT NULL DEFAULT '',   -- Slack relay: the item's notification thread root
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL
 );

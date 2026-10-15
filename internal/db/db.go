@@ -119,6 +119,9 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "runs", "resume_after", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := ensureColumn(db, "inbox_items", "slack_thread_ts", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -30,6 +30,10 @@ type Relay interface {
 	// Apply maps a reply onto the item's workflow actions. Returns true
 	// when the command was handled (so the provider may ack the message).
 	Apply(ctx context.Context, itemID, text string) bool
+	// TopLevel handles a threadless DM from Martin (capture commands like
+	// "new: ..."). ts is the message's own timestamp — capture binds the
+	// item's thread to Martin's message itself. Returns true when handled.
+	TopLevel(ctx context.Context, text, ts string) bool
 	// ItemForThread resolves which item a thread belongs to.
 	ItemForThread(parent string) string
 }
@@ -49,6 +53,14 @@ func (n *Notifier) Run(ctx context.Context) error {
 		return nil // notifications disabled
 	}
 	return n.provider.Start(ctx, n.relay)
+}
+
+// BindThread records which item a thread belongs to (provider bookkeeping;
+// the relay also persists the binding on the item).
+func (n *Notifier) BindThread(ts, itemID string) {
+	if b, ok := n.provider.(interface{ BindThread(ts, itemID string) }); ok {
+		b.BindThread(ts, itemID)
+	}
 }
 
 // Notify posts to an item's thread (parent = thread root ts; "" starts one).

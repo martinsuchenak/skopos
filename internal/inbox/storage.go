@@ -13,6 +13,10 @@ import (
 type Store interface {
 	CreateItem(ctx context.Context, item Item) error
 	GetItem(ctx context.Context, id string) (*Item, error)
+	// SetSlackThread records the item's Slack notification thread root.
+	SetSlackThread(ctx context.Context, id, ts string) error
+	// ItemForSlackThread resolves an item by its Slack thread root.
+	ItemForSlackThread(ctx context.Context, ts string) (*Item, error)
 	ListItems(ctx context.Context, workspaceID, status, tag, query string) ([]Item, error)
 	// ItemsByPriority returns the open/in_progress items holding an exact
 	// priority in one workspace — the by-number item reference for agents.
@@ -92,7 +96,7 @@ func (s *Storage) RunInTx(ctx context.Context, fn func(Store) error) error {
 // they became, and a deleted plan leaves the summary NULL (dangling plan_id).
 const itemColumns = `
 	i.id, i.workspace_id, i.title, i.content, i.tags, i.status, i.priority,
-	i.claimed_by_agent_id, i.author_agent_id, i.plan_id, i.created_at, i.updated_at,
+	i.claimed_by_agent_id, i.author_agent_id, i.plan_id, i.slack_thread_ts, i.created_at, i.updated_at,
 	p.name, p.status
 `
 
@@ -115,6 +119,27 @@ func (s *Storage) CreateItem(ctx context.Context, item Item) error {
 		return fmt.Errorf("inserting inbox item: %w", err)
 	}
 	return nil
+}
+
+// ItemForSlackThread resolves an item by its Slack thread root (restart
+// recovery for the relay).
+func (s *Storage) ItemForSlackThread(ctx context.Context, ts string) (*Item, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT `+itemColumns+`
+		FROM inbox_items i LEFT JOIN plans p ON p.id = i.plan_id
+		WHERE i.slack_thread_ts = ?
+	`, ts)
+	item, err := scanItem(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: no item for thread %s", ErrNotFound, ts)
+	}
+	return &item, err
+}
+
+// SetSlackThread records the item's Slack notification thread root.
+func (s *Storage) SetSlackThread(ctx context.Context, id, ts string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE inbox_items SET slack_thread_ts = ? WHERE id = ?`, ts, id)
+	return err
 }
 
 func (s *Storage) GetItem(ctx context.Context, id string) (*Item, error) {
@@ -466,7 +491,7 @@ func scanItem(row rowScanner) (Item, error) {
 	var tags string
 	var createdAt, updatedAt string
 	if err := row.Scan(&item.ID, &workspace, &item.Title, &item.Content, &tags, &item.Status, &priority,
-		&claimedBy, &item.AuthorAgentID, &planID, &createdAt, &updatedAt, &planName, &planStatus); err != nil {
+		&claimedBy, &item.AuthorAgentID, &planID, &item.SlackThreadTS, &createdAt, &updatedAt, &planName, &planStatus); err != nil {
 		return item, fmt.Errorf("scanning inbox item: %w", err)
 	}
 	if workspace.Valid {
