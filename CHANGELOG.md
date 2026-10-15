@@ -4,6 +4,17 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.13.5] — 2026-10-15
+
+### Fixed
+
+- **Socket Mode could never dial** — Slack's websocket URLs carry no port
+  (`wss-primary.slack.com`), and Go's TLS dial requires `host:port`; every
+  connect failed with "missing port in address" and retried forever. The
+  dial address now defaults `:443` for wss (`:80` for ws). The relay's
+  websocket tests covered the read loop with a fake socket — the dial
+  path had never run against a real host.
+
 ## [0.13.4] — 2026-10-15
 
 ### Fixed

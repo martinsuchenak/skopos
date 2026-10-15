@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -146,5 +147,24 @@ func TestReadLoopAcksAndDedups(t *testing.T) {
 	}
 	if acks != 4 {
 		t.Fatalf("every envelope must be acked (incl. unknown types), got %d: %v", acks, ws.writes)
+	}
+}
+
+// Socket Mode URLs carry no port; the dial address must default it or
+// tls.Dial dies with "missing port in address" (found live — the relay
+// had never connected).
+func TestDialAddrDefaultsPort(t *testing.T) {
+	for _, tc := range []struct{ raw, want string }{
+		{"wss://wss-primary.slack.com/link/?ts=1", "wss-primary.slack.com:443"},
+		{"wss://host.evil:8443/x", "host.evil:8443"},
+		{"ws://127.0.0.1/debug", "127.0.0.1:80"},
+	} {
+		u, err := url.Parse(tc.raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := dialAddr(u); got != tc.want {
+			t.Errorf("dialAddr(%s) = %q, want %q", tc.raw, got, tc.want)
+		}
 	}
 }

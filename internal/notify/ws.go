@@ -12,6 +12,20 @@ import (
 	"time"
 )
 
+// dialAddr defaults the port for scheme-less-host URLs (Socket Mode URLs
+// have none).
+func dialAddr(u *url.URL) string {
+	host := u.Host
+	if !strings.Contains(host, ":") {
+		if u.Scheme == "wss" {
+			host += ":443"
+		} else {
+			host += ":80"
+		}
+	}
+	return host
+}
+
 // dialWS opens a minimal RFC6455 client websocket (text frames, no
 // dependencies). Slack Socket Mode sends sequential envelopes; the
 // handshake plus masked client frames are all that's needed.
@@ -20,8 +34,12 @@ func dialWS(ctx context.Context, rawURL string) (wsConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	host := u.Host
+	host := dialAddr(u)
 	path := u.RequestURI()
+	// tls/net.Dial require host:PORT; Socket Mode URLs carry no port
+	// (wss-primary.slack.com) — default it or every dial dies with
+	// "missing port in address" (found live: the relay never connected,
+	// on any deploy).
 	// wss:// endpoints require TLS — a plaintext dial would leak the
 	// handshake and fail (review finding 2).
 	var conn net.Conn
