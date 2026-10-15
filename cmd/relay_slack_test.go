@@ -307,3 +307,40 @@ func recordRunWithHead(t *testing.T, runsSvc *runs.Service, itemID, head string)
 	}
 	return fmt.Errorf("implement run never claimed")
 }
+
+// `new <workspace>: <what>` files into the selected workspace (unique
+// suffix match); an unknown prefix stays part of the title.
+func TestRelayCaptureWorkspaceSelector(t *testing.T) {
+	svc, _, _, fake, relay := relayStack(t)
+	relay.resolveWS = func(sel string) (string, bool) {
+		if sel == "mail-processor" {
+			return "github.com/fortix/mail-processor", true
+		}
+		return "", false
+	}
+	if !relay.TopLevel(context.Background(), "new mail-processor: fix the attachment parser", "800.1") {
+		t.Fatal("selector capture must be handled")
+	}
+	items, err := svc.ListItems(context.Background(), "github.com/fortix/mail-processor", "", "slack-new", "")
+	if err != nil || len(items) != 1 {
+		t.Fatalf("item in the selected workspace: %v err %v", items, err)
+	}
+	if items[0].Title != "fix the attachment parser" {
+		t.Fatalf("selector must not leak into the title: %q", items[0].Title)
+	}
+	if items[0].SlackThreadTS != "800.1" {
+		t.Fatalf("thread binding: %q", items[0].SlackThreadTS)
+	}
+	// Unknown prefix falls through as content (default workspace).
+	if !relay.TopLevel(context.Background(), "new fix: the login bug", "801.1") {
+		t.Fatal("plain capture must still work")
+	}
+	def, err := svc.ListItems(context.Background(), "ws-a", "", "slack-new", "")
+	if err != nil || len(def) != 1 {
+		t.Fatalf("fallback capture: %v err %v", def, err)
+	}
+	if def[0].Title != "fix: the login bug" {
+		t.Fatalf("unknown prefix must stay in the title: %q", def[0].Title)
+	}
+	_ = fake
+}

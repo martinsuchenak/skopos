@@ -23,9 +23,12 @@ import (
 // provider has checked his user id — the gate rests on his Slack account.
 // Every action is audit-logged via=slack under the slack-relay principal.
 type slackRelay struct {
-	inbox      *inbox.Service
-	runs       *runs.Service
-	defaultWS  string
+	inbox     *inbox.Service
+	runs      *runs.Service
+	defaultWS string
+	// resolveWS maps a workspace selector from a `new <ws>: ...` message to
+	// a registered workspace id (nil = only the default workspace).
+	resolveWS  func(selector string) (string, bool)
 	notifier   *notify.Notifier
 	rebindHook func(ts, itemID string) // tests; nil in production
 
@@ -49,9 +52,11 @@ func relayCtx() context.Context {
 }
 
 var reCmd = regexp.MustCompile(`(?is)^\s*([a-z]+)\s*:?\s*(.*)$`)
-var reNew = regexp.MustCompile(`(?is)^\s*new\s*:\s*(.+)$`)
+var reNew = regexp.MustCompile(`(?is)^\s*new\s*:?\s*(.+)$`)
+var reSelector = regexp.MustCompile(`^([A-Za-z0-9._/~+-]+):\s+(.+)$`)
 
 const slackHelp = "*skopos commands* — reply in an item's thread:\n" +
+	"• `new <workspace>: <what>` — capture into a specific workspace (suffix match, e.g. `new skopos: ...`)\n" +
 	"• `approve` / `lgtm` [`: <notes>`] — approve the plan at the gate\n" +
 	"• `revise: <notes>` — request a re-plan\n" +
 	"• `changes: <notes>` — request changes on a finished branch\n" +
@@ -74,12 +79,22 @@ func (r *slackRelay) TopLevel(ctx context.Context, text, ts string) bool {
 		return true
 	}
 	what := strings.TrimSpace(m[1])
-	if r.defaultWS == "" {
+	ws := r.defaultWS
+	// `new <workspace>: <what>` — the selector must resolve (exact id or a
+	// unique "/suffix" of one); unknown prefixes stay part of the title so
+	// `new fix: the login` keeps working.
+	if sel := reSelector.FindStringSubmatch(what); sel != nil {
+		if id, ok := r.resolveWS(sel[1]); ok {
+			ws = id
+			what = strings.TrimSpace(sel[2])
+		}
+	}
+	if ws == "" {
 		r.post(ctx, "", "⚠️ Capture is disabled: SKOPOS_SLACK_DEFAULT_WORKSPACE is not set on the server.")
 		return true
 	}
 	item, err := r.inbox.CreateItem(relayCtx(), inbox.CreateInput{
-		WorkspaceID: r.defaultWS, Title: truncate(what, 80),
+		WorkspaceID: ws, Title: truncate(what, 80),
 		Content:       what + "\n\n_Created from Slack (`new:`), " + time.Now().UTC().Format("2006-01-02 15:04") + " UTC._",
 		Tags:          []string{"slack-new"},
 		AuthorAgentID: "slack",
