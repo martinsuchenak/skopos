@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -109,12 +110,19 @@ func (s *Slack) Start(ctx context.Context, relay Relay) error {
 			backoff = min(backoff*2, 60*time.Second)
 			continue
 		}
-		backoff = time.Second
+		connected := time.Now()
 		err = s.readLoop(ctx, ws, relay)
 		ws.Close()
+		// Backoff resets only when a connection LIVED (a healthy socket
+		// that later dropped deserves a fast retry); a connect-then-drop
+		// cycle keeps growing the backoff instead of spinning.
+		if time.Since(connected) >= 10*time.Second {
+			backoff = time.Second
+		}
 		if !sleep(ctx, backoff) {
 			return ctx.Err()
 		}
+		backoff = min(backoff*2, 60*time.Second)
 	}
 	return ctx.Err()
 }
@@ -168,30 +176,62 @@ func (s *Slack) connect(ctx context.Context) (wsConn, error) {
 	return dialWS(ctx, out.URL)
 }
 
-// readLoop dispatches one envelope at a time.
+// readLoop dispatches one envelope at a time. EVERY envelope must be
+// acknowledged ({"envelope_id": ...} back over the socket) — Slack
+// redelivers un-acked envelopes and drops connections from clients that
+// stay silent, which turns into a redelivery/reconnect churn (the 0.13.0
+// CPU spin).
 func (s *Slack) readLoop(ctx context.Context, ws wsConn, relay Relay) error {
+	seen := &seenSet{}
 	for {
 		data, err := ws.Read(ctx)
 		if err != nil || ctx.Err() != nil {
 			return err
 		}
 		var env struct {
-			Type string          `json:"type"`
-			Body json.RawMessage `json:"payload"`
+			EnvelopeID string          `json:"envelope_id"`
+			Type       string          `json:"type"`
+			Body       json.RawMessage `json:"payload"`
 		}
 		if json.Unmarshal(data, &env) != nil {
 			continue
 		}
+		// Ack first, dispatch second: even unknown types are acked, so
+		// Slack never queues them for redelivery.
+		if env.EnvelopeID != "" {
+			_ = ws.Write(ctx, []byte(`{"envelope_id":`+strconv.Quote(env.EnvelopeID)+`}`))
+		}
 		switch env.Type {
 		case "events_api":
-			s.handleEvent(ctx, ws, env.Body, relay)
+			s.handleEvent(ctx, ws, env.Body, relay, seen)
+		case "disconnect":
+			// Slack wants us on a new connection; drop this one now
+			// instead of waiting for the TCP timeout.
+			return fmt.Errorf("slack disconnect notice")
 		case "hello", "slack_events":
 			// connection established / keepalive
 		}
 	}
 }
 
-func (s *Slack) handleEvent(ctx context.Context, ws wsConn, body json.RawMessage, relay Relay) {
+// seenSet is a bounded redelivery dedup (message ts).
+type seenSet struct{ m map[string]bool }
+
+func (s *seenSet) dup(ts string) bool {
+	if s.m == nil {
+		s.m = map[string]bool{}
+	}
+	if s.m[ts] {
+		return true
+	}
+	if len(s.m) > 512 {
+		s.m = map[string]bool{}
+	}
+	s.m[ts] = true
+	return false
+}
+
+func (s *Slack) handleEvent(ctx context.Context, ws wsConn, body json.RawMessage, relay Relay, seen *seenSet) {
 	var ev struct {
 		Event struct {
 			Type     string `json:"type"`
@@ -208,6 +248,11 @@ func (s *Slack) handleEvent(ctx context.Context, ws wsConn, body json.RawMessage
 	e := ev.Event
 	if e.Type != "message" || e.User != s.martinID {
 		return // only Martin's replies count
+	}
+	// Slack redelivers events that were slow to process — the ts dedup
+	// keeps a redelivered command from applying twice.
+	if seen.dup(e.TS) {
+		return
 	}
 	if e.ThreadTS == "" {
 		// Top-level DM: capture ("new: ...") and help. Handled ones get the

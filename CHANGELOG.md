@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.13.1] — 2026-10-15
+
+### Fixed
+
+- **Slack relay CPU spin** — the Socket Mode client never acknowledged
+  envelopes (the protocol requires `{"envelope_id":…}` back over the
+  socket), so Slack redelivered events and churned the connection while
+  the reconnect backoff reset on every mere *connect* — a valid-token
+  deploy pinned the CPU. Every envelope is now acked immediately
+  (unknown types included), `disconnect` notices drop the connection for a
+  clean reconnect, redelivered events dedup by message ts, and the backoff
+  only resets after a connection actually lived ≥10s.
+
 ## [0.13.0] — 2026-10-15
 
 ### Added
