@@ -29,7 +29,7 @@ type ItemForm = { title: string; description: string; phase: string; depends_on:
 type InboxPlanSummary = { id: string; name: string; status: string };
 type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; created_at: string; updated_at: string; excerpt?: string };
 type InboxDetail = InboxItem & { content: string; content_html: string };
-type WorkerRow = { id: string; workspaces: string[]; stages: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string };
+type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string };
 
 type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; created_at: string; updated_at: string };
 type InboxForm = { id: string; title: string; tags: string; workspace: string };
@@ -571,6 +571,7 @@ const appState = () => ({
     else if (this.activeView === 'index') await this.fetchIndexStatus();
     else if (this.activeView === 'keys') await this.fetchKeys();
     else if (this.activeView === 'workspaces') { await this.fetchWorkspaces(); await this.fetchGroups(); if (this.whoamiIsRoot()) await this.fetchKeys(); }
+    else if (this.activeView === 'workers') await this.fetchWorkers();
   },
   async selectSession(id: string) {
     this.selectedSessionId = id; localStorage.setItem('skopos:session', id);
@@ -1025,23 +1026,39 @@ const appState = () => ({
   // honest projection of run history per worker.
   async fetchWorkers() {
     this.workersLoading = true;
-    const res = await this.authFetch('/api/runs');
+    const [runsRes, workersRes] = await Promise.all([
+      this.authFetch('/api/runs'),
+      this.authFetch('/api/workers'),
+    ]);
     this.workersLoading = false;
-    if (!res.ok) { this.notify('Could not load runs', 'error'); return; }
-    const runs = (await res.json()) as RunRow[];
+    if (!runsRes.ok) { this.notify('Could not load runs', 'error'); return; }
+    const runs = (await runsRes.json()) as RunRow[];
+    // Registry rows (recorded at claim time): offered runners + served
+    // workspaces, even for workers whose runs fall outside this key's scope.
+    const registered = new Map<string, { runners: string[]; workspaces: string[] }>();
+    if (workersRes.ok) {
+      for (const w of (await workersRes.json()) as { id: string; runners: string[]; workspaces: string[] }[]) {
+        registered.set(w.id, { runners: w.runners || [], workspaces: w.workspaces || [] });
+      }
+    }
     const byWorker = new Map<string, WorkerRow>();
+    for (const entry of registered) {
+      byWorker.set(entry[0], { id: entry[0], workspaces: [...entry[1].workspaces], stages: [], runners: [...entry[1].runners], active: 0, succeeded: 0, failed: 0, lastActive: '', currentLabel: '' });
+    }
     for (const run of runs) {
       if (!run.worker_id) continue; // queued, never claimed
       let w = byWorker.get(run.worker_id);
-      if (!w) { w = { id: run.worker_id, workspaces: [], stages: [], active: 0, succeeded: 0, failed: 0, lastActive: run.updated_at, currentLabel: '' }; byWorker.set(run.worker_id, w); }
+      if (!w) { w = { id: run.worker_id, workspaces: [], stages: [], runners: [], active: 0, succeeded: 0, failed: 0, lastActive: run.updated_at, currentLabel: '' }; byWorker.set(run.worker_id, w); }
+      const reg = registered.get(run.worker_id);
+      if (reg) { for (const ws of reg.workspaces) if (!w.workspaces.includes(ws)) w.workspaces.push(ws); }
       if (run.workspace_id && !w.workspaces.includes(run.workspace_id)) w.workspaces.push(run.workspace_id);
       if (run.stage && !w.stages.includes(run.stage)) w.stages.push(run.stage);
-      if (run.status === 'claimed' || run.status === 'running' || run.status === 'paused') { w.active++; w.currentLabel = run.stage + ' · ' + run.status + ' · ' + this.timeAgo(run.updated_at); }
+      if (run.status === 'claimed' || run.status === 'running' || run.status === 'paused') { w.active++; w.currentLabel = run.stage + ' \u00b7 ' + run.status + ' \u00b7 ' + this.timeAgo(run.updated_at); }
       if (run.status === 'succeeded') w.succeeded++;
       if (run.status === 'failed') w.failed++;
       if (run.updated_at > w.lastActive) w.lastActive = run.updated_at;
     }
-    this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) => (a.lastActive < b.lastActive ? 1 : -1));
+this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) => (a.lastActive < b.lastActive ? 1 : -1));
   },
   workerStatusLabel(w: WorkerRow): string { return w.active > 0 ? 'busy' : 'idle'; },
   workerStatusClass(w: WorkerRow): string { return w.active > 0 ? 'bg-emerald-500/15 text-emerald-300' : 'bg-zinc-700 text-zinc-400'; },

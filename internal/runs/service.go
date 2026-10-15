@@ -308,6 +308,11 @@ func (s *Service) ResumeItem(ctx context.Context, itemID string) error {
 	return nil
 }
 
+// ListWorkers is the worker registry (capabilities recorded at claim).
+func (s *Service) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
+	return s.storage.ListWorkers(ctx)
+}
+
 // RunSummary is the inbox-facing slice of a run — enough for the Slack
 // relay's gate messages and the `done` command's head-sha lookup.
 type RunSummary struct {

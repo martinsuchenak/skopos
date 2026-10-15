@@ -138,6 +138,20 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	rest.RespondJSON(w, http.StatusOK, run)
 }
 
+// Workers handles GET /api/workers: the registry of workers that have
+// claimed (runners offered, workspaces served, last seen).
+func (h *Handler) Workers(w http.ResponseWriter, r *http.Request) {
+	workers, err := h.service.ListWorkers(r.Context())
+	if err != nil {
+		rest.InternalError(w, err)
+		return
+	}
+	if workers == nil {
+		workers = []WorkerSeen{}
+	}
+	rest.RespondJSON(w, http.StatusOK, workers)
+}
+
 // List handles GET /api/runs?status=&item_id=.
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	runs, err := h.service.List(r.Context(), Status(r.URL.Query().Get("status")), r.URL.Query().Get("item_id"))

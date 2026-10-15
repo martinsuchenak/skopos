@@ -1781,6 +1781,27 @@ paths:
         "404": { description: Unknown run }
         "409": { description: Not this worker's run }
 
+  /api/workers:
+    get:
+      summary: Worker registry — runners offered and workspaces served, recorded at claim time
+      operationId: listWorkers
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: Workers seen
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string }
+                    runners: { type: array, items: { type: string } }
+                    workspaces: { type: array, items: { type: string } }
+                    last_seen: { type: string }
+        "401": { description: Unauthorized }
+
   /api/runs/{id}:
     get:
       summary: Get one run

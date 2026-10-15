@@ -326,5 +326,16 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_runs_queue ON runs(status, created_at);
+
+-- Workers seen at claim time (registry-lite): what each worker OFFERS and
+-- serves, recorded on every claim. Counts and live state stay derived from
+-- runs; this is the capability record.
+CREATE TABLE IF NOT EXISTS workers (
+    id          TEXT PRIMARY KEY,
+    runners     TEXT NOT NULL DEFAULT '[]',
+    workspaces  TEXT NOT NULL DEFAULT '[]',
+    last_seen   TEXT NOT NULL DEFAULT '',
+    updated_at  TEXT NOT NULL DEFAULT ''
+);
 CREATE INDEX IF NOT EXISTS idx_runs_item ON runs(item_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_runs_worker ON runs(worker_id, status);

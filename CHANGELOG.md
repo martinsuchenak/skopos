@@ -4,6 +4,21 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.14.1] — 2026-10-15
+
+### Added
+
+- **Worker registry (`GET /api/workers`)** — every claim now upserts what
+  the worker offered and served (runners, workspaces, last seen) into a
+  small `workers` table. The Workers view merges the registry with the
+  run-history aggregates, so cards now show the offered `runners` line;
+  workers appear with their capabilities even if their runs fall outside
+  the key's scope. Capabilities are as of each worker's last claim.
+- Workers nav icon (server-stack, matching the set); the view joined the
+  dashboard refresh fan-out (header Refresh + the live reconciliation poll
+  — runs publish no events, so polling is the mechanism); the per-view
+  Refresh button removed.
+
 ## [0.14.0] — 2026-10-15
 
 ### Fixed

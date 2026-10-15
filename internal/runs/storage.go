@@ -73,6 +73,49 @@ func (s *Storage) Create(ctx context.Context, r Run) error {
 }
 
 // Get returns one run by id.
+func jsonList(xs []string) string {
+	b, err := json.Marshal(xs)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// WorkerSeen is a registry row (capabilities recorded at claim time).
+type WorkerSeen struct {
+	ID         string   `json:"id"`
+	Runners    []string `json:"runners"`
+	Workspaces []string `json:"workspaces"`
+	LastSeen   string   `json:"last_seen"`
+}
+
+// ListWorkers returns every worker that has ever claimed, newest first.
+func (st *Storage) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
+	rows, err := st.db.QueryContext(ctx, `SELECT id, runners, workspaces, last_seen FROM workers ORDER BY last_seen DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("listing workers: %w", err)
+	}
+	defer rows.Close()
+	var out []WorkerSeen
+	for rows.Next() {
+		var w WorkerSeen
+		var runners, workspaces string
+		if err := rows.Scan(&w.ID, &runners, &workspaces, &w.LastSeen); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(runners), &w.Runners)
+		_ = json.Unmarshal([]byte(workspaces), &w.Workspaces)
+		if w.Runners == nil {
+			w.Runners = []string{}
+		}
+		if w.Workspaces == nil {
+			w.Workspaces = []string{}
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
 func (s *Storage) Get(ctx context.Context, id string) (*Run, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+runColumns+` FROM runs WHERE id = ?`, id)
 	return scanRun(row)
@@ -281,6 +324,18 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 		return nil, nil // raced: another worker claimed it between scan and write
 	}
 
+	// Registry-lite: record what this worker offers and serves on every
+	// claim (the Workers view's capability record).
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO workers (id, runners, workspaces, last_seen, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			runners = excluded.runners, workspaces = excluded.workspaces,
+			last_seen = excluded.last_seen, updated_at = excluded.updated_at`,
+		in.WorkerID, jsonList(in.Runners), jsonList(in.Workspaces),
+		formatTime(now), formatTime(now)); err != nil {
+		return nil, fmt.Errorf("recording worker: %w", err)
+	}
 	row := tx.QueryRowContext(ctx, `SELECT `+runColumns+` FROM runs WHERE id = ?`, cand.ID)
 	claimed, err := scanRun(row)
 	if err != nil {

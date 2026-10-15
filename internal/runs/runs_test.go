@@ -489,3 +489,22 @@ func assertMoved(t *testing.T, got []string, want ...string) {
 		}
 	}
 }
+
+// Registry-lite: claiming records what the worker offers and serves.
+func TestWorkerRegistry(t *testing.T) {
+	s := testService(t)
+	ctx := rootCtx()
+	mustQueue(t, s, ctx, "ws-a", "item-1", StagePlan)
+	run, err := s.ClaimNext(ctx, ClaimInput{WorkerID: "w9", Runners: []string{"claude", "gemini"}, Workspaces: []string{"ws-a", "ws-b"}})
+	if err != nil || run == nil {
+		t.Fatal(err)
+	}
+	workers, err := s.ListWorkers(ctx)
+	if err != nil || len(workers) != 1 {
+		t.Fatalf("registry: %+v err %v", workers, err)
+	}
+	w := workers[0]
+	if w.ID != "w9" || len(w.Runners) != 2 || w.Runners[0] != "claude" || len(w.Workspaces) != 2 || w.LastSeen == "" {
+		t.Fatalf("registry row wrong: %+v", w)
+	}
+}
