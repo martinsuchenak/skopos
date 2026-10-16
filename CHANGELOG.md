@@ -25,9 +25,11 @@ versions follow [Semantic Versioning](https://semver.org/).
   once a plan was approved, any in-scope key (agent and worker keys
   included) could rewrite the item title/content the implementer prompt
   reads, with no audit trail. From `approved` onward (and on any item
-  whose plan approval is on record, e.g. blocked after approval) title and
-  content edits now require the approver permission (403 otherwise; tags
-  and priority stay open), and every edit to a workflow item is
+  whose plan approval is on record, e.g. blocked after approval) title
+  changes and content rewrites now require the approver permission (403
+  otherwise). Appends that keep the existing content as a prefix stay open
+  — the worker records review verdicts, amendment reasons and re-plan
+  enrichment that way — as do tags and priority; every edit to a workflow item is
   audit-logged as `inbox.edit` with the fields it changed. Workflow items
   can no longer move workspace (their runs, plan and branch live there);
   the dashboard edit modal hides the workspace picker for them.

@@ -221,10 +221,27 @@ func TestPostApprovalEditsRequireApprover(t *testing.T) {
 	if err := svc.UpdateItem(agentCtx(), item.ID, UpdateInput{Title: "retitled by agent"}); !errors.Is(err, auth.ErrApproverRequired) {
 		t.Fatalf("approved item: agent title edit must be refused: %v", err)
 	}
+	// Appending keeps the approved content intact — the worker records
+	// review verdicts and amendment reasons this way with its executor key
+	// (AppendSection: old content + a new section), so it must pass. A
+	// "prefix" that drops part of the approved text is still a rewrite.
+	before, _ := svc.GetItem(root, item.ID)
+	if err := svc.UpdateItem(agentCtx(), item.ID, UpdateInput{Content: before.Content + "\n\n## review — acct\n\n**Verdict:** pass\n"}); err != nil {
+		t.Fatalf("post-approval append by the executor must pass: %v", err)
+	}
+	appended, _ := svc.GetItem(root, item.ID)
+	if !strings.HasPrefix(appended.Content, before.Content) || !strings.Contains(appended.Content, "**Verdict:** pass") {
+		t.Fatalf("append must land after the approved content: %q", appended.Content)
+	}
+	if len(before.Content) > 1 {
+		if err := svc.UpdateItem(agentCtx(), item.ID, UpdateInput{Content: before.Content[:len(before.Content)/2] + "\n\n## sneaky\n"}); !errors.Is(err, auth.ErrApproverRequired) {
+			t.Fatalf("truncating the approved content is a rewrite: %v", err)
+		}
+	}
 	// Re-sending the unchanged content (a tags-only form save) is not a
 	// content edit.
 	tags := []string{"triaged"}
-	if err := svc.UpdateItem(agentCtx(), item.ID, UpdateInput{Content: item.Content + "\n", Tags: &tags}); err != nil {
+	if err := svc.UpdateItem(agentCtx(), item.ID, UpdateInput{Content: appended.Content + "\n", Tags: &tags}); err != nil {
 		t.Fatalf("tags-only edit must pass: %v", err)
 	}
 
@@ -258,9 +275,11 @@ func TestPostApprovalEditsRequireApprover(t *testing.T) {
 			edits = append(edits, e)
 		}
 	}
-	// Newest first: the approver's content edit, then the agent's tags edit.
-	if len(edits) != 2 || edits[0].Via != audit.ViaDashboard || !strings.Contains(edits[0].Notes, "content") ||
-		!strings.Contains(edits[1].Notes, "tags") || strings.Contains(edits[1].Notes, "content") {
+	// Newest first: the approver's content edit, the agent's tags edit, then
+	// the executor's append (audited like any edit).
+	if len(edits) != 3 || edits[0].Via != audit.ViaDashboard || !strings.Contains(edits[0].Notes, "content") ||
+		!strings.Contains(edits[1].Notes, "tags") || strings.Contains(edits[1].Notes, "content") ||
+		!strings.Contains(edits[2].Notes, "content") {
 		t.Fatalf("workflow edits must be audited with their fields: %+v", edits)
 	}
 }

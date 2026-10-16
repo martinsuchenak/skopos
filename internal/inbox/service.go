@@ -258,9 +258,12 @@ func (s *Service) listAcrossScope(ctx context.Context, workspaceID, status, tag,
 // freeze semantics. Workflow items carry extra rules (review M7):
 //   - they cannot move workspace — their runs, plan and branch live there;
 //   - once the plan gate has passed (approved and beyond, or any item with a
-//     recorded plan approval), title/content edits require the approver
-//     permission — the implementer prompt reads them, so an agent key must
-//     not rewrite what Martin approved;
+//     recorded plan approval), title changes and content REWRITES require
+//     the approver permission — the implementer prompt reads them, so an
+//     agent key must not rewrite what Martin approved. Pure appends (the
+//     existing content kept as a prefix) stay open: the worker records
+//     review verdicts, amendment reasons and re-plan enrichment that way
+//     with its executor key, and there is no executor role to tell it apart;
 //   - every effective edit is audit-logged ("inbox.edit").
 func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInput) error {
 	if err := s.requireItemScopeQuiet(ctx, itemID); err != nil {
@@ -317,7 +320,8 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 			if workspace != item.WorkspaceID {
 				return fmt.Errorf("%w: item is in the agent workflow (%s) — its runs, plan and branch live in %s; it cannot move workspace", ErrInvalidInput, statusLabel(item.Status), item.WorkspaceID)
 			}
-			if (title != item.Title || content != item.Content) && approverErr != nil && (postApproval(item.Status) || everApproved) {
+			rewrite := title != item.Title || (content != item.Content && !appendsTo(content, item.Content))
+			if rewrite && approverErr != nil && (postApproval(item.Status) || everApproved) {
 				return fmt.Errorf("%w: the plan for this item is approved — editing its title or content changes what the implementer reads", approverErr)
 			}
 		}
@@ -331,6 +335,12 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 		s.auditItem(ctx, itemID, "inbox.edit", input.Via, "edited "+strings.Join(changed, ", "), "")
 	}
 	return nil
+}
+
+// appendsTo reports whether next keeps prev intact as its prefix — an
+// append, which leaves everything already approved in place.
+func appendsTo(next, prev string) bool {
+	return strings.HasPrefix(next, strings.TrimSpace(prev))
 }
 
 // postApproval reports the statuses that only exist after the plan gate.
