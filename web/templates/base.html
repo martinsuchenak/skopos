@@ -924,6 +924,7 @@
                                     <span class="badge" :class="runStatusClass(run.status)" x-text="run.status"></span>
                                     <span x-show="run.worker_id" class="max-w-32 truncate text-zinc-400" :title="run.worker_id" x-text="run.worker_id"></span>
                                     <span class="text-zinc-500" x-text="'try ' + run.attempt"></span>
+                                    <span x-show="run.executor" class="badge bg-zinc-800 font-mono text-zinc-400" title="How the worker ran this stage (capability profile)" x-text="run.executor"></span>
                                     <span x-show="run.branch" class="badge max-w-40 truncate bg-zinc-800 text-zinc-400" :title="run.branch" x-text="run.branch"></span>
                                     <span x-show="run.head_sha" class="font-mono text-zinc-500" :title="run.head_sha" x-text="shortSha(run.head_sha)"></span>
                                     <span class="ml-auto shrink-0 text-zinc-600" x-text="timeAgo(run.updated_at)"></span>

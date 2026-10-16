@@ -147,7 +147,9 @@ func TestRunWorkerChecks(t *testing.T) {
 	// (the runner's real PATH has no claude — this failed v0.11.0's first
 	// CI build).
 	binDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	// The stub's --help advertises the lockdown flags the check requires.
+	stub := "#!/bin/sh\necho '--setting-sources --restricted --strict-mcp-config --mcp-config --tools'\n"
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte(stub), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	pathEnv := binDir + string(os.PathListSeparator) + "/usr/bin:/bin"
@@ -329,5 +331,42 @@ func TestServiceCarriesEnvFileAndDisabled(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(home, "Library", "LaunchAgents", "w.plist"))
 	if err != nil || !strings.Contains(string(raw), "<key>Disabled</key>") {
 		t.Fatalf("an unready install must be written Disabled (err=%v):\n%s", err, raw)
+	}
+}
+
+// An agent CLI without the lockdown flags fails the check (every run would
+// fail on the unknown option); a wrapper missing from the service PATH and
+// a missing mcp_config file are reported too.
+func TestCheckRequiresLockdownCLIAndWrappers(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skopos-config.toml")
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte("#!/bin/sh\necho 'usage: claude [options]'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pathEnv := binDir + string(os.PathListSeparator) + "/usr/bin:/bin"
+	envFile := filepath.Join(dir, "skopos-worker.env")
+	if err := os.WriteFile(envFile, []byte("SKOPOS_API_KEY=sk_real\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	clone := filepath.Join(dir, "clone")
+	if err := os.MkdirAll(filepath.Join(clone, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "[client]\nserver_url = \"https://skopos.real.com\"\n\n[worker]\nid = \"worker-t\"\nmcp_servers = [\"mcp__skopos\"]\nmcp_config = \"" + filepath.Join(dir, "missing-mcp.json") + "\"\n\n" +
+		"[worker.profiles.php.implement]\nwrapper = [\"no-such-wrapper-xyz\", \"run\"]\ntools = [\"Bash(php:*)\"]\n\n" +
+		"[worker.repos.\"ws\"]\npath = \"" + clone + "\"\nprofile = \"php\"\n\n[[worker.accounts]]\nname = \"a\"\nrunner = \"claude\"\nenv = { ANTHROPIC_API_KEY = \"k\" }\n"
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	problems, err := runWorkerChecks(cfgPath, envFile, pathEnv, "/home/tester")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(problems, "\n")
+	for _, want := range []string{"does not support --setting-sources", "mcp_config", "wrapper \"no-such-wrapper-xyz\" not on the service PATH"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("expected problem %q, got:\n%s", want, joined)
+		}
 	}
 }

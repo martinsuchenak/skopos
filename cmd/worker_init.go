@@ -170,6 +170,13 @@ runner = "claude"
 priority = 1
 env = { ANTHROPIC_API_KEY = "${CLAUDE_1_API_KEY}" }
 
+# Agent runs load no user/project settings (no ~/.claude.json MCP servers,
+# no CLAUDE.md, no hooks). MCP servers for runs come from mcp_config;
+# mcp_servers allowlists their tools. Containment and extra tools per stage:
+# [worker.profiles.<name>.<stage>] — see docs/deployment/worker.md.
+# mcp_config = "~/.config/skopos/worker-mcp.json"
+# mcp_servers = ["mcp__skopos"]
+
 # Repos: one block per workspace this worker serves.%s
 `, workerID, quotedList(workspaces), repoBlocks)
 }

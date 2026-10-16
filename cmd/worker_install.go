@@ -384,6 +384,33 @@ func runWorkerChecks(configPath, envFile, pathEnv, home string) ([]string, error
 	// installer's (sudo's secure_path is not the target user's).
 	if !onPath(ws.Bin, pathEnv) {
 		problems = append(problems, fmt.Sprintf("agent CLI %q not on the service PATH (%s)", ws.Bin, pathEnv))
+	} else if err := worker.LockdownSupported(context.Background(), ws.Bin, pathEnv); err != nil {
+		problems = append(problems, err.Error())
+	}
+	if ws.MCPConfig != "" && !fileExists(ws.MCPConfig) {
+		problems = append(problems, "mcp_config "+ws.MCPConfig+" does not exist")
+	}
+	// Profile wrappers must exist where the service runs (a missing docker
+	// would fail every contained stage at run time).
+	seen := map[string]bool{}
+	checkWrapper := func(where string, p *worker.StageProfile) {
+		if p == nil || len(p.Wrapper) == 0 || seen[p.Wrapper[0]] {
+			return
+		}
+		seen[p.Wrapper[0]] = true
+		if !onPath(p.Wrapper[0], pathEnv) {
+			problems = append(problems, fmt.Sprintf("%s: wrapper %q not on the service PATH", where, p.Wrapper[0]))
+		}
+	}
+	for name, stages := range ws.Profiles {
+		for stage, p := range stages {
+			checkWrapper("profile "+name+"."+stage, p)
+		}
+	}
+	for id, r := range ws.Repos {
+		for stage, p := range r.Stages {
+			checkWrapper("repo "+id+" stage "+stage, p)
+		}
 	}
 	return problems, nil
 }

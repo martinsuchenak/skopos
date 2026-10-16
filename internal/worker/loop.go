@@ -20,7 +20,7 @@ var prompts = template.Must(template.New("").Funcs(template.FuncMap{
 	"inc": func(i int) int { return i + 1 },
 }).ParseFS(promptFS, "prompts/*.md"))
 
-const planSchema = `{"type":"object","properties":{"title":{"type":"string"},"summary":{"type":"string"},"size":{"type":"string","enum":["s","m","l"]},"needs_clarification":{"type":"boolean"},"steps":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"description":{"type":"string"}},"required":["title","description"]}},"risks":{"type":"array","items":{"type":"string"}},"questions":{"type":"array","items":{"type":"string"}}},"required":["summary","size","needs_clarification","steps","risks","questions"]}`
+const planSchema = `{"type":"object","properties":{"title":{"type":"string"},"summary":{"type":"string"},"size":{"type":"string","enum":["s","m","l"]},"needs_clarification":{"type":"boolean"},"steps":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"description":{"type":"string"}},"required":["title","description"]}},"risks":{"type":"array","items":{"type":"string"}},"questions":{"type":"array","items":{"type":"string"}},"skills":{"type":"array","items":{"type":"string"}}},"required":["summary","size","needs_clarification","steps","risks","questions"]}`
 
 const implSchema = `{"type":"object","properties":{"status":{"type":"string","enum":["done","amendment","blocked"]},"steps_done":{"type":"array","items":{"type":"integer"}},"summary":{"type":"string"},"reason":{"type":"string"},"question":{"type":"string"},"amended_steps":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"description":{"type":"string"}},"required":["title","description"]}}},"required":["status","steps_done","summary"]}`
 
@@ -49,16 +49,38 @@ func (w *Worker) ApplyMCPServers() {
 	implTools = append(append([]string{}, baseImplTools...), w.cfg.MCPServers...)
 }
 
-// settingsJSON merges the hard guards with the deployment's MCP deny list.
-func settingsJSON(mcpDeny []string) string {
+// settingsJSON merges the hard guards with the deployment's MCP deny list
+// and the stage profile's settings (capability profiles §2). The profile's
+// JSON is kept as given — e.g. Claude Code's sandbox block — except that
+// skopos's deny list is always unioned in (deny beats allow) and a profile
+// cannot pick the permission mode (the runner sets dontAsk).
+func settingsJSON(mcpDeny []string, profile string) string {
 	var g struct {
 		Permissions struct {
 			Deny []string `json:"deny"`
 		} `json:"permissions"`
 	}
 	_ = json.Unmarshal([]byte(guardSettings), &g)
-	g.Permissions.Deny = append(g.Permissions.Deny, mcpDeny...)
-	b, _ := json.Marshal(g)
+	deny := append(g.Permissions.Deny, mcpDeny...)
+	out := map[string]any{}
+	if strings.TrimSpace(profile) != "" {
+		_ = json.Unmarshal([]byte(profile), &out) // validated at config load
+	}
+	perms, _ := out["permissions"].(map[string]any)
+	if perms == nil {
+		perms = map[string]any{}
+	}
+	if extra, ok := perms["deny"].([]any); ok {
+		for _, d := range extra {
+			if s, ok := d.(string); ok {
+				deny = append(deny, s)
+			}
+		}
+	}
+	perms["deny"] = deny
+	delete(perms, "defaultMode")
+	out["permissions"] = perms
+	b, _ := json.Marshal(out)
 	return string(b)
 }
 
@@ -75,10 +97,13 @@ type Worker struct {
 	// scrubber drops them from every agent environment — env-file values
 	// are the daemon's secrets, not the agent's.
 	envFileKeys []string
+	// executors remembers how each run's agent stage was executed (the
+	// stage profile's Executor id) so every report can record it.
+	executors map[string]string
 }
 
 func New(cfg *Config, client *Client, log *slog.Logger) *Worker {
-	w := &Worker{cfg: cfg, client: client, log: log, sessions: map[string]string{}, accounts: map[string]string{}}
+	w := &Worker{cfg: cfg, client: client, log: log, sessions: map[string]string{}, accounts: map[string]string{}, executors: map[string]string{}}
 	w.loadSessions()
 	w.ApplyMCPServers()
 	return w
@@ -181,7 +206,7 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 			// instead of failing the run and blocking the item (review M4).
 			// The run stays claimed by us throughout.
 			if attempt+1 >= maxTransient {
-				_ = w.client.ReportResult(ctx, run.ID, w.cfg.ID, false, map[string]any{"reason": fmt.Sprintf("transient x%d: %s", maxTransient, tr.detail)})
+				_ = w.report(ctx, run, false, map[string]any{"reason": fmt.Sprintf("transient x%d: %s", maxTransient, tr.detail)})
 				return
 			}
 			log.Warn("transient failure, retrying", "attempt", attempt+1, "detail", tr.detail)
@@ -215,7 +240,7 @@ func (w *Worker) finish(ctx context.Context, run *Run, log *slog.Logger, err err
 		sleepCtx(ctx, wait)
 		return
 	}
-	_ = w.client.ReportResult(ctx, run.ID, w.cfg.ID, false, map[string]any{"reason": err.Error()})
+	_ = w.report(ctx, run, false, map[string]any{"reason": err.Error()})
 	log.Error("stage failed", "err", err)
 }
 
@@ -266,18 +291,59 @@ func (w *Worker) agentRun(bin, dir, prompt, schema string, tools []string, timeo
 	w.rememberAccount(run, account)
 	sessionKey := run.ID + ":" + phase
 	sess := w.sessions[sessionKey]
-	return AgentRun{
+	prof := w.cfg.StageProfile(run.WorkspaceID, phase)
+	w.executors[run.ID] = prof.Executor()
+	ar := AgentRun{
 		Bin: bin, Dir: dir, Prompt: prompt,
 		SessionID: sess, Resume: sess != "",
 		Schema: schema, AllowedTools: tools,
-		Settings:  settingsJSON(w.cfg.MCPDeny),
+		Settings:  settingsJSON(w.cfg.MCPDeny, ""),
 		Timeout:   timeout,
 		LogFile:   filepath.Join(w.cfg.StateDir, "runs", run.ID, phase+".log"),
 		Env:       account.Env,
 		TokenEnvs: w.cfg.TokenEnvs(),
+		MCPConfig: w.cfg.MCPConfig,
 
 		FileEnvKeys: w.envFileKeys,
 	}
+	if prof == nil {
+		return ar
+	}
+	// The stage profile (operator-supplied, validated fail-closed at load):
+	// capabilities extend the run, the wrapper contains it.
+	ar.AllowedTools = append(append([]string{}, tools...), prof.Tools...)
+	ar.Settings = settingsJSON(w.cfg.MCPDeny, prof.Settings)
+	if len(prof.Env) > 0 {
+		env := make(map[string]string, len(account.Env)+len(prof.Env))
+		for k, v := range account.Env {
+			env[k] = v
+		}
+		for k, v := range prof.Env {
+			env[k] = v
+		}
+		ar.Env = env
+	}
+	if len(prof.Wrapper) > 0 {
+		r := strings.NewReplacer("{dir}", dir, "{run}", run.ID, "{stage}", phase, "{workspace}", run.WorkspaceID)
+		ar.Wrapper = make([]string, len(prof.Wrapper))
+		for i, a := range prof.Wrapper {
+			ar.Wrapper[i] = r.Replace(a)
+		}
+	}
+	return ar
+}
+
+// report sends a run result with the executor that ran its agent stage
+// (capability profiles §2: the audit trail names the envelope).
+func (w *Worker) report(ctx context.Context, run *Run, succeeded bool, fields map[string]any) error {
+	if ex := w.executors[run.ID]; ex != "" {
+		if fields == nil {
+			fields = map[string]any{}
+		}
+		fields["executor"] = ex
+	}
+	delete(w.executors, run.ID)
+	return w.client.ReportResult(ctx, run.ID, w.cfg.ID, succeeded, fields)
 }
 
 // SetEnvFileKeys records which variables came from the env file (the CLI

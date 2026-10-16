@@ -4,6 +4,57 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Breaking
+
+- **Agent runs no longer load the worker user's Claude settings** — no
+  `~/.claude.json` MCP servers, no `~/.claude/settings.json` allow rules or
+  hooks, and no `CLAUDE.md` (user or worktree). If the worker sets
+  `mcp_servers`, it must now set `mcp_config` to a JSON file with those
+  servers (the daemon refuses to start otherwise). The agent CLI must
+  support `--setting-sources`, `--restricted` and `--strict-mcp-config`;
+  the daemon and `worker check` verify this.
+
+### Security
+
+- **Agent runs are locked down** (`--setting-sources "" --restricted
+  --strict-mcp-config`).
+  - **Outside files.** `Read` could return files outside the worktree,
+    including the worker's env file with the skopos key and push tokens
+    (verified live). File tools are now confined to the working directory.
+  - **Reviewer injection.** The CLI auto-loaded the worktree's `CLAUDE.md`,
+    which during review is the implementer's own branch, so it could brief
+    its reviewer. It no longer loads it.
+  - **Worker-user settings.** The worker user's personal allow rules and
+    hooks no longer apply to pipeline runs.
+- **`setup` commands run with the scrubbed environment** (they inherited
+  every daemon secret); `setup_env` passes what they need.
+
+### Added
+
+- **Capability profiles** (`worker.profiles.<name>.<stage>`, repo `profile`
+  / `stages`). skopos provides no isolation; the operator contains a stage
+  with a `wrapper` (container, VM, sandbox tool) or Claude Code sandbox
+  `settings`.
+  - Extra `tools` and `env` are granted only to a contained stage. An
+    uncontained grant is a config error (fail closed).
+  - Each run records its `executor` (`local`, `wrapper:<hash>`,
+    `sandbox:<hash>`).
+- **Repo knowledge in every stage prompt.** The repo's `AGENTS.md` (or
+  `CLAUDE.md`) and the plan's skills (`.skopos/skills/<name>/SKILL.md`) are
+  read at the base commit, never the agent's branch.
+  - The planner picks skills from an index, and item tags naming a skill are
+    always included. Slack `new:` captures turn `#hashtags` into tags.
+  - The selection is stored on the plan revision and covered by its hash, so
+    approving the plan approves the skills. Existing revisions keep their
+    hash.
+
+### Fixed
+
+- **Review prompts listed no plan steps** — the template rendered the
+  plan, but the stage never passed it; reviewers now see the approved steps.
+
 ## [0.15.0] — 2026-10-16
 
 ### Security

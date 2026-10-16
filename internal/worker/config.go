@@ -1,10 +1,14 @@
 package worker
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -38,6 +42,135 @@ type Config struct {
 	// prompt references the skopos MCP tools; without these the allowlist
 	// denies them).
 	MCPServers []string `toml:"mcp_servers"`
+	// MCPConfig is the JSON file (Claude Code `mcpServers` shape) that
+	// defines the MCP servers pipeline runs get — passed with
+	// --strict-mcp-config. Runs no longer read the worker user's
+	// ~/.claude.json (they load no user/project settings at all), so
+	// mcp_servers without mcp_config would silently allow nothing.
+	MCPConfig string `toml:"mcp_config"`
+
+	// Profiles are operator-supplied executor settings per stage, shared by
+	// repos (repo.profile names one). skopos never provides isolation
+	// itself — a profile says how the operator contains a stage, and only a
+	// contained stage may be granted capabilities (see StageProfile).
+	Profiles map[string]map[string]*StageProfile `toml:"profiles"`
+}
+
+// Stages a profile may configure.
+var profileStages = map[string]bool{"plan": true, "implement": true, "review": true, "qa": true}
+
+// StageProfile is how the operator runs one stage. Containment is the
+// operator's: a wrapper (argv prefix — a container, a VM, a sandbox tool)
+// or Claude Code's own sandbox via settings. Capabilities — extra tools,
+// extra env, settings allow rules — are only valid on a contained stage
+// (fail closed: skopos cannot verify a wrapper isolates, but it refuses to
+// grant capabilities when nothing at all contains them).
+type StageProfile struct {
+	Wrapper  []string          `toml:"wrapper"`  // argv prefix; {dir} {run} {stage} {workspace}
+	Settings string            `toml:"settings"` // JSON merged into --settings (skopos's deny list is kept)
+	Tools    []string          `toml:"tools"`    // extra --allowedTools entries
+	Env      map[string]string `toml:"env"`      // extra agent env; ${VAR} expands from the environment
+}
+
+// sandboxed reports whether Settings enables the runner's own sandbox.
+func (p *StageProfile) sandboxed() bool {
+	if p == nil || strings.TrimSpace(p.Settings) == "" {
+		return false
+	}
+	var s struct {
+		Sandbox struct {
+			Enabled bool `json:"enabled"`
+		} `json:"sandbox"`
+	}
+	return json.Unmarshal([]byte(p.Settings), &s) == nil && s.Sandbox.Enabled
+}
+
+// Contained: the stage runs inside something the operator provides.
+func (p *StageProfile) Contained() bool {
+	return p != nil && (len(p.Wrapper) > 0 || p.sandboxed())
+}
+
+// grantsAllow reports permissions.allow entries in Settings — a capability
+// grant like Tools.
+func (p *StageProfile) grantsAllow() bool {
+	if p == nil || strings.TrimSpace(p.Settings) == "" {
+		return false
+	}
+	var s struct {
+		Permissions struct {
+			Allow []string `json:"allow"`
+		} `json:"permissions"`
+	}
+	_ = json.Unmarshal([]byte(p.Settings), &s)
+	return len(s.Permissions.Allow) > 0
+}
+
+// validate checks one stage profile: parseable settings, and the fail-closed
+// rule — capabilities only on a contained stage.
+func (p *StageProfile) validate(where string) error {
+	if p == nil {
+		return nil
+	}
+	if strings.TrimSpace(p.Settings) != "" {
+		var probe map[string]any
+		if err := json.Unmarshal([]byte(p.Settings), &probe); err != nil {
+			return fmt.Errorf("%s: settings is not valid JSON: %v", where, err)
+		}
+	}
+	if (len(p.Tools) > 0 || len(p.Env) > 0 || p.grantsAllow()) && !p.Contained() {
+		return fmt.Errorf("%s: grants capabilities (tools/env/settings allow) but is not contained — set a wrapper, or settings with sandbox.enabled = true (skopos only grants capabilities to stages the operator contains)", where)
+	}
+	return nil
+}
+
+// Executor identifies how a stage ran, for the run record: "local", or
+// "wrapper:"/"sandbox:" plus a short hash over the resolved profile
+// (wrapper argv, settings, tools, env NAMES — never values).
+func (p *StageProfile) Executor() string {
+	if p == nil {
+		return "local"
+	}
+	kind := "local"
+	switch {
+	case len(p.Wrapper) > 0:
+		kind = "wrapper"
+	case p.sandboxed():
+		kind = "sandbox"
+	}
+	if kind == "local" && len(p.Tools) == 0 && len(p.Env) == 0 && strings.TrimSpace(p.Settings) == "" {
+		return "local"
+	}
+	names := make([]string, 0, len(p.Env))
+	for k := range p.Env {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	tools := append([]string{}, p.Tools...)
+	sort.Strings(tools)
+	buf, _ := json.Marshal(struct {
+		W []string `json:"w"`
+		S string   `json:"s"`
+		T []string `json:"t"`
+		E []string `json:"e"`
+	}{p.Wrapper, strings.TrimSpace(p.Settings), tools, names})
+	sum := sha256.Sum256(buf)
+	return kind + ":" + hex.EncodeToString(sum[:])[:12]
+}
+
+// StageProfile resolves a workspace's profile for a stage: the repo's own
+// stages override its named profile, per stage. Nil = plain local run.
+func (c *Config) StageProfile(workspace, stage string) *StageProfile {
+	r := c.Repos[workspace]
+	if r == nil {
+		return nil
+	}
+	if p := r.Stages[stage]; p != nil {
+		return p
+	}
+	if r.Profile != "" {
+		return c.Profiles[r.Profile][stage]
+	}
+	return nil
 }
 
 // Repo is one workspace's local clone: worktrees are cut from it per run.
@@ -46,8 +179,15 @@ type Repo struct {
 	DefaultBranch string   `toml:"default_branch"`
 	BranchPrefix  string   `toml:"branch_prefix"` // default "agent/"
 	Setup         []string `toml:"setup"`         // run in every fresh worktree ({clone} expands)
-	Checks        []string `toml:"checks"`        // verification commands
-	Protected     []string `toml:"protected_branches"`
+	// SetupEnv is extra environment for setup commands (they run with the
+	// scrubbed environment — e.g. a private registry token via ${VAR}).
+	SetupEnv  map[string]string `toml:"setup_env"`
+	Checks    []string          `toml:"checks"` // verification commands
+	Protected []string          `toml:"protected_branches"`
+	// Profile names an entry of worker.profiles; Stages overrides single
+	// stages of it (or stands alone).
+	Profile string                   `toml:"profile"`
+	Stages  map[string]*StageProfile `toml:"stages"`
 
 	// Push: remote-agnostic. Token from env (never argv); Kind selects the
 	// credential flavor — "gitea" (token auth header) is first, "github"
@@ -166,6 +306,39 @@ func (c *Config) Default(home string) error {
 			r.Push.Kind = "none"
 		}
 	}
+	if c.MCPConfig != "" {
+		c.MCPConfig = expandHome(c.MCPConfig, home)
+	} else if len(c.MCPServers) > 0 {
+		return fmt.Errorf("mcp_servers is set but mcp_config is not: pipeline runs no longer load the worker user's MCP servers (~/.claude.json) — point mcp_config at a JSON file with those servers (mcpServers shape)")
+	}
+	for name, stages := range c.Profiles {
+		for stage, p := range stages {
+			if !profileStages[stage] {
+				return fmt.Errorf("profile %s: unknown stage %q (plan, implement, review, qa)", name, stage)
+			}
+			if err := p.validate("profile " + name + "." + stage); err != nil {
+				return err
+			}
+			expandProfileEnv(p, home)
+		}
+	}
+	for ws, r := range c.Repos {
+		if r.Profile != "" && c.Profiles[r.Profile] == nil {
+			return fmt.Errorf("repo %s: profile %q is not defined under worker.profiles", ws, r.Profile)
+		}
+		for stage, p := range r.Stages {
+			if !profileStages[stage] {
+				return fmt.Errorf("repo %s: unknown stage %q (plan, implement, review, qa)", ws, stage)
+			}
+			if err := p.validate("repo " + ws + " stage " + stage); err != nil {
+				return err
+			}
+			expandProfileEnv(p, home)
+		}
+		for k, v := range r.SetupEnv {
+			r.SetupEnv[k] = expandHome(expandEnvRefs(v), home)
+		}
+	}
 	for _, a := range c.Accounts {
 		for k, v := range a.Env {
 			// ${NAME} only: os.Expand rewrites every $, silently mangling
@@ -177,6 +350,17 @@ func (c *Config) Default(home string) error {
 		}
 	}
 	return nil
+}
+
+// expandProfileEnv resolves ${VAR} (and a leading ~) in a stage's env once,
+// at load — the same treatment as account env.
+func expandProfileEnv(p *StageProfile, home string) {
+	if p == nil {
+		return
+	}
+	for k, v := range p.Env {
+		p.Env[k] = expandHome(expandEnvRefs(v), home)
+	}
 }
 
 var reEnvRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)

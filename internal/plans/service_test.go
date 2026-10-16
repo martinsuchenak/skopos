@@ -715,3 +715,19 @@ func TestServiceConcurrentAddItemsAllPersist(t *testing.T) {
 		t.Fatalf("expected all %d items persisted, got %d", n, len(detail.Items))
 	}
 }
+
+// Pre-skills revisions keep their hash: with no skills, hashContent is
+// exactly hashSteps; with skills it differs and is order-independent once
+// normalized.
+func TestHashContentBackwardCompatible(t *testing.T) {
+	steps := []RevisionStep{{ID: "a", Title: "one", Position: 1}}
+	plain, _ := hashSteps(steps)
+	if got, _ := hashContent(steps, nil); got != plain {
+		t.Fatal("no skills must hash exactly like before")
+	}
+	x, _ := hashContent(steps, normalizeSkills([]string{"b", "a"}))
+	y, _ := hashContent(steps, normalizeSkills([]string{"a", "b", "a"}))
+	if x == plain || x != y {
+		t.Fatalf("skills must change the hash, independent of order/dupes: %s %s %s", plain, x, y)
+	}
+}

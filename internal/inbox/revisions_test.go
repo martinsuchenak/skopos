@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -548,5 +549,68 @@ func TestRevisionExposesCreationTime(t *testing.T) {
 	revs, err := plansSvc.ListRevisions(root, planID)
 	if err != nil || len(revs) != 1 || revs[0].ID != rev.ID {
 		t.Fatalf("list revisions: %+v err %v", revs, err)
+	}
+}
+
+// Capability profiles §3: the skills a plan selects are part of the
+// approved content — stored on the revision, covered by the hash (only when
+// present, so pre-skills revisions keep their hash), approvable, and kept
+// across an amendment.
+func TestReplanSkillsBindIntoRevision(t *testing.T) {
+	svc, plansSvc, _ := fullStack(t)
+	root := context.Background()
+	item := mustCreate(t, svc, root, "skills probe")
+	if _, err := svc.Queue(approverCtx(), item.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SystemTransition(root, item.ID, StatusPlanning, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := plansSvc.CreatePlan(root, plans.CreatePlanInput{WorkspaceID: "ws-a", Name: "p", AuthorAgentID: "w"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.LinkPlan(root, item.ID, plan.ID); err != nil {
+		t.Fatal(err)
+	}
+	steps := []plans.RevisionStep{{Title: "one", Description: "d"}}
+	plain, err := plansSvc.Replan(root, plan.ID, steps, "base-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plain.Skills) != 0 {
+		t.Fatalf("no skills selected: %v", plain.Skills)
+	}
+	withSkills, err := plansSvc.Replan(root, plan.ID, steps, "base-1", "php-dto", "e2e", "php-dto", " ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(withSkills.Skills, ",") != "e2e,php-dto" {
+		t.Fatalf("skills normalized (sorted, unique, no empties): %v", withSkills.Skills)
+	}
+	if withSkills.ContentHash == plain.ContentHash {
+		t.Fatal("the hash must cover the skills")
+	}
+	if _, err := svc.SystemTransition(root, item.ID, StatusAwaitingApproval, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{}); err != nil {
+		t.Fatalf("a revision with skills must approve (hash re-verified): %v", err)
+	}
+	if _, err := svc.SystemTransition(root, item.ID, StatusImplementing, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	amended, err := plansSvc.Amend(root, plan.ID, []plans.RevisionStep{{Title: "two"}}, "base-2")
+	if err != nil {
+		t.Fatalf("amend: %v", err)
+	}
+	if strings.Join(amended.Skills, ",") != "e2e,php-dto" {
+		t.Fatalf("an amendment keeps the approved skills: %v", amended.Skills)
+	}
+	if _, err := svc.SystemTransition(root, item.ID, StatusAwaitingApproval, "amendment", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{}); err != nil {
+		t.Fatalf("approve after amend with skills: %v", err)
 	}
 }

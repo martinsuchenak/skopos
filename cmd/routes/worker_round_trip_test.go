@@ -248,3 +248,44 @@ func workerStack(t *testing.T) (*sql.DB, string) {
 	t.Cleanup(ts.Close)
 	return sqlDB, ts.URL
 }
+
+// Capability profiles over REST: the worker's replan carries the selected
+// skills, the revision exposes them (and the approval still verifies), a
+// malformed skill name is refused, and the run report records its executor.
+func TestIntegrationReplanSkillsAndExecutor(t *testing.T) {
+	_, baseURL := workerStack(t)
+	root := workerClient{base: baseURL, key: "root-secret"}
+	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"github.com/fortix/freedom3","name":"freedom3"}`), 201)
+	approverKey := mint(t, root, `{"name":"relay","workspaces":["github.com/fortix/freedom3"],"approver":true}`)
+	workerKey := mint(t, root, `{"name":"worker-1","workspaces":["github.com/fortix/freedom3"]}`)
+	approver := workerClient{base: baseURL, key: approverKey}
+	leases := map[string]string{}
+	worker := workerClient{base: baseURL, key: workerKey, lease: leases}
+
+	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"github.com/fortix/freedom3","title":"skills item","author_agent_id":"martin"}`), 201).(map[string]any)
+	itemID := item["id"].(string)
+	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/queue", ""), 200)
+	run := claim(t, worker, `{"worker_id":"w1","workspaces":["github.com/fortix/freedom3"]}`)
+	runID := run["id"].(string)
+
+	plan := mustJSON(t, worker.req("POST", "/api/plans", `{"workspace_id":"github.com/fortix/freedom3","name":"p","author_agent_id":"worker-1"}`), 201).(map[string]any)
+	planID := plan["id"].(string)
+	mustDo(t, worker.req("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+planID+`"}`), 200)
+	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/replan", `{"base_sha":"d2ce73d","steps":[{"title":"one"}],"skills":["../etc"]}`), 400)
+	rev := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/replan", `{"base_sha":"d2ce73d","steps":[{"title":"one"}],"skills":["php-dto","e2e"]}`), 200).(map[string]any)
+	if sk, _ := rev["skills"].([]any); len(sk) != 2 || sk[0] != "e2e" || sk[1] != "php-dto" {
+		t.Fatalf("replan must bind the skills into the revision: %v", rev["skills"])
+	}
+	var revs []map[string]any
+	if err := json.Unmarshal([]byte(mustDo(t, worker.req("GET", "/api/plans/"+planID+"/revisions", ""), 200).body), &revs); err != nil || len(revs) == 0 {
+		t.Fatalf("revisions listing: %v", err)
+	}
+	if sk, _ := revs[0]["skills"].([]any); len(sk) != 2 {
+		t.Fatalf("revisions listing must expose the skills: %v", revs[0])
+	}
+	report := mustJSON(t, worker.reqH("POST", "/api/runs/"+runID+"/report", `{"worker_id":"w1","status":"succeeded","summary":"plan ready","executor":"sandbox:0123456789ab"}`, leases[runID]), 200).(map[string]any)
+	if report["executor"] != "sandbox:0123456789ab" {
+		t.Fatalf("the report must record the executor: %v", report["executor"])
+	}
+	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/approve", `{"revision_id":"`+rev["id"].(string)+`"}`), 200)
+}

@@ -18,6 +18,14 @@ branch {{.Branch}}, created from {{.Base}}. Martin approved exactly the plan bel
 # Change requests from Martin (address every point)
 
 {{.Notes}}
+{{end}}{{if .Instructions}}
+# Repository instructions (AGENTS.md at the approved base commit)
+
+{{.Instructions}}
+{{end}}{{range .Skills}}
+# Skill: {{.Name}} (selected with the approved plan)
+
+{{.Body}}
 {{end}}
 # Rules
 

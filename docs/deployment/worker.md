@@ -68,6 +68,94 @@ config) and restarts it on both platforms — safe.
 the environment the service gets — its PATH, HOME and the env file — not your
 shell's: a `SKOPOS_API_KEY` exported in your shell does not count.
 
+## What every agent run gets
+
+Agent runs are locked down regardless of configuration:
+
+- **No user or project settings** (`--setting-sources ""`). The agent does
+  not load the worktree's `CLAUDE.md`, the worker user's `~/.claude/CLAUDE.md`,
+  the allow rules in `~/.claude/settings.json`, hooks, or the MCP servers in
+  `~/.claude.json`. Instructions reach the agent only through the stage
+  prompt (see *Repo knowledge* below).
+- **File tools confined to the working directory** (`--restricted`). The
+  env file, the state dir and other clones are out of reach of
+  Read/Edit/Write. Claude Code already path-checks Bash read commands.
+- **MCP servers only from `mcp_config`** (`--strict-mcp-config`). Put the
+  servers runs may use in a JSON file (`{"mcpServers": {...}}`), point
+  `worker.mcp_config` at it, and allowlist their tool prefixes in
+  `mcp_servers`.
+- **Scrubbed environment.** Agent runs, checks and `setup` commands get no
+  push tokens, no skopos key, no SSH agent and nothing from the env file;
+  `setup_env` passes what setup legitimately needs.
+
+The agent CLI must support these flags. The daemon refuses to start, and
+`skopos worker check` reports it, when it does not.
+
+## Containing agent runs
+
+skopos provides no isolation; it delegates. How a stage is contained is
+your choice: a container, a VM, a sandbox tool, or Claude Code's own
+sandbox. You declare it per stage in a profile:
+
+```toml
+[worker.profiles.php.implement]
+wrapper = ["docker", "run", "--rm", "-i", "-v", "{dir}:{dir}", "-w", "{dir}",
+           "-e", "ANTHROPIC_API_KEY", "ghcr.io/you/agent-php@sha256:..."]
+tools   = ["Bash(php:*)", "Bash(composer:*)", "Bash(vendor/bin/phpstan:*)", "Bash(vendor/bin/phpunit:*)"]
+
+[worker.profiles.php.review]
+settings = '{"sandbox":{"enabled":true}}'
+tools    = ["Bash(vendor/bin/phpstan:*)", "Bash(vendor/bin/phpunit:*)"]
+
+[worker.repos."github.com/you/repo"]
+path    = "~/clones/repo"
+profile = "php"
+# [worker.repos."github.com/you/repo".stages.qa] overrides one stage
+```
+
+- **`wrapper`** is an argv prefix; the agent command is appended to it.
+  - Placeholders: `{dir}` (the run's working directory), `{run}`, `{stage}`,
+    `{workspace}`.
+  - The wrapper process receives the scrubbed environment plus the stage's
+    `env`, so forward what the agent needs (`-e NAME`).
+  - The image must contain the agent CLI.
+  - Session resumes need a persistent config dir (`CLAUDE_CONFIG_DIR`)
+    mounted into the container.
+  - The agent needs network access to its model API.
+- **`settings`** is merged into the run's settings (skopos's deny list always
+  stays). `sandbox.enabled = true` counts as containment.
+- **`tools`** are extra allowed tools for the stage.
+- **`env`** is extra agent environment. `${VAR}` expands from the env file.
+
+**Fail closed.** Only a contained stage (one with a `wrapper`, or
+`settings` with `sandbox.enabled = true`) may be granted `tools`, `env` or
+settings `allow` rules. An uncontained grant is a config error: the daemon
+won't start and `worker check` lists it. A tool like `Bash(php:*)` runs
+arbitrary code, so it only makes sense inside something that contains it.
+
+Every run records its `executor` (`local`, `wrapper:<hash>`, `sandbox:<hash>`)
+on the run, so you can see which envelope executed it.
+
+## Repo knowledge (AGENTS.md and skills)
+
+Every stage prompt includes the repo's `AGENTS.md` (falling back to
+`CLAUDE.md`). It is read from the clone **at the base commit**: the
+planner's base, or the approved base for implement and review. It is never
+read from the agent's branch, which could otherwise brief its own reviewer.
+
+Skills are playbooks in `.skopos/skills/<name>/SKILL.md`. A skill can start
+with frontmatter carrying a `description`; the body is the playbook.
+
+- **Planning.** The planner sees an index of the skills at its base and
+  names the ones that apply.
+- **Tag hints.** Item tags that name a skill are always included. A Slack
+  capture's `#hashtags` become tags.
+- **Approval.** The selection is stored on the plan revision and covered by
+  its hash, so approving the plan approves the skills. The Enrichment
+  section lists them.
+- **Implement and review.** These stages receive the bodies of the approved
+  skills, read at the approved base.
+
 ## Secrets
 
 No secrets live in the service definition. The daemon loads

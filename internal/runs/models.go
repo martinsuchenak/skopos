@@ -92,8 +92,11 @@ type Run struct {
 	Checks        []Check   `json:"checks,omitempty"`
 	LogRef        string    `json:"log_ref,omitempty"`
 	FailReason    string    `json:"fail_reason,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	// Executor is how the worker ran the agent stage: "local", or the stage
+	// profile's "wrapper:<hash>" / "sandbox:<hash>" (capability profiles §2).
+	Executor  string    `json:"executor,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Check is one verification result reported by the worker.
@@ -127,6 +130,8 @@ type ReportInput struct {
 	// stage records the branch it will use; implement records the pushed head).
 	Branch  string `json:"branch"`
 	BaseSHA string `json:"base_sha"`
+	// Executor: the stage profile that ran the agent (see Run.Executor).
+	Executor string `json:"executor"`
 }
 
 // WorkspacePrefs is the per-workspace routing config: which runner each stage

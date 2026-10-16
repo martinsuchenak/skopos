@@ -50,8 +50,63 @@ type AgentRun struct {
 	TokenEnvs   []string
 	FileEnvKeys []string
 	// Env carries the account's credentials (API key/config dir) — injected
-	// per run by the placement pool; scrubbing still strips tool secrets.
+	// per run by the placement pool — plus the stage profile's env;
+	// scrubbing still strips everything else credential-shaped.
 	Env map[string]string
+	// MCPConfig is the only MCP source (--strict-mcp-config); empty = none.
+	MCPConfig string
+	// Wrapper is the operator's argv prefix (placeholders already
+	// expanded); the agent command is appended to it.
+	Wrapper []string
+}
+
+// lockdownArgs are the flags every agent run gets (capability profiles §1,
+// verified against Claude Code 2.1.300):
+//   - --setting-sources "": no user/project/local settings — so no
+//     worktree CLAUDE.md (during review that file is the implementer's
+//     branch), no worker-user CLAUDE.md, allow rules, hooks or MCP servers;
+//     instructions reach the agent only through the prompt;
+//   - --restricted: file tools confined to the working directory (Read
+//     otherwise returned the worker env file from outside the worktree);
+//     it drops code-running built-ins unless --tools names them, so the
+//     caller passes the derived --tools list;
+//   - --strict-mcp-config: MCP servers only from --mcp-config.
+func lockdownArgs(r AgentRun) []string {
+	args := []string{"--setting-sources", "", "--restricted", "--strict-mcp-config"}
+	if t := builtinTools(r.AllowedTools); len(t) > 0 {
+		args = append(args, "--tools", strings.Join(t, ","))
+	}
+	if r.MCPConfig != "" {
+		args = append(args, "--mcp-config", r.MCPConfig)
+	}
+	return args
+}
+
+// builtinTools derives --tools from the allowlist: the built-in tool names
+// (pattern arguments stripped, MCP tools excluded — they are not built-ins),
+// first occurrence order, deduped.
+func builtinTools(allowed []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, a := range allowed {
+		name, _, _ := strings.Cut(strings.TrimSpace(a), "(")
+		if name == "" || strings.HasPrefix(name, "mcp__") || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
+// agentCommand assembles argv: the wrapper prefix (if any), then the agent
+// binary and its arguments.
+func agentCommand(r AgentRun, args []string) (string, []string) {
+	if len(r.Wrapper) == 0 {
+		return r.Bin, args
+	}
+	argv := append(append(append([]string{}, r.Wrapper[1:]...), r.Bin), args...)
+	return r.Wrapper[0], argv
 }
 
 // AgentResult is the outcome.
@@ -142,10 +197,12 @@ func runClaude(ctx context.Context, r AgentRun) AgentResult {
 	if r.Settings != "" {
 		args = append(args, "--settings", r.Settings)
 	}
+	args = append(args, lockdownArgs(r)...)
 
 	cctx, cancel := context.WithTimeout(ctx, r.Timeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, r.Bin, args...)
+	name, argv := agentCommand(r, args)
+	cmd := exec.CommandContext(cctx, name, argv...)
 	cmd.Dir = r.Dir
 	cmd.Env = scrubEnv(r.Env, r.TokenEnvs, r.FileEnvKeys)
 	var stdout, stderr bytes.Buffer
@@ -272,4 +329,52 @@ func firstLine(s string) string {
 		}
 	}
 	return ""
+}
+
+// LockdownSupported verifies the agent CLI understands the flags every run
+// now passes (lockdownArgs). An older CLI would fail EVERY run on an unknown
+// option, so the daemon refuses to start and `worker check` reports it.
+// pathEnv, when set, is the PATH to resolve bin on (the service's).
+func LockdownSupported(ctx context.Context, bin, pathEnv string) error {
+	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, bin, "--help")
+	if pathEnv != "" {
+		cmd.Env = append(os.Environ(), "PATH="+pathEnv)
+		if p, err := lookPathIn(bin, pathEnv); err == nil {
+			cmd.Path = p
+		}
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil && len(out) == 0 {
+		return fmt.Errorf("running %s --help: %v", bin, err)
+	}
+	help := string(out)
+	var missing []string
+	for _, f := range []string{"--setting-sources", "--restricted", "--strict-mcp-config", "--mcp-config", "--tools"} {
+		if !strings.Contains(help, f) {
+			missing = append(missing, f)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("%s does not support %s — upgrade the agent CLI (pipeline runs need them to load no user/project settings and keep file tools inside the worktree)", bin, strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// lookPathIn resolves bin against an explicit PATH value.
+func lookPathIn(bin, pathEnv string) (string, error) {
+	if strings.Contains(bin, "/") {
+		return bin, nil
+	}
+	for _, dir := range strings.Split(pathEnv, ":") {
+		if dir == "" {
+			continue
+		}
+		p := dir + "/" + bin
+		if st, err := os.Stat(p); err == nil && !st.IsDir() && st.Mode()&0o111 != 0 {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("%s not found on PATH", bin)
 }

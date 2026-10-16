@@ -3,6 +3,7 @@ package plans
 import (
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/martinsuchenak/skopos/internal/auth"
@@ -446,6 +447,9 @@ func (h *Handler) Replan(w http.ResponseWriter, r *http.Request) {
 			Title       string `json:"title"`
 			Description string `json:"description"`
 		} `json:"steps"`
+		// Skills: the repo skills the planner selected (capability profiles
+		// §3) — part of the revision content the approval binds.
+		Skills []string `json:"skills"`
 	}
 	if err := rest.DecodeJSON(w, r, &req); err != nil {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
@@ -455,6 +459,16 @@ func (h *Handler) Replan(w http.ResponseWriter, r *http.Request) {
 		rest.RespondError(w, http.StatusBadRequest, "steps must not be empty")
 		return
 	}
+	if len(req.Skills) > maxPlanSkills {
+		rest.RespondError(w, http.StatusBadRequest, "too many skills")
+		return
+	}
+	for _, sk := range req.Skills {
+		if !validSkillName(sk) {
+			rest.RespondError(w, http.StatusBadRequest, "invalid skill name: "+sk)
+			return
+		}
+	}
 	steps := make([]RevisionStep, 0, len(req.Steps))
 	for _, st := range req.Steps {
 		if strings.TrimSpace(st.Title) == "" {
@@ -463,7 +477,7 @@ func (h *Handler) Replan(w http.ResponseWriter, r *http.Request) {
 		}
 		steps = append(steps, RevisionStep{Title: st.Title, Description: st.Description})
 	}
-	rev, err := h.service.Replan(r.Context(), r.PathValue("id"), steps, req.BaseSHA)
+	rev, err := h.service.Replan(r.Context(), r.PathValue("id"), steps, req.BaseSHA, req.Skills...)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidInput):
@@ -502,3 +516,13 @@ func (h *Handler) LockRevision(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// maxPlanSkills bounds a plan's skill selection (the worker's index lists at
+// most 50; a plan names a handful).
+const maxPlanSkills = 20
+
+var reSkillName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+
+// validSkillName: a skill is a directory under .skopos/skills — lowercase
+// slug, no path separators.
+func validSkillName(n string) bool { return reSkillName.MatchString(n) }

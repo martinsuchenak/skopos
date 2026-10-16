@@ -38,9 +38,13 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	}
 	baseSHA, _ := git(ctx, repo.Path, "rev-parse", "origin/"+repo.DefaultBranch)
 
+	// Knowledge at the base the planner reads (never a worktree head).
+	skills := repoSkills(ctx, repo.Path, baseSHA)
 	prompt, err := renderPrompt("plan.md", map[string]any{
 		"Workspace": run.WorkspaceID, "Base": repo.DefaultBranch,
 		"Title": item.Title, "Content": item.Content, "Notes": lastSection(item.Content, "## Review notes"),
+		"Instructions": repoInstructions(ctx, repo.Path, baseSHA),
+		"SkillIndex":   skillIndex(skills), "Requested": tagHints(skills, item.Tags),
 	})
 	if err != nil {
 		return err
@@ -57,7 +61,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	}
 	if pr.NeedsClarification {
 		_ = w.client.AppendSection(ctx, run.ItemID, "Questions — planner", bullets(pr.Questions))
-		return w.client.ReportResult(ctx, run.ID, w.cfg.ID, false, map[string]any{
+		return w.report(ctx, run, false, map[string]any{
 			"reason": "needs clarification: " + bullets(pr.Questions), "summary": res.Text[:min(len(res.Text), 500)],
 		})
 	}
@@ -77,16 +81,22 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 			return err // empty unlinked plan at worst — harmless, GC-able
 		}
 	}
-	rev, err := w.client.Replan(ctx, planID, baseSHA, pr.Steps)
+	// The selection is resolved HERE, once: the planner's picks plus the
+	// tag hints, bound into the revision the approval names.
+	selected := selectSkills(skills, pr.Skills, item.Tags)
+	rev, err := w.client.Replan(ctx, planID, baseSHA, pr.Steps, selected)
 	if err != nil {
 		return err
 	}
 	enrich := fmt.Sprintf("**Plan:** %s · **Size:** %s · **Branch:** `%s` · **Base:** `%s` · **Revision:** %s\n\n%s\n\n### Steps\n\n%s",
 		planID, pr.Size, branch, baseSHA[:min(10, len(baseSHA))], rev.ID, pr.Summary, numberedSteps(pr.Steps))
+	if len(selected) > 0 {
+		enrich += "\n**Skills:** " + strings.Join(selected, ", ") + "\n"
+	}
 	_ = w.client.AppendSection(ctx, run.ItemID, "Enrichment — skopos worker", enrich)
 
 	log.Info("plan ready", "plan", planID, "revision", rev.ID, "steps", len(pr.Steps), "cost_usd", res.CostUSD)
-	return w.client.ReportResult(ctx, run.ID, w.cfg.ID, true, map[string]any{
+	return w.report(ctx, run, true, map[string]any{
 		"summary": "plan ready: " + pr.Summary, "branch": branch, "base_sha": baseSHA,
 	})
 }
@@ -139,16 +149,18 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		if err := createWorktreeAt(ctx, repo.Path, worktree, branch, baseRef); err != nil {
 			return fmt.Errorf("worktree: %w", err)
 		}
-		if err := runSetup(ctx, worktree, repo.Setup, repo.Path, 10*time.Minute); err != nil {
+		if err := runSetup(ctx, worktree, repo.Setup, repo.Path, repo.SetupEnv, w.cfg.TokenEnvs(), w.envFileKeys, 10*time.Minute); err != nil {
 			removeWorktree(ctx, repo.Path, worktree)
 			return err
 		}
 	}
 
+	instructions, skillBodies := w.runKnowledge(ctx, repo, run, item.PlanID, baseRef)
 	prompt, err := renderPrompt("implement.md", map[string]any{
 		"Branch": branch, "Base": repo.DefaultBranch, "Title": item.Title,
 		"Content": item.Content, "Steps": steps, "Notes": lastSection(item.Content, "## Change requests"),
 		"ApprovalNotes": lastSection(item.Content, "## Approval notes"),
+		"Instructions":  instructions, "Skills": skillBodies,
 	})
 	if err != nil {
 		return err
@@ -171,7 +183,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		if reason == "" {
 			reason = ir.Summary
 		}
-		return w.client.ReportResult(ctx, run.ID, w.cfg.ID, false, map[string]any{"reason": reason})
+		return w.report(ctx, run, false, map[string]any{"reason": reason})
 	}
 
 	if commitCount(ctx, worktree, repo.DefaultBranch) == 0 {
@@ -192,7 +204,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	}
 
 	log.Info("implementation finished", "head", head, "commits", commitCount(ctx, worktree, repo.DefaultBranch), "cost_usd", res.CostUSD)
-	return w.client.ReportResult(ctx, run.ID, w.cfg.ID, true, map[string]any{
+	return w.report(ctx, run, true, map[string]any{
 		"summary": ir.Summary, "head_sha": head, "branch": branch,
 		"diffstat": diffStat(ctx, worktree, repo.DefaultBranch), "checks": checks,
 	})
@@ -242,8 +254,30 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 	if _, err := git(ctx, wt, "diff", "--quiet", "origin/"+repo.DefaultBranch+"...HEAD"); err == nil {
 		return fmt.Errorf("review: empty diff on %s", run.Branch)
 	}
+	// The plan the review checks against, and the knowledge at the
+	// APPROVED base — never this worktree, which is the implementer's
+	// branch (it could otherwise brief its own reviewer).
+	var steps []Step
+	var instructions string
+	var skillBodies []Skill
+	if item, ierr := w.client.GetItem(ctx, run.ItemID); ierr == nil && item.PlanID != "" {
+		if plan, perr := w.client.GetPlan(ctx, item.PlanID); perr == nil {
+			for _, pi := range plan.Items {
+				if pi.Title == "Review and push (Martin)" {
+					continue
+				}
+				steps = append(steps, Step{Title: pi.Title, Description: pi.Description})
+			}
+		}
+		base := run.BaseSHA
+		if base == "" {
+			base = "origin/" + repo.DefaultBranch
+		}
+		instructions, skillBodies = w.runKnowledge(ctx, repo, run, item.PlanID, base)
+	}
 	prompt, err := renderPrompt("review.md", map[string]any{
-		"Base": repo.DefaultBranch, "Stage": run.Stage,
+		"Base": repo.DefaultBranch, "Stage": run.Stage, "Steps": steps,
+		"Instructions": instructions, "Skills": skillBodies,
 	})
 	if err != nil {
 		return err
@@ -262,11 +296,11 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 		fmt.Sprintf("**Verdict:** %s\n\n%s", rr.Verdict, rr.Summary))
 	log.Info("review finished", "verdict", rr.Verdict, "issues", len(rr.Issues), "cost_usd", res.CostUSD)
 	if !passed {
-		return w.client.ReportResult(ctx, run.ID, w.cfg.ID, false, map[string]any{
+		return w.report(ctx, run, false, map[string]any{
 			"reason": "review failed: " + rr.Summary, "summary": rr.Summary,
 		})
 	}
-	return w.client.ReportResult(ctx, run.ID, w.cfg.ID, true, map[string]any{
+	return w.report(ctx, run, true, map[string]any{
 		"summary": rr.Summary, "checks": []Check{{Name: run.Stage + ":" + account.Name, Passed: true, Output: rr.Summary}},
 	})
 }
@@ -299,6 +333,21 @@ func (w *Worker) proposeAmendment(ctx context.Context, run *Run, item *Item, ir 
 	return w.client.Pause(ctx, run.ID, w.cfg.ID, "amendment proposed: "+firstLine(ir.Reason), time.Time{})
 }
 
+// runKnowledge is what an implement/review/qa prompt carries: the repo
+// instructions and the bodies of the APPROVED revision's skills, both read
+// from the clone at base (capability profiles §3).
+func (w *Worker) runKnowledge(ctx context.Context, repo *Repo, run *Run, planID, base string) (string, []Skill) {
+	instructions := repoInstructions(ctx, repo.Path, base)
+	if planID == "" {
+		return instructions, nil
+	}
+	rev, err := w.client.ApprovedRevision(ctx, planID, run.PlanRevID)
+	if err != nil || rev == nil {
+		return instructions, nil
+	}
+	return instructions, approvedSkills(ctx, repo.Path, base, rev.Skills)
+}
+
 func (w *Worker) failNoRepo(workspaceID string) error {
 	return fmt.Errorf("no local clone configured for workspace %s (worker config repos)", workspaceID)
 }
@@ -311,6 +360,7 @@ type Step struct {
 }
 
 type planResult struct {
+	Skills             []string `json:"skills"`
 	Title              string   `json:"title"`
 	Summary            string   `json:"summary"`
 	Size               string   `json:"size"`

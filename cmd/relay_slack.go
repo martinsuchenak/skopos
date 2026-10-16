@@ -67,6 +67,23 @@ var reWord = regexp.MustCompile(`(?i)^\s*([a-z]+)`)
 var reNew = regexp.MustCompile(`(?is)^\s*new(?:\s*:\s*|\s+)(.+)$`)
 var reSelector = regexp.MustCompile(`(?s)^([A-Za-z0-9._/~+-]+):\s+(.+)$`)
 
+// reHashtag: `#name` words in a capture become item tags — the skill tag
+// hints the planner unions into its selection (capability profiles §3).
+var reHashtag = regexp.MustCompile(`(?:^|\s)#([a-z0-9][a-z0-9._-]{0,63})\b`)
+
+// captureTags is slack-new plus the capture's hashtags (lowercased, unique).
+func captureTags(text string) []string {
+	tags := []string{"slack-new"}
+	seen := map[string]bool{"slack-new": true}
+	for _, m := range reHashtag.FindAllStringSubmatch(strings.ToLower(text), -1) {
+		if !seen[m[1]] {
+			seen[m[1]] = true
+			tags = append(tags, m[1])
+		}
+	}
+	return tags
+}
+
 const slackHelp = "*skopos commands* — reply in an item's thread:\n" +
 	"• `new <workspace>: <what>` — capture into a specific workspace (suffix match, e.g. `new skopos: ...`)\n" +
 	"• `approve` / `lgtm` [`: <notes>`] — approve the plan at the gate\n" +
@@ -108,7 +125,7 @@ func (r *slackRelay) TopLevel(ctx context.Context, text, ts string) bool {
 	item, err := r.inbox.CreateItem(relayCtx(), inbox.CreateInput{
 		WorkspaceID: ws, Title: truncate(what, 80),
 		Content:       what + "\n\n_Created from Slack (`new:`), " + time.Now().UTC().Format("2006-01-02 15:04") + " UTC._",
-		Tags:          []string{"slack-new"},
+		Tags:          captureTags(what),
 		AuthorAgentID: "slack",
 	})
 	if err != nil {

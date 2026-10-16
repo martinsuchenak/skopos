@@ -122,6 +122,17 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "inbox_items", "slack_thread_ts", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	// Capability profiles: how each run was executed, and the skills a plan
+	// selected (plan + revision snapshot — part of the approved content).
+	if err := ensureColumn(db, "runs", "executor", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "plans", "skills", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "plan_revisions", "skills_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	return nil
 }
 

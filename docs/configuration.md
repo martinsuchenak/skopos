@@ -58,8 +58,14 @@ walkthrough.
 | `worker.runners` | — | `["claude"]` | Runners this worker offers (must cover the workspaces' stage preferences) |
 | `worker.workspaces` | `--workspace` | (from repos) | Workspace IDs this worker serves |
 | `worker.poll_every` | — | `30s` | Idle claim interval |
-| `worker.repos."<workspace-id>"` | — | — | Per-workspace local clone: `path`, `default_branch`, `branch_prefix`, `setup`, `checks`, `protected_branches`, and `push.{kind,remote_url,token_env}` |
-| `worker.accounts` | — | — | Credential pool: `name`, `runner`, `priority`, `env` (injected into agent runs only) |
+| `worker.repos."<workspace-id>"` | — | — | Per-workspace local clone: `path`, `default_branch`, `branch_prefix`, `setup`, `setup_env`, `checks`, `protected_branches`, `profile`, `stages.<stage>`, and `push.{kind,remote_url,token_env}` |
+| `worker.accounts` | — | — | Credential pool: `name`, `runner`, `priority`, `model`, `env` (injected into agent runs only) |
+| `worker.claude_bin` | — | `claude` | Agent CLI binary — must support `--setting-sources`, `--restricted`, `--strict-mcp-config` (checked at start) |
+| `worker.plan_timeout` / `worker.impl_timeout` | — | `10m` / `90m` | Agent run timeouts (review/qa use the plan timeout) |
+| `worker.mcp_config` | — | — | JSON file with the MCP servers pipeline runs get (Claude Code `mcpServers` shape); required when `mcp_servers` is set |
+| `worker.mcp_servers` | — | — | MCP tool prefixes allowed in plan/implement runs, e.g. `["mcp__skopos"]` |
+| `worker.mcp_deny` | — | Fortix production-write tools | MCP tools denied in every run (added to the built-in git/network denials) |
+| `worker.profiles.<name>.<stage>` | — | — | Operator-supplied stage executor (`plan`/`implement`/`review`/`qa`): `wrapper`, `settings`, `tools`, `env` — see [deployment/worker.md](deployment/worker.md#containing-agent-runs) |
 | — | `--env-file` | `<config-dir>/skopos-worker.env` when present | `KEY=VALUE` secrets loaded before the config (real environment wins) |
 
 ## Slack relay (server)

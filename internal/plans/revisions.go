@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -49,8 +50,12 @@ type Revision struct {
 	Steps       []RevisionStep `json:"steps"`
 	ContentHash string         `json:"content_hash"`
 	BaseSHA     string         `json:"base_sha,omitempty"`
-	CreatedAt   time.Time      `json:"created_at"`
-	LockedAt    *time.Time     `json:"locked_at,omitempty"`
+	// Skills are the repo skills the plan selected (capability profiles
+	// §3): part of the approved content — the hash covers them, so the
+	// approval binds which playbooks the implementer is given.
+	Skills    []string   `json:"skills,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	LockedAt  *time.Time `json:"locked_at,omitempty"`
 }
 
 // CreateRevision snapshots the plan's current items as a new revision.
@@ -133,7 +138,7 @@ func (s *Service) SetPlannableGuard(fn func(planID string) error) { s.plannableG
 // Replan replaces ALL non-review steps and snapshots atomically (round-5
 // M6): the first plan and every re-plan go through this one call. Requires
 // the latest revision to be unlocked (planning has nothing approved).
-func (s *Service) Replan(ctx context.Context, planID string, steps []RevisionStep, baseSHA string) (*Revision, error) {
+func (s *Service) Replan(ctx context.Context, planID string, steps []RevisionStep, baseSHA string, skills ...string) (*Revision, error) {
 	if err := s.requirePlanScope(ctx, planID); err != nil {
 		return nil, err
 	}
@@ -150,7 +155,7 @@ func (s *Service) Replan(ctx context.Context, planID string, steps []RevisionSte
 	if !ok {
 		return nil, fmt.Errorf("%w: storage does not support replacement", ErrInvalidInput)
 	}
-	if err := amender.ReplaceTx(ctx, planID, steps, strings.TrimSpace(baseSHA), "plan", s.now().UTC()); err != nil {
+	if err := amender.ReplaceTx(ctx, planID, steps, strings.TrimSpace(baseSHA), "plan", normalizeSkills(skills), s.now().UTC()); err != nil {
 		return nil, err
 	}
 	s.publishPlan(ctx, planID)
@@ -174,7 +179,11 @@ func (s *Service) VerifyRevisionCurrent(ctx context.Context, planID string) (*Re
 	for _, it := range plan.Items {
 		steps = append(steps, RevisionStep{ID: it.ID, Title: it.Title, Description: it.Description, Phase: it.Phase, Position: it.Position})
 	}
-	hash, err := hashSteps(steps)
+	skills, err := s.planSkills(ctx, planID)
+	if err != nil {
+		return nil, err
+	}
+	hash, err := hashContent(steps, skills)
 	if err != nil {
 		return nil, err
 	}
@@ -197,11 +206,16 @@ func (s *Service) snapshot(ctx context.Context, planID, baseSHA string) (*Revisi
 	for _, it := range plan.Items {
 		steps = append(steps, RevisionStep{ID: it.ID, Title: it.Title, Description: it.Description, Phase: it.Phase, Position: it.Position})
 	}
-	hash, err := hashSteps(steps)
+	skills, err := s.planSkills(ctx, planID)
+	if err != nil {
+		return nil, err
+	}
+	hash, err := hashContent(steps, skills)
 	if err != nil {
 		return nil, err
 	}
 	rev := Revision{
+		Skills:      skills,
 		ID:          ids.New(),
 		PlanID:      planID,
 		WorkspaceID: plan.WorkspaceID,
@@ -219,6 +233,55 @@ func (s *Service) snapshot(ctx context.Context, planID, baseSHA string) (*Revisi
 	}
 	s.publishPlan(ctx, planID)
 	return &rev, nil
+}
+
+// hashContent is the revision content hash: the steps, plus the selected
+// skills when there are any. With no skills it is exactly hashSteps — every
+// revision created before skills existed keeps its hash (an in-flight item
+// at the gate must not go stale on upgrade).
+func hashContent(steps []RevisionStep, skills []string) (string, error) {
+	if len(skills) == 0 {
+		return hashSteps(steps)
+	}
+	buf, err := json.Marshal(struct {
+		Steps  []RevisionStep `json:"steps"`
+		Skills []string       `json:"skills"`
+	}{steps, skills})
+	if err != nil {
+		return "", fmt.Errorf("encoding revision content: %w", err)
+	}
+	sum := sha256.Sum256(buf)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// normalizeSkills trims, drops empties and duplicates, and sorts — the
+// selection is a set, and the hash must not depend on its order.
+func normalizeSkills(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, n := range in {
+		n = strings.TrimSpace(n)
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// SkillsStore is the optional storage capability for plan skills.
+type SkillsStore interface {
+	PlanSkills(ctx context.Context, planID string) ([]string, error)
+}
+
+func (s *Service) planSkills(ctx context.Context, planID string) ([]string, error) {
+	ss, ok := s.store.(SkillsStore)
+	if !ok {
+		return nil, nil
+	}
+	return ss.PlanSkills(ctx, planID)
 }
 
 func hashSteps(steps []RevisionStep) (string, error) {
@@ -308,9 +371,9 @@ func (st *Storage) CreateRevision(ctx context.Context, r Revision) error {
 		lockedAt = r.LockedAt.Format(time.RFC3339Nano)
 	}
 	if _, err := st.db.ExecContext(ctx, `
-		INSERT INTO plan_revisions (id, plan_id, workspace_id, revision_no, steps_json, content_hash, base_sha, created_at, locked_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.ID, r.PlanID, r.WorkspaceID, r.RevisionNo, string(stepsJSON), r.ContentHash, r.BaseSHA, r.CreatedAt.Format(time.RFC3339Nano), lockedAt); err != nil {
+		INSERT INTO plan_revisions (id, plan_id, workspace_id, revision_no, steps_json, content_hash, base_sha, created_at, locked_at, skills_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.PlanID, r.WorkspaceID, r.RevisionNo, string(stepsJSON), r.ContentHash, r.BaseSHA, r.CreatedAt.Format(time.RFC3339Nano), lockedAt, skillsJSON(r.Skills)); err != nil {
 		return fmt.Errorf("inserting plan revision: %w", err)
 	}
 	return nil
@@ -320,9 +383,9 @@ func (st *Storage) scanRevision(row interface {
 	Scan(dest ...any) error
 }) (*Revision, error) {
 	var r Revision
-	var stepsJSON, createdAt string
+	var stepsJSON, createdAt, skills string
 	var lockedAt sql.NullString
-	if err := row.Scan(&r.ID, &r.PlanID, &r.WorkspaceID, &r.RevisionNo, &stepsJSON, &r.ContentHash, &r.BaseSHA, &createdAt, &lockedAt); err != nil {
+	if err := row.Scan(&r.ID, &r.PlanID, &r.WorkspaceID, &r.RevisionNo, &stepsJSON, &r.ContentHash, &r.BaseSHA, &createdAt, &lockedAt, &skills); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -331,6 +394,7 @@ func (st *Storage) scanRevision(row interface {
 	if err := json.Unmarshal([]byte(stepsJSON), &r.Steps); err != nil {
 		return nil, fmt.Errorf("decoding revision steps: %w", err)
 	}
+	r.Skills = decodeSkills(skills)
 	r.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 	if lockedAt.Valid {
 		t, _ := time.Parse(time.RFC3339Nano, lockedAt.String)
@@ -339,7 +403,38 @@ func (st *Storage) scanRevision(row interface {
 	return &r, nil
 }
 
-const revisionColumns = `id, plan_id, workspace_id, revision_no, steps_json, content_hash, base_sha, created_at, locked_at`
+const revisionColumns = `id, plan_id, workspace_id, revision_no, steps_json, content_hash, base_sha, created_at, locked_at, skills_json`
+
+// skillsJSON / decodeSkills: the skills columns hold a JSON array, or ”
+// for none (the column default — every pre-skills row).
+func skillsJSON(skills []string) string {
+	if len(skills) == 0 {
+		return ""
+	}
+	b, _ := json.Marshal(skills)
+	return string(b)
+}
+
+func decodeSkills(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	_ = json.Unmarshal([]byte(s), &out)
+	return out
+}
+
+// PlanSkills reads the plan's current skill selection.
+func (st *Storage) PlanSkills(ctx context.Context, planID string) ([]string, error) {
+	var s string
+	if err := st.db.QueryRowContext(ctx, `SELECT skills FROM plans WHERE id = ?`, planID).Scan(&s); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("reading plan skills: %w", err)
+	}
+	return decodeSkills(s), nil
+}
 
 func (st *Storage) LatestRevision(ctx context.Context, planID string) (*Revision, error) {
 	row := st.db.QueryRowContext(ctx,
@@ -395,7 +490,7 @@ func (st *Storage) LockRevision(ctx context.Context, id string, at time.Time) er
 // AmendTxer is the storage capability Amend/Replan need (Storage impl).
 type AmendTxer interface {
 	AmendTx(ctx context.Context, planID string, steps []RevisionStep, baseSHA string, now time.Time) error
-	ReplaceTx(ctx context.Context, planID string, steps []RevisionStep, baseSHA string, mode string, now time.Time) error
+	ReplaceTx(ctx context.Context, planID string, steps []RevisionStep, baseSHA string, mode string, skills []string, now time.Time) error
 }
 
 // ReplaceTx replaces a plan's steps and snapshots in one transaction.
@@ -403,7 +498,9 @@ type AmendTxer interface {
 // items (the locked-revision amendment path). mode "plan": replace ALL
 // non-review items and ensure exactly one review step (planning / re-plan —
 // requires an unlocked or absent latest revision, checked by the caller).
-func (s *Storage) ReplaceTx(ctx context.Context, planID string, steps []RevisionStep, baseSHA string, mode string, now time.Time) error {
+// skills: mode "plan" sets the plan's selection; mode "amend" ignores it and
+// keeps the approved one (an amendment re-approves steps, not playbooks).
+func (s *Storage) ReplaceTx(ctx context.Context, planID string, steps []RevisionStep, baseSHA string, mode string, skills []string, now time.Time) error {
 	tx, err := s.db.(*sql.DB).BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -414,9 +511,15 @@ func (s *Storage) ReplaceTx(ctx context.Context, planID string, steps []Revision
 		`SELECT COALESCE(MAX(revision_no), 0) + 1 FROM plan_revisions WHERE plan_id = ?`, planID).Scan(&next); err != nil {
 		return fmt.Errorf("next revision number: %w", err)
 	}
-	var wsID string
-	if err := tx.QueryRowContext(ctx, `SELECT workspace_id FROM plans WHERE id = ?`, planID).Scan(&wsID); err != nil {
+	var wsID, planSkills string
+	if err := tx.QueryRowContext(ctx, `SELECT workspace_id, skills FROM plans WHERE id = ?`, planID).Scan(&wsID, &planSkills); err != nil {
 		return fmt.Errorf("plan workspace: %w", err)
+	}
+	if mode == "plan" {
+		planSkills = skillsJSON(skills)
+		if _, err := tx.ExecContext(ctx, `UPDATE plans SET skills = ? WHERE id = ?`, planSkills, planID); err != nil {
+			return fmt.Errorf("setting plan skills: %w", err)
+		}
 	}
 	if mode == "plan" {
 		// Planning: nothing is approved or executing yet — replace
@@ -490,15 +593,15 @@ func (s *Storage) ReplaceTx(ctx context.Context, planID string, steps []Revision
 	for _, it := range items {
 		snap = append(snap, RevisionStep{ID: it.ID, Title: it.Title, Description: it.Description, Phase: it.Phase, Position: it.Position})
 	}
-	hash, err := hashSteps(snap)
+	hash, err := hashContent(snap, decodeSkills(planSkills))
 	if err != nil {
 		return err
 	}
 	checks, _ := json.Marshal(snap)
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO plan_revisions (id, plan_id, workspace_id, revision_no, steps_json, content_hash, base_sha, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		ids.New(), planID, wsID, next, string(checks), hash, baseSHA, formatTime(now)); err != nil {
+		INSERT INTO plan_revisions (id, plan_id, workspace_id, revision_no, steps_json, content_hash, base_sha, created_at, skills_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ids.New(), planID, wsID, next, string(checks), hash, baseSHA, formatTime(now), planSkills); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -506,7 +609,7 @@ func (s *Storage) ReplaceTx(ctx context.Context, planID string, steps []Revision
 
 // AmendTx keeps the round-2/3 call sites working (mode "amend").
 func (s *Storage) AmendTx(ctx context.Context, planID string, steps []RevisionStep, baseSHA string, now time.Time) error {
-	return s.ReplaceTx(ctx, planID, steps, baseSHA, "amend", now)
+	return s.ReplaceTx(ctx, planID, steps, baseSHA, "amend", nil, now)
 }
 
 func txItems(ctx context.Context, tx *sql.Tx, planID string) ([]Item, error) {

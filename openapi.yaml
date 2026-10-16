@@ -495,6 +495,11 @@ paths:
                     properties:
                       title: { type: string }
                       description: { type: string }
+                skills:
+                  type: array
+                  maxItems: 20
+                  description: Repo skills (.skopos/skills/<name>) the plan selected — stored on the plan and the revision, covered by content_hash, so the approval binds them
+                  items: { type: string, pattern: '^[a-z0-9][a-z0-9._-]{0,63}$' }
       responses:
         "200":
           description: The new revision
@@ -2174,6 +2179,7 @@ components:
               output: { type: string }
         log_ref: { type: string }
         fail_reason: { type: string }
+        executor: { type: string, description: 'How the worker ran the agent stage: "local", or the stage profile''s "wrapper:<hash>" / "sandbox:<hash>"' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -2208,7 +2214,11 @@ components:
               description: { type: string }
               phase: { type: string }
               position: { type: integer }
-        content_hash: { type: string, description: SHA-256 of the canonical steps encoding }
+        content_hash: { type: string, description: SHA-256 of the canonical steps encoding (plus the skills, when any are selected) }
+        skills:
+          type: array
+          items: { type: string }
+          description: Repo skills the plan selected — part of the approved content
         base_sha: { type: string, description: The commit the planner read }
         created_at: { type: string, format: date-time }
         locked_at: { type: string, format: date-time, nullable: true }

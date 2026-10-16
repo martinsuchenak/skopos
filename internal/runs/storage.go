@@ -31,7 +31,7 @@ func parseTime(s string) time.Time {
 
 const runColumns = `id, workspace_id, item_id, plan_rev_id, stage, runner, worker_id, status,
 	resume_kind, lease_expires_at, resume_after, attempt, branch, base_sha, head_sha,
-	result_summary, diffstat, checks, log_ref, fail_reason, lease_token_hash, claimed_key_id, created_at, updated_at`
+	result_summary, diffstat, checks, log_ref, fail_reason, lease_token_hash, claimed_key_id, created_at, updated_at, executor`
 
 func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	var r Run
@@ -39,7 +39,7 @@ func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	var checks string
 	if err := row.Scan(&r.ID, &r.WorkspaceID, &r.ItemID, &r.PlanRevID, &r.Stage, &r.Runner, &r.WorkerID, &r.Status,
 		&r.ResumeKind, &lease, &resumeAfter, &r.Attempt, &r.Branch, &r.BaseSHA, &r.HeadSHA,
-		&r.ResultSummary, &r.Diffstat, &checks, &r.LogRef, &r.FailReason, &r.LeaseTokenHash, &r.ClaimedKeyID, &createdAt, &updatedAt); err != nil {
+		&r.ResultSummary, &r.Diffstat, &checks, &r.LogRef, &r.FailReason, &r.LeaseTokenHash, &r.ClaimedKeyID, &createdAt, &updatedAt, &r.Executor); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -390,10 +390,11 @@ func (s *Storage) Report(ctx context.Context, id, workerID, keyID, tokenHash str
 		UPDATE runs SET status = ?, result_summary = ?, head_sha = ?, diffstat = ?, checks = ?,
 			log_ref = ?, fail_reason = ?, branch = CASE WHEN ? != '' THEN ? ELSE branch END,
 			base_sha = CASE WHEN ? != '' THEN ? ELSE base_sha END,
+			executor = CASE WHEN ? != '' THEN ? ELSE executor END,
 			lease_expires_at = '', resume_after = '', updated_at = ?
 		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
 		string(in.Status), in.Summary, in.HeadSHA, in.Diffstat, string(checks),
-		in.LogRef, in.Reason, in.Branch, in.Branch, in.BaseSHA, in.BaseSHA,
+		in.LogRef, in.Reason, in.Branch, in.Branch, in.BaseSHA, in.BaseSHA, in.Executor, in.Executor,
 		formatTime(now), id, workerID, keyID, tokenHash, string(StatusClaimed), string(StatusRunning), string(StatusPaused))
 	if err != nil {
 		return nil, fmt.Errorf("reporting run: %w", err)

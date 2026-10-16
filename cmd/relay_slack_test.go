@@ -476,3 +476,12 @@ func TestRelayHintAndMultilineSelector(t *testing.T) {
 		t.Fatalf("confirmation must name the workspace: %q", fake.last().text)
 	}
 }
+
+// Hashtags in a capture become tags (skill hints); the text is unchanged.
+func TestCaptureTags(t *testing.T) {
+	got := captureTags("refactor the importer #php-dto-migration #PHP-DTO-migration and #qa.e2e, not a#tag")
+	want := []string{"slack-new", "php-dto-migration", "qa.e2e"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("captureTags = %v, want %v", got, want)
+	}
+}

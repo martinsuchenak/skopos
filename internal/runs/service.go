@@ -201,6 +201,11 @@ func (s *Service) Report(ctx context.Context, id string, in ReportInput, leaseTo
 	if err := s.checkScope(ctx, id); err != nil {
 		return nil, err
 	}
+	// The executor id is a short worker-chosen label ("local",
+	// "wrapper:<12 hex>"); bound it like any client string.
+	if in.Executor = strings.TrimSpace(in.Executor); len(in.Executor) > 64 {
+		in.Executor = in.Executor[:64]
+	}
 	run, err := s.storage.Report(ctx, id, in.WorkerID, callerKeyID(ctx), hashLeaseToken(leaseToken), in, s.now().UTC())
 	if err != nil {
 		return nil, err

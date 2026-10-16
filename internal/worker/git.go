@@ -160,11 +160,22 @@ func isDirty(ctx context.Context, worktree string) bool {
 	return strings.TrimSpace(s) != ""
 }
 
-func runSetup(ctx context.Context, worktree string, setup []string, clone string, timeout time.Duration) error {
+// runSetup runs the repo's setup commands in a fresh worktree. They get the
+// scrubbed environment (review: they inherited every daemon secret — env
+// file, skopos key, push tokens, SSH agent) plus the repo's setup_env, and
+// the setup timeout bounds them all.
+func runSetup(ctx context.Context, worktree string, setup []string, clone string, setupEnv map[string]string, tokenEnvs, fileEnvKeys []string, timeout time.Duration) error {
+	if len(setup) == 0 {
+		return nil
+	}
+	sctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	env := scrubEnv(setupEnv, tokenEnvs, fileEnvKeys)
 	for _, c := range setup {
 		c = strings.ReplaceAll(c, "{clone}", clone)
-		cmd := exec.CommandContext(ctx, "sh", "-c", c)
+		cmd := exec.CommandContext(sctx, "sh", "-c", c)
 		cmd.Dir = worktree
+		cmd.Env = env
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("setup %q failed: %v: %s", c, err, tail(string(out), 300))

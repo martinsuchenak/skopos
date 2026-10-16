@@ -72,6 +72,8 @@ poll_every = "30s"
 # default_branch = "main"
 # branch_prefix = "agent/"
 # setup = []
+# setup_env = { COMPOSER_AUTH = "${COMPOSER_AUTH}" }   # setup runs with a scrubbed env
+# profile = "php"                 # a [worker.profiles.<name>] entry
 # checks = ["task test"]
 # protected_branches = ["PROD", "main", "master", "develop", "release/**"]
 # [worker.repos."github.com/you/repo".push]
@@ -85,5 +87,25 @@ poll_every = "30s"
 # name = "claude-1"
 # runner = "claude"
 # priority = 1
-# env = { ANTHROPIC_API_KEY = "sk-ant-..." }
+# env = { ANTHROPIC_API_KEY = "${CLAUDE_1_API_KEY}" }   # the value lives in skopos-worker.env
+
+# MCP servers for pipeline runs. Agent runs load NO user/project settings
+# (no ~/.claude.json servers, no CLAUDE.md, no hooks), so the servers they
+# may use come from this file (Claude Code mcpServers JSON); mcp_servers is
+# the allowlist of their tool prefixes. Required when mcp_servers is set.
+# mcp_config = "~/.config/skopos/worker-mcp.json"
+# mcp_servers = ["mcp__skopos"]
+
+# Profiles: how YOU contain a stage — skopos provides no isolation itself.
+# A stage is contained by a wrapper (argv prefix the agent command is
+# appended to: a container, a VM, a sandbox tool; {dir} {run} {stage}
+# {workspace} expand) or by settings enabling Claude Code's own sandbox.
+# Only a contained stage may be granted capabilities (tools, env) — an
+# uncontained grant is a config error. Repos opt in with profile = "<name>".
+# [worker.profiles.php.implement]
+# wrapper = ["docker", "run", "--rm", "-i", "-v", "{dir}:{dir}", "-w", "{dir}", "-e", "ANTHROPIC_API_KEY", "ghcr.io/you/agent-php@sha256:..."]
+# tools = ["Bash(php:*)", "Bash(composer:*)", "Bash(vendor/bin/phpstan:*)", "Bash(vendor/bin/phpunit:*)"]
+# [worker.profiles.php.review]
+# settings = '{"sandbox":{"enabled":true}}'
+# tools = ["Bash(vendor/bin/phpstan:*)", "Bash(vendor/bin/phpunit:*)"]
 # go-scaffolder:config-sections

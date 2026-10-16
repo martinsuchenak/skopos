@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -506,5 +507,33 @@ func TestWorkerRegistry(t *testing.T) {
 	w := workers[0]
 	if w.ID != "w9" || len(w.Runners) != 2 || w.Runners[0] != "claude" || len(w.Workspaces) != 2 || w.LastSeen == "" {
 		t.Fatalf("registry row wrong: %+v", w)
+	}
+}
+
+// Capability profiles §2: the report records which executor ran the stage
+// (bounded, and kept when a later report omits it).
+func TestReportRecordsExecutor(t *testing.T) {
+	s := testService(t)
+	ctx := rootCtx()
+	_ = mustQueue(t, s, ctx, "ws-a", "item-x", StagePlan)
+	run, err := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	if err != nil || run == nil {
+		t.Fatalf("claim: %v %v", run, err)
+	}
+	got, err := s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded, Summary: "ok", Executor: "  wrapper:0123456789ab  "}, run.LeaseToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Executor != "wrapper:0123456789ab" {
+		t.Fatalf("executor: %q", got.Executor)
+	}
+	_ = mustQueue(t, s, ctx, "ws-a", "item-y", StagePlan)
+	run2, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	got2, err := s.Report(ctx, run2.ID, ReportInput{WorkerID: "w1", Status: StatusFailed, Reason: "x", Executor: strings.Repeat("e", 200)}, run2.LeaseToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got2.Executor) != 64 {
+		t.Fatalf("executor must be bounded: %d", len(got2.Executor))
 	}
 }

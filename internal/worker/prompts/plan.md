@@ -10,7 +10,20 @@ Repository: {{.Workspace}} (checked out in the current directory, branch {{.Base
 # Review notes from Martin on the previous plan (address every point)
 
 {{.Notes}}
-{{end}}
+{{end}}{{if .Instructions}}
+# Repository instructions (AGENTS.md at the base you are planning from)
+
+{{.Instructions}}
+{{end}}{{if .SkillIndex}}
+# Skills available in this repository
+
+Playbooks from `.skopos/skills/`. If one clearly applies to this item, put its name in `skills`
+in your result: the implementation and review agents then receive its full text, and Martin
+sees the selection when he approves the plan. Do not select skills that do not apply.
+{{range .SkillIndex}}- `{{.Name}}`{{if .Description}}: {{.Description}}{{end}}
+{{end}}{{if .Requested}}
+Martin tagged the item with these skills; they are always included: {{range $i, $n := .Requested}}{{if $i}}, {{end}}`{{$n}}`{{end}}.
+{{end}}{{end}}
 # What to do
 
 1. Research the codebase before planning: read the relevant files, and use the skopos MCP code

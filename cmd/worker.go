@@ -95,6 +95,11 @@ func workerCmd() *cli.Command {
 			// scrubber drops every key the file provided.
 			w.SetEnvFileKeys(fileKeys)
 
+			// Fail closed: every run passes the lockdown flags; an agent CLI
+			// without them would fail every run, so refuse to start instead.
+			if err := worker.LockdownSupported(ctx, cfg.Bin, ""); err != nil {
+				return err
+			}
 			runCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			log.Info("worker starting", "workspaces", cfg.Workspaces, "runners", cfg.Runners, "state", cfg.StateDir)

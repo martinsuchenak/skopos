@@ -5,6 +5,15 @@ The changes implement this plan:
 
 {{range $i, $s := .Steps}}{{inc $i}}. {{$s.Title}}
 {{end}}
+{{if .Instructions}}
+# Repository instructions (AGENTS.md at the approved base commit)
+
+{{.Instructions}}
+{{end}}{{range .Skills}}
+# Skill: {{.Name}} (selected with the approved plan)
+
+{{.Body}}
+{{end}}
 Report only concrete problems: bugs, missed plan steps, broken behaviour, security issues, and
 changes outside the plan. No style nitpicks, no praise.
 

@@ -230,12 +230,34 @@ func (c *Client) AmendRevision(ctx context.Context, planID, baseSHA string) (*Re
 }
 
 // Replan atomically replaces all non-review steps and snapshots (M6).
-func (c *Client) Replan(ctx context.Context, planID, baseSHA string, steps []Step) (*Revision, error) {
+func (c *Client) Replan(ctx context.Context, planID, baseSHA string, steps []Step, skills []string) (*Revision, error) {
 	var rev Revision
-	err := c.do(ctx, http.MethodPost, "/api/plans/"+planID+"/replan", map[string]any{
-		"base_sha": baseSHA, "steps": steps,
-	}, &rev)
+	body := map[string]any{"base_sha": baseSHA, "steps": steps}
+	if len(skills) > 0 {
+		body["skills"] = skills
+	}
+	err := c.do(ctx, http.MethodPost, "/api/plans/"+planID+"/replan", body, &rev)
 	return &rev, err
+}
+
+// ApprovedRevision is the revision a run executes: the run's own revision
+// id, else the newest locked one (nil when the plan has none).
+func (c *Client) ApprovedRevision(ctx context.Context, planID, revID string) (*Revision, error) {
+	var revs []Revision
+	if err := c.do(ctx, http.MethodGet, "/api/plans/"+planID+"/revisions", nil, &revs); err != nil {
+		return nil, err
+	}
+	for i := range revs {
+		if revID != "" && revs[i].ID == revID {
+			return &revs[i], nil
+		}
+	}
+	for i := range revs { // newest first
+		if revID == "" && revs[i].LockedAt != nil {
+			return &revs[i], nil
+		}
+	}
+	return nil, nil
 }
 
 // Amend is the atomic amendment (append steps + snapshot past the lock).
@@ -300,8 +322,10 @@ type PlanItem struct {
 }
 
 type Revision struct {
-	ID          string `json:"id"`
-	RevisionNo  int    `json:"revision_no"`
-	ContentHash string `json:"content_hash"`
-	BaseSHA     string `json:"base_sha"`
+	ID          string     `json:"id"`
+	RevisionNo  int        `json:"revision_no"`
+	ContentHash string     `json:"content_hash"`
+	BaseSHA     string     `json:"base_sha"`
+	Skills      []string   `json:"skills"`
+	LockedAt    *time.Time `json:"locked_at"`
 }
