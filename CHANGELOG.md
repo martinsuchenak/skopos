@@ -50,6 +50,11 @@ versions follow [Semantic Versioning](https://semver.org/).
     approving the plan approves the skills. Existing revisions keep their
     hash.
 
+- **Docs: a step-by-step pipeline tutorial** (`docs/guides/pipeline.md`)
+  covers the server, keys, repo prep, stage routing, workers, the first item,
+  Slack, scaling and troubleshooting. The worker reference is restructured,
+  and the inbox and plans concepts now document the agent workflow and plan
+  revisions.
 - **`skopos worker runner add | list | test`.** Configure runners without
   reading the docs.
   - **`add`** is a wizard: it detects installed CLIs, lists opencode's models,
@@ -87,6 +92,14 @@ versions follow [Semantic Versioning](https://semver.org/).
   the wrong repository. Every agent command now gets `PWD=<run dir>`, and
   opencode also gets `--dir`.
 - **`accounts.model` was ignored** — it never reached the agent run.
+- **Approval and change-request notes reached agents only from Slack.** The
+  relay appended them to the item, which is where the stage prompts read
+  them. The dashboard and REST endpoints only recorded them in the audit
+  log, so a dashboard **Request changes** re-ran without the reasons. The
+  service now appends notes for every surface, in the same transaction as
+  the status change: `## Approval notes`, `## Review notes` (re-plan),
+  `## Change requests` (re-implement) and `## Answers` (retry). Found while
+  writing the pipeline tutorial.
 - **The daemon dropped `runner_config`, `profiles` and `mcp_config`.** It
   copied a hand-picked list of `[worker]` fields from the config file, while
   `worker check` read the whole section. So the check passed a config the

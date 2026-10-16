@@ -310,3 +310,52 @@ func TestWorkflowItemCannotMoveWorkspace(t *testing.T) {
 		t.Fatalf("manual item re-file: %v", err)
 	}
 }
+
+// Human notes reach the agents from every surface (dashboard, REST, CLI —
+// not just the Slack relay): approve notes become "## Approval notes",
+// request-changes at the plan gate "## Review notes" and at review
+// "## Change requests", appended with the transition.
+func TestHumanNotesAppendedForAgents(t *testing.T) {
+	svc, plansSvc, _ := fullStack(t)
+	root := context.Background()
+
+	item := mustReadyForApproval(t, svc, plansSvc, "notes")
+	if _, err := svc.RequestChanges(approverCtx(), item.ID, "split step 2", audit.ViaDashboard); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := svc.GetItem(root, item.ID)
+	if got.Status != StatusPlanning || !strings.Contains(got.Content, "## Review notes\n\nsplit step 2") {
+		t.Fatalf("re-plan notes: %s %q", got.Status, got.Content)
+	}
+
+	item2 := mustReadyForApproval(t, svc, plansSvc, "approve notes")
+	if _, err := svc.Approve(approverCtx(), item2.ID, ApproveInput{Notes: "1) a — keep the old API", Via: audit.ViaDashboard}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = svc.GetItem(root, item2.ID)
+	if !strings.Contains(got.Content, "## Approval notes\n\n1) a — keep the old API") {
+		t.Fatalf("approval notes: %q", got.Content)
+	}
+	// No notes, no section.
+	item3 := mustReadyForApproval(t, svc, plansSvc, "plain approve")
+	if _, err := svc.Approve(approverCtx(), item3.ID, ApproveInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := svc.GetItem(root, item3.ID); strings.Contains(got.Content, "## Approval notes") {
+		t.Fatalf("empty notes must add nothing: %q", got.Content)
+	}
+	// At review: changes go to the implementer.
+	if _, err := svc.SystemTransition(root, item2.ID, StatusImplementing, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SystemTransition(root, item2.ID, StatusInReview, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RequestChanges(approverCtx(), item2.ID, "handle nil input", audit.ViaDashboard); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = svc.GetItem(root, item2.ID)
+	if got.Status != StatusImplementing || !strings.Contains(got.Content, "## Change requests\n\nhandle nil input") {
+		t.Fatalf("change requests: %s %q", got.Status, got.Content)
+	}
+}

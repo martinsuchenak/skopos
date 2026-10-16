@@ -37,6 +37,35 @@ Items can be claimed by an agent (`claimed_by_agent_id`) to prevent duplicate wo
 
 **Idempotent**: adding an existing dependency is a no-op (`INSERT OR IGNORE`) — no 500 on duplicates.
 
+## Revisions (agent pipeline)
+
+Plans written by a worker for the [agent workflow](inbox.md#the-agent-workflow)
+are **snapshotted into revisions**.
+
+- **What a revision holds.** A revision records the steps, the base commit
+  the planner read, and the repo skills the plan selected. Its
+  `content_hash` covers the steps, plus the skills when there are any.
+- **Approval locks it.** Approving the item locks the latest revision, and
+  the approval names `<revision>+<base_sha>`. The server re-verifies the hash
+  first; a plan edited after its snapshot is refused as stale.
+- **Locked means frozen.** Structural edits to a locked plan (adding or
+  removing steps, dependency changes) return
+  `409 ErrRevisionLocked`.
+- **Amendments re-approve.** A deviation during implementation becomes an
+  **amendment**: a new revision that keeps the done steps and the approved
+  skills, then goes back to the approval gate.
+- **Replan.** `POST /api/plans/{id}/replan` (`steps`, `base_sha`, optional
+  `skills`) replaces the steps and snapshots in one transaction. Workers use
+  it for every plan.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/plans/{id}/revisions` | List revisions, newest first (steps, hash, base, skills, lock) |
+| POST | `/api/plans/{id}/revisions` | Snapshot the current steps (refused while locked) |
+| POST | `/api/plans/{id}/replan` | Replace all steps + snapshot (executor path) |
+| POST | `/api/plans/{id}/amend` | Amendment: replace pending steps + snapshot past the lock |
+| POST | `/api/plans/{id}/revisions/{revision_id}/lock` | Lock a revision (approval does this) |
+
 ## Transactional safety
 
 All multi-step plan operations (add item with deps, add/remove dependency + re-check, update item status + cascade unblock + auto-complete plan) are wrapped in `Store.RunInTx` — a single SQLite transaction. If any step fails, the entire operation rolls back.

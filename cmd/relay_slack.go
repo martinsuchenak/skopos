@@ -201,11 +201,6 @@ func (r *slackRelay) applyCommand(ctx context.Context, item *inbox.Item, cmd, ar
 			r.post(ctx, thread, "⚠️ Nothing to approve — the item is "+statusWord(item.Status)+".")
 			return true
 		}
-		if arg != "" {
-			if err := r.appendSection(item.ID, "## Approval notes", arg); err != nil {
-				return fail(err)
-			}
-		}
 		if _, err := r.inbox.Approve(relayCtx, item.ID, inbox.ApproveInput{Notes: arg, Via: audit.ViaSlack}); err != nil {
 			if strings.Contains(err.Error(), "stale") {
 				r.post(ctx, thread, "⚠️ The plan changed since the plan-ready message — a new plan-ready follows; approve that one.")
@@ -219,9 +214,6 @@ func (r *slackRelay) applyCommand(ctx context.Context, item *inbox.Item, cmd, ar
 			r.post(ctx, thread, "⚠️ revise applies at the gate — the item is "+statusWord(item.Status)+".")
 			return true
 		}
-		if err := r.appendSection(item.ID, "## Review notes", arg); err != nil {
-			return fail(err)
-		}
 		if _, err := r.inbox.RequestChanges(relayCtx, item.ID, arg, audit.ViaSlack); err != nil {
 			return fail(err)
 		}
@@ -230,9 +222,6 @@ func (r *slackRelay) applyCommand(ctx context.Context, item *inbox.Item, cmd, ar
 		if item.Status != inbox.StatusInReview {
 			r.post(ctx, thread, "⚠️ changes applies to a finished branch — the item is "+statusWord(item.Status)+".")
 			return true
-		}
-		if err := r.appendSection(item.ID, "## Change requests", arg); err != nil {
-			return fail(err)
 		}
 		if _, err := r.inbox.RequestChanges(relayCtx, item.ID, arg, audit.ViaSlack); err != nil {
 			return fail(err)
@@ -462,22 +451,6 @@ func (r *slackRelay) reviewHead(itemID string) string {
 		}
 	}
 	return ""
-}
-
-// appendSection read-modify-writes a markdown section onto the item —
-// content edits are legal in every workflow phase (0.9.3; approver-only past
-// the plan gate, which the relay's principal holds), and the stage prompts
-// read exactly these sections.
-func (r *slackRelay) appendSection(itemID, heading, body string) error {
-	if strings.TrimSpace(body) == "" {
-		return nil
-	}
-	item, err := r.inbox.GetItem(relayCtx(), itemID)
-	if err != nil {
-		return err
-	}
-	content := item.Content + "\n\n" + heading + "\n\n" + strings.TrimSpace(body) + "\n"
-	return r.inbox.UpdateItem(relayCtx(), itemID, inbox.UpdateInput{Content: content, Via: audit.ViaSlack})
 }
 
 func (r *slackRelay) bindThread(ctx context.Context, itemID, ts string) {

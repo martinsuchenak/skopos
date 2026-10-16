@@ -243,10 +243,9 @@ func TestRelayDoneUsesRunHead(t *testing.T) {
 	}
 }
 
-// changes past the plan gate: the relay's content append is a post-approval
-// edit (approver-only since review M7) — the relay principal holds the
-// permission, so the section lands, is audited via=slack, and the item goes
-// back to implementing.
+// changes past the plan gate: the notes land on the item (appended by the
+// service, atomically with the move back to implementing), audited
+// via=slack.
 func TestRelayChangesAfterApproval(t *testing.T) {
 	svc, runsSvc, plansSvc, _, relay := relayStack(t)
 	root := context.Background()
@@ -271,14 +270,19 @@ func TestRelayChangesAfterApproval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The notes ride on the transition itself (appended server-side in the
+	// same transaction), audited via=slack with the notes.
 	audited := false
 	for _, e := range entries {
-		if e.Action == "inbox.edit" && e.Via == audit.ViaSlack {
+		if e.Action == "inbox.request_changes" && e.Via == audit.ViaSlack && strings.Contains(e.Notes, "empty-list") {
 			audited = true
 		}
 	}
 	if !audited {
-		t.Fatalf("the relay's content edit must be audited via=slack: %+v", entries)
+		t.Fatalf("the change request must be audited via=slack with its notes: %+v", entries)
+	}
+	if strings.Count(got.Content, "## Change requests") != 1 {
+		t.Fatalf("the change request must be appended exactly once: %q", got.Content)
 	}
 }
 

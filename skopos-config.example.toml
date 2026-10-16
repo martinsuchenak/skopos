@@ -61,7 +61,7 @@ vector_store = "sqlite"
 # server's orphan cleanup never touches hand-made ones).
 # id = "worker-<hostname>"
 state_dir = "~/.local/state/skopos-worker"
-runners = ["claude"]
+# runners = ["claude"]          # what claims offer — default: every runner the accounts use
 workspaces = []
 poll_every = "30s"
 
@@ -89,6 +89,7 @@ poll_every = "30s"
 # priority = 1
 # env = { ANTHROPIC_API_KEY = "${CLAUDE_1_API_KEY}" }   # the value lives in skopos-worker.env
 
+# Easiest: `skopos worker runner add` (wizard) writes runners + accounts for you.
 # Runners: an account's runner picks the agent CLI — "claude" (default) and
 # "opencode" have verified lockdowns; any other CLI via kind = "command"
 # runs only inside a wrapper (fail closed).

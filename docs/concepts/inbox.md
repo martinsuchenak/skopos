@@ -15,9 +15,11 @@ a personal notes vault, wired into agent coordination. Design and decisions:
 | `done` | completed — with the linked plan, or manually | → `open` (reopen), terminal for the automatic hooks |
 | `discarded` | won't do / superseded | → `open` (restore), retention-cleaned |
 
-Title, content, and tags are editable only while `open`/`in_progress` —
-once converted, the item is a frozen record. Claiming is compare-and-swap:
-another agent's `in_progress` item returns 409.
+Title, content, and tags are editable while `open`/`in_progress` and in the
+agent-workflow statuses (see [The agent workflow](#the-agent-workflow), which
+adds rules after approval). Once converted, done or discarded, the item is a
+frozen record. Claiming is compare-and-swap: another agent's `in_progress`
+item returns 409.
 
 ## The workflow
 
@@ -46,6 +48,58 @@ another agent's `in_progress` item returns 409.
    Error messages describe states in human terms ("item is in progress");
    messages that list valid input values keep the API slugs
    (`open, in_progress, …`) — that is what callers must type.
+
+## The agent workflow
+
+Besides the manual claim → enrich → convert flow, an item can be **queued**
+into the agent pipeline. Workers then plan and implement it, and you approve
+at two gates. Setup: [the pipeline tutorial](../guides/pipeline.md).
+
+| Status | Meaning | Moved by |
+|--------|---------|----------|
+| `queued` | waiting for a plan run | you (**Queue**, from `open`/`in_progress`) |
+| `planning` | a worker's agent is writing the plan | the system (run claimed) |
+| `awaiting_approval` | plan ready: Enrichment section + plan revision | the system |
+| `approved` | you approved; the implement run is queued | you (**Approve**) |
+| `implementing` | a worker's agent is implementing on a branch | the system |
+| `in_review` | branch pushed (and agent review passed, if configured) | the system |
+| `blocked` / `failed` | an agent needs an answer, or a run failed | the system |
+| `done` | you approved the pushed head | you (**Mark done**) |
+
+**Your actions** need a key with the approver permission
+(`skopos key create … --approver`). Agent and worker keys never hold it. The
+actions are available in the dashboard (item preview), over REST
+(`POST /api/inbox/{id}/queue|approve|request-changes|retry|mark-done|reject`)
+and from the [Slack relay](../configuration.md#slack-relay-server).
+
+- **Approve** binds to the plan revision and its base commit.
+- **Mark done** binds to the exact head commit.
+- **Request changes** sends an item back: from `awaiting_approval` to a
+  re-plan, or from `in_review` to a re-implementation.
+- **Retry** answers a blocked item.
+- **Reject** discards it.
+
+Notes given with **Approve**, **Request changes** and **Retry** are appended
+to the item, together with the status change, as `## Approval notes`,
+`## Review notes`, `## Change requests` and `## Answers`. That is where the
+next run's prompt reads them.
+
+**System moves** (`POST /api/inbox/{id}/transition`) belong to the executor,
+and the transition matrix refuses anything else. Every transition, approval
+and workflow-item edit is audit-logged with who acted and from where:
+`GET /api/inbox/{id}/timeline`.
+
+**Editing workflow items.**
+- **No workspace moves.** A workflow item can't change workspace, because its
+  runs, plan and branch live in that workspace.
+- **Approved text is protected.** Past the plan gate (`approved` and later,
+  or once a plan approval is on record), **title changes and content
+  rewrites need the approver permission**. Appends that keep the existing
+  content as a prefix stay open, because that's how workers record review
+  verdicts and enrichment.
+- **Tags** stay editable, but stages never read them live. Tags that name a
+  repo skill are folded into the plan's approved skill selection at plan
+  time.
 
 ## Bulk deletion
 

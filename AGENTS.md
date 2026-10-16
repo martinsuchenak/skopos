@@ -20,13 +20,18 @@ Running a single test package: `go test ./internal/status/... -v -count=1`
 
 The server must be running for MCP/REST integration testing: `go run . serve` (HTTP on :8080, MCP at /mcp).
 
+Live agent-CLI tests are opt-in (they spend tokens): `SKOPOS_LIVE_CLAUDE=1` / `SKOPOS_LIVE_OPENCODE=1 go test ./internal/worker -run TestLive -v` — they define what "verified lockdown" means; re-run them after upgrading an agent CLI.
+
+User-facing docs: the pipeline tutorial is `docs/guides/pipeline.md`, the worker reference `docs/deployment/worker.md`, config keys `docs/configuration.md` — keep them in step with worker/runner changes.
+
 ## Architecture
 
 ```
 main.go → cmd/register.go → cmd/serve.go
                               ├── cmd/routes/       (HTTP handlers)
                               ├── cmd/mcp/          (MCP tool definitions)
-                              └── cmd/              (CLI commands: report, blackboard, plans)
+                              └── cmd/              (CLI commands: report, blackboard, plans, worker init|install|check|runner …;
+                                                     relay_slack.go = the in-process Slack relay)
 internal/
   ├── status/     handler → service → storage   (agent status, sessions, events)
   ├── blackboard/ handler → service → storage   (scoped knowledge entries)
@@ -41,7 +46,7 @@ internal/
   ├── audit/      append-only mutation log (actor/via rendering, entity index, scoped reads; plan 01a0bf7c)
   ├── approvals/  append-only approvals tied to immutable subjects (plan revision+base, review head)
   ├── runs/       run queue: stages, affinity leases, chaining (agent-pipeline lean 1b)
-  ├── worker/     `skopos worker`: execution plane — claim/execute/report loop, agent runner, account pool
+  ├── worker/     `skopos worker`: execution plane — claim/execute/report loop, runners (claude, opencode, command), lockdown, profiles, knowledge (AGENTS.md/skills at base), account pool, probes
   ├── notify/     notification module: provider interface (Slack Socket Mode first)
   ├── health/     background goroutine: stuck-agent detection
   ├── cleanup/    background goroutine: data retention cleanup

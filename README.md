@@ -1,14 +1,17 @@
 # skopos
 
-A coordination dashboard for AI coding agents — shared memory (blackboard), plans with dependencies, an inbox for unprocessed work, real-time status, and live updates via SSE. Single binary, SQLite, no external dependencies.
+A coordination dashboard for AI coding agents — shared memory (blackboard), plans with dependencies, an inbox for unprocessed work, real-time status, and live updates via SSE — plus an optional agent pipeline that takes an inbox item from idea to a reviewed, pushed branch with you approving at two gates. Single binary, SQLite, no external dependencies.
 
 ## Features
 
 | Feature | Status |
 |---------|--------|
-| CLI | ✅ `serve`, `setup`, `report`, `blackboard`, `plan`, `inbox`, `workspace`, `mode`, `index`, `search`, `symbol`, `who-calls`, `call-tree`, `impact`, `outline`, `dead-code`, `cycles`, `branch-diff`, `install`, `cleanup`, `completion` |
+| CLI | ✅ `serve`, `setup`, `report`, `blackboard`, `plan`, `inbox`, `workspace`, `mode`, `index`, `search`, `symbol`, `who-calls`, `call-tree`, `impact`, `outline`, `dead-code`, `cycles`, `branch-diff`, `install`, `key`, `group`, `whoami`, `worker`, `cleanup`, `completion` |
 | REST API | ✅ Sessions, blackboard, plans, inbox, workspaces |
-| MCP | ✅ 33 tools at `/mcp` (same port as HTTP), incl. code-index queries |
+| MCP | ✅ 38 tools at `/mcp` (same port as HTTP), incl. code-index queries |
+| Agent pipeline | ✅ Inbox item → plan → **you approve** → implement → (agent review/QA) → **you approve the head**; approvals bind to the exact plan revision / commit; full audit trail |
+| Workers | ✅ `skopos worker`: runs stages with Claude Code, opencode, or any CLI inside your wrapper; locked-down agent runs, per-stage models, quota-aware account pools; `worker runner add` wizard |
+| Slack relay | ✅ Gate notifications and approvals from Slack DMs (Socket Mode) |
 | Dashboard | ✅ Dark/light/system theme, sidebar nav, modals, SSE live updates |
 | Real-time | ✅ SSE at `/api/events/stream` |
 | Database | ✅ SQLite (WAL, FK-enforced, transactional) |
@@ -55,7 +58,9 @@ See [Agent integration](docs/getting-started.md#connecting-an-agent) and [Integr
 | Events (SSE, real-time) | [docs/concepts/events.md](docs/concepts/events.md) |
 | Guide: local-only workflow | [docs/guides/local.md](docs/guides/local.md) |
 | Guide: remote/central workflow | [docs/guides/remote.md](docs/guides/remote.md) |
+| **Tutorial: the agent pipeline (server + workers, end to end)** | [docs/guides/pipeline.md](docs/guides/pipeline.md) |
 | Deployment (Docker, Nomad) | [docs/deployment/](docs/deployment/) |
+| Workers (runners, lockdown, profiles, service install) | [docs/deployment/worker.md](docs/deployment/worker.md) |
 | Integration guides (7 agents) | [docs/integrations/](docs/integrations/) |
 | API spec (OpenAPI) | [openapi.yaml](openapi.yaml) |
 | Changelog | [CHANGELOG.md](CHANGELOG.md) |

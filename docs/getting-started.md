@@ -70,7 +70,12 @@ skopos install --agent claude-code
 skopos install --agent all --url https://skopos.example.com/mcp --api-key "$SKOPOS_API_KEY"
 ```
 
-This merges the MCP server entry (with auth header) into the agent's config file. For per-agent manual steps and behavioral snippets, see [Integration guides](../integrations/).
+This merges the MCP server entry (with auth header) into the agent's config file. For per-agent manual steps and behavioral snippets, see [Integration guides](integrations/).
+
+## Next: the agent pipeline
+
+To have agents plan and implement inbox items for you — with workers, stage
+routing and approvals — follow [the pipeline tutorial](guides/pipeline.md).
 
 ## Agent-builder artifacts
 
@@ -81,4 +86,4 @@ agent-builder compile docs/integrations/agent-builder/ab-src
 agent-builder install
 ```
 
-See [agent-builder README](../integrations/agent-builder/README.md).
+See [agent-builder README](integrations/agent-builder/README.md).

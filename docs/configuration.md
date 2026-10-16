@@ -32,6 +32,7 @@ Optional — if absent, skopos runs on defaults. The file is gitignored (may con
 | `--vector-store` | `SKOPOS_VECTOR_STORE` | `codeindex.embeddings.vector_store` | `sqlite` | Vector backend: `sqlite` (embedded brute force) or `qdrant` (external, monorepo scale) |
 | `--qdrant-url` | `SKOPOS_QDRANT_URL` | `codeindex.embeddings.qdrant_url` | (empty) | Qdrant REST address when `--vector-store=qdrant` (e.g. `http://localhost:6333`) |
 | `--qdrant-api-key` | `SKOPOS_QDRANT_API_KEY` | `codeindex.embeddings.qdrant_api_key` | (empty) | Qdrant API key when required |
+| `--run-stage` | — | — | (none) | Agent pipeline routing, `<workspace>:<stage>=<runner>`, repeatable — see [Stage routing](#stage-routing-agent-pipeline) |
 
 ### Client (written by `skopos setup`)
 
@@ -53,9 +54,9 @@ walkthrough.
 
 | Config path | Flag | Default | Description |
 |-------------|------|---------|-------------|
-| `worker.id` | `--worker-id` | `worker-<hostname>` | Worker identity — must keep the `worker-` prefix |
-| `worker.state_dir` | `--state-dir` | `~/.local/state/skopos-worker` | Worktrees, logs, session state |
-| `worker.runners` | — | `["claude"]` | Runners this worker offers (must cover the workspaces' stage preferences) |
+| `worker.id` | `--worker-id` / `SKOPOS_WORKER_ID` | `worker-<hostname>` | Worker identity — must keep the `worker-` prefix |
+| `worker.state_dir` | `--state-dir` / `SKOPOS_WORKER_STATE` | `~/.local/state/skopos-worker` | Worktrees, logs, session state |
+| `worker.runners` | — | every runner the accounts use | Runners claims offer (only those with a usable account are offered at any moment) |
 | `worker.workspaces` | `--workspace` | (from repos) | Workspace IDs this worker serves |
 | `worker.poll_every` | — | `30s` | Idle claim interval |
 | `worker.repos."<workspace-id>"` | — | — | Per-workspace local clone: `path`, `default_branch`, `branch_prefix`, `setup`, `setup_env`, `checks`, `protected_branches`, `profile`, `stages.<stage>`, and `push.{kind,remote_url,token_env}` |
@@ -67,7 +68,26 @@ walkthrough.
 | `worker.mcp_servers` | — | — | MCP tool prefixes allowed in plan/implement runs, e.g. `["mcp__skopos"]` |
 | `worker.mcp_deny` | — | Fortix production-write tools | MCP tools denied in every run (added to the built-in git/network denials) |
 | `worker.profiles.<name>.<stage>` | — | — | Operator-supplied stage executor (`plan`/`implement`/`review`/`qa`): `wrapper`, `settings`, `tools`, `env` — see [deployment/worker.md](deployment/worker.md#containing-agent-runs) |
-| — | `--env-file` | `<config-dir>/skopos-worker.env` when present | `KEY=VALUE` secrets loaded before the config (real environment wins) |
+| — | `--env-file` / `SKOPOS_WORKER_ENV` | `<config-dir>/skopos-worker.env` when present | `KEY=VALUE` secrets loaded before the config (real environment wins) |
+
+Manage runners and accounts with `skopos worker runner add | list | test`
+instead of editing these by hand — see
+[deployment/worker.md](deployment/worker.md#adding-runners-the-wizard).
+
+### Stage routing (agent pipeline)
+
+`--run-stage <workspace>:<stage>=<runner>` on `skopos serve` (repeatable)
+pins a stage of a workspace to a worker runner name. The stages are `plan`,
+`implement`, `review` and `qa`.
+
+- **Plan and implement** always run. Without a preference, any runner's
+  account may take them.
+- **Review and QA** run only when the workspace has a preference for them.
+  Otherwise a finished implementation goes straight to `in_review`.
+- **Pinned runs wait for their own runner.** A pinned run waits for an
+  account of its runner; it never falls back to another runner.
+
+The [pipeline tutorial](guides/pipeline.md) walks through a complete setup.
 
 ## Slack relay (server)
 

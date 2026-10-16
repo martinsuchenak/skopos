@@ -82,6 +82,23 @@ func (s *Service) transition(ctx context.Context, itemID string, to Status, clas
 	return s.transitionWith(ctx, itemID, to, class, action, via, notes, agentID, nil)
 }
 
+// appendNotes returns the in-transaction mutation that appends a markdown
+// section of human notes to the item (nil when there are none) — the stage
+// prompts read exactly these sections. Bounded like a retry answer.
+func (s *Service) appendNotes(ctx context.Context, heading, notes string) (func(tx Store, cur *Item) error, error) {
+	notes = strings.TrimSpace(notes)
+	if notes == "" {
+		return nil, nil
+	}
+	if len(notes) > maxAnswerLen {
+		return nil, fmt.Errorf("%w: notes are %d bytes; the limit is %d", ErrInvalidInput, len(notes), maxAnswerLen)
+	}
+	return func(tx Store, cur *Item) error {
+		content := cur.Content + "\n\n" + heading + "\n\n" + notes + "\n"
+		return tx.UpdateItem(ctx, cur.ID, cur.WorkspaceID, cur.Title, content, tagsJSON(cur.Tags), cur.Priority, s.now().UTC())
+	}, nil
+}
+
 // transitionWith is transition plus an optional in-transaction mutation of
 // the freshly read item, run after the matrix check and before the status
 // write: the mutation and the move commit together or not at all (review
@@ -257,7 +274,14 @@ func (s *Service) Approve(ctx context.Context, itemID string, input ApproveInput
 			queuedRun = id
 		}
 	}
-	item, terr := s.transition(ctx, item.ID, StatusApproved, ActorHuman, "inbox.approve", input.Via, input.Notes, "")
+	// Approval notes (answers to the planner's questions, overrides) are
+	// for the implementer: appended to the item, which its prompt reads,
+	// with the status change — every surface, not just the Slack relay.
+	appendApproval, nerr := s.appendNotes(ctx, "## Approval notes", input.Notes)
+	if nerr != nil {
+		return nil, nerr
+	}
+	item, terr := s.transitionWith(ctx, item.ID, StatusApproved, ActorHuman, "inbox.approve", input.Via, input.Notes, "", appendApproval)
 	if terr != nil && s.runQueuer != nil && queuedRun != "" {
 		_ = s.runQueuer.CancelRun(ctx, queuedRun, "approve transition failed")
 	}
@@ -303,7 +327,18 @@ func (s *Service) RequestChanges(ctx context.Context, itemID, notes, via string)
 		}
 		queuedRun = id
 	}
-	out, err := s.transition(ctx, item.ID, target, ActorHuman, "inbox.request_changes", via, notes, "")
+	// The notes are why the work goes back: appended where the next run's
+	// prompt reads them — "## Review notes" for a re-plan, "## Change
+	// requests" for a re-implementation — atomically with the move.
+	heading := "## Review notes"
+	if target == StatusImplementing {
+		heading = "## Change requests"
+	}
+	appendRequest, nerr := s.appendNotes(ctx, heading, notes)
+	if nerr != nil {
+		return nil, nerr
+	}
+	out, err := s.transitionWith(ctx, item.ID, target, ActorHuman, "inbox.request_changes", via, notes, "", appendRequest)
 	if err != nil && s.runQueuer != nil && queuedRun != "" {
 		_ = s.runQueuer.CancelRun(ctx, queuedRun, "request-changes transition failed")
 	}
@@ -360,15 +395,10 @@ func (s *Service) Retry(ctx context.Context, itemID, answer, via string) (*Item,
 	// item (review M6): a concurrent retry loses the matrix check instead of
 	// the answer, and a failed queue/transition leaves no orphaned text for
 	// the next retry to duplicate.
-	var appendAnswer func(tx Store, cur *Item) error
-	if answer = strings.TrimSpace(answer); answer != "" {
-		if len(answer) > maxAnswerLen {
-			return nil, fmt.Errorf("%w: answer is %d bytes; the limit is %d", ErrInvalidInput, len(answer), maxAnswerLen)
-		}
-		appendAnswer = func(tx Store, cur *Item) error {
-			content := cur.Content + "\n\n## Answers\n\n" + answer + "\n"
-			return tx.UpdateItem(ctx, cur.ID, cur.WorkspaceID, cur.Title, content, tagsJSON(cur.Tags), cur.Priority, s.now().UTC())
-		}
+	answer = strings.TrimSpace(answer)
+	appendAnswer, err := s.appendNotes(ctx, "## Answers", answer)
+	if err != nil {
+		return nil, err
 	}
 	var queuedRun string
 	if s.runQueuer != nil {
