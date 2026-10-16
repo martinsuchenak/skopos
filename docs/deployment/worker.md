@@ -68,6 +68,40 @@ config) and restarts it on both platforms — safe.
 the environment the service gets — its PATH, HOME and the env file — not your
 shell's: a `SKOPOS_API_KEY` exported in your shell does not count.
 
+## Adding runners (no docs needed)
+
+```sh
+skopos worker runner add      # wizard: detects installed CLIs, lists models, writes config, smoke-tests
+skopos worker runner list     # runners, CLI versions, lockdown status, accounts, what claims offer
+skopos worker runner test     # one real prompt per account through the locked-down runner
+```
+
+**What the wizard does:**
+
+- Detects the agent CLIs on the machine, shows the models opencode knows,
+  and suggests a runner name (for example `opencode-glm-5-3-flash`).
+- Sets up credentials:
+  - **Claude**: this machine's login, an API key kept in the env file, or a
+    separate login directory for a second subscription.
+  - **Custom opencode providers** (e.g. an OpenAI-compatible router): writes
+    a providers-only config and, after you confirm, moves the API key into
+    the env file. The providers file only references it as `{env:VAR}`.
+- Previews exactly what it will add and validates the edited config before
+  saving. A failed edit changes nothing.
+- Offers a smoke test at the end.
+
+`skopos worker init` offers the wizard when run in a terminal. For scripts:
+
+```sh
+skopos worker runner add --kind opencode --name opencode-glm --model zai-coding-plan/glm-5.3 --account glm --probe
+```
+
+`runner test` also fails an account whose `${VAR}` env reference resolved to
+empty. Otherwise the CLI would quietly fall back to its own login, and the
+test would pass on the wrong credentials.
+
+`worker.runners` is optional and defaults to every runner your accounts use.
+
 ## Agent runners
 
 The worker isn't tied to one agent CLI. An account's `runner` picks it:

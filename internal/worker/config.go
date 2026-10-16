@@ -339,6 +339,12 @@ func (c *Config) Default(home string) error {
 			"mcp__llmrouter__scriptling__set_skill",
 		}
 	}
+	// runners defaults to every runner the accounts feed: adding a runner
+	// is adding an account (an explicit list still restricts what claims
+	// offer).
+	if len(c.Runners) == 0 {
+		c.Runners = c.UsedRunners()
+	}
 	if len(c.Workspaces) == 0 {
 		for ws := range c.Repos {
 			c.Workspaces = append(c.Workspaces, ws)

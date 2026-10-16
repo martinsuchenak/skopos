@@ -50,6 +50,18 @@ versions follow [Semantic Versioning](https://semver.org/).
     approving the plan approves the skills. Existing revisions keep their
     hash.
 
+- **`skopos worker runner add | list | test`.** Configure runners without
+  reading the docs.
+  - **`add`** is a wizard: it detects installed CLIs, lists opencode's models,
+    suggests names and sets up credentials. For a custom opencode provider it
+    writes a providers-only config with the key moved to the env file. It
+    previews and validates the edit before saving, then offers a live smoke
+    test. Flags (`--kind --name --model …`) make it scriptable.
+  - **`list`** shows CLI versions, lockdown status, accounts and claim offers.
+  - **`test`** runs one real prompt per account through the locked-down
+    runner, and fails accounts whose env references resolved empty.
+  - `worker init` offers the wizard in a terminal.
+  - `worker.runners` now defaults to the runners the accounts use.
 - **Runner-agnostic worker.** An account's `runner` now really selects the
   agent CLI; before, every run executed the claude binary whatever it said.
   - **`opencode`** is the second built-in runner. Its lockdown is verified

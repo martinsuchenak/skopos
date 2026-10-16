@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -25,7 +26,19 @@ func workerInitCmd() *cli.Command {
 			&cli.StringSliceFlag{Name: "workspace", Usage: "Workspace ID to emit a [worker.repos.<id>] block for (repeatable; placeholder values to fill in)"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			return runWorkerInit(os.Stdout, configFileFor(cmd), cmd.GetString("server-url"), cmd.GetStringSlice("workspace"))
+			cfgPath := configFileFor(cmd)
+			if err := runWorkerInit(os.Stdout, cfgPath, cmd.GetString("server-url"), cmd.GetStringSlice("workspace")); err != nil {
+				return err
+			}
+			// Interactive: set up the first runner right away instead of
+			// sending the operator to the docs.
+			if stdinIsTerminal() {
+				in := bufio.NewReader(os.Stdin)
+				if a := strings.ToLower(promptTo(in, os.Stdout, "\nConfigure an agent runner now (wizard)? [Y/n]", "")); a == "" || strings.HasPrefix(a, "y") {
+					return runRunnerWizard(ctx, in, os.Stdout, cfgPath, workerEnvFilePath(cfgPath), wizardEnv{})
+				}
+			}
+			return nil
 		},
 	}
 }
@@ -73,8 +86,10 @@ func runWorkerInit(out io.Writer, configPath, serverURL string, workspaces []str
 	fmt.Fprint(out, `
 Next steps:
   1. skopos key create --name <this-host> --workspace <workspace-id>   # worker-scoped key
-  2. fill in [client].api_key (or SKOPOS_API_KEY in skopos-worker.env) and the repos/accounts blocks
-  3. skopos worker install                                            # launchd/systemd service
+  2. fill in [client].api_key (or SKOPOS_API_KEY in skopos-worker.env) and the repos blocks
+  3. skopos worker runner add                                         # agent runners + accounts (wizard)
+  4. skopos worker runner test                                        # one real prompt per account
+  5. skopos worker install                                            # launchd/systemd service
 `)
 	return nil
 }
@@ -154,8 +169,8 @@ token_env = ""                    # env var holding the token (set it in skopos-
 # server's orphan cleanup never touches hand-made ones).
 id = %q
 state_dir = "~/.local/state/skopos-worker"
-runners = ["claude"]              # what this instance offers; must cover the
-                                  # workspaces' stage preferences
+# runners: what claims offer — defaults to every runner the accounts below
+# use. Add runners (and their accounts) with: skopos worker runner add
 workspaces = [%s]
 poll_every = "30s"
 

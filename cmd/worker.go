@@ -44,6 +44,7 @@ func workerCmd() *cli.Command {
 		},
 		Commands: []*cli.Command{
 			workerInitCmd(),
+			workerRunnerCmd(),
 			workerInstallCmd(),
 			workerCheckCmd(),
 			workerUninstallCmd(),

@@ -3,8 +3,10 @@ module github.com/martinsuchenak/skopos
 go 1.26.4
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/fortix/go-libs v0.0.1
 	github.com/google/uuid v1.6.0
+	github.com/mattn/go-isatty v0.0.24
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/odvcencio/gotreesitter v0.52.0
 	github.com/paularlott/cli v0.9.0
@@ -15,12 +17,10 @@ require (
 )
 
 require (
-	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
-	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/miekg/dns v1.1.73 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/paularlott/jsonrpc v0.2.0 // indirect
