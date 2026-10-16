@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"github.com/martinsuchenak/skopos/internal/worker"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -109,5 +111,67 @@ func TestResolveWorkerSetting(t *testing.T) {
 	}
 	if got := resolveWorkerSetting("", "SKOPOS_TEST_RESOLVE_UNSET", "def"); got != "def" {
 		t.Fatalf("default applies when nothing else set: %q", got)
+	}
+}
+
+// Every [worker] field in the file reaches the daemon's config — the
+// loader used a field whitelist that silently dropped profiles,
+// runner_config and mcp_config (the end-to-end run caught it). Reflection
+// keeps this honest for fields added later: a TOML setting every field must
+// leave no exported Config field at its zero value. Flags still win.
+func TestLoadWorkerConfigFileKeepsEveryField(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "skopos-config.toml")
+	toml := `[worker]
+id = "worker-file"
+state_dir = "/var/state"
+runners = ["claude", "oc"]
+workspaces = ["ws-file"]
+poll_every = "7s"
+claude_bin = "/opt/claude"
+plan_timeout = "3m"
+impl_timeout = "9m"
+mcp_deny = ["mcp__x__w"]
+mcp_servers = ["mcp__skopos"]
+mcp_config = "/etc/mcp.json"
+
+[worker.runner_config.oc]
+kind = "opencode"
+
+[worker.profiles.php.implement]
+wrapper = ["env"]
+tools = ["Bash(php:*)"]
+
+[worker.repos."ws-file"]
+path = "/clones/ws"
+
+[[worker.accounts]]
+name = "a"
+runner = "oc"
+`
+	if err := os.WriteFile(p, []byte(toml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &worker.Config{StateDir: defaultStateDir}
+	if err := loadWorkerConfigFile(cfg, p); err != nil {
+		t.Fatal(err)
+	}
+	v := reflect.ValueOf(*cfg)
+	for i := 0; i < v.NumField(); i++ {
+		f := v.Type().Field(i)
+		if f.IsExported() && v.Field(i).IsZero() {
+			t.Errorf("worker.Config.%s from the file did not reach the daemon config", f.Name)
+		}
+	}
+	if cfg.ID != "worker-file" || cfg.StateDir != "/var/state" || cfg.Workspaces[0] != "ws-file" {
+		t.Fatalf("file values: %+v", cfg)
+	}
+	// Flags win where given.
+	flagged := &worker.Config{ID: "worker-flag", StateDir: "/flag/state", Workspaces: []string{"ws-flag"}}
+	if err := loadWorkerConfigFile(flagged, p); err != nil {
+		t.Fatal(err)
+	}
+	if flagged.ID != "worker-flag" || flagged.StateDir != "/flag/state" || flagged.Workspaces[0] != "ws-flag" || flagged.MCPConfig != "/etc/mcp.json" {
+		t.Fatalf("flag precedence: %+v", flagged)
 	}
 }

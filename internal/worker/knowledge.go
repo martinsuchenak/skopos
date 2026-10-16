@@ -25,6 +25,35 @@ const (
 	skillsDir       = ".skopos/skills"
 )
 
+// stageCommands lists the shell commands a stage may run — the Bash
+// allowlist entries (base tools plus the stage profile's), as the agent
+// should type them. Prompts carry it: under the lockdown the agent sees no
+// settings that would tell it, and a single denied compound command once
+// made an implementer conclude Bash was off entirely (end-to-end run).
+func (w *Worker) stageCommands(workspace, stage string, base []string) []string {
+	tools := append([]string{}, base...)
+	if p := w.cfg.StageProfile(workspace, stage); p != nil {
+		tools = append(tools, p.Tools...)
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range tools {
+		name, pattern, ok := strings.Cut(t, "(")
+		if name != "Bash" {
+			continue
+		}
+		cmd := "any shell command"
+		if ok {
+			cmd = strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(pattern, ")"), ":*"), "*")
+		}
+		if !seen[cmd] {
+			seen[cmd] = true
+			out = append(out, cmd)
+		}
+	}
+	return out
+}
+
 // Skill is one repo playbook: .skopos/skills/<name>/SKILL.md.
 type Skill struct {
 	Name        string

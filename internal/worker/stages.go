@@ -45,6 +45,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 		"Title": item.Title, "Content": item.Content, "Notes": lastSection(item.Content, "## Review notes"),
 		"Instructions": repoInstructions(ctx, repo.Path, baseSHA),
 		"SkillIndex":   skillIndex(skills), "Requested": tagHints(skills, item.Tags),
+		"ImplCommands": w.stageCommands(run.WorkspaceID, "implement", implTools), "Checks": repo.Checks,
 	})
 	if err != nil {
 		return err
@@ -161,6 +162,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		"Content": item.Content, "Steps": steps, "Notes": lastSection(item.Content, "## Change requests"),
 		"ApprovalNotes": lastSection(item.Content, "## Approval notes"),
 		"Instructions":  instructions, "Skills": skillBodies,
+		"Commands": w.stageCommands(run.WorkspaceID, "implement", implTools), "Checks": repo.Checks,
 	})
 	if err != nil {
 		return err

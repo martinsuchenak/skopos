@@ -63,6 +63,10 @@ func (c *Client) build(ctx context.Context, method, path string, body any) (*htt
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.key)
+	// Every worker write is audited as via=worker (unset, the server
+	// labels it "cli" — the end-to-end run showed the worker's content
+	// edits recorded that way).
+	req.Header.Set("X-Skopos-Via", "worker")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

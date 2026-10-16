@@ -237,10 +237,13 @@ func expandTilde(p, home string) string {
 	return p
 }
 
-// loadWorkerConfigFile reads the optional [worker] TOML section (repos,
-// accounts, timeouts, MCP deny) from the skopos config file. Missing
-// file/section is fine — the flags carry the minimum. Without this the
-// daemon claims runs it cannot execute (review finding 3).
+// loadWorkerConfigFile reads the optional [worker] TOML section and makes
+// it the config, with the flags (already in cfg) on top where they were
+// given. Missing file/section is fine — the flags carry the minimum.
+// Whole-section, not a field whitelist: the whitelist silently dropped
+// every field added later (profiles, runner_config, mcp_config — found by
+// the end-to-end run: `worker check` accepted a config the daemon then
+// refused), and `worker check` reads the section whole too.
 func loadWorkerConfigFile(cfg *worker.Config, path string) error {
 	if path == "" {
 		path = "skopos-config.toml"
@@ -257,39 +260,20 @@ func loadWorkerConfigFile(cfg *worker.Config, path string) error {
 	if file.Worker == nil {
 		return nil
 	}
-	w := file.Worker
-	if cfg.ID == "" {
-		cfg.ID = w.ID
+	merged := *file.Worker
+	// Flags win where given (precedence: flags > environment > env file >
+	// config). StateDir's flag default cannot be told from "unset", so only
+	// a non-default flag value overrides the file.
+	if cfg.ID != "" {
+		merged.ID = cfg.ID
 	}
-	if cfg.StateDir == "" || cfg.StateDir == defaultStateDir {
-		cfg.StateDir = w.StateDir
+	if cfg.StateDir != "" && (cfg.StateDir != defaultStateDir || merged.StateDir == "") {
+		merged.StateDir = cfg.StateDir
 	}
-	if len(w.Runners) > 0 {
-		cfg.Runners = w.Runners
+	if len(cfg.Workspaces) > 0 {
+		merged.Workspaces = cfg.Workspaces
 	}
-	if len(w.Workspaces) > 0 {
-		cfg.Workspaces = w.Workspaces
-	}
-	if w.PollEvery > 0 {
-		cfg.PollEvery = w.PollEvery
-	}
-	cfg.Repos = w.Repos
-	cfg.Accounts = w.Accounts
-	if w.Bin != "" {
-		cfg.Bin = w.Bin
-	}
-	if w.PlanTimeout > 0 {
-		cfg.PlanTimeout = w.PlanTimeout
-	}
-	if w.ImplTimeout > 0 {
-		cfg.ImplTimeout = w.ImplTimeout
-	}
-	if len(w.MCPDeny) > 0 {
-		cfg.MCPDeny = w.MCPDeny
-	}
-	if len(w.MCPServers) > 0 {
-		cfg.MCPServers = w.MCPServers
-	}
+	*cfg = merged
 	return nil
 }
 

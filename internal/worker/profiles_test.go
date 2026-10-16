@@ -294,11 +294,12 @@ func TestPromptsRenderKnowledge(t *testing.T) {
 	impl, err := renderPrompt("implement.md", map[string]any{
 		"Branch": "b", "Base": "main", "Title": "t", "Content": "c", "Steps": []Step{{Title: "s"}},
 		"Instructions": "repo rules", "Skills": []Skill{{Name: "php-dto", Body: "playbook body"}},
+		"Commands": []string{"git add", "go test"}, "Checks": []string{"task test"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"repo rules", "# Skill: php-dto", "playbook body"} {
+	for _, want := range []string{"repo rules", "# Skill: php-dto", "playbook body", "exactly: `git add`, `go test`", "does NOT mean the shell is", "`task test`"} {
 		if !strings.Contains(impl, want) {
 			t.Errorf("implement prompt missing %q", want)
 		}
@@ -342,5 +343,25 @@ func TestReportCarriesExecutor(t *testing.T) {
 	}
 	if _, left := w.executors["r1"]; left {
 		t.Fatal("the executor must be forgotten after the report")
+	}
+}
+
+// The prompts name the implement stage's shell commands: base allowlist
+// plus the stage profile's tools.
+func TestStageCommands(t *testing.T) {
+	w := &Worker{cfg: &Config{Repos: map[string]*Repo{
+		"plain":   {},
+		"wrapped": {Stages: map[string]*StageProfile{"implement": {Wrapper: []string{"env"}, Tools: []string{"Bash(go test:*)", "Bash(git add:*)"}}}},
+	}}}
+	plain := strings.Join(w.stageCommands("plain", "implement", baseImplTools), ",")
+	if !strings.Contains(plain, "git add,git commit") || !strings.Contains(plain, "pwd") || strings.Contains(plain, "go test") {
+		t.Fatalf("plain implement commands: %s", plain)
+	}
+	wrapped := w.stageCommands("wrapped", "implement", baseImplTools)
+	if last := wrapped[len(wrapped)-1]; last != "go test" {
+		t.Fatalf("profile tools must be listed (deduped): %v", wrapped)
+	}
+	if got := w.stageCommands("plain", "plan", basePlanTools); len(got) != 0 {
+		t.Fatalf("plan stage has no shell: %v", got)
 	}
 }

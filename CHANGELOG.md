@@ -75,6 +75,26 @@ versions follow [Semantic Versioning](https://semver.org/).
   the wrong repository. Every agent command now gets `PWD=<run dir>`, and
   opencode also gets `--dir`.
 - **`accounts.model` was ignored** — it never reached the agent run.
+- **The daemon dropped `runner_config`, `profiles` and `mcp_config`.** It
+  copied a hand-picked list of `[worker]` fields from the config file, while
+  `worker check` read the whole section. So the check passed a config the
+  daemon then rejected or half-applied. The daemon now loads the whole
+  section with flags on top, and an explicit `--workspace` now wins as
+  documented. A reflection test fails if any future field is dropped.
+  Found by an end-to-end run.
+- **Implementers didn't know which commands they could run.** Under the
+  lockdown, a Claude implementer made one combined Bash call that included a
+  command outside its allowlist. The whole call was refused, and it
+  concluded the shell was unavailable. The plan and implement prompts now
+  list the implement stage's exact shell commands and the checks the worker
+  runs afterwards. They say not to chain commands and that one refusal
+  doesn't mean the shell is off. `pwd` is now allowed.
+- **Breaking for prompt expectations:** the implement prompt no longer
+  hard-codes a PHP verification rule (`php -l`, phpstan). Repo-specific
+  verification belongs in the repo's `AGENTS.md`, with the tools granted by
+  a stage profile.
+- **Worker edits were audited as `via=cli`.** The worker now labels its
+  requests `via=worker`.
 - **Pinned runs borrowed other runners' accounts.** A run with a stage
   preference (plan on `opencode-glm`, say) fell back to any available account
   when its runner's were exhausted, and ran on another model. A pinned run now

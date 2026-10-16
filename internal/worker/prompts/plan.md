@@ -51,5 +51,9 @@ Keep the plan within what the item asks. Do not add refactors, cleanups or extra
   options inline as (a)/(b) so he can answer "1) a". Martin answers these when approving; mark any
   step that depends on an answer in its description.
 The implementation agent cannot push, change remotes, or run anything against production.
+{{if .ImplCommands}}The only shell commands it can run are: {{range $i, $c := .ImplCommands}}{{if $i}}, {{end}}`{{$c}}`{{end}}.
+{{end}}{{if .Checks}}After implementation the worker itself runs the repository checks: {{range $i, $c := .Checks}}{{if $i}}, {{end}}`{{$c}}`{{end}}.
+{{end}}Write each step's verification with those commands only (or say it is covered by the worker's
+checks) — never ask the implementer to run a command it does not have.
 
 Return only the structured result.
