@@ -123,7 +123,7 @@ func handshake(conn net.Conn, u *url.URL) (*bufio.Reader, error) {
 	// A 101 has no body; anything else is drained only for the message.
 	if resp.StatusCode != http.StatusSwitchingProtocols {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("ws handshake: status %d %q", resp.StatusCode, string(body))
 	}
 	if !strings.EqualFold(resp.Header.Get("Upgrade"), "websocket") ||

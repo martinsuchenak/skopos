@@ -19,7 +19,7 @@ func pipeWS(t *testing.T) (*ws, net.Conn) {
 	t.Helper()
 	client, server := net.Pipe()
 	w := newWS(client, bufio.NewReader(client))
-	t.Cleanup(func() { w.Close(); server.Close() })
+	t.Cleanup(func() { w.Close(); _ = server.Close() })
 	return w, server
 }
 
@@ -210,14 +210,14 @@ func fakeServer(t *testing.T, respond func(key string) string, trailing []byte) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 	reqs := make(chan *http.Request, 1)
 	go func() {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		req, err := http.ReadRequest(bufio.NewReader(conn))
 		if err != nil {
 			return
@@ -261,7 +261,9 @@ func TestWSHandshake(t *testing.T) {
 func TestWSHandshakeRejects(t *testing.T) {
 	for name, respond := range map[string]func(string) string{
 		"bad accept": func(string) string { return upgradeResponse("bm90LXRoZS1yaWdodC1hY2NlcHQ=") },
-		"no accept":  func(string) string { return "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n" },
+		"no accept": func(string) string {
+			return "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+		},
 		"not 101": func(string) string {
 			return "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\n\r\nbad request"
 		},

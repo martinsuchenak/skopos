@@ -219,7 +219,7 @@ func runWorkerInstall(out io.Writer, o installOptions) error {
 		for _, p := range problems {
 			fmt.Fprintln(out, "  - "+p)
 		}
-		fmt.Fprint(out, "\nNOT STARTED — the service is written DISABLED (it will not start at login/boot either). Fix the above, verify with 'skopos worker check', then re-run 'skopos worker install' with the same flags. A previously running instance keeps running its old definition until then.\n")
+		_, _ = fmt.Fprint(out, "\nNOT STARTED — the service is written DISABLED (it will not start at login/boot either). Fix the above, verify with 'skopos worker check', then re-run 'skopos worker install' with the same flags. A previously running instance keeps running its old definition until then.\n")
 		return nil
 	}
 	restart := "systemctl --user restart " + o.label
@@ -235,7 +235,7 @@ func runWorkerInstall(out io.Writer, o installOptions) error {
 			logs = "journalctl -u " + o.label
 		}
 	}
-	fmt.Fprintf(out, "\nNext steps:\n  - edit the config or the env file, then restart: %s\n  - logs: %s\n  - queue an item and watch it walk queued -> planning -> awaiting_approval\n", restart, logs)
+	_, _ = fmt.Fprintf(out, "\nNext steps:\n  - edit the config or the env file, then restart: %s\n  - logs: %s\n  - queue an item and watch it walk queued -> planning -> awaiting_approval\n", restart, logs)
 	return nil
 }
 
