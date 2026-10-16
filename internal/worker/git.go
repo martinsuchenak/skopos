@@ -202,3 +202,34 @@ func tail(s string, n int) string {
 	}
 	return s[len(s)-n:]
 }
+
+// instructionPaths are the files and directories agent CLIs auto-load from
+// a working directory as instructions or config (CLAUDE.md, AGENTS.md,
+// opencode.json, .claude/, .opencode/, skills, MCP configs, ...).
+var instructionPaths = []string{
+	"AGENTS.md", "CLAUDE.md", "GEMINI.md", ".skopos",
+	".claude", ".mcp.json", ".opencode", "opencode.json", "opencode.jsonc",
+	".gemini", ".codex", ".cursor", ".cursorrules", ".github/copilot-instructions.md",
+}
+
+// restoreInstructionFiles resets every instruction/config path in a REVIEW
+// worktree to its version at base (removing what the branch added).
+// Runner-agnostic defense: the branch under review was written by the
+// implementer, and any CLI that auto-loads these files would otherwise take
+// the implementer's instructions as the reviewer's. The reviewed diff is
+// commit-based (origin/<base>...HEAD), so the branch's changes to these
+// files still show up in the review.
+func restoreInstructionFiles(ctx context.Context, wt, base string) error {
+	for _, p := range instructionPaths {
+		if err := os.RemoveAll(filepath.Join(wt, p)); err != nil {
+			return err
+		}
+		if _, err := git(ctx, wt, "cat-file", "-e", base+":"+p); err != nil {
+			continue // absent at base: stays removed
+		}
+		if _, err := git(ctx, wt, "checkout", base, "--", p); err != nil {
+			return err
+		}
+	}
+	return nil
+}

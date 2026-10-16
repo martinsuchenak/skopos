@@ -58,6 +58,44 @@ type AgentRun struct {
 	// Wrapper is the operator's argv prefix (placeholders already
 	// expanded); the agent command is appended to it.
 	Wrapper []string
+	// Runner names the runner (account runner; "" = claude). Granted: the
+	// stage profile grants capabilities (tools/env/allow). Sandboxed: the
+	// profile settings enable the runner's own sandbox. runAgent uses both
+	// for the fail-closed containment rule.
+	Runner    string
+	Granted   bool
+	Sandboxed bool
+}
+
+// withPWD pins $PWD to the run's directory. The scrubbed environment
+// inherits the daemon's PWD (under a service: the config dir), and some
+// agent CLIs trust $PWD over the process's real working directory —
+// opencode did, and edited + committed in the wrong repository. Every
+// agent command goes through this.
+func withPWD(env []string, dir string) []string {
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "PWD=") {
+			out = append(out, kv)
+		}
+	}
+	if dir == "" {
+		return out
+	}
+	return append(out, "PWD="+dir)
+}
+
+// claudeRunner is Claude Code (verified lockdown: lockdownArgs).
+type claudeRunner struct{ bin string }
+
+func (claudeRunner) Verified() bool       { return true }
+func (claudeRunner) HonorsSettings() bool { return true }
+func (c claudeRunner) Check(ctx context.Context, pathEnv string) error {
+	return LockdownSupported(ctx, c.bin, pathEnv)
+}
+func (c claudeRunner) Run(ctx context.Context, r AgentRun) AgentResult {
+	r.Bin = c.bin
+	return runClaude(ctx, r)
 }
 
 // lockdownArgs are the flags every agent run gets (capability profiles §1,
@@ -204,7 +242,7 @@ func runClaude(ctx context.Context, r AgentRun) AgentResult {
 	name, argv := agentCommand(r, args)
 	cmd := exec.CommandContext(cctx, name, argv...)
 	cmd.Dir = r.Dir
-	cmd.Env = scrubEnv(r.Env, r.TokenEnvs, r.FileEnvKeys)
+	cmd.Env = withPWD(scrubEnv(r.Env, r.TokenEnvs, r.FileEnvKeys), r.Dir)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()

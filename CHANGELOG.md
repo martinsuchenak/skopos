@@ -50,8 +50,31 @@ versions follow [Semantic Versioning](https://semver.org/).
     approving the plan approves the skills. Existing revisions keep their
     hash.
 
+- **Runner-agnostic worker.** An account's `runner` now really selects the
+  agent CLI; before, every run executed the claude binary whatever it said.
+  - **`opencode`** is the second built-in runner. Its lockdown is verified
+    live against opencode 1.18.27: an isolated config, the `OPENCODE_DISABLE_*`
+    switches, and an ordered `OPENCODE_PERMISSION` translated from the stage
+    allowlist. MCP servers come from `mcp_config`, translated to opencode's
+    format.
+  - **Any other CLI** works via `[worker.runner_config.<name>] kind =
+    "command"` (argv template). It is unverified, so it only runs inside a
+    wrapper; an unwrapped stage refuses the run.
+  - **Structured results** for runners without a schema option are extracted
+    from the reply and validated against the stage schema. opencode gets one
+    repair turn.
+- **Review worktrees reset instruction and agent-config files to the base
+  version** (`AGENTS.md`, `CLAUDE.md`, `.skopos/`, `.claude/`, `.opencode/`,
+  …) before the run. No runner can pick up instructions the implementer
+  wrote, and the diff still shows them.
+
 ### Fixed
 
+- **Agent commands ran with the daemon's `$PWD`.** opencode trusts `$PWD` over
+  the real working directory, and in a live test it edited and committed in
+  the wrong repository. Every agent command now gets `PWD=<run dir>`, and
+  opencode also gets `--dir`.
+- **`accounts.model` was ignored** — it never reached the agent run.
 - **Review prompts listed no plan steps** — the template rendered the
   plan, but the stage never passed it; reviewers now see the approved steps.
 

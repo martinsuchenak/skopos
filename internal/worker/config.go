@@ -54,6 +54,10 @@ type Config struct {
 	// itself — a profile says how the operator contains a stage, and only a
 	// contained stage may be granted capabilities (see StageProfile).
 	Profiles map[string]map[string]*StageProfile `toml:"profiles"`
+
+	// RunnerSpecs configure runner names beyond the defaults (claude and
+	// opencode need no block; "command" runs any CLI, wrapper-only).
+	RunnerSpecs map[string]*RunnerSpec `toml:"runner_config"`
 }
 
 // Stages a profile may configure.
@@ -311,6 +315,27 @@ func (c *Config) Default(home string) error {
 	} else if len(c.MCPServers) > 0 {
 		return fmt.Errorf("mcp_servers is set but mcp_config is not: pipeline runs no longer load the worker user's MCP servers (~/.claude.json) — point mcp_config at a JSON file with those servers (mcpServers shape)")
 	}
+	for name, spec := range c.RunnerSpecs {
+		if spec == nil {
+			continue
+		}
+		kind := spec.Kind
+		if kind == "" {
+			kind = name
+		}
+		if !runnerKinds[kind] {
+			return fmt.Errorf("runner_config.%s: unknown kind %q (claude, opencode, command)", name, kind)
+		}
+		if kind == "command" && len(spec.Command) == 0 {
+			return fmt.Errorf("runner_config.%s: kind command needs command = [...]", name)
+		}
+		spec.Config = expandHome(spec.Config, home)
+	}
+	for _, a := range c.Accounts {
+		if _, err := c.RunnerFor(a.Runner); err != nil {
+			return fmt.Errorf("account %s: %v", a.Name, err)
+		}
+	}
 	for name, stages := range c.Profiles {
 		for stage, p := range stages {
 			if !profileStages[stage] {
@@ -378,12 +403,6 @@ func expandHome(p, home string) string {
 		return filepath.Join(home, p[1:])
 	}
 	return p
-}
-
-// RunnerBin resolves the binary for a runner name (first runner wins for
-// now; per-runner bins land with more runner types).
-func (c *Config) RunnerBin(runner string) string {
-	return c.Bin
 }
 
 // TokenEnvs lists the configured push-token env vars (repos.*.push.token_env)

@@ -89,6 +89,15 @@ poll_every = "30s"
 # priority = 1
 # env = { ANTHROPIC_API_KEY = "${CLAUDE_1_API_KEY}" }   # the value lives in skopos-worker.env
 
+# Runners: an account's runner picks the agent CLI — "claude" (default) and
+# "opencode" have verified lockdowns; any other CLI via kind = "command"
+# runs only inside a wrapper (fail closed).
+# [worker.runner_config.opencode]
+# config = "~/.config/skopos/opencode-providers.json"   # providers/models; secrets as {env:VAR}
+# [worker.runner_config.aider]
+# kind = "command"
+# command = ["aider", "--yes", "--message", "{prompt}"]
+
 # MCP servers for pipeline runs. Agent runs load NO user/project settings
 # (no ~/.claude.json servers, no CLAUDE.md, no hooks), so the servers they
 # may use come from this file (Claude Code mcpServers JSON); mcp_servers is

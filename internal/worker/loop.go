@@ -287,14 +287,18 @@ func (w *Worker) pickAccount(run *Run, log *slog.Logger) *Account {
 	return a
 }
 
-func (w *Worker) agentRun(bin, dir, prompt, schema string, tools []string, timeout time.Duration, account *Account, run *Run, phase string) AgentRun {
+func (w *Worker) agentRun(dir, prompt, schema string, tools []string, timeout time.Duration, account *Account, run *Run, phase string) AgentRun {
 	w.rememberAccount(run, account)
 	sessionKey := run.ID + ":" + phase
 	sess := w.sessions[sessionKey]
 	prof := w.cfg.StageProfile(run.WorkspaceID, phase)
 	w.executors[run.ID] = prof.Executor()
+	runner := account.Runner
+	if runner == "" {
+		runner = "claude"
+	}
 	ar := AgentRun{
-		Bin: bin, Dir: dir, Prompt: prompt,
+		Bin: w.cfg.RunnerBin(runner), Dir: dir, Prompt: prompt, Runner: runner, Model: account.Model,
 		SessionID: sess, Resume: sess != "",
 		Schema: schema, AllowedTools: tools,
 		Settings:  settingsJSON(w.cfg.MCPDeny, ""),
@@ -310,7 +314,11 @@ func (w *Worker) agentRun(bin, dir, prompt, schema string, tools []string, timeo
 		return ar
 	}
 	// The stage profile (operator-supplied, validated fail-closed at load):
-	// capabilities extend the run, the wrapper contains it.
+	// capabilities extend the run, the wrapper contains it. runAgent
+	// re-checks containment per runner (sandbox settings only contain
+	// runners that honor them).
+	ar.Granted = len(prof.Tools) > 0 || len(prof.Env) > 0 || prof.grantsAllow()
+	ar.Sandboxed = prof.sandboxed()
 	ar.AllowedTools = append(append([]string{}, tools...), prof.Tools...)
 	ar.Settings = settingsJSON(w.cfg.MCPDeny, prof.Settings)
 	if len(prof.Env) > 0 {

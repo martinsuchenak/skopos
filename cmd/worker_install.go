@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -380,12 +381,34 @@ func runWorkerChecks(configPath, envFile, pathEnv, home string) ([]string, error
 	if ws.Bin == "" {
 		ws.Bin = "claude"
 	}
-	// Look the CLI up on the PATH the SERVICE will have, not the
-	// installer's (sudo's secure_path is not the target user's).
-	if !onPath(ws.Bin, pathEnv) {
-		problems = append(problems, fmt.Sprintf("agent CLI %q not on the service PATH (%s)", ws.Bin, pathEnv))
-	} else if err := worker.LockdownSupported(context.Background(), ws.Bin, pathEnv); err != nil {
-		problems = append(problems, err.Error())
+	// Every runner the accounts feed, on the PATH the SERVICE will have, not
+	// the installer's (sudo's secure_path is not the target user's).
+	for _, name := range ws.UsedRunners() {
+		bin := ws.RunnerBin(name)
+		if !onPath(bin, pathEnv) {
+			problems = append(problems, fmt.Sprintf("agent CLI %q (runner %s) not on the service PATH (%s)", bin, name, pathEnv))
+			continue
+		}
+		if r, err := ws.RunnerFor(name); err != nil {
+			problems = append(problems, err.Error())
+		} else if err := r.Check(context.Background(), pathEnv); err != nil {
+			problems = append(problems, fmt.Sprintf("runner %s: %v", name, err))
+		} else if !r.Verified() {
+			// Unverified (kind command): skopos refuses to run it outside a
+			// wrapper, so every stage it may execute needs one.
+			var bare []string
+			for id := range ws.Repos {
+				for _, stage := range []string{"plan", "implement", "review"} {
+					if p := ws.StageProfile(id, stage); p == nil || len(p.Wrapper) == 0 {
+						bare = append(bare, id+" "+stage)
+					}
+				}
+			}
+			if len(bare) > 0 {
+				sort.Strings(bare)
+				problems = append(problems, fmt.Sprintf("runner %s is unverified (kind command) and only runs inside a wrapper — these stages have none: %s", name, strings.Join(bare, ", ")))
+			}
+		}
 	}
 	if ws.MCPConfig != "" && !fileExists(ws.MCPConfig) {
 		problems = append(problems, "mcp_config "+ws.MCPConfig+" does not exist")

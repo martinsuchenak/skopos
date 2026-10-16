@@ -14,6 +14,10 @@ The changes implement this plan:
 
 {{.Body}}
 {{end}}
+Instruction and agent-config files in this checkout (AGENTS.md, CLAUDE.md, .skopos/, .claude/,
+.opencode/, ...) are restored to the base version; the branch's changes to them are in the diff
+and are reviewed like any other change.
+
 Report only concrete problems: bugs, missed plan steps, broken behaviour, security issues, and
 changes outside the plan. No style nitpicks, no praise.
 

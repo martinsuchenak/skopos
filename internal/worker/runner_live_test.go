@@ -29,6 +29,7 @@ func TestLiveLockdown(t *testing.T) {
 	if err := LockdownSupported(context.Background(), bin, ""); err != nil {
 		t.Fatal(err)
 	}
+	guardHostRepo(t)
 	root := t.TempDir()
 	wt := filepath.Join(root, "wt")
 	outside := filepath.Join(root, "outside")

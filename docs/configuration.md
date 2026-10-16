@@ -59,8 +59,9 @@ walkthrough.
 | `worker.workspaces` | `--workspace` | (from repos) | Workspace IDs this worker serves |
 | `worker.poll_every` | — | `30s` | Idle claim interval |
 | `worker.repos."<workspace-id>"` | — | — | Per-workspace local clone: `path`, `default_branch`, `branch_prefix`, `setup`, `setup_env`, `checks`, `protected_branches`, `profile`, `stages.<stage>`, and `push.{kind,remote_url,token_env}` |
-| `worker.accounts` | — | — | Credential pool: `name`, `runner`, `priority`, `model`, `env` (injected into agent runs only) |
-| `worker.claude_bin` | — | `claude` | Agent CLI binary — must support `--setting-sources`, `--restricted`, `--strict-mcp-config` (checked at start) |
+| `worker.accounts` | — | — | Credential pool: `name`, `runner` (`claude`, `opencode`, or a `runner_config` name), `priority`, `model`, `env` (injected into agent runs only) |
+| `worker.runner_config.<name>` | — | — | Agent CLI per runner name: `kind` (`claude` / `opencode` / `command`), `bin`, `config` (opencode base config: providers/models), `command` (argv template for any other CLI — unverified, wrapper-only) |
+| `worker.claude_bin` | — | `claude` | Claude Code binary (or `runner_config.claude.bin`) — must support `--setting-sources`, `--restricted`, `--strict-mcp-config` (checked at start) |
 | `worker.plan_timeout` / `worker.impl_timeout` | — | `10m` / `90m` | Agent run timeouts (review/qa use the plan timeout) |
 | `worker.mcp_config` | — | — | JSON file with the MCP servers pipeline runs get (Claude Code `mcpServers` shape); required when `mcp_servers` is set |
 | `worker.mcp_servers` | — | — | MCP tool prefixes allowed in plan/implement runs, e.g. `["mcp__skopos"]` |

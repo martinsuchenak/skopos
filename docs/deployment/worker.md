@@ -68,6 +68,57 @@ config) and restarts it on both platforms — safe.
 the environment the service gets — its PATH, HOME and the env file — not your
 shell's: a `SKOPOS_API_KEY` exported in your shell does not count.
 
+## Agent runners
+
+The worker isn't tied to one agent CLI. An account's `runner` picks it:
+
+| Runner | Lockdown | Notes |
+|---|---|---|
+| `claude` (default) | verified | Claude Code; structured results via `--json-schema` |
+| `opencode` | verified | `opencode run --format json`; results extracted from the reply |
+| `kind = "command"` | **unverified** | any CLI from an argv template; runs **only inside a wrapper** |
+
+```toml
+[[worker.accounts]]
+name   = "local-qwen"
+runner = "opencode"
+model  = "llmrouter/qwen/qwen3.8-27b"
+env    = { LLMROUTER_KEY = "${LLMROUTER_KEY}" }   # referenced as {env:LLMROUTER_KEY} in the config below
+
+[worker.runner_config.opencode]
+config = "~/.config/skopos/opencode-providers.json"   # providers/models only — your ~/.config/opencode is never read
+
+[worker.runner_config.aider]
+kind    = "command"
+command = ["aider", "--yes", "--message", "{prompt}"] # {prompt} {dir} {model}; no {prompt} = stdin
+```
+
+**Verified** means the lockdown has been checked live with the opt-in tests
+(`SKOPOS_LIVE_CLAUDE=1`, `SKOPOS_LIVE_OPENCODE=1`). The checks:
+
+- the repo's and the user's instruction files are not loaded;
+- files outside the worktree are unreadable;
+- the stage's tool allowlist is enforced, and commits still work.
+
+For opencode that means an empty config dir, its
+`OPENCODE_DISABLE_*` switches and an ordered `OPENCODE_PERMISSION`. The
+allowlist is translated from the same tool names Claude uses.
+
+Runners without a native schema option get the result schema in the prompt.
+The worker extracts the final JSON object and validates it, and opencode gets
+one repair turn on the same session if the object doesn't validate.
+
+**Unverified runners fail closed.** A `command` runner on a stage without a
+`wrapper` refuses the run with a clear reason, and `worker check` lists the
+unwrapped stages. Sandbox `settings` only contain the `claude` runner.
+
+**Review worktrees are runner-agnostic too.** Before a review or QA run, the
+worker resets instruction and agent-config paths in the review checkout to
+the base version: `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.skopos/`,
+`.claude/`, `.opencode/`, `opencode.json` and similar. Then no CLI picks up
+instructions the implementer wrote. Those changes still show in the reviewed
+diff.
+
 ## What every agent run gets
 
 Agent runs are locked down regardless of configuration:

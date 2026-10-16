@@ -165,8 +165,14 @@ func TestAgentRunAppliesProfile(t *testing.T) {
 		executors: map[string]string{},
 	}
 	run := &Run{ID: "r1", WorkspaceID: "ws"}
-	acct := &Account{Name: "a", Env: map[string]string{"ANTHROPIC_API_KEY": "k"}}
-	ar := w.agentRun("claude", "/wt/x", "p", "", []string{"Read"}, 0, acct, run, "implement")
+	acct := &Account{Name: "a", Model: "sonnet", Env: map[string]string{"ANTHROPIC_API_KEY": "k"}}
+	ar := w.agentRun("/wt/x", "p", "", []string{"Read"}, 0, acct, run, "implement")
+	if ar.Runner != "claude" || ar.Model != "sonnet" {
+		t.Fatalf("runner %q / model %q: the account's model must reach the run", ar.Runner, ar.Model)
+	}
+	if !ar.Granted || ar.Sandboxed {
+		t.Fatalf("granted %v sandboxed %v", ar.Granted, ar.Sandboxed)
+	}
 	if strings.Join(ar.AllowedTools, ",") != "Read,Bash(php:*)" {
 		t.Fatalf("tools: %v", ar.AllowedTools)
 	}
@@ -183,7 +189,7 @@ func TestAgentRunAppliesProfile(t *testing.T) {
 		t.Fatalf("mcp %q executor %q", ar.MCPConfig, w.executors["r1"])
 	}
 	// A stage without a profile runs plain and records "local".
-	ar = w.agentRun("claude", "/wt/x", "p", "", []string{"Read"}, 0, acct, run, "plan")
+	ar = w.agentRun("/wt/x", "p", "", []string{"Read"}, 0, acct, run, "plan")
 	if len(ar.Wrapper) != 0 || strings.Join(ar.AllowedTools, ",") != "Read" || w.executors["r1"] != "local" {
 		t.Fatalf("plain stage: %+v executor %q", ar, w.executors["r1"])
 	}

@@ -50,7 +50,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 		return err
 	}
 	log.Info("planning", "account", account.Name, "base", baseSHA)
-	res := runClaude(ctx, w.agentRun(w.cfg.RunnerBin(run.Runner), repo.Path, prompt, planSchema, planTools, w.cfg.PlanTimeout, account, run, "plan"))
+	res := w.runAgent(ctx, w.agentRun(repo.Path, prompt, planSchema, planTools, w.cfg.PlanTimeout, account, run, "plan"))
 	if err := w.handleAgentOutcome(ctx, run, res, account, "plan"); err != nil {
 		return err
 	}
@@ -166,7 +166,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		return err
 	}
 	log.Info("implementing", "account", account.Name, "branch", branch, "worktree", worktree)
-	res := runClaude(ctx, w.agentRun(w.cfg.RunnerBin(run.Runner), worktree, prompt, implSchema, implTools, w.cfg.ImplTimeout, account, run, "implement"))
+	res := w.runAgent(ctx, w.agentRun(worktree, prompt, implSchema, implTools, w.cfg.ImplTimeout, account, run, "implement"))
 	if err := w.handleAgentOutcome(ctx, run, res, account, "implement"); err != nil {
 		return err
 	}
@@ -248,6 +248,13 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 		return fmt.Errorf("review worktree: %w", err)
 	}
 	defer removeWorktree(ctx, repo.Path, wt)
+	base := run.BaseSHA
+	if base == "" {
+		base = "origin/" + repo.DefaultBranch
+	}
+	if err := restoreInstructionFiles(ctx, wt, base); err != nil {
+		return fmt.Errorf("review: restoring instruction files to %s: %w", base, err)
+	}
 
 	// Cheap pre-check (round-2 low): an empty diff fails without an
 	// agent run.
@@ -269,10 +276,6 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 				steps = append(steps, Step{Title: pi.Title, Description: pi.Description})
 			}
 		}
-		base := run.BaseSHA
-		if base == "" {
-			base = "origin/" + repo.DefaultBranch
-		}
 		instructions, skillBodies = w.runKnowledge(ctx, repo, run, item.PlanID, base)
 	}
 	prompt, err := renderPrompt("review.md", map[string]any{
@@ -283,7 +286,7 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 		return err
 	}
 	log.Info("reviewing", "account", account.Name, "stage", run.Stage, "branch", run.Branch)
-	res := runClaude(ctx, w.agentRun(w.cfg.RunnerBin(run.Runner), wt, prompt, reviewSchema, reviewTools, w.cfg.PlanTimeout, account, run, run.Stage))
+	res := w.runAgent(ctx, w.agentRun(wt, prompt, reviewSchema, reviewTools, w.cfg.PlanTimeout, account, run, run.Stage))
 	if err := w.handleAgentOutcome(ctx, run, res, account, run.Stage); err != nil {
 		return err
 	}
