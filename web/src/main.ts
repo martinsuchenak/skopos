@@ -32,7 +32,9 @@ type InboxDetail = InboxItem & { content: string; content_html: string };
 type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string };
 
 type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; created_at: string; updated_at: string };
-type InboxForm = { id: string; title: string; tags: string; workspace: string };
+// wsLocked: a workflow item cannot move workspace (its runs, plan and
+// branch live there) — the server refuses it; the modal hides the picker.
+type InboxForm = { id: string; title: string; tags: string; workspace: string; wsLocked: boolean };
 
 const UI_AUTHOR = 'ui';
 type View = 'sessions' | 'blackboard' | 'plans' | 'inbox' | 'index' | 'keys' | 'workspaces' | 'workers';
@@ -1333,6 +1335,7 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
     this.inboxErrors = {};
     this.inboxBaseline = { title: '', tags: '', content: '', workspace: this.activeWorkspace };
     this.showInboxItemModal = true;
+    this.syncInboxWsField();
     this.mountInboxEditor('');
   },
   async openInboxEditModal(item: InboxItem) {
@@ -1340,11 +1343,28 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
     const res = await this.authFetch('/api/inbox/' + encodeURIComponent(item.id));
     if (!await this.handleBad(res, 'Could not load item')) return;
     const detail = (await res.json()) as InboxDetail;
-    this.inboxForm = { id: detail.id, title: detail.title, tags: (detail.tags || []).join(', '), workspace: detail.workspace_id || '' };
+    this.inboxForm = {
+      id: detail.id, title: detail.title, tags: (detail.tags || []).join(', '), workspace: detail.workspace_id || '',
+      wsLocked: this.isWorkflowStatus(detail.status),
+    };
     this.inboxBaseline = { title: detail.title, tags: this.inboxForm.tags, content: detail.content, workspace: detail.workspace_id || '' };
     this.inboxErrors = {};
     this.showInboxItemModal = true;
+    this.syncInboxWsField();
     this.mountInboxEditor(detail.content);
+  },
+  // Imperative, like syncSessionPurge: a new x-show on a static element is
+  // one of the CSP build's silent failure modes. Workflow items keep their
+  // workspace (the server refuses the move), so the picker is hidden and
+  // disabled for them.
+  syncInboxWsField() {
+    const locked = this.inboxForm.wsLocked;
+    this.$nextTick(() => {
+      const field = document.querySelector('[data-ib-ws-field]') as HTMLElement | null;
+      if (field) field.style.display = locked ? 'none' : '';
+      const sel = document.getElementById('ib-ws') as HTMLSelectElement | null;
+      if (sel) sel.disabled = locked;
+    });
   },
   closeInboxItemModal() {
     this.showInboxItemModal = false;
@@ -1388,9 +1408,9 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
         if (!await this.handleBad(res, 'Item not captured')) return;
         this.notify(f.workspace === 'unfiled' ? 'Item captured (unfiled)' : 'Item captured', 'success');
       } else {
-        const body: Record<string, unknown> = { title: f.title.trim(), content, tags };
+        const body: Record<string, unknown> = { title: f.title.trim(), content, tags, via: 'dashboard' };
         // Filing: a changed, non-empty workspace re-files the item.
-        if (f.workspace && f.workspace !== this.inboxBaseline.workspace) body.workspace_id = f.workspace;
+        if (!f.wsLocked && f.workspace && f.workspace !== this.inboxBaseline.workspace) body.workspace_id = f.workspace;
         const res = await this.authFetch('/api/inbox/' + encodeURIComponent(f.id), { method: 'PATCH', body: JSON.stringify(body) });
         if (!await this.handleBad(res, 'Item not updated')) return;
         this.notify('Item updated', 'success');
@@ -2072,7 +2092,7 @@ function bundleParams(ws: string, branch: string) {
 function emptyEntryForm(branch = ''): EntryForm { return { scope: 'branch', entry_type: 'finding', title: '', content: '', code_ref: '', branch_name: branch, session_id: '' }; }
 function emptyPlanForm(branch = ''): PlanForm { return { name: '', description: '', branch_name: branch }; }
 function emptyItemForm(): ItemForm { return { title: '', description: '', phase: '', depends_on: '' }; }
-function emptyInboxForm(): InboxForm { return { id: '', title: '', tags: '', workspace: '' }; }
+function emptyInboxForm(): InboxForm { return { id: '', title: '', tags: '', workspace: '', wsLocked: false }; }
 function emptyInboxBaseline() { return { title: '', tags: '', content: '', workspace: '' }; }
 
 Alpine.plugin(focus);

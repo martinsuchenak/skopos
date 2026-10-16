@@ -106,10 +106,13 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	input.Via = viaFrom(r, input.Via)
 	if err := h.service.UpdateItem(r.Context(), id, input); err != nil {
 		switch {
 		case errors.Is(err, ErrNotFound):
 			rest.RespondError(w, http.StatusNotFound, err.Error())
+		case errors.Is(err, auth.ErrApproverRequired):
+			rest.RespondError(w, http.StatusForbidden, err.Error())
 		case errors.Is(err, auth.ErrOutOfScope):
 			// The only OutOfScope source on this path is the filing target
 			// (the item itself was scope-quiet-checked) — actionable 403.

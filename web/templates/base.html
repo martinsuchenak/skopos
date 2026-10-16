@@ -1282,7 +1282,9 @@
             <h2 id="inbox-item-modal-title" class="mb-4 text-lg font-semibold" x-text="inboxForm.id ? 'Edit inbox item' : 'Capture inbox item'"></h2>
             <form @submit.prevent="submitInboxItem()">
                 <div class="space-y-3">
-                    <div>
+                    <!-- Hidden/disabled for workflow items by syncInboxWsField
+                         (imperative — CSP build): they cannot move workspace. -->
+                    <div data-ib-ws-field>
                         <label class="lbl" for="ib-ws">Workspace <span aria-hidden="true">*</span></label>
                         <select id="ib-ws" x-model="inboxForm.workspace" class="fld" :aria-invalid="!!inboxErrors.workspace">
                             <option value="" x-text="inboxForm.id ? 'keep current' : 'Select workspace…'"></option>

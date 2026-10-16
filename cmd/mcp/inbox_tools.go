@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/inbox"
@@ -187,6 +188,7 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 				Title:       req.StringOr("title", ""),
 				Content:     req.StringOr("content", ""),
 				WorkspaceID: req.StringOr("workspace_id", ""),
+				Via:         audit.ViaMCP,
 			}
 			// An absent or empty tags array leaves the tags unchanged (the
 			// ToolRequest API cannot distinguish nil from an empty slice, so

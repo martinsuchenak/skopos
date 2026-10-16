@@ -26,7 +26,8 @@ func toolError(err error) error {
 		errors.Is(err, inbox.ErrInvalidInput) || errors.Is(err, inbox.ErrNotFound) ||
 		errors.Is(err, inbox.ErrClaimConflict) || errors.Is(err, inbox.ErrAlreadyConverted) ||
 		errors.Is(err, inbox.ErrFrozen) ||
-		errors.Is(err, auth.ErrOutOfScope) || errors.Is(err, auth.ErrRootRequired) {
+		errors.Is(err, auth.ErrOutOfScope) || errors.Is(err, auth.ErrRootRequired) ||
+		errors.Is(err, auth.ErrApproverRequired) {
 		return mcplib.NewToolErrorInvalidParams(err.Error())
 	}
 	return mcplib.NewToolErrorInternal(err.Error())

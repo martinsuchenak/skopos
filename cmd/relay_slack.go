@@ -437,8 +437,9 @@ func (r *slackRelay) reviewHead(itemID string) string {
 }
 
 // appendSection read-modify-writes a markdown section onto the item —
-// content edits are legal in every workflow phase (0.9.3), and the stage
-// prompts read exactly these sections.
+// content edits are legal in every workflow phase (0.9.3; approver-only past
+// the plan gate, which the relay's principal holds), and the stage prompts
+// read exactly these sections.
 func (r *slackRelay) appendSection(itemID, heading, body string) error {
 	if strings.TrimSpace(body) == "" {
 		return nil
@@ -448,7 +449,7 @@ func (r *slackRelay) appendSection(itemID, heading, body string) error {
 		return err
 	}
 	content := item.Content + "\n\n" + heading + "\n\n" + strings.TrimSpace(body) + "\n"
-	return r.inbox.UpdateItem(relayCtx(), itemID, inbox.UpdateInput{Content: content})
+	return r.inbox.UpdateItem(relayCtx(), itemID, inbox.UpdateInput{Content: content, Via: audit.ViaSlack})
 }
 
 func (r *slackRelay) bindThread(ctx context.Context, itemID, ts string) {

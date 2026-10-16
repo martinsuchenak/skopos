@@ -243,6 +243,45 @@ func TestRelayDoneUsesRunHead(t *testing.T) {
 	}
 }
 
+// changes past the plan gate: the relay's content append is a post-approval
+// edit (approver-only since review M7) — the relay principal holds the
+// permission, so the section lands, is audited via=slack, and the item goes
+// back to implementing.
+func TestRelayChangesAfterApproval(t *testing.T) {
+	svc, runsSvc, plansSvc, _, relay := relayStack(t)
+	root := context.Background()
+	item := mustReachGate(t, svc, plansSvc, "changes after approval")
+	if _, err := svc.Approve(approverCtx(), item.ID, inbox.ApproveInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordRunWithHead(t, runsSvc, item.ID, "abc123def456"); err != nil {
+		t.Fatal(err)
+	}
+	if !relay.Apply(root, item.ID, "changes: handle the empty-list case") {
+		t.Fatal("changes must be handled")
+	}
+	got, _ := svc.GetItem(root, item.ID)
+	if got.Status != inbox.StatusImplementing {
+		t.Fatalf("status after changes: %s", got.Status)
+	}
+	if !strings.Contains(got.Content, "## Change requests") || !strings.Contains(got.Content, "handle the empty-list case") {
+		t.Fatalf("change request must land on the item: %q", got.Content)
+	}
+	entries, err := svc.Timeline(root, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	audited := false
+	for _, e := range entries {
+		if e.Action == "inbox.edit" && e.Via == audit.ViaSlack {
+			audited = true
+		}
+	}
+	if !audited {
+		t.Fatalf("the relay's content edit must be audited via=slack: %+v", entries)
+	}
+}
+
 // new: capture — creates + queues the item and binds the thread to Martin's
 // own message; help and non-command text behave.
 func TestRelayCapture(t *testing.T) {

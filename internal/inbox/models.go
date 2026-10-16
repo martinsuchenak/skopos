@@ -168,6 +168,9 @@ type UpdateInput struct {
 	Tags        *[]string `json:"tags,omitempty"`
 	Priority    *int      `json:"priority,omitempty"`
 	WorkspaceID string    `json:"workspace_id,omitempty"`
+	// Via labels the surface for the audit log of workflow-item edits
+	// (dashboard, slack, cli, mcp); the REST handler defaults it.
+	Via string `json:"via,omitempty"`
 }
 
 // ConvertInput links an existing plan (created separately via the plan tools)

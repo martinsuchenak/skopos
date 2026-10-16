@@ -21,9 +21,26 @@ versions follow [Semantic Versioning](https://semver.org/).
   approving a plan or head commit nobody had seen. They are now refused
   mid-run with a hint; `revise` / `changes` / `retry` / `reject` still
   buffer.
+- **Workflow-item edits past the plan gate need the approver permission** —
+  once a plan was approved, any in-scope key (agent and worker keys
+  included) could rewrite the item title/content the implementer prompt
+  reads, with no audit trail. From `approved` onward (and on any item
+  whose plan approval is on record, e.g. blocked after approval) title and
+  content edits now require the approver permission (403 otherwise; tags
+  and priority stay open), and every edit to a workflow item is
+  audit-logged as `inbox.edit` with the fields it changed. Workflow items
+  can no longer move workspace (their runs, plan and branch live there);
+  the dashboard edit modal hides the workspace picker for them.
 
 ### Fixed
 
+- **Retry answers are applied atomically** — the answer was appended to the
+  item outside any transaction, before the run was queued: concurrent
+  retries (Slack + dashboard) lost one answer, and a failed queue or
+  transition left the text behind with no audit entry, so the next retry
+  duplicated the `## Answers` section. The append now commits with the
+  status change, on the item re-read inside the transaction; answers are
+  capped at 16 KiB.
 - **Slack command parsing** — the separator was optional, so "Done with
   lunch" marked an item done, "reject, wait no" rejected it, and "news: CI
   green" captured and queued an item. A command is now the bare word or

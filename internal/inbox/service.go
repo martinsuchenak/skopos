@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/martinsuchenak/skopos/internal/approvals"
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/martinsuchenak/skopos/internal/ids"
@@ -252,9 +253,15 @@ func (s *Service) listAcrossScope(ctx context.Context, workspaceID, status, tag,
 }
 
 // UpdateItem enriches an item (title/content/tags/priority) and files (or
-// re-files) it when WorkspaceID is set. Only open and in_progress items are
-// editable — converted/done/discarded are frozen, mirroring the plan freeze
-// semantics.
+// re-files) it when WorkspaceID is set. Open, in-progress and workflow items
+// are editable; converted/done/discarded are frozen, mirroring the plan
+// freeze semantics. Workflow items carry extra rules (review M7):
+//   - they cannot move workspace — their runs, plan and branch live there;
+//   - once the plan gate has passed (approved and beyond, or any item with a
+//     recorded plan approval), title/content edits require the approver
+//     permission — the implementer prompt reads them, so an agent key must
+//     not rewrite what Martin approved;
+//   - every effective edit is audit-logged ("inbox.edit").
 func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInput) error {
 	if err := s.requireItemScopeQuiet(ctx, itemID); err != nil {
 		return err
@@ -271,7 +278,12 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 			return err
 		}
 	}
+	// The approval log is append-only, so reading it before the transaction
+	// cannot miss a gate the fresh status inside it would not also show.
+	approverErr := auth.RequireApprover(ctx)
+	everApproved := approverErr != nil && s.planApproved(ctx, itemID)
 	var item *Item
+	var changed []string
 	err := s.store.RunInTx(ctx, func(tx Store) error {
 		var err error
 		item, err = tx.GetItem(ctx, itemID)
@@ -279,13 +291,15 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 			return err
 		}
 		if !editable(item.Status) {
-			return fmt.Errorf("%w: item is %s; only open and in-progress items can be edited", ErrFrozen, statusLabel(item.Status))
+			return fmt.Errorf("%w: item is %s; only open, in-progress and workflow items can be edited", ErrFrozen, statusLabel(item.Status))
 		}
 		title, content, tags, workspace := item.Title, item.Content, item.Tags, item.WorkspaceID
 		if input.Title != "" {
 			title = input.Title
 		}
-		if input.Content != "" {
+		// Re-sending the current content (a form saving only its tags) is
+		// not a content edit, whatever its surrounding whitespace.
+		if input.Content != "" && strings.TrimSpace(input.Content) != strings.TrimSpace(item.Content) {
 			content = strings.TrimSpace(input.Content)
 		}
 		if input.Tags != nil {
@@ -298,13 +312,70 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 		if err != nil {
 			return err
 		}
+		changed = changedFields(item, title, content, workspace, tags, priority)
+		if IsWorkflowStatus(item.Status) {
+			if workspace != item.WorkspaceID {
+				return fmt.Errorf("%w: item is in the agent workflow (%s) — its runs, plan and branch live in %s; it cannot move workspace", ErrInvalidInput, statusLabel(item.Status), item.WorkspaceID)
+			}
+			if (title != item.Title || content != item.Content) && approverErr != nil && (postApproval(item.Status) || everApproved) {
+				return fmt.Errorf("%w: the plan for this item is approved — editing its title or content changes what the implementer reads", approverErr)
+			}
+		}
 		return tx.UpdateItem(ctx, itemID, workspace, title, content, tagsJSON(tags), priority, s.now().UTC())
 	})
 	if err != nil {
 		return err
 	}
 	s.publishItem(ctx, itemID)
+	if IsWorkflowStatus(item.Status) && len(changed) > 0 {
+		s.auditItem(ctx, itemID, "inbox.edit", input.Via, "edited "+strings.Join(changed, ", "), "")
+	}
 	return nil
+}
+
+// postApproval reports the statuses that only exist after the plan gate.
+func postApproval(st Status) bool {
+	return st == StatusApproved || st == StatusImplementing || st == StatusInReview
+}
+
+// planApproved reports whether the item's plan gate was ever passed — it
+// covers blocked/failed items and amendments back at the gate, where the
+// status alone does not tell. Lookup errors fail closed.
+func (s *Service) planApproved(ctx context.Context, itemID string) bool {
+	if s.approvals == nil {
+		return false
+	}
+	entries, err := s.approvals.List(ctx, strings.TrimSpace(itemID))
+	if err != nil {
+		return true
+	}
+	for _, e := range entries {
+		if e.Gate == approvals.GatePlan && e.Decision == approvals.DecisionApproved {
+			return true
+		}
+	}
+	return false
+}
+
+// changedFields names the fields an update actually changes (audit notes).
+func changedFields(item *Item, title, content, workspace string, tags []string, priority *int) []string {
+	var out []string
+	if title != item.Title {
+		out = append(out, "title")
+	}
+	if content != item.Content {
+		out = append(out, "content")
+	}
+	if workspace != item.WorkspaceID {
+		out = append(out, "workspace")
+	}
+	if strings.Join(tags, ",") != strings.Join(item.Tags, ",") {
+		out = append(out, "tags")
+	}
+	if (priority == nil) != (item.Priority == nil) || (priority != nil && *priority != *item.Priority) {
+		out = append(out, "priority")
+	}
+	return out
 }
 
 // Reorder assigns priorities 1..N to the listed ids, in order (the board's
@@ -645,7 +716,9 @@ func editable(status Status) bool {
 	// Workflow items stay editable for content: enrichment, review notes and
 	// change requests travel on the item through the run (agent-pipeline §1)
 	// — UpdateItem never changes status, and the workflow actions are the
-	// only way its status moves. The terminal manual states stay frozen.
+	// only way its status moves. Past the plan gate those edits are
+	// approver-only and audited (UpdateItem). The terminal manual states
+	// stay frozen.
 	return status == StatusOpen || status == StatusInProgress || IsWorkflowStatus(status)
 }
 
@@ -694,6 +767,9 @@ const (
 	excerptMax  = 200
 	maxPriority = 100000
 	maxReorder  = 500
+	// maxAnswerLen caps one retry answer (review M6): it is appended to the
+	// item content every stage prompt reads.
+	maxAnswerLen = 16 << 10
 )
 
 // resolvePriority validates a create/update priority value. Create: 0 means

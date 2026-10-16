@@ -79,6 +79,14 @@ func (s *Service) auditItem(ctx context.Context, itemID, action, via, notes, age
 // audit record. Human transitions require the approver permission; system
 // transitions only require workspace scope (the executor's key).
 func (s *Service) transition(ctx context.Context, itemID string, to Status, class TransitionActor, action, via, notes, agentID string) (*Item, error) {
+	return s.transitionWith(ctx, itemID, to, class, action, via, notes, agentID, nil)
+}
+
+// transitionWith is transition plus an optional in-transaction mutation of
+// the freshly read item, run after the matrix check and before the status
+// write: the mutation and the move commit together or not at all (review
+// M6 — Retry's answer append).
+func (s *Service) transitionWith(ctx context.Context, itemID string, to Status, class TransitionActor, action, via, notes, agentID string, mutate func(tx Store, item *Item) error) (*Item, error) {
 	if class == ActorHuman {
 		if err := auth.RequireApprover(ctx); err != nil {
 			return nil, err
@@ -101,6 +109,11 @@ func (s *Service) transition(ctx context.Context, itemID string, to Status, clas
 		}
 		if actor != class {
 			return fmt.Errorf("%w: transition %s → %s belongs to the %s (this call is %s)", ErrInvalidInput, item.Status, to, actor, class)
+		}
+		if mutate != nil {
+			if err := mutate(tx, item); err != nil {
+				return err
+			}
 		}
 		return tx.SetStatus(ctx, itemID, to, s.now().UTC())
 	})
@@ -343,10 +356,18 @@ func (s *Service) Retry(ctx context.Context, itemID, answer, via string) (*Item,
 	// The answer feeds the next run: the planner (and implementer) prompt
 	// reads the item CONTENT, so the answer is appended there — the audit
 	// trail alone would leave the agent asking the same questions again.
+	// The append runs inside the transition's transaction on the re-read
+	// item (review M6): a concurrent retry loses the matrix check instead of
+	// the answer, and a failed queue/transition leaves no orphaned text for
+	// the next retry to duplicate.
+	var appendAnswer func(tx Store, cur *Item) error
 	if answer = strings.TrimSpace(answer); answer != "" {
-		content := item.Content + "\n\n## Answers\n\n" + answer + "\n"
-		if err := s.store.UpdateItem(ctx, item.ID, item.WorkspaceID, item.Title, content, tagsJSON(item.Tags), item.Priority, s.now().UTC()); err != nil {
-			return nil, err
+		if len(answer) > maxAnswerLen {
+			return nil, fmt.Errorf("%w: answer is %d bytes; the limit is %d", ErrInvalidInput, len(answer), maxAnswerLen)
+		}
+		appendAnswer = func(tx Store, cur *Item) error {
+			content := cur.Content + "\n\n## Answers\n\n" + answer + "\n"
+			return tx.UpdateItem(ctx, cur.ID, cur.WorkspaceID, cur.Title, content, tagsJSON(cur.Tags), cur.Priority, s.now().UTC())
 		}
 	}
 	var queuedRun string
@@ -357,7 +378,7 @@ func (s *Service) Retry(ctx context.Context, itemID, answer, via string) (*Item,
 		}
 		queuedRun = id
 	}
-	out, err := s.transition(ctx, item.ID, target, ActorHuman, "inbox.retry", via, answer, "")
+	out, err := s.transitionWith(ctx, item.ID, target, ActorHuman, "inbox.retry", via, answer, "", appendAnswer)
 	if err != nil && s.runQueuer != nil && queuedRun != "" {
 		_ = s.runQueuer.CancelRun(ctx, queuedRun, "retry transition failed")
 	}
