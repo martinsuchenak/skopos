@@ -439,7 +439,7 @@ func serveCmd() *cli.Command {
 			} else {
 				captureWS := os.Getenv("SKOPOS_SLACK_DEFAULT_WORKSPACE")
 				log.Info("slack relay enabled", "capture_workspace", captureWS)
-				relay := &slackRelay{inbox: inboxService, runs: runsService, defaultWS: captureWS, resolveWS: func(selector string) (string, bool) {
+				relay := &slackRelay{inbox: inboxService, runs: runsService, defaultWS: captureWS, log: log, resolveWS: func(selector string) (string, bool) {
 					// Exact id or a unique "/suffix" (mail-processor ->
 					// github.com/fortix/mail-processor); ambiguous or
 					// unknown = not a selector.
@@ -460,9 +460,11 @@ func serveCmd() *cli.Command {
 				}}
 				notifySvc := notify.New(notify.NewSlack(botTok, appTok, martinID, log), relay)
 				relay.SetNotifier(notifySvc)
-				inboxService.SetItemNotifier(relay)
-				go func() { _ = notifySvc.Run(context.Background()) }()
-				go func() { relay.Run(context.Background()) }()
+				// Async: a Slack post (and the buffered replies it drains)
+				// must never ride a request goroutine (review M3).
+				inboxService.SetItemNotifier(inbox.NewAsyncNotifier(ctx, relay, log))
+				go func() { _ = notifySvc.Run(ctx) }()
+				go func() { relay.Run(ctx) }()
 			}
 
 			webMux := http.NewServeMux()

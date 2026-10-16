@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strings"
 	"sync"
@@ -31,6 +32,7 @@ type slackRelay struct {
 	resolveWS  func(selector string) (string, bool)
 	notifier   *notify.Notifier
 	rebindHook func(ts, itemID string) // tests; nil in production
+	log        notify.Logger           // nil = silent (tests)
 
 	mu      sync.Mutex
 	pending map[string][]pendingReply // itemID -> replies waiting for an admissible status
@@ -281,7 +283,7 @@ func (r *slackRelay) NotifyItem(ctx context.Context, itemID string, from, to inb
 	} else {
 		r.notifier.Notify(ctx, item.SlackThreadTS, msg)
 	}
-	r.drain(itemID)
+	r.drain(ctx, itemID)
 }
 
 // formatGate builds the per-status message with command hints (the
@@ -352,7 +354,7 @@ func (r *slackRelay) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			r.drainAll()
+			r.drainAll(ctx)
 		}
 	}
 }
@@ -367,7 +369,16 @@ func (r *slackRelay) buffer(itemID, text string) {
 }
 
 // drain applies an item's buffered replies while its status admits them.
-func (r *slackRelay) drain(itemID string) {
+// A panic while applying is logged and swallowed: the relay runs on
+// background goroutines, and one bad reply must not take the server down.
+func (r *slackRelay) drain(ctx context.Context, itemID string) {
+	defer func() {
+		if p := recover(); p != nil {
+			if r.log != nil {
+				r.log.Warn("slack relay: drain panicked", "item", itemID, "panic", fmt.Sprint(p))
+			}
+		}
+	}()
 	item, err := r.inbox.GetItem(context.Background(), itemID)
 	if err != nil || !bufferAdmissible(item.Status) {
 		return
@@ -377,11 +388,11 @@ func (r *slackRelay) drain(itemID string) {
 	delete(r.pending, itemID)
 	r.mu.Unlock()
 	for _, reply := range replies {
-		r.Apply(context.Background(), itemID, reply.text)
+		r.Apply(ctx, itemID, reply.text)
 	}
 }
 
-func (r *slackRelay) drainAll() {
+func (r *slackRelay) drainAll(ctx context.Context) {
 	r.mu.Lock()
 	ids := make([]string, 0, len(r.pending))
 	for id := range r.pending {
@@ -389,7 +400,7 @@ func (r *slackRelay) drainAll() {
 	}
 	r.mu.Unlock()
 	for _, id := range ids {
-		r.drain(id)
+		r.drain(ctx, id)
 	}
 }
 
