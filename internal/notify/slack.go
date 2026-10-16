@@ -220,7 +220,16 @@ func (s *Slack) connect(ctx context.Context) (wsConn, error) {
 // redelivers un-acked envelopes and drops connections from clients that
 // stay silent, which turns into a redelivery/reconnect churn (the 0.13.0
 // CPU spin).
-func (s *Slack) readLoop(ctx context.Context, ws wsConn, relay Relay) error {
+//
+// A panic anywhere in the loop becomes an error (Start reconnects) rather
+// than killing the server; a panic while handling one event is logged and
+// the loop moves on — the envelope was already acked.
+func (s *Slack) readLoop(ctx context.Context, ws wsConn, relay Relay) (err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("slack read loop panicked: %v", p)
+		}
+	}()
 	seen := &seenSet{}
 	for {
 		data, err := ws.Read(ctx)
@@ -244,7 +253,7 @@ func (s *Slack) readLoop(ctx context.Context, ws wsConn, relay Relay) error {
 		}
 		switch env.Type {
 		case "events_api":
-			s.handleEvent(ctx, ws, env.Body, relay, seen)
+			s.safeHandleEvent(ctx, env.Body, relay, seen)
 		case "disconnect":
 			// Slack wants us on a new connection; drop this one now
 			// instead of waiting for the TCP timeout.
@@ -279,7 +288,16 @@ func trunc80(s string) string {
 	return s
 }
 
-func (s *Slack) handleEvent(ctx context.Context, ws wsConn, body json.RawMessage, relay Relay, seen *seenSet) {
+func (s *Slack) safeHandleEvent(ctx context.Context, body json.RawMessage, relay Relay, seen *seenSet) {
+	defer func() {
+		if p := recover(); p != nil {
+			s.log.Warn("slack event handler panicked", "panic", fmt.Sprint(p))
+		}
+	}()
+	s.handleEvent(ctx, body, relay, seen)
+}
+
+func (s *Slack) handleEvent(ctx context.Context, body json.RawMessage, relay Relay, seen *seenSet) {
 	var ev struct {
 		Event struct {
 			Type        string `json:"type"`

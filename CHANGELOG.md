@@ -30,6 +30,22 @@ versions follow [Semantic Versioning](https://semver.org/).
   `word: <text>`; replies that merely lead with a command word get a
   syntax hint. Multi-line `new <ws>: …` captures honor the workspace
   selector, and the confirmation names the workspace.
+- **Slack notifications no longer ride the request path** — an item
+  transition posted to Slack (30s client timeout) and applied buffered
+  replies synchronously, so a worker's run report could exceed the server's
+  write timeout after the transition had already committed. Notifications
+  now go through a bounded per-item-ordered queue with their own timeout;
+  a full queue drops with a warning instead of blocking.
+- **Slack Socket Mode transport** — pings were answered with a masked
+  *text* frame, so Slack never got a pong; reads ignored cancellation and
+  had no deadline, so a half-open socket (sleep, NAT timeout) hung the relay
+  forever. The client now sends real pong/ping frames, times out a silent
+  socket after 90s (keepalive pings every 30s), closes on shutdown,
+  reassembles fragmented messages, rejects oversized or malformed frames
+  before allocating, and validates the handshake (`Sec-WebSocket-Accept`,
+  random key and masks) without losing a frame sent alongside the 101.
+  The relay goroutines now stop with the server, and a panic in them is
+  logged instead of crashing it.
 - **`worker install --env-file` reached only the checks** — the service ran
   without it, found no key and restart-looped. A non-default env file is
   now passed to the service as `--env-file`.

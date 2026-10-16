@@ -56,15 +56,15 @@ func TestSlackBindAndFilter(t *testing.T) {
 	}
 	// handleEvent only relays Martin's messages in bound threads.
 	relay := &fakeRelay{}
-	s.handleEvent(context.Background(), nil, []byte(`{"event":{"type":"message","user":"U999","text":"approve","thread_ts":"111.222","ts":"1","channel":"D1","channel_type":"im"}}`), relay, &seenSet{})
+	s.handleEvent(context.Background(), []byte(`{"event":{"type":"message","user":"U999","text":"approve","thread_ts":"111.222","ts":"1","channel":"D1","channel_type":"im"}}`), relay, &seenSet{})
 	if len(relay.applied) != 0 {
 		t.Fatal("foreign user's message must not relay")
 	}
-	s.handleEvent(context.Background(), nil, []byte(`{"event":{"type":"message","user":"U123","text":"approve","thread_ts":"111.222","ts":"1","channel":"D1","channel_type":"im"}}`), relay, &seenSet{})
+	s.handleEvent(context.Background(), []byte(`{"event":{"type":"message","user":"U123","text":"approve","thread_ts":"111.222","ts":"1","channel":"D1","channel_type":"im"}}`), relay, &seenSet{})
 	if len(relay.applied) != 1 || relay.applied[0] != "item-1|approve" {
 		t.Fatalf("relay: %v", relay.applied)
 	}
-	s.handleEvent(context.Background(), nil, []byte(`{"event":{"type":"message","user":"U123","text":"approve","thread_ts":"999.999","ts":"1","channel":"D1","channel_type":"im"}}`), relay, &seenSet{})
+	s.handleEvent(context.Background(), []byte(`{"event":{"type":"message","user":"U123","text":"approve","thread_ts":"999.999","ts":"1","channel":"D1","channel_type":"im"}}`), relay, &seenSet{})
 	if len(relay.applied) != 1 {
 		t.Fatal("unbound thread must not relay")
 	}
@@ -84,7 +84,7 @@ func TestSlackChannelNotHijackable(t *testing.T) {
 		`{"event":{"type":"message","user":"U123","text":"new: hi","ts":"2","channel":"C42","channel_type":"channel"}}`,
 		`{"event":{"type":"app_mention","user":"U999","text":"hi","ts":"3","channel":"C43"}}`,
 	} {
-		s.handleEvent(context.Background(), nil, []byte(ev), relay, &seenSet{})
+		s.handleEvent(context.Background(), []byte(ev), relay, &seenSet{})
 	}
 	if got := s.channel(); got != "U123" {
 		t.Fatalf("foreign events must not redirect the outbound channel: %q", got)
@@ -92,7 +92,7 @@ func TestSlackChannelNotHijackable(t *testing.T) {
 	if len(relay.topLevel) != 0 {
 		t.Fatalf("foreign / non-im events must not reach the relay: %v", relay.topLevel)
 	}
-	s.handleEvent(context.Background(), nil, []byte(`{"event":{"type":"message","user":"U123","text":"new: hi","ts":"4","channel":"D1","channel_type":"im"}}`), relay, &seenSet{})
+	s.handleEvent(context.Background(), []byte(`{"event":{"type":"message","user":"U123","text":"new: hi","ts":"4","channel":"D1","channel_type":"im"}}`), relay, &seenSet{})
 	if got := s.channel(); got != "D1" {
 		t.Fatalf("Martin's IM must be learned: %q", got)
 	}
@@ -103,13 +103,13 @@ func TestSlackChannelNotHijackable(t *testing.T) {
 func TestSlackTopLevelAndRebind(t *testing.T) {
 	s := NewSlack("bot", "app", "U123", nil)
 	relay := &fakeRelay{topLevel: map[string]string{}}
-	s.handleEvent(context.Background(), nil, []byte(`{"event":{"type":"message","user":"U123","text":"new: fix the thing","ts":"777","channel":"D1","channel_type":"im"}}`), relay, &seenSet{})
+	s.handleEvent(context.Background(), []byte(`{"event":{"type":"message","user":"U123","text":"new: fix the thing","ts":"777","channel":"D1","channel_type":"im"}}`), relay, &seenSet{})
 	if relay.topLevel["new: fix the thing"] != "777" {
 		t.Fatalf("top-level DM must reach the relay with its ts: %v", relay.topLevel)
 	}
 	// A reply in an unknown thread is re-resolved via ItemForThread.
 	relay.resolved = "item-9"
-	s.handleEvent(context.Background(), nil, []byte(`{"event":{"type":"message","user":"U123","text":"approve","thread_ts":"555.1","ts":"2","channel":"D1","channel_type":"im"}}`), relay, &seenSet{})
+	s.handleEvent(context.Background(), []byte(`{"event":{"type":"message","user":"U123","text":"approve","thread_ts":"555.1","ts":"2","channel":"D1","channel_type":"im"}}`), relay, &seenSet{})
 	if len(relay.applied) != 1 || relay.applied[0] != "item-9|approve" {
 		t.Fatalf("rebound reply: %v", relay.applied)
 	}
