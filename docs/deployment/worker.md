@@ -93,6 +93,48 @@ kind    = "command"
 command = ["aider", "--yes", "--message", "{prompt}"] # {prompt} {dir} {model}; no {prompt} = stdin
 ```
 
+**One model per stage.** The model belongs to the account, and a runner name
+can be any label. To run one CLI with different models, give each model its
+own runner name and pin stages to it with the workspace stage preference:
+
+```toml
+[worker]
+runners = ["opencode-glm", "opencode-qwen"]
+
+[worker.runner_config.opencode-glm]
+kind = "opencode"
+[worker.runner_config.opencode-qwen]
+kind = "opencode"
+config = "~/.config/skopos/opencode-providers.json"
+
+[[worker.accounts]]
+name = "glm"
+runner = "opencode-glm"
+model = "zai-coding-plan/glm-5.3"
+
+[[worker.accounts]]
+name = "qwen"
+runner = "opencode-qwen"
+model = "llmrouter/qwen/qwen3.8-27b"
+```
+
+```sh
+skopos serve --run-stage github.com/you/repo:plan=opencode-glm \
+             --run-stage github.com/you/repo:implement=opencode-qwen
+```
+
+A run with a stage preference is **pinned** to that runner.
+
+- **Quota.** When its accounts are exhausted, the run pauses until the
+  earliest reset. It never borrows another runner's account.
+- **Claims.** A worker only offers runners that have a usable account right
+  now. A quota pause doesn't stall the worker while other accounts can still
+  work.
+- **Misconfiguration.** A preference naming a runner no account feeds fails
+  the run with a clear reason.
+- **No preference.** Runs without a stage preference may use any available
+  account.
+
 **Verified** means the lockdown has been checked live with the opt-in tests
 (`SKOPOS_LIVE_CLAUDE=1`, `SKOPOS_LIVE_OPENCODE=1`). The checks:
 

@@ -116,7 +116,7 @@ func (w *Worker) Loop(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		run, err := w.client.Claim(ctx, w.cfg.ID, w.cfg.Runners, w.cfg.Workspaces)
+		run, err := w.client.Claim(ctx, w.cfg.ID, w.cfg.AvailableRunners(time.Now()), w.cfg.Workspaces)
 		if err != nil {
 			w.log.Error("claim failed", "err", err)
 			if !sleepCtx(ctx, w.cfg.PollEvery) {
@@ -232,6 +232,13 @@ func (w *Worker) finish(ctx context.Context, run *Run, log *slog.Logger, err err
 			resumeAt = time.Now().Add(30 * time.Minute)
 		}
 		_ = w.client.Pause(ctx, run.ID, w.cfg.ID, reason, resumeAt)
+		// Another account (or runner) can still work: keep claiming — the
+		// claim no longer offers exhausted runners. Only when nothing at all
+		// is usable does the worker sleep through the back-off.
+		if w.cfg.anyAccountAvailable(time.Now()) {
+			log.Warn("quota pause (other accounts available)", "until", resumeAt, "detail", q.detail)
+			return
+		}
 		wait := time.Until(q.resetAt)
 		if wait <= 0 || wait > 30*time.Minute {
 			wait = 30 * time.Minute
@@ -252,6 +259,22 @@ type quotaError struct {
 
 func (e *quotaError) Error() string { return "quota: " + e.detail }
 
+// noAccount is the outcome when pickAccount finds nothing for a run: a
+// quota pause until the earliest of the runner's accounts resets, or — when
+// no account feeds the run's runner at all — a failure that says so (a
+// pause would just repeat forever).
+func (w *Worker) noAccount(run *Run, what string) error {
+	runner := run.Runner
+	if runner == "" {
+		return &quotaError{detail: "no available account for " + what}
+	}
+	reset, found := w.cfg.NextAvailable(runner, time.Now())
+	if !found {
+		return fmt.Errorf("no account feeds runner %q (the stage preference for this %s) — add a [[worker.accounts]] entry with runner = %q", runner, what, runner)
+	}
+	return &quotaError{detail: fmt.Sprintf("no available %s account for %s", runner, what), resetAt: reset}
+}
+
 type transientError struct{ detail string }
 
 func (e *transientError) Error() string { return "transient: " + e.detail }
@@ -268,13 +291,19 @@ func (w *Worker) pickAccount(run *Run, log *slog.Logger) *Account {
 			}
 		}
 	}
+	// A run that names a runner (the workspace's stage preference — e.g.
+	// plan on opencode-glm, implement on opencode-qwen) is PINNED to it: it
+	// never falls back to another runner's account, it waits for its own
+	// (noAccount pauses it until the earliest reset). Only a run with no
+	// preference may use any available account.
 	runner := run.Runner
-	if runner == "" {
+	pinned := runner != ""
+	if !pinned {
 		runner = "claude"
 	}
 	now := time.Now()
 	a := w.cfg.AccountFor(runner, now)
-	if a == nil {
+	if a == nil && !pinned {
 		// Fall back to any account of any runner offered (single-runner
 		// deployments have exactly one).
 		for _, cand := range w.cfg.Accounts {

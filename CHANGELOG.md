@@ -75,6 +75,17 @@ versions follow [Semantic Versioning](https://semver.org/).
   the wrong repository. Every agent command now gets `PWD=<run dir>`, and
   opencode also gets `--dir`.
 - **`accounts.model` was ignored** — it never reached the agent run.
+- **Pinned runs borrowed other runners' accounts.** A run with a stage
+  preference (plan on `opencode-glm`, say) fell back to any available account
+  when its runner's were exhausted, and ran on another model. A pinned run now
+  waits for its own runner, pausing until the earliest reset. Unpinned runs
+  still fall back. A preference naming a runner no account feeds now fails
+  with a clear reason instead of pausing forever.
+- **Claims offered exhausted runners**, so the worker took runs it couldn't
+  start and paused each one onto itself. Claims now offer only runners with a
+  usable account.
+- **One account's quota stalled the whole worker** for up to 30 minutes. It
+  now keeps claiming while any account can work.
 - **Review prompts listed no plan steps** — the template rendered the
   plan, but the stage never passed it; reviewers now see the approved steps.
 

@@ -25,7 +25,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	}
 	account := w.pickAccount(run, log)
 	if account == nil {
-		return &quotaError{detail: "no available account for planning"}
+		return w.noAccount(run, "planning")
 	}
 
 	// The planner reads the clone's working tree at the base branch; the
@@ -117,7 +117,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	}
 	account := w.pickAccount(run, log)
 	if account == nil {
-		return &quotaError{detail: "no available account for implementation"}
+		return w.noAccount(run, "implementation")
 	}
 
 	branch := run.Branch
@@ -234,7 +234,7 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 	}
 	account := w.pickAccount(run, log)
 	if account == nil {
-		return &quotaError{detail: "no available account for review"}
+		return w.noAccount(run, "review")
 	}
 	// Fresh checkout of the pushed branch: fetch, then a detached worktree
 	// at origin/<branch>. If the fetch finds nothing the review fails — an

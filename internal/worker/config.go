@@ -221,7 +221,7 @@ type Account struct {
 func (c *Config) AccountFor(runner string, now time.Time) *Account {
 	var best *Account
 	for _, a := range c.Accounts {
-		if a.Runner != runner {
+		if accountRunner(a) != runner {
 			continue
 		}
 		if now.Before(a.exhaustedUntil) {
@@ -232,6 +232,58 @@ func (c *Config) AccountFor(runner string, now time.Time) *Account {
 		}
 	}
 	return best
+}
+
+// accountRunner is the runner an account feeds ("" means claude).
+func accountRunner(a *Account) string {
+	if a.Runner == "" {
+		return "claude"
+	}
+	return a.Runner
+}
+
+// NextAvailable reports whether any account feeds runner, and when the
+// first of them is usable again (zero = available now).
+func (c *Config) NextAvailable(runner string, now time.Time) (time.Time, bool) {
+	var next time.Time
+	found := false
+	for _, a := range c.Accounts {
+		if accountRunner(a) != runner {
+			continue
+		}
+		found = true
+		if !now.Before(a.exhaustedUntil) {
+			return time.Time{}, true
+		}
+		if next.IsZero() || a.exhaustedUntil.Before(next) {
+			next = a.exhaustedUntil
+		}
+	}
+	return next, found
+}
+
+// AvailableRunners is what a claim offers: the configured runners that
+// have an account usable right now. Offering a runner whose accounts are
+// all quota-exhausted (or that no account feeds) would claim runs the
+// worker cannot start — each one paused with affinity to this worker.
+func (c *Config) AvailableRunners(now time.Time) []string {
+	out := []string{}
+	for _, r := range c.Runners {
+		if at, ok := c.NextAvailable(r, now); ok && at.IsZero() {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// anyAccountAvailable: at least one account can start a run now.
+func (c *Config) anyAccountAvailable(now time.Time) bool {
+	for _, a := range c.Accounts {
+		if !now.Before(a.exhaustedUntil) {
+			return true
+		}
+	}
+	return false
 }
 
 // MarkExhausted records a quota death until the reset time (or a backoff).
