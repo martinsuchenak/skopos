@@ -1,0 +1,73 @@
+{{/*
+  Shared dashboard markup. base.html is an html/template, so repeated
+  structure lives here as partials instead of hand-copied blocks; `dict`
+  (cmd/routes) builds the parameter map. Values are Alpine expressions,
+  inserted as attribute text.
+*/}}
+
+{{/*
+  modal-open / modal-close wrap every dialog: overlay, backdrop, panel,
+  focus trap, Escape, and the close button. Styling is the .modal* classes
+  (style.css) — the overlay scrolls, so tall dialogs stay reachable.
+    ID       prefix; the panel is labelled by "<ID>-title" (put that id on the h2)
+    Show     Alpine expression that opens the dialog
+    Close    what Escape does
+    Dismiss  what the backdrop and the X do (default: Close)
+    Size     panel width/layout classes (default: max-w-md)
+    Alert    true → role=alertdialog, described by "<ID>-desc"
+    NoX      true → no close button (the dialog has its own)
+    NoBackdropDismiss  true → clicking outside does nothing
+*/}}
+{{define "modal-open"}}<div x-show="{{.Show}}" x-cloak class="modal" role="{{if .Alert}}alertdialog{{else}}dialog{{end}}" aria-modal="true" aria-labelledby="{{.ID}}-title"{{if .Alert}} aria-describedby="{{.ID}}-desc"{{end}} @keydown.escape.window="{{.Close}}" x-trap="{{.Show}}">
+        <div class="modal-backdrop"{{if not .NoBackdropDismiss}} @click="{{or .Dismiss .Close}}"{{end}} aria-hidden="true"></div>
+        <div class="card modal-panel {{or .Size "max-w-md"}}">{{if not .NoX}}
+            <button type="button" @click="{{or .Dismiss .Close}}" class="modal-x" aria-label="Close dialog">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>{{end}}{{end}}
+
+{{define "modal-close"}}
+        </div>
+    </div>{{end}}
+
+{{/*
+  checklist: a labelled, scrollable list of checkboxes bound to an array in
+  the app state (inList / toggleInList with a dotted path). Row keys carry
+  formNonce, bumped on every dialog open, so :checked re-evaluates when the
+  same dialog reopens for different data (CSP build: rows reading outer
+  state otherwise keep their first value).
+    LabelID   id of the visible label element
+    For       x-for expression, e.g. "g in groups"
+    Key       row key expression, e.g. "g.id"
+    Value     value expression stored in the array
+    Text      label text expression
+    Path      dotted state path of the array, e.g. "keyForm.groups"
+    Empty     optional Alpine expression: show EmptyText when true
+    EmptyText
+    Max       max-height class (default max-h-40)
+*/}}
+{{define "checklist"}}<div class="checklist {{or .Max "max-h-40"}}" role="group" aria-labelledby="{{.LabelID}}">{{if .Empty}}
+                    <p class="px-1.5 py-1 text-xs text-zinc-400" x-show="{{.Empty}}">{{.EmptyText}}</p>{{end}}
+                    <template x-for="{{.For}}" :key="'{{.Path}}|' + formNonce + '|' + {{.Key}}">
+                        <label class="checklist-row">
+                            <input type="checkbox" :checked="inList('{{.Path}}', {{.Value}})" @change="toggleInList('{{.Path}}', {{.Value}})" />
+                            <span class="truncate" x-text="{{.Text}}"></span>
+                        </label>
+                    </template>
+                </div>{{end}}
+
+{{/*
+  ws-badge: which workspace a row belongs to, shown only under "All
+  workspaces". V is the row variable; Missing labels rows with no workspace
+  (inbox: "unfiled" — not yet assigned; blackboard/plans: "no workspace" —
+  visible everywhere).
+*/}}
+{{define "ws-badge"}}<span x-show="!activeWorkspace && {{.V}}.workspace_id" class="badge tone-info max-w-48 truncate" :title="{{.V}}.workspace_id" x-text="workspaceLabel({{.V}}.workspace_id)"></span>
+                                        <span x-show="!{{.V}}.workspace_id" class="badge {{if eq .Missing "unfiled"}}tone-warn{{else}}tone-muted{{end}}" title="{{if eq .Missing "unfiled"}}Not yet assigned to a workspace{{else}}Not assigned to any workspace — visible in every workspace{{end}}">{{.Missing}}</span>{{end}}
+
+{{/* index-branch: one row of the code-index list (B = the branch variable). */}}
+{{define "index-branch"}}<li class="card flex flex-wrap items-center gap-3 px-4 py-3">
+                            <span class="font-mono text-sm text-cyan-300" x-text="{{.}}.branch"></span>
+                            <span class="text-xs text-zinc-500"><span x-text="{{.}}.file_count"></span> files · <span x-text="{{.}}.symbol_count"></span> symbols</span>
+                            <span class="ml-auto text-xs text-zinc-500" x-text="{{.}}.source || ''"></span>
+                            <span class="text-xs text-zinc-500" x-text="formatTime({{.}}.built_at)"></span>
+                        </li>{{end}}

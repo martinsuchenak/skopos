@@ -73,3 +73,34 @@ func TestBundleHashCoversEveryAsset(t *testing.T) {
 		t.Fatalf("hash must be deterministic: %q vs %q", again, v1)
 	}
 }
+
+// The rendered dashboard (base.html + partials) must not repeat an id —
+// two workspace dialogs once shared ws-id/ws-name/ws-modal-title, so the
+// visible dialog's labels pointed at the hidden copy — and every dialog
+// must be labelled by an element that exists.
+func TestDashboardIDsAndDialogLabels(t *testing.T) {
+	mux := http.NewServeMux()
+	registerWebRoutes(mux)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	page := w.Body.String()
+
+	ids := map[string]int{}
+	for _, m := range regexp.MustCompile(`\sid="([^"]+)"`).FindAllStringSubmatch(page, -1) {
+		ids[m[1]]++
+	}
+	for id, n := range ids {
+		if n > 1 {
+			t.Errorf("id %q appears %d times", id, n)
+		}
+	}
+	dialogs := regexp.MustCompile(`role="(?:alert)?dialog"[^>]*aria-labelledby="([^"]+)"`).FindAllStringSubmatch(page, -1)
+	if len(dialogs) < 10 {
+		t.Fatalf("expected the dashboard's dialogs, found %d", len(dialogs))
+	}
+	for _, m := range dialogs {
+		if ids[m[1]] != 1 {
+			t.Errorf("dialog labelled by %q, which is not exactly one element", m[1])
+		}
+	}
+}

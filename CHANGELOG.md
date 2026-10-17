@@ -137,6 +137,41 @@ versions follow [Semantic Versioning](https://semver.org/).
   for a fresh plan with no revision. It now says what is wrong (`409`): no
   linked item (`link-plan` first), or the item's actual status. Amendment
   refusals also say why.
+- **Dashboard accessibility (WCAG 2.2 AA) and consistency.** From a full UI
+  review, audited live in both themes at 320px, 375px, a short 740×360
+  screen, and desktop.
+  - **Dialogs scroll.** A dialog taller than the screen ran off both edges
+    with the page scroll-locked, so its title and buttons were unreachable on
+    short screens or at 200%+ zoom. Every dialog now uses one shared shell
+    that scrolls, has the same close button, traps focus and returns it.
+  - **Light theme.** "approved" and "awaiting approval" badges were 1.2:1 and
+    1.5:1 (no light colours for lime and orange). Status colours are now
+    shared tone classes, defined once per theme and checked against every
+    surface. One status→tone map replaces eight drifting ones ("running" and
+    "queued" now look the same everywhere).
+  - **Dark theme.** Secondary text (timestamps, authors, hints) went from
+    2.3–4.1:1 to at least 4.5:1.
+  - **One workspace dialog.** The header "+" and Workspaces → New workspace
+    opened two different dialogs with the same element IDs, so the header
+    dialog's labels pointed at the hidden copy. They're one dialog now (the
+    header "+" is root-only, like creating workspaces). New and Edit key
+    share one dialog too.
+  - **Phones.** Every view has a page heading (it was hidden below `sm`). The
+    closed menu no longer leaves its links in the Tab order off screen; open,
+    it takes focus, Escape closes it and focus returns to the menu button.
+    Toasts fit a 320px screen.
+  - **Forms.** Field errors are linked to their inputs and focused on a failed
+    submit; Enter submits every form dialog; the markdown editor has a label.
+  - **Toasts.** Errors stay until dismissed, others pause while hovered or
+    focused; errors are alerts, the rest status messages; solid backgrounds.
+  - **States and names.** Layout and status-filter toggles expose
+    `aria-pressed`; the tag-filter chip is a real button; Archive, Release,
+    Discard, Promote, Edit and Revoke name their row; the workspace picker's
+    name includes what it shows.
+  - **Ranking without dragging.** Ranked inbox items get Move up/down in the
+    list view (the board's drag-to-rank needed a pointer).
+  - **Consistency.** One page-intro pattern, one empty state, one card style,
+    shared badges and chips, "Delete all" everywhere.
 - **Approval and change-request notes reached agents only from Slack.** The
   relay appended them to the item, which is where the stage prompts read
   them. The dashboard and REST endpoints only recorded them in the audit

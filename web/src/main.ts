@@ -135,18 +135,21 @@ const appState = () => ({
   wsSaving: false,
   wsErrors: {} as Record<string, string>,
   wsForm: { id: '', name: '', git_url: '', groups: [] as string[] },
+  // opened from the header "+": select the new workspace once it exists
+  wsSelectAfterCreate: false,
+  // bumped on every dialog open; checklist row keys carry it so :checked
+  // re-evaluates when a dialog reopens for different data (CSP build)
+  formNonce: 0,
   showGroupModal: false,
   groupModalMode: 'create' as 'create' | 'edit',
   groupSaving: false,
   groupErrors: {} as Record<string, string>,
   groupForm: { id: '', name: '', description: '', patterns: '', members: [] as string[] },
-  showNewKeyModal: false, keySaving: false,
-  keyForm: { name: '', all: false, workspaces: [] as string[], groups: [] as string[] } as KeyForm & { groups: string[] },
+  // scoped API key create/edit: one dialog, two modes
+  showApiKeyModal: false, keyModalMode: 'create' as 'create' | 'edit', keySaving: false,
+  keyForm: { id: '', name: '', all: false, workspaces: [] as string[], groups: [] as string[] },
   keyErrors: {} as Record<string, string>,
   showSecretModal: false, newSecret: '', newSecretName: '', secretCopied: false,
-  showEditKeyModal: false, editKeySaving: false,
-  editKeyForm: { id: '', name: '', all: false, workspaces: [] as string[], groups: [] as string[] },
-  editKeyErrors: {} as Record<string, string>,
 
   // toasts
   toasts: [] as Toast[],
@@ -185,9 +188,10 @@ const appState = () => ({
   pendingConvertWorkspaceId: '',
   // modal: delete confirm
   confirm: { open: false, title: '', message: '', label: 'Delete', busy: false, pending: null as null | { kind: string; id: string } },
-  // modal: create workspace
-  showWorkspaceModal: false, workspaceSaving: false,
-  workspaceForm: { id: '', name: '' }, workspaceErrors: {} as Record<string, string>,
+  // element focused before a dialog opened imperatively (file modal) —
+  // x-trap restores focus for the others
+  fileReturnFocus: null as HTMLElement | null,
+  toastsPaused: false,
 
   init() {
     this.theme = (localStorage.getItem('skopos:theme') as 'dark' | 'light' | 'system') || 'system';
@@ -296,8 +300,84 @@ const appState = () => ({
   },
 
   anyModalOpen() {
-    return this.showNewKeyModal || this.showSecretModal || this.showEditKeyModal || this.showEntryModal || this.showPlanModal || this.showItemModal || this.showInboxItemModal || this.showWorkspaceModal || this.showFileModal || this.confirm.open;
+    return this.showKeyModal || this.showApiKeyModal || this.showSecretModal || this.showWsModal || this.showGroupModal
+      || this.showEntryModal || this.showPlanModal || this.showItemModal || this.showInboxItemModal || this.showInboxPreview
+      || this.showFileModal || this.confirm.open || (this.sidebarOpen && window.matchMedia('(max-width: 767px)').matches);
   },
+
+  // ---- shared dialog helpers ----
+  // Checklist binding by dotted state path ("keyForm.groups"): one pair of
+  // methods for every checkbox list (templates/partials.html "checklist").
+  listAt(path: string): string[] {
+    let v: any = this;
+    for (const k of path.split('.')) v = v == null ? undefined : v[k];
+    return Array.isArray(v) ? v : [];
+  },
+  inList(path: string, value: string): boolean { return this.listAt(path).indexOf(value) >= 0; },
+  toggleInList(path: string, value: string) {
+    const list = this.listAt(path);
+    const i = list.indexOf(value);
+    if (i >= 0) list.splice(i, 1); else list.push(value);
+  },
+  // After a failed validation, move focus to the first invalid field so a
+  // screen reader announces it with its linked error (aria-describedby).
+  focusFirstError() {
+    this.$nextTick(() => {
+      const dialogs = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')] as HTMLElement[];
+      const open = dialogs.filter(d => d.offsetParent !== null || getComputedStyle(d).display !== 'none');
+      const el = open.length ? open[open.length - 1].querySelector('[aria-invalid="true"]') as HTMLElement | null : null;
+      if (el) el.focus();
+    });
+  },
+  confirmBusyLabel(): string {
+    const l = this.confirm.label || 'Delete';
+    return ({ Delete: 'Deleting…', Discard: 'Discarding…', Reject: 'Rejecting…', Revoke: 'Revoking…' } as Record<string, string>)[l] ?? l + '…';
+  },
+
+  // ---- tones ----
+  // The one status → colour mapping. Colours live in style.css (.tone-*,
+  // both themes); this only names the meaning. kind separates vocabularies
+  // that reuse a word: a run STAGE "plan" vs nothing else.
+  toneOf(kind: 'status' | 'entry' | 'scope' | 'stage', value?: string | null): string {
+    const v = value || '';
+    const maps: Record<string, Record<string, string>> = {
+      status: {
+        succeeded: 'success', done: 'success', completed: 'success',
+        failed: 'danger', blocked: 'danger', orphaned: 'danger',
+        running: 'active', testing: 'active', editing: 'active', in_progress: 'active', implementing: 'active', active: 'active',
+        thinking: 'info', planning: 'info', queued: 'info', claimed: 'info',
+        waiting: 'warn', paused: 'warn', stuck: 'warn', open: 'warn',
+        awaiting_approval: 'attention', interrupted: 'attention', handoff: 'attention',
+        approved: 'ready', converted: 'accent', in_review: 'review',
+        archived: 'muted', cancelled: 'muted', discarded: 'muted',
+        pending: 'neutral',
+      },
+      entry: { bug: 'danger', debt: 'warn', warning: 'warn', finding: 'active', decision: 'success', context: 'neutral' },
+      scope: { session: 'neutral', branch: 'accent', project: 'secondary' },
+      stage: { plan: 'accent', implement: 'active', review: 'review', qa: 'review' },
+    };
+    return 'tone-' + (maps[kind][v] ?? 'neutral');
+  },
+
+  // ---- page chrome ----
+  viewTitle(): string {
+    return ({ sessions: 'Sessions', blackboard: 'Blackboard', plans: 'Plans', inbox: 'Inbox', index: 'Code index', keys: 'API keys', workspaces: 'Workspaces', workers: 'Workers' } as Record<string, string>)[this.activeView] ?? '';
+  },
+  // Phone navigation drawer: focus moves in on open, Escape closes and
+  // returns focus to the menu button. Closed, the drawer is invisible to
+  // keyboard and screen readers (max-md:invisible in the markup).
+  openSidebar() {
+    this.sidebarOpen = true;
+    this.$nextTick(() => { (document.querySelector('#main-nav .nav-item[aria-current="page"]') as HTMLElement | null || document.querySelector('#main-nav .nav-item') as HTMLElement | null)?.focus(); });
+  },
+  // No explicit focus here: while the trap is still active it would pull
+  // focus straight back into the drawer, which then hides and drops focus
+  // to <body>. x-trap returns focus to the menu button when it releases.
+  closeSidebar() {
+    if (!this.sidebarOpen) return;
+    this.sidebarOpen = false;
+  },
+  toggleSidebar() { if (this.sidebarOpen) this.closeSidebar(); else this.openSidebar(); },
 
   // ---- theme ----
   applyTheme() {
@@ -336,17 +416,28 @@ const appState = () => ({
   },
 
   // ---- toasts ----
+  // Errors stay until dismissed; others expire after 5s unless the stack is
+  // hovered or focused (WCAG 2.2.1). At most four on screen.
   notify(message: string, type: Toast['type'] = 'info') {
     const id = Date.now() + Math.random();
     this.toasts.push({ id, message, type });
-    window.setTimeout(() => this.dismissToast(id), type === 'error' ? 7000 : 5000);
+    if (this.toasts.length > 4) this.toasts.splice(0, this.toasts.length - 4);
+    if (type !== 'error') this.expireToast(id, 5000);
   },
+  expireToast(id: number, ms: number) {
+    window.setTimeout(() => {
+      if (this.toastsPaused) { this.expireToast(id, 1500); return; }
+      this.dismissToast(id);
+    }, ms);
+  },
+  pauseToasts() { this.toastsPaused = true; },
+  resumeToasts() { this.toastsPaused = false; },
   dismissToast(id: number) { this.toasts = this.toasts.filter((t: Toast) => t.id !== id); },
   toastClass(type: Toast['type']): string {
     switch (type) {
-      case 'success': return 'border-emerald-700 bg-emerald-950/80 text-emerald-200';
-      case 'error': return 'border-rose-700 bg-rose-950/80 text-rose-200';
-      default: return 'border-zinc-700 bg-zinc-900/90 text-zinc-200';
+      case 'success': return 'border-emerald-700 bg-emerald-950 text-emerald-200';
+      case 'error': return 'border-rose-700 bg-rose-950 text-rose-200';
+      default: return 'border-zinc-700 bg-zinc-900 text-zinc-200';
     }
   },
 
@@ -529,29 +620,6 @@ const appState = () => ({
     }
     await this.fetchWorkspaces();
   },
-  openWorkspaceModal() {
-    this.workspaceForm = { id: '', name: '' }; this.workspaceErrors = {};
-    this.showWorkspaceModal = true;
-  },
-  closeWorkspaceModal() { this.showWorkspaceModal = false; },
-  async submitWorkspace() {
-    const e: Record<string, string> = {};
-    if (!this.workspaceForm.id.trim()) e.id = 'ID is required.';
-    this.workspaceErrors = e;
-    if (Object.keys(e).length) return;
-    this.workspaceSaving = true;
-    try {
-      const id = this.workspaceForm.id.trim();
-      const res = await this.authFetch('/api/workspaces', { method: 'POST', body: JSON.stringify({ id, name: this.workspaceForm.name.trim() }) });
-      if (!await this.handleBad(res, 'Workspace not created')) return;
-      this.notify('Workspace created', 'success');
-      this.showWorkspaceModal = false;
-      await this.fetchWorkspaces();
-      this.activeWorkspace = id;
-      await this.refresh();
-    } finally { this.workspaceSaving = false; }
-  },
-
   async refresh() {
     this.loading = true;
     try {
@@ -632,8 +700,6 @@ const appState = () => ({
     const colors: Record<string, string> = { bug: 'text-rose-400', debt: 'text-amber-400', warning: 'text-amber-400', finding: 'text-cyan-400', decision: 'text-emerald-400', context: 'text-zinc-400' };
     return order.map(t => ({ type: t, label: labels[t] ?? t, colorClass: colors[t] ?? 'text-zinc-400', items: this.entries.filter((e: Entry) => e.entry_type === t) })).filter(g => g.items.length > 0);
   },
-  entryTypeClass(t: string) { return { bug: 'bg-rose-500/15 text-rose-300', debt: 'bg-amber-500/15 text-amber-300', warning: 'bg-amber-500/15 text-amber-300', finding: 'bg-cyan-500/15 text-cyan-300', decision: 'bg-emerald-500/15 text-emerald-300', context: 'bg-zinc-700 text-zinc-300' }[t] ?? 'bg-zinc-700 text-zinc-200'; },
-  scopeClass(s: string) { return { session: 'bg-zinc-700 text-zinc-300', branch: 'bg-violet-500/15 text-violet-300', project: 'bg-indigo-500/15 text-indigo-300' }[s] ?? 'bg-zinc-700 text-zinc-200'; },
 
   // ---- plans ----
   async fetchPlans() {
@@ -922,7 +988,6 @@ const appState = () => ({
   // The modal's fallback Close (load failed / nothing to show). A method,
   // not an inline `!a && !b` x-show: the CSP build evaluated that inline
   // form wrongly and showed a second Close under every loaded item.
-  previewFailed(): boolean { return !this.previewLoading && !this.previewItem; },
   workflowRevisionLabel(): string {
     const r = this.previewRevision;
     if (!r) return 'Loading the plan revision…';
@@ -977,17 +1042,6 @@ const appState = () => ({
     this.fetchPreviewRuns(id);
     this.fetchPreviewRevision();
   },
-  inboxStatusClass(s: string) {
-    return {
-      open: 'bg-amber-500/15 text-amber-300', in_progress: 'bg-cyan-500/15 text-cyan-300', converted: 'bg-violet-500/15 text-violet-300', done: 'bg-emerald-500/15 text-emerald-300', discarded: 'bg-zinc-700 text-zinc-400',
-      queued: 'bg-sky-500/15 text-sky-300', planning: 'bg-sky-500/15 text-sky-300', awaiting_approval: 'bg-orange-500/15 text-orange-300', approved: 'bg-lime-500/15 text-lime-300', implementing: 'bg-indigo-500/15 text-indigo-300', in_review: 'bg-teal-500/15 text-teal-300', failed: 'bg-rose-500/15 text-rose-300', blocked: 'bg-rose-500/15 text-rose-300',
-    }[s] ?? 'bg-zinc-700 text-zinc-200';
-  },
-
-  // Pin/Unpin in every lens — the action is absolute (rank first / clear),
-  // not positional, so it is meaningful even when the view is date-sorted
-  // (the row re-creates on priority change, so the #n badge shows). Rank
-  // DRAGGING stays priority-lens-only: dropOnLane/dropBeforeItem guard it.
   inboxCanRank(item: InboxItem): boolean { return this.inboxItemEditable(item); },
   // "updated 2m ago" beside the created age once the item has been touched
   // (claim/convert/edit/reorder all bump updated_at; the bare age stays the
@@ -1123,19 +1177,9 @@ const appState = () => ({
 this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) => (a.lastActive < b.lastActive ? 1 : -1));
   },
   workerStatusLabel(w: WorkerRow): string { return w.active > 0 ? 'busy' : 'idle'; },
-  workerStatusClass(w: WorkerRow): string { return w.active > 0 ? 'bg-emerald-500/15 text-emerald-300' : 'bg-zinc-700 text-zinc-400'; },
+  workerStatusClass(w: WorkerRow): string { return w.active > 0 ? 'tone-success' : 'tone-muted'; },
 
   // ---- run rows (preview modal) ----
-  runStatusClass(s: string) {
-    return {
-      queued: 'bg-zinc-700 text-zinc-300', claimed: 'bg-sky-500/15 text-sky-300', running: 'bg-indigo-500/15 text-indigo-300',
-      paused: 'bg-amber-500/15 text-amber-300', succeeded: 'bg-emerald-500/15 text-emerald-300', failed: 'bg-rose-500/15 text-rose-300',
-      interrupted: 'bg-orange-500/15 text-orange-300', cancelled: 'bg-zinc-700 text-zinc-400',
-    }[s] ?? 'bg-zinc-700 text-zinc-200';
-  },
-  runStageClass(s: string) {
-    return { plan: 'bg-violet-500/15 text-violet-300', implement: 'bg-cyan-500/15 text-cyan-300', review: 'bg-teal-500/15 text-teal-300', qa: 'bg-teal-500/15 text-teal-300' }[s] ?? 'bg-zinc-700 text-zinc-300';
-  },
   shortSha(sha: string): string { return sha ? sha.slice(0, 7) : ''; },
   // A succeeded run can still carry a chain NOTE in fail_reason (e.g. a
   // quiet matrix skip) — that is diagnostics, not a failure line.
@@ -1317,8 +1361,10 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
   // DRAGGED ITEM's board: reorder is per-workspace and open/in_progress only,
   // so the all-workspaces view must not mix foreign workspaces in (400), and
   // converted items must be excluded even though they keep stale priorities.
-  async inboxOrderedIds(excludeId: string): Promise<string[] | null> {
-    const from = this.inboxItems.find((i: InboxItem) => i.id === excludeId);
+  // contextId picks the workspace when no filter is active (default: the
+  // excluded item's own).
+  async inboxOrderedIds(excludeId: string, contextId = excludeId): Promise<string[] | null> {
+    const from = this.inboxItems.find((i: InboxItem) => i.id === contextId);
     const ws = this.activeWorkspace || (from ? from.workspace_id || '' : '');
     const p = new URLSearchParams();
     if (ws) p.set('workspace', ws);
@@ -1360,6 +1406,20 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
     this.notify('Pinned to top', 'success');
     await this.fetchInbox();
   },
+  // Move a ranked item one place up (-1) or down (+1): the single-pointer
+  // alternative to drag-to-rank on the board (WCAG 2.5.7). Swaps against the
+  // server's ordered prefix, like drops do.
+  async moveInboxItem(id: string, dir: number) {
+    const ordered = await this.inboxOrderedIds('', id);
+    if (ordered === null) return;
+    const i = ordered.indexOf(id), j = i + dir;
+    if (i < 0 || j < 0 || j >= ordered.length) return;
+    [ordered[i], ordered[j]] = [ordered[j], ordered[i]];
+    const res = await this.authFetch('/api/inbox/reorder', { method: 'POST', body: JSON.stringify({ ids: ordered }) });
+    if (!await this.handleBad(res, 'Move failed')) return;
+    await this.fetchInbox();
+  },
+  inboxRankedCount(): number { return this.inboxItems.filter((i: InboxItem) => i.priority != null).length; },
   // The editor host div lives inside the modal; it only exists in the DOM
   // once the modal renders, hence the $nextTick mount.
   mountInboxEditor(initial: string) {
@@ -1374,6 +1434,7 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
       inboxEditor = mountMarkdownEditor(host, initial, {
         // Cmd/Ctrl+Enter saves straight from the editor.
         onSubmit: () => { this.submitInboxItem(); },
+        labelledBy: 'ib-content-lbl',
       });
       inboxEditor.focus();
     });
@@ -1488,6 +1549,7 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
   // active option via aria-activedescendant.
   openFileModal(item: InboxItem) {
     if (!this.inboxItemEditable(item)) return; // frozen items cannot be re-filed
+    this.fileReturnFocus = document.activeElement as HTMLElement | null;
     this.fileTargetItem = item;
     this.fileQuery = '';
     this.fileHighlightId = this.firstFileOptionId();
@@ -1506,6 +1568,9 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
     this.fileHighlightId = '';
     const el = document.querySelector('[data-file-modal]') as HTMLElement | null;
     if (el) el.style.display = 'none';
+    const back = this.fileReturnFocus;
+    this.fileReturnFocus = null;
+    if (back && document.contains(back)) back.focus();
   },
   fileOptionIds(): string[] {
     return this.fileOptions().filter((o: { id: string; empty?: boolean }) => !o.empty).map((o: { id: string }) => o.id);
@@ -1621,71 +1686,69 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
 
   // ---- api keys ----
   wsGroupsOf(id: string): KeyGroup[] { return this.groups.filter((g: KeyGroup) => (g.members || []).indexOf(id) >= 0); },
-  openNewWorkspaceModal() {
+  openNewWorkspaceModal(selectAfter = false) {
     this.wsModalMode = 'create';
+    this.wsSelectAfterCreate = selectAfter;
+    this.formNonce++;
     this.wsForm = { id: '', name: '', git_url: '', groups: [] };
     this.wsErrors = {};
     this.showWsModal = true;
   },
   openEditWorkspaceModal(ws: WorkspaceRow) {
     this.wsModalMode = 'edit';
+    this.wsSelectAfterCreate = false;
+    this.formNonce++;
     this.wsForm = { id: ws.id, name: ws.name || '', git_url: ws.git_url || '', groups: this.wsGroupsOf(ws.id).map((g: KeyGroup) => g.name) };
     this.wsErrors = {};
     this.showWsModal = true;
   },
   closeWsModal() { this.showWsModal = false; },
-  toggleWsGroup(name: string) {
-    const i = this.wsForm.groups.indexOf(name);
-    if (i >= 0) this.wsForm.groups.splice(i, 1);
-    else this.wsForm.groups.push(name);
-  },
   async saveWorkspace() {
     this.wsErrors = {};
     const id = this.wsForm.id.trim();
-    if (!id) { this.wsErrors.id = 'Workspace id is required'; return; }
+    if (!id) { this.wsErrors.id = 'Workspace ID is required.'; this.focusFirstError(); return; }
+    const creating = this.wsModalMode === 'create';
     this.wsSaving = true;
     try {
       const res = await this.authFetch('/api/workspaces', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, name: this.wsForm.name.trim(), git_url: this.wsForm.git_url.trim() }),
       });
-      if (!res.ok) {
-        this.wsErrors.id = res.status === 403 ? 'Registering workspaces requires the root key' : 'Saving the workspace failed';
-        return;
+      if (!res.ok) { this.wsErrors.id = await this.extractError(res); this.focusFirstError(); return; }
+      // Group allocation is a separate call; skip it for a new workspace
+      // with no groups picked (nothing to set).
+      if (!creating || this.wsForm.groups.length) {
+        const groupsRes = await this.authFetch('/api/workspaces/' + encodeURIComponent(id) + '/groups', {
+          method: 'PUT',
+          body: JSON.stringify({ groups: this.wsForm.groups }),
+        });
+        if (!groupsRes.ok) { this.wsErrors.groups = await this.extractError(groupsRes); return; }
       }
-      const groupsRes = await this.authFetch('/api/workspaces/' + encodeURIComponent(id) + '/groups', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ groups: this.wsForm.groups }),
-      });
-      if (!groupsRes.ok) { this.wsErrors.groups = 'Group allocation failed (unknown group?)'; return; }
       this.showWsModal = false;
+      this.notify(creating ? 'Workspace created' : 'Workspace saved', 'success');
       await this.fetchWorkspaces();
       await this.fetchGroups();
-    } catch { this.wsErrors.id = 'Network error'; } finally { this.wsSaving = false; }
+      if (creating && this.wsSelectAfterCreate) this.setWorkspace(id);
+    } finally { this.wsSaving = false; }
   },
   openNewGroupModal() {
     this.groupModalMode = 'create';
+    this.formNonce++;
     this.groupForm = { id: '', name: '', description: '', patterns: '', members: [] };
     this.groupErrors = {};
     this.showGroupModal = true;
   },
   openEditGroupModal(g: KeyGroup) {
     this.groupModalMode = 'edit';
+    this.formNonce++;
     this.groupForm = { id: g.id, name: g.name, description: g.description || '', patterns: (g.patterns || []).join('\n'), members: [...(g.members || [])] };
     this.groupErrors = {};
     this.showGroupModal = true;
   },
   closeGroupModal() { this.showGroupModal = false; },
-  toggleGroupMember(id: string) {
-    const i = this.groupForm.members.indexOf(id);
-    if (i >= 0) this.groupForm.members.splice(i, 1);
-    else this.groupForm.members.push(id);
-  },
   async saveGroup() {
     this.groupErrors = {};
-    if (!this.groupForm.name.trim()) { this.groupErrors.name = 'Name is required'; return; }
+    if (!this.groupForm.name.trim()) { this.groupErrors.name = 'Name is required.'; this.focusFirstError(); return; }
     this.groupSaving = true;
     try {
       const patterns = this.groupForm.patterns.split('\n').map((p: string) => p.trim()).filter(Boolean);
@@ -1770,34 +1833,46 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
   },
   keyIsApprover(k: ApiKey): boolean { return !!k.approver; },
   openNewKeyModal() {
-    this.keyForm = { name: '', all: false, workspaces: [], groups: [] };
+    this.keyModalMode = 'create';
+    this.keyForm = { id: '', name: '', all: false, workspaces: [], groups: [] };
     this.keyErrors = {};
-    this.showNewKeyModal = true;
+    this.formNonce++;
+    this.showApiKeyModal = true;
   },
-  closeNewKeyModal() { this.showNewKeyModal = false; },
-  toggleKeyWorkspace(id: string) {
-    const i = this.keyForm.workspaces.indexOf(id);
-    if (i >= 0) this.keyForm.workspaces.splice(i, 1);
-    else this.keyForm.workspaces.push(id);
+  openEditKeyModal(k: ApiKey) {
+    this.keyModalMode = 'edit';
+    this.keyForm = { id: k.id, name: k.name, all: k.all_workspaces, workspaces: [...(k.workspaces || [])], groups: [...(k.groups || [])] };
+    this.keyErrors = {};
+    this.formNonce++;
+    this.showApiKeyModal = true;
   },
-  async submitKey() {
+  closeApiKeyModal() { this.showApiKeyModal = false; },
+  async submitApiKey() {
     const f = this.keyForm;
     const errs: Record<string, string> = {};
     if (!f.name.trim()) errs.name = 'Name is required.';
     if (!f.all && f.workspaces.length === 0 && f.groups.length === 0) errs.workspaces = 'Select at least one workspace or group, or all workspaces.';
     this.keyErrors = errs;
-    if (Object.keys(errs).length) return;
+    if (Object.keys(errs).length) { this.focusFirstError(); return; }
+    const creating = this.keyModalMode === 'create';
     this.keySaving = true;
     try {
       const body: Record<string, unknown> = { name: f.name.trim(), workspaces: f.all ? ['*'] : f.workspaces };
-      if (!f.all && f.groups.length) body.groups = f.groups;
-      const res = await this.authFetch('/api/keys', { method: 'POST', body: JSON.stringify(body) });
-      if (!await this.handleBad(res, 'Key not created')) return;
-      const data = await res.json();
-      this.newSecret = data.key_secret;
-      this.newSecretName = data.key.name;
-      this.showNewKeyModal = false;
-      this.showSecretModal = true;
+      // create: groups only when picked; edit: [] clears, absent = unchanged
+      if (!f.all && (!creating || f.groups.length)) body.groups = f.groups;
+      const res = creating
+        ? await this.authFetch('/api/keys', { method: 'POST', body: JSON.stringify(body) })
+        : await this.authFetch('/api/keys/' + encodeURIComponent(f.id), { method: 'PATCH', body: JSON.stringify(body) });
+      if (!await this.handleBad(res, creating ? 'Key not created' : 'Key not updated')) return;
+      this.showApiKeyModal = false;
+      if (creating) {
+        const data = await res.json();
+        this.newSecret = data.key_secret;
+        this.newSecretName = data.key.name;
+        this.showSecretModal = true;
+      } else {
+        this.notify('Key updated', 'success');
+      }
       await this.fetchKeys();
     } finally {
       this.keySaving = false;
@@ -1819,51 +1894,6 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
   },
   deleteKey(k: ApiKey) {
     this.requestDelete('apikeyhard', k.id, k.name);
-  },
-
-  // ---- edit key ----
-  openEditKeyModal(k: ApiKey) {
-    this.editKeyForm = { id: k.id, name: k.name, all: k.all_workspaces, workspaces: [...(k.workspaces || [])], groups: [...(k.groups || [])] };
-    this.editKeyErrors = {};
-    this.showEditKeyModal = true;
-  },
-  closeEditKeyModal() { this.showEditKeyModal = false; },
-  toggleEditKeyWorkspace(id: string) {
-    const i = this.editKeyForm.workspaces.indexOf(id);
-    if (i >= 0) this.editKeyForm.workspaces.splice(i, 1);
-    else this.editKeyForm.workspaces.push(id);
-  },
-  toggleKeyGroup(name: string) {
-    const f = this.keyForm;
-    const i = f.groups.indexOf(name);
-    if (i >= 0) f.groups.splice(i, 1);
-    else f.groups.push(name);
-  },
-  toggleEditKeyGroup(name: string) {
-    const f = this.editKeyForm;
-    const i = f.groups.indexOf(name);
-    if (i >= 0) f.groups.splice(i, 1);
-    else f.groups.push(name);
-  },
-  async submitEditKey() {
-    const f = this.editKeyForm;
-    const errs: Record<string, string> = {};
-    if (!f.name.trim()) errs.name = 'Name is required.';
-    if (!f.all && f.workspaces.length === 0 && f.groups.length === 0) errs.workspaces = 'Select at least one workspace or group, or all workspaces.';
-    this.editKeyErrors = errs;
-    if (Object.keys(errs).length) return;
-    this.editKeySaving = true;
-    try {
-      const body: Record<string, unknown> = { name: f.name.trim(), workspaces: f.all ? ['*'] : f.workspaces };
-      if (!f.all) body.groups = f.groups; // [] clears; absent = unchanged
-      const res = await this.authFetch(`/api/keys/${encodeURIComponent(f.id)}`, { method: 'PATCH', body: JSON.stringify(body) });
-      if (!await this.handleBad(res, 'Key not updated')) return;
-      this.notify('Key updated', 'success');
-      this.showEditKeyModal = false;
-      await this.fetchKeys();
-    } finally {
-      this.editKeySaving = false;
-    }
   },
 
   async fetchIndexStatus() {
@@ -2029,8 +2059,6 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
   },
 
   // ---- formatting ----
-  planStatusClass(s: string) { return { active: 'bg-cyan-500/15 text-cyan-300', completed: 'bg-emerald-500/15 text-emerald-300', archived: 'bg-zinc-700 text-zinc-400', blocked: 'bg-rose-500/15 text-rose-300' }[s] ?? 'bg-zinc-700 text-zinc-200'; },
-  itemStatusClass(s: string) { return { done: 'bg-emerald-500/15 text-emerald-300', in_progress: 'bg-cyan-500/15 text-cyan-300', blocked: 'bg-rose-500/15 text-rose-300', pending: 'bg-zinc-700 text-zinc-300' }[s] ?? 'bg-zinc-700 text-zinc-200'; },
   depLabel(item: PlanItem) {
     if (!item.depends_on?.length) return '';
     const items = this.expandedPlan?.items ?? [];
@@ -2045,16 +2073,6 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
   planDepNames(plan: Plan) {
     if (!plan.depends_on?.length) return '';
     return plan.depends_on.map(d => { const dep = this.plans.find(p => p.id === d); return dep ? dep.name : d.slice(0, 8) + '…'; }).join(', ');
-  },
-  statusClass(status?: string) {
-    switch (status) {
-      case 'succeeded': return 'bg-emerald-500/15 text-emerald-300';
-      case 'failed': case 'blocked': return 'bg-rose-500/15 text-rose-300';
-      case 'orphaned': return 'bg-rose-500/15 text-rose-200';
-      case 'testing': case 'running': case 'editing': return 'bg-cyan-500/15 text-cyan-300';
-      case 'waiting': case 'paused': case 'stuck': return 'bg-amber-500/15 text-amber-300';
-      default: return 'bg-zinc-700 text-zinc-200';
-    }
   },
   formatTime(v: string) { if (!v) return ''; return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(v)); },
 
@@ -2127,7 +2145,7 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
         gap: prevTs > 0 && gapMs > 5 * 60 * 1000 ? this.durationBetween(new Date(prevTs).toISOString(), e.created_at) : '',
         agent: e.agent_id,
         statusLabel: e.status,
-        statusCls: this.statusClass(e.status),
+        statusCls: this.toneOf('status', e.status),
         time: this.formatTime(e.created_at),
         auto: this.isAutoEvent(e),
         stepLabel: e.step_total ? 'step ' + (e.step_current || 0) + '/' + e.step_total : '',

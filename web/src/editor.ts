@@ -33,6 +33,9 @@ const mdHighlight = HighlightStyle.define([
 
 export interface EditorOptions {
   onSubmit?: () => void;
+  // id of the visible label: the editable surface is a contenteditable div,
+  // which a <label for> cannot name.
+  labelledBy?: string;
 }
 
 export function mountMarkdownEditor(parent: HTMLElement, initial: string, opts: EditorOptions = {}): EditorView {
@@ -54,6 +57,7 @@ export function mountMarkdownEditor(parent: HTMLElement, initial: string, opts: 
         highlightActiveLine(),
         placeholder('Rough notes in markdown…'),
         syntaxHighlighting(mdHighlight),
+        EditorView.contentAttributes.of(opts.labelledBy ? { 'aria-labelledby': opts.labelledBy } : {}),
       ],
     }),
     parent,

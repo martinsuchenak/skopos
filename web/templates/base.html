@@ -12,7 +12,11 @@
     <a href="#main-content" class="skip-link btn btn-sm">Skip to main content</a>
 
     <!-- Sidebar -->
-    <aside id="main-nav" class="fixed inset-y-0 left-0 z-40 flex w-64 flex-col transform border-r border-zinc-800 bg-zinc-950 transition-transform md:translate-x-0" :class="{ '-translate-x-full': !sidebarOpen }" role="navigation" aria-label="Primary">
+    <!-- Below md the sidebar is a drawer. Closed, it is also invisible
+         (visibility transitions after the slide), so its links leave the Tab
+         order and the accessibility tree instead of being focusable off
+         screen. Open, focus moves in and stays until Escape or a pick. -->
+    <aside id="main-nav" class="fixed inset-y-0 left-0 z-40 flex w-64 flex-col transform border-r border-zinc-800 bg-zinc-950 transition-[transform,visibility] md:visible md:translate-x-0" :class="sidebarOpen ? '' : '-translate-x-full max-md:invisible'" role="navigation" aria-label="Primary" @keydown.escape="closeSidebar()" x-trap="sidebarOpen">
         <div class="flex h-16 items-center gap-2 border-b border-zinc-800 px-6">
             <span class="text-xl font-semibold tracking-tight"><span class="text-cyan-400">sko</span>pos</span>
             <span class="h-2 w-2 rounded-full transition-colors" :class="streamConnected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'" :title="streamConnected ? 'Connected' : 'Reconnecting…'" role="status" :aria-label="streamConnected ? 'Connected' : 'Reconnecting'"></span>
@@ -33,7 +37,7 @@
             <button type="button" @click="switchView('inbox')" class="nav-item" :aria-current="activeView === 'inbox' ? 'page' : null">
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 3h1a2 2 0 012 2v12a2 2 0 002 2h12a2 2 0 002-2v-6M2 3v0zm20 0h-6m6 0v6m0-6L13 12"/></svg>
                 Inbox
-                <span x-show="activeView === 'inbox' && !inboxTagFilter && (inboxLayout === 'lanes' || inboxStatus === 'open') && inboxOpenCount() > 0" class="badge ml-auto bg-amber-500/15 text-amber-300" x-text="inboxOpenCount()"></span>
+                <span x-show="activeView === 'inbox' && !inboxTagFilter && (inboxLayout === 'lanes' || inboxStatus === 'open') && inboxOpenCount() > 0" class="badge ml-auto tone-warn" x-text="inboxOpenCount()"></span>
             </button><button type="button" @click="switchView('index')" class="nav-item" :aria-current="activeView === 'index' ? 'page' : null">
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 1.1.9 2 2 2h9M4 7l4-4 4 4M4 7h10a2 2 0 012 2v2m4 4l-4-2v4l4-2z m0 0v0z m-4-2l4 2"/></svg>
                 Index
@@ -52,20 +56,22 @@
             </button>
         </nav>
         <div class="border-t border-zinc-800 p-4">
-            <p class="text-center text-[11px] text-zinc-600">skopos {{.Version}}</p>
+            <p class="text-center text-[11px] text-zinc-500">skopos {{.Version}}</p>
         </div>
     </aside>
 
     <!-- Mobile sidebar backdrop -->
-    <div x-show="sidebarOpen" x-cloak @click="sidebarOpen = false" class="fixed inset-0 z-30 bg-black/60 md:hidden" aria-hidden="true"></div>
+    <div x-show="sidebarOpen" x-cloak @click="closeSidebar()" class="fixed inset-0 z-30 bg-black/60 md:hidden" aria-hidden="true"></div>
 
     <div class="md:ml-64">
         <!-- Header -->
         <header class="sticky top-0 z-20 flex h-16 items-center gap-2 sm:gap-3 border-b border-zinc-800 bg-zinc-950/95 px-4 backdrop-blur">
-            <button type="button" @click="sidebarOpen = !sidebarOpen" class="btn btn-ghost p-2 md:hidden" aria-label="Toggle navigation" :aria-expanded="sidebarOpen">
+            <button type="button" id="nav-toggle" @click="toggleSidebar()" class="btn btn-ghost p-2 md:hidden" aria-label="Menu" aria-controls="main-nav" :aria-expanded="sidebarOpen ? 'true' : 'false'">
                 <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
             </button>
-            <h1 class="hidden min-w-0 truncate text-base font-semibold capitalize sm:block" x-text="activeView"></h1>
+            <!-- The page heading: here from sm up; on phones the header has no
+                 room, so the same h1 opens the main column instead. -->
+            <h1 class="hidden min-w-0 truncate text-base font-semibold sm:block" x-text="viewTitle()"></h1>
 
             <!-- Workspace filter: global context, so it lives in the sticky
                  header and persists in localStorage. A native select cannot
@@ -75,11 +81,11 @@
                  truncates; "+" and the right cluster never shrink, so nothing
                  slides under the key button. -->
             <div class="relative flex min-w-0 items-center gap-1.5 sm:ml-1">
-                <button type="button" @click="toggleWorkspaceMenu()" class="fld-sm flex min-w-0 max-w-32 items-center gap-1.5 text-left sm:max-w-80" :aria-expanded="workspaceMenuOpen ? 'true' : 'false'" aria-haspopup="listbox" aria-label="Filter by workspace" :title="activeWorkspace || 'All workspaces'">
+                <button type="button" @click="toggleWorkspaceMenu()" class="fld-sm flex min-w-0 max-w-32 items-center gap-1.5 text-left sm:max-w-80" :aria-expanded="workspaceMenuOpen ? 'true' : 'false'" aria-haspopup="listbox" :aria-label="'Workspace filter: ' + (activeWorkspace ? workspaceLabel(activeWorkspace) : 'All workspaces')" :title="activeWorkspace || 'All workspaces'">
                     <span class="truncate" x-text="activeWorkspace ? workspaceLabel(activeWorkspace) : 'All workspaces'"></span>
                     <svg class="ml-auto h-3.5 w-3.5 shrink-0 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                 </button>
-                <button type="button" @click="openWorkspaceModal()" class="btn btn-sm shrink-0 !min-h-8 sm:!min-h-6 !px-2" aria-label="Create workspace" title="Create workspace">
+                <button type="button" x-show="whoamiIsRoot()" x-cloak @click="openNewWorkspaceModal(true)" class="btn btn-sm shrink-0 !min-h-8 sm:!min-h-6 !px-2" aria-label="New workspace" title="New workspace">
                     <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                     <span class="hidden lg:inline">New</span>
                 </button>
@@ -135,7 +141,8 @@
             </div>
         </header>
 
-        <main id="main-content" class="p-4 sm:p-6" role="main">
+        <main id="main-content" class="p-4 focus:outline-none sm:p-6" role="main" tabindex="-1">
+            <h1 class="mb-4 text-xl font-semibold sm:hidden" x-text="viewTitle()"></h1>
 
             <!-- ===================== SESSIONS ===================== -->
             <section x-show="activeView === 'sessions'" class="grid gap-6 lg:grid-cols-[360px_1fr]">
@@ -150,7 +157,7 @@
                             <button type="button" data-session-purge style="display: none" @click="requestSessionPurge()" class="btn btn-sm btn-ghost text-rose-400" title="Bulk-delete sessions — their events, agent states, and session-scoped blackboard entries go with them">Delete all…</button>
                         </div>
                     </div>
-                    <p x-show="!loading && sessions.length === 0" class="card p-4 text-sm text-zinc-400">No reports yet.</p>
+                    <p x-show="!loading && sessions.length === 0" class="empty-state">No reports yet.</p>
                     <ul class="space-y-2" aria-label="Sessions list">
                         <template x-for="session in sessions" :key="session.id">
                             <li class="card" :class="selectedSessionId === session.id ? 'border-cyan-500' : ''">
@@ -158,7 +165,7 @@
                                     <button type="button" @click="selectSession(session.id)" class="min-w-0 flex-1 rounded text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" :aria-current="selectedSessionId === session.id ? 'true' : null">
                                         <div class="flex items-center justify-between gap-3">
                                             <span class="truncate text-sm font-medium" x-text="session.title"></span>
-                                            <span class="badge shrink-0" :class="statusClass(session.status)" x-text="session.status"></span>
+                                            <span class="badge shrink-0" :class="toneOf('status', session.status)" x-text="session.status"></span>
                                         </div>
                                         <div class="mt-2 flex items-center justify-between gap-2 text-xs text-zinc-500">
                                             <span class="truncate" x-text="workspaceLabel(session.workspace)"></span>
@@ -184,15 +191,15 @@
                             <p x-show="selectedSession" class="mt-0.5 text-xs text-zinc-600"
                                 x-text="selectedSession && ('started ' + formatTime(selectedSession.started_at) + ' · ran ' + sessionDuration(selectedSession) + ' · last activity ' + timeAgo(selectedSession.updated_at))"></p>
                         </div>
-                        <span x-show="selectedSession" class="badge" :class="statusClass(selectedSession && selectedSession.status)" x-text="selectedSession && selectedSession.status"></span>
+                        <span x-show="selectedSession" class="badge" :class="toneOf('status', selectedSession && selectedSession.status)" x-text="selectedSession && selectedSession.status"></span>
                     </div>
 
-                    <p x-show="!selectedSession" class="card p-6 text-sm text-zinc-400">Select a session on the left to see its agents and events.</p>
+                    <p x-show="!selectedSession" class="empty-state">Select a session on the left to see its agents and events.</p>
 
                     <template x-if="selectedSession">
                         <div>
                             <h3 class="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">Agents</h3>
-                            <p x-show="!selectedSession.agents || selectedSession.agents.length === 0" class="card p-4 text-sm text-zinc-500">No agents have reported for this session.</p>
+                            <p x-show="!selectedSession.agents || selectedSession.agents.length === 0" class="empty-state">No agents have reported for this session.</p>
                             <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                                 <template x-for="agent in selectedSession.agents || []" :key="agent.agent_id">
                                     <article class="card p-4">
@@ -201,7 +208,7 @@
                                                 <h3 class="truncate text-sm font-semibold" x-text="agent.agent_id"></h3>
                                                 <p class="text-xs text-zinc-500" x-text="agent.agent_type"></p>
                                             </div>
-                                            <span class="badge" :class="statusClass(agent.status)" x-text="agent.status"></span>
+                                            <span class="badge" :class="toneOf('status', agent.status)" x-text="agent.status"></span>
                                         </div>
                                         <div class="mt-4 h-2 overflow-hidden rounded bg-zinc-800" role="progressbar" :aria-valuenow="agent.progress || 0" aria-valuemin="0" aria-valuemax="100" :aria-label="'Progress for ' + agent.agent_id">
                                             <div class="h-full bg-cyan-400 transition-all" :style="'width: ' + (agent.progress || 0) + '%'"></div>
@@ -214,7 +221,7 @@
 
                             <div class="mt-8">
                                 <h3 class="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">Events</h3>
-                                <p x-show="!selectedSession.events || selectedSession.events.length === 0" class="card p-4 text-sm text-zinc-500">No events yet.</p>
+                                <p x-show="!selectedSession.events || selectedSession.events.length === 0" class="empty-state">No events yet.</p>
                                 <ul class="space-y-2" aria-label="Events">
                                     <template x-for="item in sessionTimeline()" :key="item.key">
                                         <li :class="item.isGroup ? 'flex items-center justify-between gap-3 rounded-lg border border-dashed border-zinc-800 px-3 py-1.5 text-xs text-zinc-500' : 'card p-3'">
@@ -225,15 +232,15 @@
                                                 <span class="shrink-0 text-zinc-600" x-text="item.rangeText"></span>
                                             </span>
                                             <div x-show="!item.isGroup">
-                                                <div x-show="item.gap" class="mb-2 flex items-center gap-2 text-[11px] text-amber-500/80" role="note">
+                                                <div x-show="item.gap" class="mb-2 flex items-center gap-2 text-[11px] text-amber-300" role="note">
                                                     <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                                                     <span x-text="'silent for ' + item.gap + ' before this'"></span>
                                                 </div>
                                                 <div class="flex flex-wrap items-center gap-2 text-sm">
                                                     <span class="font-medium" x-text="item.agent"></span>
                                                     <span class="badge" :class="item.statusCls" x-text="item.statusLabel"></span>
-                                                    <span x-show="item.auto" class="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-zinc-400">auto</span>
-                                                    <span x-show="item.stepLabel" class="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300" x-text="item.stepLabel"></span>
+                                                    <span x-show="item.auto" class="chip tone-muted uppercase tracking-wide">auto</span>
+                                                    <span x-show="item.stepLabel" class="chip tone-neutral" x-text="item.stepLabel"></span>
                                                     <span class="ml-auto text-xs text-zinc-500" x-text="item.time"></span>
                                                 </div>
                                                 <div x-show="item.progress >= 0" class="mt-2 h-1.5 overflow-hidden rounded bg-zinc-800">
@@ -255,7 +262,7 @@
                 <div class="mb-6 flex flex-wrap items-center gap-3">
                     <div class="flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2">
                         <label class="text-xs text-zinc-500" for="bb-branch">Branch</label>
-                        <input id="bb-branch" type="text" x-model="blackboardBranch" @input.debounce.300ms="fetchBundle()" placeholder="all" class="h-6 w-36 bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600" />
+                        <input id="bb-branch" type="text" x-model="blackboardBranch" @input.debounce.300ms="fetchBundle()" placeholder="all" class="h-6 w-36 bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-400" />
                     </div>
                     <span x-show="blackboardLoading" class="text-xs text-zinc-500" role="status" aria-live="polite">Loading…</span>
                     <span x-show="!blackboardLoading" class="text-xs text-zinc-500" x-text="entries.length + ' entries'"></span>
@@ -264,7 +271,7 @@
                     </button>
                 </div>
 
-                <p x-show="!blackboardLoading && entries.length === 0" class="card p-6 text-sm text-zinc-400">
+                <p x-show="!blackboardLoading && entries.length === 0" class="empty-state">
                     No blackboard entries yet. Agents write entries via the MCP <code class="text-zinc-300">blackboard_write</code> tool or <code class="text-zinc-300">POST /api/blackboard/entries</code>.
                 </p>
 
@@ -286,15 +293,14 @@
                                     <li class="card p-4">
                                         <div class="flex flex-wrap items-start justify-between gap-2">
                                             <div class="flex flex-wrap items-center gap-2">
-                                                <span class="badge" :class="entryTypeClass(entry.entry_type)" x-text="entry.entry_type"></span>
-                                                <span class="badge" :class="scopeClass(entry.scope)" x-text="entry.scope"></span>
+                                                <span class="badge" :class="toneOf('entry', entry.entry_type)" x-text="entry.entry_type"></span>
+                                                <span class="badge" :class="toneOf('scope', entry.scope)" x-text="entry.scope"></span>
                                                 <span x-show="entry.branch_name" class="text-xs text-zinc-500" x-text="'@ ' + entry.branch_name"></span>
-                                                <span x-show="!activeWorkspace && entry.workspace_id" class="badge max-w-[12rem] truncate bg-sky-500/15 text-sky-300" :title="entry.workspace_id" x-text="workspaceLabel(entry.workspace_id)"></span>
-                                                <span x-show="!activeWorkspace && !entry.workspace_id" class="badge bg-zinc-700 text-zinc-400" title="Not assigned to any workspace">no workspace</span>
+                                                {{template "ws-badge" (dict "V" "entry" "Missing" "no workspace")}}
                                             </div>
                                             <div class="flex items-center gap-1">
                                                 <span class="text-xs text-zinc-600" x-text="formatTime(entry.created_at)"></span>
-                                                <button x-show="entry.scope !== 'project'" type="button" @click.stop="promoteEntry(entry.id)" class="btn btn-sm btn-ghost" aria-label="Promote entry to wider scope">Promote</button>
+                                                <button x-show="entry.scope !== 'project'" type="button" @click.stop="promoteEntry(entry.id)" class="btn btn-sm btn-ghost" :aria-label="'Promote entry ' + entry.title + ' to a wider scope'">Promote</button>
                                                 <button type="button" @click.stop="requestDelete('entry', entry.id, entry.title)" class="btn btn-sm btn-ghost text-rose-400" :aria-label="'Delete entry ' + entry.title">Delete</button>
                                             </div>
                                         </div>
@@ -317,7 +323,7 @@
                 <div class="mb-6 flex flex-wrap items-center gap-3">
                     <div class="flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2">
                         <label class="text-xs text-zinc-500" for="pl-branch">Branch</label>
-                        <input id="pl-branch" type="text" x-model="plansBranch" @input.debounce.300ms="fetchPlans()" placeholder="all" class="h-6 w-36 bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600" />
+                        <input id="pl-branch" type="text" x-model="plansBranch" @input.debounce.300ms="fetchPlans()" placeholder="all" class="h-6 w-36 bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-400" />
                     </div>
                     <span x-show="plansLoading" class="text-xs text-zinc-500" role="status" aria-live="polite">Loading…</span>
                     <span x-show="!plansLoading" class="text-xs text-zinc-500" x-text="plans.length + ' plans'"></span>
@@ -326,7 +332,7 @@
                     </button>
                 </div>
 
-                <p x-show="!plansLoading && plans.length === 0" class="card p-6 text-sm text-zinc-400">
+                <p x-show="!plansLoading && plans.length === 0" class="empty-state">
                     No plans yet. Agents create plans via the <code class="text-zinc-300">plan_create</code> MCP tool or <code class="text-zinc-300">POST /api/plans</code>.
                 </p>
 
@@ -337,17 +343,16 @@
                                 <button type="button" @click="togglePlan(plan)" class="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 rounded">
                                     <div class="flex flex-wrap items-center gap-2">
                                         <span class="font-medium text-zinc-100" x-text="plan.name"></span>
-                                        <span class="badge" :class="planStatusClass(plan.status)" x-text="plan.status"></span>
-                                        <span x-show="plan.branch_name" class="badge bg-violet-500/15 text-violet-300" x-text="plan.branch_name"></span>
-                                        <span x-show="!plan.branch_name" class="badge bg-indigo-500/15 text-indigo-300">project</span>
-                                        <span x-show="!activeWorkspace && plan.workspace_id" class="badge max-w-[12rem] truncate bg-sky-500/15 text-sky-300" :title="plan.workspace_id" x-text="workspaceLabel(plan.workspace_id)"></span>
-                                        <span x-show="!activeWorkspace && !plan.workspace_id" class="badge bg-zinc-700 text-zinc-400" title="Not assigned to any workspace">no workspace</span>
+                                        <span class="badge" :class="toneOf('status', plan.status)" x-text="plan.status"></span>
+                                        <span x-show="plan.branch_name" class="badge tone-accent" x-text="plan.branch_name"></span>
+                                        <span x-show="!plan.branch_name" class="badge tone-secondary">project</span>
+                                        {{template "ws-badge" (dict "V" "plan" "Missing" "no workspace")}}
                                         <span x-show="plan.depends_on && plan.depends_on.length > 0" class="text-xs text-zinc-500">depends on <span class="text-amber-400" x-text="planDepNames(plan)"></span></span>
                                     </div>
                                     <p x-show="plan.description" class="mt-1 text-sm text-zinc-400" x-text="plan.description"></p>
                                 </button>
                                 <div class="flex flex-wrap items-center gap-1">
-                                    <button type="button" x-show="plan.status !== 'archived'" @click.stop="archivePlan(plan.id)" class="btn btn-sm btn-ghost" aria-label="Archive plan">Archive</button>
+                                    <button type="button" x-show="plan.status !== 'archived'" @click.stop="archivePlan(plan.id)" class="btn btn-sm btn-ghost" :aria-label="'Archive plan ' + plan.name">Archive</button>
                                     <button type="button" @click.stop="requestDelete('plan', plan.id, plan.name)" class="btn btn-sm btn-ghost text-rose-400" :aria-label="'Delete plan ' + plan.name">Delete</button>
                                 </div>
                             </div>
@@ -362,8 +367,8 @@
                                                 <template x-for="item in grp.items" :key="item.id">
                                                     <li class="flex flex-wrap items-start gap-2 rounded-md border border-zinc-800 bg-zinc-950 p-3">
                                                         <div class="flex w-32 shrink-0 items-center gap-2">
-                                                            <span class="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-xs text-zinc-400" x-text="'#' + item.position"></span>
-                                                            <span class="badge" :class="itemStatusClass(item.status)" x-text="item.status"></span>
+                                                            <span class="chip tone-muted font-mono" x-text="'#' + item.position"></span>
+                                                            <span class="badge" :class="toneOf('status', item.status)" x-text="item.status"></span>
                                                         </div>
                                                         <div class="min-w-0 flex-1">
                                                             <p class="text-sm text-zinc-200" x-text="item.title"></p>
@@ -410,16 +415,16 @@
             <section x-show="activeView === 'inbox'" x-cloak>
                 <div class="mb-6 flex flex-wrap items-center gap-3">
                     <div class="flex items-center gap-1 rounded-md border border-zinc-700 bg-zinc-900 p-1" role="group" aria-label="Inbox layout">
-                        <button type="button" @click="setInboxLayout('list')" class="btn btn-sm !min-h-8 sm:!min-h-6 px-2 py-1" :class="inboxLayout === 'list' ? 'border-cyan-500 text-cyan-300' : 'border-transparent text-zinc-400'" aria-label="List layout" title="List layout">
+                        <button type="button" @click="setInboxLayout('list')" :aria-pressed="inboxLayout === 'list' ? 'true' : 'false'" class="btn btn-sm !min-h-8 sm:!min-h-6 px-2 py-1" :class="inboxLayout === 'list' ? 'border-cyan-500 text-cyan-300' : 'border-transparent text-zinc-400'" aria-label="List layout" title="List layout">
                             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
                         </button>
-                        <button type="button" @click="setInboxLayout('lanes')" class="btn btn-sm !min-h-8 sm:!min-h-6 px-2 py-1" :class="inboxLayout === 'lanes' ? 'border-cyan-500 text-cyan-300' : 'border-transparent text-zinc-400'" aria-label="Board layout (swimlanes)" title="Board layout (swimlanes)">
+                        <button type="button" @click="setInboxLayout('lanes')" :aria-pressed="inboxLayout === 'lanes' ? 'true' : 'false'" class="btn btn-sm !min-h-8 sm:!min-h-6 px-2 py-1" :class="inboxLayout === 'lanes' ? 'border-cyan-500 text-cyan-300' : 'border-transparent text-zinc-400'" aria-label="Board layout (swimlanes)" title="Board layout (swimlanes)">
                             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 4v16m6-16v16M4 4h16M4 20h16"/></svg>
                         </button>
                     </div>
                     <div x-show="inboxLayout === 'list'" class="flex flex-wrap items-center gap-1" role="group" aria-label="Filter by status">
                         <template x-for="chip in inboxStatusChips()" :key="chip.key || 'all'">
-                            <button type="button" @click="setInboxStatus(chip.key)" class="btn btn-sm" :class="inboxStatus === chip.key ? 'border-cyan-500 text-cyan-300' : 'border-zinc-700 text-zinc-400'" x-text="chip.label"></button>
+                            <button type="button" @click="setInboxStatus(chip.key)" :aria-pressed="inboxStatus === chip.key ? 'true' : 'false'" class="btn btn-sm" :class="inboxStatus === chip.key ? 'border-cyan-500 text-cyan-300' : 'border-zinc-700 text-zinc-400'" x-text="chip.label"></button>
                         </template>
                     </div>
                     <!-- Top-of-page search + tag filter: item-level tag chips
@@ -438,7 +443,7 @@
                             <option value="oldest">Sort: oldest first</option>
                         </select>
                     </div>
-                    <span x-show="inboxTagFilter" class="badge bg-violet-500/15 text-violet-300" role="button" tabindex="0" @click="setInboxTagFilter(inboxTagFilter)" @keydown.enter.prevent="setInboxTagFilter(inboxTagFilter)" @keydown.space.prevent="setInboxTagFilter(inboxTagFilter)" :aria-label="'Clear tag filter ' + inboxTagFilter" x-text="'#' + inboxTagFilter + ' ×'"></span>
+                    <button type="button" x-show="inboxTagFilter" class="badge tone-accent min-h-6" @click="setInboxTagFilter(inboxTagFilter)" :aria-label="'Clear tag filter ' + inboxTagFilter" x-text="'#' + inboxTagFilter + ' ×'"></button>
                     <span x-show="inboxLoading" class="text-xs text-zinc-500" role="status" aria-live="polite">Loading…</span>
                     <span x-show="!inboxLoading" class="text-xs text-zinc-500" x-text="inboxItems.length + ' items'"></span>
                     <button type="button" @click="openInboxCreateModal()" class="btn btn-primary btn-sm ml-auto">
@@ -452,7 +457,7 @@
                      Done is the manual complete (work finished without a plan);
                      dragging done BACK to Open reopens it. Converted cards move
                      only to Discarded. -->
-                <p x-show="inboxLayout === 'lanes' && !inboxLoading && inboxItems.length === 0" class="card p-6 text-sm text-zinc-400">
+                <p x-show="inboxLayout === 'lanes' && !inboxLoading && inboxItems.length === 0" class="empty-state">
                     No inbox items. Capture rough ideas here — an agent can then claim, enrich, and convert them into a plan.
                 </p>
                 <div x-show="inboxLayout === 'lanes' && inboxItems.length > 0" class="flex gap-4 overflow-x-auto pb-4" @dragend="endInboxDrag()">
@@ -465,12 +470,12 @@
                             <div class="flex items-center justify-between gap-2 border-b border-zinc-800 px-3 py-2">
                                 <span class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
                                     <span x-text="lane.label"></span>
-                                    <span class="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400" x-text="laneItems(lane.key).length"></span>
+                                    <span class="chip tone-muted" x-text="laneItems(lane.key).length"></span>
                                 </span>
                                 <span class="flex items-center gap-1">
                                     <span x-show="lane.key === 'converted'" class="text-[10px] text-zinc-600" title="Conversion links a plan (Convert on a card)">auto</span>
                                     <span x-show="lane.key === 'done'" class="text-[10px] text-zinc-600" title="Linked plans flip their items here on completion; drag a card here to mark it done manually; drag it back to Open to reopen">auto</span>
-                                    <button x-show="!!activeWorkspace" type="button" @click="requestInboxPurge(lane.key, lane.label)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-1.5 !py-0 text-[10px] text-rose-400" :title="'Permanently delete every ' + lane.label.toLowerCase() + ' item in ' + activeWorkspace" :aria-label="'Delete every ' + lane.label.toLowerCase() + ' item in ' + activeWorkspace">Clear</button>
+                                    <button x-show="!!activeWorkspace" type="button" @click="requestInboxPurge(lane.key, lane.label)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-1.5 !py-0 text-[10px] text-rose-400" :title="'Permanently delete every ' + lane.label.toLowerCase() + ' item in ' + activeWorkspace" :aria-label="'Delete every ' + lane.label.toLowerCase() + ' item in ' + activeWorkspace">Delete all</button>
                                 </span>
                             </div>
                             <!-- Drop handlers live on a CHILD of the x-for root: the
@@ -491,7 +496,7 @@
                                                  landed. -->
                                             <div>
                                                 <div class="min-w-0">
-                                                    <span x-show="item.priority != null" class="mr-1 rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] text-amber-300" x-text="'#' + item.priority"></span>
+                                                    <span x-show="item.priority != null" class="chip tone-warn mr-1 font-mono" x-text="'#' + item.priority" :aria-label="'Rank ' + item.priority"></span>
                                                     <span class="text-sm font-medium text-zinc-100" x-text="item.title"></span>
                                                 </div>
                                                 <div class="mt-1 flex flex-wrap items-center gap-1">
@@ -509,11 +514,10 @@
                                             <div class="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-zinc-500">
                                                 <!-- The workflow lane holds every pipeline status;
                                                      the badge tells blocked from awaiting approval. -->
-                                                <span x-show="isWorkflowStatus(item.status)" class="badge" :class="inboxStatusClass(item.status)" x-text="item.status"></span>
-                                                <span x-show="!activeWorkspace && item.workspace_id" class="badge max-w-40 truncate bg-sky-500/15 text-sky-300" :title="item.workspace_id" x-text="workspaceLabel(item.workspace_id)"></span>
-                                                <span x-show="!item.workspace_id" class="badge bg-amber-500/15 text-amber-300">unfiled</span>
+                                                <span x-show="isWorkflowStatus(item.status)" class="badge" :class="toneOf('status', item.status)" x-text="item.status"></span>
+                                                {{template "ws-badge" (dict "V" "item" "Missing" "unfiled")}}
                                                 <span x-show="item.claimed_by_agent_id" class="truncate max-w-28" x-text="item.claimed_by_agent_id"></span>
-                                                <span x-show="item.plan_id" class="badge max-w-32 truncate bg-violet-500/15 text-violet-300" x-text="item.plan && item.plan.name ? '→ ' + item.plan.name : '→ plan'"></span>
+                                                <span x-show="item.plan_id" class="badge max-w-32 truncate tone-accent" x-text="item.plan && item.plan.name ? '→ ' + item.plan.name : '→ plan'"></span>
                                                 <span class="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap">
                                                     <span x-text="timeAgo(item.created_at)"></span>
                                                     <span x-show="inboxShowUpdated(item)" x-text="inboxUpdatedLabel(item)"></span>
@@ -540,7 +544,7 @@
 
                 <!-- List -->
                 <div x-show="inboxLayout === 'list'">
-                <p x-show="!inboxLoading && inboxItems.length === 0" class="card p-6 text-sm text-zinc-400">
+                <p x-show="!inboxLoading && inboxItems.length === 0" class="empty-state">
                     No inbox items. Capture rough ideas here — an agent can then claim, enrich, and convert them into a plan.
                 </p>
 
@@ -558,18 +562,17 @@
                             <div class="flex flex-col gap-2 p-4 sm:flex-row sm:items-start sm:justify-between">
                                 <button type="button" @click="toggleInboxItem(item)" class="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 rounded">
                                     <div class="flex flex-wrap items-center gap-2">
-                                        <span x-show="item.priority != null" class="rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] text-amber-300" x-text="'#' + item.priority"></span>
+                                        <span x-show="item.priority != null" class="chip tone-warn font-mono" x-text="'#' + item.priority" :aria-label="'Rank ' + item.priority"></span>
                                         <span class="font-medium text-zinc-100" x-text="item.title"></span>
-                                        <span class="badge" :class="inboxStatusClass(item.status)" x-text="item.status"></span>
-                                        <span x-show="item.claimed_by_agent_id" class="badge bg-zinc-700 text-zinc-300" x-text="'claimed: ' + item.claimed_by_agent_id"></span>
-                                        <span x-show="!activeWorkspace && item.workspace_id" class="badge max-w-[12rem] truncate bg-sky-500/15 text-sky-300" :title="item.workspace_id" x-text="workspaceLabel(item.workspace_id)"></span>
-                                        <span x-show="!item.workspace_id" class="badge bg-amber-500/15 text-amber-300" title="Not yet assigned to a workspace">unfiled</span>
+                                        <span class="badge" :class="toneOf('status', item.status)" x-text="item.status"></span>
+                                        <span x-show="item.claimed_by_agent_id" class="badge tone-neutral" x-text="'claimed: ' + item.claimed_by_agent_id"></span>
+                                        {{template "ws-badge" (dict "V" "item" "Missing" "unfiled")}}
                                     </div>
                                     <div class="mt-1.5 flex flex-wrap items-center gap-2">
                                         <template x-for="tag in item.tags || []" :key="item.id + tag">
-                                            <button type="button" @click.stop="setInboxTagFilter(tag)" class="inline-flex h-6 items-center rounded bg-zinc-800 px-1.5 text-[11px] text-zinc-300 hover:bg-zinc-700" :aria-label="'Filter by tag ' + tag" x-text="'#' + tag"></button>
+                                            <button type="button" @click.stop="setInboxTagFilter(tag)" class="chip tone-neutral h-6 hover:bg-zinc-700" :aria-label="'Filter by tag ' + tag" x-text="'#' + tag"></button>
                                         </template>
-                                        <span x-show="item.plan_id" class="badge bg-violet-500/15 text-violet-300" x-text="item.plan && item.plan.name ? '→ ' + item.plan.name : '→ plan'"></span>
+                                        <span x-show="item.plan_id" class="badge tone-accent" x-text="item.plan && item.plan.name ? '→ ' + item.plan.name : '→ plan'"></span>
                                         <!-- Dates stay one group: never split created/updated. -->
                                         <span class="flex shrink-0 items-center gap-2 whitespace-nowrap">
                                             <span class="text-xs text-zinc-600" x-text="timeAgo(item.created_at)"></span>
@@ -580,17 +583,20 @@
                                 </button>
                                 <div class="flex flex-wrap items-center gap-1">
                                     <button type="button" x-show="!item.workspace_id && inboxItemEditable(item)" @click.stop="openFileModal(item)" class="btn btn-sm btn-ghost" :aria-label="'File item ' + item.title + ' into a workspace'">File into…</button>
+                                    <!-- Rank without dragging (WCAG 2.5.7): the board's drag-to-rank, one step at a time. -->
+                                    <button type="button" x-show="item.priority != null && inboxSort === 'priority' && inboxCanRank(item)" :disabled="item.priority === 1" @click.stop="moveInboxItem(item.id, -1)" class="btn btn-sm btn-ghost" :aria-label="'Move item ' + item.title + ' up'" title="Move up">↑</button>
+                                    <button type="button" x-show="item.priority != null && inboxSort === 'priority' && inboxCanRank(item)" @click.stop="moveInboxItem(item.id, 1)" class="btn btn-sm btn-ghost" :aria-label="'Move item ' + item.title + ' down'" title="Move down">↓</button>
                                     <button type="button" x-show="inboxCanRank(item)" @click.stop="item.priority != null ? inboxSetPriority(item.id, 0) : pinInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="item.priority != null ? 'Unpin item ' + item.title : 'Pin item ' + item.title + ' to top'" x-text="item.priority != null ? 'Unpin' : 'Pin'"></button>
                                     <button type="button" x-show="inboxContentEditable(item)" @click.stop="openInboxEditModal(item)" class="btn btn-sm btn-ghost" :aria-label="'Edit item ' + item.title">Edit</button>
                                     <button type="button" x-show="item.status === 'discarded'" @click.stop="restoreInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Restore item ' + item.title + ' to open'">Restore</button>
                                     <button type="button" x-show="item.status === 'done'" @click.stop="reopenInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Reopen item ' + item.title + ' back to open'">Reopen</button>
                                     <button type="button" x-show="item.status === 'open'" @click.stop="claimInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Claim item ' + item.title">Claim</button>
-                                    <button type="button" x-show="item.status === 'in_progress'" @click.stop="releaseInboxItem(item.id)" class="btn btn-sm btn-ghost">Release</button>
+                                    <button type="button" x-show="item.status === 'in_progress'" @click.stop="releaseInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Release item ' + item.title">Release</button>
                                     <button type="button" x-show="!isWorkflowStatus(item.status) && item.status !== 'done' && item.status !== 'discarded'" @click.stop="completeInboxItem(item.id)" class="btn btn-sm btn-ghost text-emerald-300" :aria-label="'Mark item ' + item.title + ' done'">Done</button>
                                     <button type="button" @click.stop="openInboxPreview(item)" class="btn btn-sm btn-ghost" :aria-label="'Preview item ' + item.title">View</button>
                                     <button type="button" x-show="workflowQuickAction(item)" x-text="workflowQuickAction(item)" @click.stop="runQuickWorkflowAction(item)" class="btn btn-sm btn-ghost text-sky-300" :aria-label="'Workflow action for item ' + item.title"></button>
                                     <button type="button" x-show="item.workspace_id && (item.status === 'open' || item.status === 'in_progress')" @click.stop="convertInboxItem(item)" class="btn btn-sm btn-ghost text-violet-300" :aria-label="'Convert item ' + item.title + ' to a plan'">Convert</button>
-                                    <button type="button" x-show="!isWorkflowStatus(item.status) && item.status !== 'done' && item.status !== 'discarded'" @click.stop="discardInboxItem(item.id)" class="btn btn-sm btn-ghost">Discard</button>
+                                    <button type="button" x-show="!isWorkflowStatus(item.status) && item.status !== 'done' && item.status !== 'discarded'" @click.stop="discardInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Discard item ' + item.title">Discard</button>
                                     <button type="button" @click.stop="requestDelete('inboxitem', item.id, item.title)" class="btn btn-sm btn-ghost text-rose-400" :aria-label="'Delete item ' + item.title">Delete</button>
                                 </div>
                             </div>
@@ -612,305 +618,271 @@
             </section>
 
             <!-- ===================== CODE INDEX ===================== -->
+            <!-- Page intro pattern (every view): the h1 is the title; an
+                 optional description and the view's primary action follow. -->
             <section x-show="activeView === 'index'" x-cloak>
-                <h2 class="mb-1 text-2xl font-semibold">Code index</h2>
-                <p class="mb-6 text-sm text-zinc-500">
-                    <span x-show="activeWorkspace">Indexed branches for <span class="font-mono text-zinc-400" x-text="activeWorkspace"></span>.</span>
-                    <span x-show="!activeWorkspace">Indexed branches across all workspaces.</span>
-                    Push with <code class="rounded bg-zinc-800 px-1">skopos index push</code> or refresh from the registered git URL.
-                </p>
-                <div x-show="indexBranches.length === 0" class="rounded-lg border border-zinc-800 bg-zinc-900/50 p-6 text-sm text-zinc-500">
-                    No indexed branches yet. Agents push indexes via the CLI; every machine then queries the same central index.
+                <div class="mb-6">
+                    <p class="max-w-2xl text-sm text-zinc-400">
+                        <span x-show="activeWorkspace">Indexed branches for <span class="font-mono text-zinc-300" x-text="activeWorkspace"></span>.</span>
+                        <span x-show="!activeWorkspace">Indexed branches across all workspaces.</span>
+                        Push with <code class="rounded bg-zinc-800 px-1 text-zinc-300">skopos index push</code> or refresh from the registered git URL.
+                    </p>
                 </div>
+                <p x-show="indexBranches.length === 0" class="empty-state">No indexed branches yet. Agents push indexes via the CLI; every machine then queries the same central index.</p>
                 <ul class="space-y-2" x-show="activeWorkspace && indexBranches.length > 0">
                     <template x-for="b in indexBranches" :key="b.branch">
-                        <li class="flex flex-wrap items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3">
-                            <span class="font-mono text-sm text-cyan-300" x-text="b.branch"></span>
-                            <span class="text-xs text-zinc-500">
-                                <span x-text="b.file_count"></span> files ·
-                                <span x-text="b.symbol_count"></span> symbols
-                            </span>
-                            <span class="ml-auto text-xs text-zinc-600" x-text="b.source || ''"></span>
-                            <span class="text-xs text-zinc-600" x-text="formatTime(b.built_at)"></span>
-                        </li>
+                        {{template "index-branch" "b"}}
                     </template>
                 </ul>
                 <div x-show="!activeWorkspace && indexGroups.length > 0" class="space-y-6">
                     <template x-for="g in indexGroups" :key="g.id">
                         <div>
-                            <h3 class="mb-2 flex items-baseline gap-2 text-sm font-semibold text-zinc-300">
+                            <h2 class="mb-2 flex items-baseline gap-2 text-sm font-semibold text-zinc-300">
                                 <span class="font-mono" x-text="g.label"></span>
-                                <span class="text-xs font-normal text-zinc-600" x-text="g.branches.length === 0 ? 'not indexed' : g.branches.length + ' branch(es)'"></span>
-                            </h3>
+                                <span class="text-xs font-normal text-zinc-500" x-text="g.branches.length === 0 ? 'not indexed' : g.branches.length + ' branch(es)'"></span>
+                            </h2>
                             <ul x-show="g.branches.length > 0" class="space-y-2">
                                 <template x-for="b in g.branches" :key="b.branch">
-                                    <li class="flex flex-wrap items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3">
-                                        <span class="font-mono text-sm text-cyan-300" x-text="b.branch"></span>
-                                        <span class="text-xs text-zinc-500">
-                                            <span x-text="b.file_count"></span> files ·
-                                            <span x-text="b.symbol_count"></span> symbols
-                                        </span>
-                                        <span class="ml-auto text-xs text-zinc-600" x-text="b.source || ''"></span>
-                                        <span class="text-xs text-zinc-600" x-text="formatTime(b.built_at)"></span>
-                                    </li>
+                                    {{template "index-branch" "b"}}
                                 </template>
                             </ul>
                         </div>
                     </template>
                 </div>
             </section>
-            <!-- ===================== API KEYS ===================== -->
+
+            <!-- ===================== WORKERS ===================== -->
             <section x-show="activeView === 'workers'" x-cloak>
-                <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
-                    <div>
-                        <h2 class="text-lg font-semibold">Workers</h2>
-                        <p class="mt-1 max-w-2xl text-sm text-zinc-500">Execution planes: what each worker offers (recorded when it claims) plus its run history. Refreshes with the dashboard's live poll.</p>
-                    </div>
-                            </div>
-                <p x-show="workersLoading" class="text-sm text-zinc-500">Loading…</p>
-                <p x-show="!workersLoading && workers.length === 0" class="text-sm text-zinc-500">No workers have claimed runs yet.</p>
+                <div class="mb-6">
+                    <p class="max-w-2xl text-sm text-zinc-400">Execution planes: what each worker offers (recorded when it claims) plus its run history. Refreshes with the dashboard's live poll.</p>
+                </div>
+                <p x-show="workersLoading && workers.length === 0" class="empty-state" role="status">Loading…</p>
+                <p x-show="!workersLoading && workers.length === 0" class="empty-state">No workers have claimed runs yet.</p>
                 <ul class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     <template x-for="w in workers" :key="w.id + '|' + w.lastActive">
                         <li class="card p-4">
                             <div class="flex items-start justify-between gap-2">
-                                <h3 class="min-w-0 break-all font-mono text-sm font-medium" x-text="w.id"></h3>
+                                <h2 class="min-w-0 break-all font-mono text-sm font-medium" x-text="w.id"></h2>
                                 <span class="badge shrink-0" :class="workerStatusClass(w)" x-text="workerStatusLabel(w)"></span>
                             </div>
                             <p class="mt-2 text-sm" x-show="w.active > 0" x-text="w.currentLabel"></p>
                             <dl class="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
-                                <div class="rounded-lg border border-zinc-800 p-2"><dt class="text-zinc-500">active</dt><dd class="font-mono text-sm" x-text="w.active"></dd></div>
-                                <div class="rounded-lg border border-zinc-800 p-2"><dt class="text-zinc-500">succeeded</dt><dd class="font-mono text-sm text-emerald-300" x-text="w.succeeded"></dd></div>
-                                <div class="rounded-lg border border-zinc-800 p-2"><dt class="text-zinc-500">failed</dt><dd class="font-mono text-sm text-rose-300" x-text="w.failed"></dd></div>
+                                <div class="rounded-lg border border-zinc-700 p-2"><dt class="text-zinc-400">active</dt><dd class="font-mono text-sm" x-text="w.active"></dd></div>
+                                <div class="rounded-lg border border-zinc-700 p-2"><dt class="text-zinc-400">succeeded</dt><dd class="font-mono text-sm text-emerald-300" x-text="w.succeeded"></dd></div>
+                                <div class="rounded-lg border border-zinc-700 p-2"><dt class="text-zinc-400">failed</dt><dd class="font-mono text-sm text-rose-300" x-text="w.failed"></dd></div>
                             </dl>
-                            <p class="mt-3 text-[11px] text-zinc-500"><span class="text-zinc-400">workspaces:</span> <span class="break-all" x-text="w.workspaces.join(', ')"></span></p>
-                            <p class="mt-1 text-[11px] text-zinc-500"><span class="text-zinc-400">runners:</span> <span class="font-mono" x-text="w.runners.join(', ')"></span></p>
-                <p class="mt-1 text-[11px] text-zinc-500"><span class="text-zinc-400">stages:</span> <span x-text="w.stages.join(', ')"></span></p>
-                            <p class="mt-1 text-[11px] text-zinc-500">last active <span x-text="timeAgo(w.lastActive)"></span></p>
+                            <dl class="mt-3 space-y-1 text-xs text-zinc-400">
+                                <div><dt class="inline text-zinc-300">workspaces:</dt> <dd class="inline break-all" x-text="w.workspaces.join(', ')"></dd></div>
+                                <div><dt class="inline text-zinc-300">runners:</dt> <dd class="inline font-mono" x-text="w.runners.join(', ')"></dd></div>
+                                <div><dt class="inline text-zinc-300">stages:</dt> <dd class="inline" x-text="w.stages.join(', ')"></dd></div>
+                                <div><dt class="inline text-zinc-300">last active:</dt> <dd class="inline" x-text="timeAgo(w.lastActive)"></dd></div>
+                            </dl>
                         </li>
                     </template>
                 </ul>
             </section>
-                        <section x-show="activeView === 'keys'" x-cloak>
-                <div class="mb-6 flex items-center justify-between gap-4">
-                    <div>
-                        <h2 class="mb-1 text-2xl font-semibold">API keys</h2>
-                        <p class="text-sm text-zinc-500">
-                            Scoped credentials for agents and machines. The root key (server config) always has full access;
-                            these keys see only the workspaces they are scoped to.
-                        </p>
-                    </div>
-                    <button type="button" @click="openNewKeyModal()" class="btn">New key</button>
+
+            <!-- ===================== API KEYS ===================== -->
+            <section x-show="activeView === 'keys'" x-cloak>
+                <div class="mb-6 flex flex-wrap items-start justify-between gap-3">
+                    <p class="max-w-2xl text-sm text-zinc-400">
+                        Scoped credentials for agents and machines. The root key (server config) always has full access;
+                        these keys see only the workspaces they are scoped to.
+                    </p>
+                    <button type="button" @click="openNewKeyModal()" class="btn btn-primary btn-sm"><span aria-hidden="true">+</span> New key</button>
                 </div>
-                <div x-show="keysLoading" class="text-sm text-zinc-500">Loading…</div>
-                <div x-show="!keysLoading && keys.length === 0" class="rounded-lg border border-zinc-800 bg-zinc-900/50 p-6 text-sm text-zinc-500">
-                    No API keys yet. Mint one per agent or machine and scope it to the workspaces it may touch.
-                </div>
+                <p x-show="keysLoading && keys.length === 0" class="empty-state" role="status">Loading…</p>
+                <p x-show="!keysLoading && keys.length === 0" class="empty-state">No API keys yet. Mint one per agent or machine and scope it to the workspaces it may touch.</p>
                 <ul class="space-y-2" x-show="keys.length > 0">
                     <template x-for="k in keys" :key="k.id">
-                        <li class="flex flex-wrap items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3" :class="k.revoked_at ? 'opacity-50' : ''">
+                        <li class="card flex flex-wrap items-center gap-3 px-4 py-3" :class="k.revoked_at ? 'opacity-60' : ''">
                             <div class="min-w-0 flex-1">
                                 <div class="flex flex-wrap items-baseline gap-2">
                                     <span class="font-medium" x-text="k.name"></span>
-                                    <span class="font-mono text-xs text-zinc-500" x-text="k.key_prefix + '…'"></span>
-                                    <span class="rounded bg-zinc-800 px-1.5 py-0.5 text-[11px] text-zinc-300" x-text="keyScope(k)"></span>
-                                    <span x-show="keyIsApprover(k)" class="rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] text-amber-300">approver</span>
-                                    <span x-show="k.revoked_at" class="rounded bg-rose-500/15 px-1.5 py-0.5 text-[11px] text-rose-300">revoked</span>
+                                    <span class="font-mono text-xs text-zinc-400" x-text="k.key_prefix + '…'"></span>
+                                    <span class="chip tone-neutral" x-text="keyScope(k)"></span>
+                                    <span x-show="keyIsApprover(k)" class="chip tone-warn">approver</span>
+                                    <span x-show="k.revoked_at" class="chip tone-danger">revoked</span>
                                 </div>
-                                <div class="mt-0.5 text-xs text-zinc-600">
+                                <div class="mt-0.5 text-xs text-zinc-400">
                                     created <span x-text="formatTime(k.created_at)"></span>
                                     <span x-show="k.last_used_at"> · last used <span x-text="formatTime(k.last_used_at || '')"></span></span>
                                 </div>
                             </div>
-                            <button type="button" x-show="!k.revoked_at" @click="openEditKeyModal(k)"
-                                class="btn btn-sm border-zinc-700 text-zinc-200 hover:border-zinc-500">Edit</button>
-                            <button type="button" x-show="!k.revoked_at" @click="revokeKey(k)"
-                                class="btn btn-sm border-rose-800/60 text-rose-300 hover:border-rose-700">Revoke</button>
-                            <button type="button" x-show="k.revoked_at" @click="deleteKey(k)"
-                                class="btn btn-sm border-rose-800/60 text-rose-300 hover:border-rose-700">Delete</button>
+                            <div class="flex flex-wrap items-center gap-1">
+                                <button type="button" x-show="!k.revoked_at" @click="openEditKeyModal(k)" class="btn btn-sm btn-ghost" :aria-label="'Edit key ' + k.name">Edit</button>
+                                <button type="button" x-show="!k.revoked_at" @click="revokeKey(k)" class="btn btn-sm btn-ghost text-rose-400" :aria-label="'Revoke key ' + k.name">Revoke</button>
+                                <button type="button" x-show="k.revoked_at" @click="deleteKey(k)" class="btn btn-sm btn-ghost text-rose-400" :aria-label="'Delete key ' + k.name">Delete</button>
+                            </div>
                         </li>
                     </template>
                 </ul>
             </section>
 
+            <!-- ===================== WORKSPACES ===================== -->
             <section x-show="activeView === 'workspaces'" x-cloak>
-                <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
-                    <div>
-                        <h2 class="mb-1 text-2xl font-semibold">Workspaces</h2>
-                        <p class="text-sm text-zinc-500">
-                            The registry every domain scopes by. Allocate workspaces to groups here — a key's scope is
-                            its workspaces plus its groups' members and pattern matches.
-                        </p>
-                    </div>
-                    <button type="button" @click="openNewWorkspaceModal()" class="btn" x-show="whoamiIsRoot()" x-cloak>New workspace</button>
-                </div>
-                <div class="rounded-lg border border-zinc-800 bg-zinc-900/50">
-                    <ul class="divide-y divide-zinc-800">
-                        <template x-for="ws in registeredWorkspaces" :key="ws.id">
-                            <li class="flex flex-wrap items-start justify-between gap-3 p-4">
-                                <div class="min-w-0 flex-1">
-                                    <div class="flex flex-wrap items-baseline gap-2">
-                                        <span class="truncate font-medium text-zinc-100" x-text="ws.name || ws.id"></span>
-                                        <span class="text-xs text-zinc-500" x-text="ws.id"></span>
-                                    </div>
-                                    <div class="mt-1.5 flex flex-wrap gap-1.5">
-                                        <template x-for="g in wsGroupsOf(ws.id)" :key="'ws|' + ws.id + '|' + g.id">
-                                            <span class="badge bg-violet-500/15 text-violet-300" x-text="g.name"></span>
-                                        </template>
-                                        <template x-for="k in wsKeys(ws.id)" :key="'wsk|' + ws.id + '|' + k.id">
-                                            <span class="badge bg-emerald-500/15 text-emerald-300" x-text="'🔑 ' + k.name"></span>
-                                        </template>
-                                    </div>
-                                </div>
-                                <button type="button" @click="openEditWorkspaceModal(ws)" x-show="whoamiIsRoot()" x-cloak
-                                    class="btn btn-sm border-zinc-700 text-zinc-200 hover:border-zinc-500">Edit</button>
-                            </li>
-                        </template>
-                    </ul>
-                    <p class="p-4 text-sm text-zinc-500" x-show="registeredWorkspaces.length === 0">
-                        No workspaces registered yet. Workspaces appear as agents report sessions, or register one above.
+                <div class="mb-6 flex flex-wrap items-start justify-between gap-3">
+                    <p class="max-w-2xl text-sm text-zinc-400">
+                        The registry every domain scopes by. Allocate workspaces to groups here — a key's scope is
+                        its workspaces plus its groups' members and pattern matches.
                     </p>
+                    <button type="button" @click="openNewWorkspaceModal()" class="btn btn-primary btn-sm" x-show="whoamiIsRoot()" x-cloak><span aria-hidden="true">+</span> New workspace</button>
                 </div>
+                <p class="empty-state" x-show="registeredWorkspaces.length === 0">No workspaces registered yet. Workspaces appear as agents report sessions, or register one above.</p>
+                <ul class="card divide-y divide-zinc-800" x-show="registeredWorkspaces.length > 0">
+                    <template x-for="ws in registeredWorkspaces" :key="ws.id">
+                        <li class="flex flex-wrap items-start justify-between gap-3 p-4">
+                            <div class="min-w-0 flex-1">
+                                <div class="flex flex-wrap items-baseline gap-2">
+                                    <span class="truncate font-medium text-zinc-100" x-text="ws.name || ws.id"></span>
+                                    <span class="text-xs text-zinc-400" x-text="ws.id"></span>
+                                </div>
+                                <div class="mt-1.5 flex flex-wrap gap-1.5">
+                                    <template x-for="g in wsGroupsOf(ws.id)" :key="'ws|' + ws.id + '|' + g.id">
+                                        <span class="badge tone-accent" x-text="g.name"></span>
+                                    </template>
+                                    <template x-for="k in wsKeys(ws.id)" :key="'wsk|' + ws.id + '|' + k.id">
+                                        <span class="badge tone-success" x-text="'🔑 ' + k.name"></span>
+                                    </template>
+                                </div>
+                            </div>
+                            <button type="button" @click="openEditWorkspaceModal(ws)" x-show="whoamiIsRoot()" x-cloak class="btn btn-sm btn-ghost" :aria-label="'Edit workspace ' + (ws.name || ws.id)">Edit</button>
+                        </li>
+                    </template>
+                </ul>
 
-                <div class="mb-6 mt-10 flex flex-wrap items-center justify-between gap-4">
+                <div class="mb-6 mt-10 flex flex-wrap items-start justify-between gap-3">
                     <div>
-                        <h3 class="mb-1 text-xl font-semibold">Groups</h3>
-                        <p class="text-sm text-zinc-500">
+                        <h2 class="mb-1 text-lg font-semibold">Groups</h2>
+                        <p class="max-w-2xl text-sm text-zinc-400">
                             Named bundles of workspaces (explicit members plus pattern matches). Members are allocated
                             from the workspace side; patterns and names live here.
                         </p>
                     </div>
-                    <button type="button" @click="openNewGroupModal()" class="btn" x-show="whoamiIsRoot()" x-cloak>New group</button>
+                    <button type="button" @click="openNewGroupModal()" class="btn btn-primary btn-sm" x-show="whoamiIsRoot()" x-cloak><span aria-hidden="true">+</span> New group</button>
                 </div>
-                <div x-show="groupsLoading" class="text-sm text-zinc-500">Loading…</div>
-                <div x-show="!groupsLoading && groups.length === 0" class="rounded-lg border border-zinc-800 bg-zinc-900/50 p-6 text-sm text-zinc-500">
-                    No workspace groups yet. Create one to give keys access to many workspaces at once.
-                </div>
-                <ul class="space-y-3" x-show="!groupsLoading && groups.length > 0">
+                <p x-show="groupsLoading && groups.length === 0" class="empty-state" role="status">Loading…</p>
+                <p x-show="!groupsLoading && groups.length === 0" class="empty-state">No workspace groups yet. Create one to give keys access to many workspaces at once.</p>
+                <ul class="space-y-3" x-show="groups.length > 0">
                     <template x-for="g in groups" :key="g.id">
-                        <li class="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+                        <li class="card p-4">
                             <div class="flex flex-wrap items-start justify-between gap-2">
                                 <div class="min-w-0">
                                     <div class="flex flex-wrap items-baseline gap-2">
                                         <span class="font-medium text-zinc-100" x-text="g.name"></span>
-                                        <span class="text-xs text-zinc-500" x-text="g.id"></span>
+                                        <span class="text-xs text-zinc-400" x-text="g.id"></span>
                                     </div>
-                                    <p class="mt-1 text-sm text-zinc-500" x-show="g.description" x-text="g.description"></p>
+                                    <p class="mt-1 text-sm text-zinc-400" x-show="g.description" x-text="g.description"></p>
                                     <div class="mt-2 flex flex-wrap gap-1.5">
                                         <template x-for="m in g.members" :key="'m|' + g.id + '|' + m">
-                                            <span class="badge bg-cyan-500/15 text-cyan-300" x-text="m"></span>
+                                            <span class="badge tone-active" x-text="m"></span>
                                         </template>
                                         <template x-for="p in g.patterns" :key="'p|' + g.id + '|' + p">
-                                            <span class="badge bg-violet-500/15 text-violet-300" x-text="p"></span>
+                                            <span class="badge tone-accent font-mono" x-text="p"></span>
                                         </template>
                                         <template x-for="k in groupKeys(g)" :key="'gk|' + g.id + '|' + k.id">
-                                            <span class="badge bg-emerald-500/15 text-emerald-300" x-text="'🔑 ' + k.name"></span>
+                                            <span class="badge tone-success" x-text="'🔑 ' + k.name"></span>
                                         </template>
                                     </div>
                                 </div>
-                                <button type="button" @click="openEditGroupModal(g)" x-show="whoamiIsRoot()" x-cloak
-                                    class="btn btn-sm border-zinc-700 text-zinc-200 hover:border-zinc-500">Edit</button>
+                                <button type="button" @click="openEditGroupModal(g)" x-show="whoamiIsRoot()" x-cloak class="btn btn-sm btn-ghost" :aria-label="'Edit group ' + g.name">Edit</button>
                             </div>
                         </li>
                     </template>
                 </ul>
-
             </section>
 
 
-    <!-- Workspace create/edit: id, name, git URL, group allocation. -->
-    <div x-show="showWsModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="ws-modal-title" @keydown.escape.window="closeWsModal()" x-trap="showWsModal">
-        <div class="fixed inset-0 bg-black/60" @click="closeWsModal()" aria-hidden="true"></div>
-        <div class="card relative w-full max-w-md p-6 shadow-2xl">
-            <h2 id="ws-modal-title" class="mb-4 text-lg font-semibold" x-text="wsModalMode === 'create' ? 'New workspace' : 'Edit workspace'"></h2>
-            <label class="lbl" for="ws-id">Workspace ID</label>
-            <input id="ws-id" type="text" x-model="wsForm.id" class="fld" placeholder="github.com/owner/repo" autocomplete="off"
-                :disabled="wsModalMode === 'edit'" :aria-invalid="!!wsErrors.id" />
-            <p x-show="wsErrors.id" class="mt-1 text-xs text-rose-400" x-text="wsErrors.id"></p>
-            <label class="lbl mt-4" for="ws-name">Display name</label>
-            <input id="ws-name" type="text" x-model="wsForm.name" class="fld" placeholder="Optional" autocomplete="off" />
-            <label class="lbl mt-4" for="ws-git">Git URL</label>
-            <input id="ws-git" type="text" x-model="wsForm.git_url" class="fld" placeholder="Optional" autocomplete="off" />
-            <div class="mt-4">
-                <span class="lbl">Group allocation</span>
-                <div class="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900/60 p-2">
-                    <p class="px-1.5 py-1 text-xs text-zinc-500" x-show="groups.length === 0">No groups yet — create one below first.</p>
-                    <template x-for="g in groups" :key="'wsg|' + g.id">
-                        <label class="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm text-zinc-200 hover:bg-zinc-800/60">
-                            <input type="checkbox" :checked="wsForm.groups.indexOf(g.name) >= 0" @change="toggleWsGroup(g.name)" class="h-4 w-4 rounded border-zinc-700 bg-zinc-900" />
-                            <span class="truncate" x-text="g.name"></span>
-                        </label>
-                    </template>
+    <!-- Workspace create/edit: id, name, git URL, group allocation. The one
+         workspace dialog — the header "+" opens it too (selecting the new
+         workspace afterwards). -->
+    {{template "modal-open" (dict "ID" "ws-modal" "Show" "showWsModal" "Close" "closeWsModal()")}}
+            <h2 id="ws-modal-title" class="modal-title" x-text="wsModalMode === 'create' ? 'New workspace' : 'Edit workspace'"></h2>
+            <p x-show="wsModalMode === 'create'" class="-mt-2 mb-4 text-sm text-zinc-400">A workspace groups sessions, blackboard entries, and plans. Use the id agents report (a repo path or normalized git URL).</p>
+            <form @submit.prevent="saveWorkspace()" class="space-y-4">
+                <div>
+                    <label class="lbl" for="ws-id">Workspace ID <span aria-hidden="true">*</span></label>
+                    <input id="ws-id" type="text" x-model="wsForm.id" class="fld" placeholder="github.com/owner/repo" autocomplete="off" autofocus aria-required="true"
+                        :disabled="wsModalMode === 'edit'" :aria-invalid="wsErrors.id ? 'true' : 'false'" :aria-describedby="wsErrors.id ? 'ws-id-err' : null" />
+                    <p id="ws-id-err" x-show="wsErrors.id" class="field-error" x-text="wsErrors.id"></p>
                 </div>
-                <p x-show="wsErrors.groups" class="mt-1 text-xs text-rose-400" x-text="wsErrors.groups"></p>
-            </div>
-            <div class="mt-6 flex justify-end gap-2">
-                <button type="button" @click="closeWsModal()" class="btn btn-ghost">Cancel</button>
-                <button type="button" @click="saveWorkspace()" class="btn btn-primary" :disabled="wsSaving" x-text="wsSaving ? 'Saving…' : (wsModalMode === 'create' ? 'Create workspace' : 'Save')"></button>
-            </div>
-        </div>
-    </div>
+                <div>
+                    <label class="lbl" for="ws-name">Display name (optional)</label>
+                    <input id="ws-name" type="text" x-model="wsForm.name" class="fld" autocomplete="off" />
+                </div>
+                <div>
+                    <label class="lbl" for="ws-git">Git URL (optional)</label>
+                    <input id="ws-git" type="text" x-model="wsForm.git_url" class="fld" autocomplete="off" />
+                </div>
+                <div>
+                    <span class="lbl mb-1" id="ws-groups-lbl">Group allocation</span>
+                    {{template "checklist" (dict "LabelID" "ws-groups-lbl" "For" "g in groups" "Key" "g.id" "Value" "g.name" "Text" "g.name" "Path" "wsForm.groups" "Empty" "groups.length === 0" "EmptyText" "No groups yet — create one under Groups first.")}}
+                    <p id="ws-groups-err" x-show="wsErrors.groups" class="field-error" x-text="wsErrors.groups"></p>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" @click="closeWsModal()" class="btn">Cancel</button>
+                    <button type="submit" class="btn btn-primary" :disabled="wsSaving" x-text="wsSaving ? 'Saving…' : (wsModalMode === 'create' ? 'Create workspace' : 'Save')"></button>
+                </div>
+            </form>
+    {{template "modal-close"}}
 
     <!-- Group create/edit: name, description, patterns (members come from workspace allocation). -->
-    <div x-show="showGroupModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="group-modal-title" @keydown.escape.window="closeGroupModal()" x-trap="showGroupModal">
-        <div class="fixed inset-0 bg-black/60" @click="closeGroupModal()" aria-hidden="true"></div>
-        <div class="card relative w-full max-w-md p-6 shadow-2xl">
-            <h2 id="group-modal-title" class="mb-4 text-lg font-semibold" x-text="groupModalMode === 'create' ? 'New group' : 'Edit group'"></h2>
-            <label class="lbl" for="group-name">Name</label>
-            <input id="group-name" type="text" x-model="groupForm.name" class="fld" placeholder="work, personal, …" autocomplete="off" :aria-invalid="!!groupErrors.name" />
-            <p x-show="groupErrors.name" class="mt-1 text-xs text-rose-400" x-text="groupErrors.name"></p>
-            <label class="lbl mt-4" for="group-desc">Description</label>
-            <input id="group-desc" type="text" x-model="groupForm.description" class="fld" placeholder="Optional" autocomplete="off" />
-            <div class="mt-4">
-                <span class="lbl">Member workspaces</span>
-                <div class="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900/60 p-2">
-                    <p class="px-1.5 py-1 text-xs text-zinc-500" x-show="registeredWorkspaces.length === 0">No workspaces registered yet.</p>
-                    <template x-for="ws in registeredWorkspaces" :key="'gm|' + groupForm.id + '|' + ws.id">
-                        <label class="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm text-zinc-200 hover:bg-zinc-800/60">
-                            <input type="checkbox" :checked="groupForm.members.indexOf(ws.id) >= 0" @change="toggleGroupMember(ws.id)" class="h-4 w-4 rounded border-zinc-700 bg-zinc-900" />
-                            <span class="truncate" x-text="ws.name || ws.id"></span>
-                        </label>
-                    </template>
+    {{template "modal-open" (dict "ID" "group-modal" "Show" "showGroupModal" "Close" "closeGroupModal()")}}
+            <h2 id="group-modal-title" class="modal-title" x-text="groupModalMode === 'create' ? 'New group' : 'Edit group'"></h2>
+            <form @submit.prevent="saveGroup()" class="space-y-4">
+                <div>
+                    <label class="lbl" for="group-name">Name <span aria-hidden="true">*</span></label>
+                    <input id="group-name" type="text" x-model="groupForm.name" class="fld" placeholder="work, personal, …" autocomplete="off" autofocus aria-required="true"
+                        :aria-invalid="groupErrors.name ? 'true' : 'false'" :aria-describedby="groupErrors.name ? 'group-name-err' : null" />
+                    <p id="group-name-err" x-show="groupErrors.name" class="field-error" x-text="groupErrors.name"></p>
                 </div>
-            </div>
-            <label class="lbl mt-4" for="group-patterns">Patterns (one per line, optional)</label>
-            <textarea id="group-patterns" rows="3" x-model="groupForm.patterns" class="fld font-mono text-xs" placeholder="github.com/fortix/*"></textarea>
-            <p class="mt-1 text-xs text-zinc-500">path.Match — * matches one segment, never crosses /; no **. A group needs at least one member or pattern.</p>
-            <p x-show="groupErrors.patterns || groupErrors.form" class="mt-1 text-xs text-rose-400" x-text="groupErrors.patterns || groupErrors.form"></p>
-            <div class="mt-6 flex justify-end gap-2">
-                <button type="button" @click="closeGroupModal()" class="btn btn-ghost">Cancel</button>
-                <button type="button" @click="saveGroup()" class="btn btn-primary" :disabled="groupSaving" x-text="groupSaving ? 'Saving…' : (groupModalMode === 'create' ? 'Create group' : 'Save')"></button>
-            </div>
-        </div>
-    </div>
+                <div>
+                    <label class="lbl" for="group-desc">Description (optional)</label>
+                    <input id="group-desc" type="text" x-model="groupForm.description" class="fld" autocomplete="off" />
+                </div>
+                <div>
+                    <span class="lbl mb-1" id="group-members-lbl">Member workspaces</span>
+                    {{template "checklist" (dict "LabelID" "group-members-lbl" "For" "ws in registeredWorkspaces" "Key" "ws.id" "Value" "ws.id" "Text" "ws.name || ws.id" "Path" "groupForm.members" "Empty" "registeredWorkspaces.length === 0" "EmptyText" "No workspaces registered yet.")}}
+                </div>
+                <div>
+                    <label class="lbl" for="group-patterns">Patterns (one per line, optional)</label>
+                    <textarea id="group-patterns" rows="3" x-model="groupForm.patterns" class="fld font-mono text-xs" placeholder="github.com/fortix/*"
+                        aria-describedby="group-patterns-help" :aria-invalid="(groupErrors.patterns || groupErrors.form) ? 'true' : 'false'"></textarea>
+                    <p id="group-patterns-help" class="mt-1 text-xs text-zinc-400">path.Match — * matches one segment, never crosses /; no **. A group needs at least one member or pattern.</p>
+                    <p x-show="groupErrors.patterns || groupErrors.form" class="field-error" role="alert" x-text="groupErrors.patterns || groupErrors.form"></p>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" @click="closeGroupModal()" class="btn">Cancel</button>
+                    <button type="submit" class="btn btn-primary" :disabled="groupSaving" x-text="groupSaving ? 'Saving…' : (groupModalMode === 'create' ? 'Create group' : 'Save')"></button>
+                </div>
+            </form>
+    {{template "modal-close"}}
 
     <!-- Inbox preview modal: the universal read view (workflow items are
          frozen for inline editing; this works for every status). -->
-    <div x-show="showInboxPreview" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="preview-modal-title" @keydown.escape.window="closeInboxPreview()" x-trap="showInboxPreview">
-        <div class="fixed inset-0 bg-black/60" @click="closeInboxPreview()" aria-hidden="true"></div>
-        <div class="card relative flex max-h-[85vh] w-full max-w-2xl flex-col p-6 shadow-2xl">
+    {{template "modal-open" (dict "ID" "preview-modal" "Show" "showInboxPreview" "Close" "closeInboxPreview()" "Size" "flex max-h-[85vh] max-w-2xl flex-col")}}
             <div x-show="previewLoading" class="text-sm text-zinc-500">Loading&hellip;</div>
             <template x-if="previewItem">
                 <div class="flex min-h-0 flex-1 flex-col">
-                    <div class="mb-3 flex items-start justify-between gap-3">
+                    <div class="mb-3 flex items-start justify-between gap-3 pr-10">
                         <div class="min-w-0">
                             <h2 id="preview-modal-title" class="text-lg font-semibold leading-tight" x-text="previewItem.title"></h2>
                             <div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
-                                <span class="badge" :class="inboxStatusClass(previewItem.status)" x-text="previewItem.status"></span>
-                                <span x-show="previewItem.workspace_id" class="badge max-w-48 truncate bg-sky-500/15 text-sky-300" :title="previewItem.workspace_id" x-text="workspaceLabel(previewItem.workspace_id)"></span>
-                                <span x-show="!previewItem.workspace_id" class="badge bg-amber-500/15 text-amber-300">unfiled</span>
+                                <span class="badge" :class="toneOf('status', previewItem.status)" x-text="previewItem.status"></span>
+                                <span x-show="previewItem.workspace_id" class="badge max-w-48 truncate tone-info" :title="previewItem.workspace_id" x-text="workspaceLabel(previewItem.workspace_id)"></span>
+                                <span x-show="!previewItem.workspace_id" class="badge tone-warn">unfiled</span>
                                 <span x-show="previewItem.claimed_by_agent_id" x-text="previewItem.claimed_by_agent_id"></span>
-                                <span x-show="previewItem.plan_id" class="badge max-w-40 truncate bg-violet-500/15 text-violet-300" x-text="'→ ' + (previewItem.plan && previewItem.plan.name ? previewItem.plan.name : 'plan')"></span>
+                                <span x-show="previewItem.plan_id" class="badge max-w-40 truncate tone-accent" x-text="'→ ' + (previewItem.plan && previewItem.plan.name ? previewItem.plan.name : 'plan')"></span>
                                 <span x-text="timeAgo(previewItem.created_at)"></span>
                             </div>
                             <div class="mt-1.5 flex flex-wrap gap-1" x-show="(previewItem.tags || []).length > 0">
                                 <template x-for="t in previewItem.tags" :key="'pt|' + previewItem.id + '|' + t">
-                                    <span class="badge bg-zinc-800 text-zinc-400" x-text="t"></span>
+                                    <span class="badge tone-muted" x-text="t"></span>
                                 </template>
                             </div>
                         </div>
                         <div class="flex shrink-0 items-center gap-2">
-                            <button type="button" x-show="inboxContentEditable(previewItem)" @click="editFromPreview()" class="btn btn-sm">Edit</button>
-                            <button type="button" @click="closeInboxPreview()" class="btn btn-ghost btn-sm">Close</button>
+                            <button type="button" x-show="inboxContentEditable(previewItem)" @click="editFromPreview()" class="btn btn-sm" :aria-label="'Edit item ' + previewItem.title">Edit</button>
                         </div>
                     </div>
                     <div class="md-body min-h-0 flex-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950/50 p-4" data-md-preview aria-live="polite"></div>
@@ -928,12 +900,12 @@
                             <p x-show="!previewRunsLoading && previewRuns.length === 0" class="px-3 py-2 text-xs text-zinc-500">No runs yet &mdash; queue the item to start the pipeline.</p>
                             <template x-for="run in previewRuns" :key="run.id + '|' + run.status + '|' + run.updated_at">
                                 <div class="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-zinc-800/60 px-3 py-1.5 text-[11px] last:border-b-0">
-                                    <span class="badge" :class="runStageClass(run.stage)" x-text="run.stage"></span>
-                                    <span class="badge" :class="runStatusClass(run.status)" x-text="run.status"></span>
+                                    <span class="badge" :class="toneOf('stage', run.stage)" x-text="run.stage"></span>
+                                    <span class="badge" :class="toneOf('status', run.status)" x-text="run.status"></span>
                                     <span x-show="run.worker_id" class="max-w-32 truncate text-zinc-400" :title="run.worker_id" x-text="run.worker_id"></span>
                                     <span class="text-zinc-500" x-text="'try ' + run.attempt"></span>
                                     <span x-show="run.executor" class="badge bg-zinc-800 font-mono text-zinc-400" title="How the worker ran this stage (capability profile)" x-text="run.executor"></span>
-                                    <span x-show="run.branch" class="badge max-w-40 truncate bg-zinc-800 text-zinc-400" :title="run.branch" x-text="run.branch"></span>
+                                    <span x-show="run.branch" class="badge max-w-40 truncate tone-muted" :title="run.branch" x-text="run.branch"></span>
                                     <span x-show="run.head_sha" class="font-mono text-zinc-500" :title="run.head_sha" x-text="shortSha(run.head_sha)"></span>
                                     <span class="ml-auto shrink-0 text-zinc-600" x-text="timeAgo(run.updated_at)"></span>
                                     <p x-show="runHasFailed(run)" class="w-full text-rose-300" x-text="run.fail_reason"></p>
@@ -962,135 +934,65 @@
                     </div>
                 </div>
             </template>
-            <div class="mt-4 flex justify-end" x-show="previewFailed()">
-                <button type="button" @click="closeInboxPreview()" class="btn btn-ghost">Close</button>
-            </div>
-        </div>
-    </div>
+    {{template "modal-close"}}
         </main>
     </div>
 
-    <!-- ===================== API KEY MODAL ===================== -->
-    <div x-show="showKeyModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4"         role="dialog" aria-modal="true" aria-labelledby="key-modal-title" @keydown.escape.window="closeKeyModal()" x-trap="showKeyModal">
-        <div class="fixed inset-0 bg-black/60" @click="closeKeyModal()" aria-hidden="true"></div>
-        <div class="card relative w-full max-w-md p-6 shadow-2xl">
-            <button type="button" @click="closeKeyModal()" class="absolute right-4 top-4 rounded-full p-2 text-zinc-400 hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" aria-label="Close dialog">
-                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-            <h2 id="key-modal-title" class="mb-4 text-lg font-semibold">API key</h2>
-            <p class="mb-4 text-sm text-zinc-400">Sent as <code class="text-zinc-300">Authorization: Bearer</code> on every request. Leave empty to disable auth.</p>
-            <label class="lbl" for="api-key-input">API key</label>
-            <input id="api-key-input" type="password" x-model="keyDraft" @keydown.enter="saveKey()" class="fld" placeholder="sk-..." autocomplete="off" autofocus />
-            <div class="mt-6 flex items-center justify-between">
-                <button type="button" @click="clearKey()" class="btn btn-ghost btn-sm text-rose-400">Clear</button>
-                <button type="button" @click="saveKey()" class="btn btn-primary">Save</button>
-            </div>
-        </div>
-    </div>
+    <!-- ===================== API KEY (this browser's) ===================== -->
+    {{template "modal-open" (dict "ID" "key-modal" "Show" "showKeyModal" "Close" "closeKeyModal()")}}
+            <h2 id="key-modal-title" class="modal-title">API key</h2>
+            <p class="-mt-2 mb-4 text-sm text-zinc-400">Sent as <code class="text-zinc-300">Authorization: Bearer</code> on every request. Leave empty to disable auth.</p>
+            <form @submit.prevent="saveKey()">
+                <label class="lbl" for="api-key-input">API key</label>
+                <input id="api-key-input" type="password" x-model="keyDraft" class="fld" placeholder="sk_…" autocomplete="off" autofocus />
+                <div class="modal-actions justify-between">
+                    <button type="button" @click="clearKey()" class="btn btn-ghost text-rose-400">Clear</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+    {{template "modal-close"}}
 
-    <!-- ===================== CREATE API KEY MODAL ===================== -->
-    <div x-show="showNewKeyModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="newkey-modal-title" @keydown.escape.window="closeNewKeyModal()" x-trap="showNewKeyModal">
-        <div class="fixed inset-0 bg-black/60" @click="closeNewKeyModal()" aria-hidden="true"></div>
-        <div class="card relative w-full max-w-md p-6 shadow-2xl">
-            <h2 id="newkey-modal-title" class="mb-1 text-lg font-semibold">New API key</h2>
-            <p class="mb-4 text-sm text-zinc-400">The secret is shown once after creation. Scope decides which workspaces the key can read and write.</p>
-            <label class="lbl" for="newkey-name">Name</label>
-            <input id="newkey-name" type="text" x-model="keyForm.name" class="fld" placeholder="ci, zcode-laptop, …" autocomplete="off" :aria-invalid="!!keyErrors.name" />
-            <p x-show="keyErrors.name" class="mt-1 text-xs text-rose-400" x-text="keyErrors.name"></p>
-            <div class="mt-4">
-                <label class="flex items-center gap-2 text-sm text-zinc-200">
-                    <input type="checkbox" x-model="keyForm.all" class="h-4 w-4 rounded border-zinc-700 bg-zinc-900" />
+    <!-- ===================== SCOPED API KEY: create / edit ===================== -->
+    {{template "modal-open" (dict "ID" "apikey-modal" "Show" "showApiKeyModal" "Close" "closeApiKeyModal()")}}
+            <h2 id="apikey-modal-title" class="modal-title" x-text="keyModalMode === 'create' ? 'New API key' : 'Edit API key'"></h2>
+            <p class="-mt-2 mb-4 text-sm text-zinc-400" x-text="keyModalMode === 'create' ? 'The secret is shown once after creation. Scope decides which workspaces the key can read and write.' : 'Change the name or which workspaces this key can access. Scope changes apply to the next request.'"></p>
+            <form @submit.prevent="submitApiKey()" class="space-y-4">
+                <div>
+                    <label class="lbl" for="apikey-name">Name <span aria-hidden="true">*</span></label>
+                    <input id="apikey-name" type="text" x-model="keyForm.name" class="fld" placeholder="ci, zcode-laptop, …" autocomplete="off" autofocus aria-required="true"
+                        :aria-invalid="keyErrors.name ? 'true' : 'false'" :aria-describedby="keyErrors.name ? 'apikey-name-err' : null" />
+                    <p id="apikey-name-err" x-show="keyErrors.name" class="field-error" x-text="keyErrors.name"></p>
+                </div>
+                <label class="flex min-h-8 items-center gap-2 text-sm text-zinc-200">
+                    <input type="checkbox" x-model="keyForm.all" class="h-4 w-4 rounded border-zinc-500 bg-zinc-900" />
                     All workspaces (current and future)
                 </label>
-            </div>
-            <div class="mt-3" x-show="!keyForm.all">
-                <span class="lbl">Workspaces</span>
-                <div class="max-h-44 space-y-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900/60 p-2">
-                    <template x-for="o in workspaceOptions()" :key="o.id">
-                        <label class="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm text-zinc-200 hover:bg-zinc-800/60">
-                            <input type="checkbox" :checked="keyForm.workspaces.indexOf(o.id) >= 0" @change="toggleKeyWorkspace(o.id)" class="h-4 w-4 rounded border-zinc-700 bg-zinc-900" />
-                            <span class="truncate" x-text="o.label"></span>
-                        </label>
-                    </template>
+                <div x-show="!keyForm.all">
+                    <span class="lbl mb-1" id="apikey-ws-lbl">Workspaces</span>
+                    {{template "checklist" (dict "LabelID" "apikey-ws-lbl" "For" "o in workspaceOptions()" "Key" "o.id" "Value" "o.id" "Text" "o.label" "Path" "keyForm.workspaces" "Max" "max-h-44")}}
+                    <p id="key-workspaces-err" x-show="keyErrors.workspaces" class="field-error" role="alert" x-text="keyErrors.workspaces"></p>
                 </div>
-                <p x-show="keyErrors.workspaces" class="mt-1 text-xs text-rose-400" x-text="keyErrors.workspaces"></p>
-            </div>
-            <div class="mt-3" x-show="!keyForm.all">
-                <span class="lbl">Groups</span>
-                <div class="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900/60 p-2">
-                    <p class="px-1.5 py-1 text-xs text-zinc-500" x-show="groups.length === 0">No groups yet — manage them under Workspaces.</p>
-                    <template x-for="g in groups" :key="'kg|' + g.id">
-                        <label class="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm text-zinc-200 hover:bg-zinc-800/60">
-                            <input type="checkbox" :checked="keyForm.groups.indexOf(g.name) >= 0" @change="toggleKeyGroup(g.name)" class="h-4 w-4 rounded border-zinc-700 bg-zinc-900" />
-                            <span class="truncate" x-text="g.name"></span>
-                        </label>
-                    </template>
+                <div x-show="!keyForm.all">
+                    <span class="lbl mb-1" id="apikey-groups-lbl">Groups</span>
+                    {{template "checklist" (dict "LabelID" "apikey-groups-lbl" "For" "g in groups" "Key" "g.id" "Value" "g.name" "Text" "g.name" "Path" "keyForm.groups" "Empty" "groups.length === 0" "EmptyText" "No groups yet — manage them under Workspaces." "Max" "max-h-32")}}
+                    <p class="mt-1 text-xs text-zinc-400">Group members and pattern matches widen the key's scope.</p>
                 </div>
-                <p class="mt-1 text-xs text-zinc-500">Group members and pattern matches widen the key's scope.</p>
-            </div>
-            <div class="mt-6 flex justify-end gap-2">
-                <button type="button" @click="closeNewKeyModal()" class="btn btn-ghost">Cancel</button>
-                <button type="button" @click="submitKey()" class="btn btn-primary" :disabled="keySaving" x-text="keySaving ? 'Creating…' : 'Create key'"></button>
-            </div>
-        </div>
-    </div>
+                <div class="modal-actions">
+                    <button type="button" @click="closeApiKeyModal()" class="btn">Cancel</button>
+                    <button type="submit" class="btn btn-primary" :disabled="keySaving" x-text="keySaving ? 'Saving…' : (keyModalMode === 'create' ? 'Create key' : 'Save changes')"></button>
+                </div>
+            </form>
+    {{template "modal-close"}}
 
-    <!-- ===================== EDIT API KEY MODAL ===================== -->
-    <div x-show="showEditKeyModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="editkey-modal-title" @keydown.escape.window="closeEditKeyModal()" x-trap="showEditKeyModal">
-        <div class="fixed inset-0 bg-black/60" @click="closeEditKeyModal()" aria-hidden="true"></div>
-        <div class="card relative w-full max-w-md p-6 shadow-2xl">
-            <h2 id="editkey-modal-title" class="mb-1 text-lg font-semibold">Edit API key</h2>
-            <p class="mb-4 text-sm text-zinc-400">Change the name or which workspaces this key can access. Scope changes apply to the next request.</p>
-            <label class="lbl" for="editkey-name">Name</label>
-            <input id="editkey-name" type="text" x-model="editKeyForm.name" class="fld" autocomplete="off" :aria-invalid="!!editKeyErrors.name" />
-            <p x-show="editKeyErrors.name" class="mt-1 text-xs text-rose-400" x-text="editKeyErrors.name"></p>
-            <div class="mt-4">
-                <label class="flex items-center gap-2 text-sm text-zinc-200">
-                    <input type="checkbox" x-model="editKeyForm.all" class="h-4 w-4 rounded border-zinc-700 bg-zinc-900" />
-                    All workspaces (current and future)
-                </label>
-            </div>
-            <div class="mt-3" x-show="!editKeyForm.all">
-                <span class="lbl">Workspaces</span>
-                <div class="max-h-44 space-y-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900/60 p-2">
-                    <template x-for="o in workspaceOptions()" :key="o.id">
-                        <label class="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm text-zinc-200 hover:bg-zinc-800/60">
-                            <input type="checkbox" :checked="editKeyForm.workspaces.indexOf(o.id) >= 0" @change="toggleEditKeyWorkspace(o.id)" class="h-4 w-4 rounded border-zinc-700 bg-zinc-900" />
-                            <span class="truncate" x-text="o.label"></span>
-                        </label>
-                    </template>
-                </div>
-                <p x-show="editKeyErrors.workspaces" class="mt-1 text-xs text-rose-400" x-text="editKeyErrors.workspaces"></p>
-            </div>
-            <div class="mt-3" x-show="!editKeyForm.all">
-                <span class="lbl">Groups</span>
-                <div class="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900/60 p-2">
-                    <p class="px-1.5 py-1 text-xs text-zinc-500" x-show="groups.length === 0">No groups yet — manage them under Workspaces.</p>
-                    <template x-for="g in groups" :key="'ekg|' + g.id">
-                        <label class="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm text-zinc-200 hover:bg-zinc-800/60">
-                            <input type="checkbox" :checked="editKeyForm.groups.indexOf(g.name) >= 0" @change="toggleEditKeyGroup(g.name)" class="h-4 w-4 rounded border-zinc-700 bg-zinc-900" />
-                            <span class="truncate" x-text="g.name"></span>
-                        </label>
-                    </template>
-                </div>
-            </div>
-            <div class="mt-6 flex justify-end gap-2">
-                <button type="button" @click="closeEditKeyModal()" class="btn btn-ghost">Cancel</button>
-                <button type="button" @click="submitEditKey()" class="btn btn-primary" :disabled="editKeySaving" x-text="editKeySaving ? 'Saving…' : 'Save changes'"></button>
-            </div>
-        </div>
-    </div>
-
-    <!-- ===================== NEW KEY SECRET MODAL ===================== -->
-    <div x-show="showSecretModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="secret-modal-title" @keydown.escape.window="closeSecretModal()" x-trap="showSecretModal">
-        <div class="card relative w-full max-w-lg p-6 shadow-2xl">
-            <h2 id="secret-modal-title" class="mb-1 text-lg font-semibold">API key created</h2>
+    <!-- ===================== NEW KEY SECRET ===================== -->
+    <!-- No backdrop dismissal and no X: closing loses the secret for good, so
+         only Done (or Escape) closes it. -->
+    {{template "modal-open" (dict "ID" "secret-modal" "Show" "showSecretModal" "Close" "closeSecretModal()" "Size" "max-w-lg" "NoX" true "NoBackdropDismiss" true)}}
+            <h2 id="secret-modal-title" class="modal-title mb-1">API key created</h2>
             <p class="mb-3 text-sm text-amber-300">Store this secret now — it is shown only once and cannot be recovered.</p>
-            <div class="flex items-start gap-2 rounded-lg border border-zinc-800 bg-zinc-950 p-3">
+            <div class="flex items-start gap-2 rounded-lg border border-zinc-700 bg-zinc-950 p-3">
                 <code class="min-w-0 flex-1 break-all font-mono text-sm text-emerald-300" x-text="newSecret"></code>
-                <button type="button" @click="copySecret()"
-                    class="btn btn-sm shrink-0 border-zinc-700 text-zinc-200 hover:border-zinc-500"
-                    :aria-label="secretCopied ? 'Copied' : 'Copy API key to clipboard'">
+                <button type="button" @click="copySecret()" class="btn btn-sm shrink-0" :aria-label="secretCopied ? 'Copied' : 'Copy API key to clipboard'">
                     <span x-show="!secretCopied" class="flex items-center gap-1">
                         <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                         Copy
@@ -1101,57 +1003,19 @@
                     </span>
                 </button>
             </div>
-            <p class="mt-3 text-xs text-zinc-500">
+            <p class="mt-3 text-xs text-zinc-400">
                 Key <span class="text-zinc-300" x-text="newSecretName"></span> — use it as
                 <code class="rounded bg-zinc-800 px-1">Authorization: Bearer &lt;secret&gt;</code> or configure it as the client api_key
                 (<code class="rounded bg-zinc-800 px-1">skopos install --api-key</code>, <code class="rounded bg-zinc-800 px-1">skopos-config.toml</code>).
             </p>
-            <div class="mt-5 flex justify-end">
-                <button type="button" @click="closeSecretModal()" class="btn btn-primary">Done</button>
+            <div class="modal-actions">
+                <button type="button" @click="closeSecretModal()" class="btn btn-primary" autofocus>Done</button>
             </div>
-        </div>
-    </div>
-
-    <!-- ===================== CREATE WORKSPACE MODAL ===================== -->
-    <div x-show="showWorkspaceModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4"         role="dialog" aria-modal="true" aria-labelledby="ws-modal-title" @keydown.escape.window="closeWorkspaceModal()" x-trap="showWorkspaceModal">
-        <div class="fixed inset-0 bg-black/60" @click="closeWorkspaceModal()" aria-hidden="true"></div>
-        <div class="card relative w-full max-w-md p-6 shadow-2xl">
-            <button type="button" @click="closeWorkspaceModal()" class="absolute right-4 top-4 rounded-full p-2 text-zinc-400 hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" aria-label="Close dialog">
-                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-            <h2 id="ws-modal-title" class="mb-2 text-lg font-semibold">Create workspace</h2>
-            <p class="mb-4 text-sm text-zinc-400">A workspace groups sessions, blackboard entries, and plans. Use the same id agents report (e.g. a repo path or normalized git URL).</p>
-            <form @submit.prevent="submitWorkspace()">
-                <div class="space-y-3">
-                    <div>
-                        <label class="lbl" for="ws-id">ID <span aria-hidden="true">*</span></label>
-                        <input id="ws-id" type="text" x-model="workspaceForm.id" class="fld" :aria-invalid="!!workspaceErrors.id" placeholder="github.com/you/repo" autocomplete="off" autofocus />
-                        <p x-show="workspaceErrors.id" class="field-error" role="alert" x-text="workspaceErrors.id"></p>
-                    </div>
-                    <div>
-                        <label class="lbl" for="ws-name">Display name (optional)</label>
-                        <input id="ws-name" type="text" x-model="workspaceForm.name" class="fld" placeholder="My Repo" autocomplete="off" />
-                    </div>
-                </div>
-                <div class="mt-6 flex justify-end gap-3">
-                    <button type="button" @click="closeWorkspaceModal()" class="btn">Cancel</button>
-                    <button type="submit" class="btn btn-primary" :disabled="workspaceSaving">
-                        <span x-show="!workspaceSaving">Create</span>
-                        <span x-show="workspaceSaving">Creating…</span>
-                    </button>
-                </div>
-            </form>
-        </div>
-    </div>
+    {{template "modal-close"}}
 
     <!-- ===================== WRITE ENTRY MODAL ===================== -->
-    <div x-show="showEntryModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4"         role="dialog" aria-modal="true" aria-labelledby="entry-modal-title" @keydown.escape.window="closeEntryModal()" x-trap="showEntryModal">
-        <div class="fixed inset-0 bg-black/60" @click="closeEntryModal()" aria-hidden="true"></div>
-        <div class="card relative w-full max-w-lg p-6 shadow-2xl">
-            <button type="button" @click="closeEntryModal()" class="absolute right-4 top-4 rounded-full p-2 text-zinc-400 hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" aria-label="Close dialog">
-                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-            <h2 id="entry-modal-title" class="mb-4 text-lg font-semibold">Write blackboard entry</h2>
+    {{template "modal-open" (dict "ID" "entry-modal" "Show" "showEntryModal" "Close" "closeEntryModal()" "Size" "max-w-lg")}}
+            <h2 id="entry-modal-title" class="modal-title">Write blackboard entry</h2>
             <form @submit.prevent="submitEntry()">
                 <div class="grid gap-3 sm:grid-cols-2">
                     <div>
@@ -1169,18 +1033,18 @@
                     </div>
                     <div class="sm:col-span-2">
                         <label class="lbl" for="e-title">Title <span aria-hidden="true">*</span></label>
-                        <input id="e-title" type="text" x-model="entryForm.title" class="fld" :aria-invalid="!!entryErrors.title" autocomplete="off" />
-                        <p x-show="entryErrors.title" class="field-error" role="alert" x-text="entryErrors.title"></p>
+                        <input id="e-title" type="text" x-model="entryForm.title" class="fld" :aria-invalid="entryErrors.title ? 'true' : 'false'" :aria-describedby="entryErrors.title ? 'entry-title-err' : null" aria-required="true" autocomplete="off" />
+                        <p id="entry-title-err" x-show="entryErrors.title" class="field-error" role="alert" x-text="entryErrors.title"></p>
                     </div>
                     <div x-show="entryForm.scope === 'branch'">
                         <label class="lbl" for="e-branch">Branch <span aria-hidden="true">*</span></label>
-                        <input id="e-branch" type="text" x-model="entryForm.branch_name" class="fld" :aria-invalid="!!entryErrors.branch_name" autocomplete="off" />
-                        <p x-show="entryErrors.branch_name" class="field-error" role="alert" x-text="entryErrors.branch_name"></p>
+                        <input id="e-branch" type="text" x-model="entryForm.branch_name" class="fld" :aria-invalid="entryErrors.branch_name ? 'true' : 'false'" :aria-describedby="entryErrors.branch_name ? 'entry-branch_name-err' : null" aria-required="true" autocomplete="off" />
+                        <p id="entry-branch_name-err" x-show="entryErrors.branch_name" class="field-error" role="alert" x-text="entryErrors.branch_name"></p>
                     </div>
                     <div x-show="entryForm.scope === 'session'">
                         <label class="lbl" for="e-session">Session ID <span aria-hidden="true">*</span></label>
-                        <input id="e-session" type="text" x-model="entryForm.session_id" class="fld" :aria-invalid="!!entryErrors.session_id" autocomplete="off" />
-                        <p x-show="entryErrors.session_id" class="field-error" role="alert" x-text="entryErrors.session_id"></p>
+                        <input id="e-session" type="text" x-model="entryForm.session_id" class="fld" :aria-invalid="entryErrors.session_id ? 'true' : 'false'" :aria-describedby="entryErrors.session_id ? 'entry-session_id-err' : null" aria-required="true" autocomplete="off" />
+                        <p id="entry-session_id-err" x-show="entryErrors.session_id" class="field-error" role="alert" x-text="entryErrors.session_id"></p>
                     </div>
                     <div class="sm:col-span-2">
                         <label class="lbl" for="e-ref">Code reference (optional)</label>
@@ -1199,23 +1063,17 @@
                     </button>
                 </div>
             </form>
-        </div>
-    </div>
+    {{template "modal-close"}}
 
     <!-- ===================== CREATE PLAN MODAL ===================== -->
-    <div x-show="showPlanModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4"         role="dialog" aria-modal="true" aria-labelledby="plan-modal-title" @keydown.escape.window="closePlanModal()" x-trap="showPlanModal">
-        <div class="fixed inset-0 bg-black/60" @click="closePlanModal()" aria-hidden="true"></div>
-        <div class="card relative w-full max-w-lg p-6 shadow-2xl">
-            <button type="button" @click="closePlanModal()" class="absolute right-4 top-4 rounded-full p-2 text-zinc-400 hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" aria-label="Close dialog">
-                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-            <h2 id="plan-modal-title" class="mb-4 text-lg font-semibold">New plan</h2>
+    {{template "modal-open" (dict "ID" "plan-modal" "Show" "showPlanModal" "Close" "closePlanModal()" "Size" "max-w-lg")}}
+            <h2 id="plan-modal-title" class="modal-title">New plan</h2>
             <form @submit.prevent="submitPlan()">
                 <div class="space-y-3">
                     <div>
                         <label class="lbl" for="p-name">Name <span aria-hidden="true">*</span></label>
-                        <input id="p-name" type="text" x-model="planForm.name" class="fld" :aria-invalid="!!planErrors.name" autocomplete="off" autofocus />
-                        <p x-show="planErrors.name" class="field-error" role="alert" x-text="planErrors.name"></p>
+                        <input id="p-name" type="text" x-model="planForm.name" class="fld" :aria-invalid="planErrors.name ? 'true' : 'false'" :aria-describedby="planErrors.name ? 'plan-name-err' : null" aria-required="true" autocomplete="off" autofocus />
+                        <p id="plan-name-err" x-show="planErrors.name" class="field-error" role="alert" x-text="planErrors.name"></p>
                     </div>
                     <div>
                         <label class="lbl" for="p-branch">Branch (optional)</label>
@@ -1234,23 +1092,17 @@
                     </button>
                 </div>
             </form>
-        </div>
-    </div>
+    {{template "modal-close"}}
 
     <!-- ===================== ADD ITEM MODAL ===================== -->
-    <div x-show="showItemModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4"         role="dialog" aria-modal="true" aria-labelledby="item-modal-title" @keydown.escape.window="closeItemModal()" x-trap="showItemModal">
-        <div class="fixed inset-0 bg-black/60" @click="closeItemModal()" aria-hidden="true"></div>
-        <div class="card relative w-full max-w-lg p-6 shadow-2xl">
-            <button type="button" @click="closeItemModal()" class="absolute right-4 top-4 rounded-full p-2 text-zinc-400 hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" aria-label="Close dialog">
-                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-            <h2 id="item-modal-title" class="mb-4 text-lg font-semibold">Add item</h2>
+    {{template "modal-open" (dict "ID" "item-modal" "Show" "showItemModal" "Close" "closeItemModal()" "Size" "max-w-lg")}}
+            <h2 id="item-modal-title" class="modal-title">Add item</h2>
             <form @submit.prevent="submitItem()">
                 <div class="space-y-3">
                     <div>
                         <label class="lbl" for="i-title">Title <span aria-hidden="true">*</span></label>
-                        <input id="i-title" type="text" x-model="itemForm.title" class="fld" :aria-invalid="!!itemErrors.title" autocomplete="off" autofocus />
-                        <p x-show="itemErrors.title" class="field-error" role="alert" x-text="itemErrors.title"></p>
+                        <input id="i-title" type="text" x-model="itemForm.title" class="fld" :aria-invalid="itemErrors.title ? 'true' : 'false'" :aria-describedby="itemErrors.title ? 'item-title-err' : null" aria-required="true" autocomplete="off" autofocus />
+                        <p id="item-title-err" x-show="itemErrors.title" class="field-error" role="alert" x-text="itemErrors.title"></p>
                     </div>
                     <div class="grid gap-3 sm:grid-cols-2">
                         <div>
@@ -1280,38 +1132,32 @@
                     </button>
                 </div>
             </form>
-        </div>
-    </div>
+    {{template "modal-close"}}
 
     <!-- ===================== CREATE/EDIT INBOX ITEM MODAL ===================== -->
-    <div x-show="showInboxItemModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="inbox-item-modal-title" @keydown.escape.window="closeInboxItemModal()" x-trap="showInboxItemModal">
-        <div class="fixed inset-0 bg-black/60" @click="attemptCloseInboxItemModal()" aria-hidden="true"></div>
-        <div class="card relative w-full max-w-4xl p-6 shadow-2xl">
-            <button type="button" @click="attemptCloseInboxItemModal()" class="absolute right-4 top-4 rounded-full p-2 text-zinc-400 hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" aria-label="Close dialog">
-                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-            <h2 id="inbox-item-modal-title" class="mb-4 text-lg font-semibold" x-text="inboxForm.id ? 'Edit inbox item' : 'Capture inbox item'"></h2>
+    {{template "modal-open" (dict "ID" "inbox-item-modal" "Show" "showInboxItemModal" "Close" "closeInboxItemModal()" "Dismiss" "attemptCloseInboxItemModal()" "Size" "max-w-4xl")}}
+            <h2 id="inbox-item-modal-title" class="modal-title" x-text="inboxForm.id ? 'Edit inbox item' : 'Capture inbox item'"></h2>
             <form @submit.prevent="submitInboxItem()">
                 <div class="space-y-3">
                     <!-- Hidden/disabled for workflow items by syncInboxWsField
                          (imperative — CSP build): they cannot move workspace. -->
                     <div data-ib-ws-field>
                         <label class="lbl" for="ib-ws">Workspace <span aria-hidden="true">*</span></label>
-                        <select id="ib-ws" x-model="inboxForm.workspace" class="fld" :aria-invalid="!!inboxErrors.workspace">
+                        <select id="ib-ws" x-model="inboxForm.workspace" class="fld" :aria-invalid="inboxErrors.workspace ? 'true' : 'false'" :aria-describedby="inboxErrors.workspace ? 'inbox-workspace-err' : null" aria-required="true">
                             <option value="" x-text="inboxForm.id ? 'keep current' : 'Select workspace…'"></option>
                             <option value="unfiled" x-show="!inboxForm.id && whoamiIsRoot()">Unfiled — decide later</option>
                             <template x-for="o in workspaceOptions()" :key="o.id">
                                 <option :value="o.id" x-text="o.label"></option>
                             </template>
                         </select>
-                        <p x-show="inboxErrors.workspace" class="field-error" role="alert" x-text="inboxErrors.workspace"></p>
+                        <p id="inbox-workspace-err" x-show="inboxErrors.workspace" class="field-error" role="alert" x-text="inboxErrors.workspace"></p>
                         <p x-show="!inboxForm.id" class="text-xs text-zinc-500">Unfiled items stay visible only to the root key until filed.</p>
                     </div>
                     <div class="grid gap-3 sm:grid-cols-[1fr_16rem]">
                         <div>
                             <label class="lbl" for="ib-title">Title <span aria-hidden="true">*</span></label>
-                            <input id="ib-title" type="text" x-model="inboxForm.title" class="fld" :aria-invalid="!!inboxErrors.title" autocomplete="off" autofocus />
-                            <p x-show="inboxErrors.title" class="field-error" role="alert" x-text="inboxErrors.title"></p>
+                            <input id="ib-title" type="text" x-model="inboxForm.title" class="fld" :aria-invalid="inboxErrors.title ? 'true' : 'false'" :aria-describedby="inboxErrors.title ? 'inbox-title-err' : null" aria-required="true" autocomplete="off" autofocus />
+                            <p id="inbox-title-err" x-show="inboxErrors.title" class="field-error" role="alert" x-text="inboxErrors.title"></p>
                         </div>
                         <div>
                             <label class="lbl" for="ib-tags">Tags (comma-separated)</label>
@@ -1319,8 +1165,8 @@
                         </div>
                     </div>
                     <div>
-                        <label class="lbl" for="ib-content">Content (markdown)</label>
-                        <div class="cm-host" id="ib-content" x-ref="inboxEditorHost" aria-label="Markdown content editor"></div>
+                        <span class="lbl" id="ib-content-lbl">Content (markdown)</span>
+                        <div class="cm-host mt-1" id="ib-content" x-ref="inboxEditorHost"></div>
                         <p class="mt-1 text-xs text-zinc-500">Rough notes are fine — an agent enriches this when the item is processed.</p>
                     </div>
                 </div>
@@ -1332,9 +1178,8 @@
                     </button>
                 </div>
             </form>
-            <p class="mt-2 text-right text-[11px] text-zinc-600">⌘/Ctrl+Enter saves · Esc closes without saving · accidental closes (backdrop/Cancel) are confirmed</p>
-        </div>
-    </div>
+            <p class="mt-2 text-right text-[11px] text-zinc-500">⌘/Ctrl+Enter saves · Esc closes without saving · accidental closes (backdrop/Cancel) are confirmed</p>
+    {{template "modal-close"}}
 
     <!-- ===================== FILE-INTO-WORKSPACE MODAL ===================== -->
     <!-- Visibility is imperative ([data-file-modal], set in openFileModal/
@@ -1343,10 +1188,10 @@
          Keyboard: ARIA combobox pattern — focus stays in the search input,
          arrows move the active option (composite :key re-renders the
          highlight), Enter picks, Escape closes, Tab cycles input ⇄ Cancel. -->
-    <div data-file-modal style="display: none" class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="file-modal-title" @keydown.escape.window="closeFileModal()">
-        <div class="fixed inset-0 bg-black/60" @click="closeFileModal()" aria-hidden="true"></div>
-        <div class="card relative w-full max-w-md p-6 shadow-2xl" @keydown.tab="trapFileTab($event)">
-            <h2 id="file-modal-title" class="mb-1 text-lg font-semibold">File item into workspace</h2>
+    <div data-file-modal style="display: none" class="modal" role="dialog" aria-modal="true" aria-labelledby="file-modal-title" @keydown.escape.window="closeFileModal()">
+        <div class="modal-backdrop" @click="closeFileModal()" aria-hidden="true"></div>
+        <div class="card modal-panel max-w-md" @keydown.tab="trapFileTab($event)">
+            <h2 id="file-modal-title" class="modal-title mb-1">File item into workspace</h2>
             <p class="mb-4 truncate text-sm text-zinc-400" :title="fileTargetItem ? fileTargetItem.title : ''" x-text="fileTargetItem ? fileTargetItem.title : ''"></p>
             <input id="file-ws-query" type="search" x-model="fileQuery" @input="fileQueryChanged()"
                 @keydown.down.prevent="fileHighlightMove(1)" @keydown.up.prevent="fileHighlightMove(-1)"
@@ -1364,35 +1209,32 @@
                     </li>
                 </template>
             </ul>
-            <div class="mt-5 flex justify-end">
+            <div class="modal-actions">
                 <button type="button" @click="closeFileModal()" class="btn">Cancel</button>
             </div>
         </div>
     </div>
 
-    <!-- ===================== DELETE CONFIRM MODAL ===================== -->
-    <div x-show="confirm.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4"         role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-desc" @keydown.escape.window="cancelDelete()" x-trap="confirm.open">
-        <div class="fixed inset-0 bg-black/60" @click="cancelDelete()" aria-hidden="true"></div>
-        <div class="card relative w-full max-w-md p-6 shadow-2xl">
-            <h2 id="confirm-title" class="mb-3 text-lg font-semibold" x-text="confirm.title"></h2>
+    <!-- ===================== CONFIRM (destructive actions) ===================== -->
+    {{template "modal-open" (dict "ID" "confirm" "Show" "confirm.open" "Close" "cancelDelete()" "Alert" true)}}
+            <h2 id="confirm-title" class="modal-title mb-3" x-text="confirm.title"></h2>
             <p id="confirm-desc" class="text-sm text-zinc-300" x-text="confirm.message"></p>
-            <div class="mt-6 flex justify-end gap-3">
-                <button type="button" @click="cancelDelete()" class="btn">Cancel</button>
-                <button type="button" @click="confirmDelete()" class="btn btn-danger" :disabled="confirm.busy">
-                    <span x-show="!confirm.busy" x-text="confirm.label || 'Delete'"></span>
-                    <span x-show="confirm.busy" x-text="confirm.label === 'Discard' ? 'Discarding…' : 'Deleting…'"></span>
-                </button>
+            <div class="modal-actions">
+                <button type="button" @click="cancelDelete()" class="btn" autofocus>Cancel</button>
+                <button type="button" @click="confirmDelete()" class="btn btn-danger" :disabled="confirm.busy" x-text="confirm.busy ? confirmBusyLabel() : (confirm.label || 'Delete')"></button>
             </div>
-        </div>
-    </div>
+    {{template "modal-close"}}
 
-    <!-- ===================== TOASTS (top-right) ===================== -->
-    <div class="fixed right-4 top-4 z-[100] flex w-80 flex-col gap-2">
+    <!-- ===================== TOASTS ===================== -->
+    <!-- Full-width under sm (a fixed w-80 ran off a 320px screen). Errors stay
+         until dismissed and others pause while hovered or focused (WCAG
+         2.2.1); errors are alerts, the rest polite status messages. -->
+    <div class="fixed inset-x-4 top-4 z-[100] flex flex-col gap-2 sm:left-auto sm:w-80" @mouseenter="pauseToasts()" @mouseleave="resumeToasts()" @focusin="pauseToasts()" @focusout="resumeToasts()">
         <template x-for="toast in toasts" :key="toast.id">
-            <div x-transition class="flex items-start gap-3 rounded-lg border p-4 shadow-lg" :class="toastClass(toast.type)" role="alert" :aria-live="toast.type === 'error' ? 'assertive' : 'polite'">
+            <div x-transition class="flex items-start gap-3 rounded-lg border p-4 shadow-lg" :class="toastClass(toast.type)" :role="toast.type === 'error' ? 'alert' : 'status'">
                 <p class="flex-1 text-sm font-medium" x-text="toast.message"></p>
-                <button type="button" @click="dismissToast(toast.id)" class="shrink-0 rounded p-1 hover:bg-black/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" aria-label="Dismiss notification">
-                    <svg class="h-4 w-4 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                <button type="button" @click="dismissToast(toast.id)" class="-m-1 shrink-0 rounded p-1.5 hover:bg-black/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" aria-label="Dismiss notification">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                 </button>
             </div>
         </template>

@@ -2,6 +2,7 @@ package routes
 
 import (
 	"encoding/hex"
+	"fmt"
 	"hash/fnv"
 	"html/template"
 	"io/fs"
@@ -137,8 +138,30 @@ func bundleHash(fsys fs.FS) (string, error) {
 	return hex.EncodeToString(h.Sum(nil))[:12], nil
 }
 
+// dashboardTemplates parses base.html with the shared partials
+// (templates/partials.html: modal shell, checklist, badges). `dict` builds a
+// partial's parameter map: {{template "modal-open" (dict "ID" "x" ...)}}.
+func dashboardTemplates() *template.Template {
+	return template.Must(template.New("base.html").Funcs(template.FuncMap{
+		"dict": func(kv ...any) (map[string]any, error) {
+			if len(kv)%2 != 0 {
+				return nil, fmt.Errorf("dict: odd number of arguments")
+			}
+			m := make(map[string]any, len(kv)/2)
+			for i := 0; i < len(kv); i += 2 {
+				k, ok := kv[i].(string)
+				if !ok {
+					return nil, fmt.Errorf("dict: key %v is not a string", kv[i])
+				}
+				m[k] = kv[i+1]
+			}
+			return m, nil
+		},
+	}).ParseFS(appweb.TemplateFiles, "templates/*.html"))
+}
+
 func registerWebRoutes(mux *http.ServeMux) {
-	templates := template.Must(template.ParseFS(appweb.TemplateFiles, "templates/base.html"))
+	templates := dashboardTemplates()
 	// assetsVersion derives the dashboard's cache-busting suffix from the
 	// embedded bundle CONTENT: the asset URLs change exactly when the assets
 	// do (every dev rebuild, every release upgrade), so a browser can never
