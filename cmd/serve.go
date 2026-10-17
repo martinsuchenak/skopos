@@ -145,7 +145,11 @@ func serveCmd() *cli.Command {
 			},
 			&cli.StringSliceFlag{
 				Name:  "run-stage",
-				Usage: "Per-workspace stage runner preference, <workspace>:<stage>=<runner> (repeatable; the lean routing engine)",
+				Usage: "Per-workspace stage routing, <workspace>:<stage>=<runner> (repeatable). review/qa take a list of [focus@]runner members to run several agents (e.g. review=security@claude,tests@opencode-glm)",
+			},
+			&cli.StringSliceFlag{
+				Name:  "stage-policy",
+				Usage: "How a multi-agent stage is decided, <workspace>:<stage>=<any-blocks|majority|all-pass>[,early-exit][,timeout=60m] (repeatable)",
 			},
 			&cli.IntFlag{
 				Name:         "cleanup-retention-days",
@@ -404,7 +408,17 @@ func serveCmd() *cli.Command {
 			// item's lifecycle; chaining moves the item through the workflow
 			// via the system transitions.
 			runsService := runs.NewService(runs.NewStorage(sqlDB))
-			runsService.SetPrefs(runWorkspacePrefs(cmd))
+			prefs, prefWarnings := runWorkspacePrefs(cmd.GetStringSlice("run-stage"), cmd.GetStringSlice("stage-policy"))
+			for _, w := range prefWarnings {
+				log.Warn("stage routing: " + w)
+			}
+			runsService.SetPrefs(prefs)
+			// Multi-agent stages: the group summary lands in the item, and
+			// groups past their deadline are decided with what they have.
+			runsService.SetItemAppend(func(ctx context.Context, itemID, heading, body string) error {
+				return inboxService.AppendSection(ctx, itemID, heading, body, audit.ViaWorker)
+			})
+			go runsService.RunSweepLoop(ctx, time.Minute)
 			runsService.SetItemTransition(func(ctx context.Context, itemID, to, reason, agentID string) error {
 				toStatus := inbox.Status(to)
 				if !inbox.IsWorkflowStatus(toStatus) {
@@ -582,26 +596,126 @@ func hostAllowed(serverHost string) func(http.Handler) http.Handler {
 	}
 }
 
-// runWorkspacePrefs parses --run-stage <workspace>:<stage>=<runner> flags
-// into per-workspace stage preferences (the whole routing engine: one axis,
-// per workspace, per stage).
-func runWorkspacePrefs(cmd *cli.Command) map[string]*runs.WorkspacePrefs {
+// runWorkspacePrefs parses --run-stage <workspace>:<stage>=<members> and
+// --stage-policy flags into per-workspace routing. A member is
+// [focus@]runner; one member is today's single-runner routing, two or more
+// on review/qa make a multi-agent stage (opt-in). Malformed entries are
+// skipped with a warning rather than failing the server.
+func runWorkspacePrefs(stageSpecs, policySpecs []string) (map[string]*runs.WorkspacePrefs, []string) {
 	prefs := map[string]*runs.WorkspacePrefs{}
-	for _, spec := range cmd.GetStringSlice("run-stage") {
-		ws, rest, ok := strings.Cut(spec, ":")
-		if !ok {
-			continue
-		}
-		stage, runner, ok := strings.Cut(rest, "=")
-		if !ok || ws == "" || stage == "" || runner == "" {
-			continue
-		}
+	var warnings []string
+	get := func(ws string) *runs.WorkspacePrefs {
 		if prefs[ws] == nil {
-			prefs[ws] = &runs.WorkspacePrefs{Stages: map[string]string{}}
+			prefs[ws] = &runs.WorkspacePrefs{Stages: map[string]string{}, Groups: map[string][]runs.Member{}, Policies: map[string]runs.StagePolicy{}}
 		}
-		prefs[ws].Stages[stage] = runner
+		return prefs[ws]
 	}
-	return prefs
+	for _, spec := range stageSpecs {
+		ws, stage, value, ok := splitStageSpec(spec)
+		if !ok {
+			warnings = append(warnings, fmt.Sprintf("ignoring --run-stage %q: want <workspace>:<stage>=<runner>", spec))
+			continue
+		}
+		var members []runs.Member
+		for _, part := range strings.Split(value, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			focus, runner, hasFocus := strings.Cut(part, "@")
+			if !hasFocus {
+				focus, runner = "", part
+			}
+			if runner == "" || (hasFocus && !validFocusName(focus)) {
+				warnings = append(warnings, fmt.Sprintf("ignoring member %q in --run-stage %q: want [focus@]runner, focus = lowercase letters, digits, - or _", part, spec))
+				continue
+			}
+			members = append(members, runs.Member{Runner: runner, Focus: focus})
+		}
+		if len(members) == 0 {
+			continue
+		}
+		p := get(ws)
+		multiOK := stage == runs.StageReview || stage == runs.StageQA
+		if len(members) > 1 && !multiOK {
+			warnings = append(warnings, fmt.Sprintf("--run-stage %q: only review and qa run several agents; using %s", spec, members[0].Runner))
+			members = members[:1]
+		}
+		if len(members) == 1 {
+			p.Stages[stage] = members[0].Runner
+			if members[0].Focus != "" {
+				p.Groups[stage] = members // a single focused reviewer
+			} else {
+				delete(p.Groups, stage)
+			}
+			continue
+		}
+		delete(p.Stages, stage)
+		p.Groups[stage] = members
+	}
+	for _, spec := range policySpecs {
+		ws, stage, value, ok := splitStageSpec(spec)
+		if !ok {
+			warnings = append(warnings, fmt.Sprintf("ignoring --stage-policy %q: want <workspace>:<stage>=<policy>[,early-exit][,timeout=60m]", spec))
+			continue
+		}
+		var sp runs.StagePolicy
+		bad := false
+		for i, part := range strings.Split(value, ",") {
+			part = strings.TrimSpace(part)
+			switch {
+			case i == 0 && (part == runs.PolicyAnyBlocks || part == runs.PolicyMajority || part == runs.PolicyAllPass):
+				sp.Policy = part
+			case part == "early-exit":
+				sp.EarlyExit = true
+			case strings.HasPrefix(part, "timeout="):
+				d, err := time.ParseDuration(strings.TrimPrefix(part, "timeout="))
+				if err != nil || d <= 0 {
+					bad = true
+				}
+				sp.Timeout = d
+			default:
+				bad = true
+			}
+		}
+		if bad || sp.Policy == "" {
+			warnings = append(warnings, fmt.Sprintf("ignoring --stage-policy %q: policy is any-blocks, majority or all-pass, then optional early-exit and timeout=<duration>", spec))
+			continue
+		}
+		get(ws).Policies[stage] = sp
+	}
+	return prefs, warnings
+}
+
+// splitStageSpec splits "<workspace>:<stage>=<value>". The workspace may
+// itself contain ':' (host:port), so the stage is taken from the last ':'
+// before the '='.
+func splitStageSpec(spec string) (ws, stage, value string, ok bool) {
+	left, value, found := strings.Cut(spec, "=")
+	if !found {
+		return "", "", "", false
+	}
+	i := strings.LastIndex(left, ":")
+	if i <= 0 || i == len(left)-1 || strings.TrimSpace(value) == "" {
+		return "", "", "", false
+	}
+	return strings.TrimSpace(left[:i]), strings.TrimSpace(left[i+1:]), strings.TrimSpace(value), true
+}
+
+// validFocusName: the focus brief file name (.skopos/focus/<name>.md).
+func validFocusName(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for i, c := range s {
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		case (c == '-' || c == '_') && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 type runsListerAdapter struct{ runs *runs.Service }

@@ -105,6 +105,12 @@ skopos serve --server-host 0.0.0.0 \
 - **Names must match.** Runner names here must match the worker's runners
   (step 5). A run pinned to a runner waits for that runner's accounts; it
   never silently switches model.
+- **Optional: several reviewers.** List members to run review or QA on
+  several agents, each with a focus brief from `.skopos/focus/<name>.md`:
+  `--run-stage github.com/you/repo:review=security@claude,tests@opencode-glm`.
+  They are decided together (by default, any blocking finding sends the item
+  back to you) and leave one merged summary. See
+  [Multi-agent review and QA](../configuration.md#multi-agent-review-and-qa).
 
 ## 5. Set up a worker
 

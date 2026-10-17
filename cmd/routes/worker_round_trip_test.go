@@ -207,6 +207,13 @@ func mustJSON(t *testing.T, r *stubResp, want int) any {
 // serve.go installs.
 func workerStack(t *testing.T) (*sql.DB, string) {
 	t.Helper()
+	return workerStackWith(t, nil)
+}
+
+// workerStackWith lets a test configure the run queue (routing) before the
+// server starts.
+func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, string) {
+	t.Helper()
 	log := logslog.New(logslog.Config{Level: "error", Writer: io.Discard})
 	sqlDB, err := db.Connect(log, filepath.Join(t.TempDir(), "worker.db"))
 	if err != nil {
@@ -231,7 +238,13 @@ func workerStack(t *testing.T) (*sql.DB, string) {
 		_, err := inboxService.SystemTransition(ctx, itemID, inbox.Status(to), reason, agentID, audit.ViaWorker)
 		return err
 	})
+	runsService.SetItemAppend(func(ctx context.Context, itemID, heading, body string) error {
+		return inboxService.AppendSection(ctx, itemID, heading, body, audit.ViaWorker)
+	})
 	inboxService.SetRunQueuer(runsService)
+	if configure != nil {
+		configure(runsService)
+	}
 
 	st := status.NewHandler(status.NewService(status.NewStorage(sqlDB)), authn)
 	bb := blackboard.NewHandler(blackboard.NewService(blackboard.NewStorage(sqlDB)), authn)
@@ -291,4 +304,73 @@ func TestIntegrationReplanSkillsAndExecutor(t *testing.T) {
 		t.Fatalf("the report must record the executor: %v", report["executor"])
 	}
 	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/approve", `{"revision_id":"`+rev["id"].(string)+`"}`), 200)
+}
+
+// Multi-agent review over REST: two reviewers (each pinned to its runner)
+// report structured findings and cost; the group decides once, blocks the
+// item with one merged summary, and the groups endpoint shows it all.
+func TestIntegrationReviewGroupRoundTrip(t *testing.T) {
+	const ws = "github.com/fortix/freedom3"
+	_, baseURL := workerStackWith(t, func(r *runs.Service) {
+		r.SetPrefs(map[string]*runs.WorkspacePrefs{ws: {
+			Stages: map[string]string{},
+			Groups: map[string][]runs.Member{"review": {{Runner: "claude", Focus: "security"}, {Runner: "glm", Focus: "tests"}}},
+		}})
+	})
+	root := workerClient{base: baseURL, key: "root-secret"}
+	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`","name":"freedom3"}`), 201)
+	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"relay","workspaces":["`+ws+`"],"approver":true}`)}
+	leases := map[string]string{}
+	worker := workerClient{base: baseURL, key: mint(t, root, `{"name":"worker-1","workspaces":["`+ws+`"]}`), lease: leases}
+
+	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"group item","author_agent_id":"martin"}`), 201).(map[string]any)
+	itemID := item["id"].(string)
+	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/queue", ""), 200)
+	run := claim(t, worker, `{"worker_id":"w1","runners":["claude"],"workspaces":["`+ws+`"]}`)
+	runID := run["id"].(string)
+	plan := mustJSON(t, worker.req("POST", "/api/plans", `{"workspace_id":"`+ws+`","name":"p","author_agent_id":"worker-1"}`), 201).(map[string]any)
+	planID := plan["id"].(string)
+	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/items", `{"title":"step"}`), 201)
+	mustDo(t, worker.req("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+planID+`"}`), 200)
+	revID := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"d2ce73d"}`), 201).(map[string]any)["id"].(string)
+	mustDo(t, worker.reqH("POST", "/api/runs/"+runID+"/report", `{"worker_id":"w1","status":"succeeded","summary":"plan ready","branch":"agent/g","cost_usd":0.12}`, leases[runID]), 200)
+	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/approve", `{"revision_id":"`+revID+`"}`), 200)
+	run = claim(t, worker, `{"worker_id":"w1","runners":["claude"],"workspaces":["`+ws+`"]}`)
+	runID = run["id"].(string)
+	mustDo(t, worker.reqH("POST", "/api/runs/"+runID+"/report", `{"worker_id":"w1","status":"succeeded","summary":"done","head_sha":"abc123","branch":"agent/g"}`, leases[runID]), 200)
+
+	// The review group: each worker gets exactly its own member.
+	sec := claim(t, worker, `{"worker_id":"w-claude","runners":["claude"],"workspaces":["`+ws+`"]}`)
+	tst := claim(t, worker, `{"worker_id":"w-glm","runners":["glm"],"workspaces":["`+ws+`"]}`)
+	if sec["focus"] != "security" || tst["focus"] != "tests" || sec["group_id"] == nil || sec["group_id"] != tst["group_id"] {
+		t.Fatalf("members: %v / %v", sec, tst)
+	}
+	mustDo(t, worker.req("POST", "/api/runs/claim", `{"worker_id":"w-x","runners":["claude","glm"],"workspaces":["`+ws+`"]}`), 204, "no third member")
+	secID, tstID := sec["id"].(string), tst["id"].(string)
+	mustDo(t, worker.reqH("POST", "/api/runs/"+secID+"/report", `{"worker_id":"w-claude","status":"failed","reason":"review failed: injection","summary":"injection","cost_usd":0.31,"findings":[{"severity":"blocking","text":"Query built by concatenation","file":"db.go:12"}]}`, leases[secID]), 200)
+	got := mustJSON(t, root.req("GET", "/api/inbox/"+itemID, ""), 200).(map[string]any)
+	if got["status"] != "implementing" {
+		t.Fatalf("one member must not decide the group: %v", got["status"])
+	}
+	mustDo(t, worker.reqH("POST", "/api/runs/"+tstID+"/report", `{"worker_id":"w-glm","status":"succeeded","summary":"tests ok","findings":[{"severity":"nit","text":"table-driven please"}]}`, leases[tstID]), 200)
+
+	got = mustJSON(t, root.req("GET", "/api/inbox/"+itemID, ""), 200).(map[string]any)
+	content, _ := got["content"].(string)
+	if got["status"] != "blocked" || !strings.Contains(content, "## Review summary — round 1") || !strings.Contains(content, "`db.go:12` Query built by concatenation — _security · claude_") || !strings.Contains(content, "### Nits (not blocking)") {
+		t.Fatalf("after the group: status %v\n%s", got["status"], content)
+	}
+	groupsResp := mustDo(t, root.req("GET", "/api/runs/groups?item_id="+itemID, ""), 200)
+	var groups []map[string]any
+	if err := json.Unmarshal([]byte(groupsResp.body), &groups); err != nil || len(groups) != 1 {
+		t.Fatalf("groups: %v %s", err, groupsResp.body)
+	}
+	g := groups[0]
+	members := g["members"].([]any)
+	if g["outcome"] != "fail" || g["round"].(float64) != 1 || len(members) != 2 {
+		t.Fatalf("group view: %v", g)
+	}
+	m0 := members[0].(map[string]any)
+	if m0["cost_usd"].(float64) != 0.31 || len(m0["findings"].([]any)) != 1 {
+		t.Fatalf("member carries cost and findings: %v", m0)
+	}
 }

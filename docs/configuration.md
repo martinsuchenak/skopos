@@ -32,7 +32,8 @@ Optional — if absent, skopos runs on defaults. The file is gitignored (may con
 | `--vector-store` | `SKOPOS_VECTOR_STORE` | `codeindex.embeddings.vector_store` | `sqlite` | Vector backend: `sqlite` (embedded brute force) or `qdrant` (external, monorepo scale) |
 | `--qdrant-url` | `SKOPOS_QDRANT_URL` | `codeindex.embeddings.qdrant_url` | (empty) | Qdrant REST address when `--vector-store=qdrant` (e.g. `http://localhost:6333`) |
 | `--qdrant-api-key` | `SKOPOS_QDRANT_API_KEY` | `codeindex.embeddings.qdrant_api_key` | (empty) | Qdrant API key when required |
-| `--run-stage` | — | — | (none) | Agent pipeline routing, `<workspace>:<stage>=<runner>`, repeatable — see [Stage routing](#stage-routing-agent-pipeline) |
+| `--run-stage` | — | — | (none) | Agent pipeline routing, `<workspace>:<stage>=<runner>`, repeatable; review/qa take a `[focus@]runner,…` list — see [Stage routing](#stage-routing-agent-pipeline) |
+| `--stage-policy` | — | — | `any-blocks`, 60m | How a multi-agent stage is decided, `<workspace>:<stage>=<policy>[,early-exit][,timeout=<duration>]` — see [Multi-agent review and QA](#multi-agent-review-and-qa) |
 
 ### Client (written by `skopos setup`)
 
@@ -88,6 +89,49 @@ pins a stage of a workspace to a worker runner name. The stages are `plan`,
   account of its runner; it never falls back to another runner.
 
 The [pipeline tutorial](guides/pipeline.md) walks through a complete setup.
+
+#### Multi-agent review and QA
+
+Optional. A review or QA stage may run on several agents at once, each with
+its own **focus**. One runner per stage (the line above) is unchanged.
+
+```bash
+skopos serve \
+  --run-stage github.com/you/repo:review=security@claude,tests@opencode-glm,conventions@opencode-qwen \
+  --stage-policy github.com/you/repo:review=any-blocks
+```
+
+- **Members.** Each list entry is `[focus@]runner`. Every member is its own
+  run, pinned to its runner; together they form a *group* that is decided
+  once. A single entry with a focus (`review=security@claude`) is one
+  focused reviewer, not a group.
+- **Focus briefs** live in the repository, `.skopos/focus/<name>.md`
+  (optional `description:` frontmatter, then the brief). Workers read them at
+  the approved base commit, never from the branch under review. A missing
+  brief fails that member.
+- **Findings** carry a severity: `blocking` fails a reviewer, `nit` is
+  reported but never blocks.
+- **Policies** (`--stage-policy`):
+  - `any-blocks` (default): any blocking finding fails the group; waits for
+    every member, so you get full feedback per round;
+  - `majority`: fails when more than half of the members that finished fail;
+  - `all-pass`: like `any-blocks`, never exits early;
+  - `early-exit`: decide as soon as the outcome is certain and cancel the
+    rest (saves tokens, gives partial feedback);
+  - `timeout=<duration>` (default `60m`): at the deadline the group is
+    decided with what finished; unclaimed or paused members are cancelled
+    and named.
+- **The decision** writes one `Review summary — round N` (or `QA summary`)
+  section into the item: each member's result, blocking findings merged
+  across reviewers with who found them, nits separately. A failed group
+  blocks the item, as a failed review always has; a passing one continues
+  to QA or `in_review`. Slack's blocked and branch-ready messages quote the
+  summary.
+- **Parallelism** comes from workers: a worker runs one job at a time, so
+  members claimed by one worker run one after another.
+
+`plan` and `implement` take one runner; a list there keeps the first runner
+and logs a warning.
 
 ## Slack relay (server)
 

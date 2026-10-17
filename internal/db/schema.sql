@@ -339,3 +339,32 @@ CREATE TABLE IF NOT EXISTS workers (
 );
 CREATE INDEX IF NOT EXISTS idx_runs_item ON runs(item_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_runs_worker ON runs(worker_id, status);
+
+-- Stage groups (tmp/multi-agent-stages — design.md §1): N runs of one stage
+-- for one item, decided once by a recorded policy. Opt-in: a stage routed to
+-- a single runner never creates a group. STRICT + CHECKs let SQLite reject
+-- bad values; timestamps are Unix milliseconds (they sort exactly, unlike
+-- RFC3339Nano text); NULL means "not yet".
+CREATE TABLE IF NOT EXISTS run_groups (
+    id            TEXT    PRIMARY KEY,
+    workspace_id  TEXT    NOT NULL,
+    item_id       TEXT    NOT NULL REFERENCES inbox_items(id) ON DELETE CASCADE,
+    stage         TEXT    NOT NULL CHECK (stage IN ('plan', 'review', 'qa')),
+    round         INTEGER NOT NULL CHECK (round >= 1),
+    size          INTEGER NOT NULL CHECK (size >= 2),
+    policy        TEXT    NOT NULL CHECK (policy IN ('any-blocks', 'majority', 'all-pass', 'candidates')),
+    early_exit    INTEGER NOT NULL DEFAULT 0 CHECK (early_exit IN (0, 1)),
+    state         TEXT    NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'decided', 'cancelled')),
+    outcome       TEXT    CHECK (outcome IN ('pass', 'fail', 'candidates', 'timeout')),
+    base_sha      TEXT,
+    deadline_ms   INTEGER NOT NULL,
+    decided_ms    INTEGER,
+    created_ms    INTEGER NOT NULL,
+    CHECK ((state = 'decided') = (outcome IS NOT NULL)),
+    CHECK ((state = 'open') = (decided_ms IS NULL)),
+    UNIQUE (item_id, stage, round)
+) STRICT;
+
+-- One open group per item and stage, enforced by the database.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_run_groups_open ON run_groups(item_id, stage) WHERE state = 'open';
+CREATE INDEX IF NOT EXISTS idx_run_groups_deadline ON run_groups(state, deadline_ms);

@@ -31,15 +31,19 @@ func parseTime(s string) time.Time {
 
 const runColumns = `id, workspace_id, item_id, plan_rev_id, stage, runner, worker_id, status,
 	resume_kind, lease_expires_at, resume_after, attempt, branch, base_sha, head_sha,
-	result_summary, diffstat, checks, log_ref, fail_reason, lease_token_hash, claimed_key_id, created_at, updated_at, executor`
+	result_summary, diffstat, checks, log_ref, fail_reason, lease_token_hash, claimed_key_id, created_at, updated_at, executor,
+	group_id, focus, cost_usd, findings`
 
 func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	var r Run
 	var lease, resumeAfter, createdAt, updatedAt string
 	var checks string
+	var groupID, focus, findings sql.NullString
+	var cost sql.NullFloat64
 	if err := row.Scan(&r.ID, &r.WorkspaceID, &r.ItemID, &r.PlanRevID, &r.Stage, &r.Runner, &r.WorkerID, &r.Status,
 		&r.ResumeKind, &lease, &resumeAfter, &r.Attempt, &r.Branch, &r.BaseSHA, &r.HeadSHA,
-		&r.ResultSummary, &r.Diffstat, &checks, &r.LogRef, &r.FailReason, &r.LeaseTokenHash, &r.ClaimedKeyID, &createdAt, &updatedAt, &r.Executor); err != nil {
+		&r.ResultSummary, &r.Diffstat, &checks, &r.LogRef, &r.FailReason, &r.LeaseTokenHash, &r.ClaimedKeyID, &createdAt, &updatedAt, &r.Executor,
+		&groupID, &focus, &cost, &findings); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -52,21 +56,58 @@ func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	if checks != "" && checks != "[]" {
 		_ = json.Unmarshal([]byte(checks), &r.Checks)
 	}
+	r.GroupID, r.Focus = groupID.String, focus.String
+	if cost.Valid {
+		c := cost.Float64
+		r.CostUSD = &c
+	}
+	if findings.Valid && findings.String != "" {
+		_ = json.Unmarshal([]byte(findings.String), &r.Findings)
+	}
 	return &r, nil
+}
+
+// nullIfEmpty maps "" to SQL NULL: the new columns use NULL for "not set".
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// findingsJSON stores findings as a JSON array, or NULL when there are none.
+func findingsJSON(fs []Finding) any {
+	if len(fs) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(fs)
+	if err != nil {
+		return nil
+	}
+	return string(b)
 }
 
 // Create inserts a queued run.
 func (s *Storage) Create(ctx context.Context, r Run) error {
+	return insertRun(ctx, s.db, r)
+}
+
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func insertRun(ctx context.Context, db execer, r Run) error {
 	checks, err := json.Marshal(r.Checks)
 	if err != nil {
 		checks = []byte("[]")
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := db.ExecContext(ctx, `
 		INSERT INTO runs (id, workspace_id, item_id, plan_rev_id, stage, runner, status, attempt,
-			branch, base_sha, checks, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			branch, base_sha, checks, created_at, updated_at, group_id, focus)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.ID, r.WorkspaceID, r.ItemID, r.PlanRevID, r.Stage, r.Runner, StatusQueued, 1,
-		r.Branch, r.BaseSHA, string(checks), formatTime(r.CreatedAt), formatTime(r.UpdatedAt)); err != nil {
+		r.Branch, r.BaseSHA, string(checks), formatTime(r.CreatedAt), formatTime(r.UpdatedAt),
+		nullIfEmpty(r.GroupID), nullIfEmpty(r.Focus)); err != nil {
 		return fmt.Errorf("inserting run: %w", err)
 	}
 	return nil
@@ -243,8 +284,7 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 			if !wsSet[r.WorkspaceID] {
 				continue
 			}
-			pref := prefs[r.WorkspaceID].StageRunner(r.Stage)
-			if pref == "" || runnerSet[pref] {
+			if claimable(r, prefs, runnerSet) {
 				cand = r
 				break
 			}
@@ -285,8 +325,7 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 			if !wsSet[r.WorkspaceID] {
 				continue
 			}
-			pref := prefs[r.WorkspaceID].StageRunner(r.Stage)
-			if pref == "" || runnerSet[pref] {
+			if claimable(r, prefs, runnerSet) {
 				cand = r
 				break
 			}
@@ -348,6 +387,18 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 	return claimed, nil
 }
 
+// claimable: does a worker offering runnerSet match this run? A group
+// member is pinned to the runner it was queued for (each member is a
+// different agent); an ordinary run follows the workspace's current
+// preference, as before.
+func claimable(r *Run, prefs map[string]*WorkspacePrefs, runnerSet map[string]bool) bool {
+	pref := prefs[r.WorkspaceID].StageRunner(r.Stage)
+	if r.GroupID != "" {
+		pref = r.Runner
+	}
+	return pref == "" || runnerSet[pref]
+}
+
 // newLeaseToken: 128 random bits, base64url.
 func newLeaseToken() string {
 	b := make([]byte, 16)
@@ -391,10 +442,12 @@ func (s *Storage) Report(ctx context.Context, id, workerID, keyID, tokenHash str
 			log_ref = ?, fail_reason = ?, branch = CASE WHEN ? != '' THEN ? ELSE branch END,
 			base_sha = CASE WHEN ? != '' THEN ? ELSE base_sha END,
 			executor = CASE WHEN ? != '' THEN ? ELSE executor END,
+			cost_usd = COALESCE(?, cost_usd), findings = COALESCE(?, findings),
 			lease_expires_at = '', resume_after = '', updated_at = ?
 		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
 		string(in.Status), in.Summary, in.HeadSHA, in.Diffstat, string(checks),
 		in.LogRef, in.Reason, in.Branch, in.Branch, in.BaseSHA, in.BaseSHA, in.Executor, in.Executor,
+		costArg(in.CostUSD), findingsJSON(in.Findings),
 		formatTime(now), id, workerID, keyID, tokenHash, string(StatusClaimed), string(StatusRunning), string(StatusPaused))
 	if err != nil {
 		return nil, fmt.Errorf("reporting run: %w", err)
@@ -404,6 +457,13 @@ func (s *Storage) Report(ctx context.Context, id, workerID, keyID, tokenHash str
 	}
 	row := s.db.QueryRowContext(ctx, `SELECT `+runColumns+` FROM runs WHERE id = ?`, id)
 	return scanRun(row)
+}
+
+func costArg(c *float64) any {
+	if c == nil {
+		return nil
+	}
+	return *c
 }
 
 // Pause keeps affinity: the run stays with its worker, no lease pressure.

@@ -32,7 +32,7 @@ type InboxDetail = InboxItem & { content: string; content_html: string };
 type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string };
 
 type PlanRevisionInfo = { id: string; revision_no: number; content_hash: string; skills?: string[] };
-type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; created_at: string; updated_at: string };
+type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; created_at: string; updated_at: string };
 // wsLocked: a workflow item cannot move workspace (its runs, plan and
 // branch live there) — the server refuses it; the modal hides the picker.
 type InboxForm = { id: string; title: string; tags: string; workspace: string; wsLocked: boolean };
@@ -1181,6 +1181,8 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
 
   // ---- run rows (preview modal) ----
   shortSha(sha: string): string { return sha ? sha.slice(0, 7) : ''; },
+  // What a run cost, when its runner reports it ("" otherwise).
+  runCost(run: RunRow): string { return run.cost_usd != null && run.cost_usd > 0 ? '$' + run.cost_usd.toFixed(2) : ''; },
   // A succeeded run can still carry a chain NOTE in fail_reason (e.g. a
   // quiet matrix skip) — that is diagnostics, not a failure line.
   runHasFailed(run: RunRow): boolean { return !!run.fail_reason && run.status !== 'succeeded'; },

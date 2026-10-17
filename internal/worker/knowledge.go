@@ -23,6 +23,7 @@ const (
 	skillIndexMax   = 50       // skills listed to the planner
 	skillDescMax    = 200      // description length in the index
 	skillsDir       = ".skopos/skills"
+	focusDir        = ".skopos/focus"
 )
 
 // stageCommands lists the shell commands a stage may run — the Bash
@@ -115,6 +116,28 @@ func repoSkills(ctx context.Context, clone, base string) []Skill {
 		skills = skills[:skillIndexMax]
 	}
 	return skills
+}
+
+var reFocusName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+
+// repoFocus reads a reviewer's focus brief, .skopos/focus/<name>.md, at
+// the approved base — never from the branch under review, which could
+// otherwise rewrite the brief that reviews it. A missing brief is an error
+// (the member fails loudly rather than reviewing without its focus).
+func repoFocus(ctx context.Context, clone, base, name string) (Skill, error) {
+	if !reFocusName.MatchString(name) {
+		return Skill{}, fmt.Errorf("invalid focus name %q", name)
+	}
+	raw := strings.TrimSpace(showAt(ctx, clone, base, focusDir+"/"+name+".md"))
+	if raw == "" {
+		short := base
+		if len(short) > 10 {
+			short = short[:10]
+		}
+		return Skill{}, fmt.Errorf("unknown focus %q: %s/%s.md not found at %s", name, focusDir, name, short)
+	}
+	desc, body := parseSkill(raw)
+	return Skill{Name: name, Description: desc, Body: capText(body, skillBodyCap, focusDir+"/"+name+".md")}, nil
 }
 
 // parseSkill splits optional YAML-ish frontmatter (only `description:` is

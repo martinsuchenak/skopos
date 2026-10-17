@@ -1651,6 +1651,31 @@ paths:
                 items: { $ref: "#/components/schemas/Run" }
         "401": { description: Unauthorized }
 
+  /api/runs/groups:
+    get:
+      summary: An item's multi-agent stage groups with their members, newest first
+      description: >-
+        A group is several agents on one stage (review or qa), routed with
+        --run-stage <workspace>:<stage>=[focus@]runner,… and decided once by its
+        policy. Opt-in — items in workspaces with one runner per stage have none.
+      operationId: listRunGroups
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: item_id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Groups (scoped keys see their slice)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/RunGroup" }
+        "400": { description: item_id missing }
+        "401": { description: Unauthorized }
+
   /api/runs/claim:
     post:
       summary: A worker polls for its next run (affinity first, then the queue by scope and stage preference)
@@ -1731,6 +1756,12 @@ paths:
                 reason: { type: string, description: On failure }
                 branch: { type: string }
                 base_sha: { type: string }
+                executor: { type: string }
+                cost_usd: { type: number, description: What the agent run cost, when the runner reports it }
+                findings:
+                  type: array
+                  description: Review/QA structured findings
+                  items: { $ref: "#/components/schemas/Finding" }
       responses:
         "200":
           description: The finished run
@@ -2181,8 +2212,43 @@ components:
         log_ref: { type: string }
         fail_reason: { type: string }
         executor: { type: string, description: 'How the worker ran the agent stage: "local", or the stage profile''s "wrapper:<hash>" / "sandbox:<hash>"' }
+        group_id: { type: string, description: Set when the run is one member of a multi-agent stage group }
+        focus: { type: string, description: 'The member''s focus brief (.skopos/focus/<name>.md, read at the approved base)' }
+        cost_usd: { type: number }
+        findings:
+          type: array
+          items: { $ref: "#/components/schemas/Finding" }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    Finding:
+      type: object
+      required: [severity, text]
+      properties:
+        severity: { type: string, enum: [blocking, nit], description: Blocking findings fail the review; nits never block }
+        text: { type: string }
+        file: { type: string, description: "path:line" }
+
+    RunGroup:
+      type: object
+      properties:
+        id: { type: string }
+        workspace_id: { type: string }
+        item_id: { type: string }
+        stage: { type: string, enum: [plan, review, qa] }
+        round: { type: integer, description: 1, 2, … per item and stage }
+        size: { type: integer }
+        policy: { type: string, enum: [any-blocks, majority, all-pass, candidates] }
+        early_exit: { type: boolean }
+        state: { type: string, enum: [open, decided, cancelled] }
+        outcome: { type: string, enum: [pass, fail, candidates, timeout] }
+        base_sha: { type: string }
+        deadline_at: { type: string, format: date-time }
+        decided_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        members:
+          type: array
+          items: { $ref: "#/components/schemas/Run" }
 
     AuditEntry:
       type: object

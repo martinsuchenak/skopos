@@ -133,6 +133,26 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "plan_revisions", "skills_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	// Stage groups (multi-agent stages): membership, the reviewer's focus
+	// brief, what the run cost, and its structured findings (JSON). NULL =
+	// not grouped / no focus / not reported. SQLite only allows adding a
+	// REFERENCES column whose default is NULL — these are.
+	if err := ensureColumn(db, "runs", "group_id", "TEXT REFERENCES run_groups(id) ON DELETE SET NULL"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "runs", "focus", "TEXT"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "runs", "cost_usd", "REAL"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "runs", "findings", "TEXT CHECK (findings IS NULL OR json_valid(findings))"); err != nil {
+		return err
+	}
+	// After the column exists (schema.sql runs before ensureColumn).
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_runs_group ON runs(group_id) WHERE group_id IS NOT NULL`); err != nil {
+		return fmt.Errorf("indexing runs.group_id: %w", err)
+	}
 	return nil
 }
 

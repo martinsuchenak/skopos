@@ -26,6 +26,9 @@ type Service struct {
 	// itemTransition moves the inbox item (system edge) — wired to
 	// inbox.SystemTransition. Nil disables chaining (tests, partial wiring).
 	itemTransition func(ctx context.Context, itemID, to, reason, agentID string) error
+	// itemAppend writes a section into the item (a stage group's summary) —
+	// wired to inbox.AppendSection. Nil skips the summary.
+	itemAppend func(ctx context.Context, itemID, heading, body string) error
 	// nextStage resolves the stage that follows a successful one per
 	// workspace; "" ends the sequence. Defaults to: plan -> implement -> done
 	// (review/qa only when configured).
@@ -47,6 +50,11 @@ func (s *Service) SetPrefs(p map[string]*WorkspacePrefs) {
 		p = map[string]*WorkspacePrefs{}
 	}
 	s.prefs = p
+}
+
+// SetItemAppend wires the inbox section-append callback (group summaries).
+func (s *Service) SetItemAppend(fn func(ctx context.Context, itemID, heading, body string) error) {
+	s.itemAppend = fn
 }
 
 // SetItemTransition wires the inbox system-transition callback.
@@ -105,6 +113,13 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 			return nil, fmt.Errorf("%w: %s (%s)", ErrDuplicateActive, in.Stage, r.ID)
 		}
 	}
+	// Multi-agent stage (opt-in): two or more members routed to it open a
+	// group instead of a single run.
+	if groupStage(in.Stage) {
+		if members := s.prefs[in.WorkspaceID].GroupMembers(in.Stage); members != nil {
+			return s.queueGroup(ctx, in, members)
+		}
+	}
 	now := s.now().UTC()
 	r := Run{
 		ID:          ids.New(),
@@ -113,6 +128,7 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 		PlanRevID:   strings.TrimSpace(in.PlanRevID),
 		Stage:       in.Stage,
 		Runner:      s.prefs[in.WorkspaceID].StageRunner(in.Stage),
+		Focus:       s.prefs[in.WorkspaceID].SingleFocus(in.Stage),
 		Branch:      strings.TrimSpace(in.Branch),
 		BaseSHA:     strings.TrimSpace(in.BaseSHA),
 		CreatedAt:   now,
@@ -221,6 +237,12 @@ func (s *Service) chain(ctx context.Context, run *Run, in ReportInput) {
 	if s.itemTransition == nil {
 		return
 	}
+	// A group member's result is recorded on its run; the group decides
+	// (once) and moves the item — never the member alone.
+	if run.GroupID != "" {
+		s.groupMemberDone(ctx, run)
+		return
+	}
 	move := func(to, reason string) {
 		if err := s.itemTransition(ctx, run.ItemID, to, reason, "worker:"+run.WorkerID); err != nil {
 			s.chainNote(ctx, run, "item move to "+to+" failed: "+err.Error())
@@ -238,21 +260,28 @@ func (s *Service) chain(ctx context.Context, run *Run, in ReportInput) {
 			move("planning", "")
 			move("awaiting_approval", "")
 		case StageImplement, StageReview, StageQA:
-			next := s.nextStage(run.WorkspaceID, run.Stage)
-			// Review/QA run only when the workspace prefers a runner for
-			// them; otherwise the sequence ends and Martin reviews.
-			if next != "" && s.prefs[run.WorkspaceID].StageRunner(next) != "" {
-				if _, err := s.Queue(ctx, QueueInput{
-					WorkspaceID: run.WorkspaceID, ItemID: run.ItemID, PlanRevID: run.PlanRevID,
-					Stage: next, Branch: run.Branch, BaseSHA: run.BaseSHA,
-				}); err == nil {
-					return
-				}
-			}
-			_ = s.itemTransition(ctx, run.ItemID, "implementing", "", "worker:"+run.WorkerID)
-			_ = s.itemTransition(ctx, run.ItemID, "in_review", "", "worker:"+run.WorkerID)
+			s.advance(ctx, run, "worker:"+run.WorkerID)
 		}
 	}
+}
+
+// advance continues after a successful implement/review/qa stage (a single
+// run, or a group's passing decision): queue the next configured stage, or
+// hand the item to Martin at in_review.
+func (s *Service) advance(ctx context.Context, run *Run, agentID string) {
+	next := s.nextStage(run.WorkspaceID, run.Stage)
+	// Review/QA run only when the workspace configures them (one runner or
+	// a group); otherwise the sequence ends and Martin reviews.
+	if next != "" && s.prefs[run.WorkspaceID].Configured(next) {
+		if _, err := s.Queue(ctx, QueueInput{
+			WorkspaceID: run.WorkspaceID, ItemID: run.ItemID, PlanRevID: run.PlanRevID,
+			Stage: next, Branch: run.Branch, BaseSHA: run.BaseSHA,
+		}); err == nil {
+			return
+		}
+	}
+	_ = s.itemTransition(ctx, run.ItemID, "implementing", "", agentID)
+	_ = s.itemTransition(ctx, run.ItemID, "in_review", "", agentID)
 }
 
 // Pause keeps the run with its worker — affinity means the resume lands
@@ -296,6 +325,13 @@ func (s *Service) CancelItem(ctx context.Context, itemID, reason string) error {
 	if itemID == "" {
 		return fmt.Errorf("%w: item is required", ErrInvalidInput)
 	}
+	// Open groups close first (cancelled, no decision), so no member's late
+	// report can decide them; then every active run is retired.
+	if groups, err := s.storage.OpenGroupsForItem(ctx, itemID); err == nil {
+		for _, g := range groups {
+			_, _ = s.storage.CancelGroup(ctx, g.ID, reason, s.now().UTC())
+		}
+	}
 	_, err := s.storage.CancelItem(ctx, itemID, reason, s.now().UTC())
 	return err
 }
@@ -328,6 +364,9 @@ type RunSummary struct {
 	HeadSHA  string `json:"head_sha,omitempty"`
 	Diffstat string `json:"diffstat,omitempty"`
 	Summary  string `json:"result_summary,omitempty"`
+	// GroupID: the run was one member of a multi-agent stage (its group's
+	// summary section speaks for the decision, not this member).
+	GroupID string `json:"group_id,omitempty"`
 }
 
 // ListRuns is the inbox-facing read (amendment-paused check).
@@ -339,7 +378,7 @@ func (s *Service) ListRuns(ctx context.Context, itemID string) ([]RunSummary, er
 	out := make([]RunSummary, 0, len(all))
 	for _, r := range all {
 		out = append(out, RunSummary{ID: r.ID, Stage: r.Stage, Status: string(r.Status),
-			Branch: r.Branch, HeadSHA: r.HeadSHA, Diffstat: r.Diffstat, Summary: r.ResultSummary})
+			Branch: r.Branch, HeadSHA: r.HeadSHA, Diffstat: r.Diffstat, Summary: r.ResultSummary, GroupID: r.GroupID})
 	}
 	return out, nil
 }
@@ -408,6 +447,11 @@ func callerKeyID(ctx context.Context) string {
 		return p.KeyID
 	}
 	return ""
+}
+
+// checkWorkspace: the caller may read this workspace's runs and groups.
+func (s *Service) checkWorkspace(ctx context.Context, workspaceID string) error {
+	return auth.RequireWorkspaceQuiet(ctx, workspaceID)
 }
 
 func (s *Service) checkScope(ctx context.Context, id string) error {

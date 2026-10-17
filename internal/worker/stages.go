@@ -52,6 +52,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	}
 	log.Info("planning", "account", account.Name, "base", baseSHA)
 	res := w.runAgent(ctx, w.agentRun(repo.Path, prompt, planSchema, planTools, w.cfg.PlanTimeout, account, run, "plan"))
+	w.addCost(run, res)
 	if err := w.handleAgentOutcome(ctx, run, res, account, "plan"); err != nil {
 		return err
 	}
@@ -169,6 +170,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	}
 	log.Info("implementing", "account", account.Name, "branch", branch, "worktree", worktree)
 	res := w.runAgent(ctx, w.agentRun(worktree, prompt, implSchema, implTools, w.cfg.ImplTimeout, account, run, "implement"))
+	w.addCost(run, res)
 	if err := w.handleAgentOutcome(ctx, run, res, account, "implement"); err != nil {
 		return err
 	}
@@ -213,13 +215,60 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 }
 
 // reviewSchema makes the verdict machine-checkable (review H6: a substring
-// test let "2 issues found." pass).
-const reviewSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","fail"]},"summary":{"type":"string"},"issues":{"type":"array","items":{"type":"string"}}},"required":["verdict","summary"]}`
+// test let "2 issues found." pass). Findings carry a severity: blocking
+// findings fail the review, nits are reported but never block (multi-agent
+// stages merge them across reviewers). `issues` is the older shape, still
+// accepted as all-blocking.
+const reviewSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","fail"]},"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["blocking","nit"]},"text":{"type":"string"},"file":{"type":"string"}},"required":["severity","text"]}},"issues":{"type":"array","items":{"type":"string"}}},"required":["verdict","summary"]}`
 
 type reviewResult struct {
-	Verdict string   `json:"verdict"`
-	Summary string   `json:"summary"`
-	Issues  []string `json:"issues"`
+	Verdict  string    `json:"verdict"`
+	Summary  string    `json:"summary"`
+	Findings []Finding `json:"findings"`
+	Issues   []string  `json:"issues"`
+}
+
+// Finding is one review observation (mirrors runs.Finding on the wire).
+type Finding struct {
+	Severity string `json:"severity"`
+	Text     string `json:"text"`
+	File     string `json:"file,omitempty"`
+}
+
+// normalise makes the verdict follow the findings instead of trusting the
+// free-form verdict: a review fails exactly when it has a blocking finding.
+// Older `issues` count as blocking; a "fail" with no findings at all keeps
+// the reviewer's judgement as one blocking finding (its summary).
+func (rr *reviewResult) normalise() {
+	for _, is := range rr.Issues {
+		if strings.TrimSpace(is) != "" {
+			rr.Findings = append(rr.Findings, Finding{Severity: "blocking", Text: strings.TrimSpace(is)})
+		}
+	}
+	rr.Issues = nil
+	blocking := false
+	kept := rr.Findings[:0]
+	for _, f := range rr.Findings {
+		f.Text = strings.TrimSpace(f.Text)
+		if f.Text == "" {
+			continue
+		}
+		if f.Severity != "nit" {
+			f.Severity = "blocking"
+			blocking = true
+		}
+		kept = append(kept, f)
+	}
+	rr.Findings = kept
+	if !blocking && rr.Verdict == "fail" && len(rr.Findings) == 0 {
+		rr.Findings = append(rr.Findings, Finding{Severity: "blocking", Text: strings.TrimSpace(rr.Summary)})
+		blocking = true
+	}
+	if blocking {
+		rr.Verdict = "fail"
+	} else {
+		rr.Verdict = "pass"
+	}
 }
 
 // stageReview: a second opinion over the pushed branch (the review/QA
@@ -241,7 +290,9 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 	// Fresh checkout of the pushed branch: fetch, then a detached worktree
 	// at origin/<branch>. If the fetch finds nothing the review fails — an
 	// empty diff is not a pass.
-	wt := filepath.Join(w.cfg.StateDir, "worktrees", filepath.Base(repo.Path), strings.ReplaceAll(run.Branch, "/", "-")+"-review")
+	// Per run: members of a multi-agent stage review the same branch, and
+	// must never share a worktree.
+	wt := filepath.Join(w.cfg.StateDir, "worktrees", filepath.Base(repo.Path), strings.ReplaceAll(run.Branch, "/", "-")+"-"+run.Stage+"-"+shortID(run.ID))
 	removeWorktree(ctx, repo.Path, wt)
 	if _, err := git(ctx, repo.Path, "fetch", "--quiet", "origin", run.Branch); err != nil {
 		return fmt.Errorf("review: branch %s not pushed: %w", run.Branch, err)
@@ -280,15 +331,26 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 		}
 		instructions, skillBodies = w.runKnowledge(ctx, repo, run, item.PlanID, base)
 	}
+	// The member's focus brief, read at the approved base (never from the
+	// branch under review). A missing brief fails this member loudly.
+	var focus *Skill
+	if run.Focus != "" {
+		f, ferr := repoFocus(ctx, repo.Path, base, run.Focus)
+		if ferr != nil {
+			return w.report(ctx, run, false, map[string]any{"reason": run.Stage + ": " + ferr.Error()})
+		}
+		focus = &f
+	}
 	prompt, err := renderPrompt("review.md", map[string]any{
 		"Base": repo.DefaultBranch, "Stage": run.Stage, "Steps": steps,
-		"Instructions": instructions, "Skills": skillBodies,
+		"Instructions": instructions, "Skills": skillBodies, "Focus": focus,
 	})
 	if err != nil {
 		return err
 	}
 	log.Info("reviewing", "account", account.Name, "stage", run.Stage, "branch", run.Branch)
 	res := w.runAgent(ctx, w.agentRun(wt, prompt, reviewSchema, reviewTools, w.cfg.PlanTimeout, account, run, run.Stage))
+	w.addCost(run, res)
 	if err := w.handleAgentOutcome(ctx, run, res, account, run.Stage); err != nil {
 		return err
 	}
@@ -296,18 +358,45 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 	if err := json.Unmarshal(res.Structured, &rr); err != nil || rr.Verdict == "" {
 		return fmt.Errorf("review returned no verdict: %s", firstLine(res.Text))
 	}
+	rr.normalise()
 	passed := rr.Verdict == "pass"
-	_ = w.client.AppendSection(ctx, run.ItemID, run.Stage+" — "+account.Name,
-		fmt.Sprintf("**Verdict:** %s\n\n%s", rr.Verdict, rr.Summary))
-	log.Info("review finished", "verdict", rr.Verdict, "issues", len(rr.Issues), "cost_usd", res.CostUSD)
+	heading := run.Stage + " — " + account.Name
+	if run.Focus != "" {
+		heading = run.Stage + " — " + run.Focus + " · " + account.Name
+	}
+	_ = w.client.AppendSection(ctx, run.ItemID, heading, reviewSection(rr))
+	log.Info("review finished", "verdict", rr.Verdict, "findings", len(rr.Findings), "focus", run.Focus, "cost_usd", res.CostUSD)
 	if !passed {
 		return w.report(ctx, run, false, map[string]any{
-			"reason": "review failed: " + rr.Summary, "summary": rr.Summary,
+			"reason": run.Stage + " failed: " + rr.Summary, "summary": rr.Summary, "findings": rr.Findings,
 		})
 	}
 	return w.report(ctx, run, true, map[string]any{
-		"summary": rr.Summary, "checks": []Check{{Name: run.Stage + ":" + account.Name, Passed: true, Output: rr.Summary}},
+		"summary": rr.Summary, "findings": rr.Findings,
+		"checks": []Check{{Name: run.Stage + ":" + account.Name, Passed: true, Output: rr.Summary}},
 	})
+}
+
+// reviewSection renders one reviewer's verdict and findings for the item.
+func reviewSection(rr reviewResult) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "**Verdict:** %s\n\n%s", rr.Verdict, rr.Summary)
+	for _, f := range rr.Findings {
+		loc := ""
+		if f.File != "" {
+			loc = "`" + f.File + "` "
+		}
+		fmt.Fprintf(&b, "\n- **%s** %s%s", f.Severity, loc, f.Text)
+	}
+	return b.String()
+}
+
+// shortID is the tail of a UUIDv7 (the random part), for path names.
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[len(id)-8:]
+	}
+	return id
 }
 
 // proposeAmendment is the amendment gate (1b round-2 N2): the item returns

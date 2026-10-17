@@ -285,21 +285,25 @@ func (c *Client) Transition(ctx context.Context, itemID, to, reason string) erro
 // --- wire types (kept lean; the server's openapi is the contract) ---
 
 type Run struct {
-	ID          string    `json:"id"`
-	LeaseToken  string    `json:"lease_token,omitempty"` // fencing token (claim response only)
-	WorkspaceID string    `json:"workspace_id"`
-	ItemID      string    `json:"item_id"`
-	PlanRevID   string    `json:"plan_rev_id"`
-	Stage       string    `json:"stage"`
-	Runner      string    `json:"runner"`
-	WorkerID    string    `json:"worker_id"`
-	Status      string    `json:"status"`
-	ResumeKind  string    `json:"resume_kind"`
-	Attempt     int       `json:"attempt"`
-	Branch      string    `json:"branch"`
-	BaseSHA     string    `json:"base_sha"`
-	HeadSHA     string    `json:"head_sha"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string `json:"id"`
+	LeaseToken  string `json:"lease_token,omitempty"` // fencing token (claim response only)
+	WorkspaceID string `json:"workspace_id"`
+	ItemID      string `json:"item_id"`
+	PlanRevID   string `json:"plan_rev_id"`
+	Stage       string `json:"stage"`
+	Runner      string `json:"runner"`
+	WorkerID    string `json:"worker_id"`
+	Status      string `json:"status"`
+	ResumeKind  string `json:"resume_kind"`
+	Attempt     int    `json:"attempt"`
+	Branch      string `json:"branch"`
+	BaseSHA     string `json:"base_sha"`
+	HeadSHA     string `json:"head_sha"`
+	// GroupID: set when the run is one member of a multi-agent stage;
+	// Focus: the member's brief (.skopos/focus/<name>.md at the base).
+	GroupID   string    `json:"group_id"`
+	Focus     string    `json:"focus"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type Item struct {

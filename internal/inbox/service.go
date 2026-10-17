@@ -337,6 +337,33 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 	return nil
 }
 
+// AppendSection appends "## heading" + body to an item's content inside one
+// transaction — the system path for server-written sections (a stage
+// group's summary). Read-modify-write over the API would race a worker's
+// concurrent append; here the append is atomic. Audited as inbox.edit.
+func (s *Service) AppendSection(ctx context.Context, itemID, heading, body, via string) error {
+	if err := s.requireItemScopeQuiet(ctx, itemID); err != nil {
+		return err
+	}
+	itemID = strings.TrimSpace(itemID)
+	var item *Item
+	err := s.store.RunInTx(ctx, func(tx Store) error {
+		var err error
+		item, err = tx.GetItem(ctx, itemID)
+		if err != nil {
+			return err
+		}
+		content := strings.TrimSpace(item.Content) + "\n\n## " + strings.TrimSpace(heading) + "\n\n" + strings.TrimSpace(body)
+		return tx.UpdateItem(ctx, itemID, item.WorkspaceID, item.Title, content, tagsJSON(item.Tags), item.Priority, s.now().UTC())
+	})
+	if err != nil {
+		return err
+	}
+	s.publishItem(ctx, itemID)
+	s.auditItem(ctx, itemID, "inbox.edit", via, "appended "+heading, "")
+	return nil
+}
+
 // appendsTo reports whether next keeps prev intact as its prefix — an
 // append, which leaves everything already approved in place.
 func appendsTo(next, prev string) bool {

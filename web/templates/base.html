@@ -902,6 +902,8 @@
                                 <div class="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-zinc-800/60 px-3 py-1.5 text-[11px] last:border-b-0">
                                     <span class="badge" :class="toneOf('stage', run.stage)" x-text="run.stage"></span>
                                     <span class="badge" :class="toneOf('status', run.status)" x-text="run.status"></span>
+                                    <span x-show="run.focus" class="chip tone-accent" :title="run.group_id ? 'One of several agents on this stage — focus brief .skopos/focus/' + run.focus + '.md' : 'Focus brief .skopos/focus/' + run.focus + '.md'" x-text="run.focus"></span>
+                                    <span x-show="runCost(run)" class="text-zinc-400" title="What this run cost" x-text="runCost(run)"></span>
                                     <span x-show="run.worker_id" class="max-w-32 truncate text-zinc-400" :title="run.worker_id" x-text="run.worker_id"></span>
                                     <span class="text-zinc-500" x-text="'try ' + run.attempt"></span>
                                     <span x-show="run.executor" class="badge bg-zinc-800 font-mono text-zinc-400" title="How the worker ran this stage (capability profile)" x-text="run.executor"></span>

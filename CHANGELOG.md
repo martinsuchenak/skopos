@@ -38,6 +38,27 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Multi-agent review and QA (opt-in).** `--run-stage
+  ws:review=security@claude,tests@opencode-glm` runs a stage on several
+  agents, each with a focus brief from the repository
+  (`.skopos/focus/<name>.md`, read at the approved base). They form a group
+  that is decided once by `--stage-policy` (`any-blocks` by default, or
+  `majority` / `all-pass`, optional `early-exit`, `timeout`). The decision
+  writes one summary into the item (each member's result, blocking findings
+  merged across reviewers, nits separately), blocks or advances the item, and
+  shows in Slack's blocked and branch-ready messages. One runner per stage
+  behaves exactly as before. New endpoint: `GET /api/runs/groups?item_id=`.
+  Design: `tmp/multi-agent-stages — design.md`.
+- **Review findings have a severity.** `blocking` fails a review; `nit` is
+  reported and never blocks. The worker makes the verdict follow the
+  findings instead of trusting the free-form verdict.
+- **Run cost is recorded.** Workers now report each run's agent cost
+  (`cost_usd`), shown on the dashboard's run rows, so fan-out can be judged
+  by data.
+- **Typed tables for new data.** `run_groups` is a STRICT table with CHECK
+  constraints, Unix-millisecond timestamps and a partial unique index
+  enforcing one open group per item and stage in the database.
+
 - **Capability profiles** (`worker.profiles.<name>.<stage>`, repo `profile`
   / `stages`). skopos provides no isolation; the operator contains a stage
   with a `wrapper` (container, VM, sandbox tool) or Claude Code sandbox

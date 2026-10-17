@@ -100,10 +100,12 @@ type Worker struct {
 	// executors remembers how each run's agent stage was executed (the
 	// stage profile's Executor id) so every report can record it.
 	executors map[string]string
+	// costs: what each run's agent turns cost, sent with its report.
+	costs map[string]float64
 }
 
 func New(cfg *Config, client *Client, log *slog.Logger) *Worker {
-	w := &Worker{cfg: cfg, client: client, log: log, sessions: map[string]string{}, accounts: map[string]string{}, executors: map[string]string{}}
+	w := &Worker{cfg: cfg, client: client, log: log, sessions: map[string]string{}, accounts: map[string]string{}, executors: map[string]string{}, costs: map[string]float64{}}
 	w.loadSessions()
 	w.ApplyMCPServers()
 	return w
@@ -380,7 +382,27 @@ func (w *Worker) report(ctx context.Context, run *Run, succeeded bool, fields ma
 		fields["executor"] = ex
 	}
 	delete(w.executors, run.ID)
+	if c, ok := w.costs[run.ID]; ok {
+		if fields == nil {
+			fields = map[string]any{}
+		}
+		fields["cost_usd"] = c
+		delete(w.costs, run.ID)
+	}
 	return w.client.ReportResult(ctx, run.ID, w.cfg.ID, succeeded, fields)
+}
+
+// addCost records what an agent run cost (summed over a stage's turns);
+// report() sends it with the result. Runners that report nothing add 0 and
+// stay unreported.
+func (w *Worker) addCost(run *Run, res AgentResult) {
+	if res.CostUSD <= 0 {
+		return
+	}
+	if w.costs == nil {
+		w.costs = map[string]float64{}
+	}
+	w.costs[run.ID] += res.CostUSD
 }
 
 // SetEnvFileKeys records which variables came from the env file (the CLI

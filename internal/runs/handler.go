@@ -3,6 +3,7 @@ package runs
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/auth"
@@ -163,4 +164,23 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		runs = []Run{}
 	}
 	rest.RespondJSON(w, http.StatusOK, runs)
+}
+
+// Groups handles GET /api/runs/groups?item_id= — an item's multi-agent
+// stage groups with their members, newest first.
+func (h *Handler) Groups(w http.ResponseWriter, r *http.Request) {
+	itemID := strings.TrimSpace(r.URL.Query().Get("item_id"))
+	if itemID == "" {
+		rest.RespondError(w, http.StatusBadRequest, "item_id is required")
+		return
+	}
+	groups, err := h.service.ListGroups(r.Context(), itemID)
+	if err != nil {
+		h.respondRunError(w, err, "list groups")
+		return
+	}
+	if groups == nil {
+		groups = []GroupView{}
+	}
+	rest.RespondJSON(w, http.StatusOK, groups)
 }

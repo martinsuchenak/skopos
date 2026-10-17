@@ -87,6 +87,9 @@ func relayStack(t *testing.T) (*inbox.Service, *runs.Service, *plans.Service, *f
 		_, err := inboxSvc.SystemTransition(ctx, itemID, inbox.Status(to), reason, agentID, audit.ViaWorker)
 		return err
 	})
+	runsSvc.SetItemAppend(func(ctx context.Context, itemID, heading, body string) error {
+		return inboxSvc.AppendSection(ctx, itemID, heading, body, audit.ViaWorker)
+	})
 	inboxSvc.SetRunQueuer(runsSvc)
 	inboxSvc.SetRunLister(runsListerAdapter{runs: runsSvc})
 
@@ -556,5 +559,46 @@ func TestPlanReadyUsesNewestEnrichment(t *testing.T) {
 	got := lastSectionOf(content, "## Enrichment")
 	if !strings.Contains(got, "NEW plan summary") || strings.Contains(got, "OLD") {
 		t.Fatalf("newest enrichment: %q", got)
+	}
+}
+
+// A failed multi-agent review blocks with its group summary in Slack (the
+// decision and who found what), not one reviewer's free text.
+func TestRelayBlockedShowsGroupSummary(t *testing.T) {
+	inboxSvc, runsSvc, _, _, relay := relayStack(t)
+	ctx := context.Background()
+	item, err := inboxSvc.CreateItem(ctx, inbox.CreateInput{WorkspaceID: "ws-a", Title: "grouped", AuthorAgentID: "martin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runsSvc.SetPrefs(map[string]*runs.WorkspacePrefs{"ws-a": {
+		Stages: map[string]string{},
+		Groups: map[string][]runs.Member{"review": {{Runner: "claude", Focus: "security"}, {Runner: "glm", Focus: "tests"}}},
+	}})
+	if _, err := runsSvc.Queue(ctx, runs.QueueInput{WorkspaceID: "ws-a", ItemID: item.ID, Stage: runs.StageReview}); err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []struct{ worker, runner string }{{"w1", "claude"}, {"w2", "glm"}} {
+		r, err := runsSvc.ClaimNext(ctx, runs.ClaimInput{WorkerID: w.worker, Runners: []string{w.runner}, Workspaces: []string{"ws-a"}})
+		if err != nil || r == nil {
+			t.Fatalf("claim %s: %v", w.runner, err)
+		}
+		in := runs.ReportInput{WorkerID: w.worker, Status: runs.StatusSucceeded, Summary: "fine"}
+		if w.runner == "claude" {
+			in = runs.ReportInput{WorkerID: w.worker, Status: runs.StatusFailed, Summary: "one member's own words", Reason: "review failed",
+				Findings: []runs.Finding{{Severity: "blocking", Text: "token logged in plain text", File: "auth.go:7"}}}
+		}
+		if _, err := runsSvc.Report(ctx, r.ID, in, r.LeaseToken); err != nil {
+			t.Fatal(err)
+		}
+	}
+	msg := relay.formatGate(item.ID, inbox.StatusImplementing, inbox.StatusBlocked)
+	for _, want := range []string{"*Blocked*", "*Review summary — round 1*", "token logged in plain text", "security · claude"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("blocked message missing %q:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "one member's own words") {
+		t.Errorf("must quote the group summary, not a member:\n%s", msg)
 	}
 }

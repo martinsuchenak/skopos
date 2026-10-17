@@ -418,6 +418,12 @@ func (r *slackRelay) formatGate(itemID string, from, to inbox.Status) string {
 		reason := ""
 		if runs, err := r.runs.ListRuns(context.Background(), itemID); err == nil {
 			for _, run := range runs {
+				if run.Status == "failed" && run.GroupID != "" {
+					// A multi-agent stage failed: its summary is the reason
+					// (decision, who found what), not one member's text.
+					reason = groupSummarySection(item.Content, run.Stage)
+					break
+				}
 				if run.Status == "failed" && run.Summary != "" {
 					reason = run.Summary
 					break
@@ -442,6 +448,21 @@ func (r *slackRelay) formatGate(itemID string, from, to inbox.Status) string {
 		detail := branch
 		if diff != "" {
 			detail = branch + " · " + strings.SplitN(diff, "\n", 2)[0]
+		}
+		// After a multi-agent review/QA, its summary (members, nits) rides
+		// along; the newest grouped run decides which stage's summary.
+		if runs, err := r.runs.ListRuns(context.Background(), itemID); err == nil {
+			for _, run := range runs {
+				if run.Stage == "implement" {
+					break // nothing newer than the implementation was grouped
+				}
+				if run.GroupID != "" && (run.Stage == "review" || run.Stage == "qa") {
+					if sum := groupSummarySection(item.Content, run.Stage); sum != "" {
+						detail += "\n\n" + truncate(sum, 900)
+					}
+					break
+				}
+			}
 		}
 		return "✅ *Branch ready* · " + title + "\n\n" + detail +
 			"\n\n`done` (approves head " + short(head) + ") · `changes: <notes>` · `reject`"
@@ -570,6 +591,21 @@ func (r *slackRelay) post(ctx context.Context, parent, text string) {
 	if r.notifier != nil {
 		r.notifier.Notify(ctx, parent, text)
 	}
+}
+
+// groupSummarySection is the newest group summary for a stage ("Review
+// summary — round N" / "QA summary — round N"), without its heading line.
+func groupSummarySection(content, stage string) string {
+	heading := "## Review summary"
+	if stage == "qa" {
+		heading = "## QA summary"
+	}
+	sec := lastSectionOf(content, heading)
+	if sec == "" {
+		return ""
+	}
+	first, rest, _ := strings.Cut(sec, "\n")
+	return "*" + strings.TrimSpace(strings.TrimPrefix(first, "## ")) + "*\n" + strings.TrimSpace(rest)
 }
 
 // lastSectionOf is sectionOf for the LAST occurrence of heading — after a
