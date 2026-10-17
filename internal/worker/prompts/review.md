@@ -14,7 +14,14 @@ The changes implement this plan:
 
 {{.Body}}
 {{end}}
-{{if .Focus}}
+{{if .Decisions}}
+# Martin's decisions (part of the spec)
+
+These are his answers and notes for this item. Behaviour he explicitly accepted here is NOT a
+finding — do not block on it; you may mention a residual concern as a nit.
+{{range .Decisions}}
+{{.}}
+{{end}}{{end}}{{if .Focus}}
 # Your focus: {{.Focus.Name}}
 
 You are one of several reviewers of this change; each has a different focus. Review it

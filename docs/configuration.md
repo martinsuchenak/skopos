@@ -157,8 +157,28 @@ skopos serve --run-stage github.com/you/repo:plan=claude,opencode-glm,opencode-q
   with your notes. *Re-plan all*: every planner runs again as round 2. Either
   way the old round's candidates can no longer be approved.
 
-`implement` takes one runner; a list there keeps the first runner and logs a
-warning.
+**Optional judge and merge.** Between the candidates and the gate:
+
+```bash
+--run-stage github.com/you/repo:compare=opencode-qwen     # the judge
+--run-stage github.com/you/repo:synthesize=claude          # the merge
+```
+
+- `compare` scores every candidate (correctness, scope, step granularity,
+  tests, fit with AGENTS.md), lists risks and recommends one with reasons.
+  It's written into the item as `Comparison`, shown at the gate and in
+  Slack, and **never pre-selects** anything. Prefer a runner that wrote no
+  candidate: a judge favours its own style.
+- `synthesize` writes one more candidate, `synthesis`, combining the others
+  (and reading the comparison when there is one). The originals stay
+  approvable — merging can average away the one idea that made a candidate
+  better.
+- Order: candidates → compare → synthesize → gate, each only when
+  configured and only when the round has two or more candidates. Both are
+  advisory: if one fails, the gate opens with the candidates as they are.
+
+`implement`, `compare` and `synthesize` take one runner; a list there keeps
+the first runner and logs a warning.
 
 ## Slack relay (server)
 

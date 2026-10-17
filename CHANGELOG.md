@@ -59,6 +59,12 @@ versions follow [Semantic Versioning](https://semver.org/).
   New endpoints: `POST /api/plans/{id}/candidates`,
   `POST /api/runs/{id}/pin-base`; request-changes takes an optional
   `revision_id`.
+- **Plan judge and merge (opt-in).** After a multi-agent plan round,
+  `--run-stage ws:compare=<runner>` scores the candidates and recommends one
+  (shown at the gate and in Slack, never pre-selected), and
+  `--run-stage ws:synthesize=<runner>` writes one more candidate combining
+  them. Both are advisory: a failure opens the gate with the candidates as
+  they are.
 - **Review findings have a severity.** `blocking` fails a review; `nit` is
   reported and never blocks. The worker makes the verdict follow the
   findings instead of trusting the free-form verdict.
@@ -134,6 +140,11 @@ versions follow [Semantic Versioning](https://semver.org/).
   wrote, and the diff still shows them.
 
 ### Fixed
+
+- **Reviewers didn't see Martin's decisions.** The review prompt now
+  includes the item's answers, approval notes and change requests. A live
+  multi-agent run caught a security reviewer blocking on behaviour Martin
+  had explicitly accepted; with the decisions in the prompt it became a nit.
 
 - **Agent commands ran with the daemon's `$PWD`.** opencode trusts `$PWD` over
   the real working directory, and in a live test it edited and committed in

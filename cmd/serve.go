@@ -145,7 +145,7 @@ func serveCmd() *cli.Command {
 			},
 			&cli.StringSliceFlag{
 				Name:  "run-stage",
-				Usage: "Per-workspace stage routing, <workspace>:<stage>=<runner> (repeatable). review/qa take a list of [focus@]runner members to run several agents (e.g. review=security@claude,tests@opencode-glm)",
+				Usage: "Per-workspace stage routing, <workspace>:<stage>=<runner> (repeatable). plan/review/qa take a list of [focus@]runner members to run several agents (e.g. review=security@claude,tests@opencode-glm); compare/synthesize add a judge and a merge after a multi-agent plan round",
 			},
 			&cli.StringSliceFlag{
 				Name:  "stage-policy",

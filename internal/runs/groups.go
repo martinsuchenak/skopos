@@ -230,12 +230,19 @@ func (s *Service) applyGroupDecision(ctx context.Context, g *Group, members []Ru
 		rep := representative(members)
 		s.advance(ctx, &rep, agent)
 	case OutcomeCandidates:
-		// The plan run IS the planning phase: walk queued → planning →
-		// awaiting_approval (the first move fails quietly when already there).
-		_ = s.itemTransition(ctx, g.ItemID, "planning", "", agent)
-		if err := s.itemTransition(ctx, g.ItemID, "awaiting_approval", "", agent); err != nil {
-			slog.Warn("opening the plan gate after group decision", "group", g.ID, "err", err)
+		// Two or more candidates: the optional judge and merge run first
+		// (compare → synthesize → gate); with one, straight to the gate.
+		passed := 0
+		for _, m := range members {
+			if m.Status == StatusSucceeded {
+				passed++
+			}
 		}
+		if passed >= 2 {
+			s.afterAdvisory(ctx, StagePlan, g.ItemID, g.WorkspaceID, agent)
+			return
+		}
+		s.openPlanGate(ctx, g.ItemID, agent)
 	default:
 		if err := s.itemTransition(ctx, g.ItemID, "blocked", d.reason, agent); err != nil {
 			slog.Warn("blocking item after group decision", "group", g.ID, "err", err)
@@ -402,4 +409,41 @@ func (s *Service) ListGroups(ctx context.Context, itemID string) ([]GroupView, e
 		out = append(out, GroupView{Group: g, Members: members})
 	}
 	return out, nil
+}
+
+// afterAdvisory walks a multi-agent plan round after `done`: candidates →
+// compare (if configured) → synthesize (if configured) → the gate. Each
+// advisory stage is one run; it reads the round's candidates itself.
+func (s *Service) afterAdvisory(ctx context.Context, done, itemID, workspaceID, agent string) {
+	prefs := s.prefs[workspaceID]
+	var next []string
+	switch done {
+	case StagePlan:
+		next = []string{StageCompare, StageSynthesize}
+	case StageCompare:
+		next = []string{StageSynthesize}
+	}
+	for _, stage := range next {
+		if !prefs.Configured(stage) {
+			continue
+		}
+		if _, err := s.Queue(ctx, QueueInput{WorkspaceID: workspaceID, ItemID: itemID, Stage: stage, Single: true}); err == nil {
+			return
+		} else {
+			slog.Warn("queueing advisory plan stage", "stage", stage, "item", itemID, "err", err)
+		}
+	}
+	s.openPlanGate(ctx, itemID, agent)
+}
+
+// openPlanGate walks the item (planning) to awaiting_approval; the first
+// move fails quietly when the item is already planning.
+func (s *Service) openPlanGate(ctx context.Context, itemID, agent string) {
+	if s.itemTransition == nil {
+		return
+	}
+	_ = s.itemTransition(ctx, itemID, "planning", "", agent)
+	if err := s.itemTransition(ctx, itemID, "awaiting_approval", "", agent); err != nil {
+		slog.Warn("opening the plan gate", "item", itemID, "err", err)
+	}
 }

@@ -356,6 +356,9 @@ func (c *apiClient) showPlanFull(ctx context.Context, out io.Writer, id string) 
 			pf("\nCandidate %d · %s (%s) · base %s\n", i+1, cr.Label, cr.ID, short(cr.BaseSHA))
 			printSteps(cr, "  ")
 		}
+		if cmp := lastSectionOf(item.Content, "## Comparison"); cmp != "" {
+			pf("\n%s\n", cmp)
+		}
 		if q := lastSectionOf(item.Content, "## Questions"); q != "" {
 			pf("\n%s\n", q)
 		}

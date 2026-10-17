@@ -109,7 +109,7 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 		return nil, fmt.Errorf("%w: workspace, item and stage are required", ErrInvalidInput)
 	}
 	switch in.Stage {
-	case StagePlan, StageImplement, StageReview, StageQA:
+	case StagePlan, StageImplement, StageReview, StageQA, StageCompare, StageSynthesize:
 	default:
 		return nil, fmt.Errorf("%w: unknown stage %q", ErrInvalidInput, in.Stage)
 	}
@@ -167,7 +167,7 @@ func runnerFor(in QueueInput, p *WorkspacePrefs) string {
 // blocks from a valid edge (review H1).
 func phaseForStage(stage string) string {
 	switch stage {
-	case StagePlan:
+	case StagePlan, StageCompare, StageSynthesize:
 		return "planning"
 	case StageImplement, StageReview, StageQA:
 		return "implementing"
@@ -305,6 +305,15 @@ func (s *Service) chain(ctx context.Context, run *Run, in ReportInput) {
 		if err := s.itemTransition(ctx, run.ItemID, to, reason, "worker:"+run.WorkerID); err != nil {
 			s.chainNote(ctx, run, "item move to "+to+" failed: "+err.Error())
 		}
+	}
+	// Advisory plan stages: success or failure, the plan round moves on
+	// (a failed judge or merge never blocks the candidates).
+	if run.Stage == StageCompare || run.Stage == StageSynthesize {
+		if run.Status == StatusFailed {
+			s.chainNote(ctx, run, run.Stage+" failed (advisory): "+firstLine(in.Reason, in.Summary))
+		}
+		s.afterAdvisory(ctx, run.Stage, run.ItemID, run.WorkspaceID, "worker:"+run.WorkerID)
+		return
 	}
 	switch run.Status {
 	case StatusFailed:

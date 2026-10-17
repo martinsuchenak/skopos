@@ -274,3 +274,44 @@ func TestGroupCancelAndNextRound(t *testing.T) {
 		t.Fatalf("list groups: %v %+v", err, views)
 	}
 }
+
+// A multi-agent plan round with a judge and a merge configured: candidates →
+// compare → synthesize → gate. The item stays planning until the end; a
+// failed judge is advisory and the round moves on.
+func TestPlanRoundAdvisoryChain(t *testing.T) {
+	f := newGroupFixture(t, StagePolicy{})
+	f.s.SetPrefs(map[string]*WorkspacePrefs{"ws-a": {
+		Stages:   map[string]string{"compare": "qwen", "synthesize": "claude"},
+		Groups:   map[string][]Member{"plan": {{Runner: "claude"}, {Runner: "glm"}}},
+		Policies: map[string]StagePolicy{},
+	}})
+	mustQueue(t, f.s, rootCtx(), "ws-a", "item-1", StagePlan)
+	a, b := f.claimAs(t, "w1", "claude"), f.claimAs(t, "w2", "glm")
+	f.resetMoves()
+	f.report(t, a, "w1", true)
+	f.report(t, b, "w2", true)
+	if m := f.lastMove(); m != "" {
+		t.Fatalf("the gate must wait for compare/synthesize: %q", m)
+	}
+	cmp := f.claimAs(t, "w3", "qwen")
+	if cmp == nil || cmp.Stage != StageCompare || cmp.GroupID != "" {
+		t.Fatalf("compare run: %+v", cmp)
+	}
+	f.resetMoves()
+	if _, err := f.s.Report(rootCtx(), cmp.ID, ReportInput{WorkerID: "w3", Status: StatusFailed, Reason: "judge timed out"}, cmp.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(f.lastMove(), "blocked") {
+		t.Fatal("a failed judge must not block the round")
+	}
+	syn := f.claimAs(t, "w1", "claude")
+	if syn == nil || syn.Stage != StageSynthesize {
+		t.Fatalf("synthesize run after the judge: %+v", syn)
+	}
+	if _, err := f.s.Report(rootCtx(), syn.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded, Summary: "merged"}, syn.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	if m := f.lastMove(); m != "awaiting_approval|" {
+		t.Fatalf("the gate opens after the merge: %q (%v)", m, f.moves)
+	}
+}

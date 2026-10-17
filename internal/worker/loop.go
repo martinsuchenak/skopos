@@ -147,7 +147,7 @@ func (w *Worker) Loop(ctx context.Context) error {
 // PhaseAdmissible: the item statuses under which a stage's run may execute.
 func PhaseAdmissible(itemStatus, stage string) bool {
 	switch stage {
-	case "plan":
+	case "plan", "compare", "synthesize":
 		return itemStatus == "queued" || itemStatus == "planning"
 	case "implement", "review", "qa":
 		return itemStatus == "approved" || itemStatus == "implementing"
@@ -197,6 +197,10 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 			err = w.stageImplement(ctx, run, log)
 		case "review", "qa":
 			err = w.stageReview(ctx, run, log)
+		case "compare":
+			err = w.stageCompare(ctx, run, log)
+		case "synthesize":
+			err = w.stageSynthesize(ctx, run, log)
 		default:
 			err = fmt.Errorf("unknown stage %q", run.Stage)
 		}

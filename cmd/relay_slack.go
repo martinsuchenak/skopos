@@ -498,6 +498,16 @@ func candidatesMessage(item *inbox.Item, cands []plans.Revision) (string, []show
 		}
 		shown = append(shown, shownRev{ID: c.ID, Label: c.Label})
 	}
+	// The judge's recommendation, when a compare stage ran (advisory: it
+	// never pre-selects anything).
+	if cmp := lastSectionOf(item.Content, "## Comparison"); cmp != "" {
+		for _, line := range strings.Split(cmp, "\n") {
+			if rec, ok := strings.CutPrefix(strings.TrimSpace(line), "**Recommendation:**"); ok {
+				b.WriteString("\n*Judge recommends:* " + strings.TrimSpace(rec) + " _(details in skopos)_\n")
+				break
+			}
+		}
+	}
 	if q := lastSectionOf(item.Content, "## Questions"); q != "" {
 		b.WriteString("\n*Questions for you:*\n" + q + "\n")
 	}

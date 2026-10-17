@@ -2269,7 +2269,7 @@ components:
         workspace_id: { type: string }
         item_id: { type: string }
         plan_rev_id: { type: string }
-        stage: { type: string, enum: [plan, implement, review, qa] }
+        stage: { type: string, enum: [plan, implement, review, qa, compare, synthesize] }
         runner: { type: string, description: The resolved stage preference at queue time }
         worker_id: { type: string, description: Affinity owner }
         status: { type: string, enum: [queued, claimed, running, paused, succeeded, failed, interrupted, cancelled] }

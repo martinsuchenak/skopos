@@ -423,7 +423,17 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 	var steps []Step
 	var instructions string
 	var skillBodies []Skill
+	var decisions []string
 	if item, ierr := w.client.GetItem(ctx, run.ItemID); ierr == nil && item.PlanID != "" {
+		// Martin's decisions (answers to the planner's questions, approval
+		// notes, change requests) are part of the spec: a reviewer that
+		// cannot see them blocks on behaviour he explicitly accepted (found
+		// in the live multi-agent run).
+		for _, h := range []string{"## Answers", "## Approval notes", "## Change requests"} {
+			if sec := sectionOnly(item.Content, h); sec != "" {
+				decisions = append(decisions, sec)
+			}
+		}
 		if plan, perr := w.client.GetPlan(ctx, item.PlanID); perr == nil {
 			for _, pi := range plan.Items {
 				if pi.Title == "Review and push (Martin)" {
@@ -447,6 +457,7 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 	prompt, err := renderPrompt("review.md", map[string]any{
 		"Base": repo.DefaultBranch, "Stage": run.Stage, "Steps": steps,
 		"Instructions": instructions, "Skills": skillBodies, "Focus": focus,
+		"Decisions": decisions,
 	})
 	if err != nil {
 		return err
@@ -582,6 +593,20 @@ func lastSection(content, heading string) string {
 		return ""
 	}
 	return strings.TrimSpace(content[idx:])
+}
+
+// sectionOnly is the newest "heading" section alone: up to the next "## "
+// heading (lastSection runs to the end of the content).
+func sectionOnly(content, heading string) string {
+	idx := strings.LastIndex(content, heading)
+	if idx < 0 {
+		return ""
+	}
+	rest := content[idx:]
+	if j := strings.Index(rest[len(heading):], "\n## "); j >= 0 {
+		rest = rest[:len(heading)+j]
+	}
+	return strings.TrimSpace(rest)
 }
 
 func numberedSteps(steps []Step) string {

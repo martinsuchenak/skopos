@@ -86,3 +86,20 @@ func TestReviewNormalise(t *testing.T) {
 		t.Fatalf("bare fail: %+v", rr.Findings)
 	}
 }
+
+// Reviewers see Martin's decisions (answers, approval notes, change
+// requests) — each section alone, not everything after it.
+func TestReviewPromptCarriesDecisions(t *testing.T) {
+	content := "item\n\n## Answers\n\nU+FFFD is accepted.\n\n## Review summary — round 1\n\nnoise"
+	sec := sectionOnly(content, "## Answers")
+	if sec != "## Answers\n\nU+FFFD is accepted." {
+		t.Fatalf("sectionOnly: %q", sec)
+	}
+	out, err := renderPrompt("review.md", map[string]any{"Base": "main", "Decisions": []string{sec}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "# Martin's decisions") || !strings.Contains(out, "U+FFFD is accepted.") || strings.Contains(out, "noise") {
+		t.Fatalf("review prompt decisions:\n%s", out)
+	}
+}

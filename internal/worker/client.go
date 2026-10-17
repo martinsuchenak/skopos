@@ -256,6 +256,29 @@ func (c *Client) CreateCandidate(ctx context.Context, planID, baseSHA string, st
 	return &rev, err
 }
 
+// RoundCandidates returns the open candidates of the plan's newest round,
+// oldest first (numbered 1..n as at the gate), and the round's group id.
+func (c *Client) RoundCandidates(ctx context.Context, planID string) ([]Revision, string, error) {
+	var revs []Revision
+	if err := c.do(ctx, http.MethodGet, "/api/plans/"+planID+"/revisions", nil, &revs); err != nil {
+		return nil, "", err
+	}
+	group := ""
+	for _, r := range revs { // newest first
+		if r.GroupID != "" {
+			group = r.GroupID
+			break
+		}
+	}
+	var out []Revision
+	for i := len(revs) - 1; i >= 0; i-- {
+		if group != "" && revs[i].GroupID == group && revs[i].State == "open" {
+			out = append(out, revs[i])
+		}
+	}
+	return out, group, nil
+}
+
 // PinBase reports the base this planner would read and returns the plan
 // group's pinned base (the first member's) — every candidate plans at it.
 func (c *Client) PinBase(ctx context.Context, runID, baseSHA string) (string, error) {
@@ -360,6 +383,8 @@ type Revision struct {
 	LockedAt    *time.Time `json:"locked_at"`
 	Steps       []RevStep  `json:"steps"`
 	Label       string     `json:"label"`
+	GroupID     string     `json:"group_id"`
+	State       string     `json:"candidate_state"`
 }
 
 // RevStep is one step of a revision snapshot.
