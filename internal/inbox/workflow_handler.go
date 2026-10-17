@@ -3,6 +3,7 @@ package inbox
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
@@ -81,7 +82,15 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req actionRequest
-	_ = rest.DecodeJSON(w, r, &req) // empty body is fine; revision binding optional but recommended
+	_ = rest.DecodeJSON(w, r, &req)
+	// Every human approval names the revision the approver looked at (M2):
+	// without it the server would bind whatever is latest at click time —
+	// possibly a revision the planner wrote after the page was read. The
+	// dashboard, CLI and Slack relay all send it.
+	if strings.TrimSpace(req.RevisionID) == "" {
+		rest.RespondError(w, http.StatusBadRequest, "revision_id is required: approve names the plan revision you reviewed (GET /api/plans/{plan_id}/revisions)")
+		return
+	}
 	item, err := h.service.Approve(r.Context(), r.PathValue("id"), ApproveInput{
 		Notes: req.Notes, Via: viaFrom(r, ""),
 		RevisionID: req.RevisionID, ContentHash: req.ContentHash,

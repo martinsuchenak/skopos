@@ -130,7 +130,7 @@ func TestIntegrationWorkflowRoundTrip(t *testing.T) {
 	mustStatus(t, worker.do("POST", "/api/inbox/"+itemID+"/transition", `{"to":"awaiting_approval","via":"worker"}`), 200, "awaiting approval")
 
 	// Approve with overrides: revision locks, approval records.
-	mustStatus(t, approver.do("POST", "/api/inbox/"+itemID+"/approve", `{"notes":"wr=108900"}`), 200, "approve")
+	mustStatus(t, approver.do("POST", "/api/inbox/"+itemID+"/approve", `{"notes":"wr=108900","revision_id":"`+rev.ID+`"}`), 200, "approve")
 
 	// The plan is locked content now: the worker cannot add steps.
 	if w := worker.do("POST", "/api/plans/"+plan.ID+"/items", `{"title":"sneak"}`); w.StatusCode != 409 || !strings.Contains(w.Body.String(), "locked") {

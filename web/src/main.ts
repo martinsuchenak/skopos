@@ -31,6 +31,7 @@ type InboxItem = { id: string; workspace_id?: string; title: string; tags: strin
 type InboxDetail = InboxItem & { content: string; content_html: string };
 type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string };
 
+type PlanRevisionInfo = { id: string; revision_no: number; content_hash: string; skills?: string[] };
 type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; created_at: string; updated_at: string };
 // wsLocked: a workflow item cannot move workspace (its runs, plan and
 // branch live there) — the server refuses it; the modal hides the picker.
@@ -92,6 +93,10 @@ const appState = () => ({
   previewItem: null as InboxDetail | null,
   previewRuns: [] as RunRow[],
   previewRunsLoading: false,
+  // The plan revision the preview shows for an item at the gate — Approve
+  // names exactly this one (M2), so the server refuses it if the planner
+  // wrote a newer revision after the page was read.
+  previewRevision: null as PlanRevisionInfo | null,
   workflowNote: '',
   workflowBusy: false,
   expandedInbox: null as InboxDetail | null,
@@ -900,8 +905,30 @@ const appState = () => ({
     });
     this.workflowNote = '';
     this.fetchPreviewRuns(item.id);
+    this.fetchPreviewRevision();
   },
-  closeInboxPreview() { this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.workflowNote = ''; this.workflowBusy = false; },
+  closeInboxPreview() { this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.workflowNote = ''; this.workflowBusy = false; },
+  // The newest revision of the previewed item's plan, while it waits at the
+  // gate (revisions list newest first).
+  async fetchPreviewRevision() {
+    const item = this.previewItem;
+    this.previewRevision = null;
+    if (!item || item.status !== 'awaiting_approval' || !item.plan_id) return;
+    const res = await this.authFetch('/api/plans/' + encodeURIComponent(item.plan_id) + '/revisions');
+    if (!res.ok || !this.previewItem || this.previewItem.id !== item.id) return;
+    const revs = (await res.json()) as PlanRevisionInfo[];
+    this.previewRevision = revs.length > 0 ? revs[0] : null;
+  },
+  // The modal's fallback Close (load failed / nothing to show). A method,
+  // not an inline `!a && !b` x-show: the CSP build evaluated that inline
+  // form wrongly and showed a second Close under every loaded item.
+  previewFailed(): boolean { return !this.previewLoading && !this.previewItem; },
+  workflowRevisionLabel(): string {
+    const r = this.previewRevision;
+    if (!r) return 'Loading the plan revision…';
+    const skills = r.skills && r.skills.length > 0 ? ' · skills: ' + r.skills.join(', ') : '';
+    return 'Approving plan revision #' + r.revision_no + skills;
+  },
   // Edit from the preview: capture the item BEFORE closing (close nulls
   // previewItem). One method because the CSP build's expression parser
   // accepts a single expression per handler — `a(); b()` throws.
@@ -948,6 +975,7 @@ const appState = () => ({
       document.querySelectorAll('[data-md-preview]').forEach((el) => { el.innerHTML = html; });
     });
     this.fetchPreviewRuns(id);
+    this.fetchPreviewRevision();
   },
   inboxStatusClass(s: string) {
     return {
@@ -978,6 +1006,7 @@ const appState = () => ({
   workflowShowApprove(): boolean { return !!this.previewItem && this.previewItem.status === 'awaiting_approval'; },
   workflowShowRetry(): boolean { return !!this.previewItem && (this.previewItem.status === 'blocked' || this.previewItem.status === 'failed'); },
   workflowShowMarkDone(): boolean { return !!this.previewItem && this.previewItem.status === 'in_review'; },
+  workflowShowReject(): boolean { return !!this.previewItem && this.isWorkflowStatus(this.previewItem.status); },
   workflowShowInput(): boolean { return this.workflowShowApprove() || this.workflowShowRetry() || this.workflowShowMarkDone(); },
   workflowNoteLabel(): string {
     if (this.workflowShowRetry()) return 'Answer to the blocker (sent to the agent)';
@@ -996,7 +1025,8 @@ const appState = () => ({
   // the :disabled-with-undefined CSP trap.
   workflowActionReady(action: string): boolean {
     if (this.workflowBusy) return false;
-    if (action === 'approve' || action === 'queue') return true;
+    if (action === 'approve') return !!this.previewRevision;
+    if (action === 'queue' || action === 'reject') return true;
     return !!this.workflowNote && this.workflowNote.trim().length > 0;
   },
   async postWorkflowAction(id: string, action: string, body: Record<string, string> | null, okMessage: string) {
@@ -1006,27 +1036,49 @@ const appState = () => ({
     if (body) opts.body = JSON.stringify(body);
     const res = await this.authFetch('/api/inbox/' + encodeURIComponent(id) + '/' + action, opts);
     this.workflowBusy = false;
-    if (!await this.handleBad(res, 'Action failed')) return;
+    if (!await this.handleBad(res, 'Action failed')) {
+      // A refusal often means the preview is stale (a newer revision, a
+      // status that moved on): show the current state.
+      await this.reloadPreview();
+      return;
+    }
     this.notify(okMessage, 'success');
     this.workflowNote = '';
     await this.fetchInbox();
     await this.reloadPreview();
   },
   queueInboxItem(id: string) { this.postWorkflowAction(id, 'queue', null, 'Queued for the agent pipeline'); },
-  approveInboxItem(id: string) { this.postWorkflowAction(id, 'approve', this.workflowNote ? { notes: this.workflowNote } : null, 'Approved'); },
+  approveInboxItem(id: string) {
+    const rev = this.previewRevision;
+    if (!rev) { this.notify('The plan revision has not loaded yet', 'error'); return; }
+    const body: Record<string, string> = { revision_id: rev.id, content_hash: rev.content_hash };
+    if (this.workflowNote.trim()) body.notes = this.workflowNote;
+    this.postWorkflowAction(id, 'approve', body, 'Approved revision #' + rev.revision_no);
+  },
+  // Reject leaves the pipeline for good (the item is discarded): confirm.
+  rejectInboxItem(id: string) {
+    const title = this.previewItem ? this.previewItem.title : 'this item';
+    this.confirm = {
+      open: true, title: 'Reject item', label: 'Reject', busy: false,
+      message: `Reject “${title}”? It leaves the agent pipeline and is discarded (restore brings it back to open).`,
+      pending: { kind: 'inboxreject', id },
+    };
+  },
   requestChangesInboxItem(id: string) { if (this.workflowNote.trim()) this.postWorkflowAction(id, 'request-changes', { notes: this.workflowNote }, 'Change requested'); },
   retryInboxItem(id: string) { if (this.workflowNote.trim()) this.postWorkflowAction(id, 'retry', { answer: this.workflowNote }, 'Requeued'); },
   markDoneInboxItem(id: string) { if (this.workflowNote.trim()) this.postWorkflowAction(id, 'mark-done', { head_sha: this.workflowNote }, 'Marked done'); },
   // The quick action for a card/row is the one that needs no input; Retry
   // and Mark done live in the modal (answer / head sha required).
+  // A plan at the gate is never approved from a card: the quick action
+  // opens the preview, where the plan and its revision are on screen.
   workflowQuickAction(item: InboxItem): string {
     if (item.status === 'open' && item.workspace_id) return 'Queue';
-    if (item.status === 'awaiting_approval') return 'Approve';
+    if (item.status === 'awaiting_approval') return 'Review plan';
     return '';
   },
   runQuickWorkflowAction(item: InboxItem) {
     if (item.status === 'open') this.queueInboxItem(item.id);
-    else if (item.status === 'awaiting_approval') this.approveInboxItem(item.id);
+    else if (item.status === 'awaiting_approval') this.openInboxPreview(item);
   },
 
   // ---- workers (derived from run history) ----
@@ -1898,6 +1950,13 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
   async confirmDelete() {
     const p = this.confirm.pending; if (!p) return;
     this.confirm.busy = true;
+    if (p.kind === 'inboxreject') {
+      this.confirm.busy = false;
+      this.confirm.open = false; this.confirm.pending = null;
+      const notes = this.workflowNote.trim();
+      await this.postWorkflowAction(p.id, 'reject', notes ? { notes } : null, 'Rejected');
+      return;
+    }
     // Discarding unsaved inbox edits closes the editor; nothing to delete.
     if (p.kind === 'inboxdiscard') {
       this.confirm.busy = false;

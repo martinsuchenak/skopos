@@ -61,7 +61,8 @@ func TestIntegrationStubWorkerRoundTrip(t *testing.T) {
 	planID := plan["id"].(string)
 	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/items", `{"title":"do the thing"}`), 201)
 	mustDo(t, worker.req("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+planID+`"}`), 200)
-	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"d2ce73d"}`), 201)
+	snap := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"d2ce73d"}`), 201).(map[string]any)
+	revID := snap["id"].(string)
 	mustDo(t, worker.reqH("POST", "/api/runs/"+runID+"/heartbeat", `{"worker_id":"w1"}`, leases[runID]), 204)
 	mustDo(t, worker.reqH("POST", "/api/runs/"+runID+"/report", `{"worker_id":"w1","status":"succeeded","summary":"plan ready","branch":"agent/stub-item"}`, leases[runID]), 200)
 
@@ -71,8 +72,10 @@ func TestIntegrationStubWorkerRoundTrip(t *testing.T) {
 		t.Fatalf("after plan: %v", got["status"])
 	}
 
-	// Approve (approver key) queues the implement run.
-	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/approve", `{}`), 200)
+	// Approve (approver key) queues the implement run. An approval must
+	// name the revision reviewed (M2): a bare approve is refused.
+	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/approve", `{}`), 400)
+	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/approve", `{"revision_id":"`+revID+`"}`), 200)
 	run = claim(t, worker, `{"worker_id":"w1","workspaces":["github.com/fortix/freedom3"]}`)
 	if run["stage"] != "implement" {
 		t.Fatalf("second claim should be implement, got %v", run["stage"])

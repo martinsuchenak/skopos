@@ -68,11 +68,14 @@ at two gates. Setup: [the pipeline tutorial](../guides/pipeline.md).
 
 **Your actions** need a key with the approver permission
 (`skopos key create … --approver`). Agent and worker keys never hold it. The
-actions are available in the dashboard (item preview), over REST
-(`POST /api/inbox/{id}/queue|approve|request-changes|retry|mark-done|reject`)
+actions are available in the dashboard (item preview), the CLI
+(`skopos inbox queue|plan|approve|request-changes|retry|mark-done|reject`),
+over REST (`POST /api/inbox/{id}/queue|approve|request-changes|retry|mark-done|reject`)
 and from the [Slack relay](../configuration.md#slack-relay-server).
 
-- **Approve** binds to the plan revision and its base commit.
+- **Approve** binds to the plan revision you reviewed and its base commit.
+  The REST call must name it (`revision_id`). The dashboard, CLI and Slack
+  send the revision they showed, and a newer revision is refused.
 - **Mark done** binds to the exact head commit.
 - **Request changes** sends an item back: from `awaiting_approval` to a
   re-plan, or from `in_review` to a re-implementation.

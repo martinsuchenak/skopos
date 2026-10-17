@@ -43,19 +43,18 @@ Open the dashboard, click **Set key**, and paste the root key for now.
 ## 2. Register the workspaces and mint keys
 
 A workspace is a repository, identified like `github.com/you/repo`. Register
-each repository the pipeline should work on:
-
-```bash
-curl -X POST https://skopos.example.com/api/workspaces \
-  -H "Authorization: Bearer $ROOT_KEY" -H 'Content-Type: application/json' \
-  -d '{"id":"github.com/you/repo","name":"repo"}'
-```
-
-Mint scoped keys with the root key:
+each repository the pipeline should work on, using the root key:
 
 ```bash
 export SKOPOS_SERVER_URL=https://skopos.example.com SKOPOS_API_KEY=$ROOT_KEY
 
+skopos workspace add --id github.com/you/repo --name repo   # inside a checkout, --id defaults to it
+skopos workspace list
+```
+
+Mint scoped keys:
+
+```bash
 # You: approves plans and reviews. Use it in the dashboard instead of the root key.
 skopos key create --name me --workspace github.com/you/repo --approver
 
@@ -184,15 +183,26 @@ skopos worker install             # launchd (macOS) or systemd (Linux); starts o
 - **Slack** (step 7): DM the bot `new repo: …`. Slack captures are queued
   immediately.
 
-**Queue it.** Open the item in the dashboard and click **Queue**. A worker
-claims the plan run within a poll interval.
+**Queue it.** Open the item in the dashboard and click **Queue**, or run
+`skopos inbox queue --id <item>`. A worker claims the plan run within a poll
+interval.
+
+Every action below also has a CLI form, run with your approver key:
+`skopos inbox plan|approve|request-changes|retry|mark-done|reject --id <item>`.
+In a terminal, `approve` and `mark-done` show the revision or head and ask you
+to confirm. Scripts must name it with `--revision` or `--head`.
 
 **Approve the plan.** The item reaches `awaiting_approval` with an
 **Enrichment** section: the steps, the size, the branch, the base commit and
-the selected skills. Then either:
+the selected skills. On a card, **Review plan** opens it; plans are never
+approved from a card. The preview shows which revision you're approving.
+Then either:
 - click **Approve**, with optional notes; they're appended for the
   implementer and override the plan where they conflict;
 - or click **Request changes**, with notes, to get a re-plan.
+
+The approval binds to that revision. If the planner wrote a newer one
+meanwhile, the server refuses and the preview reloads with the current plan.
 
 **Implementation runs.** The worker branches from the approved base, the agent
 commits each step, the worker runs `checks`, pushes, and the configured
@@ -208,8 +218,8 @@ on the item, and the run list (runner, executor, head commit). Then:
 question. Click **Retry** with your answer; it's appended to the item and the
 next run reads it.
 
-**Reject** is available in Slack (`reject`) and over REST
-(`POST /api/inbox/{id}/reject`).
+**Reject** (the preview's button, with a confirmation; `skopos inbox reject`;
+or `reject` in Slack) takes an item out of the pipeline.
 
 Every transition, approval and edit is in the item's timeline
 (`GET /api/inbox/{id}/timeline`), labelled with who acted and from where.
@@ -223,7 +233,10 @@ SKOPOS_SLACK_BOT_TOKEN=xoxb-...   SKOPOS_SLACK_APP_TOKEN=xapp-...
 SKOPOS_SLACK_USER_ID=U...         SKOPOS_SLACK_DEFAULT_WORKSPACE=github.com/you/repo
 ```
 
-The bot DMs you a thread per item at every gate. You reply with:
+The bot DMs you a thread per item at every gate. A plan-ready message lists
+the revision's steps, and `approve` approves exactly that revision. If the
+plan changed, or the relay restarted and can't know what you read, it posts
+the current plan and asks again. You reply with:
 - `approve` or `approve: notes`;
 - `revise: notes`;
 - `changes: notes`;

@@ -91,7 +91,7 @@ func relayStack(t *testing.T) (*inbox.Service, *runs.Service, *plans.Service, *f
 	inboxSvc.SetRunLister(runsListerAdapter{runs: runsSvc})
 
 	fake := &fakeProvider{}
-	relay := &slackRelay{inbox: inboxSvc, runs: runsSvc, defaultWS: "ws-a"}
+	relay := &slackRelay{inbox: inboxSvc, runs: runsSvc, revisions: plansSvc, defaultWS: "ws-a"}
 	notifySvc := notify.New(fake, relay)
 	relay.SetNotifier(notifySvc)
 	inboxSvc.SetItemNotifier(relay)
@@ -487,5 +487,74 @@ func TestCaptureTags(t *testing.T) {
 	want := []string{"slack-new", "php-dto-migration", "qa.e2e"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("captureTags = %v, want %v", got, want)
+	}
+}
+
+// M2: a Slack approve binds to the revision the plan-ready message showed.
+// The message lists that revision's steps; after a restart (nothing
+// recorded) or a newer revision, the relay re-posts the current plan
+// instead of approving something Martin did not read.
+func TestRelayApproveBindsShownRevision(t *testing.T) {
+	svc, _, plansSvc, fake, relay := relayStack(t)
+	root := context.Background()
+	item := mustReachGate(t, svc, plansSvc, "bound approve")
+	item, _ = svc.GetItem(root, item.ID) // with its plan link
+	ready := ""
+	for _, m := range fake.texts() {
+		if strings.Contains(m, "Plan ready") {
+			ready = m
+		}
+	}
+	if !strings.Contains(ready, "revision #1") || !strings.Contains(ready, "1. step 1") {
+		t.Fatalf("plan-ready must name the revision and list its steps: %q", ready)
+	}
+
+	// Restart: a fresh relay has no record of what was shown.
+	fresh := &slackRelay{inbox: svc, runs: relay.runs, revisions: plansSvc, defaultWS: "ws-a", notifier: relay.notifier}
+	if !fresh.Apply(root, item.ID, "approve") {
+		t.Fatal("approve must be answered")
+	}
+	if got, _ := svc.GetItem(root, item.ID); got.Status != inbox.StatusAwaitingApproval {
+		t.Fatalf("an approve with no shown revision must not approve: %s", got.Status)
+	}
+	texts := strings.Join(fake.texts(), "\n")
+	if !strings.Contains(texts, "can't tell which plan revision") {
+		t.Fatalf("restart case must explain and re-post: %v", fake.texts())
+	}
+
+	// A newer revision lands after the re-post (an unlocked plan re-snapshot).
+	if _, err := plansSvc.CreateRevision(root, item.PlanID, "base2"); err != nil {
+		t.Fatal(err)
+	}
+	if !fresh.Apply(root, item.ID, "approve") {
+		t.Fatal("approve must be answered")
+	}
+	if got, _ := svc.GetItem(root, item.ID); got.Status != inbox.StatusAwaitingApproval {
+		t.Fatalf("a stale approve must not approve: %s", got.Status)
+	}
+	if last := fake.last().text; !strings.Contains(last, "revision #2") {
+		t.Fatalf("the current plan (revision #2) must be re-posted: %q", last)
+	}
+	// Now it approves exactly revision #2.
+	if !fresh.Apply(root, item.ID, "approve") {
+		t.Fatal("approve must be handled")
+	}
+	got, _ := svc.GetItem(root, item.ID)
+	if got.Status != inbox.StatusApproved {
+		t.Fatalf("approve of the shown revision: %s", got.Status)
+	}
+	rev, _ := plansSvc.LatestRevision(root, item.PlanID)
+	if rev.RevisionNo != 2 || rev.LockedAt == nil {
+		t.Fatalf("revision #2 must be the locked one: %+v", rev)
+	}
+}
+
+// After a revise the item carries several Enrichment sections; the
+// plan-ready message quotes the newest.
+func TestPlanReadyUsesNewestEnrichment(t *testing.T) {
+	content := "idea\n\n## Enrichment — worker\n\nOLD plan summary\n\n### Steps\n\n1. old\n\n## Review notes\n\nsplit it\n\n## Enrichment — worker\n\nNEW plan summary\n\n### Steps\n\n1. new\n"
+	got := lastSectionOf(content, "## Enrichment")
+	if !strings.Contains(got, "NEW plan summary") || strings.Contains(got, "OLD") {
+		t.Fatalf("newest enrichment: %q", got)
 	}
 }

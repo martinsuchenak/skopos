@@ -439,7 +439,7 @@ func serveCmd() *cli.Command {
 			} else {
 				captureWS := os.Getenv("SKOPOS_SLACK_DEFAULT_WORKSPACE")
 				log.Info("slack relay enabled", "capture_workspace", captureWS)
-				relay := &slackRelay{inbox: inboxService, runs: runsService, defaultWS: captureWS, log: log, resolveWS: func(selector string) (string, bool) {
+				relay := &slackRelay{inbox: inboxService, runs: runsService, revisions: plansService, defaultWS: captureWS, log: log, resolveWS: func(selector string) (string, bool) {
 					// Exact id or a unique "/suffix" (mail-processor ->
 					// github.com/fortix/mail-processor); ambiguous or
 					// unknown = not a selector.

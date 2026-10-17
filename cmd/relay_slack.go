@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/martinsuchenak/skopos/internal/plans"
 	"regexp"
 	"strings"
 	"sync"
@@ -32,10 +34,22 @@ type slackRelay struct {
 	resolveWS  func(selector string) (string, bool)
 	notifier   *notify.Notifier
 	rebindHook func(ts, itemID string) // tests; nil in production
-	log        notify.Logger           // nil = silent (tests)
+	// revisions reads plan revisions: a plan-ready message shows one, and
+	// an `approve` reply approves exactly that one (M2).
+	revisions planRevisions
+	log       notify.Logger // nil = silent (tests)
 
 	mu      sync.Mutex
 	pending map[string][]pendingReply // itemID -> replies waiting for an admissible status
+	// shown is the plan revision the latest plan-ready message showed per
+	// item. In memory: after a restart the relay cannot know what Martin
+	// read, so an approve then re-posts the current plan (fail closed).
+	shown map[string]string
+}
+
+// planRevisions is the slice of the plans service the relay needs.
+type planRevisions interface {
+	LatestRevision(ctx context.Context, planID string) (*plans.Revision, error)
 }
 
 type pendingReply struct{ text string }
@@ -201,9 +215,17 @@ func (r *slackRelay) applyCommand(ctx context.Context, item *inbox.Item, cmd, ar
 			r.post(ctx, thread, "⚠️ Nothing to approve — the item is "+statusWord(item.Status)+".")
 			return true
 		}
-		if _, err := r.inbox.Approve(relayCtx, item.ID, inbox.ApproveInput{Notes: arg, Via: audit.ViaSlack}); err != nil {
-			if strings.Contains(err.Error(), "stale") {
-				r.post(ctx, thread, "⚠️ The plan changed since the plan-ready message — a new plan-ready follows; approve that one.")
+		// Approve exactly the revision the plan-ready message showed (M2).
+		revID := r.shownRevision(item.ID)
+		if revID == "" {
+			r.post(ctx, thread, "⚠️ I can't tell which plan revision you read (the relay restarted since the plan-ready message). The current plan follows — reply `approve` to it.")
+			r.postPlanReady(ctx, item.ID)
+			return true
+		}
+		if _, err := r.inbox.Approve(relayCtx, item.ID, inbox.ApproveInput{Notes: arg, Via: audit.ViaSlack, RevisionID: revID}); err != nil {
+			if errors.Is(err, inbox.ErrStaleRevision) || errors.Is(err, plans.ErrStaleRevision) {
+				r.post(ctx, thread, "⚠️ The plan changed since the message you replied to. The current plan follows — approve that one.")
+				r.postPlanReady(ctx, item.ID)
 				return true
 			}
 			return fail(err)
@@ -274,22 +296,110 @@ func (r *slackRelay) ItemForThread(parent string) string {
 // NotifyItem formats and posts the gate message for a status change, then
 // drains the item's buffered replies (a finished run may admit them).
 func (r *slackRelay) NotifyItem(ctx context.Context, itemID string, from, to inbox.Status) {
+	if to == inbox.StatusAwaitingApproval {
+		r.postPlanReady(ctx, itemID)
+		r.drain(ctx, itemID)
+		return
+	}
 	msg := r.formatGate(itemID, from, to)
 	if msg == "" {
 		return
 	}
+	r.postInThread(ctx, itemID, msg)
+	r.drain(ctx, itemID)
+}
+
+// postInThread posts msg in the item's thread (starting it if needed) and
+// reports whether Slack accepted it.
+func (r *slackRelay) postInThread(ctx context.Context, itemID, msg string) bool {
 	item, err := r.inbox.GetItem(context.Background(), itemID)
-	if err != nil {
-		return
+	if err != nil || r.notifier == nil {
+		return false
 	}
 	if item.SlackThreadTS == "" {
-		if ts := r.notifier.Notify(ctx, "", msg); ts != "" {
+		ts := r.notifier.Notify(ctx, "", msg)
+		if ts != "" {
 			r.bindThread(ctx, itemID, ts)
 		}
-	} else {
-		r.notifier.Notify(ctx, item.SlackThreadTS, msg)
+		return ts != ""
 	}
-	r.drain(ctx, itemID)
+	return r.notifier.Notify(ctx, item.SlackThreadTS, msg) != ""
+}
+
+// postPlanReady posts the plan at the gate — the revision's own steps, not
+// prose scraped from the item — and records which revision was shown, so
+// the `approve` reply binds to exactly it.
+func (r *slackRelay) postPlanReady(ctx context.Context, itemID string) {
+	msg, revID := r.planReadyMessage(itemID)
+	if msg == "" {
+		return
+	}
+	if r.postInThread(ctx, itemID, msg) && revID != "" {
+		r.mu.Lock()
+		if r.shown == nil {
+			r.shown = map[string]string{}
+		}
+		r.shown[itemID] = revID
+		r.mu.Unlock()
+	}
+}
+
+func (r *slackRelay) shownRevision(itemID string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.shown[itemID]
+}
+
+// planReadyMessage formats the gate message for the item's latest plan
+// revision: the summary from the newest Enrichment section, the revision's
+// steps and skills, and the planner's questions.
+func (r *slackRelay) planReadyMessage(itemID string) (string, string) {
+	item, err := r.inbox.GetItem(context.Background(), itemID)
+	if err != nil {
+		return "", ""
+	}
+	var rev *plans.Revision
+	if item.PlanID != "" && r.revisions != nil {
+		rev, _ = r.revisions.LatestRevision(relayCtx(), item.PlanID)
+	}
+	var b strings.Builder
+	b.WriteString("🧭 *Plan ready* · " + item.Title)
+	if rev != nil {
+		fmt.Fprintf(&b, " · revision #%d", rev.RevisionNo)
+	}
+	b.WriteString("\n\n")
+	enrich := lastSectionOf(item.Content, "## Enrichment")
+	if i := strings.Index(enrich, "### Steps"); i >= 0 {
+		enrich = strings.TrimSpace(enrich[:i])
+	}
+	if enrich != "" {
+		b.WriteString(enrich + "\n\n")
+	}
+	if rev != nil {
+		b.WriteString("*Steps:*\n")
+		n := 0
+		for _, st := range rev.Steps {
+			if st.Phase == "review" {
+				continue
+			}
+			n++
+			fmt.Fprintf(&b, "%d. %s\n", n, st.Title)
+		}
+		if len(rev.Skills) > 0 {
+			b.WriteString("*Skills:* " + strings.Join(rev.Skills, ", ") + "\n")
+		}
+	} else if enrich == "" {
+		b.WriteString("_Plan details in skopos._\n")
+	}
+	if q := lastSectionOf(item.Content, "## Questions"); q != "" {
+		b.WriteString("\n*Questions for you:*\n" + q + "\n")
+	}
+	b.WriteString("\n`approve` · `approve: <notes>` · `revise: <notes>` · `reject`")
+	revID := ""
+	if rev != nil {
+		revID = rev.ID
+	}
+	return b.String(), revID
 }
 
 // formatGate builds the per-status message with command hints (the
@@ -302,15 +412,8 @@ func (r *slackRelay) formatGate(itemID string, from, to inbox.Status) string {
 	title := item.Title
 	switch to {
 	case inbox.StatusAwaitingApproval:
-		body := sectionOf(item.Content, "## Enrichment")
-		if q := sectionOf(item.Content, "## Questions"); q != "" {
-			body += "\n\n*Questions for you:*\n" + q
-		}
-		if body == "" {
-			body = "_Plan details in skopos._"
-		}
-		return "🧭 *Plan ready* · " + title + "\n\n" + body +
-			"\n\n`approve` · `approve: <notes>` · `revise: <notes>` · `reject`"
+		msg, _ := r.planReadyMessage(itemID)
+		return msg
 	case inbox.StatusBlocked, inbox.StatusFailed:
 		reason := ""
 		if runs, err := r.runs.ListRuns(context.Background(), itemID); err == nil {
@@ -467,6 +570,17 @@ func (r *slackRelay) post(ctx context.Context, parent, text string) {
 	if r.notifier != nil {
 		r.notifier.Notify(ctx, parent, text)
 	}
+}
+
+// lastSectionOf is sectionOf for the LAST occurrence of heading — after a
+// revise the item carries several Enrichment sections, and the newest one
+// describes the plan at the gate.
+func lastSectionOf(content, heading string) string {
+	i := strings.LastIndex(content, heading)
+	if i < 0 {
+		return ""
+	}
+	return sectionOf(content[i:], heading)
 }
 
 // sectionOf extracts a markdown section (heading included) from content.

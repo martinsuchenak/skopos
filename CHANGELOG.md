@@ -15,6 +15,11 @@ versions follow [Semantic Versioning](https://semver.org/).
   servers (the daemon refuses to start otherwise). The agent CLI must
   support `--setting-sources`, `--restricted` and `--strict-mcp-config`;
   the daemon and `worker check` verify this.
+- **`POST /api/inbox/{id}/approve` requires `revision_id`**, the plan
+  revision the approver reviewed. Previously it bound to whatever was latest
+  at click time, possibly a revision the planner wrote after the page was
+  read. The dashboard, CLI and Slack relay all send it; scripts calling the
+  endpoint must too (`GET /api/plans/{plan_id}/revisions`).
 
 ### Security
 
@@ -55,6 +60,18 @@ versions follow [Semantic Versioning](https://semver.org/).
   Slack, scaling and troubleshooting. The worker reference is restructured,
   and the inbox and plans concepts now document the agent workflow and plan
   revisions.
+- **Workflow actions from the CLI:** `skopos inbox plan | queue | approve |
+  request-changes | retry | mark-done | reject`.
+  - `plan` shows the revision an approval would bind: steps, skills and
+    questions.
+  - In a terminal, `approve` and `mark-done` show what they approve and ask
+    to confirm. Without a terminal they require `--revision` or `--head`.
+- **`skopos workspace add | list`.** Registering a workspace no longer needs
+  `curl`.
+- **Dashboard Reject.** The item preview has Reject, with a confirmation.
+- **Status on workflow cards.** Kanban cards in the Agent workflow lane show
+  their status (queued, blocked, awaiting approval…); the lane mixed them all
+  with no way to tell them apart.
 - **`skopos worker runner add | list | test`.** Configure runners without
   reading the docs.
   - **`add`** is a wizard: it detects installed CLIs, lists opencode's models,
@@ -92,6 +109,21 @@ versions follow [Semantic Versioning](https://semver.org/).
   the wrong repository. Every agent command now gets `PWD=<run dir>`, and
   opencode also gets `--dir`.
 - **`accounts.model` was ignored** — it never reached the agent run.
+- **Approvals are bound to what you saw (review M2).**
+  - **Dashboard:** the preview fetches and shows the plan revision ("Approving
+    plan revision #N"), and Approve sends it. A refusal reloads the preview.
+    Kanban and list cards no longer approve: their quick action is **Review
+    plan**.
+  - **Slack:** plan-ready messages list the revision's own steps and skills,
+    and `approve` approves exactly the revision shown. If the plan changed,
+    or the relay restarted and can't know what you read, it re-posts the
+    current plan; the old reply promised a re-post that never came.
+  - **Newest plan in Slack:** plan-ready messages now quote the newest
+    Enrichment. After a revise they used to show the first, outdated plan.
+- **Discard on workflow items** showed in the list and always failed (400);
+  it's hidden now, and Reject replaces it.
+- **Item preview showed a second Close** under every loaded item, and an
+  approved item's preview hid its Reject.
 - **Approval and change-request notes reached agents only from Slack.** The
   relay appended them to the item, which is where the stage prompts read
   them. The dashboard and REST endpoints only recorded them in the audit

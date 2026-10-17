@@ -25,7 +25,7 @@ func inboxCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "inbox",
 		Usage: "Manage the workspace inbox of unprocessed work",
-		Commands: []*cli.Command{
+		Commands: append([]*cli.Command{
 			inboxAddCmd(),
 			inboxListCmd(),
 			inboxShowCmd(),
@@ -40,7 +40,7 @@ func inboxCmd() *cli.Command {
 			inboxPurgeCmd(),
 			inboxDeleteCmd(),
 			inboxMigrateWorkflowCmd(),
-		},
+		}, inboxWorkflowCmds()...),
 	}
 }
 

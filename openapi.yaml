@@ -1309,28 +1309,29 @@ paths:
 
   /api/inbox/{id}/approve:
     post:
-      summary: Approve the plan under review, bound to the revision Martin saw (approver permission required)
-      description: awaiting_approval → approved. The item must link a plan with a revision; revision_id/content_hash bind the approval to what was shown (409 when stale). Notes may carry overrides (wr, runner, tags).
+      summary: Approve the plan under review, bound to the revision the approver saw (approver permission required)
+      description: awaiting_approval → approved. revision_id is required — the revision the approving client rendered (GET /api/plans/{plan_id}/revisions); a newer revision or a plan edited after its snapshot is refused with 409. Notes are appended to the item as "## Approval notes" for the implementer.
       operationId: approveInboxItem
       security: [{ BearerAuth: [] }]
       parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
+              required: [revision_id]
               properties:
                 notes: { type: string }
                 revision_id: { type: string, description: The revision the approving client rendered }
-                content_hash: { type: string }
+                content_hash: { type: string, description: Optional stronger binding to the revision's content hash }
       responses:
         "200":
           description: Approved item
           content:
             application/json:
               schema: { $ref: "#/components/schemas/InboxItem" }
-        "400": { description: Illegal transition, no linked plan, or no revision }
+        "400": { description: Missing revision_id, illegal transition, no linked plan, or no revision }
         "401": { description: Unauthorized }
         "403": { description: Approver permission required }
         "404": { description: Not found }
