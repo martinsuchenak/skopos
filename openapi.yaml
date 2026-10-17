@@ -471,6 +471,51 @@ paths:
         "404": { description: Unknown plan }
         "409": { description: Locked (guard) }
 
+  /api/plans/{id}/candidates:
+    post:
+      summary: One planner's candidate in a multi-agent plan round (executor path)
+      description: >-
+        Snapshots an open candidate revision WITHOUT touching the plan's live
+        steps. The approver picks one at the gate (approve with its
+        revision_id); approving materialises it as the plan, locks it and
+        supersedes its siblings. Guarded like replan (item in planning, plan
+        unlocked).
+      operationId: createPlanCandidate
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PlanId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [group_id, steps]
+              properties:
+                group_id: { type: string, description: The plan group (run_groups) this candidate belongs to }
+                label: { type: string, description: 'Its planner: "runner" or "focus@runner"' }
+                base_sha: { type: string }
+                steps:
+                  type: array
+                  items:
+                    type: object
+                    required: [title]
+                    properties:
+                      title: { type: string }
+                      description: { type: string }
+                skills:
+                  type: array
+                  items: { type: string }
+      responses:
+        "201":
+          description: The candidate revision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlanRevision" }
+        "400": { description: Invalid input }
+        "401": { description: Unauthorized }
+        "404": { description: Plan not found }
+        "409": { description: Plan locked or not being planned }
+
   /api/plans/{id}/replan:
     post:
       summary: Atomic re-plan — replace all non-review steps and snapshot (executor path)
@@ -1353,6 +1398,13 @@ paths:
               required: [notes]
               properties:
                 notes: { type: string }
+                revision_id:
+                  type: string
+                  description: >-
+                    At a multi-agent plan gate: the open candidate to revise —
+                    one planner (its runner) re-plans from it with the notes.
+                    Omitted, every planner re-plans (a new round). Either way
+                    the round's open candidates are superseded.
       responses:
         "200":
           description: Item returned to planning
@@ -1675,6 +1727,35 @@ paths:
                 items: { $ref: "#/components/schemas/RunGroup" }
         "400": { description: item_id missing }
         "401": { description: Unauthorized }
+
+  /api/runs/{id}/pin-base:
+    post:
+      summary: Pin a plan group's base commit (first member wins); returns the pinned base
+      description: Every planner of a multi-agent round plans at the same commit, so candidates differ in judgement, not input.
+      operationId: pinRunGroupBase
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/RunId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [base_sha]
+              properties:
+                base_sha: { type: string }
+      responses:
+        "200":
+          description: The group's pinned base
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  base_sha: { type: string }
+        "400": { description: base_sha missing }
+        "401": { description: Unauthorized }
+        "404": { description: Unknown run }
 
   /api/runs/claim:
     post:
@@ -2287,6 +2368,9 @@ components:
           items: { type: string }
           description: Repo skills the plan selected — part of the approved content
         base_sha: { type: string, description: The commit the planner read }
+        group_id: { type: string, description: 'Candidates only: the plan group that produced it' }
+        label: { type: string, description: 'Candidates only: its planner ("runner" / "focus@runner")' }
+        candidate_state: { type: string, enum: [open, approved, superseded], description: 'Candidates only' }
         created_at: { type: string, format: date-time }
         locked_at: { type: string, format: date-time, nullable: true }
 

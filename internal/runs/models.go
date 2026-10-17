@@ -289,4 +289,8 @@ type QueueInput struct {
 	Stage       string
 	Branch      string
 	BaseSHA     string
+	// Runner pins the run to a runner regardless of the workspace
+	// preference; Single never opens a group (a seeded plan revise).
+	Runner string
+	Single bool
 }

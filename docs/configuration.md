@@ -32,7 +32,7 @@ Optional — if absent, skopos runs on defaults. The file is gitignored (may con
 | `--vector-store` | `SKOPOS_VECTOR_STORE` | `codeindex.embeddings.vector_store` | `sqlite` | Vector backend: `sqlite` (embedded brute force) or `qdrant` (external, monorepo scale) |
 | `--qdrant-url` | `SKOPOS_QDRANT_URL` | `codeindex.embeddings.qdrant_url` | (empty) | Qdrant REST address when `--vector-store=qdrant` (e.g. `http://localhost:6333`) |
 | `--qdrant-api-key` | `SKOPOS_QDRANT_API_KEY` | `codeindex.embeddings.qdrant_api_key` | (empty) | Qdrant API key when required |
-| `--run-stage` | — | — | (none) | Agent pipeline routing, `<workspace>:<stage>=<runner>`, repeatable; review/qa take a `[focus@]runner,…` list — see [Stage routing](#stage-routing-agent-pipeline) |
+| `--run-stage` | — | — | (none) | Agent pipeline routing, `<workspace>:<stage>=<runner>`, repeatable; plan/review/qa take a `[focus@]runner,…` list — see [Stage routing](#stage-routing-agent-pipeline) |
 | `--stage-policy` | — | — | `any-blocks`, 60m | How a multi-agent stage is decided, `<workspace>:<stage>=<policy>[,early-exit][,timeout=<duration>]` — see [Multi-agent review and QA](#multi-agent-review-and-qa) |
 
 ### Client (written by `skopos setup`)
@@ -130,8 +130,35 @@ skopos serve \
 - **Parallelism** comes from workers: a worker runs one job at a time, so
   members claimed by one worker run one after another.
 
-`plan` and `implement` take one runner; a list there keeps the first runner
-and logs a warning.
+#### Multi-agent planning
+
+Optional, like the above. A `plan` list runs several planners, each writing
+a **candidate**:
+
+```bash
+skopos serve --run-stage github.com/you/repo:plan=claude,opencode-glm,opencode-qwen
+```
+
+- **Candidates don't touch the plan.** Each planner writes a candidate
+  revision; the plan itself is created and linked when the first planner
+  starts, and stays empty until you approve one.
+- **Same input.** The first planner pins the base commit; the others plan
+  at that commit too, so candidates differ in judgement only.
+- **The gate opens** once every planner is done (or at the group's
+  timeout) with at least one candidate. If none produced a plan, the item
+  is blocked with their reasons and questions.
+- **You approve one.** The dashboard shows a card per candidate (steps,
+  skills) with **Approve** and **Revise**; Slack lists them numbered
+  (`approve 2`, `approve glm`, `revise 2: <notes>`); the CLI shows them in
+  `skopos inbox plan` and asks which on `approve`. The approved candidate
+  becomes the plan exactly (same step ids, re-verified hash) and the
+  approval names it; its siblings are superseded.
+- **Changes.** *Revise* one candidate: one planner (its runner) reworks it
+  with your notes. *Re-plan all*: every planner runs again as round 2. Either
+  way the old round's candidates can no longer be approved.
+
+`implement` takes one runner; a list there keeps the first runner and logs a
+warning.
 
 ## Slack relay (server)
 

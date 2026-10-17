@@ -184,3 +184,22 @@ func (h *Handler) Groups(w http.ResponseWriter, r *http.Request) {
 	}
 	rest.RespondJSON(w, http.StatusOK, groups)
 }
+
+// PinBase handles POST /api/runs/{id}/pin-base {base_sha}: a plan group
+// member reports the base it would plan at; the response is the group's
+// pinned base (the first member's), which every member must use.
+func (h *Handler) PinBase(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		BaseSHA string `json:"base_sha"`
+	}
+	if err := rest.DecodeJSON(w, r, &in); err != nil {
+		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	base, err := h.service.PinGroupBase(r.Context(), r.PathValue("id"), in.BaseSHA)
+	if err != nil {
+		h.respondRunError(w, err, "pin base")
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, map[string]string{"base_sha": base})
+}

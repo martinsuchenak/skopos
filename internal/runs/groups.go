@@ -16,10 +16,11 @@ import (
 // unless a workspace routes a stage to two or more members, and then
 // nothing here runs.
 
-// groupStage reports whether a stage may be fanned out as a group.
-// Phase 1: review and qa (read-only, no approval-rule change).
+// groupStage reports whether a stage may be fanned out as a group: review
+// and qa (decided by policy) and plan (every success is a candidate).
+// Implement never fans out (design §5).
 func groupStage(stage string) bool {
-	return stage == StageReview || stage == StageQA
+	return stage == StageReview || stage == StageQA || stage == StagePlan
 }
 
 // queueGroup opens a group for the stage and queues one run per member, in
@@ -27,6 +28,15 @@ func groupStage(stage string) bool {
 func (s *Service) queueGroup(ctx context.Context, in QueueInput, members []Member) (*Run, error) {
 	prefs := s.prefs[in.WorkspaceID]
 	policy := prefs.PolicyFor(in.Stage)
+	if in.Stage == StagePlan {
+		policy.Policy, policy.EarlyExit = PolicyCandidates, false
+		// A new plan round closes the previous one.
+		if s.planRoundStart != nil {
+			if err := s.planRoundStart(ctx, in.ItemID); err != nil {
+				return nil, err
+			}
+		}
+	}
 	round, err := s.storage.NextRound(ctx, in.ItemID, in.Stage)
 	if err != nil {
 		return nil, err
@@ -94,6 +104,19 @@ func evaluateGroup(g *Group, members []Run, final bool) groupDecision {
 	}
 	failReason := fmt.Sprintf("%s group failed (%s): %s", g.Stage, g.Policy, strings.Join(failers, ", "))
 	switch g.Policy {
+	case PolicyCandidates:
+		// Planning: every success is a candidate; the gate opens once all
+		// members are done (or at the deadline) with at least one.
+		if pending > 0 {
+			return groupDecision{}
+		}
+		if passed > 0 {
+			return groupDecision{true, OutcomeCandidates, ""}
+		}
+		if failed > 0 {
+			return groupDecision{true, OutcomeFail, "plan group: no planner produced a plan (" + strings.Join(failers, ", ") + ")"}
+		}
+		return groupDecision{true, OutcomeTimeout, "plan group: no planner finished before the deadline"}
 	case PolicyMajority:
 		if g.EarlyExit && !final {
 			if failed*2 > g.Size {
@@ -206,6 +229,13 @@ func (s *Service) applyGroupDecision(ctx context.Context, g *Group, members []Ru
 	case OutcomePass:
 		rep := representative(members)
 		s.advance(ctx, &rep, agent)
+	case OutcomeCandidates:
+		// The plan run IS the planning phase: walk queued → planning →
+		// awaiting_approval (the first move fails quietly when already there).
+		_ = s.itemTransition(ctx, g.ItemID, "planning", "", agent)
+		if err := s.itemTransition(ctx, g.ItemID, "awaiting_approval", "", agent); err != nil {
+			slog.Warn("opening the plan gate after group decision", "group", g.ID, "err", err)
+		}
 	default:
 		if err := s.itemTransition(ctx, g.ItemID, "blocked", d.reason, agent); err != nil {
 			slog.Warn("blocking item after group decision", "group", g.ID, "err", err)
@@ -226,11 +256,13 @@ func representative(members []Run) Run {
 }
 
 func groupSummaryHeading(g *Group) string {
-	name := "Review"
-	if g.Stage == StageQA {
-		name = "QA"
+	switch g.Stage {
+	case StagePlan:
+		return fmt.Sprintf("Plan candidates — round %d", g.Round)
+	case StageQA:
+		return fmt.Sprintf("QA summary — round %d", g.Round)
 	}
-	return fmt.Sprintf("%s summary — round %d", name, g.Round)
+	return fmt.Sprintf("Review summary — round %d", g.Round)
 }
 
 // groupSummary is the one section the implementer and the human read: the
@@ -252,8 +284,14 @@ func groupSummary(g *Group, members []Run) string {
 		switch r.Status {
 		case StatusSucceeded:
 			status = "pass"
+			if g.Stage == StagePlan {
+				status = "candidate ready"
+			}
 		case StatusFailed:
 			status = "fail"
+			if g.Stage == StagePlan {
+				status = "no plan"
+			}
 		}
 		line := fmt.Sprintf("- **%s**: %s", memberLabel(r), status)
 		if blocking+nits > 0 {

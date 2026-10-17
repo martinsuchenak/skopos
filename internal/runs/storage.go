@@ -393,7 +393,10 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 // preference, as before.
 func claimable(r *Run, prefs map[string]*WorkspacePrefs, runnerSet map[string]bool) bool {
 	pref := prefs[r.WorkspaceID].StageRunner(r.Stage)
-	if r.GroupID != "" {
+	// A group member, or a run pinned at queue time where the workspace has
+	// no single-runner preference (a seeded revise of a group stage), waits
+	// for its own runner.
+	if r.GroupID != "" || (pref == "" && r.Runner != "") {
 		pref = r.Runner
 	}
 	return pref == "" || runnerSet[pref]

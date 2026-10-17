@@ -10,6 +10,20 @@ Repository: {{.Workspace}} (checked out in the current directory, branch {{.Base
 # Review notes from Martin on the previous plan (address every point)
 
 {{.Notes}}
+{{end}}{{if .Seed}}
+# Start from this plan
+
+Martin asked for changes to this candidate plan (one of several written for this item). Revise
+it to address his review notes above; keep what he did not object to.
+
+{{range $i, $st := .Seed}}{{inc $i}}. {{$st.Title}}{{if $st.Description}} — {{$st.Description}}{{end}}
+{{end}}{{end}}{{if .Focus}}
+# Your focus: {{.Focus.Name}}
+
+Several planners are writing independent plans for this item; Martin will compare them. Plan
+with this brief in mind, but the plan must still cover the whole item.
+
+{{.Focus.Body}}
 {{end}}{{if .Instructions}}
 # Repository instructions (AGENTS.md at the base you are planning from)
 

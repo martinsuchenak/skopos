@@ -242,6 +242,25 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 		return inboxService.AppendSection(ctx, itemID, heading, body, audit.ViaWorker)
 	})
 	inboxService.SetRunQueuer(runsService)
+	// Plan-group hooks, as serve.go wires them.
+	runsService.SetPlanHooks(func(ctx context.Context, itemID string) error {
+		item, err := inboxService.GetItem(ctx, itemID)
+		if err != nil || item.PlanID == "" {
+			return nil
+		}
+		return plansService.SupersedeOpenCandidates(ctx, item.PlanID)
+	}, func(ctx context.Context, itemID string) error {
+		item, err := inboxService.GetItem(ctx, itemID)
+		if err != nil || item.PlanID != "" {
+			return err
+		}
+		plan, err := plansService.CreatePlan(ctx, plans.CreatePlanInput{WorkspaceID: item.WorkspaceID, Name: item.Title, AuthorAgentID: "skopos"})
+		if err != nil {
+			return err
+		}
+		_, err = inboxService.LinkPlan(ctx, itemID, plan.ID)
+		return err
+	})
 	if configure != nil {
 		configure(runsService)
 	}
@@ -373,4 +392,162 @@ func TestIntegrationReviewGroupRoundTrip(t *testing.T) {
 	if m0["cost_usd"].(float64) != 0.31 || len(m0["findings"].([]any)) != 1 {
 		t.Fatalf("member carries cost and findings: %v", m0)
 	}
+}
+
+// Multi-agent planning over REST: two planners write candidates at the
+// group's pinned base without touching the live plan; the gate opens with
+// both; approving candidate 2 makes it the plan (same step ids, so the
+// approval binds the candidate itself), supersedes candidate 1, and the
+// implement run is bound to candidate 2 and its base.
+func TestIntegrationPlanCandidatesRoundTrip(t *testing.T) {
+	const ws = "github.com/fortix/freedom3"
+	_, baseURL := workerStackWith(t, func(r *runs.Service) {
+		r.SetPrefs(map[string]*runs.WorkspacePrefs{ws: {
+			Stages: map[string]string{"implement": "claude"},
+			Groups: map[string][]runs.Member{"plan": {{Runner: "claude"}, {Runner: "glm"}}},
+		}})
+	})
+	root := workerClient{base: baseURL, key: "root-secret"}
+	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`","name":"freedom3"}`), 201)
+	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"relay","workspaces":["`+ws+`"],"approver":true}`)}
+	leases := map[string]string{}
+	worker := workerClient{base: baseURL, key: mint(t, root, `{"name":"worker-1","workspaces":["`+ws+`"]}`), lease: leases}
+
+	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"three ways","author_agent_id":"martin"}`), 201).(map[string]any)
+	itemID := item["id"].(string)
+	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/queue", ""), 200)
+
+	a := claim(t, worker, `{"worker_id":"w-claude","runners":["claude"],"workspaces":["`+ws+`"]}`)
+	b := claim(t, worker, `{"worker_id":"w-glm","runners":["glm"],"workspaces":["`+ws+`"]}`)
+	if a["stage"] != "plan" || b["stage"] != "plan" || a["group_id"] == nil || a["group_id"] != b["group_id"] {
+		t.Fatalf("plan members: %v / %v", a, b)
+	}
+	got := mustJSON(t, root.req("GET", "/api/inbox/"+itemID, ""), 200).(map[string]any)
+	planID, _ := got["plan_id"].(string)
+	if planID == "" || got["status"] != "planning" {
+		t.Fatalf("claiming a member must link the plan: %v", got)
+	}
+	aID, bID := a["id"].(string), b["id"].(string)
+	// The first member pins the base; the second gets it back.
+	pin := mustJSON(t, worker.reqH("POST", "/api/runs/"+aID+"/pin-base", `{"base_sha":"aaaa111"}`, leases[aID]), 200).(map[string]any)
+	pin2 := mustJSON(t, worker.reqH("POST", "/api/runs/"+bID+"/pin-base", `{"base_sha":"bbbb222"}`, leases[bID]), 200).(map[string]any)
+	if pin["base_sha"] != "aaaa111" || pin2["base_sha"] != "aaaa111" {
+		t.Fatalf("pinned base: %v / %v", pin, pin2)
+	}
+	c1 := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/candidates", `{"base_sha":"aaaa111","group_id":"`+a["group_id"].(string)+`","label":"claude","steps":[{"title":"small fix"}]}`), 201).(map[string]any)
+	c2 := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/candidates", `{"base_sha":"aaaa111","group_id":"`+a["group_id"].(string)+`","label":"glm","steps":[{"title":"extract module","description":"move x"},{"title":"add tests"}],"skills":["go-tests"]}`), 201).(map[string]any)
+	planNow := mustJSON(t, root.req("GET", "/api/plans/"+planID, ""), 200).(map[string]any)
+	if items, _ := planNow["items"].([]any); len(items) != 0 {
+		t.Fatalf("candidates must not touch the live plan: %v", items)
+	}
+	mustDo(t, worker.reqH("POST", "/api/runs/"+aID+"/report", `{"worker_id":"w-claude","status":"succeeded","summary":"candidate ready"}`, leases[aID]), 200)
+	if got = mustJSON(t, root.req("GET", "/api/inbox/"+itemID, ""), 200).(map[string]any); got["status"] != "planning" {
+		t.Fatalf("one planner must not open the gate: %v", got["status"])
+	}
+	mustDo(t, worker.reqH("POST", "/api/runs/"+bID+"/report", `{"worker_id":"w-glm","status":"succeeded","summary":"candidate ready"}`, leases[bID]), 200)
+	got = mustJSON(t, root.req("GET", "/api/inbox/"+itemID, ""), 200).(map[string]any)
+	if got["status"] != "awaiting_approval" || !strings.Contains(got["content"].(string), "## Plan candidates — round 1") {
+		t.Fatalf("gate after both planners: %v\n%v", got["status"], got["content"])
+	}
+	// A bare (latest-style) approve can't pick a candidate.
+	if r := approver.req("POST", "/api/inbox/"+itemID+"/approve", `{"revision_id":"nope"}`); r.code != 400 || !strings.Contains(r.body, "several candidates") {
+		t.Fatalf("approve without a candidate: %d %s", r.code, r.body)
+	}
+	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/approve", `{"revision_id":"`+c2["id"].(string)+`"}`), 200)
+
+	revsResp := mustDo(t, root.req("GET", "/api/plans/"+planID+"/revisions", ""), 200)
+	var revs []map[string]any
+	if err := json.Unmarshal([]byte(revsResp.body), &revs); err != nil {
+		t.Fatal(err)
+	}
+	states := map[string]any{}
+	for _, r := range revs {
+		states[r["label"].(string)] = r["candidate_state"]
+	}
+	if states["glm"] != "approved" || states["claude"] != "superseded" {
+		t.Fatalf("candidate states: %v", states)
+	}
+	planNow = mustJSON(t, root.req("GET", "/api/plans/"+planID, ""), 200).(map[string]any)
+	items := planNow["items"].([]any)
+	if len(items) != 3 || items[0].(map[string]any)["title"] != "extract module" {
+		t.Fatalf("approved candidate must become the plan (2 steps + review): %v", items)
+	}
+	impl := claim(t, worker, `{"worker_id":"w-claude","runners":["claude"],"workspaces":["`+ws+`"]}`)
+	if impl["stage"] != "implement" || impl["plan_rev_id"] != c2["id"] || impl["base_sha"] != "aaaa111" {
+		t.Fatalf("implement must bind candidate 2 and its base: %v", impl)
+	}
+	_ = c1
+}
+
+// At a candidates gate, request-changes either revises ONE candidate (a
+// single plan run pinned to that candidate's runner, seeded with it) or,
+// without a candidate, re-runs every planner as round 2. Either way the
+// round's open candidates are superseded, so an old candidate can't be
+// approved later.
+func TestIntegrationPlanCandidatesRequestChanges(t *testing.T) {
+	const ws = "github.com/fortix/freedom3"
+	_, baseURL := workerStackWith(t, func(r *runs.Service) {
+		r.SetPrefs(map[string]*runs.WorkspacePrefs{ws: {
+			Stages: map[string]string{},
+			Groups: map[string][]runs.Member{"plan": {{Runner: "claude"}, {Runner: "glm"}}},
+		}})
+	})
+	root := workerClient{base: baseURL, key: "root-secret"}
+	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`","name":"freedom3"}`), 201)
+	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"relay","workspaces":["`+ws+`"],"approver":true}`)}
+	leases := map[string]string{}
+	worker := workerClient{base: baseURL, key: mint(t, root, `{"name":"worker-1","workspaces":["`+ws+`"]}`), lease: leases}
+
+	// Round 1 with two candidates, gate open.
+	round := func(itemID string) (planID string, cands []map[string]any) {
+		a := claim(t, worker, `{"worker_id":"w-claude","runners":["claude"],"workspaces":["`+ws+`"]}`)
+		b := claim(t, worker, `{"worker_id":"w-glm","runners":["glm"],"workspaces":["`+ws+`"]}`)
+		got := mustJSON(t, root.req("GET", "/api/inbox/"+itemID, ""), 200).(map[string]any)
+		planID = got["plan_id"].(string)
+		for _, m := range []map[string]any{a, b} {
+			id := m["id"].(string)
+			c := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/candidates", `{"base_sha":"abc","group_id":"`+m["group_id"].(string)+`","label":"`+m["runner"].(string)+`","steps":[{"title":"s"}]}`), 201).(map[string]any)
+			cands = append(cands, c)
+			mustDo(t, worker.reqH("POST", "/api/runs/"+id+"/report", `{"worker_id":"`+m["worker_id"].(string)+`","status":"succeeded","summary":"ok"}`, leases[id]), 200)
+		}
+		return planID, cands
+	}
+	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"pick one","author_agent_id":"martin"}`), 201).(map[string]any)
+	itemID := item["id"].(string)
+	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/queue", ""), 200)
+	_, cands := round(itemID)
+
+	// Revise candidate 2 (glm): one run, pinned to glm, seeded with it.
+	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/request-changes", `{"notes":"split step 1","revision_id":"`+cands[1]["id"].(string)+`"}`), 200)
+	mustDo(t, worker.req("POST", "/api/runs/claim", `{"worker_id":"w-claude","runners":["claude"],"workspaces":["`+ws+`"]}`), 204, "a revise is pinned to the candidate's runner")
+	rev := claim(t, worker, `{"worker_id":"w-glm","runners":["glm"],"workspaces":["`+ws+`"]}`)
+	if rev["stage"] != "plan" || rev["group_id"] != nil || rev["plan_rev_id"] != cands[1]["id"] || rev["runner"] != "glm" {
+		t.Fatalf("seeded revise run: %v", rev)
+	}
+	// The revise writes an ordinary plan; at the reopened gate, round 1's
+	// candidates are closed (stale) and the revised plan is approvable.
+	planID := mustJSON(t, root.req("GET", "/api/inbox/"+itemID, ""), 200).(map[string]any)["plan_id"].(string)
+	revised := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/replan", `{"base_sha":"abc","steps":[{"title":"s1a"},{"title":"s1b"}]}`), 200).(map[string]any)
+	revID := rev["id"].(string)
+	mustDo(t, worker.reqH("POST", "/api/runs/"+revID+"/report", `{"worker_id":"w-glm","status":"succeeded","summary":"revised"}`, leases[revID]), 200)
+	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/approve", `{"revision_id":"`+cands[0]["id"].(string)+`"}`), 409)
+	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/approve", `{"revision_id":"`+revised["id"].(string)+`"}`), 200)
+	if impl := claim(t, worker, `{"worker_id":"w-drain","runners":["claude","glm"],"workspaces":["`+ws+`"]}`); impl["stage"] != "implement" || impl["plan_rev_id"] != revised["id"] {
+		t.Fatalf("the revised plan's implement run: %v", impl)
+	}
+
+	// Re-plan everything on a second item: round 2 opens with both members.
+	item2 := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"again","author_agent_id":"martin"}`), 201).(map[string]any)
+	item2ID := item2["id"].(string)
+	mustDo(t, approver.req("POST", "/api/inbox/"+item2ID+"/queue", ""), 200)
+	_, c2 := round(item2ID)
+	mustDo(t, approver.req("POST", "/api/inbox/"+item2ID+"/request-changes", `{"notes":"none of these"}`), 200)
+	groupsResp := mustDo(t, root.req("GET", "/api/runs/groups?item_id="+item2ID, ""), 200)
+	var groups []map[string]any
+	if err := json.Unmarshal([]byte(groupsResp.body), &groups); err != nil || len(groups) != 2 || groups[0]["round"].(float64) != 2 {
+		t.Fatalf("re-plan must open round 2: %v %s", err, groupsResp.body)
+	}
+	_, r2 := round(item2ID)
+	mustDo(t, approver.req("POST", "/api/inbox/"+item2ID+"/approve", `{"revision_id":"`+c2[1]["id"].(string)+`"}`), 409)
+	mustDo(t, approver.req("POST", "/api/inbox/"+item2ID+"/approve", `{"revision_id":"`+r2[0]["id"].(string)+`"}`), 200)
 }

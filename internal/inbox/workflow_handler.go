@@ -20,7 +20,7 @@ type actionRequest struct {
 	Reason      string `json:"reason"`
 	HeadSHA     string `json:"head_sha"`     // review gate subject on mark-done (required)
 	PlanID      string `json:"plan_id"`      // link-plan
-	RevisionID  string `json:"revision_id"`  // approve: bind to the revision Martin saw
+	RevisionID  string `json:"revision_id"`  // approve: bind to the revision Martin saw; request-changes: the plan candidate to revise
 	ContentHash string `json:"content_hash"` // approve: optional stronger binding
 	BaseSHA     string `json:"base_sha"`     // amend-plan
 }
@@ -112,7 +112,7 @@ func (h *Handler) RequestChanges(w http.ResponseWriter, r *http.Request) {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	item, err := h.service.RequestChanges(r.Context(), r.PathValue("id"), req.Notes, viaFrom(r, ""))
+	item, err := h.service.RequestChangesOn(r.Context(), r.PathValue("id"), req.Notes, viaFrom(r, ""), req.RevisionID)
 	h.respondTransition(w, item, err)
 }
 

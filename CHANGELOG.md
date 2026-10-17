@@ -49,6 +49,16 @@ versions follow [Semantic Versioning](https://semver.org/).
   shows in Slack's blocked and branch-ready messages. One runner per stage
   behaves exactly as before. New endpoint: `GET /api/runs/groups?item_id=`.
   Design: `tmp/multi-agent-stages — design.md`.
+- **Multi-agent planning (opt-in).** `--run-stage ws:plan=claude,opencode-glm`
+  runs several planners at one pinned base commit; each writes a candidate
+  plan without touching the live plan. The gate lists them (dashboard cards,
+  Slack `approve 2` / `approve glm` / `revise 2: notes`, CLI `inbox plan`);
+  approving one makes it the plan exactly and the approval names it, its
+  siblings are superseded. Revise one candidate (one planner reworks it) or
+  re-plan all (round 2); an old round's candidates are never approvable.
+  New endpoints: `POST /api/plans/{id}/candidates`,
+  `POST /api/runs/{id}/pin-base`; request-changes takes an optional
+  `revision_id`.
 - **Review findings have a severity.** `blocking` fails a review; `nit` is
   reported and never blocks. The worker makes the verdict follow the
   findings instead of trusting the free-form verdict.

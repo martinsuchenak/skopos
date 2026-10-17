@@ -602,3 +602,75 @@ func TestRelayBlockedShowsGroupSummary(t *testing.T) {
 		t.Errorf("must quote the group summary, not a member:\n%s", msg)
 	}
 }
+
+// A multi-agent plan gate in Slack: the candidates are listed and numbered;
+// a bare approve can't pick one; `approve glm: notes` approves exactly that
+// candidate, which becomes the plan.
+func TestRelayCandidatesGate(t *testing.T) {
+	svc, runsSvc, plansSvc, fake, relay := relayStack(t)
+	root := context.Background()
+	runsSvc.SetPrefs(map[string]*runs.WorkspacePrefs{"ws-a": {
+		Stages: map[string]string{},
+		Groups: map[string][]runs.Member{"plan": {{Runner: "claude"}, {Runner: "glm"}}},
+	}})
+	runsSvc.SetPlanHooks(planRoundStartHook(svc, plansSvc), ensurePlanHook(svc, plansSvc))
+	item := mustRelayItem(t, svc, "three ways")
+	if _, err := svc.Queue(approverCtx(), item.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	var members []*runs.Run
+	for _, w := range []struct{ worker, runner string }{{"w1", "claude"}, {"w2", "glm"}} {
+		r, err := runsSvc.ClaimNext(root, runs.ClaimInput{WorkerID: w.worker, Runners: []string{w.runner}, Workspaces: []string{"ws-a"}})
+		if err != nil || r == nil || r.GroupID == "" {
+			t.Fatalf("claim %s: %+v %v", w.runner, r, err)
+		}
+		members = append(members, r)
+	}
+	item, _ = svc.GetItem(root, item.ID)
+	if item.PlanID == "" {
+		t.Fatal("claiming a plan member must link the plan")
+	}
+	for i, steps := range [][]plans.RevisionStep{{{Title: "patch it"}}, {{Title: "rewrite module"}, {Title: "add tests"}}} {
+		if _, err := plansSvc.CreateCandidate(root, item.PlanID, steps, "base1", nil, members[i].GroupID, members[i].Runner); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, m := range members {
+		if _, err := runsSvc.Report(root, m.ID, runs.ReportInput{WorkerID: []string{"w1", "w2"}[i], Status: runs.StatusSucceeded, Summary: "ok"}, m.LeaseToken); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ := svc.GetItem(root, item.ID); got.Status != inbox.StatusAwaitingApproval {
+		t.Fatalf("gate: %s", got.Status)
+	}
+	gate := ""
+	for _, m := range fake.texts() {
+		if strings.Contains(m, "plan candidates") {
+			gate = m
+		}
+	}
+	for _, want := range []string{"*2 plan candidates*", "*1 · claude*", "1. patch it", "*2 · glm*", "2. add tests", "`approve <n>`", "`revise <n>: <notes>`"} {
+		if !strings.Contains(gate, want) {
+			t.Errorf("candidates message missing %q:\n%s", want, gate)
+		}
+	}
+	if !relay.Apply(root, item.ID, "approve") {
+		t.Fatal("approve must be answered")
+	}
+	if got, _ := svc.GetItem(root, item.ID); got.Status != inbox.StatusAwaitingApproval || !strings.Contains(fake.last().text, "There are 2 candidates") {
+		t.Fatalf("a bare approve must ask which: %s / %q", got.Status, fake.last().text)
+	}
+	if !relay.Apply(root, item.ID, "approve 3") || !strings.Contains(fake.last().text, "No candidate 3") {
+		t.Fatalf("unknown number: %q", fake.last().text)
+	}
+	if !relay.Apply(root, item.ID, "approve glm: go with the rewrite") {
+		t.Fatal("approve glm must be handled")
+	}
+	if got, _ := svc.GetItem(root, item.ID); got.Status != inbox.StatusApproved {
+		t.Fatalf("approve glm: %s (%q)", got.Status, fake.last().text)
+	}
+	plan, _ := plansSvc.GetPlan(root, item.PlanID)
+	if len(plan.Items) != 3 || plan.Items[0].Title != "rewrite module" {
+		t.Fatalf("glm's candidate must be the plan: %+v", plan.Items)
+	}
+}

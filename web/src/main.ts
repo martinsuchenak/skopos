@@ -31,7 +31,10 @@ type InboxItem = { id: string; workspace_id?: string; title: string; tags: strin
 type InboxDetail = InboxItem & { content: string; content_html: string };
 type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string };
 
-type PlanRevisionInfo = { id: string; revision_no: number; content_hash: string; skills?: string[] };
+type PlanRevisionInfo = { id: string; revision_no: number; content_hash: string; skills?: string[]; base_sha?: string; group_id?: string; label?: string; candidate_state?: string; steps?: { title: string; phase?: string }[] };
+// One thing the approver can approve at the gate: the plan revision, or one
+// candidate of a multi-agent plan round.
+type ApproveTarget = { id: string; title: string; meta: string; steps: string[]; candidate: boolean; hash: string; toast: string };
 type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; created_at: string; updated_at: string };
 // wsLocked: a workflow item cannot move workspace (its runs, plan and
 // branch live there) — the server refuses it; the modal hides the picker.
@@ -97,6 +100,9 @@ const appState = () => ({
   // names exactly this one (M2), so the server refuses it if the planner
   // wrote a newer revision after the page was read.
   previewRevision: null as PlanRevisionInfo | null,
+  // Open candidates of the current multi-agent plan round, oldest first
+  // (numbered 1..n, the same order Slack and the CLI use).
+  previewCandidates: [] as PlanRevisionInfo[],
   workflowNote: '',
   workflowBusy: false,
   expandedInbox: null as InboxDetail | null,
@@ -973,27 +979,60 @@ const appState = () => ({
     this.fetchPreviewRuns(item.id);
     this.fetchPreviewRevision();
   },
-  closeInboxPreview() { this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.workflowNote = ''; this.workflowBusy = false; },
+  closeInboxPreview() { this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.previewCandidates = []; this.workflowNote = ''; this.workflowBusy = false; },
   // The newest revision of the previewed item's plan, while it waits at the
   // gate (revisions list newest first).
   async fetchPreviewRevision() {
     const item = this.previewItem;
     this.previewRevision = null;
+    this.previewCandidates = [];
     if (!item || item.status !== 'awaiting_approval' || !item.plan_id) return;
     const res = await this.authFetch('/api/plans/' + encodeURIComponent(item.plan_id) + '/revisions');
     if (!res.ok || !this.previewItem || this.previewItem.id !== item.id) return;
-    const revs = (await res.json()) as PlanRevisionInfo[];
-    this.previewRevision = revs.length > 0 ? revs[0] : null;
+    const revs = (await res.json()) as PlanRevisionInfo[]; // newest first
+    const live = revs.filter((r: PlanRevisionInfo) => r.candidate_state !== 'superseded');
+    this.previewRevision = live.length > 0 ? live[0] : null;
+    // The current round = the newest candidate's group; its open ones.
+    const newestCand = revs.find((r: PlanRevisionInfo) => !!r.group_id);
+    this.previewCandidates = newestCand
+      ? revs.filter((r: PlanRevisionInfo) => r.group_id === newestCand.group_id && r.candidate_state === 'open').reverse()
+      : [];
   },
-  // The modal's fallback Close (load failed / nothing to show). A method,
-  // not an inline `!a && !b` x-show: the CSP build evaluated that inline
-  // form wrongly and showed a second Close under every loaded item.
-  workflowRevisionLabel(): string {
+  // What Approve can bind at the gate, rendered through one keyed x-for
+  // (re-renders reliably in the CSP build when the async load lands): the
+  // plan revision, or one card per candidate of a multi-agent round.
+  approveTargets(): ApproveTarget[] {
+    if (!this.workflowShowApprove()) return [];
+    if (this.previewCandidates.length > 0) {
+      return this.previewCandidates.map((c: PlanRevisionInfo, i: number) => {
+        const steps = (c.steps || []).filter(st => st.phase !== 'review').map(st => st.title);
+        const skills = c.skills && c.skills.length ? ' · skills: ' + c.skills.join(', ') : '';
+        const name = 'Candidate ' + (i + 1) + (c.label ? ' · ' + c.label : '');
+        return { id: c.id, title: name, meta: steps.length + ' step' + (steps.length === 1 ? '' : 's') + skills, steps, candidate: true, hash: c.content_hash, toast: 'Approved ' + name };
+      });
+    }
     const r = this.previewRevision;
-    if (!r) return 'Loading the plan revision…';
-    const skills = r.skills && r.skills.length > 0 ? ' · skills: ' + r.skills.join(', ') : '';
-    return 'Approving plan revision #' + r.revision_no + skills;
+    if (!r) return [];
+    const skills = r.skills && r.skills.length ? ' · skills: ' + r.skills.join(', ') : '';
+    return [{ id: r.id, title: 'Plan revision #' + r.revision_no, meta: skills.replace(/^ · /, ''), steps: [], candidate: false, hash: r.content_hash, toast: 'Approved revision #' + r.revision_no }];
   },
+  approveTarget(revisionId: string) {
+    const item = this.previewItem;
+    const t = this.approveTargets().find((x: ApproveTarget) => x.id === revisionId);
+    if (!item || !t) return;
+    const body: Record<string, string> = { revision_id: t.id, content_hash: t.hash };
+    if (this.workflowNote.trim()) body.notes = this.workflowNote;
+    this.postWorkflowAction(item.id, 'approve', body, t.toast);
+  },
+  // Revise one candidate: a single planner re-plans from it with the notes.
+  reviseCandidate(revisionId: string) {
+    const item = this.previewItem;
+    const t = this.approveTargets().find((x: ApproveTarget) => x.id === revisionId);
+    if (!item || !t) return;
+    if (!this.workflowNote.trim()) { this.notify('Write what to change in the notes first', 'error'); return; }
+    this.postWorkflowAction(item.id, 'request-changes', { notes: this.workflowNote, revision_id: t.id }, 'Revising ' + t.title);
+  },
+  requestChangesLabel(): string { return this.previewCandidates.length > 0 ? 'Re-plan all' : 'Request changes'; },
   // Edit from the preview: capture the item BEFORE closing (close nulls
   // previewItem). One method because the CSP build's expression parser
   // accepts a single expression per handler — `a(); b()` throws.
@@ -1079,7 +1118,7 @@ const appState = () => ({
   // the :disabled-with-undefined CSP trap.
   workflowActionReady(action: string): boolean {
     if (this.workflowBusy) return false;
-    if (action === 'approve') return !!this.previewRevision;
+    if (action === 'approve') return true;
     if (action === 'queue' || action === 'reject') return true;
     return !!this.workflowNote && this.workflowNote.trim().length > 0;
   },
@@ -1102,13 +1141,6 @@ const appState = () => ({
     await this.reloadPreview();
   },
   queueInboxItem(id: string) { this.postWorkflowAction(id, 'queue', null, 'Queued for the agent pipeline'); },
-  approveInboxItem(id: string) {
-    const rev = this.previewRevision;
-    if (!rev) { this.notify('The plan revision has not loaded yet', 'error'); return; }
-    const body: Record<string, string> = { revision_id: rev.id, content_hash: rev.content_hash };
-    if (this.workflowNote.trim()) body.notes = this.workflowNote;
-    this.postWorkflowAction(id, 'approve', body, 'Approved revision #' + rev.revision_no);
-  },
   // Reject leaves the pipeline for good (the item is discarded): confirm.
   rejectInboxItem(id: string) {
     const title = this.previewItem ? this.previewItem.title : 'this item';

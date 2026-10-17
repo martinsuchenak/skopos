@@ -149,6 +149,21 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "runs", "findings", "TEXT CHECK (findings IS NULL OR json_valid(findings))"); err != nil {
 		return err
 	}
+	// Plan candidates (multi-agent planning): a candidate is a revision with
+	// a group; its state moves open → approved | superseded. NULL for every
+	// revision outside a plan group (all existing ones).
+	if err := ensureColumn(db, "plan_revisions", "group_id", "TEXT REFERENCES run_groups(id) ON DELETE SET NULL"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "plan_revisions", "label", "TEXT"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "plan_revisions", "candidate_state", "TEXT CHECK (candidate_state IS NULL OR candidate_state IN ('open', 'superseded', 'approved'))"); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_revisions_one_approved ON plan_revisions(group_id) WHERE candidate_state = 'approved'`); err != nil {
+		return fmt.Errorf("indexing plan candidates: %w", err)
+	}
 	// After the column exists (schema.sql runs before ensureColumn).
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_runs_group ON runs(group_id) WHERE group_id IS NOT NULL`); err != nil {
 		return fmt.Errorf("indexing runs.group_id: %w", err)

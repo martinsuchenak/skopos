@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -44,13 +45,18 @@ type slackRelay struct {
 	// shown is the plan revision the latest plan-ready message showed per
 	// item. In memory: after a restart the relay cannot know what Martin
 	// read, so an approve then re-posts the current plan (fail closed).
-	shown map[string]string
+	shown map[string][]shownRev
 }
 
 // planRevisions is the slice of the plans service the relay needs.
 type planRevisions interface {
 	LatestRevision(ctx context.Context, planID string) (*plans.Revision, error)
+	OpenCandidates(ctx context.Context, planID string) ([]plans.Revision, error)
 }
+
+// shownRev is one revision a plan-ready message showed: the plan revision,
+// or candidate N of a multi-agent round (Label names its planner).
+type shownRev struct{ ID, Label string }
 
 type pendingReply struct{ text string }
 
@@ -71,7 +77,9 @@ func relayCtx() context.Context {
 // Anything else — "Done with lunch", "approve? not sure", "reject, wait" —
 // is conversation, not a command (review M1: the optional separator turned
 // casual replies into irreversible actions).
-var reCmd = regexp.MustCompile(`(?is)^\s*([a-z]+)(?:\s*[.!]?\s*|\s*:\s*(.*))$`)
+// Groups: 1 the command, 2 an optional selector (a plan candidate: its
+// number or label — `approve 2`, `revise glm: notes`), 3 the notes.
+var reCmd = regexp.MustCompile(`(?is)^\s*([a-z]+)(?:\s+([a-z0-9@._-]+))?(?:\s*[.!]?\s*|\s*:\s*(.*))$`)
 
 // reWord is the leading word of a reply that did not parse as a command —
 // used only to hint at the syntax when it names one.
@@ -172,7 +180,12 @@ func (r *slackRelay) Apply(ctx context.Context, itemID, text string) bool {
 		}
 		return false
 	}
-	cmd, arg := strings.ToLower(m[1]), strings.TrimSpace(m[2])
+	cmd, sel, arg := strings.ToLower(m[1]), strings.ToLower(strings.TrimSpace(m[2])), strings.TrimSpace(m[3])
+	if sel != "" && cmd != "approve" && cmd != "approved" && cmd != "lgtm" && cmd != "revise" {
+		// Only approve/revise take a selector; anything else with a word
+		// after it is prose, not a command.
+		return false
+	}
 	item, err := r.inbox.GetItem(relayCtx(), itemID)
 	if err != nil {
 		return false
@@ -198,11 +211,11 @@ func (r *slackRelay) Apply(ctx context.Context, itemID, text string) bool {
 		r.post(ctx, item.SlackThreadTS, "⏳ Got it — the item is mid-run; I'll apply it when the run finishes.")
 		return true
 	}
-	return r.applyCommand(ctx, item, cmd, arg)
+	return r.applyCommand(ctx, item, cmd, sel, arg)
 }
 
 // applyCommand runs one parsed command against the current item state.
-func (r *slackRelay) applyCommand(ctx context.Context, item *inbox.Item, cmd, arg string) bool {
+func (r *slackRelay) applyCommand(ctx context.Context, item *inbox.Item, cmd, sel, arg string) bool {
 	relayCtx := relayCtx()
 	thread := item.SlackThreadTS
 	fail := func(err error) bool {
@@ -215,11 +228,17 @@ func (r *slackRelay) applyCommand(ctx context.Context, item *inbox.Item, cmd, ar
 			r.post(ctx, thread, "⚠️ Nothing to approve — the item is "+statusWord(item.Status)+".")
 			return true
 		}
-		// Approve exactly the revision the plan-ready message showed (M2).
-		revID := r.shownRevision(item.ID)
-		if revID == "" {
+		// Approve exactly the revision the plan-ready message showed (M2);
+		// with several candidates, the one the reply names.
+		shown := r.shownRevisions(item.ID)
+		if len(shown) == 0 {
 			r.post(ctx, thread, "⚠️ I can't tell which plan revision you read (the relay restarted since the plan-ready message). The current plan follows — reply `approve` to it.")
 			r.postPlanReady(ctx, item.ID)
+			return true
+		}
+		revID, msg := pickShown(shown, sel)
+		if revID == "" {
+			r.post(ctx, thread, "⚠️ "+msg)
 			return true
 		}
 		if _, err := r.inbox.Approve(relayCtx, item.ID, inbox.ApproveInput{Notes: arg, Via: audit.ViaSlack, RevisionID: revID}); err != nil {
@@ -236,7 +255,23 @@ func (r *slackRelay) applyCommand(ctx context.Context, item *inbox.Item, cmd, ar
 			r.post(ctx, thread, "⚠️ revise applies at the gate — the item is "+statusWord(item.Status)+".")
 			return true
 		}
-		if _, err := r.inbox.RequestChanges(relayCtx, item.ID, arg, audit.ViaSlack); err != nil {
+		// `revise 2: notes` reworks candidate 2 with one planner; a bare
+		// `revise: notes` re-plans everything.
+		reviseID := ""
+		if sel != "" {
+			shown := r.shownRevisions(item.ID)
+			if len(shown) < 2 {
+				r.post(ctx, thread, "⚠️ This plan has one revision — reply `revise: <notes>`.")
+				return true
+			}
+			id, msg := pickShown(shown, sel)
+			if id == "" {
+				r.post(ctx, thread, "⚠️ "+msg)
+				return true
+			}
+			reviseID = id
+		}
+		if _, err := r.inbox.RequestChangesOn(relayCtx, item.ID, arg, audit.ViaSlack, reviseID); err != nil {
 			return fail(err)
 		}
 		return true
@@ -330,33 +365,63 @@ func (r *slackRelay) postInThread(ctx context.Context, itemID, msg string) bool 
 // prose scraped from the item — and records which revision was shown, so
 // the `approve` reply binds to exactly it.
 func (r *slackRelay) postPlanReady(ctx context.Context, itemID string) {
-	msg, revID := r.planReadyMessage(itemID)
+	msg, shown := r.planReadyMessage(itemID)
 	if msg == "" {
 		return
 	}
-	if r.postInThread(ctx, itemID, msg) && revID != "" {
+	if r.postInThread(ctx, itemID, msg) && len(shown) > 0 {
 		r.mu.Lock()
 		if r.shown == nil {
-			r.shown = map[string]string{}
+			r.shown = map[string][]shownRev{}
 		}
-		r.shown[itemID] = revID
+		r.shown[itemID] = shown
 		r.mu.Unlock()
 	}
 }
 
-func (r *slackRelay) shownRevision(itemID string) string {
+func (r *slackRelay) shownRevisions(itemID string) []shownRev {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.shown[itemID]
 }
 
+// pickShown resolves a reply's selector against what the plan-ready message
+// showed: no selector is fine for a single revision; with candidates it
+// must name one by number (1-based, as listed) or label.
+func pickShown(shown []shownRev, sel string) (string, string) {
+	if sel == "" {
+		if len(shown) == 1 {
+			return shown[0].ID, ""
+		}
+		return "", fmt.Sprintf("There are %d candidates — reply `approve <number>` (e.g. `approve 1`) or `approve <name>`.", len(shown))
+	}
+	if n, err := strconv.Atoi(sel); err == nil {
+		if n >= 1 && n <= len(shown) && (len(shown) > 1 || n == 1) {
+			return shown[n-1].ID, ""
+		}
+		return "", fmt.Sprintf("No candidate %d — there are %d.", n, len(shown))
+	}
+	for _, s := range shown {
+		if s.Label != "" && strings.EqualFold(s.Label, sel) {
+			return s.ID, ""
+		}
+	}
+	return "", "No candidate named `" + sel + "`."
+}
+
 // planReadyMessage formats the gate message for the item's latest plan
 // revision: the summary from the newest Enrichment section, the revision's
 // steps and skills, and the planner's questions.
-func (r *slackRelay) planReadyMessage(itemID string) (string, string) {
+func (r *slackRelay) planReadyMessage(itemID string) (string, []shownRev) {
 	item, err := r.inbox.GetItem(context.Background(), itemID)
 	if err != nil {
-		return "", ""
+		return "", nil
+	}
+	// A multi-agent plan round: list the candidates, numbered.
+	if item.PlanID != "" && r.revisions != nil {
+		if cands, cerr := r.revisions.OpenCandidates(relayCtx(), item.PlanID); cerr == nil && len(cands) > 1 {
+			return candidatesMessage(item, cands)
+		}
 	}
 	var rev *plans.Revision
 	if item.PlanID != "" && r.revisions != nil {
@@ -395,11 +460,49 @@ func (r *slackRelay) planReadyMessage(itemID string) (string, string) {
 		b.WriteString("\n*Questions for you:*\n" + q + "\n")
 	}
 	b.WriteString("\n`approve` · `approve: <notes>` · `revise: <notes>` · `reject`")
-	revID := ""
+	var shown []shownRev
 	if rev != nil {
-		revID = rev.ID
+		shown = []shownRev{{ID: rev.ID}}
 	}
-	return b.String(), revID
+	return b.String(), shown
+}
+
+// candidatesMessage is the gate message for a multi-agent plan round: each
+// candidate with its planner, step titles and skills, numbered in the order
+// approve/revise refer to.
+func candidatesMessage(item *inbox.Item, cands []plans.Revision) (string, []shownRev) {
+	var b strings.Builder
+	fmt.Fprintf(&b, "🧭 *%d plan candidates* · %s\n", len(cands), item.Title)
+	shown := make([]shownRev, 0, len(cands))
+	for i, c := range cands {
+		label := c.Label
+		if label == "" {
+			label = "planner"
+		}
+		fmt.Fprintf(&b, "\n*%d · %s*\n", i+1, label)
+		n := 0
+		for _, st := range c.Steps {
+			if st.Phase == "review" {
+				continue
+			}
+			n++
+			if n <= 6 {
+				fmt.Fprintf(&b, "  %d. %s\n", n, st.Title)
+			}
+		}
+		if n > 6 {
+			fmt.Fprintf(&b, "  _…%d more steps_\n", n-6)
+		}
+		if len(c.Skills) > 0 {
+			b.WriteString("  _skills: " + strings.Join(c.Skills, ", ") + "_\n")
+		}
+		shown = append(shown, shownRev{ID: c.ID, Label: c.Label})
+	}
+	if q := lastSectionOf(item.Content, "## Questions"); q != "" {
+		b.WriteString("\n*Questions for you:*\n" + q + "\n")
+	}
+	b.WriteString("\n`approve <n>` · `approve <n>: <notes>` · `revise <n>: <notes>` (one planner reworks it) · `revise: <notes>` (re-plan all) · `reject`")
+	return b.String(), shown
 }
 
 // formatGate builds the per-status message with command hints (the

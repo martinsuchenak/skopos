@@ -244,6 +244,28 @@ func (c *Client) Replan(ctx context.Context, planID, baseSHA string, steps []Ste
 	return &rev, err
 }
 
+// CreateCandidate writes one planner's candidate in a multi-agent plan
+// round (the live plan is untouched until Martin approves one).
+func (c *Client) CreateCandidate(ctx context.Context, planID, baseSHA string, steps []Step, skills []string, groupID, label string) (*Revision, error) {
+	var rev Revision
+	body := map[string]any{"base_sha": baseSHA, "steps": steps, "group_id": groupID, "label": label}
+	if len(skills) > 0 {
+		body["skills"] = skills
+	}
+	err := c.do(ctx, http.MethodPost, "/api/plans/"+planID+"/candidates", body, &rev)
+	return &rev, err
+}
+
+// PinBase reports the base this planner would read and returns the plan
+// group's pinned base (the first member's) — every candidate plans at it.
+func (c *Client) PinBase(ctx context.Context, runID, baseSHA string) (string, error) {
+	var out struct {
+		BaseSHA string `json:"base_sha"`
+	}
+	err := c.doHeader(ctx, http.MethodPost, "/api/runs/"+runID+"/pin-base", map[string]string{"base_sha": baseSHA}, &out, "X-Skopos-Lease", c.leaseHeader(runID))
+	return out.BaseSHA, err
+}
+
 // ApprovedRevision is the revision a run executes: the run's own revision
 // id, else the newest locked one (nil when the plan has none).
 func (c *Client) ApprovedRevision(ctx context.Context, planID, revID string) (*Revision, error) {
@@ -336,4 +358,13 @@ type Revision struct {
 	BaseSHA     string     `json:"base_sha"`
 	Skills      []string   `json:"skills"`
 	LockedAt    *time.Time `json:"locked_at"`
+	Steps       []RevStep  `json:"steps"`
+	Label       string     `json:"label"`
+}
+
+// RevStep is one step of a revision snapshot.
+type RevStep struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Phase       string `json:"phase"`
 }

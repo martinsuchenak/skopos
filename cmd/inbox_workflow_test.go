@@ -35,6 +35,11 @@ func fakeSkopos(t *testing.T) (*httptest.Server, *[]recordedReq) {
 			_, _ = w.Write([]byte(`{"id":"it-1","title":"Add Reverse","status":"awaiting_approval","plan_id":"pl-1","content":"x\n\n## Questions\n\n- runes or bytes?"}`))
 		case r.Method == "GET" && r.URL.Path == "/api/plans/pl-1/revisions":
 			_, _ = w.Write([]byte(`[{"id":"rev-2","revision_no":2,"base_sha":"abcdef1234567","skills":["go-tests"],"steps":[{"title":"Create reverse.go","description":"by runes","phase":"implement"},{"title":"Review and push (Martin)","phase":"review"}]},{"id":"rev-1","revision_no":1}]`))
+		case r.Method == "GET" && r.URL.Path == "/api/inbox/it-2":
+			_, _ = w.Write([]byte(`{"id":"it-2","title":"Three ways","status":"awaiting_approval","plan_id":"pl-2","content":"x"}`))
+		case r.Method == "GET" && r.URL.Path == "/api/plans/pl-2/revisions":
+			// newest first: two open candidates of round g2, one superseded from g1
+			_, _ = w.Write([]byte(`[{"id":"c3","revision_no":3,"base_sha":"abc","group_id":"g2","label":"glm","candidate_state":"open","steps":[{"title":"rewrite","phase":"implement"},{"title":"Review and push (Martin)","phase":"review"}]},{"id":"c2","revision_no":2,"base_sha":"abc","group_id":"g2","label":"claude","candidate_state":"open","steps":[{"title":"patch","phase":"implement"}]},{"id":"c1","revision_no":1,"group_id":"g1","label":"old","candidate_state":"superseded"}]`))
 		case r.Method == "GET" && r.URL.Path == "/api/runs":
 			_, _ = w.Write([]byte(`[{"stage":"review","status":"succeeded"},{"stage":"implement","status":"succeeded","branch":"agent/x","head_sha":"c2b57e43"}]`))
 		case r.Method == "POST":
@@ -157,5 +162,36 @@ func TestWorkspaceAdd(t *testing.T) {
 	}
 	if p := lastPost(*reqs); p.path != "/api/workspaces" || p.body["id"] != "github.com/you/repo" || p.body["name"] != "repo" {
 		t.Fatalf("workspace add: %+v", p)
+	}
+}
+
+// A multi-agent plan gate in the CLI: candidates of the newest round are
+// listed oldest first (claude = 1, glm = 2), superseded ones never; and
+// request-changes --revision revises one candidate.
+func TestInboxPlanShowsCandidates(t *testing.T) {
+	srv, reqs := fakeSkopos(t)
+	c := &apiClient{base: srv.URL, key: "k"}
+	var out strings.Builder
+	rev, _, cands, err := c.showPlanFull(context.Background(), &out, "it-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if rev != nil || len(cands) != 2 || cands[0].ID != "c2" || cands[1].ID != "c3" {
+		t.Fatalf("candidates: %+v rev %+v", cands, rev)
+	}
+	for _, want := range []string{"2 plan candidates", "Candidate 1 · claude (c2)", "Candidate 2 · glm (c3)", "1. rewrite"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "old") || strings.Contains(got, "Review and push") {
+		t.Errorf("superseded candidates and the review step must not show:\n%s", got)
+	}
+	if err := runInbox(t, "request-changes", "--server-url", srv.URL, "--api-key", "k", "--id", "it-2", "--notes", "split it", "--revision", "c3"); err != nil {
+		t.Fatal(err)
+	}
+	if p := lastPost(*reqs); p.path != "/api/inbox/it-2/request-changes" || p.body["revision_id"] != "c3" || p.body["notes"] != "split it" {
+		t.Fatalf("request-changes --revision: %+v", p)
 	}
 }

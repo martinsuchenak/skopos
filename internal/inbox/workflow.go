@@ -2,6 +2,7 @@ package inbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -30,6 +31,18 @@ type PlanRevisions interface {
 	VerifyRevisionCurrent(ctx context.Context, planID string) (*plans.Revision, error)
 	AmendRevision(ctx context.Context, planID, baseSHA string) (*plans.Revision, error)
 	CreateRevision(ctx context.Context, planID, baseSHA string) (*plans.Revision, error)
+	// Plan candidates (multi-agent planning).
+	GetRevision(ctx context.Context, revisionID string) (*plans.Revision, error)
+	ApproveCandidate(ctx context.Context, planID, revisionID string) (*plans.Revision, error)
+	SupersedeOpenCandidates(ctx context.Context, planID string) error
+	OpenCandidates(ctx context.Context, planID string) ([]plans.Revision, error)
+}
+
+// SeededQueuer is the optional run-queue capability for revising one plan
+// candidate: a single plan run, pinned to the candidate's runner, seeded
+// with the candidate (internal/runs.Service satisfies it).
+type SeededQueuer interface {
+	QueueSeeded(ctx context.Context, itemID, workspaceID, stage, seedRevisionID, runner string) (string, error)
 }
 
 // ApprovalLog records human decisions; internal/approvals.Service satisfies it.
@@ -217,9 +230,18 @@ func (s *Service) Approve(ctx context.Context, itemID string, input ApproveInput
 	if item.Status != StatusAwaitingApproval {
 		return nil, fmt.Errorf("%w: only awaiting_approval items can be approved (item is %s)", ErrInvalidInput, statusLabel(item.Status))
 	}
+	// A multi-agent plan round: approve names one candidate.
+	if input.RevisionID != "" {
+		if cand, cerr := s.plans.GetRevision(ctx, input.RevisionID); cerr == nil && cand.PlanID == item.PlanID && cand.GroupID != "" {
+			return s.approveCandidate(ctx, item, cand, input)
+		}
+	}
 	rev, err := s.plans.LatestRevision(ctx, item.PlanID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: item has no plan revision — the planner must snapshot before approval", ErrInvalidInput)
+	}
+	if rev.GroupID != "" && rev.CandidateState == plans.CandidateOpen {
+		return nil, fmt.Errorf("%w: the plan has several candidates — approve names one (revision_id)", ErrInvalidInput)
 	}
 	if input.RevisionID != "" && input.RevisionID != rev.ID {
 		return nil, ErrStaleRevision
@@ -257,6 +279,44 @@ func (s *Service) Approve(ctx context.Context, itemID string, input ApproveInput
 		}
 	}
 	_ = verified
+	return s.finishApprove(ctx, item, rev, input)
+}
+
+// approveCandidate approves one candidate of the plan's current round: the
+// plans service materialises it as the plan, locks it and supersedes its
+// siblings in one transaction; the approval names the candidate itself.
+func (s *Service) approveCandidate(ctx context.Context, item *Item, cand *plans.Revision, input ApproveInput) (*Item, error) {
+	if input.ContentHash != "" && input.ContentHash != cand.ContentHash {
+		return nil, ErrStaleRevision
+	}
+	rev, err := s.plans.ApproveCandidate(ctx, item.PlanID, cand.ID)
+	if err != nil {
+		if errors.Is(err, plans.ErrStaleRevision) {
+			return nil, ErrStaleRevision
+		}
+		return nil, err
+	}
+	s.auditItem(ctx, item.ID, "plan.lock_revision", input.Via, rev.ID+" (candidate "+rev.Label+")", "")
+	if s.approvals != nil {
+		if _, err := s.approvals.Record(ctx, approvals.RecordInput{
+			WorkspaceID: item.WorkspaceID,
+			ItemID:      item.ID,
+			Gate:        approvals.GatePlan,
+			Subject:     rev.ID + "+" + rev.BaseSHA,
+			Decision:    approvals.DecisionApproved,
+			Via:         input.Via,
+			Notes:       input.Notes,
+		}); err != nil {
+			return nil, fmt.Errorf("recording approval: %w", err)
+		}
+	}
+	return s.finishApprove(ctx, item, rev, input)
+}
+
+// finishApprove is the shared tail of an approval: queue (or resume) the
+// implement run bound to the approved revision, append the notes, move the
+// item to approved.
+func (s *Service) finishApprove(ctx context.Context, item *Item, rev *plans.Revision, input ApproveInput) (*Item, error) {
 	// Queue the implement run bound to the approved revision and its base
 	// (review H3) BEFORE the status change; a paused run (an approved
 	// amendment) is resumed instead (H4).
@@ -296,6 +356,15 @@ func (s *Service) Approve(ctx context.Context, itemID string, input ApproveInput
 // awaiting_approval → planning, in_review → implementing. The notes are
 // passed into the next run's prompt.
 func (s *Service) RequestChanges(ctx context.Context, itemID, notes, via string) (*Item, error) {
+	return s.RequestChangesOn(ctx, itemID, notes, via, "")
+}
+
+// RequestChangesOn is RequestChanges with an optional plan candidate to
+// revise: at a multi-agent gate, reviseRevisionID names the candidate Martin
+// wants reworked — one planner (that candidate's runner) re-plans from it
+// with the notes. Empty re-runs every planner (a new round). Either way the
+// open candidates of the current round are superseded first.
+func (s *Service) RequestChangesOn(ctx context.Context, itemID, notes, via, reviseRevisionID string) (*Item, error) {
 	if err := s.requireItemScopeQuiet(ctx, itemID); err != nil {
 		return nil, err
 	}
@@ -319,9 +388,32 @@ func (s *Service) RequestChanges(ctx context.Context, itemID, notes, via string)
 		return nil, fmt.Errorf("%w: request-changes applies to awaiting_approval or in_review items (item is %s)", ErrInvalidInput, statusLabel(item.Status))
 	}
 	revID, baseSHA := s.approvedRevision(ctx, item)
+	// At a multi-agent plan gate: resolve the candidate to revise (if any),
+	// then close the round.
+	var seed *plans.Revision
+	if stage == "plan" && item.PlanID != "" && s.plans != nil {
+		if reviseRevisionID = strings.TrimSpace(reviseRevisionID); reviseRevisionID != "" {
+			cand, cerr := s.plans.GetRevision(ctx, reviseRevisionID)
+			if cerr != nil || cand.PlanID != item.PlanID || cand.GroupID == "" || cand.CandidateState != plans.CandidateOpen {
+				return nil, fmt.Errorf("%w: %s is not an open candidate of this item's plan", ErrInvalidInput, reviseRevisionID)
+			}
+			seed = cand
+		}
+		if err := s.plans.SupersedeOpenCandidates(ctx, item.PlanID); err != nil {
+			return nil, err
+		}
+	} else if strings.TrimSpace(reviseRevisionID) != "" {
+		return nil, fmt.Errorf("%w: revising a candidate applies to a plan at the approval gate", ErrInvalidInput)
+	}
 	var queuedRun string
 	if s.runQueuer != nil {
-		id, qErr := s.runQueuer.QueueStage(ctx, item.ID, item.WorkspaceID, stage, revID, baseSHA, "")
+		var id string
+		var qErr error
+		if sq, ok := s.runQueuer.(SeededQueuer); ok && seed != nil {
+			id, qErr = sq.QueueSeeded(ctx, item.ID, item.WorkspaceID, stage, seed.ID, candidateRunner(seed.Label))
+		} else {
+			id, qErr = s.runQueuer.QueueStage(ctx, item.ID, item.WorkspaceID, stage, revID, baseSHA, "")
+		}
 		if qErr != nil {
 			return nil, qErr
 		}
@@ -343,6 +435,15 @@ func (s *Service) RequestChanges(ctx context.Context, itemID, notes, via string)
 		_ = s.runQueuer.CancelRun(ctx, queuedRun, "request-changes transition failed")
 	}
 	return out, err
+}
+
+// candidateRunner is the runner in a candidate label ("focus@runner" or
+// "runner").
+func candidateRunner(label string) string {
+	if _, runner, ok := strings.Cut(label, "@"); ok {
+		return runner
+	}
+	return label
 }
 
 // approvedRevision returns the locked revision id and base for an item, when

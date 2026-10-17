@@ -434,6 +434,59 @@ func (h *Handler) Amend(w http.ResponseWriter, r *http.Request) {
 	rest.RespondJSON(w, http.StatusOK, rev)
 }
 
+// CreateCandidate handles POST /api/plans/{id}/candidates: one planner's
+// candidate in a multi-agent plan round. Snapshots a revision without
+// touching the live steps (executor path, like replan).
+func (h *Handler) CreateCandidate(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req struct {
+		BaseSHA string `json:"base_sha"`
+		GroupID string `json:"group_id"`
+		Label   string `json:"label"`
+		Steps   []struct {
+			Title       string `json:"title"`
+			Description string `json:"description"`
+		} `json:"steps"`
+		Skills []string `json:"skills"`
+	}
+	if err := rest.DecodeJSON(w, r, &req); err != nil {
+		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(req.Skills) > maxPlanSkills {
+		rest.RespondError(w, http.StatusBadRequest, "too many skills")
+		return
+	}
+	for _, sk := range req.Skills {
+		if !validSkillName(sk) {
+			rest.RespondError(w, http.StatusBadRequest, "invalid skill name: "+sk)
+			return
+		}
+	}
+	steps := make([]RevisionStep, 0, len(req.Steps))
+	for _, st := range req.Steps {
+		steps = append(steps, RevisionStep{Title: st.Title, Description: st.Description})
+	}
+	rev, err := h.service.CreateCandidate(r.Context(), r.PathValue("id"), steps, req.BaseSHA, req.Skills, req.GroupID, req.Label)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
+			rest.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
+			rest.RespondError(w, http.StatusNotFound, err.Error())
+		case errors.Is(err, ErrRevisionLocked) || errors.Is(err, ErrNotPlannable):
+			rest.RespondError(w, http.StatusConflict, err.Error())
+		default:
+			rest.InternalError(w, err)
+		}
+		return
+	}
+	rest.RespondJSON(w, http.StatusCreated, rev)
+}
+
 // Replan handles POST /api/plans/{id}/replan: replace ALL non-review steps
 // and snapshot atomically (first plan and re-plans both).
 func (h *Handler) Replan(w http.ResponseWriter, r *http.Request) {

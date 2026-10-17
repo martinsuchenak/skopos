@@ -38,6 +38,51 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	}
 	baseSHA, _ := git(ctx, repo.Path, "rev-parse", "origin/"+repo.DefaultBranch)
 
+	// A multi-agent plan round: every candidate plans at the group's pinned
+	// base (the first member's), so candidates differ in judgement, not in
+	// what they read. When the clone has moved on, plan in a detached
+	// worktree at the pinned commit.
+	dir := repo.Path
+	if run.GroupID != "" {
+		pinned, perr := w.client.PinBase(ctx, run.ID, baseSHA)
+		if perr != nil {
+			return fmt.Errorf("pinning the plan group's base: %w", perr)
+		}
+		if pinned != "" && pinned != baseSHA {
+			wt := filepath.Join(w.cfg.StateDir, "worktrees", filepath.Base(repo.Path), "plan-"+shortID(run.ID))
+			removeWorktree(ctx, repo.Path, wt)
+			if err := createDetached(ctx, repo.Path, wt, pinned); err != nil {
+				return fmt.Errorf("plan worktree at pinned base %s: %w", pinned, err)
+			}
+			defer removeWorktree(ctx, repo.Path, wt)
+			dir, baseSHA = wt, pinned
+		}
+	}
+	// Optional focus brief (plan members may have one), read at the base.
+	var focus *Skill
+	if run.Focus != "" {
+		f, ferr := repoFocus(ctx, repo.Path, baseSHA, run.Focus)
+		if ferr != nil {
+			return w.report(ctx, run, false, map[string]any{"reason": "plan: " + ferr.Error()})
+		}
+		focus = &f
+	}
+	// Revising one candidate at a multi-agent gate: start from it.
+	var seed *Revision
+	if run.PlanRevID != "" && item.PlanID != "" {
+		if rev, rerr := w.client.ApprovedRevision(ctx, item.PlanID, run.PlanRevID); rerr == nil && rev != nil {
+			seed = rev
+		}
+	}
+	var seedSteps []RevStep
+	if seed != nil {
+		for _, st := range seed.Steps {
+			if st.Phase != "review" {
+				seedSteps = append(seedSteps, st)
+			}
+		}
+	}
+
 	// Knowledge at the base the planner reads (never a worktree head).
 	skills := repoSkills(ctx, repo.Path, baseSHA)
 	prompt, err := renderPrompt("plan.md", map[string]any{
@@ -46,12 +91,13 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 		"Instructions": repoInstructions(ctx, repo.Path, baseSHA),
 		"SkillIndex":   skillIndex(skills), "Requested": tagHints(skills, item.Tags),
 		"ImplCommands": w.stageCommands(run.WorkspaceID, "implement", implTools), "Checks": repo.Checks,
+		"Focus": focus, "Seed": seedSteps,
 	})
 	if err != nil {
 		return err
 	}
-	log.Info("planning", "account", account.Name, "base", baseSHA)
-	res := w.runAgent(ctx, w.agentRun(repo.Path, prompt, planSchema, planTools, w.cfg.PlanTimeout, account, run, "plan"))
+	log.Info("planning", "account", account.Name, "base", baseSHA, "group", run.GroupID != "", "seeded", seed != nil)
+	res := w.runAgent(ctx, w.agentRun(dir, prompt, planSchema, planTools, w.cfg.PlanTimeout, account, run, "plan"))
 	w.addCost(run, res)
 	if err := w.handleAgentOutcome(ctx, run, res, account, "plan"); err != nil {
 		return err
@@ -61,14 +107,22 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	if err := json.Unmarshal(res.Structured, &pr); err != nil || (!pr.NeedsClarification && len(pr.Steps) == 0) {
 		return fmt.Errorf("planner returned no usable plan: %s", firstLine(res.Text))
 	}
+	label := candidateLabel(run, account)
 	if pr.NeedsClarification {
-		_ = w.client.AppendSection(ctx, run.ItemID, "Questions — planner", bullets(pr.Questions))
+		heading := "Questions — planner"
+		if run.GroupID != "" {
+			heading = "Questions — planner " + label
+		}
+		_ = w.client.AppendSection(ctx, run.ItemID, heading, bullets(pr.Questions))
 		return w.report(ctx, run, false, map[string]any{
 			"reason": "needs clarification: " + bullets(pr.Questions), "summary": res.Text[:min(len(res.Text), 500)],
 		})
 	}
 
 	branch := normalizeBranch(item.ID, item.Title, repo.BranchPrefix)
+	if run.GroupID != "" {
+		return w.submitCandidate(ctx, run, item, pr, skills, baseSHA, branch, label, res, log)
+	}
 	// Single atomic path (round-5 M6): ensure a linked plan exists, then
 	// ONE replan call replaces all steps and snapshots. No piecemeal
 	// Add/Delete — a failure can no longer gut the plan.
@@ -100,6 +154,55 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	log.Info("plan ready", "plan", planID, "revision", rev.ID, "steps", len(pr.Steps), "cost_usd", res.CostUSD)
 	return w.report(ctx, run, true, map[string]any{
 		"summary": "plan ready: " + pr.Summary, "branch": branch, "base_sha": baseSHA,
+	})
+}
+
+// candidateLabel names a plan group member's candidate: "focus@runner" or
+// "runner" (the same syntax as the routing config).
+func candidateLabel(run *Run, account *Account) string {
+	runner := run.Runner
+	if runner == "" && account != nil {
+		runner = account.Runner
+	}
+	if runner == "" {
+		runner = "claude"
+	}
+	if run.Focus != "" {
+		return run.Focus + "@" + runner
+	}
+	return runner
+}
+
+// submitCandidate writes a plan group member's result as a candidate
+// revision. The server created and linked the plan when the first member
+// was claimed; the live steps stay untouched until Martin approves one.
+func (w *Worker) submitCandidate(ctx context.Context, run *Run, item *Item, pr planResult, skills []Skill, baseSHA, branch, label string, res AgentResult, log *slog.Logger) error {
+	planID := item.PlanID
+	if planID == "" {
+		if fresh, err := w.client.GetItem(ctx, run.ItemID); err == nil {
+			planID = fresh.PlanID
+		}
+	}
+	if planID == "" {
+		return fmt.Errorf("plan group: the item has no linked plan yet")
+	}
+	selected := selectSkills(skills, pr.Skills, item.Tags)
+	rev, err := w.client.CreateCandidate(ctx, planID, baseSHA, pr.Steps, selected, run.GroupID, label)
+	if err != nil {
+		return err
+	}
+	enrich := fmt.Sprintf("**Candidate:** %s · **Size:** %s · **Base:** `%s` · **Revision:** %s\n\n%s\n\n### Steps\n\n%s",
+		label, pr.Size, baseSHA[:min(10, len(baseSHA))], rev.ID, pr.Summary, numberedSteps(pr.Steps))
+	if len(selected) > 0 {
+		enrich += "\n**Skills:** " + strings.Join(selected, ", ") + "\n"
+	}
+	if len(pr.Risks) > 0 {
+		enrich += "\n**Risks:**\n" + bullets(pr.Risks) + "\n"
+	}
+	_ = w.client.AppendSection(ctx, run.ItemID, "Candidate — "+label, enrich)
+	log.Info("candidate ready", "plan", planID, "revision", rev.ID, "label", label, "steps", len(pr.Steps), "cost_usd", res.CostUSD)
+	return w.report(ctx, run, true, map[string]any{
+		"summary": "candidate ready: " + pr.Summary, "branch": branch, "base_sha": baseSHA,
 	})
 }
 

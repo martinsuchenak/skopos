@@ -105,6 +105,9 @@ skopos serve --server-host 0.0.0.0 \
 - **Names must match.** Runner names here must match the worker's runners
   (step 5). A run pinned to a runner waits for that runner's accounts; it
   never silently switches model.
+- **Optional: several planners.** `--run-stage github.com/you/repo:plan=claude,opencode-glm`
+  writes one candidate plan per planner; you approve one at the gate. See
+  [Multi-agent planning](../configuration.md#multi-agent-planning).
 - **Optional: several reviewers.** List members to run review or QA on
   several agents, each with a focus brief from `.skopos/focus/<name>.md`:
   `--run-stage github.com/you/repo:review=security@claude,tests@opencode-glm`.
@@ -210,6 +213,11 @@ Then either:
 The approval binds to that revision. If the planner wrote a newer one
 meanwhile, the server refuses and the preview reloads with the current plan.
 
+**Several planners?** With a `plan` member list (step 4), the gate shows one
+card per **candidate**. Approve the one you want (or `approve 2` in Slack);
+it becomes the plan. *Revise* sends one candidate back to its planner with
+your notes; *Re-plan all* runs every planner again.
+
 **Implementation runs.** The worker branches from the approved base, the agent
 commits each step, the worker runs `checks`, pushes, and the configured
 review stage runs.
@@ -243,7 +251,9 @@ The bot DMs you a thread per item at every gate. A plan-ready message lists
 the revision's steps, and `approve` approves exactly that revision. If the
 plan changed, or the relay restarted and can't know what you read, it posts
 the current plan and asks again. You reply with:
-- `approve` or `approve: notes`;
+- `approve` or `approve: notes` (with several candidates: `approve 2`,
+  `approve glm`, `approve 2: notes`);
+- `revise 2: notes` to rework one candidate;
 - `revise: notes`;
 - `changes: notes`;
 - `done`;

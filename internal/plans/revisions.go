@@ -59,9 +59,16 @@ type Revision struct {
 	// Skills are the repo skills the plan selected (capability profiles
 	// §3): part of the approved content — the hash covers them, so the
 	// approval binds which playbooks the implementer is given.
-	Skills    []string   `json:"skills,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	LockedAt  *time.Time `json:"locked_at,omitempty"`
+	Skills []string `json:"skills,omitempty"`
+	// Candidates (multi-agent planning): GroupID is the plan group that
+	// produced the revision, Label names its author ("claude",
+	// "focus@runner"), CandidateState is open | approved | superseded.
+	// All empty for an ordinary revision.
+	GroupID        string     `json:"group_id,omitempty"`
+	Label          string     `json:"label,omitempty"`
+	CandidateState string     `json:"candidate_state,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	LockedAt       *time.Time `json:"locked_at,omitempty"`
 }
 
 // CreateRevision snapshots the plan's current items as a new revision.
@@ -390,8 +397,9 @@ func (st *Storage) scanRevision(row interface {
 }) (*Revision, error) {
 	var r Revision
 	var stepsJSON, createdAt, skills string
-	var lockedAt sql.NullString
-	if err := row.Scan(&r.ID, &r.PlanID, &r.WorkspaceID, &r.RevisionNo, &stepsJSON, &r.ContentHash, &r.BaseSHA, &createdAt, &lockedAt, &skills); err != nil {
+	var lockedAt, groupID, label, candState sql.NullString
+	if err := row.Scan(&r.ID, &r.PlanID, &r.WorkspaceID, &r.RevisionNo, &stepsJSON, &r.ContentHash, &r.BaseSHA, &createdAt, &lockedAt, &skills,
+		&groupID, &label, &candState); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -401,6 +409,7 @@ func (st *Storage) scanRevision(row interface {
 		return nil, fmt.Errorf("decoding revision steps: %w", err)
 	}
 	r.Skills = decodeSkills(skills)
+	r.GroupID, r.Label, r.CandidateState = groupID.String, label.String, candState.String
 	r.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 	if lockedAt.Valid {
 		t, _ := time.Parse(time.RFC3339Nano, lockedAt.String)
@@ -409,7 +418,8 @@ func (st *Storage) scanRevision(row interface {
 	return &r, nil
 }
 
-const revisionColumns = `id, plan_id, workspace_id, revision_no, steps_json, content_hash, base_sha, created_at, locked_at, skills_json`
+const revisionColumns = `id, plan_id, workspace_id, revision_no, steps_json, content_hash, base_sha, created_at, locked_at, skills_json,
+	group_id, label, candidate_state`
 
 // skillsJSON / decodeSkills: the skills columns hold a JSON array, or ”
 // for none (the column default — every pre-skills row).
@@ -442,9 +452,15 @@ func (st *Storage) PlanSkills(ctx context.Context, planID string) ([]string, err
 	return decodeSkills(s), nil
 }
 
+// LatestRevision is the newest revision that still counts: superseded
+// candidates (losers of a multi-agent plan round) never do — after a
+// candidate is approved, "latest" is the approved one even if a sibling
+// was written later.
 func (st *Storage) LatestRevision(ctx context.Context, planID string) (*Revision, error) {
 	row := st.db.QueryRowContext(ctx,
-		`SELECT `+revisionColumns+` FROM plan_revisions WHERE plan_id = ? ORDER BY revision_no DESC LIMIT 1`, planID)
+		`SELECT `+revisionColumns+` FROM plan_revisions
+		 WHERE plan_id = ? AND (candidate_state IS NULL OR candidate_state != 'superseded')
+		 ORDER BY revision_no DESC LIMIT 1`, planID)
 	return st.scanRevision(row)
 }
 

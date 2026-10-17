@@ -54,7 +54,7 @@ func TestRunWorkspacePrefs(t *testing.T) {
 		t.Fatalf("bad policy must fall back to defaults: %+v", d)
 	}
 	all := strings.Join(warnings, "\n")
-	for _, want := range []string{"only review and qa run several agents", `ignoring member "Bad Focus@claude"`, `ignoring --run-stage "no-equals-sign"`, `ignoring --stage-policy "github.com/you/repo:qa=sometimes"`} {
+	for _, want := range []string{"only plan, review and qa run several agents", `ignoring member "Bad Focus@claude"`, `ignoring --run-stage "no-equals-sign"`, `ignoring --stage-policy "github.com/you/repo:qa=sometimes"`} {
 		if !strings.Contains(all, want) {
 			t.Errorf("warnings missing %q:\n%s", want, all)
 		}

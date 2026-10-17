@@ -419,6 +419,7 @@ func serveCmd() *cli.Command {
 				return inboxService.AppendSection(ctx, itemID, heading, body, audit.ViaWorker)
 			})
 			go runsService.RunSweepLoop(ctx, time.Minute)
+			runsService.SetPlanHooks(planRoundStartHook(inboxService, plansService), ensurePlanHook(inboxService, plansService))
 			runsService.SetItemTransition(func(ctx context.Context, itemID, to, reason, agentID string) error {
 				toStatus := inbox.Status(to)
 				if !inbox.IsWorkflowStatus(toStatus) {
@@ -636,9 +637,9 @@ func runWorkspacePrefs(stageSpecs, policySpecs []string) (map[string]*runs.Works
 			continue
 		}
 		p := get(ws)
-		multiOK := stage == runs.StageReview || stage == runs.StageQA
+		multiOK := stage == runs.StagePlan || stage == runs.StageReview || stage == runs.StageQA
 		if len(members) > 1 && !multiOK {
-			warnings = append(warnings, fmt.Sprintf("--run-stage %q: only review and qa run several agents; using %s", spec, members[0].Runner))
+			warnings = append(warnings, fmt.Sprintf("--run-stage %q: only plan, review and qa run several agents; using %s", spec, members[0].Runner))
 			members = members[:1]
 		}
 		if len(members) == 1 {
@@ -685,6 +686,45 @@ func runWorkspacePrefs(stageSpecs, policySpecs []string) (map[string]*runs.Works
 		get(ws).Policies[stage] = sp
 	}
 	return prefs, warnings
+}
+
+// planRoundStartHook: a new multi-agent plan round supersedes the previous
+// round's open candidates.
+func planRoundStartHook(inboxSvc *inbox.Service, plansSvc *plans.Service) func(ctx context.Context, itemID string) error {
+	return func(ctx context.Context, itemID string) error {
+		item, err := inboxSvc.GetItem(ctx, itemID)
+		if err != nil || item.PlanID == "" {
+			return nil
+		}
+		return plansSvc.SupersedeOpenCandidates(ctx, item.PlanID)
+	}
+}
+
+// ensurePlanHook creates and links the item's plan for a multi-agent plan
+// round, so planners only write candidates. Idempotent: when two members
+// are claimed at once, the loser's plan is deleted and the linked one kept.
+func ensurePlanHook(inboxSvc *inbox.Service, plansSvc *plans.Service) func(ctx context.Context, itemID string) error {
+	return func(ctx context.Context, itemID string) error {
+		item, err := inboxSvc.GetItem(ctx, itemID)
+		if err != nil {
+			return err
+		}
+		if item.PlanID != "" {
+			return nil
+		}
+		plan, err := plansSvc.CreatePlan(ctx, plans.CreatePlanInput{WorkspaceID: item.WorkspaceID, Name: item.Title, AuthorAgentID: "skopos"})
+		if err != nil {
+			return err
+		}
+		if _, err := inboxSvc.LinkPlan(ctx, itemID, plan.ID); err != nil {
+			_ = plansSvc.DeletePlan(ctx, plan.ID)
+			if errors.Is(err, inbox.ErrAlreadyConverted) {
+				return nil
+			}
+			return err
+		}
+		return nil
+	}
 }
 
 // splitStageSpec splits "<workspace>:<stage>=<value>". The workspace may

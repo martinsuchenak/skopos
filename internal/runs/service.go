@@ -29,6 +29,13 @@ type Service struct {
 	// itemAppend writes a section into the item (a stage group's summary) —
 	// wired to inbox.AppendSection. Nil skips the summary.
 	itemAppend func(ctx context.Context, itemID, heading, body string) error
+	// Plan groups (multi-agent planning), wired in serve.go: planRoundStart
+	// closes the previous round (supersedes its open candidates) when a new
+	// plan group opens; ensurePlan creates and links the item's plan when
+	// the first member is claimed (the item is in planning by then), so
+	// planners only ever write candidates.
+	planRoundStart func(ctx context.Context, itemID string) error
+	ensurePlan     func(ctx context.Context, itemID string) error
 	// nextStage resolves the stage that follows a successful one per
 	// workspace; "" ends the sequence. Defaults to: plan -> implement -> done
 	// (review/qa only when configured).
@@ -50,6 +57,11 @@ func (s *Service) SetPrefs(p map[string]*WorkspacePrefs) {
 		p = map[string]*WorkspacePrefs{}
 	}
 	s.prefs = p
+}
+
+// SetPlanHooks wires the plan-group callbacks (see the fields).
+func (s *Service) SetPlanHooks(roundStart, ensurePlan func(ctx context.Context, itemID string) error) {
+	s.planRoundStart, s.ensurePlan = roundStart, ensurePlan
 }
 
 // SetItemAppend wires the inbox section-append callback (group summaries).
@@ -114,8 +126,8 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 		}
 	}
 	// Multi-agent stage (opt-in): two or more members routed to it open a
-	// group instead of a single run.
-	if groupStage(in.Stage) {
+	// group instead of a single run (a seeded revise is always single).
+	if groupStage(in.Stage) && !in.Single {
 		if members := s.prefs[in.WorkspaceID].GroupMembers(in.Stage); members != nil {
 			return s.queueGroup(ctx, in, members)
 		}
@@ -127,7 +139,7 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 		ItemID:      in.ItemID,
 		PlanRevID:   strings.TrimSpace(in.PlanRevID),
 		Stage:       in.Stage,
-		Runner:      s.prefs[in.WorkspaceID].StageRunner(in.Stage),
+		Runner:      runnerFor(in, s.prefs[in.WorkspaceID]),
 		Focus:       s.prefs[in.WorkspaceID].SingleFocus(in.Stage),
 		Branch:      strings.TrimSpace(in.Branch),
 		BaseSHA:     strings.TrimSpace(in.BaseSHA),
@@ -138,6 +150,15 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 		return nil, err
 	}
 	return &r, nil
+}
+
+// runnerFor: an explicit runner (a seeded revise) wins over the workspace
+// preference.
+func runnerFor(in QueueInput, p *WorkspacePrefs) string {
+	if r := strings.TrimSpace(in.Runner); r != "" {
+		return r
+	}
+	return p.StageRunner(in.Stage)
 }
 
 // phaseForStage is the item status a run's stage corresponds to: a plan
@@ -183,7 +204,44 @@ func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 	if to := phaseForStage(run.Stage); to != "" && s.itemTransition != nil {
 		_ = s.itemTransition(ctx, run.ItemID, to, "run claimed: "+run.ID, "worker:"+run.WorkerID)
 	}
+	// A plan group member: the item now plans, so its plan can be created
+	// and linked (idempotent — the first member does it).
+	if run.GroupID != "" && run.Stage == StagePlan && s.ensurePlan != nil {
+		if err := s.ensurePlan(ctx, run.ItemID); err != nil {
+			s.chainNote(ctx, run, "ensuring the plan failed: "+err.Error())
+		}
+	}
 	return run, nil
+}
+
+// QueueSeeded queues one plan run that re-plans from a candidate (revise
+// at a multi-agent gate): never a group, pinned to the candidate's runner,
+// the seed revision carried in plan_rev_id.
+func (s *Service) QueueSeeded(ctx context.Context, itemID, workspaceID, stage, seedRevisionID, runner string) (string, error) {
+	r, err := s.Queue(ctx, QueueInput{WorkspaceID: workspaceID, ItemID: itemID, Stage: stage, PlanRevID: seedRevisionID, Runner: runner, Single: true})
+	if err != nil {
+		return "", err
+	}
+	return r.ID, nil
+}
+
+// PinGroupBase records a plan group's base commit once (the first member to
+// start) and returns the pinned base every member must plan at.
+func (s *Service) PinGroupBase(ctx context.Context, runID, baseSHA string) (string, error) {
+	if err := s.checkScope(ctx, runID); err != nil {
+		return "", err
+	}
+	r, err := s.storage.Get(ctx, strings.TrimSpace(runID))
+	if err != nil {
+		return "", err
+	}
+	if r.GroupID == "" {
+		return strings.TrimSpace(baseSHA), nil // not grouped: nothing to pin
+	}
+	if strings.TrimSpace(baseSHA) == "" {
+		return "", fmt.Errorf("%w: base_sha is required", ErrInvalidInput)
+	}
+	return s.storage.SetGroupBase(ctx, r.GroupID, strings.TrimSpace(baseSHA))
 }
 
 // Heartbeat extends the worker's lease; the first flips claimed -> running.

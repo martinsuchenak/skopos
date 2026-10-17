@@ -927,9 +927,28 @@
                             <textarea id="workflow-note" x-model="workflowNote" rows="3" class="fld w-full resize-y text-sm" :placeholder="workflowNotePlaceholder()" :aria-label="workflowNoteLabel()"></textarea>
                         </div>
                         <button type="button" x-show="workflowShowQueue()" @click.stop="queueInboxItem(previewItem.id)" :disabled="!workflowActionReady('queue')" class="btn btn-sm text-sky-300" :aria-label="'Queue item ' + previewItem.title">Queue</button>
-                        <span x-show="workflowShowApprove()" class="w-full text-[11px] text-zinc-400" x-text="workflowRevisionLabel()"></span>
-                        <button type="button" x-show="workflowShowApprove()" @click.stop="approveInboxItem(previewItem.id)" :disabled="!workflowActionReady('approve')" class="btn btn-sm text-emerald-300" :aria-label="'Approve item ' + previewItem.title">Approve</button>
-                        <button type="button" x-show="workflowShowApprove()" @click.stop="requestChangesInboxItem(previewItem.id)" :disabled="!workflowActionReady('request_changes')" class="btn btn-sm btn-ghost text-orange-300" :aria-label="'Request changes on item ' + previewItem.title">Request changes</button>
+                        <!-- What Approve binds: the plan revision, or one card per
+                             candidate of a multi-agent plan round (numbered as in
+                             Slack and the CLI). A keyed x-for: it re-renders when
+                             the async revision load lands (CSP build). -->
+                        <template x-for="c in approveTargets()" :key="c.id + '|' + previewItem.updated_at">
+                            <div class="w-full rounded-lg border border-zinc-700 p-3">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span class="text-sm font-medium" x-text="c.title"></span>
+                                    <span class="text-[11px] text-zinc-400" x-text="c.meta"></span>
+                                    <span class="ml-auto flex flex-wrap gap-2">
+                                        <button type="button" @click.stop="approveTarget(c.id)" :disabled="!workflowActionReady('approve')" class="btn btn-sm text-emerald-300" :aria-label="'Approve ' + c.title">Approve</button>
+                                        <button type="button" x-show="c.candidate" @click.stop="reviseCandidate(c.id)" :disabled="!workflowActionReady('request_changes')" class="btn btn-sm btn-ghost text-orange-300" :aria-label="'Revise ' + c.title + ' with the notes'">Revise</button>
+                                    </span>
+                                </div>
+                                <ol x-show="c.candidate" class="mt-2 list-decimal space-y-0.5 pl-5 text-xs text-zinc-300">
+                                    <template x-for="(st, si) in c.steps" :key="c.id + '|' + si">
+                                        <li x-text="st"></li>
+                                    </template>
+                                </ol>
+                            </div>
+                        </template>
+                        <button type="button" x-show="workflowShowApprove()" @click.stop="requestChangesInboxItem(previewItem.id)" :disabled="!workflowActionReady('request_changes')" class="btn btn-sm btn-ghost text-orange-300" :aria-label="requestChangesLabel() + ' for item ' + previewItem.title" x-text="requestChangesLabel()"></button>
                         <button type="button" x-show="workflowShowRetry()" @click.stop="retryInboxItem(previewItem.id)" :disabled="!workflowActionReady('retry')" class="btn btn-sm text-sky-300" :aria-label="'Retry item ' + previewItem.title">Retry</button>
                         <button type="button" x-show="workflowShowMarkDone()" @click.stop="markDoneInboxItem(previewItem.id)" :disabled="!workflowActionReady('mark_done')" class="btn btn-sm text-emerald-300" :aria-label="'Mark item ' + previewItem.title + ' done'">Mark done</button>
                         <button type="button" x-show="workflowShowReject()" @click.stop="rejectInboxItem(previewItem.id)" :disabled="!workflowActionReady('reject')" class="btn btn-sm btn-ghost text-rose-300" :aria-label="'Reject item ' + previewItem.title">Reject</button>
