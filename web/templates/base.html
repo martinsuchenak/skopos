@@ -61,7 +61,7 @@
 
     <div class="md:ml-64">
         <!-- Header -->
-        <header class="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-zinc-800 bg-zinc-950/95 px-4 backdrop-blur">
+        <header class="sticky top-0 z-20 flex h-16 items-center gap-2 sm:gap-3 border-b border-zinc-800 bg-zinc-950/95 px-4 backdrop-blur">
             <button type="button" @click="sidebarOpen = !sidebarOpen" class="btn btn-ghost p-2 md:hidden" aria-label="Toggle navigation" :aria-expanded="sidebarOpen">
                 <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
             </button>
@@ -71,12 +71,15 @@
                  header and persists in localStorage. A native select cannot
                  search and truncates long repo paths — the trigger opens a
                  searchable panel instead. -->
-            <div class="relative ml-1 flex min-w-0 items-center gap-1.5">
-                <button type="button" @click="toggleWorkspaceMenu()" class="fld-sm flex max-w-32 items-center gap-1.5 text-left sm:max-w-80" :aria-expanded="workspaceMenuOpen ? 'true' : 'false'" aria-haspopup="listbox" aria-label="Filter by workspace" :title="activeWorkspace || 'All workspaces'">
+            <!-- On a phone the row is ~20px short: the trigger (min-w-0) is what
+                 truncates; "+" and the right cluster never shrink, so nothing
+                 slides under the key button. -->
+            <div class="relative flex min-w-0 items-center gap-1.5 sm:ml-1">
+                <button type="button" @click="toggleWorkspaceMenu()" class="fld-sm flex min-w-0 max-w-32 items-center gap-1.5 text-left sm:max-w-80" :aria-expanded="workspaceMenuOpen ? 'true' : 'false'" aria-haspopup="listbox" aria-label="Filter by workspace" :title="activeWorkspace || 'All workspaces'">
                     <span class="truncate" x-text="activeWorkspace ? workspaceLabel(activeWorkspace) : 'All workspaces'"></span>
                     <svg class="ml-auto h-3.5 w-3.5 shrink-0 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                 </button>
-                <button type="button" @click="openWorkspaceModal()" class="btn btn-sm !min-h-8 sm:!min-h-6 !px-2" aria-label="Create workspace" title="Create workspace">
+                <button type="button" @click="openWorkspaceModal()" class="btn btn-sm shrink-0 !min-h-8 sm:!min-h-6 !px-2" aria-label="Create workspace" title="Create workspace">
                     <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                     <span class="hidden lg:inline">New</span>
                 </button>
@@ -84,9 +87,11 @@
                 <!-- click-away backdrop + panel. Visibility is driven
                      imperatively by syncWorkspaceMenu (data-ws-menu-layer):
                      x-show effects on these elements never re-run in the CSP
-                     build — see main.ts. -->
+                     build — see main.ts. On a phone the panel spans the
+                     screen (16px gutters): anchored at the trigger it ran
+                     past the right edge and scrolled the page sideways. -->
                 <div data-ws-menu-layer style="display: none" class="fixed inset-0 z-40" @click="closeWorkspaceMenu()" aria-hidden="true"></div>
-                <div data-ws-menu-layer style="display: none" class="absolute left-0 top-full z-50 mt-2 w-[22rem] max-w-[calc(100vw-2rem)] rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl">
+                <div data-ws-menu-layer style="display: none" class="fixed inset-x-4 top-[4.5rem] z-50 sm:absolute sm:inset-x-auto sm:left-0 sm:top-full sm:mt-2 sm:w-[22rem] rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl">
                     <div class="border-b border-zinc-800 p-2">
                         <input id="ws-menu-search" type="search" x-model="workspaceSearch" @input="wsSearchChanged()" @keydown="workspaceKeyNav($event)" class="fld-sm w-full" placeholder="Search workspaces…" aria-label="Search workspaces" autocomplete="off">
                     </div>
@@ -113,7 +118,7 @@
                 </div>
             </div>
 
-            <div class="ml-auto flex items-center gap-2">
+            <div class="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
                 <button type="button" @click="openKeyModal()" class="btn btn-sm" :class="apiKey ? 'border-emerald-700 text-emerald-300' : 'border-amber-700 text-amber-300'" :aria-label="apiKey ? 'API key set — edit' : 'Set API key'">
                     <span aria-hidden="true" x-text="apiKey ? '●' : '○'"></span>
                     <span class="hidden sm:inline" x-text="apiKey ? 'Key set' : 'Set key'"></span>

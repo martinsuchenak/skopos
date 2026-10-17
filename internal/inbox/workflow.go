@@ -565,7 +565,10 @@ func (s *Service) RequireAmendable(planID string) error {
 			return nil
 		}
 	}
-	return plans.ErrRevisionLocked
+	if len(items) == 0 {
+		return fmt.Errorf("%w; it has no linked inbox item to amend through", plans.ErrRevisionLocked)
+	}
+	return fmt.Errorf("%w; amendments go through an item that is implementing or awaiting approval, and its item is %s", plans.ErrRevisionLocked, statusLabel(items[0].Status))
 }
 
 // RequirePlannable is the plans service's replan guard: the linked item
@@ -575,12 +578,15 @@ func (s *Service) RequirePlannable(planID string) error {
 	if err != nil {
 		return err
 	}
+	if len(items) == 0 {
+		return fmt.Errorf("%w: no inbox item is linked to it (POST /api/inbox/{id}/link-plan first)", plans.ErrNotPlannable)
+	}
 	for i := range items {
 		if items[i].Status == StatusPlanning {
 			return nil
 		}
 	}
-	return plans.ErrRevisionLocked
+	return fmt.Errorf("%w: its item is %s, not planning", plans.ErrNotPlannable, statusLabel(items[0].Status))
 }
 
 // PlanHasWorkflowItem is the plans service's deletion guard: refuse deleting

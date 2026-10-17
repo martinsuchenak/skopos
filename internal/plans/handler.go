@@ -484,7 +484,7 @@ func (h *Handler) Replan(w http.ResponseWriter, r *http.Request) {
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
 		case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
 			rest.RespondError(w, http.StatusNotFound, err.Error())
-		case errors.Is(err, ErrRevisionLocked):
+		case errors.Is(err, ErrRevisionLocked) || errors.Is(err, ErrNotPlannable):
 			rest.RespondError(w, http.StatusConflict, err.Error())
 		default:
 			rest.InternalError(w, err)

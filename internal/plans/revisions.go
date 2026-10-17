@@ -25,6 +25,12 @@ import (
 // claim updates stay legal — execution must be able to progress.
 var ErrRevisionLocked = errors.New("plan revision is locked: structural changes require an amendment (a new revision)")
 
+// ErrNotPlannable is returned when a replan targets a plan that no inbox
+// item is planning right now: not linked yet, or its item has moved past (or
+// not reached) the planning phase. Nothing is locked; the plan just isn't
+// being planned.
+var ErrNotPlannable = errors.New("plan is not being planned")
+
 // ErrStaleRevision is returned when an approval names a revision that is no
 // longer the latest, or whose snapshot no longer matches the plan's current
 // steps — approving would bind Martin to content he did not see.

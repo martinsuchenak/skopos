@@ -124,6 +124,19 @@ versions follow [Semantic Versioning](https://semver.org/).
   it's hidden now, and Reject replaces it.
 - **Item preview showed a second Close** under every loaded item, and an
   approved item's preview hid its Reject.
+- **Dashboard styles could go stale after an upgrade.** The asset version
+  hashed only `app.js`, so a release that changed only markup (new classes
+  land in `style.css` alone) kept the old URL. Browsers then kept the old
+  stylesheet, cached as immutable for a year. The version now covers every
+  bundled file.
+- **Phone header:** at 375px "+ New" slid under the key button, and the
+  workspace menu ran off the right edge and scrolled the page sideways. The
+  picker now truncates and the menu spans the screen; from `sm` up nothing
+  changes.
+- **Replan on a plan nobody is planning** answered "plan revision is locked"
+  for a fresh plan with no revision. It now says what is wrong (`409`): no
+  linked item (`link-plan` first), or the item's actual status. Amendment
+  refusals also say why.
 - **Approval and change-request notes reached agents only from Slack.** The
   relay appended them to the item, which is where the stage prompts read
   them. The dashboard and REST endpoints only recorded them in the audit

@@ -114,21 +114,43 @@ func MetricsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// bundleHash fingerprints every file in the bundle — paths and contents, in
+// WalkDir's lexical order — so any asset change yields a new version.
+func bundleHash(fsys fs.FS) (string, error) {
+	h := fnv.New64a()
+	err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := fs.ReadFile(fsys, path)
+		if err != nil {
+			return err
+		}
+		h.Write([]byte(path))
+		h.Write([]byte{0})
+		h.Write(data)
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil))[:12], nil
+}
+
 func registerWebRoutes(mux *http.ServeMux) {
 	templates := template.Must(template.ParseFS(appweb.TemplateFiles, "templates/base.html"))
 	// assetsVersion derives the dashboard's cache-busting suffix from the
 	// embedded bundle CONTENT: the asset URLs change exactly when the assets
 	// do (every dev rebuild, every release upgrade), so a browser can never
-	// run a cached app.js against markup from a newer binary — the
-	// "hard reload fixes it" class of confusion. Falls back to the build
-	// version when the bundle cannot be read.
+	// run a cached app.js or style.css against markup from a newer binary —
+	// the "hard reload fixes it" class of confusion. Every file counts: a
+	// markup-only change ships new Tailwind utilities in style.css alone.
+	// Falls back to the build version when the bundle cannot be read.
 	assetsVersion := build.Version
 	staticFS, err := fs.Sub(appweb.StaticFiles, "dist")
 	if err == nil {
-		if data, readErr := fs.ReadFile(staticFS, "app.js"); readErr == nil {
-			h := fnv.New64a()
-			h.Write(data)
-			assetsVersion = hex.EncodeToString(h.Sum(nil))[:12]
+		if v, hashErr := bundleHash(staticFS); hashErr == nil {
+			assetsVersion = v
 		}
 		// Serve files but never directory listings: the bundle contains only
 		// named assets, and an index of dist/ leaks the asset inventory.

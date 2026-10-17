@@ -217,6 +217,41 @@ func TestReplanAtomic(t *testing.T) {
 	}
 }
 
+// A replan on a plan nobody is planning is refused as not plannable, not
+// as "locked": a fresh plan has no revision at all, so the old message sent
+// operators hunting for a lock that didn't exist.
+func TestReplanNotPlannable(t *testing.T) {
+	svc, plansSvc, _ := fullStack(t)
+	root := context.Background()
+	steps := []plans.RevisionStep{{Title: "step"}}
+	plan, err := plansSvc.CreatePlan(root, plans.CreatePlanInput{WorkspaceID: "ws-a", Name: "p", AuthorAgentID: "w"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = plansSvc.Replan(root, plan.ID, steps, "base")
+	if !errors.Is(err, plans.ErrNotPlannable) || errors.Is(err, plans.ErrRevisionLocked) || !strings.Contains(err.Error(), "link-plan") {
+		t.Fatalf("unlinked plan: want ErrNotPlannable naming link-plan, got %v", err)
+	}
+	// Linked, but the item is still queued: says which status it is in.
+	item := mustCreate(t, svc, root, "not yet planning")
+	if _, err := svc.Queue(approverCtx(), item.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.LinkPlan(root, item.ID, plan.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = plansSvc.Replan(root, plan.ID, steps, "base")
+	if !errors.Is(err, plans.ErrNotPlannable) || !strings.Contains(err.Error(), "queued, not planning") {
+		t.Fatalf("queued item: want ErrNotPlannable naming the status, got %v", err)
+	}
+	if _, err := svc.SystemTransition(root, item.ID, StatusPlanning, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plansSvc.Replan(root, plan.ID, steps, "base"); err != nil {
+		t.Fatalf("planning item: replan must pass: %v", err)
+	}
+}
+
 // Round-6 F3, the real worker path end to end: replan (worker-shaped, no
 // review step) -> approve -> implementing -> amend -> approve. The
 // server-owned review step must survive the amendment — last, phase review,

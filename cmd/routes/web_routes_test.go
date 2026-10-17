@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"regexp"
 	"testing"
+	"testing/fstest"
 )
 
 // The dashboard must reference the static assets through content-versioned
@@ -40,5 +41,35 @@ func TestDashboardAssetVersioning(t *testing.T) {
 	mux.ServeHTTP(w, r)
 	if cc := w.Header().Get("Cache-Control"); cc != "public, max-age=31536000, immutable" {
 		t.Fatalf("static assets must be immutable, got %q", cc)
+	}
+}
+
+// A markup-only change ships new utilities in style.css alone; the version
+// must cover it, or browsers keep the old immutable stylesheet (seen live:
+// a new responsive class never applied after a rebuild).
+func TestBundleHashCoversEveryAsset(t *testing.T) {
+	base := fstest.MapFS{
+		"app.js":    {Data: []byte("app")},
+		"style.css": {Data: []byte(".a{}")},
+		"theme.js":  {Data: []byte("theme")},
+	}
+	v1, err := bundleHash(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cssOnly := fstest.MapFS{
+		"app.js":    {Data: []byte("app")},
+		"style.css": {Data: []byte(".a{}.b{}")},
+		"theme.js":  {Data: []byte("theme")},
+	}
+	v2, err := bundleHash(cssOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v1 == v2 || len(v1) != 12 {
+		t.Fatalf("a style.css change must change the version: %q vs %q", v1, v2)
+	}
+	if again, _ := bundleHash(base); again != v1 {
+		t.Fatalf("hash must be deterministic: %q vs %q", again, v1)
 	}
 }
