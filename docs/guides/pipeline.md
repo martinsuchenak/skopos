@@ -32,7 +32,7 @@ skopos setup                  # choose "3) Run server" — writes an annotated s
 Set `auth.api_key` in `skopos-config.toml`. This is the **root** key: only for
 administration, never for agents or workers.
 
-Start the server, keeping step 4's `--run-stage` flags in mind:
+Start the server:
 
 ```bash
 skopos serve --server-host 0.0.0.0
@@ -87,14 +87,18 @@ approved base commit.
 ## 4. Decide which agent does what
 
 Each stage can run on a different runner, meaning a different CLI or model.
-You set this on the server, per workspace:
+Set it per workspace in the dashboard (Workspaces → **Pipeline**) or with the
+CLI, no restart needed:
 
 ```bash
-skopos serve --server-host 0.0.0.0 \
-  --run-stage github.com/you/repo:plan=claude \
-  --run-stage github.com/you/repo:implement=claude \
-  --run-stage github.com/you/repo:review=opencode-glm-5-3
+skopos workspace pipeline set --workspace github.com/you/repo --stage plan --runners claude
+skopos workspace pipeline set --workspace github.com/you/repo --stage implement --runners claude
+skopos workspace pipeline set --workspace github.com/you/repo --stage review --runners opencode-glm-5-3
 ```
+
+Many repositories with the same setup? Put them in a workspace group (for
+example the pattern `github.com/you/*`) and set the pipeline once on the
+group; a repository overrides only the stages it needs.
 
 - **Plan and implement always run.** They use any available account unless
   pinned.
@@ -103,22 +107,24 @@ skopos serve --server-host 0.0.0.0 \
 - **Use a different model for review.** A second opinion catches more than
   the implementer reviewing itself.
 - **Names must match.** Runner names here must match the worker's runners
-  (step 5). A run pinned to a runner waits for that runner's accounts; it
-  never silently switches model.
-- **Optional: several planners.** `--run-stage github.com/you/repo:plan=claude,opencode-glm`
-  writes one candidate plan per planner; you approve one at the gate. See
+  (step 5); the dialog suggests the runners your workers offer and warns
+  about one no worker offers yet. A run pinned to a runner waits for that
+  runner's accounts; it never silently switches model.
+- **Optional: several planners.** Add two or more runners to Plan
+  (`--runners claude,opencode-glm`): each writes a candidate plan; you
+  approve one at the gate. See
   [Multi-agent planning](../configuration.md#multi-agent-planning).
 - **Optional: several reviewers.** List members to run review or QA on
   several agents, each with a focus brief from `.skopos/focus/<name>.md`:
-  `--run-stage github.com/you/repo:review=security@claude,tests@opencode-glm`.
+  `--runners security@claude,tests@opencode-glm` on the review stage.
   They are decided together (by default, any blocking finding sends the item
   back to you) and leave one merged summary. See
   [Multi-agent review and QA](../configuration.md#multi-agent-review-and-qa).
 - **Panel or solo, per item.** With lists configured, each item chooses: the
   dashboard's *Agents* field, `#panel` / `#solo` in a Slack capture (or a
   `panel` / `solo` reply in its thread), `--agents` on the CLI. Items that
-  don't choose get `--agents-default github.com/you/repo=panel|solo`
-  (`panel` when unset). See
+  don't choose get the workspace default ("Items without their own choice
+  get" in the Pipeline dialog; `panel` when unset). See
   [Per-item switch](../configuration.md#per-item-switch-panel-or-solo).
 
 ## 5. Set up a worker
@@ -207,8 +213,8 @@ choose per item whether it gets that panel or a single agent:
   `skopos inbox update --id <item> --agents solo|panel|default`;
 - **Slack:** add `#panel` or `#solo` to the `new:` message.
 
-Leave it unset to get the repository default (`--agents-default`, `panel`
-unless you changed it). You can switch an item later; it applies from its
+Leave it unset to get the workspace default (set in its Pipeline dialog,
+`panel` unless you changed it). You can switch an item later; it applies from its
 next plan, review or QA stage.
 
 **Queue it.** Open the item in the dashboard and click **Queue**, or run

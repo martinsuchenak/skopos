@@ -120,12 +120,13 @@ use. Built-in names (`claude`, `opencode`) need no `runner_config` block.
 
 The model belongs to the account, and a runner name is any label. To run one
 CLI with different models, give each model its own runner name. The wizard
-does this when you pick a model. Then pin stages to runners on the server:
+does this when you pick a model. Then pin stages to runners in the
+workspace's pipeline settings (dashboard: Workspaces → Pipeline):
 
 ```sh
-skopos serve --run-stage github.com/you/repo:plan=opencode-glm-5-3 \
-             --run-stage github.com/you/repo:implement=claude \
-             --run-stage github.com/you/repo:review=opencode-qwen3-8-27b
+skopos workspace pipeline set --workspace github.com/you/repo --stage plan --runners opencode-glm-5-3
+skopos workspace pipeline set --workspace github.com/you/repo --stage implement --runners claude
+skopos workspace pipeline set --workspace github.com/you/repo --stage review --runners opencode-qwen3-8-27b
 ```
 
 - **A pinned run uses only its own runner.** When that runner's accounts are
@@ -276,6 +277,25 @@ No secrets live in the service definition or the TOML. The daemon loads
   and any `${VAR}` your accounts reference.
 - **What agents see:** env-file values never reach an agent directly. Only an
   account's `env = { NAME = "${VAR}" }` passes a credential to the agent run.
+
+## Presence
+
+The dashboard's Workers view (and `GET /api/workers`) shows each worker as
+**busy** (holds a claimed or running run), **idle** or **offline**:
+
+- **From the first poll.** Every claim poll reports the worker's runners,
+  workspaces, skopos version and `poll_every`, so a new worker is visible
+  within seconds of starting, before it has worked on anything.
+- **While busy.** Run heartbeats keep it fresh.
+- **Offline.** A clean stop (SIGTERM, `systemctl stop`) says goodbye and the
+  worker shows offline at once. After a crash it shows offline once it has
+  been silent for three poll intervals (at least two minutes; 15 minutes
+  while it holds a run).
+- **Version.** Workers still on an older release after an upgrade are easy
+  to spot.
+
+The pipeline settings dialog suggests the runners these workers offer and
+warns about a runner no worker serving the workspace offers yet.
 
 ## Service management
 

@@ -109,6 +109,9 @@ func NewMCPHandler(statusService *status.Service, blackboardService *blackboard.
 			fn(server, workspacesService)
 		}
 	}
+	if pipelineReader != nil {
+		registerPipelineTool(server, pipelineReader)
+	}
 
 	return http.HandlerFunc(server.HandleRequest)
 }

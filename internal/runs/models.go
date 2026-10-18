@@ -184,6 +184,10 @@ type ClaimInput struct {
 	Runners    []string `json:"runners"`
 	Workspaces []string `json:"workspaces"`
 	KeyID      string   `json:"-"` // the claiming key (M5 binding)
+	// Presence: the worker's release and idle poll interval (decides when a
+	// silent worker counts as offline).
+	Version string `json:"version,omitempty"`
+	PollMS  int64  `json:"poll_ms,omitempty"`
 }
 
 // ReportInput is the worker's result for a claimed run.

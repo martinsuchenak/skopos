@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/martinsuchenak/skopos/internal/apikeys"
+	"github.com/martinsuchenak/skopos/internal/pipeline"
 	"github.com/paularlott/cli"
 )
 
@@ -23,6 +24,7 @@ func groupCmd() *cli.Command {
 			groupCreateCmd(),
 			groupListCmd(),
 			groupAddCmd(),
+			pipelineCmd(pipeline.KindGroup),
 		},
 	}
 }

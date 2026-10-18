@@ -32,9 +32,9 @@ Optional — if absent, skopos runs on defaults. The file is gitignored (may con
 | `--vector-store` | `SKOPOS_VECTOR_STORE` | `codeindex.embeddings.vector_store` | `sqlite` | Vector backend: `sqlite` (embedded brute force) or `qdrant` (external, monorepo scale) |
 | `--qdrant-url` | `SKOPOS_QDRANT_URL` | `codeindex.embeddings.qdrant_url` | (empty) | Qdrant REST address when `--vector-store=qdrant` (e.g. `http://localhost:6333`) |
 | `--qdrant-api-key` | `SKOPOS_QDRANT_API_KEY` | `codeindex.embeddings.qdrant_api_key` | (empty) | Qdrant API key when required |
-| `--run-stage` | — | — | (none) | Agent pipeline routing, `<workspace>:<stage>=<runner>`, repeatable; plan/review/qa take a `[focus@]runner,…` list — see [Stage routing](#stage-routing-agent-pipeline) |
-| `--stage-policy` | — | — | `any-blocks`, 60m | How a multi-agent stage is decided, `<workspace>:<stage>=<policy>[,early-exit][,timeout=<duration>]` — see [Multi-agent review and QA](#multi-agent-review-and-qa) |
-| `--agents-default` | — | — | `panel` | What items without their own switch get on a multi-agent stage, `<workspace>=<panel\|solo>`, repeatable — see [Per-item switch](#per-item-switch-panel-or-solo) |
+| `--run-stage` | — | — | (none) | **Deprecated**: imported once into the [pipeline settings](#pipeline-settings-agent-pipeline), removed next release. Agent pipeline routing, `<workspace>:<stage>=<runner>`, repeatable; plan/review/qa take a `[focus@]runner,…` list — see [Stage routing](#stage-routing-agent-pipeline) |
+| `--stage-policy` | — | — | `any-blocks`, 60m | **Deprecated**: imported once into the [pipeline settings](#pipeline-settings-agent-pipeline), removed next release. How a multi-agent stage is decided, `<workspace>:<stage>=<policy>[,early-exit][,timeout=<duration>]` — see [Multi-agent review and QA](#multi-agent-review-and-qa) |
+| `--agents-default` | — | — | `panel` | **Deprecated**: imported once into the [pipeline settings](#pipeline-settings-agent-pipeline), removed next release. What items without their own switch get on a multi-agent stage, `<workspace>=<panel\|solo>`, repeatable — see [Per-item switch](#per-item-switch-panel-or-solo) |
 
 ### Client (written by `skopos setup`)
 
@@ -76,18 +76,47 @@ Manage runners and accounts with `skopos worker runner add | list | test`
 instead of editing these by hand — see
 [deployment/worker.md](deployment/worker.md#adding-runners-the-wizard).
 
-### Stage routing (agent pipeline)
+### Pipeline settings (agent pipeline)
 
-`--run-stage <workspace>:<stage>=<runner>` on `skopos serve` (repeatable)
-pins a stage of a workspace to a worker runner name. The stages are `plan`,
-`implement`, `review` and `qa`.
+Which worker runner takes each stage of a workspace — `plan`, `compare`,
+`synthesize`, `implement`, `review`, `qa` — is stored in the database and
+edited without a restart:
 
-- **Plan and implement** always run. Without a preference, any runner's
+- **Dashboard:** Workspaces → **Pipeline** on a workspace, or on a group.
+- **CLI:** `skopos workspace pipeline show|set|clear` and `skopos group
+  pipeline show|set|clear`.
+- **REST:** `GET`/`PUT /api/workspaces/{id}/pipeline` and
+  `/api/groups/{id}/pipeline`. **MCP:** `workspace_pipeline` (read only).
+
+```bash
+skopos workspace pipeline set --workspace github.com/you/repo --stage plan --runners claude
+skopos workspace pipeline set --workspace github.com/you/repo --stage review --runners opencode-glm-5-3
+skopos workspace pipeline show --workspace github.com/you/repo
+```
+
+- **Plan and implement** always run. Without a setting, any runner's
   account may take them.
-- **Review and QA** run only when the workspace has a preference for them.
-  Otherwise a finished implementation goes straight to `in_review`.
+- **Review and QA** run only when set. Otherwise a finished implementation
+  goes straight to `in_review`. **Compare and synthesize** are off unless
+  set.
 - **Pinned runs wait for their own runner.** A pinned run waits for an
-  account of its runner; it never falls back to another runner.
+  account of its runner; it never falls back to another runner. The dialog
+  and `show` warn about a runner no worker serving the workspace offers yet.
+- **Group defaults.** A workspace group (explicit members or patterns like
+  `github.com/fortix/*`) can carry the same settings. Per stage, a
+  workspace's own setting wins, else its group's. Two groups may not set
+  the same stage for a shared workspace (the save is refused; if membership
+  changes make it happen anyway, the first group by name wins and the
+  dialog reports the conflict).
+- **Who may change them.** A workspace's: approver keys whose scope covers
+  it (and root). A group's: root. Any key in scope may read them. Every
+  change is audit-logged (`workspace_pipeline`) with what changed.
+- **When a change applies.** At the next queued stage. Runs already queued
+  or running keep their runner.
+- **The old flags.** `--run-stage`, `--stage-policy` and `--agents-default`
+  are imported once at startup (stages a workspace has not stored yet;
+  stored settings win, a differing flag only logs) and will be removed in
+  the next release.
 
 The [pipeline tutorial](guides/pipeline.md) walks through a complete setup.
 
@@ -97,10 +126,11 @@ Optional. A review or QA stage may run on several agents at once, each with
 its own **focus**. One runner per stage (the line above) is unchanged.
 
 ```bash
-skopos serve \
-  --run-stage github.com/you/repo:review=security@claude,tests@opencode-glm,conventions@opencode-qwen \
-  --stage-policy github.com/you/repo:review=any-blocks
+skopos workspace pipeline set --workspace github.com/you/repo --stage review \
+  --runners security@claude,tests@opencode-glm,conventions@opencode-qwen --policy any-blocks
 ```
+
+In the dashboard: Pipeline → Review → add each runner with its focus.
 
 - **Members.** Each list entry is `[focus@]runner`. Every member is its own
   run, pinned to its runner; together they form a *group* that is decided
@@ -112,7 +142,8 @@ skopos serve \
   brief fails that member.
 - **Findings** carry a severity: `blocking` fails a reviewer, `nit` is
   reported but never blocks.
-- **Policies** (`--stage-policy`):
+- **Policies** (Decision in the dialog, `--policy` / `--early-exit` /
+  `--timeout` on the CLI):
   - `any-blocks` (default): any blocking finding fails the group; waits for
     every member, so you get full feedback per round;
   - `majority`: fails when more than half of the members that finished fail;
@@ -137,7 +168,7 @@ Optional, like the above. A `plan` list runs several planners, each writing
 a **candidate**:
 
 ```bash
-skopos serve --run-stage github.com/you/repo:plan=claude,opencode-glm,opencode-qwen
+skopos workspace pipeline set --workspace github.com/you/repo --stage plan --runners claude,opencode-glm,opencode-qwen
 ```
 
 - **Candidates don't touch the plan.** Each planner writes a candidate
@@ -161,8 +192,8 @@ skopos serve --run-stage github.com/you/repo:plan=claude,opencode-glm,opencode-q
 **Optional judge and merge.** Between the candidates and the gate:
 
 ```bash
---run-stage github.com/you/repo:compare=opencode-qwen     # the judge
---run-stage github.com/you/repo:synthesize=claude          # the merge
+skopos workspace pipeline set --workspace github.com/you/repo --stage compare --runners opencode-qwen     # the judge
+skopos workspace pipeline set --workspace github.com/you/repo --stage synthesize --runners claude         # the merge
 ```
 
 - `compare` scores every candidate (correctness, scope, step granularity,
@@ -190,12 +221,11 @@ whether its plan, review and QA stages use it:
 |---|---|
 | `panel` | the repository's list (a group) |
 | `solo` | one run on the list's **first** runner, without its focus brief |
-| (empty) | the repository default: `--agents-default <workspace>=panel\|solo`, `panel` when not set |
+| (empty) | the workspace default ("Items without their own choice get" in the Pipeline dialog, or its group's), `panel` when not set |
 
 ```bash
-skopos serve \
-  --run-stage github.com/you/repo:review=security@claude,tests@opencode-glm \
-  --agents-default github.com/you/repo=solo     # panel only where an item asks for it
+# panel only where an item asks for it
+skopos workspace pipeline set --workspace github.com/you/repo --agents-default solo
 ```
 
 - **Every interface sets it.** Dashboard: the *Agents* field in the capture

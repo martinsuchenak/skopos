@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/martinsuchenak/skopos/internal/worker"
@@ -91,6 +92,7 @@ func workerCmd() *cli.Command {
 			}
 			serverURL := resolveClientSetting(cmd.GetString("server-url"), "SKOPOS_SERVER_URL", "http://localhost:8080", clientCfg.ServerURL)
 			client := worker.NewClient(expandTilde(serverURL, home), key)
+			client.SetPollInterval(cfg.PollEvery)
 			w := worker.New(cfg, client, log)
 			// Env-file values never reach agent runs (review low): the
 			// scrubber drops every key the file provided.
@@ -107,8 +109,16 @@ func workerCmd() *cli.Command {
 			log.Info("worker starting", "workspaces", cfg.Workspaces, "runners", cfg.Runners, "state", cfg.StateDir)
 			// A cancelled context is a clean stop (SIGTERM from the service
 			// manager) — exit 0 so Restart=on-failure stays quiet.
-			if err := w.Loop(runCtx); err != nil && !errors.Is(err, context.Canceled) {
-				return err
+			loopErr := w.Loop(runCtx)
+			// Goodbye: presence shows the worker offline at once instead of
+			// after its silence window (best effort; a crash skips it).
+			byeCtx, cancelBye := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := client.Offline(byeCtx, cfg.ID); err != nil {
+				log.Warn("could not mark the worker offline", "err", err)
+			}
+			cancelBye()
+			if loopErr != nil && !errors.Is(loopErr, context.Canceled) {
+				return loopErr
 			}
 			return nil
 		},

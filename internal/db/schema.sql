@@ -368,3 +368,33 @@ CREATE TABLE IF NOT EXISTS run_groups (
 -- One open group per item and stage, enforced by the database.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_run_groups_open ON run_groups(item_id, stage) WHERE state = 'open';
 CREATE INDEX IF NOT EXISTS idx_run_groups_deadline ON run_groups(state, deadline_ms);
+
+-- Pipeline settings (tmp/workspace-pipeline-settings — design.md): which
+-- agents run each stage, per workspace or per workspace group. Resolution
+-- per stage: the workspace's own row, else its group's, else not set.
+-- owner_id names a workspace or a group id (two tables, so no FK; the
+-- service drops rows of deleted owners). members is a JSON array of
+-- {"runner","focus"}; a list is only valid on plan, review and qa.
+CREATE TABLE IF NOT EXISTS pipeline_stages (
+    owner_kind  TEXT    NOT NULL CHECK (owner_kind IN ('workspace', 'group')),
+    owner_id    TEXT    NOT NULL,
+    stage       TEXT    NOT NULL CHECK (stage IN ('plan', 'compare', 'synthesize', 'implement', 'review', 'qa')),
+    members     TEXT    NOT NULL CHECK (json_valid(members) AND json_array_length(members) >= 1),
+    policy      TEXT    CHECK (policy IS NULL OR policy IN ('any-blocks', 'majority', 'all-pass')),
+    early_exit  INTEGER NOT NULL DEFAULT 0 CHECK (early_exit IN (0, 1)),
+    timeout_ms  INTEGER CHECK (timeout_ms IS NULL OR timeout_ms > 0),
+    updated_ms  INTEGER NOT NULL,
+    updated_by  TEXT    NOT NULL,  -- API key id ('' = root, 'flag-import' = startup import)
+    PRIMARY KEY (owner_kind, owner_id, stage)
+) STRICT;
+
+-- Owner-level pipeline defaults: what items without their own agents switch
+-- get on a multi-agent stage (NULL = panel).
+CREATE TABLE IF NOT EXISTS pipeline_defaults (
+    owner_kind      TEXT    NOT NULL CHECK (owner_kind IN ('workspace', 'group')),
+    owner_id        TEXT    NOT NULL,
+    agents_default  TEXT    CHECK (agents_default IS NULL OR agents_default IN ('panel', 'solo')),
+    updated_ms      INTEGER NOT NULL,
+    updated_by      TEXT    NOT NULL,
+    PRIMARY KEY (owner_kind, owner_id)
+) STRICT;

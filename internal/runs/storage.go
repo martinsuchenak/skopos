@@ -125,17 +125,108 @@ func jsonList(xs []string) string {
 	return string(b)
 }
 
-// WorkerSeen is a registry row (capabilities recorded at claim time).
+// WorkerSeen is a registry row (what the worker reports on every poll) and
+// its presence: State is busy (holds a claimed/running run), idle (polled
+// recently) or offline (said goodbye, or silent too long).
 type WorkerSeen struct {
 	ID         string   `json:"id"`
 	Runners    []string `json:"runners"`
 	Workspaces []string `json:"workspaces"`
 	LastSeen   string   `json:"last_seen"`
+	Version    string   `json:"version,omitempty"`
+	PollMS     int64    `json:"poll_ms,omitempty"`
+	OfflineAt  string   `json:"offline_at,omitempty"`
+	State      string   `json:"state"`
+}
+
+// presenceRefresh: an unchanged worker row is rewritten at most this often
+// by idle polls and heartbeats (presence without a write per poll).
+const presenceRefresh = 30 * time.Second
+
+// recordWorker is the registry write of every claim poll: what the worker
+// offers and serves, its version and poll interval; it also clears a
+// goodbye. The row belongs to the key that first wrote it (” = root; NULL
+// = a row from before keys were recorded, adopted by its next writer):
+// another key reusing the worker id cannot overwrite it (review H4); its
+// claims are unaffected (runs are fenced by claimed_key_id). force (a
+// successful claim) always writes; an idle poll writes only when something
+// changed or the row is older than presenceRefresh.
+func recordWorker(ctx context.Context, tx *sql.Tx, in ClaimInput, now time.Time, force bool) error {
+	var version, poll any
+	if in.Version != "" {
+		version = in.Version
+	}
+	if in.PollMS > 0 {
+		poll = in.PollMS
+	}
+	forced := 0
+	if force {
+		forced = 1
+	}
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO workers (id, runners, workspaces, last_seen, updated_at, key_id, version, poll_ms, offline_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+		ON CONFLICT(id) DO UPDATE SET
+			runners = excluded.runners, workspaces = excluded.workspaces,
+			last_seen = excluded.last_seen, updated_at = excluded.updated_at, key_id = excluded.key_id,
+			version = excluded.version, poll_ms = excluded.poll_ms, offline_at = NULL
+		WHERE (workers.key_id IS NULL OR workers.key_id = excluded.key_id)
+			AND (? = 1 OR workers.runners != excluded.runners OR workers.workspaces != excluded.workspaces
+				OR COALESCE(workers.version, '') != COALESCE(excluded.version, '')
+				OR COALESCE(workers.poll_ms, 0) != COALESCE(excluded.poll_ms, 0)
+				OR workers.offline_at IS NOT NULL OR workers.last_seen < ?)`,
+		in.WorkerID, jsonList(in.Runners), jsonList(in.Workspaces), formatTime(now), formatTime(now), in.KeyID,
+		version, poll, forced, formatTime(now.Add(-presenceRefresh)))
+	if err != nil {
+		return fmt.Errorf("recording worker: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 && force {
+		slog.Warn("worker id is registered to another API key; registry row left unchanged", "worker", in.WorkerID)
+	}
+	return nil
+}
+
+// TouchWorker refreshes a busy worker's presence on a run heartbeat.
+func (s *Storage) TouchWorker(ctx context.Context, workerID, keyID string, now time.Time) {
+	_, _ = s.db.ExecContext(ctx, `
+		UPDATE workers SET last_seen = ?, offline_at = NULL
+		WHERE id = ? AND (key_id IS NULL OR key_id = ?) AND (last_seen < ? OR offline_at IS NOT NULL)`,
+		formatTime(now), workerID, keyID, formatTime(now.Add(-presenceRefresh)))
+}
+
+// WorkerOffline records a worker's clean-shutdown goodbye; false when the
+// row does not exist or belongs to another key.
+func (s *Storage) WorkerOffline(ctx context.Context, workerID, keyID string, now time.Time) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE workers SET offline_at = ? WHERE id = ? AND (key_id IS NULL OR key_id = ?)`,
+		formatTime(now), workerID, keyID)
+	if err != nil {
+		return false, fmt.Errorf("marking worker offline: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// BusyWorkers lists worker ids holding a claimed or running run.
+func (s *Storage) BusyWorkers(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT worker_id FROM runs WHERE status IN (?, ?) AND worker_id != ''`, string(StatusClaimed), string(StatusRunning))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }
 
 // ListWorkers returns every worker that has ever claimed, newest first.
 func (st *Storage) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
-	rows, err := st.db.QueryContext(ctx, `SELECT id, runners, workspaces, last_seen FROM workers ORDER BY last_seen DESC`)
+	rows, err := st.db.QueryContext(ctx, `SELECT id, runners, workspaces, last_seen, COALESCE(version, ''), COALESCE(poll_ms, 0), COALESCE(offline_at, '') FROM workers ORDER BY last_seen DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("listing workers: %w", err)
 	}
@@ -144,7 +235,7 @@ func (st *Storage) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
 	for rows.Next() {
 		var w WorkerSeen
 		var runners, workspaces string
-		if err := rows.Scan(&w.ID, &runners, &workspaces, &w.LastSeen); err != nil {
+		if err := rows.Scan(&w.ID, &runners, &workspaces, &w.LastSeen, &w.Version, &w.PollMS, &w.OfflineAt); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(runners), &w.Runners)
@@ -338,7 +429,11 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 		// Commit even with no candidate: the lease-expiry sweep above must
 		// persist (it was silently rolled back here, so runs only ever
 		// expired inside a successful claim — review found it via the
-		// cancel-interrupted test).
+		// cancel-interrupted test). An idle poll still records the worker
+		// (presence: visible from its first poll, not its first run).
+		if err := recordWorker(ctx, tx, in, now, false); err != nil {
+			return nil, err
+		}
 		return nil, tx.Commit()
 	}
 
@@ -366,26 +461,8 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 		return nil, nil // raced: another worker claimed it between scan and write
 	}
 
-	// Registry-lite: record what this worker offers and serves on every
-	// claim (the Workers view's capability record). The row belongs to the
-	// key that first wrote it ('' = root; NULL = a row from before keys
-	// were recorded, adopted by its next writer): another key reusing the
-	// worker id cannot overwrite it (review H4). The claim itself is
-	// unaffected — runs are fenced by claimed_key_id.
-	reg, err := tx.ExecContext(ctx, `
-		INSERT INTO workers (id, runners, workspaces, last_seen, updated_at, key_id)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			runners = excluded.runners, workspaces = excluded.workspaces,
-			last_seen = excluded.last_seen, updated_at = excluded.updated_at, key_id = excluded.key_id
-		WHERE workers.key_id IS NULL OR workers.key_id = excluded.key_id`,
-		in.WorkerID, jsonList(in.Runners), jsonList(in.Workspaces),
-		formatTime(now), formatTime(now), in.KeyID)
-	if err != nil {
-		return nil, fmt.Errorf("recording worker: %w", err)
-	}
-	if n, _ := reg.RowsAffected(); n == 0 {
-		slog.Warn("worker id is registered to another API key; registry row left unchanged", "worker", in.WorkerID)
+	if err := recordWorker(ctx, tx, in, now, true); err != nil {
+		return nil, err
 	}
 	row := tx.QueryRowContext(ctx, `SELECT `+runColumns+` FROM runs WHERE id = ?`, cand.ID)
 	claimed, err := scanRun(row)

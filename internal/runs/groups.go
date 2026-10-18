@@ -26,7 +26,7 @@ func groupStage(stage string) bool {
 // queueGroup opens a group for the stage and queues one run per member, in
 // one transaction. The caller already refused a duplicate active run.
 func (s *Service) queueGroup(ctx context.Context, in QueueInput, members []Member) (*Run, error) {
-	prefs := s.prefs[in.WorkspaceID]
+	prefs := s.prefsOf(ctx, in.WorkspaceID)
 	policy := prefs.PolicyFor(in.Stage)
 	if in.Stage == StagePlan {
 		policy.Policy, policy.EarlyExit = PolicyCandidates, false
@@ -415,7 +415,7 @@ func (s *Service) ListGroups(ctx context.Context, itemID string) ([]GroupView, e
 // compare (if configured) → synthesize (if configured) → the gate. Each
 // advisory stage is one run; it reads the round's candidates itself.
 func (s *Service) afterAdvisory(ctx context.Context, done, itemID, workspaceID, agent string) {
-	prefs := s.prefs[workspaceID]
+	prefs := s.prefsOf(ctx, workspaceID)
 	var next []string
 	switch done {
 	case StagePlan:

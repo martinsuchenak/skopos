@@ -4,6 +4,44 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Pipeline settings in the dashboard.** Which agents run each stage
+  (plan, compare, synthesize, implement, review, qa), the review/QA decision
+  rule and the agents default for items are now stored per workspace and
+  edited without a restart: Workspaces → **Pipeline**, `skopos workspace
+  pipeline show|set|clear`, `GET`/`PUT /api/workspaces/{id}/pipeline`, and
+  the read-only MCP tool `workspace_pipeline`.
+  - **Group defaults:** a workspace group (members or patterns such as
+    `github.com/fortix/*`) carries the same settings, so many repositories
+    are configured once (`skopos group pipeline …`,
+    `/api/groups/{id}/pipeline`). Per stage, the workspace's own setting
+    wins, else its group's; two groups setting the same stage for a shared
+    workspace is refused.
+  - Workspace settings are approver-only (root for groups), audit-logged
+    with what changed, and apply from the next queued stage.
+  - The dialog suggests runners your workers offer and warns about one no
+    worker serving the workspace offers yet.
+- **Worker presence.** Workers report their runners, workspaces, version and
+  poll interval on every poll, so they appear from their first poll, not
+  their first run. The Workers view shows busy / idle / offline and the
+  version; a clean shutdown says goodbye (`POST /api/workers/{id}/offline`)
+  so the worker shows offline at once.
+
+### Deprecated
+
+- **`--run-stage`, `--stage-policy` and `--agents-default`** on `skopos
+  serve`. They are imported once into the pipeline settings at startup
+  (stages a workspace has not stored yet; stored settings win and a
+  differing flag only logs) and will be removed in the next release.
+
+### Fixed
+
+- A successful single-planner plan run no longer carries a false "item move
+  to planning failed" note.
+
 ## [0.16.0] — 2026-10-18
 
 ### Breaking

@@ -325,6 +325,49 @@ paths:
         "401": { description: Unauthorized }
         "403": { description: Root key required }
 
+  /api/groups/{id}/pipeline:
+    get:
+      summary: A group's pipeline settings (root only) — defaults its workspaces inherit per stage
+      operationId: getGroupPipeline
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Pipeline settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PipelineView" }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the root key }
+        "404": { description: Not found or out of scope }
+    put:
+      summary: Set a group's pipeline settings (root only)
+      description: >-
+        Replaces the whole document at this level: stages it omits are
+        cleared here (its workspaces then get nothing for that stage from this group). Audit-logged with what changed. Applies
+        from the next queued stage.
+      operationId: putGroupPipeline
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PipelineSettingsInput" }
+      responses:
+        "200":
+          description: Saved; the new view
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PipelineView" }
+        "400": { description: Invalid settings (unknown stage, a list on a single-runner stage, bad focus or policy) }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the root key }
+        "404": { description: Not found or out of scope }
+        "409": { description: Another group already sets one of these stages for a workspace this group holds }
+
   /api/groups/{id}:
     get:
       summary: Get a workspace group (root only)
@@ -818,6 +861,48 @@ paths:
         "204": { description: Removed }
         "401": { description: Unauthorized }
         "404": { description: Not found }
+
+  /api/workspaces/{id}/pipeline:
+    get:
+      summary: Effective pipeline settings of a workspace — which agents run each stage, with where each comes from (the workspace or a group)
+      operationId: getWorkspacePipeline
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Pipeline settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PipelineView" }
+        "401": { description: Unauthorized }
+        "403": { description: Out of scope }
+        "404": { description: Not found or out of scope }
+    put:
+      summary: Set a workspace's own pipeline settings (approver keys whose scope covers it)
+      description: >-
+        Replaces the whole document at this level: stages it omits are
+        cleared here (the workspace then inherits its group's). Audit-logged with what changed. Applies
+        from the next queued stage.
+      operationId: putWorkspacePipeline
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PipelineSettingsInput" }
+      responses:
+        "200":
+          description: Saved; the new view
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PipelineView" }
+        "400": { description: Invalid settings (unknown stage, a list on a single-runner stage, bad focus or policy) }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the approver permission and the workspace in scope }
+        "404": { description: Not found or out of scope }
 
   # ---- blackboard ----
   /api/blackboard/entries:
@@ -1776,6 +1861,8 @@ paths:
                 worker_id: { type: string }
                 runners: { type: array, items: { type: string } }
                 workspaces: { type: array, items: { type: string } }
+                version: { type: string, description: "Presence: the worker's release" }
+                poll_ms: { type: integer, description: "Presence: its idle poll interval" }
       responses:
         "200":
           description: The claimed run (lease started)
@@ -1926,7 +2013,26 @@ paths:
                     runners: { type: array, items: { type: string } }
                     workspaces: { type: array, items: { type: string } }
                     last_seen: { type: string }
+                    version: { type: string, description: The worker's skopos release }
+                    poll_ms: { type: integer, description: Its idle poll interval }
+                    offline_at: { type: string, description: When it said goodbye (clean shutdown) }
+                    state:
+                      type: string
+                      enum: [busy, idle, offline]
+                      description: "busy: holds a claimed/running run; idle: polled within 3 poll intervals (at least 2 minutes); offline: said goodbye or silent longer"
         "401": { description: Unauthorized }
+
+  /api/workers/{id}/offline:
+    post:
+      summary: A worker's clean-shutdown goodbye (presence shows it offline at once)
+      operationId: workerOffline
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Marked offline }
+        "401": { description: Unauthorized }
+        "404": { description: No such worker for this key }
 
   /api/runs/{id}:
     get:
@@ -1963,6 +2069,58 @@ components:
         the accessible workspaces), by-id operations return 404, and writes
         require workspace_id for every principal including root.
   schemas:
+    PipelineStage:
+      type: object
+      required: [members]
+      properties:
+        members:
+          type: array
+          minItems: 1
+          description: Several only on plan, review and qa
+          items:
+            type: object
+            required: [runner]
+            properties:
+              runner: { type: string }
+              focus: { type: string, description: "Focus brief name (.skopos/focus/<name>.md)" }
+        policy: { type: string, enum: [any-blocks, majority, all-pass], description: review/qa only }
+        early_exit: { type: boolean, description: review/qa only }
+        timeout_ms: { type: integer, description: "plan/review/qa with several agents; at least 60000" }
+    PipelineSettingsInput:
+      type: object
+      properties:
+        stages:
+          type: object
+          description: "Keyed by stage: plan, compare, synthesize, implement, review, qa"
+          additionalProperties: { $ref: "#/components/schemas/PipelineStage" }
+        agents_default: { type: string, enum: [panel, solo, default, ""], description: What items without their own switch get }
+        via: { type: string, description: Surface label for the audit log }
+    PipelineView:
+      type: object
+      properties:
+        owner_kind: { type: string, enum: [workspace, group] }
+        owner_id: { type: string }
+        own:
+          type: object
+          properties:
+            stages: { type: object, additionalProperties: { $ref: "#/components/schemas/PipelineStage" } }
+            agents_default: { type: string }
+        effective:
+          type: object
+          description: "Workspace only: the resolved stages, each with source (workspace or group:<name>)"
+          additionalProperties:
+            allOf:
+              - { $ref: "#/components/schemas/PipelineStage" }
+              - type: object
+                properties:
+                  source: { type: string }
+        effective_agents_default: { type: string }
+        agents_default_source: { type: string }
+        groups:
+          type: array
+          items: { type: object, properties: { id: { type: string }, name: { type: string } } }
+        conflicts: { type: array, items: { type: string }, description: Stages two groups both set (the first group by name wins until fixed) }
+        unknown_runners: { type: array, items: { type: string }, description: Runners no worker serving this workspace offers yet }
     Error:
       type: object
       properties:

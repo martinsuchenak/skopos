@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/martinsuchenak/skopos/internal/pipeline"
 	"github.com/martinsuchenak/skopos/internal/workspace"
 	"github.com/paularlott/cli"
 )
@@ -27,6 +28,7 @@ func workspaceCmd() *cli.Command {
 			return nil
 		},
 		Commands: []*cli.Command{
+			pipelineCmd(pipeline.KindWorkspace),
 			{
 				Name:  "add",
 				Usage: "Register a workspace on the server (root key; default: this checkout's workspace)",

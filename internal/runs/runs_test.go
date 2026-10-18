@@ -664,3 +664,67 @@ func TestWorkerRegistryScopedAndBound(t *testing.T) {
 		t.Fatalf("legacy row adopted by its next writer: %q %v", owner, err)
 	}
 }
+
+// Worker presence: an idle poll registers the worker (with version and poll
+// interval) — visible before its first run; repeated idle polls don't
+// rewrite an unchanged row; a goodbye shows it offline until it polls again;
+// silence beyond three poll intervals (min 2m) is offline; a held run is busy.
+func TestWorkerPresence(t *testing.T) {
+	s := testService(t)
+	clock := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return clock }
+	k := auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: "k1", Workspaces: map[string]struct{}{"ws-a": {}}})
+	poll := func() {
+		t.Helper()
+		if _, err := s.ClaimNext(k, ClaimInput{WorkerID: "w1", Runners: []string{"claude"}, Workspaces: []string{"ws-a"}, Version: "v0.17.0", PollMS: 30000}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state := func() WorkerSeen {
+		t.Helper()
+		ws, err := s.ListWorkers(rootCtx())
+		if err != nil || len(ws) != 1 {
+			t.Fatalf("workers: %+v %v", ws, err)
+		}
+		return ws[0]
+	}
+	poll() // empty queue
+	if w := state(); w.State != "idle" || w.Version != "v0.17.0" || w.PollMS != 30000 {
+		t.Fatalf("idle poll registers the worker: %+v", w)
+	}
+	first := state().LastSeen
+	clock = clock.Add(10 * time.Second)
+	poll()
+	if state().LastSeen != first {
+		t.Fatal("an unchanged row is not rewritten within the refresh window")
+	}
+	clock = clock.Add(31 * time.Second)
+	poll()
+	if state().LastSeen == first {
+		t.Fatal("past the refresh window the row is refreshed")
+	}
+	if err := s.WorkerOffline(k, "w1"); err != nil {
+		t.Fatal(err)
+	}
+	if w := state(); w.State != "offline" {
+		t.Fatalf("goodbye shows offline: %+v", w)
+	}
+	other := auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: "k2", Workspaces: map[string]struct{}{"ws-a": {}}})
+	if err := s.WorkerOffline(other, "w1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("another key cannot say goodbye for w1: %v", err)
+	}
+	clock = clock.Add(time.Second)
+	poll()
+	if w := state(); w.State != "idle" || w.OfflineAt != "" {
+		t.Fatalf("polling again clears the goodbye: %+v", w)
+	}
+	clock = clock.Add(2*time.Minute + time.Second)
+	if w := state(); w.State != "offline" {
+		t.Fatalf("silent past max(3 polls, 2m) is offline: %+v", w)
+	}
+	_ = mustQueue(t, s, rootCtx(), "ws-a", "item-1", StagePlan)
+	poll()
+	if w := state(); w.State != "busy" {
+		t.Fatalf("holding a claimed run is busy: %+v", w)
+	}
+}

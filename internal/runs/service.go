@@ -21,7 +21,11 @@ type Service struct {
 	now     func() time.Time
 	lease   time.Duration
 
-	prefs map[string]*WorkspacePrefs
+	// prefs backs SetPrefs (tests, partial wiring); prefsFor is the lookup
+	// every queue and claim reads — the pipeline settings resolver in
+	// production, so routing changes apply at the next queue.
+	prefs    map[string]*WorkspacePrefs
+	prefsFor func(ctx context.Context, workspaceID string) *WorkspacePrefs
 
 	// itemTransition moves the inbox item (system edge) — wired to
 	// inbox.SystemTransition. Nil disables chaining (tests, partial wiring).
@@ -54,12 +58,27 @@ func NewService(storage *Storage) *Service {
 // SetLease overrides the claim lease (tests).
 func (s *Service) SetLease(d time.Duration) { s.lease = d }
 
-// SetPrefs installs the per-workspace routing preferences.
+// SetPrefs installs fixed per-workspace routing (tests, partial wiring).
 func (s *Service) SetPrefs(p map[string]*WorkspacePrefs) {
 	if p == nil {
 		p = map[string]*WorkspacePrefs{}
 	}
 	s.prefs = p
+	s.prefsFor = nil
+}
+
+// SetPrefsSource installs the live routing lookup (the pipeline settings
+// resolver): read at every queue and claim.
+func (s *Service) SetPrefsSource(fn func(ctx context.Context, workspaceID string) *WorkspacePrefs) {
+	s.prefsFor = fn
+}
+
+// prefsOf is the routing of one workspace (nil = nothing configured).
+func (s *Service) prefsOf(ctx context.Context, workspaceID string) *WorkspacePrefs {
+	if s.prefsFor != nil {
+		return s.prefsFor(ctx, workspaceID)
+	}
+	return s.prefs[workspaceID]
 }
 
 // SetPlanHooks wires the plan-group callbacks (see the fields).
@@ -139,8 +158,8 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 	// default) opens the group; solo runs the first member alone, without
 	// its focus brief.
 	if groupStage(in.Stage) && !in.Single {
-		if members := s.prefs[in.WorkspaceID].GroupMembers(in.Stage); members != nil {
-			if s.prefs[in.WorkspaceID].Panel(s.agentsFor(ctx, in.ItemID)) {
+		if members := s.prefsOf(ctx, in.WorkspaceID).GroupMembers(in.Stage); members != nil {
+			if s.prefsOf(ctx, in.WorkspaceID).Panel(s.agentsFor(ctx, in.ItemID)) {
 				return s.queueGroup(ctx, in, members)
 			}
 			if strings.TrimSpace(in.Runner) == "" {
@@ -155,8 +174,8 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 		ItemID:      in.ItemID,
 		PlanRevID:   strings.TrimSpace(in.PlanRevID),
 		Stage:       in.Stage,
-		Runner:      runnerFor(in, s.prefs[in.WorkspaceID]),
-		Focus:       s.prefs[in.WorkspaceID].SingleFocus(in.Stage),
+		Runner:      runnerFor(in, s.prefsOf(ctx, in.WorkspaceID)),
+		Focus:       s.prefsOf(ctx, in.WorkspaceID).SingleFocus(in.Stage),
 		Branch:      strings.TrimSpace(in.Branch),
 		BaseSHA:     strings.TrimSpace(in.BaseSHA),
 		CreatedAt:   now,
@@ -215,12 +234,24 @@ func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 	if len(in.Workspaces) == 0 {
 		return nil, fmt.Errorf("%w: workspaces is required (scope at least one)", ErrInvalidInput)
 	}
+	// Presence fields are client strings: bound them.
+	if in.Version = strings.TrimSpace(in.Version); len(in.Version) > 64 {
+		in.Version = in.Version[:64]
+	}
+	if in.PollMS < 0 || in.PollMS > int64(24*time.Hour/time.Millisecond) {
+		in.PollMS = 0
+	}
 	for _, ws := range in.Workspaces {
 		if err := auth.RequireWorkspaceQuiet(ctx, ws); err != nil {
 			return nil, fmt.Errorf("%w: workspace scope", ErrNotFound)
 		}
 	}
-	run, err := s.storage.Claim(ctx, in, s.prefs, s.lease, s.now().UTC())
+	// Routing of the offered workspaces, resolved once per claim.
+	prefs := make(map[string]*WorkspacePrefs, len(in.Workspaces))
+	for _, ws := range in.Workspaces {
+		prefs[ws] = s.prefsOf(ctx, ws)
+	}
+	run, err := s.storage.Claim(ctx, in, prefs, s.lease, s.now().UTC())
 	if err != nil || run == nil {
 		return run, err
 	}
@@ -279,7 +310,59 @@ func (s *Service) Heartbeat(ctx context.Context, id, workerID, leaseToken string
 		return err
 	}
 	keyID := callerKeyID(ctx)
-	return s.storage.Heartbeat(ctx, id, workerID, keyID, hashLeaseToken(leaseToken), s.lease, s.now().UTC())
+	if err := s.storage.Heartbeat(ctx, id, workerID, keyID, hashLeaseToken(leaseToken), s.lease, s.now().UTC()); err != nil {
+		return err
+	}
+	s.storage.TouchWorker(ctx, workerID, keyID, s.now().UTC())
+	return nil
+}
+
+// WorkerOffline records a worker's clean-shutdown goodbye. Only the key
+// that owns the registry row may say it (others get not-found).
+func (s *Service) WorkerOffline(ctx context.Context, workerID string) error {
+	workerID = strings.TrimSpace(workerID)
+	if workerID == "" {
+		return fmt.Errorf("%w: worker id is required", ErrInvalidInput)
+	}
+	ok, err := s.storage.WorkerOffline(ctx, workerID, callerKeyID(ctx), s.now().UTC())
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%w: worker %s", ErrNotFound, workerID)
+	}
+	return nil
+}
+
+// Presence windows: an idle worker is online while it polled within three
+// poll intervals (at least idleWindowMin); a busy one sends heartbeats and
+// counts as online for busyWindow.
+const (
+	idleWindowMin = 2 * time.Minute
+	busyWindow    = 15 * time.Minute
+)
+
+// workerState: offline after a goodbye or a long silence; busy while it
+// holds a claimed/running run; idle otherwise.
+func workerState(w WorkerSeen, busy bool, now time.Time) string {
+	seen, err := time.Parse(time.RFC3339Nano, w.LastSeen)
+	if err != nil {
+		return "offline"
+	}
+	if w.OfflineAt != "" && w.OfflineAt >= w.LastSeen {
+		return "offline"
+	}
+	idle := 3 * time.Duration(w.PollMS) * time.Millisecond
+	if idle < idleWindowMin {
+		idle = idleWindowMin
+	}
+	switch {
+	case busy && now.Sub(seen) <= busyWindow:
+		return "busy"
+	case now.Sub(seen) <= idle:
+		return "idle"
+	}
+	return "offline"
 }
 
 // Report ends a run and chains: success queues the next configured stage or
@@ -369,7 +452,7 @@ func (s *Service) advance(ctx context.Context, run *Run, agentID string) {
 	next := s.nextStage(run.WorkspaceID, run.Stage)
 	// Review/QA run only when the workspace configures them (one runner or
 	// a group); otherwise the sequence ends and Martin reviews.
-	if next != "" && s.prefs[run.WorkspaceID].Configured(next) {
+	if next != "" && s.prefsOf(ctx, run.WorkspaceID).Configured(next) {
 		if _, err := s.Queue(ctx, QueueInput{
 			WorkspaceID: run.WorkspaceID, ItemID: run.ItemID, PlanRevID: run.PlanRevID,
 			Stage: next, Branch: run.Branch, BaseSHA: run.BaseSHA,
@@ -454,6 +537,14 @@ func (s *Service) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
 	all, err := s.storage.ListWorkers(ctx)
 	if err != nil {
 		return nil, err
+	}
+	busy, err := s.storage.BusyWorkers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	now := s.now().UTC()
+	for i := range all {
+		all[i].State = workerState(all[i], busy[all[i].ID], now)
 	}
 	p := auth.PrincipalFromContext(ctx)
 	if p.IsRoot() || p.AllWorkspaces {

@@ -29,6 +29,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/health"
 	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/notify"
+	"github.com/martinsuchenak/skopos/internal/pipeline"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/rest"
 	"github.com/martinsuchenak/skopos/internal/runs"
@@ -145,15 +146,15 @@ func serveCmd() *cli.Command {
 			},
 			&cli.StringSliceFlag{
 				Name:  "run-stage",
-				Usage: "Per-workspace stage routing, <workspace>:<stage>=<runner> (repeatable). plan/review/qa take a list of [focus@]runner members to run several agents (e.g. review=security@claude,tests@opencode-glm); compare/synthesize add a judge and a merge after a multi-agent plan round",
+				Usage: "DEPRECATED (imported once into the dashboard pipeline settings; removed next release). Per-workspace stage routing, <workspace>:<stage>=<runner> (repeatable). plan/review/qa take a list of [focus@]runner members to run several agents (e.g. review=security@claude,tests@opencode-glm); compare/synthesize add a judge and a merge after a multi-agent plan round",
 			},
 			&cli.StringSliceFlag{
 				Name:  "stage-policy",
-				Usage: "How a multi-agent stage is decided, <workspace>:<stage>=<any-blocks|majority|all-pass>[,early-exit][,timeout=60m] (repeatable)",
+				Usage: "DEPRECATED (imported once into the dashboard pipeline settings; removed next release). How a multi-agent stage is decided, <workspace>:<stage>=<any-blocks|majority|all-pass>[,early-exit][,timeout=60m] (repeatable)",
 			},
 			&cli.StringSliceFlag{
 				Name:  "agents-default",
-				Usage: "What items without their own agents switch get on a multi-agent stage, <workspace>=<panel|solo> (repeatable; default panel)",
+				Usage: "DEPRECATED (imported once into the dashboard pipeline settings; removed next release). What items without their own agents switch get on a multi-agent stage, <workspace>=<panel|solo> (repeatable; default panel)",
 			},
 			&cli.IntFlag{
 				Name:         "cleanup-retention-days",
@@ -412,11 +413,31 @@ func serveCmd() *cli.Command {
 			// item's lifecycle; chaining moves the item through the workflow
 			// via the system transitions.
 			runsService := runs.NewService(runs.NewStorage(sqlDB))
-			prefs, prefWarnings := runWorkspacePrefs(cmd.GetStringSlice("run-stage"), cmd.GetStringSlice("stage-policy"), cmd.GetStringSlice("agents-default"))
-			for _, w := range prefWarnings {
-				log.Warn("stage routing: " + w)
+			// Pipeline settings (which agents run each stage) live in the
+			// database, per workspace or group, edited in the dashboard; the
+			// queue reads them at every queue. The old --run-stage /
+			// --stage-policy / --agents-default flags are imported once.
+			pipelineService := pipeline.NewService(pipeline.NewStorage(sqlDB))
+			pipelineService.SetAuditSink(auditService)
+			pipelineService.SetPublisher(hub)
+			if err := pipelineService.DropOrphans(ctx); err != nil {
+				log.Warn("pipeline settings: " + err.Error())
 			}
-			runsService.SetPrefs(prefs)
+			if flagPrefs, prefWarnings := runWorkspacePrefs(cmd.GetStringSlice("run-stage"), cmd.GetStringSlice("stage-policy"), cmd.GetStringSlice("agents-default")); len(flagPrefs) > 0 || len(prefWarnings) > 0 {
+				for _, w := range prefWarnings {
+					log.Warn("stage routing flags: " + w)
+				}
+				for _, line := range pipelineService.Import(context.Background(), flagPrefs, func(ws string) error {
+					_, _, err := workspacesService.Create(context.Background(), workspaces.CreateInput{ID: ws})
+					return err
+				}) {
+					log.Info(line)
+				}
+				log.Warn("--run-stage, --stage-policy and --agents-default are deprecated: pipeline settings now live in the dashboard (Workspaces → Pipeline); the flags are imported once and will be removed in the next release")
+			}
+			runsService.SetPrefsSource(func(ctx context.Context, ws string) *runs.WorkspacePrefs {
+				return pipelineService.Prefs(ctx, ws)
+			})
 			// Multi-agent stages: the group summary lands in the item, and
 			// groups past their deadline are decided with what they have.
 			runsService.SetItemAppend(func(ctx context.Context, itemID, heading, body string) error {
@@ -497,6 +518,7 @@ func serveCmd() *cli.Command {
 			webMux := http.NewServeMux()
 			apiMux := http.NewServeMux()
 			routes.RegisterRoutes(webMux, apiMux, statusHandler, blackboardHandler, plansHandler, inboxHandler, workspacesHandler, codeIndexHandler, apiKeysHandler, runsHandler)
+			routes.RegisterPipelineRoutes(apiMux, pipeline.NewHandler(pipelineService, authn))
 			mux := http.NewServeMux()
 			// Longest-pattern wins: the exact SSE route below overrides /api/.
 			mux.Handle("/api/", authn.Middleware(apiMux))
@@ -513,6 +535,7 @@ func serveCmd() *cli.Command {
 			if cmd.GetBool("mcp-lean-tools") {
 				mcp.SetLeanToolset(true)
 			}
+			mcp.SetPipelineReader(pipelineService)
 			mcpHandler := mcp.NewMCPHandler(statusService, blackboardService, plansService, inboxService, codeIndexService, workspacesService)
 			mcpHandler = rest.BodyLimit(noBrowserOrigin(mcpHandler))
 			mcpHandler = authn.Middleware(mcpHandler)

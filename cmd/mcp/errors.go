@@ -7,6 +7,7 @@ import (
 
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/inbox"
+	"github.com/martinsuchenak/skopos/internal/pipeline"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/status"
 	mcplib "github.com/paularlott/mcp"
@@ -27,7 +28,8 @@ func toolError(err error) error {
 		errors.Is(err, inbox.ErrClaimConflict) || errors.Is(err, inbox.ErrAlreadyConverted) ||
 		errors.Is(err, inbox.ErrFrozen) ||
 		errors.Is(err, auth.ErrOutOfScope) || errors.Is(err, auth.ErrRootRequired) ||
-		errors.Is(err, auth.ErrApproverRequired) {
+		errors.Is(err, auth.ErrApproverRequired) ||
+		errors.Is(err, pipeline.ErrInvalidInput) || errors.Is(err, pipeline.ErrNotFound) {
 		return mcplib.NewToolErrorInvalidParams(err.Error())
 	}
 	return mcplib.NewToolErrorInternal(err.Error())

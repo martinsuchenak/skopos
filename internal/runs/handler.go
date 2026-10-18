@@ -153,6 +153,16 @@ func (h *Handler) Workers(w http.ResponseWriter, r *http.Request) {
 	rest.RespondJSON(w, http.StatusOK, workers)
 }
 
+// WorkerOffline handles POST /api/workers/{id}/offline — a worker's
+// clean-shutdown goodbye (presence shows it offline at once).
+func (h *Handler) WorkerOffline(w http.ResponseWriter, r *http.Request) {
+	if err := h.service.WorkerOffline(r.Context(), r.PathValue("id")); err != nil {
+		h.respondRunError(w, err, "worker offline")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // List handles GET /api/runs?status=&item_id=.
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	runs, err := h.service.List(r.Context(), Status(r.URL.Query().Get("status")), r.URL.Query().Get("item_id"))

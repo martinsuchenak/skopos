@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
+
+	"github.com/martinsuchenak/skopos/build"
 )
 
 // Client is the worker's REST client against skopos (claim/heartbeat/report,
@@ -21,6 +24,7 @@ type Client struct {
 	http      *http.Client
 	leases    map[string]string // run id -> fencing token
 	mu        sync.Mutex
+	pollMS    int64 // idle poll interval, reported for presence
 }
 
 func NewClient(base, key string) *Client {
@@ -95,7 +99,8 @@ func (c *Client) exec(req *http.Request, out any) error {
 // Claim polls the queue. (nil, nil) = nothing to do.
 func (c *Client) Claim(ctx context.Context, workerID string, runners, workspaces []string) (*Run, error) {
 	var run Run
-	req := map[string]any{"worker_id": workerID, "runners": runners, "workspaces": workspaces}
+	req := map[string]any{"worker_id": workerID, "runners": runners, "workspaces": workspaces,
+		"version": build.Version, "poll_ms": c.pollMS}
 	// 204 handling: do() returns nil without touching out.
 	if err := c.do(ctx, http.MethodPost, "/api/runs/claim", req, &run); err != nil {
 		return nil, err
@@ -115,6 +120,15 @@ func (c *Client) leaseHeader(runID string) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.leases[runID]
+}
+
+// SetPollInterval: reported with every poll, so the server knows when a
+// silent worker counts as offline.
+func (c *Client) SetPollInterval(d time.Duration) { c.pollMS = d.Milliseconds() }
+
+// Offline says goodbye on a clean shutdown (best effort).
+func (c *Client) Offline(ctx context.Context, workerID string) error {
+	return c.do(ctx, http.MethodPost, "/api/workers/"+url.PathEscape(workerID)+"/offline", map[string]any{}, nil)
 }
 
 func (c *Client) Heartbeat(ctx context.Context, runID, workerID string) error {

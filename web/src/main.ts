@@ -29,7 +29,15 @@ type ItemForm = { title: string; description: string; phase: string; depends_on:
 type InboxPlanSummary = { id: string; name: string; status: string };
 type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; agents?: string; created_at: string; updated_at: string; excerpt?: string };
 type InboxDetail = InboxItem & { content: string; content_html: string };
-type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string };
+type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string; state: string; version: string; lastSeen: string };
+type WorkerSeen = { id: string; runners: string[]; workspaces: string[]; last_seen: string; version?: string; state?: string };
+// Pipeline settings (which agents run each stage, per workspace or group).
+type PipeMember = { runner: string; focus?: string };
+type PipeStage = { members: PipeMember[]; policy?: string; early_exit?: boolean; timeout_ms?: number };
+type PipeView = { owner_kind: string; owner_id: string; own: { stages: Record<string, PipeStage> | null; agents_default?: string }; effective?: Record<string, PipeStage & { source: string }>; effective_agents_default?: string; agents_default_source?: string; groups?: { id: string; name: string }[]; conflicts?: string[]; unknown_runners?: string[] };
+// One dialog row per stage. mode: own (set at this level, editable),
+// inherited (from a group; Override copies it here), unset.
+type PipeRow = { stage: string; label: string; multi: boolean; rule: boolean; mode: string; members: PipeMember[]; policy: string; earlyExit: boolean; timeoutMin: string; inherited: PipeStage | null; inheritedFrom: string; addRunner: string; addFocus: string };
 
 type PlanRevisionInfo = { id: string; revision_no: number; content_hash: string; skills?: string[]; base_sha?: string; group_id?: string; label?: string; candidate_state?: string; steps?: { title: string; phase?: string }[] };
 // One thing the approver can approve at the gate: the plan revision, or one
@@ -147,6 +155,7 @@ const appState = () => ({
   // re-evaluates when a dialog reopens for different data (CSP build)
   formNonce: 0,
   showGroupModal: false,
+  pipe: { open: false, kind: 'workspace', id: '', label: '', saving: false, rev: 0, rows: [] as PipeRow[], agentsDefault: '', agentsInherited: '', agentsInheritedFrom: '', notes: [] as { key: string; tone: string; text: string }[], runnerOptions: [] as string[] },
   groupModalMode: 'create' as 'create' | 'edit',
   groupSaving: false,
   groupErrors: {} as Record<string, string>,
@@ -308,7 +317,7 @@ const appState = () => ({
   anyModalOpen() {
     return this.showKeyModal || this.showApiKeyModal || this.showSecretModal || this.showWsModal || this.showGroupModal
       || this.showEntryModal || this.showPlanModal || this.showItemModal || this.showInboxItemModal || this.showInboxPreview
-      || this.showFileModal || this.confirm.open || (this.sidebarOpen && window.matchMedia('(max-width: 767px)').matches);
+      || this.showFileModal || this.confirm.open || this.pipe.open || (this.sidebarOpen && window.matchMedia('(max-width: 767px)').matches);
   },
 
   // ---- shared dialog helpers ----
@@ -1167,6 +1176,134 @@ const appState = () => ({
     else if (item.status === 'awaiting_approval') this.openInboxPreview(item);
   },
 
+  // ---- pipeline settings dialog ----
+  // Opened from a workspace (approvers in scope; server-enforced) or a group
+  // (root). Rows re-render through pipe.rev on every structural change —
+  // keyed x-for is the reliable re-render path in the CSP build.
+  async openPipeline(kind: string, id: string, label: string) {
+    const base = kind === 'group' ? '/api/groups/' : '/api/workspaces/';
+    const [res, wres] = await Promise.all([this.authFetch(base + encodeURIComponent(id) + '/pipeline'), this.authFetch('/api/workers')]);
+    if (!await this.handleBad(res, 'Could not load the pipeline')) return;
+    const v = (await res.json()) as PipeView;
+    const runners: string[] = [];
+    if (wres.ok) for (const w of (await wres.json()) as WorkerSeen[]) for (const r of w.runners || []) if (!runners.includes(r)) runners.push(r);
+    this.pipe.kind = kind; this.pipe.id = v.owner_id; this.pipe.label = label;
+    this.pipe.runnerOptions = runners.sort();
+    this.pipe.agentsDefault = v.own.agents_default || '';
+    const fromGroup = kind === 'workspace' && v.agents_default_source && v.agents_default_source !== 'workspace';
+    this.pipe.agentsInherited = fromGroup ? (v.effective_agents_default || '') : '';
+    this.pipe.agentsInheritedFrom = fromGroup ? (v.agents_default_source || '').replace('group:', '') : '';
+    const labels: Record<string, string> = { plan: 'Plan', compare: 'Compare (judge)', synthesize: 'Synthesize (merge)', implement: 'Implement', review: 'Review', qa: 'QA' };
+    const own = v.own.stages || {};
+    this.pipe.rows = ['plan', 'compare', 'synthesize', 'implement', 'review', 'qa'].map((stage: string) => {
+      const mine = own[stage];
+      const eff = v.effective ? v.effective[stage] : undefined;
+      const inherited = eff && eff.source !== 'workspace' ? eff : null;
+      const src = mine || null;
+      return {
+        stage, label: labels[stage], multi: stage === 'plan' || stage === 'review' || stage === 'qa', rule: stage === 'review' || stage === 'qa',
+        mode: mine ? 'own' : (inherited ? 'inherited' : 'unset'),
+        members: src ? src.members.map((m: PipeMember) => ({ runner: m.runner, focus: m.focus || '' })) : [],
+        policy: (src && src.policy) || '', earlyExit: !!(src && src.early_exit), timeoutMin: src && src.timeout_ms ? String(Math.round(src.timeout_ms / 60000)) : '',
+        inherited: inherited ? { members: inherited.members, policy: inherited.policy, early_exit: inherited.early_exit, timeout_ms: inherited.timeout_ms } : null,
+        inheritedFrom: inherited ? inherited.source.replace('group:', '') : '',
+        addRunner: '', addFocus: '',
+      } as PipeRow;
+    });
+    const notes: { key: string; tone: string; text: string }[] = [];
+    for (const c of v.conflicts || []) notes.push({ key: 'c|' + c, tone: 'tone-danger', text: 'Conflict: ' + c });
+    if ((v.unknown_runners || []).length) notes.push({ key: 'u', tone: 'tone-warn', text: 'No worker serving this workspace offers ' + (v.unknown_runners || []).join(', ') + ' yet; those runs wait until one does.' });
+    if (kind === 'workspace' && (v.groups || []).length) notes.push({ key: 'g', tone: 'tone-neutral', text: 'Inherits from group' + ((v.groups || []).length > 1 ? 's ' : ' ') + (v.groups || []).map((g: { name: string }) => g.name).join(', ') + ' where a stage is not set here.' });
+    this.pipe.notes = notes;
+    this.pipe.rev++;
+    this.pipe.open = true;
+  },
+  closePipeline() { this.pipe.open = false; },
+  pipeRow(stage: string): PipeRow | undefined { return this.pipe.rows.find((r: PipeRow) => r.stage === stage); },
+  pipeBump() { this.pipe.rows = this.pipe.rows.map((r: PipeRow) => ({ ...r })); this.pipe.rev++; },
+  pipeOverride(stage: string) {
+    const r = this.pipeRow(stage);
+    if (!r || !r.inherited) return;
+    r.mode = 'own';
+    r.members = r.inherited.members.map((m: PipeMember) => ({ runner: m.runner, focus: m.focus || '' }));
+    r.policy = r.inherited.policy || ''; r.earlyExit = !!r.inherited.early_exit;
+    r.timeoutMin = r.inherited.timeout_ms ? String(Math.round(r.inherited.timeout_ms / 60000)) : '';
+    this.pipeBump();
+  },
+  pipeSetHere(stage: string) { const r = this.pipeRow(stage); if (r) { r.mode = 'own'; r.members = []; this.pipeBump(); } },
+  // Back to the group's value (or to not set when no group sets it).
+  pipeClearStage(stage: string) {
+    const r = this.pipeRow(stage);
+    if (!r) return;
+    r.mode = r.inherited ? 'inherited' : 'unset'; r.members = []; r.policy = ''; r.earlyExit = false; r.timeoutMin = '';
+    this.pipeBump();
+  },
+  pipeAddMember(stage: string) {
+    const r = this.pipeRow(stage);
+    if (!r) return;
+    const runner = r.addRunner.trim(), focus = r.addFocus.trim().toLowerCase();
+    if (!runner) { this.notify('Type or pick a runner first', 'error'); return; }
+    if (r.members.some((m: PipeMember) => m.runner === runner && (m.focus || '') === focus)) { this.notify('That agent is already listed', 'error'); return; }
+    if (!r.multi && r.members.length >= 1) { this.notify(r.label + ' takes one runner', 'error'); return; }
+    r.members = r.members.concat([{ runner, focus }]);
+    r.addRunner = ''; r.addFocus = '';
+    this.pipeBump();
+  },
+  pipeRemoveMember(stage: string, runner: string, focus: string) {
+    const r = this.pipeRow(stage);
+    if (!r) return;
+    r.members = r.members.filter((m: PipeMember) => !(m.runner === runner && (m.focus || '') === (focus || '')));
+    this.pipeBump();
+  },
+  pipeMemberLabel(m: PipeMember): string { return m.focus ? m.focus + ' @ ' + m.runner : m.runner; },
+  pipeStageText(st: PipeStage | null): string {
+    if (!st) return '';
+    let out = st.members.map((m: PipeMember) => this.pipeMemberLabel(m)).join(', ');
+    const extra: string[] = [];
+    if (st.policy) extra.push(st.policy);
+    if (st.early_exit) extra.push('early exit');
+    if (st.timeout_ms) extra.push('timeout ' + Math.round(st.timeout_ms / 60000) + 'm');
+    if (extra.length) out += ' (' + extra.join(', ') + ')';
+    return out;
+  },
+  pipeRowHint(r: PipeRow): string {
+    if (r.mode === 'inherited') return 'from group ' + r.inheritedFrom;
+    if (r.mode === 'unset') return r.stage === 'review' || r.stage === 'qa' ? 'not set — skipped' : (r.stage === 'compare' || r.stage === 'synthesize' ? 'not set — off' : 'not set — any runner');
+    return r.inherited ? 'set here (overrides group ' + r.inheritedFrom + ')' : 'set here';
+  },
+  pipeCanAdd(r: PipeRow): boolean { return r.multi || r.members.length === 0; },
+  pipeShowGroupOptions(r: PipeRow): boolean { return r.multi && r.members.length > 1; },
+  pipeAgentsHint(): string {
+    if (this.pipe.agentsDefault) return '';
+    if (this.pipe.agentsInherited) return 'Inherited: ' + (this.pipe.agentsInherited === 'solo' ? 'one agent' : 'agent panel') + ' (group ' + this.pipe.agentsInheritedFrom + ')';
+    return this.pipe.kind === 'group' ? 'Not set: workspaces default to the agent panel' : 'Not set: items get the agent panel';
+  },
+  async savePipeline() {
+    if (this.pipe.saving) return;
+    const stages: Record<string, PipeStage> = {};
+    for (const r of this.pipe.rows as PipeRow[]) {
+      if (r.mode !== 'own') continue;
+      if (r.members.length === 0) { this.notify(r.label + ': add a runner, or clear the stage', 'error'); return; }
+      const st: PipeStage = { members: r.members.map((m: PipeMember) => (m.focus ? { runner: m.runner, focus: m.focus } : { runner: m.runner })) };
+      if (r.members.length > 1) {
+        if (r.rule && r.policy) st.policy = r.policy;
+        if (r.rule && r.earlyExit) st.early_exit = true;
+        const mins = parseInt(r.timeoutMin, 10);
+        if (r.timeoutMin.trim() && (isNaN(mins) || mins < 1)) { this.notify(r.label + ': timeout is whole minutes, at least 1', 'error'); return; }
+        if (mins >= 1) st.timeout_ms = mins * 60000;
+      }
+      stages[r.stage] = st;
+    }
+    this.pipe.saving = true;
+    try {
+      const base = this.pipe.kind === 'group' ? '/api/groups/' : '/api/workspaces/';
+      const res = await this.authFetch(base + encodeURIComponent(this.pipe.id) + '/pipeline', { method: 'PUT', body: JSON.stringify({ stages, agents_default: this.pipe.agentsDefault, via: 'dashboard' }) });
+      if (!await this.handleBad(res, 'Pipeline not saved')) return;
+      this.notify('Pipeline saved — applies from the next stage', 'success');
+      this.pipe.open = false;
+    } finally { this.pipe.saving = false; }
+  },
+
   // ---- workers (derived from run history) ----
   // There is no worker registry yet: what the server knows is what runs
   // reveal — who claimed what, when, and how it went. Offered runners and
@@ -1183,22 +1320,21 @@ const appState = () => ({
     const runs = (await runsRes.json()) as RunRow[];
     // Registry rows (recorded at claim time): offered runners + served
     // workspaces, even for workers whose runs fall outside this key's scope.
-    const registered = new Map<string, { runners: string[]; workspaces: string[] }>();
+    const registered = new Map<string, WorkerSeen>();
     if (workersRes.ok) {
-      for (const w of (await workersRes.json()) as { id: string; runners: string[]; workspaces: string[] }[]) {
-        registered.set(w.id, { runners: w.runners || [], workspaces: w.workspaces || [] });
-      }
+      for (const w of (await workersRes.json()) as WorkerSeen[]) registered.set(w.id, w);
     }
     const byWorker = new Map<string, WorkerRow>();
     for (const entry of registered) {
-      byWorker.set(entry[0], { id: entry[0], workspaces: [...entry[1].workspaces], stages: [], runners: [...entry[1].runners], active: 0, succeeded: 0, failed: 0, lastActive: '', currentLabel: '' });
+      const reg = entry[1];
+      byWorker.set(entry[0], { id: entry[0], workspaces: [...(reg.workspaces || [])], stages: [], runners: [...(reg.runners || [])], active: 0, succeeded: 0, failed: 0, lastActive: '', currentLabel: '', state: reg.state || '', version: reg.version || '', lastSeen: reg.last_seen || '' });
     }
     for (const run of runs) {
       if (!run.worker_id) continue; // queued, never claimed
       let w = byWorker.get(run.worker_id);
-      if (!w) { w = { id: run.worker_id, workspaces: [], stages: [], runners: [], active: 0, succeeded: 0, failed: 0, lastActive: run.updated_at, currentLabel: '' }; byWorker.set(run.worker_id, w); }
+      if (!w) { w = { id: run.worker_id, workspaces: [], stages: [], runners: [], active: 0, succeeded: 0, failed: 0, lastActive: run.updated_at, currentLabel: '', state: '', version: '', lastSeen: '' }; byWorker.set(run.worker_id, w); }
       const reg = registered.get(run.worker_id);
-      if (reg) { for (const ws of reg.workspaces) if (!w.workspaces.includes(ws)) w.workspaces.push(ws); }
+      if (reg) { for (const ws of reg.workspaces || []) if (!w.workspaces.includes(ws)) w.workspaces.push(ws); }
       if (run.workspace_id && !w.workspaces.includes(run.workspace_id)) w.workspaces.push(run.workspace_id);
       if (run.stage && !w.stages.includes(run.stage)) w.stages.push(run.stage);
       if (run.status === 'claimed' || run.status === 'running' || run.status === 'paused') { w.active++; w.currentLabel = run.stage + ' \u00b7 ' + run.status + ' \u00b7 ' + this.timeAgo(run.updated_at); }
@@ -1206,10 +1342,22 @@ const appState = () => ({
       if (run.status === 'failed') w.failed++;
       if (run.updated_at > w.lastActive) w.lastActive = run.updated_at;
     }
-this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) => (a.lastActive < b.lastActive ? 1 : -1));
+    // Online first (busy, idle), then offline; newest activity within each.
+    const rank: Record<string, number> = { busy: 0, idle: 1, offline: 2 };
+    this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) => {
+      const ra = rank[this.workerStatusLabel(a)] ?? 3, rb = rank[this.workerStatusLabel(b)] ?? 3;
+      if (ra !== rb) return ra - rb;
+      const la = a.lastSeen || a.lastActive, lb = b.lastSeen || b.lastActive;
+      return la < lb ? 1 : -1;
+    });
   },
-  workerStatusLabel(w: WorkerRow): string { return w.active > 0 ? 'busy' : 'idle'; },
-  workerStatusClass(w: WorkerRow): string { return w.active > 0 ? 'tone-success' : 'tone-muted'; },
+  // Presence comes from the server (busy / idle / offline); a worker known
+  // only from run history (pre-presence) falls back to its runs.
+  workerStatusLabel(w: WorkerRow): string { return w.state || (w.active > 0 ? 'busy' : 'offline'); },
+  workerStatusClass(w: WorkerRow): string {
+    const s = this.workerStatusLabel(w);
+    return s === 'busy' ? 'tone-success' : s === 'idle' ? 'tone-info' : 'tone-muted';
+  },
 
   // ---- run rows (preview modal) ----
   shortSha(sha: string): string { return sha ? sha.slice(0, 7) : ''; },

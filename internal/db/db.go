@@ -167,6 +167,13 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "workers", "key_id", "TEXT"); err != nil {
 		return err
 	}
+	// Worker presence: what a worker reports on every poll (its version and
+	// poll interval) and its clean-shutdown goodbye.
+	for _, col := range [][2]string{{"version", "TEXT"}, {"poll_ms", "INTEGER"}, {"offline_at", "TEXT"}} {
+		if err := ensureColumn(db, "workers", col[0], col[1]); err != nil {
+			return err
+		}
+	}
 	// Per-item multi-agent switch: NULL = the repository default.
 	if err := ensureColumn(db, "inbox_items", "agents", "TEXT CHECK (agents IS NULL OR agents IN ('solo', 'panel'))"); err != nil {
 		return err
@@ -229,7 +236,7 @@ var timestampColumns = []struct{ table, column string }{
 	{"workspace_groups", "created_at"},
 	{"audit_log", "created_at"},
 	{"runs", "lease_expires_at"}, {"runs", "resume_after"}, {"runs", "created_at"}, {"runs", "updated_at"},
-	{"workers", "last_seen"}, {"workers", "updated_at"},
+	{"workers", "last_seen"}, {"workers", "updated_at"}, {"workers", "offline_at"},
 }
 
 // normalizeTimestamps rewrites every stored timestamp that is not yet in

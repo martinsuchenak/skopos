@@ -656,12 +656,12 @@
             <!-- ===================== WORKERS ===================== -->
             <section x-show="activeView === 'workers'" x-cloak>
                 <div class="mb-6">
-                    <p class="max-w-2xl text-sm text-zinc-400">Execution planes: what each worker offers (recorded when it claims) plus its run history. Refreshes with the dashboard's live poll.</p>
+                    <p class="max-w-2xl text-sm text-zinc-400">Execution planes: what each worker offers and whether it is online (reported on every poll), plus its run history. Refreshes with the dashboard's live poll.</p>
                 </div>
                 <p x-show="workersLoading && workers.length === 0" class="empty-state" role="status">Loading…</p>
-                <p x-show="!workersLoading && workers.length === 0" class="empty-state">No workers have claimed runs yet.</p>
+                <p x-show="!workersLoading && workers.length === 0" class="empty-state">No workers have connected yet. A worker appears here from its first poll.</p>
                 <ul class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                    <template x-for="w in workers" :key="w.id + '|' + w.lastActive">
+                    <template x-for="w in workers" :key="w.id + '|' + w.lastActive + '|' + w.state + '|' + w.lastSeen">
                         <li class="card p-4">
                             <div class="flex items-start justify-between gap-2">
                                 <h2 class="min-w-0 break-all font-mono text-sm font-medium" x-text="w.id"></h2>
@@ -677,7 +677,9 @@
                                 <div><dt class="inline text-zinc-300">workspaces:</dt> <dd class="inline break-all" x-text="w.workspaces.join(', ')"></dd></div>
                                 <div><dt class="inline text-zinc-300">runners:</dt> <dd class="inline font-mono" x-text="w.runners.join(', ')"></dd></div>
                                 <div><dt class="inline text-zinc-300">stages:</dt> <dd class="inline" x-text="w.stages.join(', ')"></dd></div>
-                                <div><dt class="inline text-zinc-300">last active:</dt> <dd class="inline" x-text="timeAgo(w.lastActive)"></dd></div>
+                                <div x-show="w.lastSeen"><dt class="inline text-zinc-300">last seen:</dt> <dd class="inline" x-text="timeAgo(w.lastSeen)"></dd></div>
+                                <div x-show="w.lastActive"><dt class="inline text-zinc-300">last run:</dt> <dd class="inline" x-text="timeAgo(w.lastActive)"></dd></div>
+                                <div x-show="w.version"><dt class="inline text-zinc-300">version:</dt> <dd class="inline font-mono" x-text="w.version"></dd></div>
                             </dl>
                         </li>
                     </template>
@@ -748,7 +750,10 @@
                                     </template>
                                 </div>
                             </div>
-                            <button type="button" @click="openEditWorkspaceModal(ws)" x-show="whoamiIsRoot()" x-cloak class="btn btn-sm btn-ghost" :aria-label="'Edit workspace ' + (ws.name || ws.id)">Edit</button>
+                            <div class="flex flex-wrap gap-1">
+                                <button type="button" @click="openPipeline('workspace', ws.id, ws.name || ws.id)" class="btn btn-sm btn-ghost" :aria-label="'Pipeline settings of ' + (ws.name || ws.id)">Pipeline</button>
+                                <button type="button" @click="openEditWorkspaceModal(ws)" x-show="whoamiIsRoot()" x-cloak class="btn btn-sm btn-ghost" :aria-label="'Edit workspace ' + (ws.name || ws.id)">Edit</button>
+                            </div>
                         </li>
                     </template>
                 </ul>
@@ -787,13 +792,101 @@
                                         </template>
                                     </div>
                                 </div>
-                                <button type="button" @click="openEditGroupModal(g)" x-show="whoamiIsRoot()" x-cloak class="btn btn-sm btn-ghost" :aria-label="'Edit group ' + g.name">Edit</button>
+                                <div class="flex flex-wrap gap-1" x-show="whoamiIsRoot()" x-cloak>
+                                    <button type="button" @click="openPipeline('group', g.id, g.name)" class="btn btn-sm btn-ghost" :aria-label="'Pipeline settings of group ' + g.name">Pipeline</button>
+                                    <button type="button" @click="openEditGroupModal(g)" class="btn btn-sm btn-ghost" :aria-label="'Edit group ' + g.name">Edit</button>
+                                </div>
                             </div>
                         </li>
                     </template>
                 </ul>
             </section>
 
+
+    <!-- Pipeline settings: which agents run each stage, for a workspace (its
+         own values override its groups' per stage) or a group (defaults its
+         workspaces inherit). Rows re-render via pipe.rev (CSP build). -->
+    {{template "modal-open" (dict "ID" "pipe-modal" "Show" "pipe.open" "Close" "closePipeline()" "Size" "max-w-3xl")}}
+            <h2 id="pipe-modal-title" class="modal-title">Pipeline · <span x-text="pipe.label"></span></h2>
+            <p class="mb-3 text-sm text-zinc-400">Which agents run each stage. Several agents are allowed on plan, review and QA; add a focus to give an agent a brief from <code class="font-mono">.skopos/focus/&lt;name&gt;.md</code>. Changes apply from the next stage.</p>
+            <ul class="mb-3 space-y-1" aria-live="polite">
+                <template x-for="n in pipe.notes" :key="n.key + '|' + pipe.rev">
+                    <li class="chip" :class="n.tone" x-text="n.text"></li>
+                </template>
+            </ul>
+            <datalist id="pipe-runners">
+                <template x-for="r in pipe.runnerOptions" :key="'ro|' + r"><option :value="r"></option></template>
+            </datalist>
+            <form @submit.prevent="savePipeline()">
+                <ul class="space-y-2">
+                    <template x-for="row in pipe.rows" :key="row.stage + '|' + pipe.rev">
+                        <li class="rounded-lg border border-zinc-800 p-3">
+                            <div class="flex flex-wrap items-center justify-between gap-2">
+                                <div class="min-w-0">
+                                    <span class="font-medium text-zinc-100" x-text="row.label"></span>
+                                    <span class="ml-1 text-xs text-zinc-400" x-text="pipeRowHint(row)"></span>
+                                </div>
+                                <div class="flex flex-wrap gap-1">
+                                    <button type="button" x-show="row.mode === 'inherited'" @click="pipeOverride(row.stage)" class="btn btn-sm btn-ghost" :aria-label="'Override ' + row.label + ' here'">Override</button>
+                                    <button type="button" x-show="row.mode === 'unset'" @click="pipeSetHere(row.stage)" class="btn btn-sm btn-ghost" :aria-label="'Set ' + row.label">Set</button>
+                                    <button type="button" x-show="row.mode === 'own'" @click="pipeClearStage(row.stage)" class="btn btn-sm btn-ghost" :aria-label="(row.inherited ? 'Use the group value for ' : 'Clear ') + row.label" x-text="row.inherited ? 'Use group' : 'Clear'"></button>
+                                </div>
+                            </div>
+                            <p x-show="row.mode === 'inherited'" class="mt-1 text-sm text-zinc-300" x-text="pipeStageText(row.inherited)"></p>
+                            <div x-show="row.mode === 'own'" class="mt-2 space-y-2">
+                                <div class="flex flex-wrap gap-1.5">
+                                    <template x-for="m in row.members" :key="row.stage + '|' + m.focus + '@' + m.runner + '|' + pipe.rev">
+                                        <span class="chip tone-accent inline-flex items-center gap-1">
+                                            <span class="font-mono" x-text="pipeMemberLabel(m)"></span>
+                                            <button type="button" @click="pipeRemoveMember(row.stage, m.runner, m.focus)" class="rounded px-1 hover:bg-zinc-700" :aria-label="'Remove ' + pipeMemberLabel(m) + ' from ' + row.label">×</button>
+                                        </span>
+                                    </template>
+                                </div>
+                                <div x-show="pipeCanAdd(row)" class="flex flex-wrap items-end gap-2">
+                                    <div class="w-full min-w-0 sm:w-auto sm:flex-1">
+                                        <label class="lbl" :for="'pipe-runner-' + row.stage">Runner</label>
+                                        <input :id="'pipe-runner-' + row.stage" type="text" list="pipe-runners" x-model="row.addRunner" class="fld" placeholder="claude" autocomplete="off" />
+                                    </div>
+                                    <div class="min-w-0 flex-1 sm:w-36 sm:flex-none" x-show="row.multi">
+                                        <label class="lbl" :for="'pipe-focus-' + row.stage">Focus (optional)</label>
+                                        <input :id="'pipe-focus-' + row.stage" type="text" x-model="row.addFocus" class="fld" placeholder="security" autocomplete="off" />
+                                    </div>
+                                    <button type="button" @click="pipeAddMember(row.stage)" class="btn btn-sm" :aria-label="'Add agent to ' + row.label">Add</button>
+                                </div>
+                                <div x-show="pipeShowGroupOptions(row)" class="flex flex-wrap items-end gap-3">
+                                    <div x-show="row.rule">
+                                        <label class="lbl" :for="'pipe-policy-' + row.stage">Decision</label>
+                                        <select :id="'pipe-policy-' + row.stage" x-model="row.policy" class="fld">
+                                            <option value="">Any blocking finding fails (default)</option>
+                                            <option value="majority">Majority</option>
+                                            <option value="all-pass">All must pass</option>
+                                        </select>
+                                    </div>
+                                    <label x-show="row.rule" class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="row.earlyExit" /> Early exit</label>
+                                    <div class="w-32">
+                                        <label class="lbl" :for="'pipe-timeout-' + row.stage">Timeout (min)</label>
+                                        <input :id="'pipe-timeout-' + row.stage" type="text" inputmode="numeric" x-model="row.timeoutMin" class="fld" placeholder="60" autocomplete="off" />
+                                    </div>
+                                </div>
+                            </div>
+                        </li>
+                    </template>
+                </ul>
+                <div class="mt-4">
+                    <label class="lbl" for="pipe-agents">Items without their own choice get</label>
+                    <select id="pipe-agents" x-model="pipe.agentsDefault" class="fld max-w-xs" aria-describedby="pipe-agents-hint">
+                        <option value="" x-text="pipe.agentsInherited ? 'Inherit from group' : 'Not set (agent panel)'"></option>
+                        <option value="panel">The agent panel</option>
+                        <option value="solo">One agent</option>
+                    </select>
+                    <p id="pipe-agents-hint" class="mt-1 text-xs text-zinc-500" x-text="pipeAgentsHint()"></p>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" @click="closePipeline()" class="btn">Cancel</button>
+                    <button type="submit" class="btn btn-primary" :disabled="pipe.saving" x-text="pipe.saving ? 'Saving…' : 'Save'"></button>
+                </div>
+            </form>
+    {{template "modal-close"}}
 
     <!-- Workspace create/edit: id, name, git URL, group allocation. The one
          workspace dialog — the header "+" opens it too (selecting the new
