@@ -346,11 +346,16 @@ func (s *Service) chain(ctx context.Context, run *Run, in ReportInput) {
 	case StatusSucceeded:
 		switch run.Stage {
 		case StagePlan:
-			// The worker wrote the revision and enrichment. The item may
-			// still be queued (the plan run IS its planning phase), so walk
-			// the matrix: queued -> planning -> awaiting_approval.
-			move("planning", "")
-			move("awaiting_approval", "")
+			// The worker wrote the revision and enrichment. The claim
+			// normally moved the item into planning already; only when that
+			// move did not happen is it still queued, and then the matrix
+			// walk is queued -> planning -> awaiting_approval. Trying the
+			// gate first keeps a false "move failed" note off a good run.
+			agent := "worker:" + run.WorkerID
+			if s.itemTransition(ctx, run.ItemID, "awaiting_approval", "", agent) != nil {
+				move("planning", "")
+				move("awaiting_approval", "")
+			}
 		case StageImplement, StageReview, StageQA:
 			s.advance(ctx, run, "worker:"+run.WorkerID)
 		}

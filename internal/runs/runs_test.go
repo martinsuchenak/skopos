@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -558,6 +559,45 @@ func TestClaimOrderWithinOneSecond(t *testing.T) {
 		got, err := s.ClaimNext(rootCtx(), ClaimInput{WorkerID: "w", Runners: []string{"claude"}, Workspaces: []string{"ws-a"}})
 		if err != nil || got == nil || got.ID != ids[i] {
 			t.Fatalf("claim %d: got %+v, want run %s", i, got, ids[i])
+		}
+	}
+}
+
+// A successful plan run reaches the gate without a false "move failed"
+// note: the claim already moved the item into planning (the strict fake
+// refuses planning -> planning, like the workflow matrix). When the claim
+// move did not happen, the item still walks queued -> planning -> gate.
+func TestPlanSuccessNoFalseMoveNote(t *testing.T) {
+	status := map[string]string{"item-1": "queued", "item-2": "queued"}
+	allowed := map[string]bool{"queued>planning": true, "planning>awaiting_approval": true}
+	refuseClaimMove := map[string]bool{"item-2": true}
+	s := testService(t)
+	s.SetItemTransition(func(_ context.Context, itemID, to, _, _ string) error {
+		if !allowed[status[itemID]+">"+to] {
+			return fmt.Errorf("%s is not a workflow transition from %s", to, status[itemID])
+		}
+		if refuseClaimMove[itemID] && to == "planning" {
+			refuseClaimMove[itemID] = false // the claim-time move is lost once
+			return fmt.Errorf("transient")
+		}
+		status[itemID] = to
+		return nil
+	})
+	ctx := rootCtx()
+	for _, item := range []string{"item-1", "item-2"} {
+		_ = mustQueue(t, s, ctx, "ws-a", item, StagePlan)
+		run, err := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+		if err != nil || run == nil {
+			t.Fatalf("claim %s: %v", item, err)
+		}
+		if _, err := s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded, Summary: "plan ready"}, run.LeaseToken); err != nil {
+			t.Fatal(err)
+		}
+		if status[item] != "awaiting_approval" {
+			t.Fatalf("%s must reach the gate, is %s", item, status[item])
+		}
+		if got, _ := s.Get(ctx, run.ID); got.FailReason != "" {
+			t.Fatalf("%s: a plan success must not carry a move note: %q", item, got.FailReason)
 		}
 	}
 }
