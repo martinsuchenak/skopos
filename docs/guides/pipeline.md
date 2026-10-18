@@ -198,6 +198,19 @@ skopos worker install             # launchd (macOS) or systemd (Linux); starts o
 - **Slack** (step 7): DM the bot `new repo: …`. Slack captures are queued
   immediately.
 
+**Panel or solo?** If you gave plan, review or QA a list of agents (step 4),
+choose per item whether it gets that panel or a single agent:
+- **Dashboard:** the *Agents* field when capturing or editing (Repository
+  default / Agent panel / One agent); the item then shows an `agent panel`
+  or `one agent` badge;
+- **CLI:** `skopos inbox add … --agents panel` (or `solo`), and later
+  `skopos inbox update --id <item> --agents solo|panel|default`;
+- **Slack:** add `#panel` or `#solo` to the `new:` message.
+
+Leave it unset to get the repository default (`--agents-default`, `panel`
+unless you changed it). You can switch an item later; it applies from its
+next plan, review or QA stage.
+
 **Queue it.** Open the item in the dashboard and click **Queue**, or run
 `skopos inbox queue --id <item>`. A worker claims the plan run within a poll
 interval.
@@ -264,9 +277,12 @@ the current plan and asks again. You reply with:
 - `changes: notes`;
 - `done`;
 - `retry: answer`;
-- `reject`.
+- `reject`;
+- `panel`, `solo` or `default` to switch the item's agents (applied at once,
+  even mid-run; it takes effect from the next stage).
 
-Start an item with `new: …`, or `new <workspace>: …` for another repo. See
+Start an item with `new: …`, or `new <workspace>: …` for another repo; add
+`#panel` or `#solo` to choose its agents. See
 [Slack relay](../configuration.md#slack-relay-server).
 
 ## 8. Scale out
