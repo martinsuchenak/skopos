@@ -34,6 +34,7 @@ Optional — if absent, skopos runs on defaults. The file is gitignored (may con
 | `--qdrant-api-key` | `SKOPOS_QDRANT_API_KEY` | `codeindex.embeddings.qdrant_api_key` | (empty) | Qdrant API key when required |
 | `--run-stage` | — | — | (none) | Agent pipeline routing, `<workspace>:<stage>=<runner>`, repeatable; plan/review/qa take a `[focus@]runner,…` list — see [Stage routing](#stage-routing-agent-pipeline) |
 | `--stage-policy` | — | — | `any-blocks`, 60m | How a multi-agent stage is decided, `<workspace>:<stage>=<policy>[,early-exit][,timeout=<duration>]` — see [Multi-agent review and QA](#multi-agent-review-and-qa) |
+| `--agents-default` | — | — | `panel` | What items without their own switch get on a multi-agent stage, `<workspace>=<panel\|solo>`, repeatable — see [Per-item switch](#per-item-switch-panel-or-solo) |
 
 ### Client (written by `skopos setup`)
 
@@ -180,6 +181,38 @@ skopos serve --run-stage github.com/you/repo:plan=claude,opencode-glm,opencode-q
 `implement`, `compare` and `synthesize` take one runner; a list there keeps
 the first runner and logs a warning.
 
+#### Per-item switch: panel or solo
+
+The lists above define the repository's **panel**. Each item chooses
+whether its plan, review and QA stages use it:
+
+| Item setting | Plan, review, QA |
+|---|---|
+| `panel` | the repository's list (a group) |
+| `solo` | one run on the list's **first** runner, without its focus brief |
+| (empty) | the repository default: `--agents-default <workspace>=panel\|solo`, `panel` when not set |
+
+```bash
+skopos serve \
+  --run-stage github.com/you/repo:review=security@claude,tests@opencode-glm \
+  --agents-default github.com/you/repo=solo     # panel only where an item asks for it
+```
+
+- **Every interface sets it.** Dashboard: the *Agents* field in the capture
+  and edit forms (a badge shows it on the item). Slack: `#panel` or `#solo`
+  in a `new:` capture, or reply `panel` / `solo` / `default` in the item's
+  thread. CLI: `skopos inbox add|update --agents panel|solo|default`. REST
+  and MCP: the `agents` field of create/update (`"default"` or `""` on
+  update clears it).
+- **When it applies.** It is read each time a stage is queued, so a change
+  takes effect at the next plan, review or QA stage; a stage already running
+  keeps its agents.
+- **Who may change it.** Anyone who may edit the item, until it enters the
+  agent workflow; from then on it is approver-only (it decides how many
+  agents check the work) and audit-logged like any workflow edit.
+- **Without a list** for a stage, `panel` has nothing to fan out to and the
+  stage runs on its one runner.
+
 ## Slack relay (server)
 
 Enabled when all three `SKOPOS_SLACK_*` variables are set on `skopos serve`;
@@ -201,11 +234,14 @@ scopes and the `message.im` event subscription.
 | `SKOPOS_SLACK_DEFAULT_WORKSPACE` | Workspace for `new: <what>` capture (unset disables capture) |
 
 Commands (replies in an item's thread): `approve` [`: <notes>`], `revise:
-<notes>`, `changes: <notes>`, `done`, `retry: <answer>`, `reject`. A command is
+<notes>`, `changes: <notes>`, `done`, `retry: <answer>`, `reject`, and
+`panel` / `solo` / `default` (the item's [agents switch](#per-item-switch-panel-or-solo),
+applied at once, even mid-run). A command is
 the bare word or `word: <text>` on its own — "done with lunch" is not `done`
 (a reply that leads with a command word gets a syntax hint instead).
 Top-level: `new: <what to do>` or `new <workspace>: <what>` (exact id or a
-unique `/suffix`), `help`. Non-approving replies (`revise`, `changes`,
+unique `/suffix`), `help`; `#panel` or `#solo` in a capture sets the item's
+agents switch (other hashtags become tags). Non-approving replies (`revise`, `changes`,
 `retry`, `reject`) that arrive mid-run are buffered and applied when the run
 finishes (in-memory; a restart drops unapplied ones); `approve` and `done`
 are refused mid-run — they answer the gate message they approve.

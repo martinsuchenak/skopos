@@ -516,6 +516,7 @@
                                                      the badge tells blocked from awaiting approval. -->
                                                 <span x-show="isWorkflowStatus(item.status)" class="badge" :class="toneOf('status', item.status)" x-text="item.status"></span>
                                                 {{template "ws-badge" (dict "V" "item" "Missing" "unfiled")}}
+                                                <span x-show="item.agents" class="badge tone-accent" x-text="agentsLabel(item.agents)" :title="agentsTitle(item.agents)"></span>
                                                 <span x-show="item.claimed_by_agent_id" class="truncate max-w-28" x-text="item.claimed_by_agent_id"></span>
                                                 <span x-show="item.plan_id" class="badge max-w-32 truncate tone-accent" x-text="item.plan && item.plan.name ? '→ ' + item.plan.name : '→ plan'"></span>
                                                 <span class="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap">
@@ -567,6 +568,7 @@
                                         <span class="badge" :class="toneOf('status', item.status)" x-text="item.status"></span>
                                         <span x-show="item.claimed_by_agent_id" class="badge tone-neutral" x-text="'claimed: ' + item.claimed_by_agent_id"></span>
                                         {{template "ws-badge" (dict "V" "item" "Missing" "unfiled")}}
+                                        <span x-show="item.agents" class="badge tone-accent" x-text="agentsLabel(item.agents)" :title="agentsTitle(item.agents)"></span>
                                     </div>
                                     <div class="mt-1.5 flex flex-wrap items-center gap-2">
                                         <template x-for="tag in item.tags || []" :key="item.id + tag">
@@ -871,6 +873,7 @@
                                 <span class="badge" :class="toneOf('status', previewItem.status)" x-text="previewItem.status"></span>
                                 <span x-show="previewItem.workspace_id" class="badge max-w-48 truncate tone-info" :title="previewItem.workspace_id" x-text="workspaceLabel(previewItem.workspace_id)"></span>
                                 <span x-show="!previewItem.workspace_id" class="badge tone-warn">unfiled</span>
+                                <span x-show="previewItem.agents" class="badge tone-accent" x-text="agentsLabel(previewItem.agents)" :title="agentsTitle(previewItem.agents)"></span>
                                 <span x-show="previewItem.claimed_by_agent_id" x-text="previewItem.claimed_by_agent_id"></span>
                                 <span x-show="previewItem.plan_id" class="badge max-w-40 truncate tone-accent" x-text="'→ ' + (previewItem.plan && previewItem.plan.name ? previewItem.plan.name : 'plan')"></span>
                                 <span x-text="timeAgo(previewItem.created_at)"></span>
@@ -1174,7 +1177,7 @@
                         <p id="inbox-workspace-err" x-show="inboxErrors.workspace" class="field-error" role="alert" x-text="inboxErrors.workspace"></p>
                         <p x-show="!inboxForm.id" class="text-xs text-zinc-500">Unfiled items stay visible only to the root key until filed.</p>
                     </div>
-                    <div class="grid gap-3 sm:grid-cols-[1fr_16rem]">
+                    <div class="grid gap-3 sm:grid-cols-[1fr_14rem_12rem]">
                         <div>
                             <label class="lbl" for="ib-title">Title <span aria-hidden="true">*</span></label>
                             <input id="ib-title" type="text" x-model="inboxForm.title" class="fld" :aria-invalid="inboxErrors.title ? 'true' : 'false'" :aria-describedby="inboxErrors.title ? 'inbox-title-err' : null" aria-required="true" autocomplete="off" autofocus />
@@ -1183,6 +1186,15 @@
                         <div>
                             <label class="lbl" for="ib-tags">Tags (comma-separated)</label>
                             <input id="ib-tags" type="text" x-model="inboxForm.tags" class="fld" placeholder="auth, refactor" autocomplete="off" />
+                        </div>
+                        <div>
+                            <label class="lbl" for="ib-agents">Agents</label>
+                            <select id="ib-agents" x-model="inboxForm.agents" class="fld" aria-describedby="ib-agents-help">
+                                <option value="">Repository default</option>
+                                <option value="panel">Agent panel</option>
+                                <option value="solo">One agent</option>
+                            </select>
+                            <p id="ib-agents-help" class="mt-1 text-xs text-zinc-500">Plan, review and QA — from the next stage.</p>
                         </div>
                     </div>
                     <div>

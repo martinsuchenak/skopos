@@ -65,6 +65,15 @@ versions follow [Semantic Versioning](https://semver.org/).
   `--run-stage ws:synthesize=<runner>` writes one more candidate combining
   them. Both are advisory: a failure opens the gate with the candidates as
   they are.
+- **Per-item panel or solo.** Each item chooses whether its plan, review and
+  QA stages use the repository's agent list (`panel`) or one agent (`solo`,
+  the list's first runner); unset follows `--agents-default
+  <workspace>=panel|solo` (`panel` by default). Set from every interface:
+  dashboard *Agents* field and badge, Slack `#panel` / `#solo` in `new:` and
+  `panel` / `solo` / `default` thread replies, `skopos inbox add|update
+  --agents`, and the `agents` field on REST and MCP. Read at each queue, so
+  it applies from the next stage; approver-only and audited once the item is
+  in the workflow. Stored as `inbox_items.agents` (CHECK, NULL = default).
 - **Review findings have a severity.** `blocking` fails a review; `nit` is
   reported and never blocks. The worker makes the verdict follow the
   findings instead of trusting the free-form verdict.

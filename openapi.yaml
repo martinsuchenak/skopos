@@ -1123,6 +1123,7 @@ paths:
                 tags: { type: array, items: { type: string } }
                 priority: { type: integer, description: "1+ prioritizes (smaller first; unprioritized sort last); omit or 0 for none" }
                 author_agent_id: { type: string }
+                agents: { type: string, enum: [panel, solo], description: "Multi-agent stages for this item: the repository's agent panel or one agent; omit for the repository default (--agents-default)" }
       responses:
         "201":
           description: Item captured
@@ -1224,6 +1225,7 @@ paths:
                 tags: { type: array, items: { type: string } }
                 priority: { type: integer, description: "1+ sets, 0 clears (unordered); omit to keep" }
                 workspace_id: { type: string, description: "Files (or re-files) the item into this workspace; open/in_progress items only" }
+                agents: { type: string, enum: [panel, solo, default, ""], description: "Multi-agent switch: panel, solo, or default/\"\" to follow the repository default; omit to keep. Approver-only once the item is in the agent workflow" }
       responses:
         "204": { description: Updated }
         "403": { description: "Filing target workspace out of scope for this credential" }
@@ -2441,6 +2443,7 @@ components:
           description: Present when prioritized; items without it sort after all prioritized ones.
         claimed_by_agent_id: { type: string }
         author_agent_id: { type: string }
+        agents: { type: string, enum: [panel, solo], description: "Per-item multi-agent switch; absent = the repository default" }
         plan_id: { type: string }
         plan:
           type: object

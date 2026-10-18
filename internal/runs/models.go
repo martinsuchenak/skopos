@@ -220,6 +220,24 @@ type WorkspacePrefs struct {
 	// Policies: how a group stage is decided (defaults: any-blocks, no
 	// early exit, DefaultGroupTimeout).
 	Policies map[string]StagePolicy `json:"policies,omitempty"`
+	// AgentsDefault is what an item without its own switch gets for a group
+	// stage: AgentsPanel (the default when empty) or AgentsSolo.
+	AgentsDefault string `json:"agents_default,omitempty"`
+}
+
+// Per-item multi-agent switch values (inbox item "agents").
+const (
+	AgentsPanel = "panel"
+	AgentsSolo  = "solo"
+)
+
+// Panel decides whether a group stage runs as a panel for an item whose
+// switch is itemAgents ("" = the workspace default).
+func (p *WorkspacePrefs) Panel(itemAgents string) bool {
+	if itemAgents != "" {
+		return itemAgents != AgentsSolo
+	}
+	return p == nil || p.AgentsDefault != AgentsSolo
 }
 
 // Member is one agent of a group stage: a runner, optionally with a focus

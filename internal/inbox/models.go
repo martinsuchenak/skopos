@@ -2,6 +2,8 @@ package inbox
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -108,12 +110,16 @@ type Item struct {
 	// SlackThreadTS is the relay's notification thread root for this item
 	// (empty = no thread yet). Persisted so a server restart re-binds the
 	// thread instead of stranding replies in a dead one.
-	SlackThreadTS    string    `json:"slack_thread_ts,omitempty"`
-	ClaimedByAgentID string    `json:"claimed_by_agent_id,omitempty"`
-	AuthorAgentID    string    `json:"author_agent_id"`
-	PlanID           string    `json:"plan_id,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	SlackThreadTS    string `json:"slack_thread_ts,omitempty"`
+	ClaimedByAgentID string `json:"claimed_by_agent_id,omitempty"`
+	AuthorAgentID    string `json:"author_agent_id"`
+	PlanID           string `json:"plan_id,omitempty"`
+	// Agents is the item's multi-agent switch for stage groups: "panel"
+	// (the repository's configured agents), "solo" (one agent), or empty
+	// (the repository default, --agents-default).
+	Agents    string    `json:"agents,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 
 	// Read-path hydration. List rows carry only Excerpt (content is dropped);
 	// GetItem fills ContentHTML (dashboard-safe rendering) and, when the item
@@ -129,6 +135,24 @@ type PlanSummary struct {
 	ID     string `json:"id"`
 	Name   string `json:"name"`
 	Status string `json:"status"`
+}
+
+// Per-item multi-agent switch values (Item.Agents).
+const (
+	AgentsPanel = "panel"
+	AgentsSolo  = "solo"
+)
+
+// NormalizeAgents validates an agents value: "panel", "solo", or empty
+// (repository default). "default" is accepted as an alias for empty.
+func NormalizeAgents(v string) (string, error) {
+	switch v = strings.ToLower(strings.TrimSpace(v)); v {
+	case "", "default":
+		return "", nil
+	case AgentsPanel, AgentsSolo:
+		return v, nil
+	}
+	return "", fmt.Errorf("%w: agents must be panel, solo or default, not %q", ErrInvalidInput, v)
 }
 
 var (
@@ -155,6 +179,8 @@ type CreateInput struct {
 	Tags          []string `json:"tags,omitempty"`
 	Priority      int      `json:"priority,omitempty"`
 	AuthorAgentID string   `json:"author_agent_id"`
+	// Agents: "panel", "solo", or empty for the repository default.
+	Agents string `json:"agents,omitempty"`
 }
 
 // UpdateInput is the enrichment patch. Tags is a pointer so an explicit empty
@@ -168,6 +194,9 @@ type UpdateInput struct {
 	Tags        *[]string `json:"tags,omitempty"`
 	Priority    *int      `json:"priority,omitempty"`
 	WorkspaceID string    `json:"workspace_id,omitempty"`
+	// Agents: nil = unchanged, "" = back to the repository default,
+	// "panel" / "solo" = set.
+	Agents *string `json:"agents,omitempty"`
 	// Via labels the surface for the audit log of workflow-item edits
 	// (dashboard, slack, cli, mcp); the REST handler defaults it.
 	Via string `json:"via,omitempty"`

@@ -79,6 +79,7 @@ func inboxAddCmd() *cli.Command {
 			&cli.StringFlag{Name: "agent-id", Usage: "Author identifier", EnvVars: []string{"SKOPOS_AGENT_ID"}, DefaultValue: "user"},
 			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID"},
 			&cli.BoolFlag{Name: "unfiled", Usage: "Capture without a workspace (decide later; root key only)"},
+			&cli.StringFlag{Name: "agents", Usage: "Multi-agent stages for this item: panel or solo (omit for the repository default)"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			content, err := inboxContent(cmd.GetString("content"), cmd.GetString("file"))
@@ -96,6 +97,7 @@ func inboxAddCmd() *cli.Command {
 				Priority:      cmd.GetInt("priority"),
 				AuthorAgentID: cmd.GetString("agent-id"),
 				WorkspaceID:   ws,
+				Agents:        cmd.GetString("agents"),
 			})
 			if err != nil {
 				return err
@@ -182,6 +184,9 @@ func inboxShowCmd() *cli.Command {
 			if len(item.Tags) > 0 {
 				fmt.Printf("Tags: %s\n", strings.Join(item.Tags, ", "))
 			}
+			if item.Agents != "" {
+				fmt.Printf("Agents: %s\n", item.Agents)
+			}
 			if item.ClaimedByAgentID != "" {
 				fmt.Printf("Claimed by: %s\n", item.ClaimedByAgentID)
 			}
@@ -214,6 +219,7 @@ func inboxUpdateCmd() *cli.Command {
 			&cli.StringFlag{Name: "file", Usage: "Read new markdown content from this file ('-' for stdin)"},
 			&cli.StringSliceFlag{Name: "tag", Usage: "Replace tags (repeatable)"},
 			&cli.StringFlag{Name: "priority", Usage: "Set priority: a number >= 1, or 'clear' to unpin (smaller first; unprioritized items sort last)"},
+			&cli.StringFlag{Name: "agents", Usage: "Multi-agent stages for this item: panel, solo, or default (the repository default)"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			id := strings.TrimSpace(cmd.GetString("id"))
@@ -240,6 +246,9 @@ func inboxUpdateCmd() *cli.Command {
 					return fmt.Errorf("--priority must be a number >= 1 or 'clear'")
 				}
 				input.Priority = &n
+			}
+			if a := strings.TrimSpace(cmd.GetString("agents")); a != "" {
+				input.Agents = &a
 			}
 			if err := inboxPatch(ctx, cmd.GetString("server-url"), cmd.GetString("api-key"), id, input); err != nil {
 				return err

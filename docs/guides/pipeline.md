@@ -114,6 +114,12 @@ skopos serve --server-host 0.0.0.0 \
   They are decided together (by default, any blocking finding sends the item
   back to you) and leave one merged summary. See
   [Multi-agent review and QA](../configuration.md#multi-agent-review-and-qa).
+- **Panel or solo, per item.** With lists configured, each item chooses: the
+  dashboard's *Agents* field, `#panel` / `#solo` in a Slack capture (or a
+  `panel` / `solo` reply in its thread), `--agents` on the CLI. Items that
+  don't choose get `--agents-default github.com/you/repo=panel|solo`
+  (`panel` when unset). See
+  [Per-item switch](../configuration.md#per-item-switch-panel-or-solo).
 
 ## 5. Set up a worker
 

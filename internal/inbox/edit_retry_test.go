@@ -359,3 +359,64 @@ func TestHumanNotesAppendedForAgents(t *testing.T) {
 		t.Fatalf("change requests: %s %q", got.Status, got.Content)
 	}
 }
+
+// The per-item agents switch: validated, stored typed (NULL = repository
+// default), clearable with "" or "default"; on an agent-workflow item it is
+// approver-only and audited like any workflow edit.
+func TestItemAgentsSwitch(t *testing.T) {
+	svc, _, _ := fullStack(t)
+	root := context.Background()
+
+	if _, err := svc.CreateItem(root, CreateInput{WorkspaceID: "ws-a", Title: "x", AuthorAgentID: "a", Agents: "crowd"}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("unknown agents value must be refused: %v", err)
+	}
+	item, err := svc.CreateItem(root, CreateInput{WorkspaceID: "ws-a", Title: "panel item", AuthorAgentID: "a", Agents: " Panel "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := svc.GetItem(root, item.ID); got.Agents != AgentsPanel {
+		t.Fatalf("created with panel: %q", got.Agents)
+	}
+	// Manual item: any scoped key may set it; "default" clears it.
+	solo, clear := "solo", "default"
+	if err := svc.UpdateItem(agentCtx(), item.ID, UpdateInput{Agents: &solo}); err != nil {
+		t.Fatalf("manual item switch: %v", err)
+	}
+	if err := svc.UpdateItem(root, item.ID, UpdateInput{Agents: &clear}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := svc.GetItem(root, item.ID); got.Agents != "" {
+		t.Fatalf("default clears the switch: %q", got.Agents)
+	}
+
+	// Workflow item: approver-only, audited.
+	if _, err := svc.Queue(approverCtx(), item.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.UpdateItem(agentCtx(), item.ID, UpdateInput{Agents: &solo}); !errors.Is(err, auth.ErrApproverRequired) {
+		t.Fatalf("agent key switching a workflow item must be refused: %v", err)
+	}
+	if err := svc.UpdateItem(approverCtx(), item.ID, UpdateInput{Agents: &solo, Via: audit.ViaSlack}); err != nil {
+		t.Fatalf("approver switch: %v", err)
+	}
+	if got, _ := svc.GetItem(root, item.ID); got.Agents != AgentsSolo {
+		t.Fatalf("approver switch must land: %q", got.Agents)
+	}
+	entries, err := svc.Timeline(root, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Action == "inbox.edit" && e.Via == audit.ViaSlack && strings.Contains(e.Notes, "agents") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the switch must be audited: %+v", entries)
+	}
+	// Re-sending the current value is not an edit (no approver needed).
+	if err := svc.UpdateItem(agentCtx(), item.ID, UpdateInput{Agents: &solo}); err != nil {
+		t.Fatalf("unchanged switch is a no-op: %v", err)
+	}
+}

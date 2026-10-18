@@ -24,6 +24,9 @@ func TestRunWorkspacePrefs(t *testing.T) {
 	}, []string{
 		"github.com/you/repo:review=majority,early-exit,timeout=45m",
 		"github.com/you/repo:qa=sometimes",
+	}, []string{
+		"github.com/you/repo=Solo",
+		"git.example.com:2222/team/app=sometimes",
 	})
 	p := prefs["github.com/you/repo"]
 	if p.StageRunner("plan") != "claude" || p.GroupMembers("plan") != nil {
@@ -53,8 +56,14 @@ func TestRunWorkspacePrefs(t *testing.T) {
 	if d := p.PolicyFor("qa"); d.Policy != runs.PolicyAnyBlocks || d.EarlyExit || d.Timeout != runs.DefaultGroupTimeout {
 		t.Fatalf("bad policy must fall back to defaults: %+v", d)
 	}
+	if p.AgentsDefault != runs.AgentsSolo || p.Panel("") || !p.Panel(runs.AgentsPanel) {
+		t.Fatalf("agents default solo, item panel wins: %+v", p)
+	}
+	if other := prefs["git.example.com:2222/team/app"]; !other.Panel("") || other.Panel(runs.AgentsSolo) {
+		t.Fatalf("bad agents default falls back to panel; item solo wins: %+v", other)
+	}
 	all := strings.Join(warnings, "\n")
-	for _, want := range []string{"only plan, review and qa run several agents", `ignoring member "Bad Focus@claude"`, `ignoring --run-stage "no-equals-sign"`, `ignoring --stage-policy "github.com/you/repo:qa=sometimes"`} {
+	for _, want := range []string{`ignoring --agents-default "git.example.com:2222/team/app=sometimes"`, "only plan, review and qa run several agents", `ignoring member "Bad Focus@claude"`, `ignoring --run-stage "no-equals-sign"`, `ignoring --stage-policy "github.com/you/repo:qa=sometimes"`} {
 		if !strings.Contains(all, want) {
 			t.Errorf("warnings missing %q:\n%s", want, all)
 		}

@@ -72,6 +72,7 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 			mcplib.StringArray("tags", "Optional tags (lowercase alphanumerics with . _ / -)"),
 			mcplib.Integer("priority", "Optional explicit priority (>= 1; smaller first). Unprioritized items always sort after prioritized ones — set it only on the few items that matter."),
 			mcplib.String("author_agent_id", "Identifier of the capturing agent", mcplib.Required()),
+			mcplib.String("agents", "Multi-agent stages for this item: panel (the repository's configured agents), solo (one agent), or omit for the repository default"),
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 			item, err := service.CreateItem(ctx, inbox.CreateInput{
@@ -81,11 +82,12 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 				Tags:          req.StringSliceOr("tags", nil),
 				Priority:      req.IntOr("priority", 0),
 				AuthorAgentID: req.StringOr("author_agent_id", ""),
+				Agents:        req.StringOr("agents", ""),
 			})
 			if err != nil {
 				return nil, toolError(err)
 			}
-			return mcplib.NewToolResponseJSON(map[string]any{"id": item.ID, "status": string(item.Status), "title": item.Title, "priority": item.Priority, "workspace_id": item.WorkspaceID}), nil
+			return mcplib.NewToolResponseJSON(map[string]any{"id": item.ID, "status": string(item.Status), "title": item.Title, "priority": item.Priority, "workspace_id": item.WorkspaceID, "agents": item.Agents}), nil
 		},
 	)
 
@@ -163,6 +165,9 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 				"author":     item.AuthorAgentID,
 				"created_at": item.CreatedAt,
 			}
+			if item.Agents != "" {
+				out["agents"] = item.Agents
+			}
 			if item.PlanID != "" {
 				out["plan_id"] = item.PlanID
 				if item.Plan != nil {
@@ -182,6 +187,7 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 			mcplib.StringArray("tags", "Replace tags (omit to keep)"),
 			mcplib.Integer("priority", "Priority: >= 1 sets, -1 clears (back to unordered), 0 or omitted leaves unchanged. Prioritized items sort first, smallest first."),
 			mcplib.String("workspace_id", "File (or re-file) an unfiled/misfiled item into this workspace; open/in_progress items only. Omit to keep the current workspace."),
+			mcplib.String("agents", "Multi-agent stages for this item: panel, solo, or default (back to the repository default); omit to keep. Approver-only once the item is in the agent workflow."),
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 			input := inbox.UpdateInput{
@@ -203,6 +209,10 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 					p = 0 // clear
 				}
 				input.Priority = &p
+			}
+			// Absent leaves the switch unchanged; "default" clears it.
+			if a := req.StringOr("agents", ""); a != "" {
+				input.Agents = &a
 			}
 			if err := service.UpdateItem(ctx, req.StringOr("item_id", ""), input); err != nil {
 				return nil, toolError(err)

@@ -123,6 +123,10 @@ func (s *Service) CreateItem(ctx context.Context, input CreateInput) (*Item, err
 	if err != nil {
 		return nil, err
 	}
+	agents, err := NormalizeAgents(input.Agents)
+	if err != nil {
+		return nil, err
+	}
 	now := s.now().UTC()
 	item := Item{
 		ID:            ids.New(),
@@ -133,6 +137,7 @@ func (s *Service) CreateItem(ctx context.Context, input CreateInput) (*Item, err
 		Status:        StatusOpen,
 		Priority:      priority,
 		AuthorAgentID: input.AuthorAgentID,
+		Agents:        agents,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
@@ -274,6 +279,13 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 		input.Title = strings.TrimSpace(input.Title)
 	}
 	input.WorkspaceID = strings.TrimSpace(input.WorkspaceID)
+	if input.Agents != nil {
+		agents, err := NormalizeAgents(*input.Agents)
+		if err != nil {
+			return err
+		}
+		input.Agents = &agents
+	}
 	// Filing names an explicit target workspace: an out-of-scope target is
 	// the actionable 403 flavor (the item itself was already scope-checked).
 	if input.WorkspaceID != "" {
@@ -316,6 +328,10 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 			return err
 		}
 		changed = changedFields(item, title, content, workspace, tags, priority)
+		agentsChanged := input.Agents != nil && *input.Agents != item.Agents
+		if agentsChanged {
+			changed = append(changed, "agents")
+		}
 		if IsWorkflowStatus(item.Status) {
 			if workspace != item.WorkspaceID {
 				return fmt.Errorf("%w: item is in the agent workflow (%s) — its runs, plan and branch live in %s; it cannot move workspace", ErrInvalidInput, statusLabel(item.Status), item.WorkspaceID)
@@ -323,6 +339,16 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 			rewrite := title != item.Title || (content != item.Content && !appendsTo(content, item.Content))
 			if rewrite && approverErr != nil && (postApproval(item.Status) || everApproved) {
 				return fmt.Errorf("%w: the plan for this item is approved — editing its title or content changes what the implementer reads", approverErr)
+			}
+			// One agent vs a panel decides how many reviewers check the
+			// work — a human call, never an agent key's.
+			if agentsChanged && approverErr != nil {
+				return fmt.Errorf("%w: switching an agent-workflow item between one agent and a panel", approverErr)
+			}
+		}
+		if agentsChanged {
+			if err := tx.SetAgents(ctx, itemID, *input.Agents, s.now().UTC()); err != nil {
+				return err
 			}
 		}
 		return tx.UpdateItem(ctx, itemID, workspace, title, content, tagsJSON(tags), priority, s.now().UTC())

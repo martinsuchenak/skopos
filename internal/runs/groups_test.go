@@ -107,6 +107,33 @@ func TestGroupOptInOnly(t *testing.T) {
 	}
 }
 
+// The per-item switch, read at every queue: solo runs the first member
+// alone without its focus; panel opens the group even when the workspace
+// default is solo; empty follows the workspace default.
+func TestGroupItemSwitch(t *testing.T) {
+	f := newGroupFixture(t, StagePolicy{})
+	agents := map[string]string{"item-solo": AgentsSolo, "item-panel": AgentsPanel}
+	f.s.SetItemAgents(func(_ context.Context, itemID string) string { return agents[itemID] })
+	for _, id := range []string{"item-solo", "item-panel", "item-default"} {
+		insertItem(t, f.s, id)
+	}
+	solo := mustQueue(t, f.s, rootCtx(), "ws-a", "item-solo", StageReview)
+	if solo.GroupID != "" || solo.Runner != "claude" || solo.Focus != "" {
+		t.Fatalf("solo item: one run on the first member, no focus: %+v", solo)
+	}
+	if r := mustQueue(t, f.s, rootCtx(), "ws-a", "item-default", StageReview); r.GroupID == "" {
+		t.Fatalf("empty switch follows the panel default: %+v", r)
+	}
+	f.s.prefs["ws-a"].AgentsDefault = AgentsSolo
+	if r := mustQueue(t, f.s, rootCtx(), "ws-a", "item-panel", StageReview); r.GroupID == "" {
+		t.Fatalf("panel item opens the group over a solo default: %+v", r)
+	}
+	insertItem(t, f.s, "item-default-2")
+	if r := mustQueue(t, f.s, rootCtx(), "ws-a", "item-default-2", StageReview); r.GroupID != "" {
+		t.Fatalf("empty switch follows the solo default: %+v", r)
+	}
+}
+
 // Members are pinned to their own runner and carry their focus; a second
 // group for the same item and stage is refused by the database.
 func TestGroupQueueAndPinning(t *testing.T) {

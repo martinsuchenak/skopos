@@ -16,6 +16,8 @@ type Store interface {
 	GetItem(ctx context.Context, id string) (*Item, error)
 	// SetSlackThread records the item's Slack notification thread root.
 	SetSlackThread(ctx context.Context, id, ts string) error
+	// SetAgents records the item's multi-agent switch ("" = repo default).
+	SetAgents(ctx context.Context, id, agents string, updatedAt time.Time) error
 	// ItemForSlackThread resolves an item by its Slack thread root.
 	ItemForSlackThread(ctx context.Context, ts string) (*Item, error)
 	ListItems(ctx context.Context, workspaceID, status, tag, query string) ([]Item, error)
@@ -97,7 +99,7 @@ func (s *Storage) RunInTx(ctx context.Context, fn func(Store) error) error {
 // they became, and a deleted plan leaves the summary NULL (dangling plan_id).
 const itemColumns = `
 	i.id, i.workspace_id, i.title, i.content, i.tags, i.status, i.priority,
-	i.claimed_by_agent_id, i.author_agent_id, i.plan_id, i.slack_thread_ts, i.created_at, i.updated_at,
+	i.claimed_by_agent_id, i.author_agent_id, i.plan_id, i.slack_thread_ts, i.agents, i.created_at, i.updated_at,
 	p.name, p.status
 `
 
@@ -112,10 +114,10 @@ const itemOrder = ` ORDER BY (i.priority IS NULL) ASC, i.priority ASC, i.id DESC
 func (s *Storage) CreateItem(ctx context.Context, item Item) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO inbox_items
-		    (id, workspace_id, title, content, tags, status, priority, claimed_by_agent_id, author_agent_id, plan_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?)
+		    (id, workspace_id, title, content, tags, status, priority, claimed_by_agent_id, author_agent_id, plan_id, agents, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?)
 	`, item.ID, item.WorkspaceID, item.Title, item.Content, tagsJSON(item.Tags), string(item.Status),
-		nullableInt(item.Priority), nullableString(item.AuthorAgentID), formatTime(item.CreatedAt), formatTime(item.UpdatedAt))
+		nullableInt(item.Priority), nullableString(item.AuthorAgentID), nullableString(item.Agents), formatTime(item.CreatedAt), formatTime(item.UpdatedAt))
 	if err != nil {
 		return fmt.Errorf("inserting inbox item: %w", err)
 	}
@@ -135,6 +137,20 @@ func (s *Storage) ItemForSlackThread(ctx context.Context, ts string) (*Item, err
 		return nil, fmt.Errorf("%w: no item for thread %s", ErrNotFound, ts)
 	}
 	return &item, err
+}
+
+// SetAgents records the item's multi-agent switch; "" stores NULL (the
+// repository default).
+func (s *Storage) SetAgents(ctx context.Context, id, agents string, updatedAt time.Time) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE inbox_items SET agents = ?, updated_at = ? WHERE id = ?`,
+		nullableString(agents), formatTime(updatedAt), id)
+	if err != nil {
+		return fmt.Errorf("setting inbox item agents: %w", err)
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: item %s", ErrNotFound, id)
+	}
+	return nil
 }
 
 // SetSlackThread records the item's Slack notification thread root.
@@ -487,12 +503,12 @@ func scanItem(row rowScanner) (Item, error) {
 	var item Item
 	var workspace sql.NullString
 	var priority sql.NullInt64
-	var claimedBy, planID sql.NullString
+	var claimedBy, planID, agents sql.NullString
 	var planName, planStatus sql.NullString
 	var tags string
 	var createdAt, updatedAt string
 	if err := row.Scan(&item.ID, &workspace, &item.Title, &item.Content, &tags, &item.Status, &priority,
-		&claimedBy, &item.AuthorAgentID, &planID, &item.SlackThreadTS, &createdAt, &updatedAt, &planName, &planStatus); err != nil {
+		&claimedBy, &item.AuthorAgentID, &planID, &item.SlackThreadTS, &agents, &createdAt, &updatedAt, &planName, &planStatus); err != nil {
 		return item, fmt.Errorf("scanning inbox item: %w", err)
 	}
 	if workspace.Valid {
@@ -508,6 +524,7 @@ func scanItem(row rowScanner) (Item, error) {
 	if planID.Valid {
 		item.PlanID = planID.String
 	}
+	item.Agents = agents.String
 	if planName.Valid {
 		item.Plan = &PlanSummary{ID: item.PlanID, Name: planName.String}
 		if planStatus.Valid {

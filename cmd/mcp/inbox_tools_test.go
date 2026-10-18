@@ -221,3 +221,42 @@ func TestInboxPriorityAddressing(t *testing.T) {
 		t.Fatalf("item_id precedence: %d %s", e.Code, e.Message)
 	}
 }
+
+// The per-item agents switch over MCP: set at create, read back, cleared
+// with "default" on update; omitted on update leaves it alone.
+func TestInboxAgentsSwitch(t *testing.T) {
+	sqlDB := mustOpenDB(t)
+	h := NewMCPHandler(
+		status.NewService(status.NewStorage(sqlDB)),
+		blackboard.NewService(blackboard.NewStorage(sqlDB)),
+		plans.NewService(plans.NewStorage(sqlDB)),
+		inbox.NewService(inbox.NewStorage(sqlDB)),
+		nil, nil,
+	)
+	sid := initialize(t, h)
+	r := callTool(t, h, sid, 2, "inbox_create", map[string]any{
+		"workspace_id": "ws-a", "title": "panel item", "author_agent_id": "t", "agents": "panel",
+	})
+	if r.Result.IsError || !strings.Contains(r.Result.Content[0].Text, `"agents":"panel"`) {
+		t.Fatalf("inbox_create with agents: %s", r.Result.Content[0].Text)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(r.Result.Content[0].Text), &created); err != nil {
+		t.Fatal(err)
+	}
+	callTool(t, h, sid, 3, "inbox_update", map[string]any{"item_id": created.ID, "title": "renamed"})
+	r = callTool(t, h, sid, 4, "inbox_read", map[string]any{"item_id": created.ID})
+	if !strings.Contains(r.Result.Content[0].Text, `"agents":"panel"`) {
+		t.Fatalf("update without agents keeps the switch: %s", r.Result.Content[0].Text)
+	}
+	callTool(t, h, sid, 5, "inbox_update", map[string]any{"item_id": created.ID, "agents": "default"})
+	r = callTool(t, h, sid, 6, "inbox_read", map[string]any{"item_id": created.ID})
+	if strings.Contains(r.Result.Content[0].Text, `"agents"`) {
+		t.Fatalf("default clears the switch: %s", r.Result.Content[0].Text)
+	}
+	if e := callToolExpectError(t, h, sid, 7, "inbox_update", map[string]any{"item_id": created.ID, "agents": "crowd"}); !strings.Contains(e.Message, "agents must be") {
+		t.Fatalf("bad value: %+v", e)
+	}
+}

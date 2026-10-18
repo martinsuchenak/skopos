@@ -27,7 +27,7 @@ type EntryForm = { scope: 'project' | 'branch' | 'session'; entry_type: 'finding
 type PlanForm = { name: string; description: string; branch_name: string };
 type ItemForm = { title: string; description: string; phase: string; depends_on: string };
 type InboxPlanSummary = { id: string; name: string; status: string };
-type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; created_at: string; updated_at: string; excerpt?: string };
+type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; agents?: string; created_at: string; updated_at: string; excerpt?: string };
 type InboxDetail = InboxItem & { content: string; content_html: string };
 type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string };
 
@@ -38,7 +38,7 @@ type ApproveTarget = { id: string; title: string; meta: string; steps: string[];
 type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; created_at: string; updated_at: string };
 // wsLocked: a workflow item cannot move workspace (its runs, plan and
 // branch live there) — the server refuses it; the modal hides the picker.
-type InboxForm = { id: string; title: string; tags: string; workspace: string; wsLocked: boolean };
+type InboxForm = { id: string; title: string; tags: string; workspace: string; agents: string; wsLocked: boolean };
 
 const UI_AUTHOR = 'ui';
 type View = 'sessions' | 'blackboard' | 'plans' | 'inbox' | 'index' | 'keys' | 'workspaces' | 'workers';
@@ -1480,7 +1480,7 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
     // explicitly (an inline field error, not a silent toast).
     this.inboxForm.workspace = this.activeWorkspace;
     this.inboxErrors = {};
-    this.inboxBaseline = { title: '', tags: '', content: '', workspace: this.activeWorkspace };
+    this.inboxBaseline = { title: '', tags: '', content: '', workspace: this.activeWorkspace, agents: '' };
     this.showInboxItemModal = true;
     this.syncInboxWsField();
     this.mountInboxEditor('');
@@ -1492,9 +1492,9 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
     const detail = (await res.json()) as InboxDetail;
     this.inboxForm = {
       id: detail.id, title: detail.title, tags: (detail.tags || []).join(', '), workspace: detail.workspace_id || '',
-      wsLocked: this.isWorkflowStatus(detail.status),
+      agents: detail.agents || '', wsLocked: this.isWorkflowStatus(detail.status),
     };
-    this.inboxBaseline = { title: detail.title, tags: this.inboxForm.tags, content: detail.content, workspace: detail.workspace_id || '' };
+    this.inboxBaseline = { title: detail.title, tags: this.inboxForm.tags, content: detail.content, workspace: detail.workspace_id || '', agents: detail.agents || '' };
     this.inboxErrors = {};
     this.showInboxItemModal = true;
     this.syncInboxWsField();
@@ -1523,7 +1523,16 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
     return editorText(inboxEditor) !== this.inboxBaseline.content
       || this.inboxForm.title !== this.inboxBaseline.title
       || this.inboxForm.tags !== this.inboxBaseline.tags
-      || this.inboxForm.workspace !== this.inboxBaseline.workspace;
+      || this.inboxForm.workspace !== this.inboxBaseline.workspace
+      || this.inboxForm.agents !== this.inboxBaseline.agents;
+  },
+  // Per-item multi-agent switch: badge text and its explanation.
+  agentsLabel(agents?: string): string {
+    return agents === 'panel' ? 'agent panel' : agents === 'solo' ? 'one agent' : '';
+  },
+  agentsTitle(agents?: string): string {
+    return agents === 'panel' ? "Plan, review and QA use the repository's agent panel"
+      : agents === 'solo' ? 'Plan, review and QA use one agent' : '';
   },
   attemptCloseInboxItemModal() {
     if (!this.showInboxItemModal || this.confirm.open) return;
@@ -1548,6 +1557,7 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
       const editing = !!f.id;
       if (!editing) {
         const body: Record<string, unknown> = { title: f.title.trim(), content, tags, author_agent_id: UI_AUTHOR };
+        if (f.agents) body.agents = f.agents;
         // 'unfiled' (root-only option) captures without a workspace; the
         // server rejects it for scoped keys with an actionable error.
         if (f.workspace !== 'unfiled') body.workspace_id = f.workspace;
@@ -1558,6 +1568,8 @@ this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) =
         const body: Record<string, unknown> = { title: f.title.trim(), content, tags, via: 'dashboard' };
         // Filing: a changed, non-empty workspace re-files the item.
         if (!f.wsLocked && f.workspace && f.workspace !== this.inboxBaseline.workspace) body.workspace_id = f.workspace;
+        // Only a changed switch is sent ("" = back to the repository default).
+        if (f.agents !== this.inboxBaseline.agents) body.agents = f.agents;
         const res = await this.authFetch('/api/inbox/' + encodeURIComponent(f.id), { method: 'PATCH', body: JSON.stringify(body) });
         if (!await this.handleBad(res, 'Item not updated')) return;
         this.notify('Item updated', 'success');
@@ -2203,8 +2215,8 @@ function bundleParams(ws: string, branch: string) {
 function emptyEntryForm(branch = ''): EntryForm { return { scope: 'branch', entry_type: 'finding', title: '', content: '', code_ref: '', branch_name: branch, session_id: '' }; }
 function emptyPlanForm(branch = ''): PlanForm { return { name: '', description: '', branch_name: branch }; }
 function emptyItemForm(): ItemForm { return { title: '', description: '', phase: '', depends_on: '' }; }
-function emptyInboxForm(): InboxForm { return { id: '', title: '', tags: '', workspace: '', wsLocked: false }; }
-function emptyInboxBaseline() { return { title: '', tags: '', content: '', workspace: '' }; }
+function emptyInboxForm(): InboxForm { return { id: '', title: '', tags: '', workspace: '', agents: '', wsLocked: false }; }
+function emptyInboxBaseline() { return { title: '', tags: '', content: '', workspace: '', agents: '' }; }
 
 Alpine.plugin(focus);
 // Register as a named component: the CSP Alpine build cannot resolve globals

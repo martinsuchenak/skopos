@@ -36,6 +36,9 @@ type Service struct {
 	// planners only ever write candidates.
 	planRoundStart func(ctx context.Context, itemID string) error
 	ensurePlan     func(ctx context.Context, itemID string) error
+	// itemAgents reads the item's multi-agent switch ("panel", "solo", ""
+	// = workspace default) — wired to the inbox. Nil = always the default.
+	itemAgents func(ctx context.Context, itemID string) string
 	// nextStage resolves the stage that follows a successful one per
 	// workspace; "" ends the sequence. Defaults to: plan -> implement -> done
 	// (review/qa only when configured).
@@ -62,6 +65,11 @@ func (s *Service) SetPrefs(p map[string]*WorkspacePrefs) {
 // SetPlanHooks wires the plan-group callbacks (see the fields).
 func (s *Service) SetPlanHooks(roundStart, ensurePlan func(ctx context.Context, itemID string) error) {
 	s.planRoundStart, s.ensurePlan = roundStart, ensurePlan
+}
+
+// SetItemAgents wires the per-item multi-agent switch lookup.
+func (s *Service) SetItemAgents(fn func(ctx context.Context, itemID string) string) {
+	s.itemAgents = fn
 }
 
 // SetItemAppend wires the inbox section-append callback (group summaries).
@@ -127,9 +135,17 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 	}
 	// Multi-agent stage (opt-in): two or more members routed to it open a
 	// group instead of a single run (a seeded revise is always single).
+	// The item's switch decides, at every queue: panel (or the workspace
+	// default) opens the group; solo runs the first member alone, without
+	// its focus brief.
 	if groupStage(in.Stage) && !in.Single {
 		if members := s.prefs[in.WorkspaceID].GroupMembers(in.Stage); members != nil {
-			return s.queueGroup(ctx, in, members)
+			if s.prefs[in.WorkspaceID].Panel(s.agentsFor(ctx, in.ItemID)) {
+				return s.queueGroup(ctx, in, members)
+			}
+			if strings.TrimSpace(in.Runner) == "" {
+				in.Runner = members[0].Runner
+			}
 		}
 	}
 	now := s.now().UTC()
@@ -150,6 +166,15 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 		return nil, err
 	}
 	return &r, nil
+}
+
+// agentsFor reads the item's multi-agent switch; "" (workspace default)
+// when unwired or unreadable.
+func (s *Service) agentsFor(ctx context.Context, itemID string) string {
+	if s.itemAgents == nil {
+		return ""
+	}
+	return s.itemAgents(ctx, itemID)
 }
 
 // runnerFor: an explicit runner (a seeded revise) wins over the workspace

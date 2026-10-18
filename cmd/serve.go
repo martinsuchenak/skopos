@@ -151,6 +151,10 @@ func serveCmd() *cli.Command {
 				Name:  "stage-policy",
 				Usage: "How a multi-agent stage is decided, <workspace>:<stage>=<any-blocks|majority|all-pass>[,early-exit][,timeout=60m] (repeatable)",
 			},
+			&cli.StringSliceFlag{
+				Name:  "agents-default",
+				Usage: "What items without their own agents switch get on a multi-agent stage, <workspace>=<panel|solo> (repeatable; default panel)",
+			},
 			&cli.IntFlag{
 				Name:         "cleanup-retention-days",
 				DefaultValue: 30,
@@ -408,7 +412,7 @@ func serveCmd() *cli.Command {
 			// item's lifecycle; chaining moves the item through the workflow
 			// via the system transitions.
 			runsService := runs.NewService(runs.NewStorage(sqlDB))
-			prefs, prefWarnings := runWorkspacePrefs(cmd.GetStringSlice("run-stage"), cmd.GetStringSlice("stage-policy"))
+			prefs, prefWarnings := runWorkspacePrefs(cmd.GetStringSlice("run-stage"), cmd.GetStringSlice("stage-policy"), cmd.GetStringSlice("agents-default"))
 			for _, w := range prefWarnings {
 				log.Warn("stage routing: " + w)
 			}
@@ -417,6 +421,14 @@ func serveCmd() *cli.Command {
 			// groups past their deadline are decided with what they have.
 			runsService.SetItemAppend(func(ctx context.Context, itemID, heading, body string) error {
 				return inboxService.AppendSection(ctx, itemID, heading, body, audit.ViaWorker)
+			})
+			// The item's own panel/solo switch, read at every queue.
+			runsService.SetItemAgents(func(ctx context.Context, itemID string) string {
+				item, err := inboxService.GetItem(ctx, itemID)
+				if err != nil {
+					return ""
+				}
+				return item.Agents
 			})
 			go runsService.RunSweepLoop(ctx, time.Minute)
 			runsService.SetPlanHooks(planRoundStartHook(inboxService, plansService), ensurePlanHook(inboxService, plansService))
@@ -600,9 +612,11 @@ func hostAllowed(serverHost string) func(http.Handler) http.Handler {
 // runWorkspacePrefs parses --run-stage <workspace>:<stage>=<members> and
 // --stage-policy flags into per-workspace routing. A member is
 // [focus@]runner; one member is today's single-runner routing, two or more
-// on review/qa make a multi-agent stage (opt-in). Malformed entries are
-// skipped with a warning rather than failing the server.
-func runWorkspacePrefs(stageSpecs, policySpecs []string) (map[string]*runs.WorkspacePrefs, []string) {
+// on plan/review/qa make a multi-agent stage (opt-in). --agents-default
+// <workspace>=panel|solo is what items without their own switch get there.
+// Malformed entries are skipped with a warning rather than failing the
+// server.
+func runWorkspacePrefs(stageSpecs, policySpecs, agentsSpecs []string) (map[string]*runs.WorkspacePrefs, []string) {
 	prefs := map[string]*runs.WorkspacePrefs{}
 	var warnings []string
 	get := func(ws string) *runs.WorkspacePrefs {
@@ -684,6 +698,15 @@ func runWorkspacePrefs(stageSpecs, policySpecs []string) (map[string]*runs.Works
 			continue
 		}
 		get(ws).Policies[stage] = sp
+	}
+	for _, spec := range agentsSpecs {
+		ws, value, ok := strings.Cut(spec, "=")
+		ws, value = strings.TrimSpace(ws), strings.ToLower(strings.TrimSpace(value))
+		if !ok || ws == "" || (value != runs.AgentsPanel && value != runs.AgentsSolo) {
+			warnings = append(warnings, fmt.Sprintf("ignoring --agents-default %q: want <workspace>=panel or <workspace>=solo", spec))
+			continue
+		}
+		get(ws).AgentsDefault = value
 	}
 	return prefs, warnings
 }

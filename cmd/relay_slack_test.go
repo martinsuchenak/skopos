@@ -493,6 +493,52 @@ func TestCaptureTags(t *testing.T) {
 	}
 }
 
+// #panel / #solo in a capture set the item's agents switch (last wins)
+// instead of becoming tags; thread replies panel / solo / default change it
+// at once, even mid-run (a setting, never buffered).
+func TestRelayAgentsSwitch(t *testing.T) {
+	if got := captureAgents("fix it #panel then #Solo"); got != inbox.AgentsSolo {
+		t.Fatalf("captureAgents = %q", got)
+	}
+	if tags := captureTags("fix it #panel #solo #php"); strings.Join(tags, ",") != "slack-new,php" {
+		t.Fatalf("switch hashtags are not tags: %v", tags)
+	}
+	svc, _, _, fake, relay := relayStack(t)
+	root := context.Background()
+	if !relay.TopLevel(root, "new: tidy the importer #solo", "880.1") {
+		t.Fatal("capture must be handled")
+	}
+	items, err := svc.ListItems(root, "ws-a", "", "slack-new", "")
+	if err != nil || len(items) != 1 || items[0].Agents != inbox.AgentsSolo {
+		t.Fatalf("captured with solo: %+v err %v", items, err)
+	}
+	if !strings.Contains(fake.last().text, "one agent") {
+		t.Fatalf("confirmation names the switch: %q", fake.last().text)
+	}
+	id := items[0].ID
+	if _, err := svc.SystemTransition(root, id, inbox.StatusPlanning, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if !relay.Apply(root, id, "panel") {
+		t.Fatal("panel reply must be handled")
+	}
+	if got, _ := svc.GetItem(root, id); got.Agents != inbox.AgentsPanel {
+		t.Fatalf("panel applies at once, mid-run too: %q", got.Agents)
+	}
+	if !strings.Contains(fake.last().text, "agent panel") || !strings.Contains(fake.last().text, "already running") {
+		t.Fatalf("panel confirmation: %q", fake.last().text)
+	}
+	if !relay.Apply(root, id, "default") {
+		t.Fatal("default reply must be handled")
+	}
+	if got, _ := svc.GetItem(root, id); got.Agents != "" {
+		t.Fatalf("default clears the switch: %q", got.Agents)
+	}
+	if relay.Apply(root, id, "solo please") {
+		t.Fatal("a switch word with prose after it is conversation")
+	}
+}
+
 // M2: a Slack approve binds to the revision the plan-ready message showed.
 // The message lists that revision's steps; after a restart (nothing
 // recorded) or a newer revision, the relay re-posts the current plan

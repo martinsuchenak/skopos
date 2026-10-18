@@ -162,6 +162,10 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "plan_revisions", "candidate_state", "TEXT CHECK (candidate_state IS NULL OR candidate_state IN ('open', 'superseded', 'approved'))"); err != nil {
 		return err
 	}
+	// Per-item multi-agent switch: NULL = the repository default.
+	if err := ensureColumn(db, "inbox_items", "agents", "TEXT CHECK (agents IS NULL OR agents IN ('solo', 'panel'))"); err != nil {
+		return err
+	}
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_revisions_one_approved ON plan_revisions(group_id) WHERE candidate_state = 'approved'`); err != nil {
 		return fmt.Errorf("indexing plan candidates: %w", err)
 	}

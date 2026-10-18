@@ -94,9 +94,10 @@ var reSelector = regexp.MustCompile(`(?s)^([A-Za-z0-9._/~+-]+):\s+(.+)$`)
 var reHashtag = regexp.MustCompile(`(?:^|\s)#([a-z0-9][a-z0-9._-]{0,63})\b`)
 
 // captureTags is slack-new plus the capture's hashtags (lowercased, unique).
+// #panel and #solo are the item's agents switch (captureAgents), not tags.
 func captureTags(text string) []string {
 	tags := []string{"slack-new"}
-	seen := map[string]bool{"slack-new": true}
+	seen := map[string]bool{"slack-new": true, inbox.AgentsPanel: true, inbox.AgentsSolo: true}
 	for _, m := range reHashtag.FindAllStringSubmatch(strings.ToLower(text), -1) {
 		if !seen[m[1]] {
 			seen[m[1]] = true
@@ -104,6 +105,29 @@ func captureTags(text string) []string {
 		}
 	}
 	return tags
+}
+
+// captureAgents: `#panel` / `#solo` in a capture set the item's
+// multi-agent switch (the last one wins); "" = the repository default.
+func captureAgents(text string) string {
+	agents := ""
+	for _, m := range reHashtag.FindAllStringSubmatch(strings.ToLower(text), -1) {
+		if m[1] == inbox.AgentsPanel || m[1] == inbox.AgentsSolo {
+			agents = m[1]
+		}
+	}
+	return agents
+}
+
+// agentsWord describes an agents switch for messages.
+func agentsWord(agents string) string {
+	switch agents {
+	case inbox.AgentsPanel:
+		return "the agent panel"
+	case inbox.AgentsSolo:
+		return "one agent"
+	}
+	return "the repository default"
 }
 
 const slackHelp = "*skopos commands* — reply in an item's thread:\n" +
@@ -114,7 +138,8 @@ const slackHelp = "*skopos commands* — reply in an item's thread:\n" +
 	"• `done` — approve the review, mark the item done\n" +
 	"• `retry: <answer>` — answer a blocker and requeue\n" +
 	"• `reject` — discard the item\n" +
-	"Top-level: `new: <what to do>` creates and queues an item."
+	"• `panel` / `solo` / `default` — the item's plan, review and QA stages use the repository's agent panel, one agent, or the repository default (from the next stage)\n" +
+	"Top-level: `new: <what to do>` creates and queues an item; add `#panel` or `#solo` to choose its agents."
 
 // TopLevel handles threadless DMs: capture and help. ts is Martin's own
 // message — a created item's thread binds to it, so his next reply in that
@@ -149,6 +174,7 @@ func (r *slackRelay) TopLevel(ctx context.Context, text, ts string) bool {
 		Content:       what + "\n\n_Created from Slack (`new:`), " + time.Now().UTC().Format("2006-01-02 15:04") + " UTC._",
 		Tags:          captureTags(what),
 		AuthorAgentID: "slack",
+		Agents:        captureAgents(what),
 	})
 	if err != nil {
 		r.post(ctx, "", "⚠️ Could not create the item: "+firstLine(err.Error()))
@@ -158,7 +184,11 @@ func (r *slackRelay) TopLevel(ctx context.Context, text, ts string) bool {
 		r.post(ctx, "", "⚠️ Created but not queued: "+firstLine(qErr.Error()))
 	}
 	r.bindThread(ctx, item.ID, ts)
-	r.post(ctx, ts, "📥 Queued in `"+ws+"` · planning starts within a minute. The plan will come back in this thread.")
+	agentsNote := ""
+	if item.Agents != "" {
+		agentsNote = " · " + agentsWord(item.Agents)
+	}
+	r.post(ctx, ts, "📥 Queued in `"+ws+"`"+agentsNote+" · planning starts within a minute. The plan will come back in this thread.")
 	return true
 }
 
@@ -189,6 +219,11 @@ func (r *slackRelay) Apply(ctx context.Context, itemID, text string) bool {
 	item, err := r.inbox.GetItem(relayCtx(), itemID)
 	if err != nil {
 		return false
+	}
+	// The agents switch is a setting, not a workflow action: it applies
+	// at once (never buffered) and takes effect at the next stage.
+	if isAgentsCommand(cmd) {
+		return r.setAgents(ctx, item, cmd)
 	}
 	if !inbox.IsWorkflowStatus(item.Status) {
 		r.post(ctx, item.SlackThreadTS, "⚠️ The item is "+statusWord(item.Status)+" — no workflow actions apply.")
@@ -314,6 +349,24 @@ func (r *slackRelay) applyCommand(ctx context.Context, item *inbox.Item, cmd, se
 		return true
 	}
 	return false
+}
+
+// setAgents applies a panel / solo / default reply to the item's switch.
+func (r *slackRelay) setAgents(ctx context.Context, item *inbox.Item, cmd string) bool {
+	value := cmd
+	if cmd == "default" {
+		value = ""
+	}
+	if err := r.inbox.UpdateItem(relayCtx(), item.ID, inbox.UpdateInput{Agents: &value, Via: audit.ViaSlack}); err != nil {
+		r.post(ctx, item.SlackThreadTS, "⚠️ Command failed: "+truncate(err.Error(), 300))
+		return true
+	}
+	msg := "👥 Plan, review and QA stages of this item now use " + agentsWord(value) + "."
+	if item.Status == inbox.StatusPlanning || item.Status == inbox.StatusImplementing {
+		msg += " A stage already running keeps its agents."
+	}
+	r.post(ctx, item.SlackThreadTS, msg)
+	return true
 }
 
 // ItemForThread re-resolves a thread after a restart (the provider's
@@ -653,7 +706,12 @@ func isCommand(w string) bool {
 	case "approve", "approved", "lgtm", "revise", "changes", "done", "retry", "reject":
 		return true
 	}
-	return false
+	return isAgentsCommand(w)
+}
+
+// isAgentsCommand: the per-item agents switch replies.
+func isAgentsCommand(w string) bool {
+	return w == inbox.AgentsPanel || w == inbox.AgentsSolo || w == "default"
 }
 
 // isApproval: commands that approve a subject (a plan revision, a review
