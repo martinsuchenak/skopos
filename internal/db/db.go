@@ -162,6 +162,11 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "plan_revisions", "candidate_state", "TEXT CHECK (candidate_state IS NULL OR candidate_state IN ('open', 'superseded', 'approved'))"); err != nil {
 		return err
 	}
+	// Worker registry rows belong to the API key that wrote them ('' =
+	// root, NULL = written before this column; adopted by the next writer).
+	if err := ensureColumn(db, "workers", "key_id", "TEXT"); err != nil {
+		return err
+	}
 	// Per-item multi-agent switch: NULL = the repository default.
 	if err := ensureColumn(db, "inbox_items", "agents", "TEXT CHECK (agents IS NULL OR agents IN ('solo', 'panel'))"); err != nil {
 		return err

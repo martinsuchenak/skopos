@@ -35,6 +35,12 @@ versions follow [Semantic Versioning](https://semver.org/).
     hooks no longer apply to pipeline runs.
 - **`setup` commands run with the scrubbed environment** (they inherited
   every daemon secret); `setup_env` passes what they need.
+- **The worker registry is scoped.** `GET /api/workers` (the Workers view)
+  showed every worker, with its runners and workspace ids, to any key. A
+  scoped key now sees only workers serving its workspaces, with their lists
+  cut to its scope. Registry rows belong to the key that first wrote them:
+  another key reusing a worker id can no longer overwrite the row (its
+  claims still work; runs were already bound to the claiming key).
 
 ### Added
 

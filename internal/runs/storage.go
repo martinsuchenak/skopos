@@ -10,8 +10,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/martinsuchenak/skopos/internal/dbtime"
+	"log/slog"
 	"time"
+
+	"github.com/martinsuchenak/skopos/internal/dbtime"
 )
 
 // Storage persists runs. The queue's correctness lives in Claim: the
@@ -365,16 +367,25 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 	}
 
 	// Registry-lite: record what this worker offers and serves on every
-	// claim (the Workers view's capability record).
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO workers (id, runners, workspaces, last_seen, updated_at)
-		VALUES (?, ?, ?, ?, ?)
+	// claim (the Workers view's capability record). The row belongs to the
+	// key that first wrote it ('' = root; NULL = a row from before keys
+	// were recorded, adopted by its next writer): another key reusing the
+	// worker id cannot overwrite it (review H4). The claim itself is
+	// unaffected — runs are fenced by claimed_key_id.
+	reg, err := tx.ExecContext(ctx, `
+		INSERT INTO workers (id, runners, workspaces, last_seen, updated_at, key_id)
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			runners = excluded.runners, workspaces = excluded.workspaces,
-			last_seen = excluded.last_seen, updated_at = excluded.updated_at`,
+			last_seen = excluded.last_seen, updated_at = excluded.updated_at, key_id = excluded.key_id
+		WHERE workers.key_id IS NULL OR workers.key_id = excluded.key_id`,
 		in.WorkerID, jsonList(in.Runners), jsonList(in.Workspaces),
-		formatTime(now), formatTime(now)); err != nil {
+		formatTime(now), formatTime(now), in.KeyID)
+	if err != nil {
 		return nil, fmt.Errorf("recording worker: %w", err)
+	}
+	if n, _ := reg.RowsAffected(); n == 0 {
+		slog.Warn("worker id is registered to another API key; registry row left unchanged", "worker", in.WorkerID)
 	}
 	row := tx.QueryRowContext(ctx, `SELECT `+runColumns+` FROM runs WHERE id = ?`, cand.ID)
 	claimed, err := scanRun(row)

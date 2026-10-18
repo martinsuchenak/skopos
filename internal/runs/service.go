@@ -447,8 +447,33 @@ func (s *Service) ResumeItem(ctx context.Context, itemID string) error {
 }
 
 // ListWorkers is the worker registry (capabilities recorded at claim).
+// Root and "*" keys see every worker; a scoped key sees only workers that
+// serve at least one of its workspaces, with the workspace list cut to its
+// scope — never another tenant's workers or workspace ids (review H4).
 func (s *Service) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
-	return s.storage.ListWorkers(ctx)
+	all, err := s.storage.ListWorkers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	p := auth.PrincipalFromContext(ctx)
+	if p.IsRoot() || p.AllWorkspaces {
+		return all, nil
+	}
+	out := make([]WorkerSeen, 0, len(all))
+	for _, w := range all {
+		var mine []string
+		for _, ws := range w.Workspaces {
+			if p.CanAccess(ws) {
+				mine = append(mine, ws)
+			}
+		}
+		if len(mine) == 0 {
+			continue
+		}
+		w.Workspaces = mine
+		out = append(out, w)
+	}
+	return out, nil
 }
 
 // RunSummary is the inbox-facing slice of a run — enough for the Slack

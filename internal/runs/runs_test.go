@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -599,5 +600,67 @@ func TestPlanSuccessNoFalseMoveNote(t *testing.T) {
 		if got, _ := s.Get(ctx, run.ID); got.FailReason != "" {
 			t.Fatalf("%s: a plan success must not carry a move note: %q", item, got.FailReason)
 		}
+	}
+}
+
+// Review H4: the worker registry. A scoped key sees only workers serving
+// its workspaces, with the list cut to its scope; root sees everything. A
+// row belongs to the key that first wrote it — another key reusing the
+// worker id still claims its run but cannot overwrite the row; a legacy row
+// (no key recorded) is adopted by its next writer.
+func TestWorkerRegistryScopedAndBound(t *testing.T) {
+	s := testService(t)
+	keyA := auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: "ka", Workspaces: map[string]struct{}{"ws-a": {}, "ws-shared": {}}})
+	keyB := auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: "kb", Workspaces: map[string]struct{}{"ws-b": {}, "ws-shared": {}}})
+	keyC := auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: "kc", Workspaces: map[string]struct{}{"ws-c": {}}})
+	claim := func(ctx context.Context, worker string, runners []string, ws ...string) {
+		t.Helper()
+		_ = mustQueue(t, s, rootCtx(), ws[0], "item-"+worker+"-"+ws[0]+"-"+runners[0], StagePlan)
+		r, err := s.ClaimNext(ctx, ClaimInput{WorkerID: worker, Runners: runners, Workspaces: ws})
+		if err != nil || r == nil {
+			t.Fatalf("claim by %s: %v %v", worker, r, err)
+		}
+	}
+	claim(keyA, "wa", []string{"claude"}, "ws-a", "ws-shared")
+	claim(keyB, "wb", []string{"glm"}, "ws-b", "ws-shared")
+	claim(keyC, "wc", []string{"qwen"}, "ws-c")
+
+	ids := func(ws []WorkerSeen) string {
+		var out []string
+		for _, w := range ws {
+			out = append(out, w.ID+"="+strings.Join(w.Workspaces, "+"))
+		}
+		sort.Strings(out)
+		return strings.Join(out, " ")
+	}
+	all, _ := s.ListWorkers(rootCtx())
+	if got := ids(all); got != "wa=ws-a+ws-shared wb=ws-b+ws-shared wc=ws-c" {
+		t.Fatalf("root sees every worker: %s", got)
+	}
+	if got, _ := s.ListWorkers(keyC); ids(got) != "wc=ws-c" {
+		t.Fatalf("scoped key sees only its own fleet: %s", ids(got))
+	}
+	// Key A shares ws-shared with B's worker: it sees wb, but only the
+	// shared workspace, never ws-b.
+	if got, _ := s.ListWorkers(keyA); ids(got) != "wa=ws-a+ws-shared wb=ws-shared" {
+		t.Fatalf("shared workspace, foreign ids cut: %s", ids(got))
+	}
+
+	// Key C reuses worker id "wa": its run is claimed, the row stays A's.
+	claim(keyC, "wa", []string{"qwen"}, "ws-c")
+	all, _ = s.ListWorkers(rootCtx())
+	for _, w := range all {
+		if w.ID == "wa" && (strings.Join(w.Workspaces, "+") != "ws-a+ws-shared" || strings.Join(w.Runners, "+") != "claude") {
+			t.Fatalf("another key overwrote the row: %+v", w)
+		}
+	}
+	// Legacy row (written before key_id existed) is adopted by its next writer.
+	if _, err := s.storage.db.Exec(`UPDATE workers SET key_id = NULL WHERE id = 'wc'`); err != nil {
+		t.Fatal(err)
+	}
+	claim(keyB, "wc", []string{"glm"}, "ws-b")
+	var owner string
+	if err := s.storage.db.QueryRow(`SELECT key_id FROM workers WHERE id = 'wc'`).Scan(&owner); err != nil || owner != "kb" {
+		t.Fatalf("legacy row adopted by its next writer: %q %v", owner, err)
 	}
 }
