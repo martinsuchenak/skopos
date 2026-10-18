@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/martinsuchenak/skopos/internal/dbtime"
 	"sort"
 	"strings"
 	"time"
@@ -381,12 +382,12 @@ func (st *Storage) CreateRevision(ctx context.Context, r Revision) error {
 	}
 	var lockedAt any
 	if r.LockedAt != nil {
-		lockedAt = r.LockedAt.Format(time.RFC3339Nano)
+		lockedAt = dbtime.Format(*r.LockedAt)
 	}
 	if _, err := st.db.ExecContext(ctx, `
 		INSERT INTO plan_revisions (id, plan_id, workspace_id, revision_no, steps_json, content_hash, base_sha, created_at, locked_at, skills_json)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.ID, r.PlanID, r.WorkspaceID, r.RevisionNo, string(stepsJSON), r.ContentHash, r.BaseSHA, r.CreatedAt.Format(time.RFC3339Nano), lockedAt, skillsJSON(r.Skills)); err != nil {
+		r.ID, r.PlanID, r.WorkspaceID, r.RevisionNo, string(stepsJSON), r.ContentHash, r.BaseSHA, dbtime.Format(r.CreatedAt), lockedAt, skillsJSON(r.Skills)); err != nil {
 		return fmt.Errorf("inserting plan revision: %w", err)
 	}
 	return nil
@@ -491,7 +492,7 @@ func (st *Storage) ListRevisions(ctx context.Context, planID string) ([]Revision
 func (st *Storage) LockRevision(ctx context.Context, id string, at time.Time) error {
 	res, err := st.db.ExecContext(ctx,
 		`UPDATE plan_revisions SET locked_at = ? WHERE id = ? AND locked_at IS NULL`,
-		at.Format(time.RFC3339Nano), id)
+		dbtime.Format(at), id)
 	if err != nil {
 		return fmt.Errorf("locking plan revision: %w", err)
 	}

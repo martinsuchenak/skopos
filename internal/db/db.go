@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"github.com/martinsuchenak/skopos/internal/dbtime"
 	"net"
 	"runtime"
 	"strconv"
@@ -164,6 +165,11 @@ func RunMigrations(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_revisions_one_approved ON plan_revisions(group_id) WHERE candidate_state = 'approved'`); err != nil {
 		return fmt.Errorf("indexing plan candidates: %w", err)
 	}
+	// Timestamps: rewrite rows stored before the fixed-width format (see
+	// internal/dbtime) so old and new values compare and sort together.
+	if err := normalizeTimestamps(db); err != nil {
+		return err
+	}
 	// After the column exists (schema.sql runs before ensureColumn).
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_runs_group ON runs(group_id) WHERE group_id IS NOT NULL`); err != nil {
 		return fmt.Errorf("indexing runs.group_id: %w", err)
@@ -194,4 +200,78 @@ func ensureColumn(db *sql.DB, table, column, decl string) error {
 		return fmt.Errorf("adding %s.%s: %w", table, column, err)
 	}
 	return nil
+}
+
+// timestampColumns are every text timestamp column (run_groups stores Unix
+// milliseconds and is not listed).
+var timestampColumns = []struct{ table, column string }{
+	{"sessions", "started_at"}, {"sessions", "updated_at"},
+	{"agents", "first_seen_at"}, {"agents", "last_seen_at"},
+	{"agent_states", "updated_at"}, {"agent_states", "stuck_at"},
+	{"events", "created_at"},
+	{"blackboard_entries", "created_at"}, {"blackboard_entries", "updated_at"},
+	{"plans", "created_at"}, {"plans", "updated_at"},
+	{"plan_items", "created_at"}, {"plan_items", "updated_at"},
+	{"plan_revisions", "created_at"}, {"plan_revisions", "locked_at"},
+	{"approvals", "created_at"},
+	{"workspaces", "created_at"},
+	{"inbox_items", "created_at"}, {"inbox_items", "updated_at"},
+	{"api_keys", "created_at"}, {"api_keys", "last_used_at"}, {"api_keys", "revoked_at"},
+	{"workspace_groups", "created_at"},
+	{"audit_log", "created_at"},
+	{"runs", "lease_expires_at"}, {"runs", "resume_after"}, {"runs", "created_at"}, {"runs", "updated_at"},
+	{"workers", "last_seen"}, {"workers", "updated_at"},
+}
+
+// normalizeTimestamps rewrites every stored timestamp that is not yet in
+// the fixed-width format, one transaction per column. Idempotent: only
+// non-empty values of the wrong width are touched, so after the first run
+// each startup is a cheap scan. Values that do not parse are left alone.
+func normalizeTimestamps(db *sql.DB) error {
+	for _, tc := range timestampColumns {
+		if err := normalizeColumn(db, tc.table, tc.column); err != nil {
+			return fmt.Errorf("normalizing %s.%s: %w", tc.table, tc.column, err)
+		}
+	}
+	return nil
+}
+
+func normalizeColumn(db *sql.DB, table, column string) error {
+	rows, err := db.Query(fmt.Sprintf(
+		`SELECT rowid, %[1]s FROM %[2]s WHERE %[1]s IS NOT NULL AND %[1]s != '' AND length(%[1]s) != ?`, column, table), dbtime.Width)
+	if err != nil {
+		return err
+	}
+	type fix struct {
+		rowid int64
+		value string
+	}
+	var fixes []fix
+	for rows.Next() {
+		var id int64
+		var raw string
+		if err := rows.Scan(&id, &raw); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if t, perr := dbtime.Parse(raw); perr == nil {
+			fixes = append(fixes, fix{id, dbtime.Format(t)})
+		}
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil || len(fixes) == 0 {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	stmt := fmt.Sprintf(`UPDATE %s SET %s = ? WHERE rowid = ?`, table, column)
+	for _, f := range fixes {
+		if _, err := tx.Exec(stmt, f.value, f.rowid); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

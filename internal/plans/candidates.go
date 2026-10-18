@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/martinsuchenak/skopos/internal/dbtime"
 	"strings"
 	"time"
 
@@ -266,7 +267,7 @@ func (s *Storage) ApproveCandidate(ctx context.Context, planID, revisionID strin
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE plan_revisions SET candidate_state = ?, locked_at = ? WHERE id = ?`,
-		CandidateApproved, now.Format(time.RFC3339Nano), revisionID); err != nil {
+		CandidateApproved, dbtime.Format(now), revisionID); err != nil {
 		return nil, fmt.Errorf("approving candidate: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/martinsuchenak/skopos/internal/dbtime"
 	"time"
 
 	"github.com/paularlott/logger"
@@ -54,7 +55,7 @@ func (c *Cleaner) RunOnce(ctx context.Context) error {
 
 func (c *Cleaner) clean(ctx context.Context) error {
 	cutoff := time.Now().UTC().Add(-c.retention)
-	cutoffStr := cutoff.Format(time.RFC3339Nano)
+	cutoffStr := dbtime.Format(cutoff)
 
 	eventsResult, err := c.db.ExecContext(ctx, `DELETE FROM events WHERE created_at < ?`, cutoffStr)
 	if err != nil {
@@ -99,7 +100,7 @@ func (c *Cleaner) clean(ctx context.Context) error {
 	// enforces), a hand-made empty plan is never touched. Dependent rows
 	// (plan_items, plan_revisions, plan_dependencies) go via the schema's
 	// ON DELETE CASCADE — the server DSN enables foreign_keys.
-	orphanCutoff := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339Nano)
+	orphanCutoff := dbtime.Format(time.Now().Add(-24 * time.Hour))
 	orphanResult, err := c.db.ExecContext(ctx, `
 		DELETE FROM plans
 		WHERE created_at < ? AND author_agent_id LIKE 'worker-%'

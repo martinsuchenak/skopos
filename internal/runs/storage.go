@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/martinsuchenak/skopos/internal/dbtime"
 	"time"
 )
 
@@ -22,7 +23,7 @@ type Storage struct {
 
 func NewStorage(db *sql.DB) *Storage { return &Storage{db: db} }
 
-func formatTime(t time.Time) string { return t.Format(time.RFC3339Nano) }
+func formatTime(t time.Time) string { return dbtime.Format(t) }
 
 func parseTime(s string) time.Time {
 	t, _ := time.Parse(time.RFC3339Nano, s)

@@ -63,6 +63,7 @@ Every domain package follows `handler → service → storage` layering. Storage
 - `go-scaffolder:` comments are patch markers — do not remove them.
 - Add new CLI commands, API endpoints, or MCP tools with `go-scaffolder add` where possible.
 - All IDs are UUIDv7 (text, time-sortable).
+- DB timestamps go through `internal/dbtime` (fixed-width UTC text: text order = time order); never `Format(time.RFC3339Nano)` into SQLite. New tables use INTEGER Unix ms instead. Versioned migrations / typed rebuilds of the old tables are planned after the multi-agent feature is polished (tmp/db-types — review.md).
 - Config: TOML (`skopos-config.toml`, gitignored — copy from `skopos-config.example.toml`; optional, falls back to flag defaults + env) + env var overrides (`SERVER_PORT`, `SKOPOS_API_KEY`, etc.).
 - Frontend assets are embedded in the binary via `web/embed.go`. Run `task frontend-build` before `task build` (the build task depends on it automatically).
 - `task lint` sets `GOCACHE` to a local directory — don't run bare `golangci-lint`.

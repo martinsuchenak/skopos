@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/martinsuchenak/skopos/internal/dbtime"
 	"path"
 	"sort"
 	"strings"
@@ -305,7 +306,7 @@ func boolToInt(b bool) int {
 
 var timeNowUTC = func() time.Time { return time.Now().UTC() }
 
-func formatTime(t time.Time) string { return t.Format(time.RFC3339Nano) }
+func formatTime(t time.Time) string { return dbtime.Format(t) }
 
 func parseTime(s string) time.Time {
 	t, _ := time.Parse(time.RFC3339Nano, s)

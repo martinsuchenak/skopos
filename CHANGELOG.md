@@ -141,6 +141,13 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Timestamps didn't sort in time order within a second.** They were
+  stored as RFC3339Nano text, which trims trailing zeros (`…05.12345Z`
+  sorted after `…05.123456Z`), and a few writers kept the local offset.
+  Every timestamp is now written as fixed-width UTC with nine fractional
+  digits (`internal/dbtime`), so queue order, lease expiry and timelines
+  follow time order. Existing rows are rewritten once at startup.
+
 - **Reviewers didn't see Martin's decisions.** The review prompt now
   includes the item's answers, approval notes and change requests. A live
   multi-agent run caught a security reviewer blocking on behaviour Martin

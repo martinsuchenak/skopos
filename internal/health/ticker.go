@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/martinsuchenak/skopos/internal/dbtime"
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/ids"
@@ -138,5 +139,5 @@ func affected(res sql.Result) bool {
 }
 
 func formatTime(t time.Time) string {
-	return t.UTC().Format(time.RFC3339Nano)
+	return dbtime.Format(t)
 }

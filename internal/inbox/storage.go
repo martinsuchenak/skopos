@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/martinsuchenak/skopos/internal/dbtime"
 	"strings"
 	"time"
 )
@@ -564,7 +565,7 @@ func nullableString(s string) any {
 }
 
 func formatTime(t time.Time) string {
-	return t.UTC().Format(time.RFC3339Nano)
+	return dbtime.Format(t)
 }
 
 func parseTime(raw string) time.Time {

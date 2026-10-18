@@ -537,3 +537,27 @@ func TestReportRecordsExecutor(t *testing.T) {
 		t.Fatalf("executor must be bounded: %d", len(got2.Executor))
 	}
 }
+
+// Runs created within one second are claimed in creation order: stored
+// timestamps are fixed-width, so the queue's ORDER BY created_at is time
+// order (RFC3339Nano text was not — "…05.12345Z" sorted after
+// "…05.123456Z").
+func TestClaimOrderWithinOneSecond(t *testing.T) {
+	s := testService(t)
+	base := time.Date(2026, 10, 17, 10, 0, 5, 0, time.UTC)
+	offsets := []time.Duration{0, 123450 * time.Microsecond, 123456 * time.Microsecond, 500 * time.Millisecond}
+	var ids []string
+	for i, off := range offsets {
+		at := base.Add(off)
+		s.now = func() time.Time { return at }
+		r := mustQueue(t, s, rootCtx(), "ws-a", "item-"+string(rune('a'+i)), StagePlan)
+		ids = append(ids, r.ID)
+	}
+	s.now = func() time.Time { return base.Add(time.Second) }
+	for i := range ids {
+		got, err := s.ClaimNext(rootCtx(), ClaimInput{WorkerID: "w", Runners: []string{"claude"}, Workspaces: []string{"ws-a"}})
+		if err != nil || got == nil || got.ID != ids[i] {
+			t.Fatalf("claim %d: got %+v, want run %s", i, got, ids[i])
+		}
+	}
+}

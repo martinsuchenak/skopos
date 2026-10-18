@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/martinsuchenak/skopos/internal/dbtime"
 	"time"
 )
 
@@ -101,7 +102,7 @@ func (s *Storage) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-func formatTime(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
+func formatTime(t time.Time) string { return dbtime.Format(t) }
 
 func parseTime(raw string) time.Time {
 	t, err := time.Parse(time.RFC3339Nano, raw)
