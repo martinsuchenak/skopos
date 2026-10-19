@@ -395,8 +395,8 @@ func runWorkerChecks(configPath, envFile, pathEnv, home string) ([]string, error
 		} else if err := r.Check(context.Background(), pathEnv); err != nil {
 			problems = append(problems, fmt.Sprintf("runner %s: %v", name, err))
 		} else if !r.Verified() {
-			// Unverified (kind command): skopos refuses to run it outside a
-			// wrapper, so every stage it may execute needs one.
+			// Unverified (kind command or antigravity): skopos refuses to run
+			// it outside a wrapper, so every stage it may execute needs one.
 			var bare []string
 			for id := range ws.Repos {
 				for _, stage := range []string{"plan", "implement", "review"} {
@@ -407,7 +407,7 @@ func runWorkerChecks(configPath, envFile, pathEnv, home string) ([]string, error
 			}
 			if len(bare) > 0 {
 				sort.Strings(bare)
-				problems = append(problems, fmt.Sprintf("runner %s is unverified (kind command) and only runs inside a wrapper — these stages have none: %s", name, strings.Join(bare, ", ")))
+				problems = append(problems, fmt.Sprintf("runner %s is unverified and only runs inside a wrapper — these stages have none: %s", name, strings.Join(bare, ", ")))
 			}
 		}
 	}

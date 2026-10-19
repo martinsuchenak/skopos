@@ -16,10 +16,10 @@ import (
 // Runners: the worker is agent-CLI agnostic. A Runner turns one AgentRun
 // (prompt, allowed tools, schema, session, env, wrapper) into one agent
 // invocation and its AgentResult. Built in: "claude", "opencode" and
-// "codex" (read-only stages), each with a lockdown skopos has verified live (instruction files not loaded,
-// files outside the worktree unreadable, the tool allowlist enforced —
-// TestLive*). "command" runs any CLI from an argv template; skopos cannot
-// vouch for an arbitrary CLI, so it is UNVERIFIED and only ever runs on a
+// "codex" (read-only stages), each with a lockdown skopos has verified live
+// (instruction files not loaded, files outside the worktree unreadable, the
+// tool allowlist enforced — TestLive*). "antigravity" (agy) and "command"
+// (any CLI from an argv template) are UNVERIFIED: they only ever run on a
 // stage the operator contains with a wrapper (fail closed, runAgent).
 type Runner interface {
 	// Run executes the agent once (wrapper applied, env scrubbed).
@@ -38,8 +38,8 @@ type Runner interface {
 // RunnerSpec configures a runner name ([worker.runner_config.<name>]).
 // kind defaults to the name; "claude" and "opencode" need no block.
 type RunnerSpec struct {
-	Kind string `toml:"kind"` // claude | opencode | codex | command
-	Bin  string `toml:"bin"`  // the CLI binary (claude/opencode/codex)
+	Kind string `toml:"kind"` // claude | opencode | codex | antigravity | command
+	Bin  string `toml:"bin"`  // the CLI binary (claude/opencode/codex/agy)
 	// Config (opencode): a base opencode.json for runs — providers and
 	// models (secrets via {env:VAR}, injected through account env). The
 	// worker user's ~/.config/opencode is never read.
@@ -49,7 +49,7 @@ type RunnerSpec struct {
 	Command []string `toml:"command"`
 }
 
-var runnerKinds = map[string]bool{"claude": true, "opencode": true, "codex": true, "command": true}
+var runnerKinds = map[string]bool{"claude": true, "opencode": true, "codex": true, "antigravity": true, "command": true}
 
 func (c *Config) runnerSpec(name string) (*RunnerSpec, string) {
 	if name == "" {
@@ -88,13 +88,19 @@ func (c *Config) RunnerFor(name string) (Runner, error) {
 			bin = "codex"
 		}
 		return codexRunner{bin: bin}, nil
+	case "antigravity":
+		bin := spec.Bin
+		if bin == "" {
+			bin = "agy"
+		}
+		return antigravityRunner{bin: bin}, nil
 	case "command":
 		if len(spec.Command) == 0 {
 			return nil, fmt.Errorf("runner %q: kind command needs command = [...]", name)
 		}
 		return commandRunner{argv: spec.Command}, nil
 	}
-	return nil, fmt.Errorf("unknown runner %q (built in: claude, opencode, codex; or define [worker.runner_config.%s] with kind = \"command\")", name, name)
+	return nil, fmt.Errorf("unknown runner %q (built in: claude, opencode, codex, antigravity; or define [worker.runner_config.%s] with kind = \"command\")", name, name)
 }
 
 // RunnerBin is the binary a runner name executes (for checks and logs).
@@ -105,6 +111,8 @@ func (c *Config) RunnerBin(runner string) string {
 		return spec.Bin
 	case kind == "claude":
 		return c.Bin
+	case kind == "antigravity":
+		return "agy"
 	case kind == "command" && len(spec.Command) > 0:
 		return spec.Command[0]
 	}
@@ -134,15 +142,20 @@ func (c *Config) UsedRunners() []string {
 }
 
 // AccountProblems reports accounts their runner can't use as configured: a
-// codex login directory holding an AGENTS.md, which codex would load into
-// every run.
+// codex login directory holding an AGENTS.md (codex loads it into every
+// run), an antigravity account without a login directory of its own.
 func (c *Config) AccountProblems() []string {
 	var out []string
 	for _, a := range c.Accounts {
-		if _, kind := c.runnerSpec(accountRunner(a)); kind == "codex" {
-			if p := codexHomeProblem(a.Env); p != "" {
-				out = append(out, "account "+a.Name+": "+p)
-			}
+		p := ""
+		switch _, kind := c.runnerSpec(accountRunner(a)); kind {
+		case "codex":
+			p = codexHomeProblem(a.Env)
+		case "antigravity":
+			p = antigravityHomeProblem(a.Env)
+		}
+		if p != "" {
+			out = append(out, "account "+a.Name+": "+p)
 		}
 	}
 	return out

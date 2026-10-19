@@ -40,6 +40,19 @@ versions follow [Semantic Versioning](https://semver.org/).
     read-only.
   - Verified on macOS (`SKOPOS_LIVE_CODEX=1 go test ./internal/worker -run
     'Codex.*Lockdown'`; the probe spends no tokens).
+- **Antigravity runner (`kind = "antigravity"`, `agy`)**, for Gemini models
+  now that the Gemini CLI is decommissioned. It is **wrapper-only**: agy
+  always loads the worktree's `AGENTS.md`/`GEMINI.md`, takes its allowlist
+  only from a settings file in `$HOME`, and ends a headless run at the
+  first denied tool.
+  - The account's `HOME` is its own login directory; each run writes the
+    stage's allow rules into its agy settings (never the worker user's
+    `~/.gemini`).
+  - Runs use `--sandbox`, `--disable-slash-commands`, `--json-schema`,
+    `--conversation` to resume and the stage timeout as `--print-timeout`;
+    never `--dangerously-skip-permissions`.
+  - `skopos worker runner add` offers it; `worker check` reports an account
+    without a login directory or with user instructions in it.
 
 ### Changed
 

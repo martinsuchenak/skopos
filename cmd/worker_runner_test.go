@@ -334,3 +334,51 @@ func TestRunnerWizardCodex(t *testing.T) {
 		t.Fatalf("account: %+v\n%s", acct, raw)
 	}
 }
+
+// The wizard's antigravity path: a login directory as the account's HOME,
+// a runner_config block (the name "agy" isn't the kind), and the notes say
+// it is wrapper-only.
+func TestRunnerWizardAntigravity(t *testing.T) {
+	bin := t.TempDir()
+	fakeBin(t, bin, "agy", `echo "1.1.25"`)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/usr/bin:/bin")
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skopos-config.toml")
+	if err := runWorkerInit(&strings.Builder{}, cfgPath, "https://s.example.internal", nil); err != nil {
+		t.Fatal(err)
+	}
+	answers := strings.Join([]string{
+		"4", // kind: antigravity
+		"",  // model: agy's default
+		"",  // runner name: agy
+		"",  // login dir: suggested
+		"",  // account name: agy
+		"",  // priority default
+		"",  // write it: yes
+		"n", // smoke test: no
+	}, "\n") + "\n"
+	var out strings.Builder
+	if err := runRunnerWizard(context.Background(), bufio.NewReader(strings.NewReader(answers)), &out, cfgPath, filepath.Join(dir, "skopos-worker.env"), wizardEnv{}); err != nil {
+		t.Fatalf("wizard: %v\n%s", err, out.String())
+	}
+	transcript := out.String()
+	for _, want := range []string{"✓ agy", "HOME=~/.agy-agy agy", "only run on wrapped stages"} {
+		if !strings.Contains(transcript, want) {
+			t.Errorf("transcript missing %q:\n%s", want, transcript)
+		}
+	}
+	raw, _ := os.ReadFile(cfgPath)
+	w := decodeW(t, string(raw))
+	if spec := w.RunnerSpecs["agy"]; spec == nil || spec.Kind != "antigravity" {
+		t.Fatalf("runner spec:\n%s", raw)
+	}
+	var acct *worker.Account
+	for _, a := range w.Accounts {
+		if a.Name == "agy" {
+			acct = a
+		}
+	}
+	if acct == nil || acct.Runner != "agy" || acct.Env["HOME"] != "~/.agy-agy" {
+		t.Fatalf("account: %+v\n%s", acct, raw)
+	}
+}

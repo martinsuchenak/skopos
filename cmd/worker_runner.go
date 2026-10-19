@@ -49,7 +49,7 @@ func workerRunnerCmd() *cli.Command {
 				MaxArgs: 0,
 				Flags: []cli.Flag{
 					envFileFlag(),
-					&cli.StringFlag{Name: "kind", Usage: "claude | opencode | codex | command (omit for the wizard)"},
+					&cli.StringFlag{Name: "kind", Usage: "claude | opencode | codex | antigravity | command (omit for the wizard)"},
 					&cli.StringFlag{Name: "name", Usage: "Runner name (accounts and --run-stage use it), e.g. opencode-glm"},
 					&cli.StringFlag{Name: "model", Usage: "Model for the account (claude alias, opencode provider/model, or codex model)"},
 					&cli.StringFlag{Name: "account", Usage: "Account name (default: the runner name)"},
@@ -67,7 +67,7 @@ func workerRunnerCmd() *cli.Command {
 					}
 					if cmd.GetString("kind") == "" {
 						if !stdinIsTerminal() {
-							return fmt.Errorf("no terminal for the wizard — pass --kind (claude, opencode, codex, command) and --name/--model")
+							return fmt.Errorf("no terminal for the wizard — pass --kind (claude, opencode, codex, antigravity, command) and --name/--model")
 						}
 						return runRunnerWizard(ctx, bufio.NewReader(os.Stdin), os.Stdout, cfgPath, envPath, wizardEnv{})
 					}
@@ -395,13 +395,13 @@ func addRunnerToConfig(content string, in runnerInput) (string, error) {
 		return "", fmt.Errorf("runner name %q: use letters, digits, - and _", in.Name)
 	}
 	switch in.Kind {
-	case "claude", "opencode", "codex":
+	case "claude", "opencode", "codex", "antigravity":
 	case "command":
 		if len(in.Command) == 0 {
 			return "", fmt.Errorf("kind command needs a command template")
 		}
 	default:
-		return "", fmt.Errorf("kind %q: claude, opencode, codex or command", in.Kind)
+		return "", fmt.Errorf("kind %q: claude, opencode, codex, antigravity or command", in.Kind)
 	}
 	if !hasTOMLSection(content, "worker") {
 		return "", fmt.Errorf("no [worker] section — run 'skopos worker init' first")
@@ -585,7 +585,7 @@ var detectableCLIs = []struct{ bin, label string }{
 	{"opencode", "opencode — built-in runner, verified lockdown"},
 	{"codex", "OpenAI Codex CLI — built-in runner, verified lockdown (read-only stages)"},
 	{"gemini", "Gemini CLI — use as a command runner (wrapper-only)"},
-	{"agy", "Antigravity CLI — use as a command runner (wrapper-only)"},
+	{"agy", "Antigravity CLI — built-in runner, wrapper-only (lockdown not verified)"},
 	{"aider", "Aider — use as a command runner (wrapper-only)"},
 }
 
@@ -626,14 +626,16 @@ func runRunnerWizard(ctx context.Context, in *bufio.Reader, out io.Writer, cfgPa
 	if !found["claude"] && found["opencode"] {
 		def = "2"
 	}
-	say("\nRunner kind:\n  1) claude    — Claude Code\n  2) opencode  — opencode, any provider/model it supports\n  3) codex     — OpenAI Codex CLI (plan, review and second opinions; not implement)\n  4) command   — any other CLI from an argv template (unverified: runs only inside a wrapper)\n")
+	say("\nRunner kind:\n  1) claude    — Claude Code\n  2) opencode  — opencode, any provider/model it supports\n  3) codex     — OpenAI Codex CLI (plan, review and second opinions; not implement)\n  4) antigravity — Antigravity CLI, agy (Gemini; unverified: runs only inside a wrapper)\n  5) command   — any other CLI from an argv template (unverified: runs only inside a wrapper)\n")
 	var kind string
-	switch ask("Choose [1-4]", def) {
+	switch ask("Choose [1-5]", def) {
 	case "2", "opencode":
 		kind = "opencode"
 	case "3", "codex":
 		kind = "codex"
-	case "4", "command":
+	case "4", "antigravity", "agy":
+		kind = "antigravity"
+	case "5", "command":
 		kind = "command"
 	default:
 		kind = "claude"
@@ -671,6 +673,9 @@ func runRunnerWizard(ctx context.Context, in *bufio.Reader, out io.Writer, cfgPa
 		}
 	case "codex":
 		say("\nModel — a codex model id (e.g. gpt-6-sol); empty = codex's default.\n")
+		ri.Model = ask("Model", "")
+	case "antigravity":
+		say("\nModel — an agy model id from `agy models` (e.g. gemini-3.8-flash-high); empty = agy's default.\n")
 		ri.Model = ask("Model", "")
 	case "command":
 		say("\nCommand template — the agent CLI and its args. Placeholders: {prompt} {dir} {model};\nwithout {prompt} the prompt goes to stdin. Example: aider --yes --message {prompt}\n")
@@ -754,6 +759,11 @@ func runRunnerWizard(ctx context.Context, in *bufio.Reader, out io.Writer, cfgPa
 			notes = append(notes, fmt.Sprintf("log that account in once: CODEX_HOME=%s codex login", dir))
 		}
 		notes = append(notes, "codex runs plan, review, compare and second opinions — route implement to another runner")
+	case "antigravity":
+		dir := ask("\nLogin directory (the account's HOME — agy keeps its sign-in there)", "~/.agy-"+ri.Name)
+		ri.Env["HOME"] = dir
+		notes = append(notes, fmt.Sprintf("sign that account in once: HOME=%s agy   (then sign in; skopos writes each run's allow rules into %s/.gemini)", dir, dir),
+			"antigravity runners only run on wrapped stages: add a worker.profiles.<name>.<stage> with a wrapper for every stage that uses this runner (see docs/deployment/worker.md)")
 	case "command":
 		notes = append(notes, "command runners only run on wrapped stages: add a worker.profiles.<name>.<stage> with a wrapper for every stage that uses this runner (see docs/deployment/worker.md)")
 	}
@@ -877,6 +887,11 @@ func suggestRunnerName(kind, model string, command []string) string {
 			return "codex"
 		}
 		return "codex-" + slug(model)
+	case "antigravity":
+		if model == "" {
+			return "agy"
+		}
+		return "agy-" + slug(model)
 	default:
 		if len(command) > 0 {
 			return slug(filepath.Base(command[0]))

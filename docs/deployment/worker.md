@@ -50,6 +50,7 @@ model and the credentials.
 | `claude` (default) | verified | Claude Code `-p`; structured results via `--json-schema` |
 | `opencode` | verified | `opencode run --format json`; results extracted from the reply |
 | `codex` | verified, **read-only stages** | `codex exec --json`; structured results via `--output-schema`. Plan, review, compare and second opinions; it refuses implement |
+| `antigravity` | **unverified** | Antigravity CLI (`agy --print`, Gemini); structured results via `--json-schema` — runs **only inside a wrapper** (see [Antigravity](#antigravity-agy)) |
 | `command` | **unverified** | any CLI from an argv template — runs **only inside a wrapper** |
 
 **Verified** means skopos has checked the lockdown live (the opt-in tests
@@ -60,8 +61,8 @@ model and the credentials.
 - the stage's tool allowlist is enforced, and commits still work (Codex:
   nothing is writable, which is why it only takes read-only stages).
 
-skopos can't vouch for an arbitrary CLI, so a `command` runner on a stage
-without a wrapper refuses the run with a clear reason. `worker check` lists
+skopos can't vouch for an arbitrary CLI, so a `command` (or `antigravity`)
+runner on a stage without a wrapper refuses the run with a clear reason. `worker check` lists
 the stages that have no wrapper.
 
 ### Adding runners: the wizard
@@ -157,6 +158,61 @@ env    = { CODEX_HOME = "~/skopos-workers/accounts/codex-1" }   # or CODEX_API_K
   `SKOPOS_LIVE_CODEX=1 go test ./internal/worker -run 'Codex.*Lockdown'` on a
   Linux worker before relying on it there; `TestCodexLockdownProbe` spends
   no tokens.
+
+### Antigravity (agy)
+
+The Gemini CLI is decommissioned, so Gemini models come through the
+Antigravity CLI. The runner is **wrapper-only**: it runs on stages a
+wrapper contains (the Knot space, a container), never bare. A spike
+against agy 1.1.25 found why:
+
+- **Instruction files load.** agy always loads the working directory's
+  `AGENTS.md` and `GEMINI.md`, with no switch to skip them. (Review
+  worktrees reset them to the base version, as for every runner.)
+- **The allowlist lives in a settings file.** In headless mode agy denies
+  every tool that would need a permission prompt: reads outside the
+  workspace, writes, and shell commands without an allow rule. Allow rules
+  can only come from `$HOME/.gemini/antigravity-cli/settings.json`.
+- **A denied tool ends the run.** The first denial stops the run with no
+  output, so a reviewer that reaches for a command the stage doesn't allow
+  fails instead of carrying on.
+
+What the runner does:
+
+- **HOME is the account's login directory.** agy keeps its sign-in,
+  settings and conversations under `~/.gemini`, and nothing moves them. The
+  account must set `HOME`; skopos never writes the worker user's own
+  `~/.gemini`.
+- **Each run writes its allow rules** into that directory's settings: the
+  stage's `Bash(...)` patterns become `command(...)` rules, the hard denies
+  stay denied, and reads inside the worktree need no rule.
+- **Flags:** `--sandbox`, `--disable-slash-commands` (no skill expansion),
+  `--json-schema` for the result, `--conversation` to resume, and
+  `--print-timeout` set to the stage timeout (agy's default is 5 minutes).
+  Never `--dangerously-skip-permissions`.
+
+```bash
+HOME=~/skopos-workers/accounts/agy-1 agy        # sign in once
+```
+
+```toml
+[worker.runner_config.agy]
+kind = "antigravity"
+
+[[worker.accounts]]
+name   = "agy-1"
+runner = "agy"
+model  = "gemini-3.8-flash-high"                  # agy models
+env    = { HOME = "~/skopos-workers/accounts/agy-1" }
+```
+
+- **One login directory per worker.** Runs rewrite its settings, so two
+  workers must not share one.
+- **No `GEMINI.md` or `AGENTS.md` in its `.gemini`.** A worker refuses an
+  account whose login directory has them, and `worker check` reports it.
+- **Live test:** `SKOPOS_LIVE_ANTIGRAVITY=1 SKOPOS_LIVE_ANTIGRAVITY_HOME=<login dir>
+  go test ./internal/worker -run TestLiveAntigravityLockdown -v` checks what
+  holds and logs the instruction-file gap.
 
 ### One model per stage
 
