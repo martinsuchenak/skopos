@@ -23,6 +23,21 @@ server-side indexing: `skopos index refresh --workspace <id>` makes the server
 clone/pull that URL and index it itself (see
 [Code index](code-index.md#getting-an-index-in)).
 
+## Pipeline settings
+
+A workspace also carries its **pipeline settings**: which worker runner
+takes each stage of the agent pipeline (plan, compare, synthesize,
+implement, review, qa), how a multi-agent review or QA is decided, and what
+items without their own choice get (one agent or the agent panel). A
+workspace **group** can carry the same settings as defaults for every
+workspace it holds; per stage, the workspace's own setting wins.
+
+Edit them in the dashboard (Workspaces → **Pipeline**), with `skopos
+workspace pipeline …` / `skopos group pipeline …`, or over REST; agents can
+read them through the MCP tool `workspace_pipeline`. Unregistering a
+workspace drops its settings. Details: [Pipeline
+settings](../configuration.md#pipeline-settings-agent-pipeline).
+
 ## Strict scoping
 
 When a workspace filter is active (a workspace is selected in the picker or passed as a query parameter), blackboard entries and plans require an **exact** `workspace_id` match:
@@ -43,4 +58,7 @@ When a workspace filter is active (a workspace is selected in the picker or pass
 |--------|------|-------------|
 | POST | `/api/workspaces` | Register/upsert a workspace (root key only) |
 | GET | `/api/workspaces` | List registered workspaces (scope-filtered for scoped keys) |
-| DELETE | `/api/workspaces/{id}` | Unregister (does not delete data) |
+| DELETE | `/api/workspaces/{id}` | Unregister (does not delete its sessions, entries or plans; drops its pipeline settings) |
+| GET | `/api/workspaces/{id}/pipeline` | Effective pipeline settings, with where each stage comes from (any key in scope) |
+| PUT | `/api/workspaces/{id}/pipeline` | Set the workspace's own pipeline settings (approver keys in scope) |
+| GET / PUT | `/api/groups/{id}/pipeline` | A group's pipeline defaults (root key only) |

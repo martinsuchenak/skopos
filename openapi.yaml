@@ -366,7 +366,7 @@ paths:
         "401": { description: Unauthorized }
         "403": { description: Requires the root key }
         "404": { description: Not found or out of scope }
-        "409": { description: Another group already sets one of these stages for a workspace this group holds }
+        "409": { description: Another group already sets one of these stages (or the agents default) for a workspace this group holds }
 
   /api/groups/{id}:
     get:

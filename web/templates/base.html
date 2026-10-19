@@ -883,7 +883,7 @@
                 </div>
                 <div class="modal-actions">
                     <button type="button" @click="closePipeline()" class="btn">Cancel</button>
-                    <button type="submit" class="btn btn-primary" :disabled="pipe.saving" x-text="pipe.saving ? 'Saving…' : 'Save'"></button>
+                    <button type="submit" class="btn btn-primary" :disabled="pipe.saving || pipe.readOnly" x-text="pipe.saving ? 'Saving…' : 'Save'"></button>
                 </div>
             </form>
     {{template "modal-close"}}

@@ -18,8 +18,9 @@ versions follow [Semantic Versioning](https://semver.org/).
     `github.com/fortix/*`) carries the same settings, so many repositories
     are configured once (`skopos group pipeline …`,
     `/api/groups/{id}/pipeline`). Per stage, the workspace's own setting
-    wins, else its group's; two groups setting the same stage for a shared
-    workspace is refused.
+    wins, else its group's; two groups setting the same stage (or both
+    setting the agents default) for a shared workspace is refused.
+    Unregistering a workspace drops its settings.
   - Workspace settings are approver-only (root for groups), audit-logged
     with what changed, and apply from the next queued stage.
   - The dialog suggests runners your workers offer and warns about one no

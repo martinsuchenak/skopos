@@ -83,3 +83,24 @@ func TestStorageDeleteMissingReturnsNotFound(t *testing.T) {
 		t.Fatal("expected error deleting missing workspace")
 	}
 }
+
+// The delete notifier fires after an actual unregister (serve.go drops the
+// workspace's pipeline settings there), and not when the delete fails.
+func TestDeleteNotifier(t *testing.T) {
+	svc := NewService(testStorage(t))
+	var deleted []string
+	svc.SetDeleteNotifier(func(id string) { deleted = append(deleted, id) })
+	ctx := context.Background()
+	if _, _, err := svc.Create(ctx, CreateInput{ID: "github.com/o/a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Delete(ctx, "github.com/o/missing"); err == nil {
+		t.Fatal("deleting an unknown workspace must fail")
+	}
+	if err := svc.Delete(ctx, "github.com/o/a"); err != nil {
+		t.Fatal(err)
+	}
+	if len(deleted) != 1 || deleted[0] != "github.com/o/a" {
+		t.Fatalf("notifier calls: %v", deleted)
+	}
+}

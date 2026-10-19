@@ -163,6 +163,24 @@ func (s *Storage) GroupsSettingStage(ctx context.Context, stage string) (map[str
 	return out, rows.Err()
 }
 
+// GroupsSettingAgentsDefault lists the groups that set an agents default.
+func (s *Storage) GroupsSettingAgentsDefault(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT owner_id FROM pipeline_defaults WHERE owner_kind = 'group' AND agents_default IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
 // WorkspaceExists: the workspace is registered.
 func (s *Storage) WorkspaceExists(ctx context.Context, id string) (bool, error) {
 	var n int

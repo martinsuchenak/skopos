@@ -723,8 +723,43 @@ func TestWorkerPresence(t *testing.T) {
 		t.Fatalf("silent past max(3 polls, 2m) is offline: %+v", w)
 	}
 	_ = mustQueue(t, s, rootCtx(), "ws-a", "item-1", StagePlan)
-	poll()
+	run, err := s.ClaimNext(k, ClaimInput{WorkerID: "w1", Runners: []string{"claude"}, Workspaces: []string{"ws-a"}, Version: "v0.17.0", PollMS: 30000})
+	if err != nil || run == nil {
+		t.Fatalf("claim: %v %v", run, err)
+	}
 	if w := state(); w.State != "busy" {
 		t.Fatalf("holding a claimed run is busy: %+v", w)
+	}
+	// A busy worker doesn't poll; its run heartbeats keep it present past
+	// the idle window (and refresh last_seen at most every 30s).
+	seenAtClaim := state().LastSeen
+	clock = clock.Add(5 * time.Minute)
+	if err := s.Heartbeat(k, run.ID, "w1", run.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	if w := state(); w.State != "busy" || w.LastSeen == seenAtClaim {
+		t.Fatalf("heartbeat refreshes a busy worker: %+v", w)
+	}
+}
+
+// SetPrefsSource is read at every queue: a routing change applies to the
+// next queued stage without rebuilding the service.
+func TestPrefsSourceLive(t *testing.T) {
+	s := testService(t)
+	runner := "claude"
+	s.SetPrefsSource(func(_ context.Context, ws string) *WorkspacePrefs {
+		return &WorkspacePrefs{Stages: map[string]string{"plan": runner}}
+	})
+	if r := mustQueue(t, s, rootCtx(), "ws-a", "item-1", StagePlan); r.Runner != "claude" {
+		t.Fatalf("first queue: %+v", r)
+	}
+	runner = "opencode-glm"
+	if r := mustQueue(t, s, rootCtx(), "ws-a", "item-2", StagePlan); r.Runner != "opencode-glm" {
+		t.Fatalf("the next queue follows the new routing: %+v", r)
+	}
+	// SetPrefs (tests, partial wiring) replaces the live source.
+	s.SetPrefs(map[string]*WorkspacePrefs{"ws-a": {Stages: map[string]string{"plan": "qwen"}}})
+	if r := mustQueue(t, s, rootCtx(), "ws-a", "item-3", StagePlan); r.Runner != "qwen" {
+		t.Fatalf("SetPrefs wins over the source: %+v", r)
 	}
 }

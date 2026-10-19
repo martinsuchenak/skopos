@@ -105,12 +105,14 @@ skopos workspace pipeline show --workspace github.com/you/repo
 - **Group defaults.** A workspace group (explicit members or patterns like
   `github.com/fortix/*`) can carry the same settings. Per stage, a
   workspace's own setting wins, else its group's. Two groups may not set
-  the same stage for a shared workspace (the save is refused; if membership
-  changes make it happen anyway, the first group by name wins and the
-  dialog reports the conflict).
+  the same stage, or both set the agents default, for a shared workspace
+  (the save is refused; if membership changes make it happen anyway, the
+  first group by name wins and the dialog reports the conflict until you
+  fix it). Unregistering a workspace drops its settings.
 - **Who may change them.** A workspace's: approver keys whose scope covers
-  it (and root). A group's: root. Any key in scope may read them. Every
-  change is audit-logged (`workspace_pipeline`) with what changed.
+  it (and root). A group's: root. Any key in scope may read them (the
+  dialog is read-only for other keys). Every change is audit-logged
+  (`workspace_pipeline`) with what changed.
 - **When a change applies.** At the next queued stage. Runs already queued
   or running keep their runner.
 - **The old flags.** `--run-stage`, `--stage-policy` and `--agents-default`

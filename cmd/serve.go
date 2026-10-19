@@ -435,6 +435,12 @@ func serveCmd() *cli.Command {
 				}
 				log.Warn("--run-stage, --stage-policy and --agents-default are deprecated: pipeline settings now live in the dashboard (Workspaces → Pipeline); the flags are imported once and will be removed in the next release")
 			}
+			// Unregistering a workspace drops its pipeline settings at once.
+			workspacesService.SetDeleteNotifier(func(string) {
+				if err := pipelineService.DropOrphans(context.Background()); err != nil {
+					log.Warn("pipeline settings: " + err.Error())
+				}
+			})
 			runsService.SetPrefsSource(func(ctx context.Context, ws string) *runs.WorkspacePrefs {
 				return pipelineService.Prefs(ctx, ws)
 			})

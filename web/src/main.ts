@@ -155,7 +155,7 @@ const appState = () => ({
   // re-evaluates when a dialog reopens for different data (CSP build)
   formNonce: 0,
   showGroupModal: false,
-  pipe: { open: false, kind: 'workspace', id: '', label: '', saving: false, rev: 0, rows: [] as PipeRow[], agentsDefault: '', agentsInherited: '', agentsInheritedFrom: '', notes: [] as { key: string; tone: string; text: string }[], runnerOptions: [] as string[] },
+  pipe: { open: false, kind: 'workspace', id: '', label: '', saving: false, readOnly: false, rev: 0, rows: [] as PipeRow[], agentsDefault: '', agentsInherited: '', agentsInheritedFrom: '', notes: [] as { key: string; tone: string; text: string }[], runnerOptions: [] as string[] },
   groupModalMode: 'create' as 'create' | 'edit',
   groupSaving: false,
   groupErrors: {} as Record<string, string>,
@@ -1210,7 +1210,10 @@ const appState = () => ({
         addRunner: '', addFocus: '',
       } as PipeRow;
     });
+    // Saving is server-enforced; say so up front instead of a 403 toast.
+    this.pipe.readOnly = kind === 'group' ? !this.whoamiIsRoot() : !this.canApprove();
     const notes: { key: string; tone: string; text: string }[] = [];
+    if (this.pipe.readOnly) notes.push({ key: 'ro', tone: 'tone-neutral', text: kind === 'group' ? 'Read only: group pipelines need the root key.' : 'Read only: changing a workspace pipeline needs an approver key.' });
     for (const c of v.conflicts || []) notes.push({ key: 'c|' + c, tone: 'tone-danger', text: 'Conflict: ' + c });
     if ((v.unknown_runners || []).length) notes.push({ key: 'u', tone: 'tone-warn', text: 'No worker serving this workspace offers ' + (v.unknown_runners || []).join(', ') + ' yet; those runs wait until one does.' });
     if (kind === 'workspace' && (v.groups || []).length) notes.push({ key: 'g', tone: 'tone-neutral', text: 'Inherits from group' + ((v.groups || []).length > 1 ? 's ' : ' ') + (v.groups || []).map((g: { name: string }) => g.name).join(', ') + ' where a stage is not set here.' });
@@ -1279,7 +1282,7 @@ const appState = () => ({
     return this.pipe.kind === 'group' ? 'Not set: workspaces default to the agent panel' : 'Not set: items get the agent panel';
   },
   async savePipeline() {
-    if (this.pipe.saving) return;
+    if (this.pipe.saving || this.pipe.readOnly) return;
     const stages: Record<string, PipeStage> = {};
     for (const r of this.pipe.rows as PipeRow[]) {
       if (r.mode !== 'own') continue;

@@ -14,6 +14,7 @@ type Service struct {
 	now       func() time.Time
 	publisher events.Publisher
 	onCreate  func(wsID string)
+	onDelete  func(wsID string)
 }
 
 func NewService(store Store) *Service { return &Service{store: store, now: time.Now} }
@@ -27,6 +28,11 @@ func (s *Service) SetPublisher(p events.Publisher) { s.publisher = p }
 // resolution: keys holding a group whose pattern matches the new id gain
 // access, so their open SSE streams must re-evaluate their scope.
 func (s *Service) SetCreateNotifier(fn func(wsID string)) { s.onCreate = fn }
+
+// SetDeleteNotifier installs a callback fired after a workspace is
+// unregistered. Wired in serve.go to drop the workspace's pipeline settings,
+// so re-registering the same id starts clean.
+func (s *Service) SetDeleteNotifier(fn func(wsID string)) { s.onDelete = fn }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (*Workspace, bool, error) {
 	// The registry and git_url feed the server-side clone path and define
@@ -89,6 +95,9 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	}
 	if err := s.store.Delete(ctx, id); err != nil {
 		return err
+	}
+	if s.onDelete != nil {
+		s.onDelete(id)
 	}
 	if s.publisher != nil {
 		s.publisher.Publish(events.Event{Type: events.TypeWorkspaces, Workspace: id})

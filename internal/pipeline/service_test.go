@@ -192,6 +192,32 @@ func TestGroupConflicts(t *testing.T) {
 	}
 }
 
+// The agents default follows the same rule as stages: refused at save when
+// a shared workspace would get it from two groups, reported (first group by
+// name wins) when membership changes cause it anyway; a workspace's own
+// value settles it.
+func TestAgentsDefaultConflicts(t *testing.T) {
+	s, sqlDB, _ := fixture(t)
+	if _, err := s.Put(root(), KindGroup, "fortix", Settings{AgentsDefault: "solo"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Put(root(), KindGroup, "web-team", Settings{AgentsDefault: "panel"}, ""); !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "agents default: workspace fx/web is also in group fortix") {
+		t.Fatalf("second group setting the agents default: %v", err)
+	}
+	exec(t, sqlDB, `INSERT INTO pipeline_defaults (owner_kind, owner_id, agents_default, updated_ms, updated_by) VALUES ('group', 'g2', 'panel', 0, '')`)
+	v, err := s.Get(root(), KindWorkspace, "fx/web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Conflicts) != 1 || !strings.Contains(v.Conflicts[0], "agents default") || v.EffectiveAgentsDefault != "solo" || v.AgentsDefaultSource != "group:fortix" {
+		t.Fatalf("agents-default conflict reported, fortix wins: %+v", v)
+	}
+	v, err = s.Put(root(), KindWorkspace, "fx/web", Settings{AgentsDefault: "panel"}, "")
+	if err != nil || len(v.Conflicts) != 0 || v.AgentsDefaultSource != "workspace" {
+		t.Fatalf("the workspace's own value settles it: %+v %v", v, err)
+	}
+}
+
 func TestPermissions(t *testing.T) {
 	s, _, _ := fixture(t)
 	set := Settings{Stages: map[string]StageSetting{"review": {Members: members(t, "claude")}}}
@@ -293,13 +319,17 @@ func TestDropOrphans(t *testing.T) {
 	if _, err := s.Put(root(), KindGroup, "fortix", Settings{Stages: map[string]StageSetting{"review": {Members: members(t, "claude")}}, AgentsDefault: "solo"}, ""); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := s.Put(root(), KindWorkspace, "other/x", Settings{Stages: map[string]StageSetting{"plan": {Members: members(t, "claude")}}}, ""); err != nil {
+		t.Fatal(err)
+	}
 	exec(t, sqlDB, `DELETE FROM workspace_groups WHERE id = 'g1'`)
+	exec(t, sqlDB, `DELETE FROM workspaces WHERE id = 'other/x'`)
 	if err := s.DropOrphans(root()); err != nil {
 		t.Fatal(err)
 	}
 	var n int
 	_ = sqlDB.QueryRow(`SELECT (SELECT count(*) FROM pipeline_stages) + (SELECT count(*) FROM pipeline_defaults)`).Scan(&n)
 	if n != 0 {
-		t.Fatalf("orphaned group settings remain: %d", n)
+		t.Fatalf("orphaned group and workspace settings remain: %d", n)
 	}
 }

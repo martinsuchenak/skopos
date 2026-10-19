@@ -18,6 +18,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/inbox"
+	"github.com/martinsuchenak/skopos/internal/pipeline"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/rest"
 	"github.com/martinsuchenak/skopos/internal/runs"
@@ -261,6 +262,13 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 		_, err = inboxService.LinkPlan(ctx, itemID, plan.ID)
 		return err
 	})
+	// Pipeline settings, as serve.go wires them (a test's configure may
+	// still pin routing with SetPrefs, which replaces this source).
+	pipelineService := pipeline.NewService(pipeline.NewStorage(sqlDB))
+	pipelineService.SetAuditSink(auditService)
+	runsService.SetPrefsSource(func(ctx context.Context, ws string) *runs.WorkspacePrefs {
+		return pipelineService.Prefs(ctx, ws)
+	})
 	if configure != nil {
 		configure(runsService)
 	}
@@ -276,6 +284,7 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	webMux := http.NewServeMux()
 	apiMux := http.NewServeMux()
 	RegisterRoutes(webMux, apiMux, st, bb, pl, ib, ws, nil, ak, rh)
+	RegisterPipelineRoutes(apiMux, pipeline.NewHandler(pipelineService, authn))
 	root := http.NewServeMux()
 	root.Handle("/api/", authn.Middleware(apiMux))
 	root.Handle("/", webMux)

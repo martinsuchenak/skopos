@@ -130,15 +130,19 @@ func (s *Service) resolve(ctx context.Context, ws string) (*resolved, error) {
 			r.conflicts = append(r.conflicts, fmt.Sprintf("%s is set by groups %s; using %s", stage, strings.Join(setters, ", "), setters[0]))
 		}
 	}
+	var agentSetters []string
+	for i, g := range groups {
+		if gsets[i].AgentsDefault != "" {
+			if len(agentSetters) == 0 {
+				r.agents, r.agentsSource = gsets[i].AgentsDefault, "group:"+g.Name
+			}
+			agentSetters = append(agentSetters, g.Name)
+		}
+	}
 	if own.AgentsDefault != "" {
 		r.agents, r.agentsSource = own.AgentsDefault, KindWorkspace
-	} else {
-		for i, g := range groups {
-			if gsets[i].AgentsDefault != "" {
-				r.agents, r.agentsSource = gsets[i].AgentsDefault, "group:"+g.Name
-				break
-			}
-		}
+	} else if len(agentSetters) > 1 {
+		r.conflicts = append(r.conflicts, fmt.Sprintf("the agents default is set by groups %s; using %s", strings.Join(agentSetters, ", "), agentSetters[0]))
 	}
 	return r, nil
 }
@@ -265,14 +269,10 @@ func (s *Service) checkGroupConflicts(ctx context.Context, groupID string, next 
 		return err
 	}
 	var problems []string
-	for stage := range next.Stages {
-		setters, err := s.storage.GroupsSettingStage(ctx, stage)
-		if err != nil {
-			return err
-		}
+	check := func(what string, setters map[string]bool) error {
 		delete(setters, groupID)
 		if len(setters) == 0 {
-			continue
+			return nil
 		}
 		for _, ws := range members {
 			groups, err := s.storage.GroupsContaining(ctx, ws)
@@ -281,9 +281,28 @@ func (s *Service) checkGroupConflicts(ctx context.Context, groupID string, next 
 			}
 			for _, g := range groups {
 				if setters[g.ID] {
-					problems = append(problems, fmt.Sprintf("%s: workspace %s is also in group %s, which sets it", stage, ws, g.Name))
+					problems = append(problems, fmt.Sprintf("%s: workspace %s is also in group %s, which sets it", what, ws, g.Name))
 				}
 			}
+		}
+		return nil
+	}
+	for stage := range next.Stages {
+		setters, err := s.storage.GroupsSettingStage(ctx, stage)
+		if err != nil {
+			return err
+		}
+		if err := check(stage, setters); err != nil {
+			return err
+		}
+	}
+	if next.AgentsDefault != "" {
+		setters, err := s.storage.GroupsSettingAgentsDefault(ctx)
+		if err != nil {
+			return err
+		}
+		if err := check("agents default", setters); err != nil {
+			return err
 		}
 	}
 	if len(problems) > 0 {
@@ -291,7 +310,7 @@ func (s *Service) checkGroupConflicts(ctx context.Context, groupID string, next 
 		if len(problems) > 5 {
 			problems = append(problems[:5], fmt.Sprintf("and %d more", len(problems)-5))
 		}
-		return fmt.Errorf("%w: %s — set the stage on one group only, or on the workspace", ErrConflict, strings.Join(problems, "; "))
+		return fmt.Errorf("%w: %s — set it on one group only, or on the workspace", ErrConflict, strings.Join(problems, "; "))
 	}
 	return nil
 }
