@@ -212,7 +212,7 @@ func (s *Storage) BusyWorkers(ctx context.Context) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[string]bool{}
 	for rows.Next() {
 		var id string
@@ -230,7 +230,7 @@ func (st *Storage) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing workers: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []WorkerSeen
 	for rows.Next() {
 		var w WorkerSeen
@@ -273,7 +273,7 @@ func (s *Storage) List(ctx context.Context, status Status, itemID string) ([]Run
 	if err != nil {
 		return nil, fmt.Errorf("listing runs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Run
 	for rows.Next() {
 		r, err := scanRun(rows)
@@ -293,7 +293,7 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 	if err != nil {
 		return nil, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Expire stale leases first so their runs re-enter the candidate pool
 	// (as interrupted, affinity kept). Runs expired longer than the
@@ -357,12 +357,12 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 		for rows.Next() {
 			r, err := scanRun(rows)
 			if err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, err
 			}
 			queued = append(queued, r)
 		}
-		rows.Close()
+		_ = rows.Close()
 		if err := rows.Err(); err != nil {
 			return nil, err
 		}
@@ -398,12 +398,12 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 		for rows.Next() {
 			r, err := scanRun(rows)
 			if err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, err
 			}
 			takeover = append(takeover, r)
 		}
-		rows.Close()
+		_ = rows.Close()
 		if err := rows.Err(); err != nil {
 			return nil, err
 		}
@@ -616,12 +616,12 @@ func (s *Storage) CancelItem(ctx context.Context, itemID, reason string, now tim
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		ids = append(ids, id)
 	}
-	rows.Close()
+	_ = rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}

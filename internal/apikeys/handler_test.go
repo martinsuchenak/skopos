@@ -94,7 +94,9 @@ func TestHandlerKeyLifecycle(t *testing.T) {
 		} `json:"key"`
 		Secret string `json:"key_secret"`
 	}
-	json.NewDecoder(w.Body).Decode(&created)
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
 	if created.Key.ID == "" || !strings.HasPrefix(created.Secret, "sk_") {
 		t.Fatalf("bad create response: %s", w.Body.String())
 	}
@@ -138,7 +140,9 @@ func TestHandlerWhoami(t *testing.T) {
 			ID string `json:"id"`
 		} `json:"workspaces"`
 	}
-	json.NewDecoder(w.Body).Decode(&resp)
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
 	if resp.Root {
 		t.Fatal("scoped principal must not report root")
 	}

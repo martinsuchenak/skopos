@@ -19,7 +19,7 @@ func testSnapshotServices(t *testing.T) (*status.Service, *blackboard.Service, *
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	t.Cleanup(func() { sqlDB.Close() })
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if _, err := sqlDB.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		t.Fatalf("enable fk: %v", err)
 	}
@@ -110,10 +110,7 @@ func TestBuildSnapshotNextReadyEmptyWhenAllClaimed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add item: %v", err)
 	}
-	// Claim the item so next_ready should skip it
-	if _, err := plansSvc.UpdateItem(ctx, plan.ID, "fake-id", plans.UpdateItemInput{ClaimedByAgentID: &claimed}); err != nil {
-		// UpdateItem with fake id will 404 — we need the real id. Get the plan.
-	}
+	// Claim the item so next_ready should skip it.
 	gotPlan, err := plansSvc.GetPlan(ctx, plan.ID)
 	if err != nil {
 		t.Fatalf("get plan: %v", err)
@@ -143,7 +140,7 @@ func inboxSvcForTest(t *testing.T) *inbox.Service {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	t.Cleanup(func() { sqlDB.Close() })
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if err := db.RunMigrations(sqlDB); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

@@ -377,7 +377,7 @@ func indexDropCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
-				defer resp.Body.Close()
+				defer func() { _ = resp.Body.Close() }()
 				if resp.StatusCode != http.StatusNoContent {
 					return fmt.Errorf("%s", apiErrorMessage("dropping branch", resp))
 				}
@@ -493,7 +493,7 @@ func indexExportCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
-				defer f.Close()
+				defer func() { _ = f.Close() }()
 				w = f
 			}
 			return codeindex.NewService(store).ExportNDJSON(workspace, cmd.GetString("branch"), w)
@@ -522,7 +522,7 @@ func indexImportCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 			store, err := codeindex.NewStore(cmd.GetString("index-dir"))
 			if err != nil {
 				return err
@@ -570,7 +570,7 @@ func indexDropWorkspaceCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
-				defer resp.Body.Close()
+				defer func() { _ = resp.Body.Close() }()
 				if resp.StatusCode != http.StatusNoContent {
 					return fmt.Errorf("%s", apiErrorMessage("dropping workspace", resp))
 				}

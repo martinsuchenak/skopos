@@ -76,7 +76,7 @@ func TestServerShutdownClosesStreams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open stream: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// The server's Shutdown only returns once the stream handler exits; without
 	// the hub close it would block until the shutdown context deadline.

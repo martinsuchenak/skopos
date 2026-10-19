@@ -37,7 +37,7 @@ func TestSSEAttributionThroughProductionWiring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { sqlDB.Close() })
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if err := db.RunMigrations(sqlDB); err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestSSEAttributionThroughProductionWiring(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 
 	var received []events.Event
@@ -109,8 +109,8 @@ func TestSSEAttributionThroughProductionWiring(t *testing.T) {
 	req, _ := http.NewRequest("DELETE", ts.URL+"/api/workspaces/ws-a", nil)
 	req.Header.Set("Authorization", "Bearer rootkey")
 	resp, _ := http.DefaultClient.Do(req)
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
 	// MCP mutation equivalence: the MCP tool handlers call this same service
 	// method with the request context — the publish is identical.
 	if _, err := blackboardSvc.Write(context.Background(), blackboard.WriteInput{

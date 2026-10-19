@@ -48,7 +48,7 @@ func cleanupCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			defer sqlDB.Close()
+			defer func() { _ = sqlDB.Close() }()
 			if err := db.RunMigrations(sqlDB); err != nil {
 				return err
 			}

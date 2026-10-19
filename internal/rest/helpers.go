@@ -63,7 +63,7 @@ func DecodeJSONLimit(w http.ResponseWriter, r *http.Request, v interface{}, limi
 	if !strings.HasPrefix(contentType, "application/json") {
 		return fmt.Errorf("content type must be application/json, got %q", contentType)
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		if strings.Contains(err.Error(), "request body too large") {

@@ -31,7 +31,7 @@ func newFakeQdrant(t *testing.T) *fakeQdrant {
 func (f *fakeQdrant) handle(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	writeJSON := func(v any) { json.NewEncoder(w).Encode(v) }
+	writeJSON := func(v any) { _ = json.NewEncoder(w).Encode(v) }
 	path := strings.TrimRight(r.URL.Path, "/")
 	switch {
 	case path == "/collections":
@@ -56,7 +56,7 @@ func (f *fakeQdrant) handle(w http.ResponseWriter, r *http.Request) {
 						Size uint64 `json:"size"`
 					} `json:"vectors"`
 				}
-				json.NewDecoder(r.Body).Decode(&body)
+				_ = json.NewDecoder(r.Body).Decode(&body)
 				f.collections[name] = map[uint64][]float32{}
 				f.dims[name] = body.Vectors.Size
 				writeJSON(map[string]any{"result": true, "status": "ok"})
@@ -80,7 +80,7 @@ func (f *fakeQdrant) handle(w http.ResponseWriter, r *http.Request) {
 			var body struct {
 				IDs []any `json:"ids"`
 			}
-			json.NewDecoder(r.Body).Decode(&body)
+			_ = json.NewDecoder(r.Body).Decode(&body)
 			coll, ok := f.collections[name]
 			if !ok {
 				w.WriteHeader(http.StatusNotFound)
@@ -107,7 +107,7 @@ func (f *fakeQdrant) handle(w http.ResponseWriter, r *http.Request) {
 				} `json:"query"`
 				Limit int `json:"limit"`
 			}
-			json.NewDecoder(r.Body).Decode(&body)
+			_ = json.NewDecoder(r.Body).Decode(&body)
 			type scored struct {
 				id    uint64
 				score float32
@@ -143,7 +143,7 @@ func (f *fakeQdrant) handle(w http.ResponseWriter, r *http.Request) {
 					Vector []float32 `json:"vector"`
 				} `json:"points"`
 			}
-			json.NewDecoder(r.Body).Decode(&body)
+			_ = json.NewDecoder(r.Body).Decode(&body)
 			coll, ok := f.collections[name]
 			if !ok {
 				w.WriteHeader(http.StatusNotFound)

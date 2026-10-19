@@ -17,7 +17,7 @@ func testDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	t.Cleanup(func() { sqlDB.Close() })
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if _, err := sqlDB.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		t.Fatalf("enable fk: %v", err)
 	}
@@ -60,15 +60,21 @@ func TestCleanerRunOnce(t *testing.T) {
 	}
 
 	var count int
-	db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions`).Scan(&count)
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 0 {
 		t.Errorf("expected 0 sessions, got %d", count)
 	}
-	db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events`).Scan(&count)
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 0 {
 		t.Errorf("expected 0 events, got %d", count)
 	}
-	db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents`).Scan(&count)
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 0 {
 		t.Errorf("expected 0 agents, got %d", count)
 	}

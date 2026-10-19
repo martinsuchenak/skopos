@@ -64,7 +64,7 @@ func configFileFor(cmd *cli.Command) string {
 var setupOut io.Writer = os.Stdout
 
 func setupPrint(format string, args ...any) {
-	fmt.Fprintf(setupOut, format, args...)
+	_, _ = fmt.Fprintf(setupOut, format, args...)
 }
 
 // runSetup drives the wizard. configDir is where skopos-config.toml lives.
@@ -304,7 +304,7 @@ func checkServerAlive(ctx context.Context, serverURL string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("/health returned %s", resp.Status)
 	}
@@ -324,7 +324,7 @@ func checkServerAuth(ctx context.Context, serverURL, apiKey string) (int, error)
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return resp.StatusCode, nil
 }
 

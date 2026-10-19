@@ -19,11 +19,17 @@ type hookTestEnv struct {
 func newHookEnv(t *testing.T) *hookTestEnv {
 	t.Helper()
 	env := &hookTestEnv{home: t.TempDir(), binDir: t.TempDir(), project: t.TempDir()}
-	os.MkdirAll(filepath.Join(env.home, ".claude", "hooks"), 0o755)
-	os.MkdirAll(env.binDir, 0o755)
+	if err := os.MkdirAll(filepath.Join(env.home, ".claude", "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(env.binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	// Stub skopos: index status succeeds (in-project); search returns a hit.
-	os.WriteFile(filepath.Join(env.binDir, "skopos"), []byte("#!/bin/sh\ncase \"$1\" in\n  index) echo \"main  10 files  20 symbols\"; exit 0;;\n  search) echo '{\"hits\":[{\"name\":\"LoadConfig\",\"qualified\":\"Auth::LoadConfig\",\"kind\":\"func\",\"path\":\"auth.go\",\"line\":42}]}' ; exit 0;;\n  mode) echo \"${SKOPOS_TEST_MODE:-local}\"; exit 0;;\n  *) exit 0;;\nesac\n"), 0o755)
-	os.WriteFile(filepath.Join(env.project, ".git", "HEAD"), []byte("ref: refs/heads/feat/x"), 0o644)
+	if err := os.WriteFile(filepath.Join(env.binDir, "skopos"), []byte("#!/bin/sh\ncase \"$1\" in\n  index) echo \"main  10 files  20 symbols\"; exit 0;;\n  search) echo '{\"hits\":[{\"name\":\"LoadConfig\",\"qualified\":\"Auth::LoadConfig\",\"kind\":\"func\",\"path\":\"auth.go\",\"line\":42}]}' ; exit 0;;\n  mode) echo \"${SKOPOS_TEST_MODE:-local}\"; exit 0;;\n  *) exit 0;;\nesac\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(env.project, ".git", "HEAD"), []byte("ref: refs/heads/feat/x"), 0o644)
 	// Prepend stubs to PATH via env when invoking scripts.
 	return env
 }
@@ -32,7 +38,9 @@ func (e *hookTestEnv) runHook(t *testing.T, script, stdin string) string {
 	t.Helper()
 	// Install the scripts into the fake hooks dir first.
 	for name, src := range hookScripts {
-		os.WriteFile(filepath.Join(e.home, ".claude", "hooks", name), []byte(src), 0o755)
+		if err := os.WriteFile(filepath.Join(e.home, ".claude", "hooks", name), []byte(src), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	out, err := runScript(t, e, script, stdin)
 	if err != nil {
@@ -78,8 +86,10 @@ func TestHookSessionEmitsBriefing(t *testing.T) {
 
 func TestHookSessionRemoteModeRoutesToMCP(t *testing.T) {
 	env := newHookEnv(t)
-	os.Setenv("SKOPOS_TEST_MODE", "remote http://127.0.0.1:9999")
-	t.Cleanup(func() { os.Unsetenv("SKOPOS_TEST_MODE") })
+	if err := os.Setenv("SKOPOS_TEST_MODE", "remote http://127.0.0.1:9999"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Unsetenv("SKOPOS_TEST_MODE") })
 	out := env.runHook(t, "skopos-session.sh", `{}`)
 	if !strings.Contains(out, "skopos_context") || !strings.Contains(out, "code_search") {
 		t.Fatalf("remote session briefing must name MCP tools:\n%s", out)
@@ -137,10 +147,14 @@ func TestHookStopExtractsKnowledge(t *testing.T) {
 func TestHookSilentWhenSkoposUnavailable(t *testing.T) {
 	env := newHookEnv(t)
 	for name, src := range hookScripts {
-		os.WriteFile(filepath.Join(env.home, ".claude", "hooks", name), []byte(src), 0o755)
+		if err := os.WriteFile(filepath.Join(env.home, ".claude", "hooks", name), []byte(src), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// Replace the stub with one that fails (not in a skopos project).
-	os.WriteFile(filepath.Join(env.binDir, "skopos"), []byte("#!/bin/sh\nexit 1\n"), 0o755)
+	if err := os.WriteFile(filepath.Join(env.binDir, "skopos"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	out, err := runWithEnv(t, filepath.Join(env.home, ".claude", "hooks", "skopos-session.sh"), `{}`,
 		[]string{"PATH=" + env.binDir + ":" + os.Getenv("PATH"), "HOME=" + env.home, "TMPDIR=" + env.home}, env.project)
 	if err != nil {
@@ -155,7 +169,9 @@ func TestMergeHookSettingsRegistersAllMatchers(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
 	// Pre-existing foreign hook must survive.
-	os.WriteFile(path, []byte(`{"hooks":{"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/other/hook.sh"}]}]}}`), 0o644)
+	if err := os.WriteFile(path, []byte(`{"hooks":{"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/other/hook.sh"}]}]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	var actions []string
 	events := []hookEvent{

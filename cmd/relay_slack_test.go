@@ -67,7 +67,7 @@ func relayStack(t *testing.T) (*inbox.Service, *runs.Service, *plans.Service, *f
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { sqlDB.Close() })
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if err := db.RunMigrations(sqlDB); err != nil {
 		t.Fatal(err)
 	}

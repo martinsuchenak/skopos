@@ -23,7 +23,7 @@ func purgeSeedPost(t *testing.T, url, key, body string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		t.Fatalf("seed POST %s failed: %d", url, resp.StatusCode)
 	}
@@ -125,7 +125,7 @@ func TestInboxCompleteAndPurgeLifecycle(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if len(list) != 2 {
 		t.Fatalf("expected 2 seeded items, got %d", len(list))
 	}

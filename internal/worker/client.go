@@ -82,7 +82,7 @@ func (c *Client) exec(req *http.Request, out any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusNoContent {
 		return nil
@@ -136,7 +136,6 @@ func (c *Client) Heartbeat(ctx context.Context, runID, workerID string) error {
 }
 
 func (c *Client) Report(ctx context.Context, runID string, in map[string]any) error {
-	in["worker_id"] = in["worker_id"]
 	return c.do(ctx, http.MethodPost, "/api/runs/"+runID+"/report", in, nil)
 }
 

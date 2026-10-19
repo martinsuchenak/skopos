@@ -100,7 +100,7 @@ func postReport(ctx context.Context, serverURL, apiKey string, input status.Repo
 	if err != nil {
 		return nil, fmt.Errorf("posting report: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("%s", apiErrorMessage("posting report", resp))
 	}

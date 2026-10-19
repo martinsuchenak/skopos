@@ -452,7 +452,7 @@ func inboxDoPurge(ctx context.Context, serverURL, apiKey, workspaceID, status st
 	if err != nil {
 		return 0, fmt.Errorf("purging inbox items: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("%s", apiErrorMessage("purging inbox items", resp))
 	}
@@ -547,7 +547,7 @@ func inboxPost(ctx context.Context, serverURL, apiKey string, input inbox.Create
 	if err != nil {
 		return nil, fmt.Errorf("capturing item: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("%s", apiErrorMessage("capturing item", resp))
 	}
@@ -584,7 +584,7 @@ func inboxGetList(ctx context.Context, serverURL, apiKey, status, tag, workspace
 	if err != nil {
 		return nil, fmt.Errorf("listing inbox: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s", apiErrorMessage("listing inbox", resp))
 	}
@@ -608,7 +608,7 @@ func inboxGetOne(ctx context.Context, serverURL, apiKey, id string) (*inbox.Item
 	if err != nil {
 		return nil, fmt.Errorf("getting item: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s", apiErrorMessage("getting item", resp))
 	}
@@ -637,7 +637,7 @@ func inboxPatch(ctx context.Context, serverURL, apiKey, id string, input inbox.U
 	if err != nil {
 		return fmt.Errorf("updating item: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("%s", apiErrorMessage("updating item", resp))
 	}
@@ -659,7 +659,7 @@ func inboxAction(ctx context.Context, serverURL, apiKey, id, action string, payl
 	if err != nil {
 		return fmt.Errorf("%s: %w", verb, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("%s", apiErrorMessage(verb, resp))
 	}
@@ -685,7 +685,7 @@ func inboxConvertItem(ctx context.Context, serverURL, apiKey, id, planID string)
 	if err != nil {
 		return nil, fmt.Errorf("converting item: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("%s", apiErrorMessage("converting item", resp))
 	}
@@ -709,7 +709,7 @@ func inboxDelete(ctx context.Context, serverURL, apiKey, id string) error {
 	if err != nil {
 		return fmt.Errorf("deleting item: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("%s", apiErrorMessage("deleting item", resp))
 	}

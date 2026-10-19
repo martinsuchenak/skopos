@@ -88,7 +88,7 @@ func dialWS(ctx context.Context, rawURL string) (wsConn, error) {
 	_ = conn.SetDeadline(time.Now().Add(dialTimeout))
 	br, err := handshake(conn, u)
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, err
 	}
 	_ = conn.SetDeadline(time.Time{})

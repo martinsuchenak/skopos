@@ -182,7 +182,7 @@ func runWorkerInstall(out io.Writer, o installOptions) error {
 			if p, perr := userLoginPath(userGroup[0]); perr == nil {
 				pathEnv = p
 			} else {
-				fmt.Fprintf(out, "NOTE: could not resolve %s's login PATH (%v) — using this shell's; pass --path if the agent CLI lives elsewhere\n", userGroup[0], perr)
+				_, _ = fmt.Fprintf(out, "NOTE: could not resolve %s's login PATH (%v) — using this shell's; pass --path if the agent CLI lives elsewhere\n", userGroup[0], perr)
 			}
 		}
 	}
@@ -213,12 +213,12 @@ func runWorkerInstall(out io.Writer, o installOptions) error {
 		return err
 	}
 	for _, a := range actions {
-		fmt.Fprintln(out, a)
+		_, _ = fmt.Fprintln(out, a)
 	}
 	if len(problems) > 0 {
-		fmt.Fprint(out, "\nConfig problems (skopos worker check):\n")
+		_, _ = fmt.Fprint(out, "\nConfig problems (skopos worker check):\n")
 		for _, p := range problems {
-			fmt.Fprintln(out, "  - "+p)
+			_, _ = fmt.Fprintln(out, "  - "+p)
 		}
 		_, _ = fmt.Fprint(out, "\nNOT STARTED — the service is written DISABLED (it will not start at login/boot either). Fix the above, verify with 'skopos worker check', then re-run 'skopos worker install' with the same flags. A previously running instance keeps running its old definition until then.\n")
 		return nil
@@ -244,20 +244,21 @@ func runWorkerUninstall(out io.Writer, o installOptions) error {
 	home, _ := os.UserHomeDir()
 	var actions []string
 	var err error
-	if runtime.GOOS == "darwin" {
+	switch runtime.GOOS {
+	case "darwin":
 		actions, err = uninstallLaunchd(o, home)
-	} else if runtime.GOOS == "linux" {
+	case "linux":
 		actions, err = uninstallSystemd(o, home)
-	} else {
+	default:
 		return fmt.Errorf("unsupported platform %s", runtime.GOOS)
 	}
 	if err != nil {
 		return err
 	}
 	for _, a := range actions {
-		fmt.Fprintln(out, a)
+		_, _ = fmt.Fprintln(out, a)
 	}
-	fmt.Fprint(out, "Kept (remove manually if you want): skopos-config.toml, skopos-worker.env, the state dir\n")
+	_, _ = fmt.Fprint(out, "Kept (remove manually if you want): skopos-config.toml, skopos-worker.env, the state dir\n")
 	return nil
 }
 

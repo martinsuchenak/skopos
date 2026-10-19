@@ -216,7 +216,7 @@ func (s *Storage) ListItems(ctx context.Context, workspaceID, status, tag, query
 	if err != nil {
 		return nil, fmt.Errorf("listing inbox items: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var items []Item
 	for rows.Next() {
 		item, err := scanItem(rows)
@@ -241,7 +241,7 @@ func (s *Storage) ItemsByPriority(ctx context.Context, workspaceID string, prior
 	if err != nil {
 		return nil, fmt.Errorf("resolving inbox item by priority: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var items []Item
 	for rows.Next() {
 		item, err := scanItem(rows)
@@ -390,7 +390,7 @@ func (s *Storage) ItemsByPlan(ctx context.Context, planID string) ([]Item, error
 	if err != nil {
 		return nil, fmt.Errorf("listing items by plan: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Item
 	for rows.Next() {
 		item, err := scanItem(rows)

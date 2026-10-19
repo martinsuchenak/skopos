@@ -172,7 +172,7 @@ func (c workerClient) reqH(method, path, body, leaseToken string) *stubResp {
 	if err != nil {
 		return &stubResp{code: 0, body: err.Error()}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	if r := jsonMapOrNil(string(b)); r != nil {
 		if id, ok := r["id"].(string); ok {
@@ -220,7 +220,7 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { sqlDB.Close() })
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if err := db.RunMigrations(sqlDB); err != nil {
 		t.Fatal(err)
 	}

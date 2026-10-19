@@ -477,7 +477,7 @@ func (st *Storage) ListRevisions(ctx context.Context, planID string) ([]Revision
 	if err != nil {
 		return nil, fmt.Errorf("listing plan revisions: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Revision
 	for rows.Next() {
 		r, err := st.scanRevision(rows)
@@ -528,7 +528,7 @@ func (s *Storage) ReplaceTx(ctx context.Context, planID string, steps []Revision
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var next int
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COALESCE(MAX(revision_no), 0) + 1 FROM plan_revisions WHERE plan_id = ?`, planID).Scan(&next); err != nil {
@@ -641,7 +641,7 @@ func txItems(ctx context.Context, tx *sql.Tx, planID string) ([]Item, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing items for snapshot: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Item
 	for rows.Next() {
 		var it Item

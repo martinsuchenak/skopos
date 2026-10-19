@@ -28,7 +28,7 @@ func StreamHandler(hub *Hub) http.HandlerFunc {
 		w.Header().Set("Connection", "keep-alive")
 		w.Header().Set("X-Accel-Buffering", "no")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, ": connected\n\n")
+		_, _ = fmt.Fprint(w, ": connected\n\n")
 		flusher.Flush()
 
 		streamCtx := r.Context()
@@ -54,10 +54,10 @@ func StreamHandler(hub *Hub) http.HandlerFunc {
 					return
 				}
 				data, _ := json.Marshal(ev)
-				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, data)
+				_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, data)
 				flusher.Flush()
 			case <-ticker.C:
-				fmt.Fprint(w, ": ping\n\n")
+				_, _ = fmt.Fprint(w, ": ping\n\n")
 				flusher.Flush()
 			}
 		}

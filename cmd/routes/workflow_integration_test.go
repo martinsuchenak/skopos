@@ -37,7 +37,7 @@ func workflowIntegrationSetup(t *testing.T) *httptest.Server {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	t.Cleanup(func() { sqlDB.Close() })
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if err := db.RunMigrations(sqlDB); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -117,14 +117,18 @@ func TestIntegrationWorkflowRoundTrip(t *testing.T) {
 	var plan struct {
 		ID string `json:"id"`
 	}
-	json.Unmarshal(planResp.Body.Bytes(), &plan)
+	if err := json.Unmarshal(planResp.Body.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
 	mustStatus(t, worker.do("POST", "/api/plans/"+plan.ID+"/items", `{"title":"step 1"}`), 201, "add step")
 	mustStatus(t, worker.do("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+plan.ID+`"}`), 200, "link plan")
 	revResp := mustStatus(t, worker.do("POST", "/api/plans/"+plan.ID+"/revisions", `{"base_sha":"d2ce73dfdd1"}`), 201, "snapshot revision")
 	var rev struct {
 		ID string `json:"id"`
 	}
-	json.Unmarshal(revResp.Body.Bytes(), &rev)
+	if err := json.Unmarshal(revResp.Body.Bytes(), &rev); err != nil {
+		t.Fatal(err)
+	}
 
 	mustStatus(t, worker.do("POST", "/api/inbox/"+itemID+"/transition", `{"to":"planning","via":"worker"}`), 200, "planning")
 	mustStatus(t, worker.do("POST", "/api/inbox/"+itemID+"/transition", `{"to":"awaiting_approval","via":"worker"}`), 200, "awaiting approval")
@@ -162,7 +166,9 @@ func createItem(t *testing.T, c bearerClient) string {
 	var item struct {
 		ID string `json:"id"`
 	}
-	json.Unmarshal(resp.Body.Bytes(), &item)
+	if err := json.Unmarshal(resp.Body.Bytes(), &item); err != nil {
+		t.Fatal(err)
+	}
 	return item.ID
 }
 
@@ -172,7 +178,9 @@ func mintKey(t *testing.T, root bearerClient, body string) string {
 	var created struct {
 		Secret string `json:"key_secret"`
 	}
-	json.Unmarshal(resp.Body.Bytes(), &created)
+	if err := json.Unmarshal(resp.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
 	return created.Secret
 }
 
@@ -195,9 +203,9 @@ func (c bearerClient) do(method, path, body string) *httpResponse {
 	if err != nil {
 		return &httpResponse{StatusCode: 0, Body: bytes.NewBufferString(err.Error())}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	buf := &bytes.Buffer{}
-	io.Copy(buf, resp.Body)
+	_, _ = io.Copy(buf, resp.Body)
 	return &httpResponse{StatusCode: resp.StatusCode, Body: buf}
 }
 
@@ -228,7 +236,9 @@ func TestIntegrationMigrationDryRun(t *testing.T) {
 	var item struct {
 		ID string `json:"id"`
 	}
-	json.Unmarshal(created.Body.Bytes(), &item)
+	if err := json.Unmarshal(created.Body.Bytes(), &item); err != nil {
+		t.Fatal(err)
+	}
 	ready := item.ID
 	// Tag it like the trial would.
 	mustStatus(t, root.do("PATCH", "/api/inbox/"+ready, `{"tags":["ready"]}`), 204, "tag ready")

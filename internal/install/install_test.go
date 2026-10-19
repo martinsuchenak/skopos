@@ -308,7 +308,7 @@ func TestInstallClaudeCodeGlobalLayout(t *testing.T) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Chdir(wd) })
+	t.Cleanup(func() { _ = os.Chdir(wd) })
 
 	if _, err := Install(Options{Agent: "claude-code", URL: "http://localhost:8080/mcp", APIKey: "k"}); err != nil {
 		t.Fatalf("install: %v", err)
@@ -413,12 +413,12 @@ func TestInstallZCodeLayout(t *testing.T) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Chdir(wd) })
+	t.Cleanup(func() { _ = os.Chdir(wd) })
 
 	// Pre-existing config with foreign keys — the merge must preserve them.
 	cfg := filepath.Join(home, ".zcode", "cli", "config.json")
-	os.MkdirAll(filepath.Dir(cfg), 0o755)
-	os.WriteFile(cfg, []byte(`{"plugins":{"enabledPlugins":{"x@y":true}},"mcp":{"servers":{"other":{"url":"http://x"}}}}`), 0o644)
+	_ = os.MkdirAll(filepath.Dir(cfg), 0o755)
+	_ = os.WriteFile(cfg, []byte(`{"plugins":{"enabledPlugins":{"x@y":true}},"mcp":{"servers":{"other":{"url":"http://x"}}}}`), 0o644)
 
 	if _, err := Install(Options{Agent: "zcode", URL: "http://localhost:8080/mcp", APIKey: "k"}); err != nil {
 		t.Fatalf("install: %v", err)

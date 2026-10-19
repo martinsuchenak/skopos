@@ -287,7 +287,7 @@ func formatMarkdown(branchName string, entries []Entry) string {
 	var sb strings.Builder
 	sb.WriteString("## Skopos Knowledge Bundle\n")
 	if branchName != "" {
-		sb.WriteString(fmt.Sprintf("### Branch: %s\n\n", sanitizeEntryText(branchName)))
+		fmt.Fprintf(&sb, "### Branch: %s\n\n", sanitizeEntryText(branchName))
 	} else {
 		sb.WriteString("\n")
 	}
@@ -320,17 +320,17 @@ func formatMarkdown(branchName string, entries []Entry) string {
 		if !ok {
 			continue
 		}
-		sb.WriteString(fmt.Sprintf("#### %s\n", labels[t]))
+		fmt.Fprintf(&sb, "#### %s\n", labels[t])
 		for _, e := range es {
 			ref := ""
 			if e.CodeRef != "" {
 				ref = fmt.Sprintf(" (%s)", sanitizeEntryText(e.CodeRef))
 			}
-			sb.WriteString(fmt.Sprintf("- **%s**%s\n", sanitizeEntryText(e.Title), ref))
+			fmt.Fprintf(&sb, "- **%s**%s\n", sanitizeEntryText(e.Title), ref)
 			if e.Content != "" {
-				sb.WriteString(fmt.Sprintf("  %s\n", sanitizeEntryText(e.Content)))
+				fmt.Fprintf(&sb, "  %s\n", sanitizeEntryText(e.Content))
 			}
-			sb.WriteString(fmt.Sprintf("  _— %s_\n", sanitizeEntryText(e.AuthorAgentID)))
+			fmt.Fprintf(&sb, "  _— %s_\n", sanitizeEntryText(e.AuthorAgentID))
 		}
 		sb.WriteString("\n")
 	}

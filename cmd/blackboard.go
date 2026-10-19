@@ -208,7 +208,7 @@ func blackboardDoPurge(ctx context.Context, serverURL, apiKey, workspaceID, entr
 	if err != nil {
 		return 0, fmt.Errorf("purging entries: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("%s", apiErrorMessage("purging entries", resp))
 	}
@@ -240,7 +240,7 @@ func blackboardPostEntry(ctx context.Context, serverURL, apiKey string, input bl
 	if err != nil {
 		return nil, fmt.Errorf("posting entry: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("%s", apiErrorMessage("posting entry", resp))
 	}
@@ -278,7 +278,7 @@ func blackboardGetBundle(ctx context.Context, serverURL, apiKey, branch, session
 	if err != nil {
 		return nil, fmt.Errorf("fetching bundle: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s", apiErrorMessage("fetching bundle", resp))
 	}
@@ -302,7 +302,7 @@ func blackboardPatchPromote(ctx context.Context, serverURL, apiKey, id string) e
 	if err != nil {
 		return fmt.Errorf("promoting entry: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("%s", apiErrorMessage("promoting entry", resp))
 	}
@@ -323,7 +323,7 @@ func blackboardDoDelete(ctx context.Context, serverURL, apiKey, id string) error
 	if err != nil {
 		return fmt.Errorf("deleting entry: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("%s", apiErrorMessage("deleting entry", resp))
 	}

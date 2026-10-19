@@ -75,8 +75,6 @@ func TestAuthenticate(t *testing.T) {
 		if p == nil || p.Root || p.KeyID != "k1" || p.Name != "ci" {
 			t.Fatalf("unexpected principal: %+v", p)
 		}
-		if p.CanAccess("github.com/o/a") || !p.CanAccess("github.com/o/a") == false {
-		}
 		if !p.CanAccess("github.com/o/a") {
 			t.Fatal("member workspace must be accessible")
 		}

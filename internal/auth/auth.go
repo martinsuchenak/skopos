@@ -31,7 +31,7 @@ func APIKeyMiddleware(apiKey string) func(http.Handler) http.Handler {
 			if r.Method != http.MethodOptions && !Authorize(r, apiKey) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
-				json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
 				return
 			}
 			next.ServeHTTP(w, r)

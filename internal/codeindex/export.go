@@ -38,13 +38,13 @@ func (s *Service) ExportNDJSON(workspace, branch string, w io.Writer) error {
 		var f fileRec
 		f.Type = "file"
 		if err := fileRows.Scan(&f.Branch, &f.Path, &f.Hash); err != nil {
-			fileRows.Close()
+			_ = fileRows.Close()
 			return err
 		}
 		needed[f.Hash] = true
 		files = append(files, f)
 	}
-	fileRows.Close()
+	_ = fileRows.Close()
 	if err := fileRows.Err(); err != nil {
 		return err
 	}
@@ -67,12 +67,12 @@ func (s *Service) ExportNDJSON(workspace, branch string, w io.Writer) error {
 		st.Type = "state"
 		var fileCount, symbolCount int
 		if err := stateRows.Scan(&st.Branch, &st.HeadSHA, &st.BuiltAt, &st.Source, &fileCount, &symbolCount); err != nil {
-			stateRows.Close()
+			_ = stateRows.Close()
 			return err
 		}
 		states = append(states, st)
 	}
-	stateRows.Close()
+	_ = stateRows.Close()
 	if err := stateRows.Err(); err != nil {
 		return err
 	}
@@ -92,14 +92,14 @@ func (s *Service) ExportNDJSON(workspace, branch string, w io.Writer) error {
 		var b blobRec
 		b.Type = "blob"
 		if err := blobRows.Scan(&b.Hash, &b.Payload); err != nil {
-			blobRows.Close()
+			_ = blobRows.Close()
 			return err
 		}
 		if needed[b.Hash] {
 			blobs = append(blobs, b)
 		}
 	}
-	blobRows.Close()
+	_ = blobRows.Close()
 	if err := blobRows.Err(); err != nil {
 		return err
 	}

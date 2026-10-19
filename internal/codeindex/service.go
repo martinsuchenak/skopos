@@ -227,12 +227,12 @@ func (s *Service) Impact(ctx context.Context, workspace, branch, name string, ma
 	for rootRows.Next() {
 		var r string
 		if err := rootRows.Scan(&r); err != nil {
-			rootRows.Close()
+			_ = rootRows.Close()
 			return nil, err
 		}
 		roots = append(roots, r)
 	}
-	rootRows.Close()
+	_ = rootRows.Close()
 	// The input name itself is always a root: a symbol row carries both name
 	// and qual_name, so the query above yields only the qualified form and a
 	// bare-name root (whose edges store the bare callee) would be lost.
@@ -331,7 +331,7 @@ func (s *Service) directSubclasses(workspace, branch, cls string) []string {
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []string
 	for rows.Next() {
 		var c string
@@ -402,14 +402,14 @@ func (s *Service) definitionLocations(workspace, branch string, names []string) 
 			var l int
 			var m string
 			if err := rows.Scan(&n, &p, &l, &m); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, err
 			}
 			if _, seen := out[n]; !seen {
 				out[n] = defLoc{path: p, line: l, mods: m}
 			}
 		}
-		rows.Close()
+		_ = rows.Close()
 		if err := rows.Err(); err != nil {
 			return nil, err
 		}

@@ -162,7 +162,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			if p == nil {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
-				json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
 				return
 			}
 			r = r.WithContext(WithPrincipal(r.Context(), p))

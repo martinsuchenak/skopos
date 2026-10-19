@@ -28,7 +28,7 @@ func (s *Storage) RecordReport(ctx context.Context, report Event, sessionTitle s
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	now := formatTime(report.CreatedAt)
 	if _, err := tx.ExecContext(ctx, `
@@ -117,7 +117,7 @@ func (s *Storage) ListSessions(ctx context.Context, workspaceID string) ([]Sessi
 	if err != nil {
 		return nil, fmt.Errorf("listing sessions: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var sessions []SessionSummary
 	for rows.Next() {
@@ -177,7 +177,7 @@ func (s *Storage) ListEvents(ctx context.Context, sessionID string) ([]Event, er
 	if err != nil {
 		return nil, fmt.Errorf("listing events: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var events []Event
 	for rows.Next() {
@@ -204,7 +204,7 @@ func (s *Storage) listAgentStates(ctx context.Context, sessionID string) ([]Agen
 	if err != nil {
 		return nil, fmt.Errorf("listing agent states: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var states []AgentState
 	for rows.Next() {
@@ -361,7 +361,7 @@ func (s *Storage) ListActiveAgents(ctx context.Context) ([]ActiveAgent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing active agents: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []ActiveAgent
 	seen := map[string]bool{}
 	for rows.Next() {

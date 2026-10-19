@@ -45,7 +45,7 @@ func fixedCompletionCommand() *cli.Command {
 		os.Stdout = w
 		runErr := origRun(ctx, cmd)
 		os.Stdout = saved
-		w.Close()
+		_ = w.Close()
 		out, readErr := io.ReadAll(r)
 		if runErr != nil {
 			return runErr

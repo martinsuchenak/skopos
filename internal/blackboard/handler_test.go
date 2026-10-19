@@ -18,7 +18,7 @@ func testHandler(t *testing.T, apiKey string) *Handler {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	t.Cleanup(func() { sqlDB.Close() })
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if _, err := sqlDB.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		t.Fatalf("enable fk: %v", err)
 	}
@@ -143,7 +143,9 @@ func TestHandlerPromoteAlreadyAtTopScope(t *testing.T) {
 		t.Fatalf("setup write: %d %s", w.Code, w.Body)
 	}
 	var result WriteResult
-	json.NewDecoder(w.Body).Decode(&result)
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
 
 	req2 := httptest.NewRequest("PATCH", "/api/blackboard/entries/"+result.ID+"/promote", nil)
 	req2.Header.Set("Content-Type", "application/json")

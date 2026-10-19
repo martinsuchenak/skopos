@@ -86,7 +86,7 @@ func (s *Storage) listWorkspaces(ctx context.Context, keyID string) ([]string, e
 	if err != nil {
 		return nil, fmt.Errorf("listing api key workspaces: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []string
 	for rows.Next() {
 		var ws string
@@ -113,16 +113,16 @@ func (s *Storage) groupWorkspacesForKey(ctx context.Context, keyID string) ([]st
 	for rows.Next() {
 		var ws string
 		if err := rows.Scan(&ws); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		out[ws] = struct{}{}
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 
 	patterns, err := s.keyPatterns(ctx, keyID)
 	if err != nil {
@@ -162,7 +162,7 @@ func (s *Storage) keyPatterns(ctx context.Context, keyID string) ([]string, erro
 	if err != nil {
 		return nil, fmt.Errorf("listing group patterns for key: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []string
 	for rows.Next() {
 		var p string
@@ -180,7 +180,7 @@ func (s *Storage) RegisteredWorkspaces(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing registered workspaces: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []string
 	for rows.Next() {
 		var id string
@@ -233,7 +233,7 @@ func (s *Storage) List(ctx context.Context) ([]Key, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing api keys: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Key
 	for rows.Next() {
 		var k Key
@@ -375,7 +375,7 @@ func (s *Storage) Update(ctx context.Context, id, name string, all, approver boo
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	res, err := tx.ExecContext(ctx,
 		`UPDATE api_keys SET name = ?, all_workspaces = ?, approver = ? WHERE id = ?`,
 		name, boolToInt(all), boolToInt(approver), id)
@@ -474,17 +474,17 @@ func (s *Storage) ListGroups(ctx context.Context) ([]Group, error) {
 		var g Group
 		var createdAt string
 		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &createdAt); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		g.CreatedAt = parseTime(createdAt)
 		out = append(out, g)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 	for i := range out {
 		if out[i].Members, err = s.groupMembers(ctx, out[i].ID); err != nil {
 			return nil, err
@@ -547,7 +547,7 @@ func (s *Storage) groupMembers(ctx context.Context, groupID string) ([]string, e
 	if err != nil {
 		return nil, fmt.Errorf("listing group members: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []string
 	for rows.Next() {
 		var ws string
@@ -565,7 +565,7 @@ func (s *Storage) groupPatterns(ctx context.Context, groupID string) ([]string, 
 	if err != nil {
 		return nil, fmt.Errorf("listing group patterns: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []string
 	for rows.Next() {
 		var p string
@@ -584,7 +584,7 @@ func (s *Storage) UpdateGroup(ctx context.Context, g Group, members, patterns *[
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	res, err := tx.ExecContext(ctx,
 		`UPDATE workspace_groups SET name = ?, description = ? WHERE id = ?`, g.Name, g.Description, g.ID)
 	if err != nil {
@@ -648,17 +648,17 @@ func (s *Storage) KeyGroups(ctx context.Context, keyID string) ([]Group, error) 
 		var g Group
 		var createdAt string
 		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &createdAt); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		g.CreatedAt = parseTime(createdAt)
 		out = append(out, g)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 	for i := range out {
 		if out[i].Members, err = s.groupMembers(ctx, out[i].ID); err != nil {
 			return nil, err
@@ -679,7 +679,7 @@ func (s *Storage) keyGroupNames(ctx context.Context, keyID string) ([]string, er
 	if err != nil {
 		return nil, fmt.Errorf("listing group names for key: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []string
 	for rows.Next() {
 		var name string
@@ -721,17 +721,17 @@ func (s *Storage) GroupsOfWorkspace(ctx context.Context, wsID string) ([]Group, 
 		var g Group
 		var createdAt string
 		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &createdAt); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		g.CreatedAt = parseTime(createdAt)
 		out = append(out, g)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 	for i := range out {
 		if out[i].Members, err = s.groupMembers(ctx, out[i].ID); err != nil {
 			return nil, err
@@ -750,7 +750,7 @@ func (s *Storage) SetWorkspaceGroups(ctx context.Context, wsID string, groupIDs 
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `DELETE FROM workspace_group_members WHERE workspace_id = ?`, wsID); err != nil {
 		return fmt.Errorf("clearing workspace groups: %w", err)
 	}
@@ -770,7 +770,7 @@ func (s *Storage) GroupIDsOfWorkspace(ctx context.Context, wsID string) ([]strin
 	if err != nil {
 		return nil, fmt.Errorf("listing group ids of workspace: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []string
 	for rows.Next() {
 		var id string
@@ -791,7 +791,7 @@ func (s *Storage) KeysInGroup(ctx context.Context, groupID string) ([]string, er
 	if err != nil {
 		return nil, fmt.Errorf("listing keys in group: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []string
 	for rows.Next() {
 		var id string
@@ -815,16 +815,16 @@ func (s *Storage) KeysInGroupsMatching(ctx context.Context, wsID string) ([]stri
 	for rows.Next() {
 		var p gp
 		if err := rows.Scan(&p.id, &p.pattern); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		pats = append(pats, p)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 
 	seenGroups := map[string]struct{}{}
 	for _, p := range pats {
@@ -894,7 +894,7 @@ func (s *Storage) KeysReachingWorkspace(ctx context.Context, wsID string) ([]Key
 		var all int
 		var createdAt, groupName string
 		if err := rows.Scan(&k.ID, &k.Name, &k.Prefix, &all, &createdAt, &groupName); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		k.AllWorkspaces = all != 0
@@ -902,10 +902,10 @@ func (s *Storage) KeysReachingWorkspace(ctx context.Context, wsID string) ([]Key
 		add(k, "group:"+groupName)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 
 	// Group patterns.
 	keyIDs, err := s.KeysInGroupsMatching(ctx, wsID)
@@ -953,7 +953,7 @@ func scanKeyRows(rows *sql.Rows, fn func(Key)) error {
 		var all int
 		var createdAt string
 		if err := rows.Scan(&k.ID, &k.Name, &k.Prefix, &all, &createdAt); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return err
 		}
 		k.AllWorkspaces = all != 0
@@ -961,9 +961,9 @@ func scanKeyRows(rows *sql.Rows, fn func(Key)) error {
 		fn(k)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return err
 	}
-	rows.Close()
+	_ = rows.Close()
 	return nil
 }

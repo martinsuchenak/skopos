@@ -82,12 +82,12 @@ func (s *SQLiteVectorStore) Missing(ctx context.Context, workspace string, symbo
 		for rows.Next() {
 			var id int64
 			if err := rows.Scan(&id); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, err
 			}
 			present[id] = true
 		}
-		rows.Close()
+		_ = rows.Close()
 		if err := rows.Err(); err != nil {
 			return nil, err
 		}
@@ -113,7 +113,7 @@ func (s *SQLiteVectorStore) Add(ctx context.Context, workspace string, symbolIDs
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	for i, id := range symbolIDs {
 		if len(vectors[i]) == 0 {
 			continue
@@ -135,7 +135,7 @@ func (s *SQLiteVectorStore) Search(ctx context.Context, workspace string, query 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	query = normalize(query)
 	type scored struct {
 		id int64

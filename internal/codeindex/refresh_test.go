@@ -102,7 +102,7 @@ func TestSlugOfNeverDotOnly(t *testing.T) {
 		}
 	}
 	// Stable across calls (same input, same digest).
-	if slugOf("..") != slugOf("..") {
+	if first, second := slugOf(".."), slugOf(".."); first != second {
 		t.Error("dot-slug substitution is not deterministic")
 	}
 	// Property: for adversarial inputs the joined path stays inside the dir.

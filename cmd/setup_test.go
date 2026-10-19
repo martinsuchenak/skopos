@@ -27,8 +27,8 @@ func TestSetupLocalFlow(t *testing.T) {
 	if err := os.Chdir(repo); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Chdir(oldWd) })
-	os.WriteFile("app.go", []byte("package main\n\nfunc Alpha() {}\n"), 0o644)
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+	_ = os.WriteFile("app.go", []byte("package main\n\nfunc Alpha() {}\n"), 0o644)
 
 	// Scripted answers: mode=1 (local), workspace (no git remote here), dir default.
 	in := bufio.NewReader(strings.NewReader("1\nmy-ws\nindexes\n"))
@@ -49,9 +49,9 @@ func TestSetupRemoteFlow(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/health":
-			w.Write([]byte(`{"status":"ok"}`))
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
 		case "/api/sessions":
-			w.Write([]byte(`[]`))
+			_, _ = w.Write([]byte(`[]`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -88,13 +88,13 @@ func TestSetupRemoteRejectsWrongKey(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/health":
-			w.Write([]byte(`{"status":"ok"}`))
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
 		case "/api/sessions":
 			if r.Header.Get("Authorization") != "Bearer good" {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
-			w.Write([]byte(`[]`))
+			_, _ = w.Write([]byte(`[]`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -138,7 +138,9 @@ func TestWriteClientConfigMergesSections(t *testing.T) {
 	}
 
 	// Existing foreign sections survive an update.
-	os.WriteFile(path, []byte("[server]\nport = 9999\n\n[client]\nserver_url = \"x\"\n\n[log]\nlevel = \"debug\"\n"), 0o644)
+	if err := os.WriteFile(path, []byte("[server]\nport = 9999\n\n[client]\nserver_url = \"x\"\n\n[log]\nlevel = \"debug\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := writeClientConfig(path, "http://c", "k9"); err != nil {
 		t.Fatal(err)
 	}

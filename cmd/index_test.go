@@ -39,12 +39,14 @@ func cliIndexServer(t *testing.T, apiKey string) *httptest.Server {
 func cliRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "main.go"), []byte(`package main
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte(`package main
 
 func Alpha() string { return beta() }
 
 func beta() string { return "b" }
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	return root
 }
 
@@ -84,7 +86,7 @@ func TestPushToServerErrorSurfacesServerMessage(t *testing.T) {
 	// Server that rejects the manifest with a JSON error.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "branch is required"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "branch is required"})
 	}))
 	defer ts.Close()
 
@@ -135,9 +137,13 @@ func TestPushLargeRepoExceedingLegacyLimits(t *testing.T) {
 	// 1 MiB cap) and blobs force several upload chunks (512 blobs/chunk).
 	for i := 0; i < 2200; i++ {
 		dir := filepath.Join(repo, fmt.Sprintf("pkg%03d/module%03d/internal%03d/deep/nested/path/segments%03d", i%50, i%97, i, i%13))
-		os.MkdirAll(dir, 0o755)
-		os.WriteFile(filepath.Join(dir, fmt.Sprintf("file%04d.go", i)),
-			[]byte(fmt.Sprintf("package p%d\n\nfunc Fn%04d() {}\n", i, i)), 0o644)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("file%04d.go", i)),
+			[]byte(fmt.Sprintf("package p%d\n\nfunc Fn%04d() {}\n", i, i)), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	uploaded, total, err := PushToServer(context.Background(), ts.URL, "", "big/repo", "main", repo)
 	if err != nil {

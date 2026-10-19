@@ -44,7 +44,7 @@ func (s *Storage) List(ctx context.Context, itemID string) ([]Entry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing approvals: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Entry
 	for rows.Next() {
 		var e Entry

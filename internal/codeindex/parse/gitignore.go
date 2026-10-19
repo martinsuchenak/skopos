@@ -18,12 +18,11 @@ type gitignoreMatcher struct {
 }
 
 type gitignorePattern struct {
-	negate    bool
-	dirOnly   bool
-	anchored  bool
-	segments  []string // "**" allowed as its own segment
-	raw       string
-	mustBeDir bool
+	negate   bool
+	dirOnly  bool
+	anchored bool
+	segments []string // "**" allowed as its own segment
+	raw      string
 }
 
 func newGitignoreMatcher() *gitignoreMatcher {
@@ -37,7 +36,7 @@ func (g *gitignoreMatcher) loadDir(dir string) bool {
 	if err != nil {
 		return false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var pats []gitignorePattern
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {

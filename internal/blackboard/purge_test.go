@@ -44,7 +44,7 @@ func TestStorageDeleteByType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {

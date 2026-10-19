@@ -74,7 +74,7 @@ func (s *Slack) Send(ctx context.Context, parent, text string) (string, error) {
 		s.log.Warn("slack send failed", "err", err)
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	var out struct {
 		OK      bool   `json:"ok"`
@@ -200,7 +200,7 @@ func (s *Slack) connect(ctx context.Context) (wsConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	var out struct {
 		OK  bool   `json:"ok"`

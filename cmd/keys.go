@@ -367,7 +367,7 @@ func keysDo(ctx context.Context, serverURL, apiKey, method, path string, body an
 	if err != nil {
 		return fmt.Errorf("contacting server: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("%s", apiErrorMessage("api keys", resp))
 	}

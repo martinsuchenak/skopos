@@ -49,8 +49,10 @@ func fixtureService(t *testing.T) *Service {
 func writeRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	os.MkdirAll(filepath.Join(root, "pkg"), 0o755)
-	os.WriteFile(filepath.Join(root, "main.go"), []byte(`package main
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte(`package main
 
 type Config struct{ Port int }
 
@@ -62,8 +64,10 @@ func main() {
 }
 
 func serve(c *Config) {}
-`), 0o644)
-	os.WriteFile(filepath.Join(root, "pkg", "util.go"), []byte(`package pkg
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(root, "pkg", "util.go"), []byte(`package pkg
 
 func Helper() int { return 42 }
 `), 0o644)
@@ -149,12 +153,14 @@ func TestBranchFallbackAndDedup(t *testing.T) {
 	buildInto(t, _lastStore, root, "main")
 
 	// Branch B modifies one file: pkg/util.go gets a new symbol.
-	os.WriteFile(filepath.Join(root, "pkg", "util.go"), []byte(`package pkg
+	if err := os.WriteFile(filepath.Join(root, "pkg", "util.go"), []byte(`package pkg
 
 func Helper() int { return 42 }
 
 func NewThing() string { return "x" }
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	buildInto(t, _lastStore, root, "feat/x")
 
 	svc := fixtureService(t)
@@ -246,7 +252,9 @@ func TestManifestNegotiation(t *testing.T) {
 	}
 
 	// A changed file's hash is missing.
-	os.WriteFile(filepath.Join(root, "pkg", "util.go"), []byte("package pkg\n\nfunc Other() {}\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(root, "pkg", "util.go"), []byte("package pkg\n\nfunc Other() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	files2, _, _ := Build(context.Background(), parse.NewExtractor(), root, "main")
 	missing, err = store.HasBlobs("ws", []string{files2[1].Hash})
 	if err != nil {
@@ -370,12 +378,14 @@ func TestSearchByQualifiedName(t *testing.T) {
 	}
 	// Go fixture has no classes; qualify via the PHP-shaped fixture instead.
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "a.php"), []byte(`<?php
+	if err := os.WriteFile(filepath.Join(root, "a.php"), []byte(`<?php
 class Invoice {
   public function updateStatus(): void { $this->notify(); }
   public function notify(): void {}
 }
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	store2 := newTestStore(t)
 	buildInto(t, store2, root, "main")
 	svc := NewService(store2)
@@ -539,8 +549,10 @@ func TestBuildWithCacheLegacyRowsWithoutPayloads(t *testing.T) {
 func docFixture(t *testing.T, store *Store) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "r")
-	os.MkdirAll(root, 0o755)
-	os.WriteFile(filepath.Join(root, "mail.php"), []byte(`<?php
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "mail.php"), []byte(`<?php
 /**
  * Sends the password reset email to a user.
  *
@@ -548,7 +560,9 @@ func docFixture(t *testing.T, store *Store) {
  * @throws MailException when transport fails
  */
 function queueResetNotification($user): void {}
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	res, err := parse.NewExtractor().ParseFile(filepath.Join(root, "mail.php"))
 	if err != nil {
 		t.Fatal(err)
@@ -613,7 +627,9 @@ func TestOutlineCarriesDoc(t *testing.T) {
 func TestIndexDBMigratesOldSchema(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "idx")
 	dbPath := filepath.Join(dir, "ws.db")
-	os.MkdirAll(dir, 0o755)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	oldDB, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatal(err)
@@ -631,7 +647,7 @@ func TestIndexDBMigratesOldSchema(t *testing.T) {
 		VALUES (1, 'h1', 'Legacy', 'func', 1, 0, 10);`); err != nil {
 		t.Fatal(err)
 	}
-	oldDB.Close()
+	_ = oldDB.Close()
 
 	store, err := NewStore(dir)
 	if err != nil {
@@ -665,15 +681,19 @@ func TestIndexDBMigratesOldSchema(t *testing.T) {
 func modifierFixture(t *testing.T, store *Store) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "r")
-	os.MkdirAll(root, 0o755)
-	os.WriteFile(filepath.Join(root, "ctrl.php"), []byte(`<?php
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "ctrl.php"), []byte(`<?php
 class UserController {
   #[Route('/users', methods: ['GET'])]
   public static function listUsers($req): void {}
 
   private function cacheKey($id): string { return "u:$id"; }
 }
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	res, err := parse.NewExtractor().ParseFile(filepath.Join(root, "ctrl.php"))
 	if err != nil {
 		t.Fatal(err)
@@ -777,13 +797,17 @@ func TestDeadCodeHitsCarryModifiers(t *testing.T) {
 func weightedFixture(t *testing.T, store *Store) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "r")
-	os.MkdirAll(root, 0o755)
-	os.WriteFile(filepath.Join(root, "a.go"), []byte(`package p
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte(`package p
 
 // Creates a handler for the websocket stream.
 func MakeListener() {}
-`), 0o644)
-	os.WriteFile(filepath.Join(root, "b.go"), []byte(`package p
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(root, "b.go"), []byte(`package p
 
 // handler is documented here but named differently.
 func Serve() {}
@@ -828,9 +852,15 @@ func TestSearchNameOutranksDocMention(t *testing.T) {
 func TestSearchPathPrefixFilter(t *testing.T) {
 	store := newTestStore(t)
 	root := filepath.Join(t.TempDir(), "r")
-	os.MkdirAll(filepath.Join(root, "pkg"), 0o755)
-	os.WriteFile(filepath.Join(root, "pkg", "util.go"), []byte("package pkg\nfunc Helper() {}\n"), 0o644)
-	os.WriteFile(filepath.Join(root, "other.go"), []byte("package p\nfunc Helper() {}\n"), 0o644)
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "util.go"), []byte("package pkg\nfunc Helper() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "other.go"), []byte("package p\nfunc Helper() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	ex := parse.NewExtractor()
 	for _, f := range []string{"pkg/util.go", "other.go"} {
 		res, err := ex.ParseFile(filepath.Join(root, f))
@@ -936,12 +966,16 @@ func TestEmbeddingVersionChangeRebuildsVectors(t *testing.T) {
 func TestGCReclaimsUnreferencedContent(t *testing.T) {
 	store := newTestStore(t)
 	root := filepath.Join(t.TempDir(), "r")
-	os.MkdirAll(root, 0o755)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	ex := parse.NewExtractor()
 	var liveHash string
 	for i, f := range []string{"live.go", "dead.go"} {
 		src := "package p\nfunc F" + fmt.Sprint(i) + "() {}\n"
-		os.WriteFile(filepath.Join(root, f), []byte(src), 0o644)
+		if err := os.WriteFile(filepath.Join(root, f), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
 		res, err := ex.ParseFile(filepath.Join(root, f))
 		if err != nil {
 			t.Fatal(err)
@@ -963,7 +997,9 @@ func TestGCReclaimsUnreferencedContent(t *testing.T) {
 	}
 	db, _ := store.DB("ws")
 	var blobsBefore int
-	db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobsBefore)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobsBefore); err != nil {
+		t.Fatal(err)
+	}
 	if blobsBefore != 2 {
 		t.Fatalf("setup: %d blobs", blobsBefore)
 	}
@@ -978,8 +1014,12 @@ func TestGCReclaimsUnreferencedContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	var blobsAfter, symbolsAfter int
-	db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobsAfter)
-	db.QueryRow(`SELECT COUNT(DISTINCT hash) FROM symbols WHERE hash = ?`, liveHash).Scan(&symbolsAfter)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobsAfter); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(DISTINCT hash) FROM symbols WHERE hash = ?`, liveHash).Scan(&symbolsAfter); err != nil {
+		t.Fatal(err)
+	}
 	if blobsAfter != 1 || symbolsAfter != 1 {
 		t.Fatalf("gc left %d blobs, live symbols %d", blobsAfter, symbolsAfter)
 	}
@@ -1017,7 +1057,9 @@ func TestCachePruneAndWipe(t *testing.T) {
 	}
 	db, _ := store.DB("cache")
 	var rows int
-	db.QueryRow(`SELECT COUNT(*) FROM file_cache`).Scan(&rows)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM file_cache`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
 	if rows != 0 {
 		t.Fatalf("wipe left %d rows", rows)
 	}
@@ -1059,8 +1101,10 @@ func TestSemanticHitsCarryMatchedBy(t *testing.T) {
 func TestWhoCallsFindsInstantiation(t *testing.T) {
 	store := newTestStore(t)
 	root := filepath.Join(t.TempDir(), "r")
-	os.MkdirAll(root, 0o755)
-	os.WriteFile(filepath.Join(root, "cache.php"), []byte(`<?php
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "cache.php"), []byte(`<?php
 class CacheService {
   public function warm(): void {}
 }
@@ -1069,7 +1113,9 @@ function boot() {
   $svc = new \App\Services\CacheService();
   $svc->warm();
 }
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	res, err := parse.NewExtractor().ParseFile(filepath.Join(root, "cache.php"))
 	if err != nil {
 		t.Fatal(err)
@@ -1100,8 +1146,10 @@ function boot() {
 func TestHierarchyVisibleToGraphQueries(t *testing.T) {
 	store := newTestStore(t)
 	root := filepath.Join(t.TempDir(), "r")
-	os.MkdirAll(root, 0o755)
-	os.WriteFile(filepath.Join(root, "app.php"), []byte(`<?php
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "app.php"), []byte(`<?php
 abstract class BaseController {
   public function handle(): void {}
 }
@@ -1115,7 +1163,9 @@ class HomeController extends BaseController {
 }
 
 class AdminController extends BaseController {}
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	res, err := parse.NewExtractor().ParseFile(filepath.Join(root, "app.php"))
 	if err != nil {
 		t.Fatal(err)
@@ -1170,15 +1220,19 @@ class AdminController extends BaseController {}
 func TestImpactIncludesOverrides(t *testing.T) {
 	store := newTestStore(t)
 	root := filepath.Join(t.TempDir(), "r")
-	os.MkdirAll(root, 0o755)
-	os.WriteFile(filepath.Join(root, "ctl.php"), []byte(`<?php
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "ctl.php"), []byte(`<?php
 class BaseController {
   public function handle(): void {}
 }
 class HomeController extends BaseController {
   public function handle(): void {}
 }
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	res, err := parse.NewExtractor().ParseFile(filepath.Join(root, "ctl.php"))
 	if err != nil {
 		t.Fatal(err)
@@ -1209,9 +1263,15 @@ class HomeController extends BaseController {
 func TestDependenciesListsImports(t *testing.T) {
 	store := newTestStore(t)
 	root := filepath.Join(t.TempDir(), "r")
-	os.MkdirAll(root, 0o755)
-	os.WriteFile(filepath.Join(root, "svc.php"), []byte("<?php\nuse App\\Other\\Mailer;\nuse App\\Cache;\nclass Svc {}\n"), 0o644)
-	os.WriteFile(filepath.Join(root, "helper.php"), []byte("<?php\nuse App\\Util\\Str;\nfunction h() {}\n"), 0o644)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "svc.php"), []byte("<?php\nuse App\\Other\\Mailer;\nuse App\\Cache;\nclass Svc {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "helper.php"), []byte("<?php\nuse App\\Util\\Str;\nfunction h() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	ex := parse.NewExtractor()
 	entries := []FileEntry{}
 	for _, f := range []string{"svc.php", "helper.php"} {
@@ -1272,12 +1332,12 @@ func TestGCBranchFilesHashIndex(t *testing.T) {
 		var detail string
 		_ = notUsed
 		if err := rows.Scan(&id, &parent, new(int), &detail); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			t.Fatal(err)
 		}
 		plan.WriteString(detail + "; ")
 	}
-	rows.Close()
+	_ = rows.Close()
 	if !strings.Contains(plan.String(), "idx_branch_files_hash") {
 		t.Fatalf("GC probe should use the hash index, plan: %s", plan.String())
 	}

@@ -179,7 +179,7 @@ func ensureColumn(db *sql.DB, table, column, decl string) error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var cid int
 		var name, ctype string
@@ -211,12 +211,12 @@ func ensureFTSShape(db *sql.DB) error {
 		var notNull, pk int
 		var dflt any
 		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return err
 		}
 		have[name] = true
 	}
-	rows.Close()
+	_ = rows.Close()
 	if have["doc"] && have["modifiers"] && have["attrs"] {
 		return nil
 	}
@@ -255,27 +255,27 @@ func (st *Store) DB(workspace string) (*sql.DB, error) {
 		return nil, fmt.Errorf("opening index db for %q: %w", workspace, err)
 	}
 	if _, err := db.Exec(schema); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("migrating index db for %q: %w", workspace, err)
 	}
 	if err := ensureColumn(db, "symbols", "qual_name", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	if err := ensureColumn(db, "symbols", "doc", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	if err := ensureColumn(db, "symbols", "modifiers", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	if err := ensureColumn(db, "symbols", "attrs", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	if err := ensureFTSShape(db); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	st.dbs[workspace] = db
@@ -319,7 +319,7 @@ func (st *Store) evictDBs() {
 		victim := st.lru[victimIdx]
 		st.lru = append(st.lru[:victimIdx], st.lru[victimIdx+1:]...)
 		if db, ok := st.dbs[victim]; ok {
-			db.Close()
+			_ = db.Close()
 			delete(st.dbs, victim)
 		}
 	}
@@ -331,7 +331,7 @@ func (st *Store) DeleteWorkspace(workspace string) error {
 	path := dbPath(st.dir, workspace)
 	st.mu.Lock()
 	if db, ok := st.dbs[workspace]; ok {
-		db.Close()
+		_ = db.Close()
 		delete(st.dbs, workspace)
 		st.forgetDB(workspace)
 	}
@@ -348,7 +348,7 @@ func (st *Store) Close() {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	for _, db := range st.dbs {
-		db.Close()
+		_ = db.Close()
 	}
 	st.dbs = map[string]*sql.DB{}
 	st.lru = nil
@@ -389,7 +389,7 @@ func (st *Store) AddBlob(workspace string, res *parse.FileResult) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var one int
 	if err := tx.QueryRow(`SELECT 1 FROM blobs WHERE hash = ?`, res.Hash).Scan(&one); err == nil {
@@ -436,7 +436,7 @@ func (st *Store) Commit(workspace, branch, headSHA, source string, files []FileE
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.Exec(`DELETE FROM branch_files WHERE branch = ?`, branch); err != nil {
 		return err
@@ -524,7 +524,7 @@ func (st *Store) Search(ctx context.Context, workspace, branch, query, pathPrefi
 		if err != nil {
 			return nil, err
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		return scanHits(rows)
 	}
 	q := query
@@ -557,7 +557,7 @@ func (st *Store) Search(ctx context.Context, workspace, branch, query, pathPrefi
 			return nil, fmt.Errorf("search %q: %w", query, err)
 		}
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanHits(rows)
 }
 
@@ -587,7 +587,7 @@ func (st *Store) Symbol(workspace, branch, name string, limit int) ([]SymbolHit,
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanHits(rows)
 }
 
@@ -606,7 +606,7 @@ func (st *Store) Outline(workspace, branch, path string) ([]SymbolHit, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanHits(rows)
 }
 
@@ -659,7 +659,7 @@ func (st *Store) callersFiltered(ctx context.Context, workspace, branch, name, p
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanEdges(rows)
 }
 
@@ -682,7 +682,7 @@ func (st *Store) Callees(ctx context.Context, workspace, branch, name, pathPrefi
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanEdges(rows)
 }
 
@@ -714,7 +714,7 @@ func (st *Store) GC(ctx context.Context, workspace string) (reclaimedIDs []int64
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	rows, err := tx.QueryContext(ctx, `
 		SELECT s.id FROM symbols s
 		WHERE NOT EXISTS (SELECT 1 FROM branch_files bf WHERE bf.hash = s.hash)`)
@@ -724,12 +724,12 @@ func (st *Store) GC(ctx context.Context, workspace string) (reclaimedIDs []int64
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		reclaimedIDs = append(reclaimedIDs, id)
 	}
-	rows.Close()
+	_ = rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
@@ -805,7 +805,7 @@ func (st *Store) Status(workspace string) ([]BranchStatus, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []BranchStatus
 	for rows.Next() {
 		var s BranchStatus
@@ -901,7 +901,7 @@ func (st *Store) exactCallers(db *sql.DB, branch, name string, limit int) ([]Edg
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanEdges(rows)
 }
 
@@ -928,7 +928,7 @@ func (st *Store) Dependencies(ctx context.Context, workspace, branch, pathPrefix
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []FileDeps
 	byPath := map[string]int{}
 	for rows.Next() {

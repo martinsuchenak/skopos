@@ -521,19 +521,3 @@ type Check struct {
 	Passed bool   `json:"passed"`
 	Output string `json:"output,omitempty"`
 }
-
-// checksMarkdown renders checks for the report/PR body.
-func checksMarkdown(checks []Check) string {
-	if len(checks) == 0 {
-		return "_No checks configured._"
-	}
-	var b strings.Builder
-	for _, c := range checks {
-		mark := "✅"
-		if !c.Passed {
-			mark = "❌"
-		}
-		fmt.Fprintf(&b, "- %s `%s`\n", mark, c.Name)
-	}
-	return b.String()
-}

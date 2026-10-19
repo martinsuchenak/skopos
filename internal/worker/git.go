@@ -54,22 +54,6 @@ func isProtected(branch string, patterns []string) bool {
 	return false
 }
 
-// createWorktree cuts a fresh worktree on a new branch from origin/<base>,
-// no upstream — a tracking misconfiguration cannot redirect a push.
-func createWorktree(ctx context.Context, clone, worktree, branch, base string) error {
-	if !reBranch.MatchString(branch) {
-		return fmt.Errorf("refusing branch name %q", branch)
-	}
-	if _, err := git(ctx, clone, "fetch", "--quiet", "origin", base); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
-		return err
-	}
-	_, err := git(ctx, clone, "worktree", "add", "--quiet", "--no-track", "-b", branch, worktree, "origin/"+base)
-	return err
-}
-
 // createWorktreeAt cuts a worktree on a new branch from an explicit ref
 // (the approved base_sha — review H3), no upstream.
 func createWorktreeAt(ctx context.Context, clone, worktree, branch, ref string) error {
@@ -146,18 +130,13 @@ func commitCount(ctx context.Context, worktree, base string) int {
 		return 0
 	}
 	var n int
-	fmt.Sscanf(s, "%d", &n)
+	_, _ = fmt.Sscanf(s, "%d", &n)
 	return n
 }
 
 func diffStat(ctx context.Context, worktree, base string) string {
 	s, _ := git(ctx, worktree, "diff", "--stat", "origin/"+base+"..HEAD")
 	return strings.TrimSpace(s)
-}
-
-func isDirty(ctx context.Context, worktree string) bool {
-	s, _ := git(ctx, worktree, "status", "--porcelain")
-	return strings.TrimSpace(s) != ""
 }
 
 // runSetup runs the repo's setup commands in a fresh worktree. They get the

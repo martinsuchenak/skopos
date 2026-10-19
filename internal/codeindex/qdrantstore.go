@@ -71,7 +71,7 @@ func (q *QdrantVectorStore) do(ctx context.Context, method, path string, body an
 	if doErr != nil {
 		return nil, doErr, false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err = io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err, false

@@ -18,12 +18,14 @@ import (
 func embedRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "svc.go"), []byte(`package main
+	if err := os.WriteFile(filepath.Join(root, "svc.go"), []byte(`package main
 
 func AuthenticateUser() bool { return checkToken() }
 
 func checkToken() bool { return true }
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	return root
 }
 
@@ -86,7 +88,7 @@ func TestOpenAIEmbedderHTTP(t *testing.T) {
 		for i := range body.Input {
 			arr[i] = map[string]any{"index": i, "embedding": []float32{1, 0, 0}}
 		}
-		json.NewEncoder(w).Encode(map[string]any{"data": arr})
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": arr})
 	}))
 	defer ts.Close()
 
@@ -117,7 +119,9 @@ func TestEmbeddingManagerEnqueue(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		var n int
-		db.QueryRow(`SELECT COUNT(*) FROM embeddings`).Scan(&n)
+		if err := db.QueryRow(`SELECT COUNT(*) FROM embeddings`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
 		if n > 0 {
 			return
 		}
@@ -184,14 +188,18 @@ func TestSemanticSearchDuplicateKeysDoNotPoolRRF(t *testing.T) {
 	// four times under the same name+path. Pooled RRF credit would let the
 	// duplicates outrank the true best match.
 	root := filepath.Join(t.TempDir(), "r")
-	os.MkdirAll(root, 0o755)
-	os.WriteFile(filepath.Join(root, "a.go"), []byte(`package p
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte(`package p
 func Best() {}
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	// Four same-named definitions in ONE file (methods on different
 	// receivers): one blob, four symbol rows, same name+path — the shape
 	// of repeated CSS selectors.
-	os.WriteFile(filepath.Join(root, "b.go"), []byte(`package p
+	_ = os.WriteFile(filepath.Join(root, "b.go"), []byte(`package p
 type t1 struct{}
 type t2 struct{}
 type t3 struct{}
@@ -233,7 +241,7 @@ func (t4) Dup() {}
 			dupIDs = append(dupIDs, id)
 		}
 	}
-	rows.Close()
+	_ = rows.Close()
 	if err := svc.vectors.Add(context.Background(), "ws", []int64{bestID}, [][]float32{q}); err != nil {
 		t.Fatal(err)
 	}

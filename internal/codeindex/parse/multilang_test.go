@@ -9,7 +9,9 @@ import (
 func parseStr(t *testing.T, name, src string) *FileResult {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), name)
-	os.WriteFile(p, []byte(src), 0o644)
+	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	res, err := NewExtractor().ParseFile(p)
 	if err != nil {
 		t.Fatal(err)

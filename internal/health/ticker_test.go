@@ -18,7 +18,7 @@ func testDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	t.Cleanup(func() { sqlDB.Close() })
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if err := db.RunMigrations(sqlDB); err != nil {
 		t.Fatalf("run migrations: %v", err)
 	}
@@ -96,8 +96,10 @@ func TestCheckerMarksStaleActiveAgentStuck(t *testing.T) {
 	}
 
 	var status, originalStatus, stuckAt sql.NullString
-	sqlDB.QueryRow(`SELECT status, original_status, stuck_at FROM agent_states WHERE agent_id = 'a1'`).
-		Scan(&status, &originalStatus, &stuckAt)
+	if err := sqlDB.QueryRow(`SELECT status, original_status, stuck_at FROM agent_states WHERE agent_id = 'a1'`).
+		Scan(&status, &originalStatus, &stuckAt); err != nil {
+		t.Fatal(err)
+	}
 	if status.String != "stuck" {
 		t.Errorf("status: got %q, want %q", status.String, "stuck")
 	}
@@ -109,7 +111,9 @@ func TestCheckerMarksStaleActiveAgentStuck(t *testing.T) {
 	}
 
 	var eventCount int
-	sqlDB.QueryRow(`SELECT COUNT(*) FROM events WHERE agent_id = 'a1' AND status = 'stuck'`).Scan(&eventCount)
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM events WHERE agent_id = 'a1' AND status = 'stuck'`).Scan(&eventCount); err != nil {
+		t.Fatal(err)
+	}
 	if eventCount != 1 {
 		t.Errorf("stuck event count: got %d, want 1", eventCount)
 	}
@@ -127,7 +131,9 @@ func TestCheckerDoesNotMarkFreshAgentStuck(t *testing.T) {
 	}
 
 	var status string
-	sqlDB.QueryRow(`SELECT status FROM agent_states WHERE agent_id = 'a1'`).Scan(&status)
+	if err := sqlDB.QueryRow(`SELECT status FROM agent_states WHERE agent_id = 'a1'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
 	if status != "running" {
 		t.Errorf("status: got %q, want %q", status, "running")
 	}
@@ -145,7 +151,9 @@ func TestCheckerDoesNotMarkWaitingAgentStuck(t *testing.T) {
 	}
 
 	var status string
-	sqlDB.QueryRow(`SELECT status FROM agent_states WHERE agent_id = 'a1'`).Scan(&status)
+	if err := sqlDB.QueryRow(`SELECT status FROM agent_states WHERE agent_id = 'a1'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
 	if status != "waiting" {
 		t.Errorf("status: got %q, want %q", status, "waiting")
 	}
@@ -163,7 +171,9 @@ func TestCheckerDoesNotMarkTerminalAgentStuck(t *testing.T) {
 	}
 
 	var status string
-	sqlDB.QueryRow(`SELECT status FROM agent_states WHERE agent_id = 'a1'`).Scan(&status)
+	if err := sqlDB.QueryRow(`SELECT status FROM agent_states WHERE agent_id = 'a1'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
 	if status != "succeeded" {
 		t.Errorf("status: got %q, want %q", status, "succeeded")
 	}
@@ -183,7 +193,9 @@ func TestCheckerMarksSessionOrphanedWhenAllAgentsStuckOrTerminal(t *testing.T) {
 	}
 
 	var sessionStatus string
-	sqlDB.QueryRow(`SELECT status FROM sessions WHERE id = 's1'`).Scan(&sessionStatus)
+	if err := sqlDB.QueryRow(`SELECT status FROM sessions WHERE id = 's1'`).Scan(&sessionStatus); err != nil {
+		t.Fatal(err)
+	}
 	if sessionStatus != "orphaned" {
 		t.Errorf("session status: got %q, want %q", sessionStatus, "orphaned")
 	}
@@ -204,7 +216,9 @@ func TestCheckerDoesNotOrphanSessionWithActiveAgent(t *testing.T) {
 	}
 
 	var sessionStatus string
-	sqlDB.QueryRow(`SELECT status FROM sessions WHERE id = 's1'`).Scan(&sessionStatus)
+	if err := sqlDB.QueryRow(`SELECT status FROM sessions WHERE id = 's1'`).Scan(&sessionStatus); err != nil {
+		t.Fatal(err)
+	}
 	if sessionStatus != "running" {
 		t.Errorf("session status: got %q, want %q", sessionStatus, "running")
 	}
@@ -223,11 +237,13 @@ func TestCheckerRecovery(t *testing.T) {
 	}
 
 	// Simulate recovery: agent sends a new report (storage upsert would do this)
-	sqlDB.Exec(
+	if _, err := sqlDB.Exec(
 		`UPDATE agent_states SET status = 'running', original_status = NULL, stuck_at = NULL, updated_at = ?
 		 WHERE agent_id = 'a1'`,
 		formatTime(now.Add(time.Second)),
-	)
+	); err != nil {
+		t.Fatal(err)
+	}
 
 	// Second check with now+1s: agent is fresh, should not re-mark stuck
 	if err := checkerAt(sqlDB, now.Add(time.Second)).check(context.Background()); err != nil {
@@ -236,8 +252,10 @@ func TestCheckerRecovery(t *testing.T) {
 
 	var status string
 	var originalStatus, stuckAt sql.NullString
-	sqlDB.QueryRow(`SELECT status, original_status, stuck_at FROM agent_states WHERE agent_id = 'a1'`).
-		Scan(&status, &originalStatus, &stuckAt)
+	if err := sqlDB.QueryRow(`SELECT status, original_status, stuck_at FROM agent_states WHERE agent_id = 'a1'`).
+		Scan(&status, &originalStatus, &stuckAt); err != nil {
+		t.Fatal(err)
+	}
 
 	if status != "running" {
 		t.Errorf("status after recovery: got %q, want %q", status, "running")

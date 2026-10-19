@@ -59,13 +59,13 @@ func runWorkerInit(out io.Writer, configPath, serverURL string, workspaces []str
 		// existing [client] wins (it may hold a deliberately chosen URL).
 		if serverURL != "" && !hasTOMLSection(updated, "client") {
 			updated = install.ReplaceTOMLSection(updated, "client", clientSectionTOML(serverURL))
-			fmt.Fprintf(out, "Added a [client] section (no server URL was configured before)\n")
+			_, _ = fmt.Fprintf(out, "Added a [client] section (no server URL was configured before)\n")
 		}
 		mode := statMode(configPath, 0o600)
 		if err := os.WriteFile(configPath, []byte(updated), mode); err != nil {
 			return fmt.Errorf("writing %s: %w", configPath, err)
 		}
-		fmt.Fprintf(out, "Added a [worker] section to %s — edit repos/accounts, then:\n", configPath)
+		_, _ = fmt.Fprintf(out, "Added a [worker] section to %s — edit repos/accounts, then:\n", configPath)
 	} else {
 		content := clientSectionTOML(serverURL) + section
 		// The file may end up holding the worker key ([client].api_key), so
@@ -77,13 +77,13 @@ func runWorkerInit(out io.Writer, configPath, serverURL string, workspaces []str
 		if err := os.Chmod(configPath, 0o600); err != nil {
 			return fmt.Errorf("setting config file permissions: %w", err)
 		}
-		fmt.Fprintf(out, "Wrote %s (0600) — edit repos/accounts, then:\n", configPath)
+		_, _ = fmt.Fprintf(out, "Wrote %s (0600) — edit repos/accounts, then:\n", configPath)
 	}
 
 	if err := writeWorkerEnvFile(out, configPath); err != nil {
 		return err
 	}
-	fmt.Fprint(out, `
+	_, _ = fmt.Fprint(out, `
 Next steps:
   1. skopos key create --name <this-host> --workspace <workspace-id>   # worker-scoped key
   2. fill in [client].api_key (or SKOPOS_API_KEY in skopos-worker.env) and the repos blocks
@@ -99,7 +99,7 @@ Next steps:
 func writeWorkerEnvFile(out io.Writer, configPath string) error {
 	envPath := workerEnvFilePath(configPath)
 	if _, err := os.Stat(envPath); err == nil {
-		fmt.Fprintf(out, "%s already exists — left untouched\n", envPath)
+		_, _ = fmt.Fprintf(out, "%s already exists — left untouched\n", envPath)
 		return nil
 	}
 	content := `# skopos worker environment — loaded by 'skopos worker' before the config.
@@ -116,7 +116,7 @@ func writeWorkerEnvFile(out io.Writer, configPath string) error {
 	if err := os.Chmod(envPath, 0o600); err != nil {
 		return fmt.Errorf("setting env file permissions: %w", err)
 	}
-	fmt.Fprintf(out, "Wrote %s (0600) — put the worker key and push tokens there\n", envPath)
+	_, _ = fmt.Fprintf(out, "Wrote %s (0600) — put the worker key and push tokens there\n", envPath)
 	return nil
 }
 

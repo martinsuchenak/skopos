@@ -14,7 +14,7 @@ import (
 func analysisRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "app.go"), []byte(`package main
+	if err := os.WriteFile(filepath.Join(root, "app.go"), []byte(`package main
 
 func main() {
 	c := NewCache()
@@ -34,7 +34,9 @@ func orphan() {}
 
 func chainA() { chainB() }
 func chainB() { chainA() }
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	return root
 }
 
@@ -104,15 +106,19 @@ func TestBranchDiff(t *testing.T) {
 	buildInto(t, store, root, "main")
 
 	// Feature branch: add a file, change app.go, delete nothing.
-	os.WriteFile(filepath.Join(root, "extra.go"), []byte("package main\n\nfunc Extra() {}\n"), 0o644)
-	os.WriteFile(filepath.Join(root, "app.go"), []byte(`package main
+	if err := os.WriteFile(filepath.Join(root, "extra.go"), []byte("package main\n\nfunc Extra() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "app.go"), []byte(`package main
 
 func main() {
 	renamedHelper()
 }
 
 func renamedHelper() {}
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	buildInto(t, store, root, "feat/x")
 	svc := NewService(store)
 
@@ -190,18 +196,22 @@ func TestExportImportRoundTrip(t *testing.T) {
 
 func TestQualifiedNamesDisambiguateGraph(t *testing.T) {
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "a.php"), []byte(`<?php
+	if err := os.WriteFile(filepath.Join(root, "a.php"), []byte(`<?php
 class Alpha {
   public function validate(): bool { return $this->check(); }
   public function check(): bool { return true; }
 }
-`), 0o644)
-	os.WriteFile(filepath.Join(root, "b.php"), []byte(`<?php
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "b.php"), []byte(`<?php
 class Beta {
   public function validate(): bool { return true; }
   public function run(): void { $this->validate(); }
 }
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	store := newTestStore(t)
 	buildInto(t, store, root, "main")
 	svc := NewService(store)
@@ -258,19 +268,23 @@ class Beta {
 
 func TestCallTreeResolvesUniqueBareNames(t *testing.T) {
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "svc.php"), []byte(`<?php
+	if err := os.WriteFile(filepath.Join(root, "svc.php"), []byte(`<?php
 class Svc {
   public function outer(): void { $this->helper(); }
   public function helper(): void { $this->inner(); }
   public function inner(): void { leafWork(); }
 }
 function leafWork() {}
-`), 0o644)
-	os.WriteFile(filepath.Join(root, "other.php"), []byte(`<?php
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "other.php"), []byte(`<?php
 class Other {
   public function helper(): void {} // same short name: helper is ambiguous
 }
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	store := newTestStore(t)
 	buildInto(t, store, root, "main")
 	svc := NewService(store)

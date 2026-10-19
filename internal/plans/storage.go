@@ -151,7 +151,7 @@ func (s *Storage) listItems(ctx context.Context, planID string) ([]Item, error) 
 	if err != nil {
 		return nil, fmt.Errorf("listing items: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var items []Item
 	for rows.Next() {
 		item, err := scanItem(rows)
@@ -198,7 +198,7 @@ func (s *Storage) ListPlans(ctx context.Context, workspaceID, branchName string)
 	if err != nil {
 		return nil, fmt.Errorf("listing plans: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var result []Plan
 	for rows.Next() {
@@ -402,7 +402,7 @@ func (s *Storage) ListDependencies(ctx context.Context, itemID string) ([]string
 	if err != nil {
 		return nil, fmt.Errorf("listing dependencies: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var ids []string
 	for rows.Next() {
 		var id string
@@ -420,7 +420,7 @@ func (s *Storage) ListDependents(ctx context.Context, itemID string) ([]string, 
 	if err != nil {
 		return nil, fmt.Errorf("listing dependents: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var ids []string
 	for rows.Next() {
 		var id string
@@ -495,7 +495,7 @@ func (s *Storage) ListPlanDependencies(ctx context.Context, planID string) ([]st
 	if err != nil {
 		return nil, fmt.Errorf("listing plan dependencies: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var ids []string
 	for rows.Next() {
 		var id string
@@ -513,7 +513,7 @@ func (s *Storage) ListPlanDependents(ctx context.Context, planID string) ([]stri
 	if err != nil {
 		return nil, fmt.Errorf("listing plan dependents: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var ids []string
 	for rows.Next() {
 		var id string

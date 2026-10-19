@@ -22,7 +22,7 @@ func testServiceWithAudit(t *testing.T) (*Service, *audit.Service) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { sqlDB.Close() })
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if err := db.RunMigrations(sqlDB); err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +314,6 @@ func errorsIsInvalidInput(err error) bool {
 	if err == nil {
 		return false
 	}
-	type unwrapper interface{ Unwrap() error }
 	return strings.Contains(err.Error(), "invalid inbox input")
 }
 

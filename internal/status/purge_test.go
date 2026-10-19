@@ -29,7 +29,7 @@ func purgeStorage(t *testing.T) *Storage {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	t.Cleanup(func() { sqlDB.Close() })
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if err := db.RunMigrations(sqlDB); err != nil {
 		t.Fatalf("migrations: %v", err)
 	}

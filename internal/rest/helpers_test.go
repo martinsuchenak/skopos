@@ -60,7 +60,9 @@ func TestInternalErrorWithoutLogger(t *testing.T) {
 		t.Errorf("expected 500, got %d", w.Code)
 	}
 	var body map[string]string
-	json.NewDecoder(w.Body).Decode(&body)
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
 	if body["error"] != "internal server error" {
 		t.Errorf("expected generic message, got %q", body["error"])
 	}

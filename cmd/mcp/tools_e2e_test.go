@@ -32,7 +32,7 @@ func toolsE2E(t *testing.T) http.Handler {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	t.Cleanup(func() { sqlDB.Close() })
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if err := sqlDB.Ping(); err != nil {
 		t.Fatalf("ping: %v", err)
 	}
@@ -194,35 +194,45 @@ func TestMCPDependencyToolsEndToEnd(t *testing.T) {
 	var a struct {
 		ID string `json:"id"`
 	}
-	json.Unmarshal([]byte(planA), &a)
+	if err := json.Unmarshal([]byte(planA), &a); err != nil {
+		t.Fatal(err)
+	}
 
 	planB := callText(t, h, sessionID, id, "plan_create", map[string]any{"name": "B", "author_agent_id": "t", "workspace_id": "ws"})
 	id++
 	var b struct {
 		ID string `json:"id"`
 	}
-	json.Unmarshal([]byte(planB), &b)
+	if err := json.Unmarshal([]byte(planB), &b); err != nil {
+		t.Fatal(err)
+	}
 
 	itemA1 := callText(t, h, sessionID, id, "plan_add_item", map[string]any{"plan_id": a.ID, "title": "a1"})
 	id++
 	var ia1 struct {
 		ID string `json:"id"`
 	}
-	json.Unmarshal([]byte(itemA1), &ia1)
+	if err := json.Unmarshal([]byte(itemA1), &ia1); err != nil {
+		t.Fatal(err)
+	}
 
 	itemA2 := callText(t, h, sessionID, id, "plan_add_item", map[string]any{"plan_id": a.ID, "title": "a2"})
 	id++
 	var ia2 struct {
 		ID string `json:"id"`
 	}
-	json.Unmarshal([]byte(itemA2), &ia2)
+	if err := json.Unmarshal([]byte(itemA2), &ia2); err != nil {
+		t.Fatal(err)
+	}
 
 	itemB1 := callText(t, h, sessionID, id, "plan_add_item", map[string]any{"plan_id": b.ID, "title": "b1"})
 	id++
 	var ib1 struct {
 		ID string `json:"id"`
 	}
-	json.Unmarshal([]byte(itemB1), &ib1)
+	if err := json.Unmarshal([]byte(itemB1), &ib1); err != nil {
+		t.Fatal(err)
+	}
 
 	// plan_add_item_dependency auto-blocks the dependent item.
 	callText(t, h, sessionID, id, "plan_add_dependency", map[string]any{"plan_id": a.ID, "item_id": ia2.ID, "depends_on_item_id": ia1.ID})
@@ -265,7 +275,6 @@ func TestMCPDependencyToolsEndToEnd(t *testing.T) {
 	callText(t, h, sessionID, id, "plan_remove_plan_dependency", map[string]any{"plan_id": a.ID, "depends_on_plan_id": b.ID})
 	id++
 	detail = callText(t, h, sessionID, id, "plan_read", map[string]any{"plan_id": a.ID})
-	id++
 	if bytes.Contains([]byte(detail), []byte(`"blocked"`)) {
 		t.Fatalf("plan A should be unblocked after removing plan dependency, got: %s", detail)
 	}
@@ -280,7 +289,9 @@ func TestMCPReadToolsAcceptAliases(t *testing.T) {
 	var p struct {
 		ID string `json:"id"`
 	}
-	json.Unmarshal([]byte(created), &p)
+	if err := json.Unmarshal([]byte(created), &p); err != nil {
+		t.Fatal(err)
+	}
 	// plan_read accepts both plan_id and the legacy id param.
 	if got := callText(t, h, sessionID, 2, "plan_read", map[string]any{"plan_id": p.ID}); !bytes.Contains([]byte(got), []byte(`"P"`)) {
 		t.Fatalf("plan_read via plan_id failed: %s", got)
@@ -309,7 +320,7 @@ func mustOpenDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { sqlDB.Close() })
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if err := db.RunMigrations(sqlDB); err != nil {
 		t.Fatal(err)
 	}
@@ -319,13 +330,17 @@ func mustOpenDB(t *testing.T) *sql.DB {
 func TestMCPCodeIndexToolsEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	repo := dir + "/repo"
-	os.MkdirAll(repo, 0o755)
-	os.WriteFile(repo+"/main.go", []byte(`package main
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(repo+"/main.go", []byte(`package main
 
 func LoadConfig() int { return helper() }
 
 func helper() int { return 42 }
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	store, err := codeindex.NewStore(dir + "/idx")
 	if err != nil {
@@ -377,8 +392,10 @@ func helper() int { return 42 }
 func TestMCPCodeAnalysisToolsEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	repo := dir + "/repo"
-	os.MkdirAll(repo, 0o755)
-	os.WriteFile(repo+"/app.go", []byte(`package main
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(repo+"/app.go", []byte(`package main
 
 func Root() { mid(); }
 
@@ -389,7 +406,9 @@ func leafB() {}
 func cyc1() { cyc2() }
 func cyc2() { cyc1() }
 func deadSym() {}
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	store, err := codeindex.NewStore(dir + "/idx")
 	if err != nil {
@@ -418,7 +437,7 @@ func deadSym() {}
 		}
 	}
 	buildCommit("main")
-	os.WriteFile(repo+"/extra.go", []byte("package main\n\nfunc Extra() {}\n"), 0o644)
+	_ = os.WriteFile(repo+"/extra.go", []byte("package main\n\nfunc Extra() {}\n"), 0o644)
 	buildCommit("feat/x")
 
 	id := 1

@@ -192,8 +192,12 @@ func TestWalkExcludes(t *testing.T) {
 		"main.go", "sub/util.go", "node_modules/x.js", ".git/config.go",
 	} {
 		full := filepath.Join(root, p)
-		os.MkdirAll(filepath.Dir(full), 0o755)
-		os.WriteFile(full, []byte("package x\n"), 0o644)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("package x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	files, err := Walk(root)
 	if err != nil {

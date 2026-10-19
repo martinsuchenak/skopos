@@ -50,7 +50,7 @@ func (e *OpenAIEmbedder) Embed(ctx context.Context, texts []string) ([][]float32
 	if err != nil {
 		return nil, fmt.Errorf("embedding request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("embedding endpoint returned %s", resp.Status)
 	}
@@ -188,7 +188,7 @@ func (s *Service) EmbedPending(ctx context.Context, workspace string, embedder E
 			var id int64
 			var kind string
 			if err := rows.Scan(&id, &kind); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return 0, err
 			}
 			cursor = id
@@ -196,7 +196,7 @@ func (s *Service) EmbedPending(ctx context.Context, workspace string, embedder E
 				pageIDs = append(pageIDs, id)
 			}
 		}
-		rows.Close()
+		_ = rows.Close()
 		if err := rows.Err(); err != nil {
 			return 0, err
 		}
@@ -253,12 +253,12 @@ func (s *Service) EmbedPending(ctx context.Context, workspace string, embedder E
 			var id int64
 			var name, sig, doc, attrsJSON string
 			if err := rows.Scan(&id, &name, &sig, &doc, &attrsJSON); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return 0, err
 			}
 			byID[id] = embedText(name, sig, doc, unmarshalStrings(attrsJSON))
 		}
-		rows.Close()
+		_ = rows.Close()
 		if err := rows.Err(); err != nil {
 			return 0, err
 		}
@@ -369,7 +369,7 @@ func (s *Service) SemanticSearch(ctx context.Context, workspace, branch, query, 
 	if err != nil {
 		return base, nil
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	idOrder := map[int64]int{}
 	for i, id := range ids {
 		idOrder[id] = i
@@ -386,7 +386,7 @@ func (s *Service) SemanticSearch(ctx context.Context, workspace, branch, query, 
 		h.rank = idOrder[id]
 		vecHits = append(vecHits, h)
 	}
-	rows.Close()
+	_ = rows.Close()
 	// The join returns rows in path order; RRF must credit vector rank, so
 	// restore the vector-store ranking before fusing.
 	sort.Slice(vecHits, func(i, j int) bool { return vecHits[i].rank < vecHits[j].rank })

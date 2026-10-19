@@ -47,7 +47,7 @@ func postJSON[T any](ctx context.Context, serverURL, apiKey, method, path string
 	if err != nil {
 		return zero, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return zero, fmt.Errorf("%s", apiErrorMessage(method+" "+path, resp))
 	}
@@ -72,7 +72,7 @@ func getJSON[T any](ctx context.Context, serverURL, apiKey, path string) (T, err
 	if err != nil {
 		return zero, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return zero, fmt.Errorf("%s", apiErrorMessage("GET "+path, resp))
 	}

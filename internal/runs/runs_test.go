@@ -23,7 +23,7 @@ func testStorage(t *testing.T) *Storage {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { sqlDB.Close() })
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if err := db.RunMigrations(sqlDB); err != nil {
 		t.Fatal(err)
 	}
@@ -132,9 +132,9 @@ func TestAffinity(t *testing.T) {
 func TestPauseHeartbeatResume(t *testing.T) {
 	s := testService(t)
 	ctx := rootCtx()
-	run := mustQueue(t, s, ctx, "ws-a", "item-1", StageImplement)
+	_ = mustQueue(t, s, ctx, "ws-a", "item-1", StageImplement)
 
-	run, _ = s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	run, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
 	if err := s.Heartbeat(ctx, run.ID, "w1", run.LeaseToken); err != nil {
 		t.Fatalf("heartbeat: %v", err)
 	}

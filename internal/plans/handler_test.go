@@ -19,7 +19,7 @@ func testHandler(t *testing.T, apiKey string) *Handler {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	t.Cleanup(func() { sqlDB.Close() })
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if _, err := sqlDB.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		t.Fatalf("enable fk: %v", err)
 	}
@@ -111,7 +111,9 @@ func TestHandlerAddItemAndPatchStatus(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CreatePlan(w, req)
 	var plan Plan
-	json.NewDecoder(w.Body).Decode(&plan)
+	if err := json.NewDecoder(w.Body).Decode(&plan); err != nil {
+		t.Fatal(err)
+	}
 
 	itemBody := bytes.NewBufferString(`{"title":"Fix auth bug"}`)
 	req2 := httptest.NewRequest("POST", "/api/plans/"+plan.ID+"/items", itemBody)
@@ -123,7 +125,9 @@ func TestHandlerAddItemAndPatchStatus(t *testing.T) {
 		t.Fatalf("add item: expected 201, got %d body=%s", w2.Code, w2.Body.String())
 	}
 	var item Item
-	json.NewDecoder(w2.Body).Decode(&item)
+	if err := json.NewDecoder(w2.Body).Decode(&item); err != nil {
+		t.Fatal(err)
+	}
 
 	patchBody := bytes.NewBufferString(`{"status":"done"}`)
 	req3 := httptest.NewRequest("PATCH", "/api/plans/"+plan.ID+"/items/"+item.ID, patchBody)
@@ -141,7 +145,9 @@ func TestHandlerAddItemAndPatchStatus(t *testing.T) {
 	w4 := httptest.NewRecorder()
 	h.GetPlan(w4, req4)
 	var updated Plan
-	json.NewDecoder(w4.Body).Decode(&updated)
+	if err := json.NewDecoder(w4.Body).Decode(&updated); err != nil {
+		t.Fatal(err)
+	}
 	if len(updated.Items) != 1 || updated.Items[0].Status != ItemDone {
 		t.Errorf("expected item done, got %v", updated.Items)
 	}
@@ -156,7 +162,9 @@ func TestHandlerDeletePlanCascades(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CreatePlan(w, req)
 	var plan Plan
-	json.NewDecoder(w.Body).Decode(&plan)
+	if err := json.NewDecoder(w.Body).Decode(&plan); err != nil {
+		t.Fatal(err)
+	}
 
 	req2 := httptest.NewRequest("DELETE", "/api/plans/"+plan.ID, nil)
 	req2.SetPathValue("id", plan.ID)
@@ -250,7 +258,9 @@ func TestHandlerAddDependencyAndAutoBlock(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CreatePlan(w, req)
 	var plan Plan
-	json.NewDecoder(w.Body).Decode(&plan)
+	if err := json.NewDecoder(w.Body).Decode(&plan); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, title := range []string{"First", "Second"} {
 		itemBody := bytes.NewBufferString(fmt.Sprintf(`{"title":"%s"}`, title))
@@ -269,7 +279,9 @@ func TestHandlerAddDependencyAndAutoBlock(t *testing.T) {
 	planW := httptest.NewRecorder()
 	h.GetPlan(planW, planReq)
 	var fullPlan Plan
-	json.NewDecoder(planW.Body).Decode(&fullPlan)
+	if err := json.NewDecoder(planW.Body).Decode(&fullPlan); err != nil {
+		t.Fatal(err)
+	}
 
 	depBody := bytes.NewBufferString(fmt.Sprintf(`{"depends_on_item_id":"%s"}`, fullPlan.Items[0].ID))
 	depReq := httptest.NewRequest("POST", fmt.Sprintf("/api/plans/%s/items/%s/dependencies", plan.ID, fullPlan.Items[1].ID), depBody)
@@ -283,7 +295,9 @@ func TestHandlerAddDependencyAndAutoBlock(t *testing.T) {
 	}
 
 	var updatedItem Item
-	json.NewDecoder(depW.Body).Decode(&updatedItem)
+	if err := json.NewDecoder(depW.Body).Decode(&updatedItem); err != nil {
+		t.Fatal(err)
+	}
 	if updatedItem.Status != ItemBlocked {
 		t.Errorf("expected blocked, got %q", updatedItem.Status)
 	}
@@ -298,7 +312,9 @@ func TestHandlerRemoveDependency(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CreatePlan(w, req)
 	var plan Plan
-	json.NewDecoder(w.Body).Decode(&plan)
+	if err := json.NewDecoder(w.Body).Decode(&plan); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, title := range []string{"A", "B"} {
 		itemBody := bytes.NewBufferString(fmt.Sprintf(`{"title":"%s"}`, title))
@@ -314,7 +330,9 @@ func TestHandlerRemoveDependency(t *testing.T) {
 	planW := httptest.NewRecorder()
 	h.GetPlan(planW, planReq)
 	var fullPlan Plan
-	json.NewDecoder(planW.Body).Decode(&fullPlan)
+	if err := json.NewDecoder(planW.Body).Decode(&fullPlan); err != nil {
+		t.Fatal(err)
+	}
 
 	depBody := bytes.NewBufferString(fmt.Sprintf(`{"depends_on_item_id":"%s"}`, fullPlan.Items[0].ID))
 	depReq := httptest.NewRequest("POST", fmt.Sprintf("/api/plans/%s/items/%s/dependencies", plan.ID, fullPlan.Items[1].ID), depBody)
@@ -354,7 +372,9 @@ func TestHandlerAddItemWithPosition(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CreatePlan(w, req)
 	var plan Plan
-	json.NewDecoder(w.Body).Decode(&plan)
+	if err := json.NewDecoder(w.Body).Decode(&plan); err != nil {
+		t.Fatal(err)
+	}
 
 	itemBody := bytes.NewBufferString(`{"title":"First","position":0}`)
 	req1 := httptest.NewRequest("POST", "/api/plans/"+plan.ID+"/items", itemBody)
@@ -381,7 +401,9 @@ func TestHandlerAddItemWithPosition(t *testing.T) {
 	getW := httptest.NewRecorder()
 	h.GetPlan(getW, getReq)
 	var updated Plan
-	json.NewDecoder(getW.Body).Decode(&updated)
+	if err := json.NewDecoder(getW.Body).Decode(&updated); err != nil {
+		t.Fatal(err)
+	}
 	if len(updated.Items) != 2 {
 		t.Fatalf("expected 2 items, got %d", len(updated.Items))
 	}
@@ -401,7 +423,9 @@ func TestHandlerUpdateItemClaimConflict(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CreatePlan(w, req)
 	var plan Plan
-	json.NewDecoder(w.Body).Decode(&plan)
+	if err := json.NewDecoder(w.Body).Decode(&plan); err != nil {
+		t.Fatal(err)
+	}
 
 	itemBody := bytes.NewBufferString(`{"title":"task"}`)
 	req2 := httptest.NewRequest("POST", "/api/plans/"+plan.ID+"/items", itemBody)
@@ -410,7 +434,9 @@ func TestHandlerUpdateItemClaimConflict(t *testing.T) {
 	w2 := httptest.NewRecorder()
 	h.AddItem(w2, req2)
 	var item Item
-	json.NewDecoder(w2.Body).Decode(&item)
+	if err := json.NewDecoder(w2.Body).Decode(&item); err != nil {
+		t.Fatal(err)
+	}
 
 	patch := func(claim string) int {
 		b := bytes.NewBufferString(`{"claimed_by_agent_id":"` + claim + `"}`)

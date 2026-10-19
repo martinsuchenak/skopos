@@ -49,7 +49,7 @@ func (s *Storage) List(ctx context.Context) ([]Workspace, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing workspaces: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Workspace
 	for rows.Next() {
 		var ws Workspace

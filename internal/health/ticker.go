@@ -55,7 +55,7 @@ func (c *Checker) check(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	t := c.now().UTC()
 	now := formatTime(t)
@@ -77,12 +77,12 @@ func (c *Checker) check(ctx context.Context) error {
 	for rows.Next() {
 		var a staleAgent
 		if err := rows.Scan(&a.sessionID, &a.agentID, &a.agentType, &a.workspace); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return fmt.Errorf("scanning stale agent: %w", err)
 		}
 		stale = append(stale, a)
 	}
-	rows.Close()
+	_ = rows.Close()
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterating stale agents: %w", err)
 	}

@@ -75,7 +75,7 @@ func Connect(log logger.Logger, path string) (*sql.DB, error) {
 	}
 
 	if err := sqlDB.Ping(); err != nil {
-		sqlDB.Close()
+		_ = sqlDB.Close()
 		return nil, fmt.Errorf("pinging database: %w", err)
 	}
 
@@ -198,7 +198,7 @@ func ensureColumn(db *sql.DB, table, column, decl string) error {
 	if err != nil {
 		return fmt.Errorf("inspecting %s: %w", table, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var cid int
 		var name, ctype string

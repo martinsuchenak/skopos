@@ -6,6 +6,7 @@ import (
 	"hash/fnv"
 	"html/template"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"runtime"
 	"strings"
@@ -218,6 +219,10 @@ func registerWebRoutes(mux *http.ServeMux) {
 		if build.Date != "unknown" {
 			version += " · " + build.Date
 		}
-		templates.ExecuteTemplate(w, "base.html", map[string]any{"Title": "Dashboard", "Version": version, "Assets": assetsVersion})
+		// Headers are already sent once rendering starts; a failure can only
+		// be logged.
+		if err := templates.ExecuteTemplate(w, "base.html", map[string]any{"Title": "Dashboard", "Version": version, "Assets": assetsVersion}); err != nil {
+			slog.Error("rendering the dashboard", "err", err)
+		}
 	})
 }

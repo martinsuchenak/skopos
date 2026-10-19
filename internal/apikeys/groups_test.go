@@ -78,7 +78,9 @@ func TestLookupKeyGroupResolution(t *testing.T) {
 	seedKey(t, s, "k-both", "h3", false, []string{"github.com/fortix/portal"}, []string{"g1"})
 	seedKey(t, s, "k-all", "h4", true, nil, []string{"g1"})
 	seedKey(t, s, "k-revoked", "h5", false, nil, []string{"g1"})
-	s.db.ExecContext(ctx, `UPDATE api_keys SET revoked_at = ? WHERE id = 'k-revoked'`, formatTime(timeNowUTC()))
+	if _, err := s.db.ExecContext(ctx, `UPDATE api_keys SET revoked_at = ? WHERE id = 'k-revoked'`, formatTime(timeNowUTC())); err != nil {
+		t.Fatal(err)
+	}
 
 	// Explicit only.
 	info, err := s.LookupKey(ctx, "h1")
@@ -231,7 +233,9 @@ func TestKeyWithGroups(t *testing.T) {
 	}
 
 	// The key resolves to the group's members.
-	st.db.ExecContext(ctx, `UPDATE api_keys SET key_hash = 'lookup-hash' WHERE id = ?`, result.Key.ID)
+	if _, err := st.db.ExecContext(ctx, `UPDATE api_keys SET key_hash = 'lookup-hash' WHERE id = ?`, result.Key.ID); err != nil {
+		t.Fatal(err)
+	}
 	info, err := st.LookupKey(ctx, "lookup-hash")
 	if err != nil || info == nil {
 		t.Fatalf("lookup: %v %v", info, err)
@@ -512,7 +516,7 @@ func TestHandlerWhoamiWithGroups(t *testing.T) {
 		if err != nil || !row.Next() {
 			t.Fatal("key hash lookup failed")
 		}
-		defer row.Close()
+		defer func() { _ = row.Close() }()
 		var hash string
 		_ = row.Scan(&hash)
 		return hash

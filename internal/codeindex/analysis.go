@@ -50,7 +50,7 @@ func (s *Service) Dead(ctx context.Context, workspace, branch, pathPrefix string
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := &DeadResult{Branch: label, Fallback: fallback}
 	if fallback {
 		out.Note = label
@@ -219,7 +219,7 @@ func (s *Service) uniqueNameResolver(workspace, branch string) func(string) stri
 	if err != nil {
 		return func(n string) string { return n }
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	m := map[string]string{}
 	for rows.Next() {
 		var name, pick string
@@ -256,7 +256,7 @@ func (s *Service) branchGraph(workspace, branch string) (map[string][]string, er
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	adj := map[string]map[string]bool{}
 	for rows.Next() {
 		var caller, callee string
@@ -443,7 +443,7 @@ func (s *Service) BranchDiff(ctx context.Context, workspace, branch, base string
 		if err != nil {
 			return nil, err
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		m := map[string]string{}
 		for rows.Next() {
 			var p, h string
@@ -468,7 +468,7 @@ func (s *Service) BranchDiff(ctx context.Context, workspace, branch, base string
 		if err != nil {
 			return nil, err
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		m := map[string]SymbolHit{}
 		for rows.Next() {
 			var h SymbolHit
@@ -612,14 +612,4 @@ func maskName(sig, name string) string {
 		return sig[:i] + "\x00" + sig[i+len(name):]
 	}
 	return sig
-}
-
-// firstOther picks the first branch that isn't skip, for hint messages.
-func firstOther(branches []string, skip string) string {
-	for _, b := range branches {
-		if b != skip {
-			return b
-		}
-	}
-	return "<feature-branch>"
 }

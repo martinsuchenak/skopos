@@ -330,7 +330,7 @@ func plansPost(ctx context.Context, serverURL, apiKey string, input plans.Create
 	if err != nil {
 		return nil, fmt.Errorf("posting plan: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("%s", apiErrorMessage("posting plan", resp))
 	}
@@ -365,7 +365,7 @@ func plansGetList(ctx context.Context, serverURL, apiKey, branch, workspaceID st
 	if err != nil {
 		return nil, fmt.Errorf("listing plans: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s", apiErrorMessage("listing plans", resp))
 	}
@@ -389,7 +389,7 @@ func plansGetOne(ctx context.Context, serverURL, apiKey, id string) (*plans.Plan
 	if err != nil {
 		return nil, fmt.Errorf("getting plan: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s", apiErrorMessage("getting plan", resp))
 	}
@@ -418,7 +418,7 @@ func plansPatch(ctx context.Context, serverURL, apiKey, id string, input plans.U
 	if err != nil {
 		return fmt.Errorf("patching plan: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("%s", apiErrorMessage("patching plan", resp))
 	}
@@ -443,7 +443,7 @@ func plansItemPost(ctx context.Context, serverURL, apiKey, planID string, input 
 	if err != nil {
 		return nil, fmt.Errorf("adding item: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("%s", apiErrorMessage("adding item", resp))
 	}
@@ -473,7 +473,7 @@ func plansItemPatch(ctx context.Context, serverURL, apiKey, planID, itemID strin
 	if err != nil {
 		return fmt.Errorf("%s item: %w", action, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("%s", apiErrorMessage(action+" item", resp))
 	}

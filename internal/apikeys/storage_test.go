@@ -19,7 +19,7 @@ func testStorage(t *testing.T) *Storage {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { sqlDB.Close() })
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if err := db.RunMigrations(sqlDB); err != nil {
 		t.Fatal(err)
 	}
@@ -31,14 +31,24 @@ func TestLookupKey(t *testing.T) {
 	ctx := context.Background()
 
 	now := "2026-09-14T00:00:00Z"
-	s.db.ExecContext(ctx, `INSERT INTO api_keys (id, name, key_hash, key_prefix, all_workspaces, created_at)
-		VALUES ('k1', 'ci', 'hash-1', 'sk_prefix1', 0, ?)`, now)
-	s.db.ExecContext(ctx, `INSERT INTO api_key_workspaces (api_key_id, workspace_id) VALUES ('k1', 'github.com/o/a'), ('k1', 'github.com/o/b')`)
-	s.db.ExecContext(ctx, `INSERT INTO api_keys (id, name, key_hash, key_prefix, all_workspaces, created_at)
-		VALUES ('k2', 'revoked', 'hash-2', 'sk_prefix2', 1, ?)`, now)
-	s.db.ExecContext(ctx, `UPDATE api_keys SET revoked_at = ? WHERE id = 'k2'`, now)
-	s.db.ExecContext(ctx, `INSERT INTO api_keys (id, name, key_hash, key_prefix, all_workspaces, created_at)
-		VALUES ('k3', 'all', 'hash-3', 'sk_prefix3', 1, ?)`, now)
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO api_keys (id, name, key_hash, key_prefix, all_workspaces, created_at)
+		VALUES ('k1', 'ci', 'hash-1', 'sk_prefix1', 0, ?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO api_key_workspaces (api_key_id, workspace_id) VALUES ('k1', 'github.com/o/a'), ('k1', 'github.com/o/b')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO api_keys (id, name, key_hash, key_prefix, all_workspaces, created_at)
+		VALUES ('k2', 'revoked', 'hash-2', 'sk_prefix2', 1, ?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE api_keys SET revoked_at = ? WHERE id = 'k2'`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO api_keys (id, name, key_hash, key_prefix, all_workspaces, created_at)
+		VALUES ('k3', 'all', 'hash-3', 'sk_prefix3', 1, ?)`, now); err != nil {
+		t.Fatal(err)
+	}
 
 	info, err := s.LookupKey(ctx, "hash-1")
 	if err != nil || info == nil {
@@ -77,8 +87,10 @@ func TestListAllWorkspacesKeyEmitsEmptySlice(t *testing.T) {
 	s := testStorage(t)
 	ctx := context.Background()
 	now := "2026-09-14T00:00:00Z"
-	s.db.ExecContext(ctx, `INSERT INTO api_keys (id, name, key_hash, key_prefix, all_workspaces, created_at)
-		VALUES ('ka', 'all', 'h', 'sk_p', 1, ?)`, now)
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO api_keys (id, name, key_hash, key_prefix, all_workspaces, created_at)
+		VALUES ('ka', 'all', 'h', 'sk_p', 1, ?)`, now); err != nil {
+		t.Fatal(err)
+	}
 	keys, err := s.List(ctx)
 	if err != nil || len(keys) != 1 {
 		t.Fatalf("list: %+v %v", keys, err)

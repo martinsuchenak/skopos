@@ -90,9 +90,9 @@ func installCmd() *cli.Command {
 				return err
 			}
 			for _, r := range results {
-				fmt.Fprintf(os.Stdout, "=== %s ===\n", r.Agent)
+				_, _ = fmt.Fprintf(os.Stdout, "=== %s ===\n", r.Agent)
 				for _, a := range r.Actions {
-					fmt.Fprintf(os.Stdout, "  - %s\n", a)
+					_, _ = fmt.Fprintf(os.Stdout, "  - %s\n", a)
 				}
 			}
 			return nil

@@ -259,9 +259,7 @@ func (h *Handler) MigrateWorkflow(w http.ResponseWriter, r *http.Request) {
 	}
 	var req migrateRequest
 	_ = rest.DecodeJSON(w, r, &req)
-	report, err := h.service.MigrateWorkflow(r.Context(), MigrateInput{
-		WorkspaceID: req.WorkspaceID, DryRun: req.DryRun, Links: req.Links,
-	})
+	report, err := h.service.MigrateWorkflow(r.Context(), MigrateInput(req))
 	if err != nil {
 		if errors.Is(err, auth.ErrRootRequired) {
 			rest.RespondError(w, http.StatusForbidden, err.Error())

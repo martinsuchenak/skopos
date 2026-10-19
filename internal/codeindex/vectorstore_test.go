@@ -27,10 +27,12 @@ func runVectorStoreConformance(t *testing.T, vs VectorStore, svc *Service, store
 	}
 	for rows.Next() {
 		var id int64
-		rows.Scan(&id)
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
 		ids = append(ids, id)
 	}
-	rows.Close()
+	_ = rows.Close()
 	if len(ids) != 2 {
 		t.Fatalf("expected 2 symbol ids, got %v", ids)
 	}

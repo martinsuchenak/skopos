@@ -241,7 +241,7 @@ func (r *Refresher) syncCheckout(gitURL, branch string) (string, error) {
 	// "--" ends option parsing so a URL can never be interpreted as a git option.
 	args = append(args, "--", gitURL, dir)
 	if out, err := git("", args...); err != nil {
-		os.RemoveAll(dir) // partial clone: start clean next time
+		_ = os.RemoveAll(dir) // partial clone: start clean next time
 		return "", fmt.Errorf("git clone: %w (%s)", err, lastLine(out))
 	}
 	return dir, nil

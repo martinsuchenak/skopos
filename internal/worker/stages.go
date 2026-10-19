@@ -617,12 +617,6 @@ func numberedSteps(steps []Step) string {
 	return b.String()
 }
 
-func numberedFromContent(content string) []Step {
-	// The enrichment section carries the numbered steps; the implementer
-	// prompt receives the whole item content anyway.
-	return nil
-}
-
 func bullets(xs []string) string {
 	var b strings.Builder
 	for _, x := range xs {
@@ -636,13 +630,6 @@ func min(a, b int) int {
 		return a
 	}
 	return b
-}
-
-func orDefault(s, def string) string {
-	if s == "" {
-		return def
-	}
-	return s
 }
 
 func dirExists(p string) bool {

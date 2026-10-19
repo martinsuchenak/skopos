@@ -68,7 +68,7 @@ func sessionsDoPurge(ctx context.Context, serverURL, apiKey, workspaceID string)
 	if err != nil {
 		return 0, fmt.Errorf("purging sessions: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("%s", apiErrorMessage("purging sessions", resp))
 	}

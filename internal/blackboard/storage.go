@@ -75,7 +75,7 @@ func (s *Storage) Bundle(ctx context.Context, workspaceID, branchName, sessionID
 	if err != nil {
 		return nil, fmt.Errorf("querying bundle: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var entries []Entry
 	for rows.Next() {
@@ -134,7 +134,7 @@ func (s *Storage) Promote(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var entry Entry
 	var workspaceID, branchName, sessionID, codeRef sql.NullString
@@ -314,7 +314,7 @@ func (s *Storage) Search(ctx context.Context, f SearchFilters) ([]Entry, error) 
 	if err != nil {
 		return nil, fmt.Errorf("searching blackboard: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Entry
 	for rows.Next() {
 		e, err := scanEntry(rows)

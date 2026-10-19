@@ -40,7 +40,7 @@ func TestConnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Connect: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if err := db.Ping(); err != nil {
 		t.Fatalf("Ping: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestConnect(t *testing.T) {
 
 func TestRunMigrationsCreatesAllTables(t *testing.T) {
 	db, _ := sql.Open("sqlite", sqliteDSN(":memory:"))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if err := RunMigrations(db); err != nil {
 		t.Fatalf("first migration: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestSessionDeleteCascadesBlackboard(t *testing.T) {
 	if err := RunMigrations(sqlDB); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	t.Cleanup(func() { sqlDB.Close() })
+	t.Cleanup(func() { _ = sqlDB.Close() })
 
 	if _, err := sqlDB.ExecContext(ctx,
 		`INSERT INTO sessions (id, title, workspace, status, started_at, updated_at) VALUES ('s1','t','w','running','2024-01-01T00:00:00Z','2024-01-01T00:00:00Z')`); err != nil {

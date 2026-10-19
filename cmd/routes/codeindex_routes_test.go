@@ -23,13 +23,17 @@ func codeindexSetup(t *testing.T, apiKey string) (*httptest.Server, string) {
 	t.Helper()
 	dir := t.TempDir()
 	repo := filepath.Join(dir, "repo")
-	os.MkdirAll(filepath.Join(repo, "pkg"), 0o755)
-	os.WriteFile(filepath.Join(repo, "main.go"), []byte(`package main
+	if err := os.MkdirAll(filepath.Join(repo, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "main.go"), []byte(`package main
 
 func Handler() string { return helper() }
 
 func helper() string { return "x" }
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	store, err := codeindex.NewStore(filepath.Join(dir, "idx"))
 	if err != nil {
@@ -79,8 +83,10 @@ func pushRepo(t *testing.T, ts *httptest.Server, key, repo, workspace, branch st
 	var man struct {
 		Missing []string `json:"missing"`
 	}
-	json.NewDecoder(resp.Body).Decode(&man)
-	resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&man); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
 	if len(man.Missing) != len(entries) {
 		t.Fatalf("manifest: expected %d missing, got %v", len(entries), man.Missing)
 	}
@@ -88,7 +94,7 @@ func pushRepo(t *testing.T, ts *httptest.Server, key, repo, workspace, branch st
 	// blobs (ndjson)
 	var nd bytes.Buffer
 	for _, h := range man.Missing {
-		json.NewEncoder(&nd).Encode(byHash[h])
+		_ = json.NewEncoder(&nd).Encode(byHash[h])
 	}
 	req, _ = http.NewRequest(http.MethodPost, ts.URL+fmt.Sprintf("/api/codeindex/%s/blobs", url.PathEscape(workspace)), bytes.NewReader(nd.Bytes()))
 	req.Header.Set("Content-Type", "application/x-ndjson")
@@ -100,8 +106,10 @@ func pushRepo(t *testing.T, ts *httptest.Server, key, repo, workspace, branch st
 		t.Fatal(err)
 	}
 	var stored map[string]int
-	json.NewDecoder(resp.Body).Decode(&stored)
-	resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&stored); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
 	if stored["stored"] != len(entries) {
 		t.Fatalf("blobs: %+v", stored)
 	}
@@ -117,7 +125,7 @@ func pushRepo(t *testing.T, ts *httptest.Server, key, repo, workspace, branch st
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("commit: %d", resp.StatusCode)
 	}
@@ -130,8 +138,10 @@ func TestCodeIndexPushSearchGraph(t *testing.T) {
 	// search by split camel/snake token
 	resp, _ := http.Get(ts.URL + "/api/codeindex/github.com%2Fexample%2Frepo/search?q=handler")
 	var res codeindex.SearchResults
-	json.NewDecoder(resp.Body).Decode(&res)
-	resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
 	if len(res.Hits) != 1 || res.Hits[0].Name != "Handler" {
 		t.Fatalf("search: %+v", res.Hits)
 	}
@@ -139,8 +149,10 @@ func TestCodeIndexPushSearchGraph(t *testing.T) {
 	// callers of helper -> Handler
 	resp, _ = http.Get(ts.URL + "/api/codeindex/github.com%2Fexample%2Frepo/callers?name=helper")
 	var callers codeindex.GraphResults
-	json.NewDecoder(resp.Body).Decode(&callers)
-	resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&callers); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
 	if len(callers.Edges) != 1 || callers.Edges[0].Caller != "Handler" {
 		t.Fatalf("callers: %+v", callers.Edges)
 	}
@@ -148,16 +160,20 @@ func TestCodeIndexPushSearchGraph(t *testing.T) {
 	// status
 	resp, _ = http.Get(ts.URL + "/api/codeindex/github.com%2Fexample%2Frepo/status")
 	var status []codeindex.BranchStatus
-	json.NewDecoder(resp.Body).Decode(&status)
-	resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
 	if len(status) != 1 || status[0].Branch != "main" || status[0].SymbolCount != 2 {
 		t.Fatalf("status: %+v", status)
 	}
 
 	// unknown branch falls back with a note
 	resp, _ = http.Get(ts.URL + "/api/codeindex/github.com%2Fexample%2Frepo/search?q=handler&branch=feat%2Fx")
-	json.NewDecoder(resp.Body).Decode(&res)
-	resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
 	if !res.Fallback || !strings.Contains(res.Note, "feat/x") {
 		t.Fatalf("fallback: %+v", res)
 	}
@@ -169,7 +185,7 @@ func TestCodeIndexRequiresAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", resp.StatusCode)
 	}
@@ -180,7 +196,7 @@ func TestCodeIndexRequiresAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("keyed status: %d", resp.StatusCode)
 	}
@@ -194,7 +210,7 @@ func TestCodeIndexBadContentType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusUnsupportedMediaType {
 		t.Fatalf("expected 415, got %d", resp.StatusCode)
 	}
@@ -255,7 +271,7 @@ func TestCodeIndexServerSideRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("refresh start: %d", resp.StatusCode)
 	}
@@ -283,8 +299,8 @@ func TestCodeIndexServerSideRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	var res codeindex.SearchResults
-	json.NewDecoder(resp.Body).Decode(&res)
-	resp.Body.Close()
+	_ = json.NewDecoder(resp.Body).Decode(&res)
+	_ = resp.Body.Close()
 	if len(res.Hits) == 0 {
 		t.Fatalf("server-built index has no hits: %+v", res)
 	}
@@ -309,9 +325,9 @@ func getRefreshState(url string) (codeindex.RefreshState, error) {
 	if err != nil {
 		return codeindex.RefreshState{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var s codeindex.RefreshState
-	json.NewDecoder(resp.Body).Decode(&s)
+	_ = json.NewDecoder(resp.Body).Decode(&s)
 	return s, nil
 }
 
@@ -321,15 +337,19 @@ func TestCodeIndexAnalysisEndpoints(t *testing.T) {
 
 	// Feature branch for the diff.
 	other := repo + "-feat"
-	os.MkdirAll(other, 0o755)
-	os.WriteFile(filepath.Join(other, "main.go"), []byte(`package main
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(other, "main.go"), []byte(`package main
 
 func Handler() string { return helper() }
 
 func helper() string { return "x" }
 
 func Added() {}
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	pushRepo(t, ts, "", other, "github.com/example/repo", "feat/x")
 
 	get := func(path string) map[string]any {
@@ -337,9 +357,9 @@ func Added() {}
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		var m map[string]any
-		json.NewDecoder(resp.Body).Decode(&m)
+		_ = json.NewDecoder(resp.Body).Decode(&m)
 		return m
 	}
 
@@ -399,7 +419,7 @@ func TestCodeIndexDropWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("drop workspace: %d", resp.StatusCode)
 	}
@@ -408,9 +428,11 @@ func TestCodeIndexDropWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var status []codeindex.BranchStatus
-	json.NewDecoder(resp.Body).Decode(&status)
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
 	if len(status) != 0 {
 		t.Fatalf("status after drop: %+v", status)
 	}

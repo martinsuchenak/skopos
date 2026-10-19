@@ -19,10 +19,10 @@ func TestLoadWorkerEnvFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("SKOPOS_TEST_PUSH_TOKEN", "tok_from_env")
-	defer os.Unsetenv("SKOPOS_TEST_WORKER_KEY")
-	defer os.Unsetenv("SKOPOS_TEST_EXPORTED")
-	defer os.Unsetenv("SKOPOS_TEST_QUOTED")
-	defer os.Unsetenv("SKOPOS_TEST_SPACED")
+	defer func() { _ = os.Unsetenv("SKOPOS_TEST_WORKER_KEY") }()
+	defer func() { _ = os.Unsetenv("SKOPOS_TEST_EXPORTED") }()
+	defer func() { _ = os.Unsetenv("SKOPOS_TEST_QUOTED") }()
+	defer func() { _ = os.Unsetenv("SKOPOS_TEST_SPACED") }()
 
 	keys, warnings, err := loadWorkerEnvFile(envPath)
 	if err != nil {

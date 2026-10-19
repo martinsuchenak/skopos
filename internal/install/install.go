@@ -675,7 +675,7 @@ func appendBlockAction(path, content string, o Options, actions *[]string) error
 		return err
 	}
 
-	updated := existing
+	var updated string
 	hadBlock := strings.Contains(existing, begin)
 	if hadBlock {
 		updated = replaceMarker(existing, begin, end, inner)

@@ -96,7 +96,7 @@ func (s *Storage) List(ctx context.Context, f ListFilter) ([]Entry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing audit entries: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Entry
 	for rows.Next() {
 		var e Entry

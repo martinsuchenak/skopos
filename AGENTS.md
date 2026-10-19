@@ -12,7 +12,7 @@
 task build-local      # build for current OS (runs frontend-build first)
 task build            # cross-compile for linux/darwin amd64+arm64
 task test             # go test ./... -v -count=1
-task lint             # golangci-lint run .
+task lint             # golangci-lint run ./... (every package, tests included)
 task frontend-build   # bun install && bun run build in web/
 ```
 
