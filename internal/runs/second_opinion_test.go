@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A second opinion needs a runner and a head; it never moves the item; its
@@ -72,5 +73,31 @@ func TestSecondOpinionRun(t *testing.T) {
 	}
 	if len(heard) != 1 || heard[0].Verdict != "fail" || heard[0].Runner != "codex" || heard[0].HeadSHA != "abc1234def" {
 		t.Fatalf("notifier: %+v", heard)
+	}
+}
+
+// A second opinion parked by a quota limit stays parked when an amendment's
+// approval resumes the item's runs: it comes back at its own reset.
+func TestSecondOpinionNotResumedWithItem(t *testing.T) {
+	s := testService(t)
+	insertItem(t, s, "item-1")
+	ctx := rootCtx()
+	id, err := s.QueueSecondOpinion(ctx, "item-1", "ws-a", "codex", "abc1234def", "agent/x", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w2", Runners: []string{"codex"}, Workspaces: []string{"ws-a"}})
+	if c == nil || c.ID != id {
+		t.Fatalf("claim: %+v", c)
+	}
+	if err := s.Pause(ctx, c.ID, "w2", "quota", time.Now().Add(time.Hour), c.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ResumeItem(ctx, "item-1"); err != nil {
+		t.Fatal(err)
+	}
+	paused, err := s.storage.List(ctx, StatusPaused, "item-1")
+	if err != nil || len(paused) != 1 || paused[0].ID != id {
+		t.Fatalf("the second opinion must stay paused: %+v %v", paused, err)
 	}
 }

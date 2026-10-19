@@ -727,6 +727,8 @@ func (s *Service) Timeline(ctx context.Context, itemID string) ([]audit.Entry, e
 
 // hasPausedRun reports whether the item has a run parked by an amendment —
 // approving the amendment re-arms that run instead of queueing a new one.
+// A paused second opinion (advisory, parked by a quota limit) doesn't count:
+// it would swallow the implement run the approval must queue.
 func (s *Service) hasPausedRun(ctx context.Context, itemID string) bool {
 	if s.runLister == nil {
 		return false
@@ -736,7 +738,7 @@ func (s *Service) hasPausedRun(ctx context.Context, itemID string) bool {
 		return false
 	}
 	for _, r := range runs {
-		if r.Status == "paused" {
+		if r.Status == "paused" && r.Stage != "second_opinion" {
 			return true
 		}
 	}

@@ -540,6 +540,9 @@ func (s *Service) ResumeItem(ctx context.Context, itemID string) error {
 		return err
 	}
 	for i := range runs {
+		if runs[i].Stage == StageSecondOpinion { // advisory: resumes on its own, never with an amendment
+			continue
+		}
 		_ = s.storage.Resume(ctx, runs[i].ID, runs[i].WorkerID, s.lease, s.now().UTC())
 	}
 	return nil

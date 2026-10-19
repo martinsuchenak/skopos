@@ -1,6 +1,7 @@
 package inbox
 
 import (
+	"context"
 	"errors"
 	"testing"
 )
@@ -31,5 +32,23 @@ func TestSecondOpinionAllowed(t *testing.T) {
 		if (err == nil) != c.ok || (err != nil && !errors.Is(err, ErrInvalidInput)) {
 			t.Errorf("%s: ok=%v err=%v", c.name, c.ok, err)
 		}
+	}
+}
+
+type fixedRuns []RunSummary
+
+func (f fixedRuns) ListRuns(context.Context, string) ([]RunSummary, error) { return f, nil }
+
+// A paused second opinion is not the paused run an approval re-arms: the
+// approval must still queue the implementation.
+func TestPausedSecondOpinionIsNotAnAmendment(t *testing.T) {
+	s := &Service{}
+	s.SetRunLister(fixedRuns{{Stage: "second_opinion", Status: "paused"}, {Stage: "implement", Status: "succeeded"}})
+	if s.hasPausedRun(context.Background(), "item-1") {
+		t.Fatal("a paused second opinion must not count")
+	}
+	s.SetRunLister(fixedRuns{{Stage: "implement", Status: "paused"}})
+	if !s.hasPausedRun(context.Background(), "item-1") {
+		t.Fatal("a paused implementation counts")
 	}
 }
