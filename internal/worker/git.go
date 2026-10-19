@@ -186,9 +186,9 @@ func tail(s string, n int) string {
 // a working directory as instructions or config (CLAUDE.md, AGENTS.md,
 // opencode.json, .claude/, .opencode/, skills, MCP configs, ...).
 var instructionPaths = []string{
-	"AGENTS.md", "CLAUDE.md", "GEMINI.md", ".skopos",
+	"AGENTS.md", "AGENTS.override.md", "CLAUDE.md", "GEMINI.md", ".skopos",
 	".claude", ".mcp.json", ".opencode", "opencode.json", "opencode.jsonc",
-	".gemini", ".codex", ".cursor", ".cursorrules", ".github/copilot-instructions.md",
+	".gemini", ".codex", ".agents", ".cursor", ".cursorrules", ".github/copilot-instructions.md",
 }
 
 // restoreInstructionFiles resets every instruction/config path in a REVIEW

@@ -285,3 +285,52 @@ func TestRunnerTestProbe(t *testing.T) {
 		t.Fatalf("empty env must fail: %v\n%s", err, out.String())
 	}
 }
+
+// The wizard's codex path: a login directory of its own by default (the
+// account env carries CODEX_HOME), no runner_config block for a plain
+// "codex" name, and the notes say how to log in and what it runs.
+func TestRunnerWizardCodex(t *testing.T) {
+	bin := t.TempDir()
+	fakeBin(t, bin, "codex", `echo "codex-cli 0.163.0"`)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/usr/bin:/bin")
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skopos-config.toml")
+	if err := runWorkerInit(&strings.Builder{}, cfgPath, "https://s.example.internal", nil); err != nil {
+		t.Fatal(err)
+	}
+	answers := strings.Join([]string{
+		"3", // kind: codex
+		"",  // model: codex's default
+		"",  // runner name: codex
+		"",  // credentials: a login directory of its own
+		"",  // login dir: suggested
+		"",  // account name: codex
+		"",  // priority default
+		"",  // write it: yes
+		"n", // smoke test: no
+	}, "\n") + "\n"
+	var out strings.Builder
+	if err := runRunnerWizard(context.Background(), bufio.NewReader(strings.NewReader(answers)), &out, cfgPath, filepath.Join(dir, "skopos-worker.env"), wizardEnv{}); err != nil {
+		t.Fatalf("wizard: %v\n%s", err, out.String())
+	}
+	transcript := out.String()
+	for _, want := range []string{"✓ codex", "CODEX_HOME=~/.codex-codex codex login", "route implement to another runner"} {
+		if !strings.Contains(transcript, want) {
+			t.Errorf("transcript missing %q:\n%s", want, transcript)
+		}
+	}
+	raw, _ := os.ReadFile(cfgPath)
+	w := decodeW(t, string(raw))
+	if w.RunnerSpecs["codex"] != nil {
+		t.Fatalf("a plain codex runner needs no runner_config block:\n%s", raw)
+	}
+	var acct *worker.Account
+	for _, a := range w.Accounts {
+		if a.Name == "codex" {
+			acct = a
+		}
+	}
+	if acct == nil || acct.Runner != "codex" || acct.Env["CODEX_HOME"] != "~/.codex-codex" {
+		t.Fatalf("account: %+v\n%s", acct, raw)
+	}
+}

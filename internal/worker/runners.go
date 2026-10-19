@@ -15,8 +15,8 @@ import (
 
 // Runners: the worker is agent-CLI agnostic. A Runner turns one AgentRun
 // (prompt, allowed tools, schema, session, env, wrapper) into one agent
-// invocation and its AgentResult. Built in: "claude" and "opencode", both
-// with a lockdown skopos has verified live (instruction files not loaded,
+// invocation and its AgentResult. Built in: "claude", "opencode" and
+// "codex" (read-only stages), each with a lockdown skopos has verified live (instruction files not loaded,
 // files outside the worktree unreadable, the tool allowlist enforced —
 // TestLive*). "command" runs any CLI from an argv template; skopos cannot
 // vouch for an arbitrary CLI, so it is UNVERIFIED and only ever runs on a
@@ -38,8 +38,8 @@ type Runner interface {
 // RunnerSpec configures a runner name ([worker.runner_config.<name>]).
 // kind defaults to the name; "claude" and "opencode" need no block.
 type RunnerSpec struct {
-	Kind string `toml:"kind"` // claude | opencode | command
-	Bin  string `toml:"bin"`  // the CLI binary (claude/opencode)
+	Kind string `toml:"kind"` // claude | opencode | codex | command
+	Bin  string `toml:"bin"`  // the CLI binary (claude/opencode/codex)
 	// Config (opencode): a base opencode.json for runs — providers and
 	// models (secrets via {env:VAR}, injected through account env). The
 	// worker user's ~/.config/opencode is never read.
@@ -49,7 +49,7 @@ type RunnerSpec struct {
 	Command []string `toml:"command"`
 }
 
-var runnerKinds = map[string]bool{"claude": true, "opencode": true, "command": true}
+var runnerKinds = map[string]bool{"claude": true, "opencode": true, "codex": true, "command": true}
 
 func (c *Config) runnerSpec(name string) (*RunnerSpec, string) {
 	if name == "" {
@@ -82,13 +82,19 @@ func (c *Config) RunnerFor(name string) (Runner, error) {
 			bin = "opencode"
 		}
 		return opencodeRunner{bin: bin, config: spec.Config}, nil
+	case "codex":
+		bin := spec.Bin
+		if bin == "" {
+			bin = "codex"
+		}
+		return codexRunner{bin: bin}, nil
 	case "command":
 		if len(spec.Command) == 0 {
 			return nil, fmt.Errorf("runner %q: kind command needs command = [...]", name)
 		}
 		return commandRunner{argv: spec.Command}, nil
 	}
-	return nil, fmt.Errorf("unknown runner %q (built in: claude, opencode; or define [worker.runner_config.%s] with kind = \"command\")", name, name)
+	return nil, fmt.Errorf("unknown runner %q (built in: claude, opencode, codex; or define [worker.runner_config.%s] with kind = \"command\")", name, name)
 }
 
 // RunnerBin is the binary a runner name executes (for checks and logs).
@@ -127,9 +133,25 @@ func (c *Config) UsedRunners() []string {
 	return out
 }
 
-// CheckRunners validates every used runner's CLI on pathEnv.
+// AccountProblems reports accounts their runner can't use as configured: a
+// codex login directory holding an AGENTS.md, which codex would load into
+// every run.
+func (c *Config) AccountProblems() []string {
+	var out []string
+	for _, a := range c.Accounts {
+		if _, kind := c.runnerSpec(accountRunner(a)); kind == "codex" {
+			if p := codexHomeProblem(a.Env); p != "" {
+				out = append(out, "account "+a.Name+": "+p)
+			}
+		}
+	}
+	return out
+}
+
+// CheckRunners validates every used runner's CLI on pathEnv, and the
+// accounts that feed them.
 func (c *Config) CheckRunners(ctx context.Context, pathEnv string) []string {
-	var problems []string
+	problems := c.AccountProblems()
 	for _, name := range c.UsedRunners() {
 		r, err := c.RunnerFor(name)
 		if err != nil {

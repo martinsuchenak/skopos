@@ -130,7 +130,7 @@ group; a repository overrides only the stages it needs.
 ## 5. Set up a worker
 
 On each worker machine (a Linux VM is the most robust), with skopos and the
-agent CLIs installed (`claude` and/or `opencode`):
+agent CLIs installed (`claude`, `opencode` and/or `codex` — codex for read-only stages):
 
 ```bash
 # Clone each repository the worker serves

@@ -49,9 +49,9 @@ func workerRunnerCmd() *cli.Command {
 				MaxArgs: 0,
 				Flags: []cli.Flag{
 					envFileFlag(),
-					&cli.StringFlag{Name: "kind", Usage: "claude | opencode | command (omit for the wizard)"},
+					&cli.StringFlag{Name: "kind", Usage: "claude | opencode | codex | command (omit for the wizard)"},
 					&cli.StringFlag{Name: "name", Usage: "Runner name (accounts and --run-stage use it), e.g. opencode-glm"},
-					&cli.StringFlag{Name: "model", Usage: "Model for the account (claude alias, or opencode provider/model)"},
+					&cli.StringFlag{Name: "model", Usage: "Model for the account (claude alias, opencode provider/model, or codex model)"},
 					&cli.StringFlag{Name: "account", Usage: "Account name (default: the runner name)"},
 					&cli.IntFlag{Name: "priority", Usage: "Account priority (lower is preferred)"},
 					&cli.StringSliceFlag{Name: "env", Usage: "Account env KEY=VALUE (repeatable; use ${VAR} to reference the env file)"},
@@ -67,7 +67,7 @@ func workerRunnerCmd() *cli.Command {
 					}
 					if cmd.GetString("kind") == "" {
 						if !stdinIsTerminal() {
-							return fmt.Errorf("no terminal for the wizard — pass --kind (claude, opencode, command) and --name/--model")
+							return fmt.Errorf("no terminal for the wizard — pass --kind (claude, opencode, codex, command) and --name/--model")
 						}
 						return runRunnerWizard(ctx, bufio.NewReader(os.Stdin), os.Stdout, cfgPath, envPath, wizardEnv{})
 					}
@@ -198,6 +198,8 @@ func printRunnerList(ctx context.Context, out io.Writer, cfg *worker.Config) {
 		lock := "verified lockdown"
 		if !r.Verified() {
 			lock = "UNVERIFIED — runs only on wrapped stages"
+		} else if ro, ok := r.(interface{ ReadOnly() bool }); ok && ro.ReadOnly() {
+			lock += " — read-only stages only (plan, review, compare, second opinion)"
 		}
 		offer := "offered in claims"
 		if !offered[name] {
@@ -393,13 +395,13 @@ func addRunnerToConfig(content string, in runnerInput) (string, error) {
 		return "", fmt.Errorf("runner name %q: use letters, digits, - and _", in.Name)
 	}
 	switch in.Kind {
-	case "claude", "opencode":
+	case "claude", "opencode", "codex":
 	case "command":
 		if len(in.Command) == 0 {
 			return "", fmt.Errorf("kind command needs a command template")
 		}
 	default:
-		return "", fmt.Errorf("kind %q: claude, opencode or command", in.Kind)
+		return "", fmt.Errorf("kind %q: claude, opencode, codex or command", in.Kind)
 	}
 	if !hasTOMLSection(content, "worker") {
 		return "", fmt.Errorf("no [worker] section — run 'skopos worker init' first")
@@ -426,7 +428,7 @@ func addRunnerToConfig(content string, in runnerInput) (string, error) {
 
 	var b strings.Builder
 	// A runner_config block unless the name IS a built-in kind with no
-	// settings (plain "claude" / "opencode").
+	// settings (plain "claude" / "opencode" / "codex").
 	needsSpec := in.Name != in.Kind || in.OpencodeConfig != "" || len(in.Command) > 0
 	if spec := cur.Worker.RunnerSpecs[in.Name]; spec != nil {
 		kind := spec.Kind
@@ -581,7 +583,7 @@ type wizardEnv struct {
 var detectableCLIs = []struct{ bin, label string }{
 	{"claude", "Claude Code — built-in runner, verified lockdown"},
 	{"opencode", "opencode — built-in runner, verified lockdown"},
-	{"codex", "OpenAI Codex CLI — use as a command runner (wrapper-only)"},
+	{"codex", "OpenAI Codex CLI — built-in runner, verified lockdown (read-only stages)"},
 	{"gemini", "Gemini CLI — use as a command runner (wrapper-only)"},
 	{"agy", "Antigravity CLI — use as a command runner (wrapper-only)"},
 	{"aider", "Aider — use as a command runner (wrapper-only)"},
@@ -624,12 +626,14 @@ func runRunnerWizard(ctx context.Context, in *bufio.Reader, out io.Writer, cfgPa
 	if !found["claude"] && found["opencode"] {
 		def = "2"
 	}
-	say("\nRunner kind:\n  1) claude    — Claude Code\n  2) opencode  — opencode, any provider/model it supports\n  3) command   — any other CLI from an argv template (unverified: runs only inside a wrapper)\n")
+	say("\nRunner kind:\n  1) claude    — Claude Code\n  2) opencode  — opencode, any provider/model it supports\n  3) codex     — OpenAI Codex CLI (plan, review and second opinions; not implement)\n  4) command   — any other CLI from an argv template (unverified: runs only inside a wrapper)\n")
 	var kind string
-	switch ask("Choose [1-3]", def) {
+	switch ask("Choose [1-4]", def) {
 	case "2", "opencode":
 		kind = "opencode"
-	case "3", "command":
+	case "3", "codex":
+		kind = "codex"
+	case "4", "command":
 		kind = "command"
 	default:
 		kind = "claude"
@@ -665,6 +669,9 @@ func runRunnerWizard(ctx context.Context, in *bufio.Reader, out io.Writer, cfgPa
 				say("  enter a number from the list or a provider/model id\n")
 			}
 		}
+	case "codex":
+		say("\nModel — a codex model id (e.g. gpt-6-sol); empty = codex's default.\n")
+		ri.Model = ask("Model", "")
 	case "command":
 		say("\nCommand template — the agent CLI and its args. Placeholders: {prompt} {dir} {model};\nwithout {prompt} the prompt goes to stdin. Example: aider --yes --message {prompt}\n")
 		for len(ri.Command) == 0 {
@@ -729,6 +736,24 @@ func runRunnerWizard(ctx context.Context, in *bufio.Reader, out io.Writer, cfgPa
 		} else {
 			notes = append(notes, fmt.Sprintf("provider %q must be logged in for the user the worker runs as: opencode auth login", provider))
 		}
+	case "codex":
+		say("\nCredentials:\n  1) a login directory of its own (a ChatGPT subscription; recommended)\n  2) an API key kept in the env file\n  3) this machine's codex login (~/.codex)\n")
+		switch ask("Choose [1-3]", "1") {
+		case "2":
+			v := ask("Env variable for the key", "CODEX_KEY_"+strings.ToUpper(strings.ReplaceAll(ri.Name, "-", "_")))
+			ri.Env["CODEX_API_KEY"] = "${" + v + "}"
+			envWrites = append(envWrites, [2]string{v, ""})
+			notes = append(notes, fmt.Sprintf("put the API key in %s: %s=sk-…", envPath, v))
+		case "3":
+			if p := worker.CodexHomeProblem(nil); p != "" {
+				notes = append(notes, p)
+			}
+		default:
+			dir := ask("Login directory", "~/.codex-"+ri.Name)
+			ri.Env["CODEX_HOME"] = dir
+			notes = append(notes, fmt.Sprintf("log that account in once: CODEX_HOME=%s codex login", dir))
+		}
+		notes = append(notes, "codex runs plan, review, compare and second opinions — route implement to another runner")
 	case "command":
 		notes = append(notes, "command runners only run on wrapped stages: add a worker.profiles.<name>.<stage> with a wrapper for every stage that uses this runner (see docs/deployment/worker.md)")
 	}
@@ -780,7 +805,7 @@ func runRunnerWizard(ctx context.Context, in *bufio.Reader, out io.Writer, cfgPa
 			say("The runner is configured, but the smoke test failed: %v\nFix it, then re-run: skopos worker runner test %s\n", err, ri.Name)
 		}
 	}
-	say("\nNext:\n  - pin stages to it on the server: skopos serve --run-stage <workspace>:<stage>=%s\n  - review all runners: skopos worker runner list\n  - restart the worker to pick it up\n", ri.Name)
+	say("\nNext:\n  - route stages to it on the server: skopos workspace pipeline set --stage review --runners %s\n  - review all runners: skopos worker runner list\n  - restart the worker to pick it up\n", ri.Name)
 	return nil
 }
 
@@ -847,6 +872,11 @@ func suggestRunnerName(kind, model string, command []string) string {
 			m = m[i+1:]
 		}
 		return "opencode-" + slug(m)
+	case "codex":
+		if model == "" {
+			return "codex"
+		}
+		return "codex-" + slug(model)
 	default:
 		if len(command) > 0 {
 			return slug(filepath.Base(command[0]))

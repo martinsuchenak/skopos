@@ -21,8 +21,30 @@ versions follow [Semantic Versioning](https://semver.org/).
   - **Limits:** approver-only, one at a time per item, `force` to repeat a
     runner on the same head, audited as `inbox.second_opinion`.
   - Design: `tmp/second-opinion-review — design.md`.
+- **Codex runner (`kind = "codex"`)**, with a verified lockdown for
+  read-only stages: plan, review, compare and second opinions. It refuses
+  implement (Codex keeps `.git` read-only, so an implementer couldn't
+  commit).
+  - **Lockdown:** no user config, rules, AGENTS.md, skills, plugins or hooks;
+    a permission profile that lets the shell read only the worktree, the
+    clone's git directory and system paths; nothing writable; no network.
+  - **Native structured output:** stage schemas are sent in the strict form
+    OpenAI requires, and results are validated against the stage's own.
+  - **Accounts:** a login directory per account (`CODEX_HOME`, a ChatGPT
+    subscription) or `CODEX_API_KEY`. A login directory holding an
+    `AGENTS.md` is refused (Codex always loads it), and `worker check`
+    reports it.
+  - Sessions resume (`codex exec resume`); usage limits pause the run until
+    the reset Codex reports.
+  - `skopos worker runner add` offers it; `runner list` shows it as
+    read-only.
+  - Verified on macOS (`SKOPOS_LIVE_CODEX=1 go test ./internal/worker -run
+    'Codex.*Lockdown'`; the probe spends no tokens).
 
 ### Changed
+
+- Review worktrees also reset `.agents/` and `AGENTS.override.md` to the
+  base version (Codex reads skills and instructions from them).
 
 - A run report without `head_sha` keeps the run's recorded head instead of
   clearing it.

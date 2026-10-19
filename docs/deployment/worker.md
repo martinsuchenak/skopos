@@ -6,8 +6,9 @@ local clone. It is the same binary as the server (`skopos worker`) and needs:
 
 - skopos over HTTP (URL + a worker-scoped API key)
 - a local clone per served workspace (with a push token if it should push)
-- one or more agent CLIs: **Claude Code** and **opencode** are built in; any
-  other CLI can run inside a wrapper you provide
+- one or more agent CLIs: **Claude Code**, **opencode** and **Codex**
+  (read-only stages) are built in; any other CLI can run inside a wrapper you
+  provide
 
 Run one worker per VM, one key per worker. For the whole setup — server, keys,
 repos, workers, first item — follow the
@@ -48,14 +49,16 @@ model and the credentials.
 |---|---|---|
 | `claude` (default) | verified | Claude Code `-p`; structured results via `--json-schema` |
 | `opencode` | verified | `opencode run --format json`; results extracted from the reply |
+| `codex` | verified, **read-only stages** | `codex exec --json`; structured results via `--output-schema`. Plan, review, compare and second opinions; it refuses implement |
 | `command` | **unverified** | any CLI from an argv template — runs **only inside a wrapper** |
 
 **Verified** means skopos has checked the lockdown live (the opt-in tests
-`SKOPOS_LIVE_CLAUDE=1` / `SKOPOS_LIVE_OPENCODE=1`):
+`SKOPOS_LIVE_CLAUDE=1` / `SKOPOS_LIVE_OPENCODE=1` / `SKOPOS_LIVE_CODEX=1`):
 
 - instruction files are not loaded;
 - files outside the worktree are unreadable;
-- the stage's tool allowlist is enforced, and commits still work.
+- the stage's tool allowlist is enforced, and commits still work (Codex:
+  nothing is writable, which is why it only takes read-only stages).
 
 skopos can't vouch for an arbitrary CLI, so a `command` runner on a stage
 without a wrapper refuses the run with a clear reason. `worker check` lists
@@ -77,6 +80,9 @@ The wizard handles the whole setup:
 - **Sets up credentials.**
   - **Claude:** this machine's login, an API key kept in the env file, or a
     separate login directory for a second subscription account.
+  - **Codex:** a login directory of its own (the default; see
+    [Codex](#codex)), an API key kept in the env file, or this machine's
+    `~/.codex`.
   - **Custom opencode providers** (an OpenAI-compatible router, say): it
     writes a providers-only config. After you confirm, it moves the API key
     into the env file; the providers file only references it as `{env:VAR}`.
@@ -114,7 +120,43 @@ command = ["aider", "--yes", "--message", "{prompt}"] # {prompt} {dir} {model}; 
 ```
 
 `worker.runners` (what claims offer) defaults to every runner your accounts
-use. Built-in names (`claude`, `opencode`) need no `runner_config` block.
+use. Built-in names (`claude`, `opencode`, `codex`) need no `runner_config`
+block.
+
+### Codex
+
+Codex takes the read-only stages: plan, review, compare and second
+opinions (a different model family is the point of a second opinion). It
+refuses implement, because its sandbox keeps `.git` read-only and an
+implementer couldn't commit.
+
+Give each Codex account a login directory of its own:
+
+```bash
+CODEX_HOME=~/skopos-workers/accounts/codex-1 codex login   # ChatGPT subscription
+```
+
+```toml
+[[worker.accounts]]
+name   = "codex-1"
+runner = "codex"
+env    = { CODEX_HOME = "~/skopos-workers/accounts/codex-1" }   # or CODEX_API_KEY = "${CODEX_KEY}"
+```
+
+- **No AGENTS.md in the login directory.** Codex always loads
+  `$CODEX_HOME/AGENTS.md` and has no switch for it, so a worker refuses an
+  account whose login directory holds one (or `AGENTS.override.md`), and
+  `worker check` reports it. A personal `~/.codex` often has one; that's why
+  the wizard suggests a separate directory.
+- **Sessions** are kept in the login directory, so an interrupted run
+  resumes on its own worker and account.
+- **Usage limits** pause the run and mark the account until the reset Codex
+  reports.
+- **Verified on macOS.** The lockdown rests on Codex's sandbox (Seatbelt on
+  macOS, its Linux sandbox elsewhere). Run
+  `SKOPOS_LIVE_CODEX=1 go test ./internal/worker -run 'Codex.*Lockdown'` on a
+  Linux worker before relying on it there; `TestCodexLockdownProbe` spends
+  no tokens.
 
 ### One model per stage
 
@@ -157,6 +199,14 @@ These hold for every runner, regardless of configuration.
     switches. Its permissions come from an ordered `OPENCODE_PERMISSION`
     translated from the same allowlist: deny-all, then the stage's allows,
     then the hard denies, including `external_directory`.
+  - **Codex:** `codex exec --ignore-user-config --ignore-rules
+    --strict-config`, every setting passed with `-c`: no AGENTS.md
+    (`project_doc_max_bytes=0`), no skills listing, plugins, apps or hooks,
+    approvals `never`. Its permission profile lets the shell read only the
+    worktree, the clone's git directory and what a shell needs (not the
+    temp directories); nothing is writable and the network is off. The
+    stage allowlist becomes that read-only sandbox, since Codex reads files
+    through its shell.
   - **Instructions:** reach the agent only through the stage prompt; see
     [Repo knowledge](#repo-knowledge-agentsmd-skills-verification).
 - **Stage allowlists.** Plan is read-only; implement can edit and run a short
@@ -178,7 +228,7 @@ These hold for every runner, regardless of configuration.
   `$PWD`.
 - **Review worktrees reset instruction files.** Before a review or QA run,
   `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.skopos/`, `.claude/`, `.opencode/`,
-  `opencode.json` and similar files are reset to the base version, so no CLI
+  `.codex/`, `.agents/`, `opencode.json` and similar files are reset to the base version, so no CLI
   picks up instructions the implementer wrote. Those changes still show in
   the reviewed diff.
 - **Only the worker pushes.** It validates the refspec, keeps the token in its

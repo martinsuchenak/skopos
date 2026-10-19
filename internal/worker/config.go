@@ -382,7 +382,7 @@ func (c *Config) Default(home string) error {
 			kind = name
 		}
 		if !runnerKinds[kind] {
-			return fmt.Errorf("runner_config.%s: unknown kind %q (claude, opencode, command)", name, kind)
+			return fmt.Errorf("runner_config.%s: unknown kind %q (claude, opencode, codex, command)", name, kind)
 		}
 		if kind == "command" && len(spec.Command) == 0 {
 			return fmt.Errorf("runner_config.%s: kind command needs command = [...]", name)
