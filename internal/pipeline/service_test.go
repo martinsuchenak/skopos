@@ -333,3 +333,39 @@ func TestDropOrphans(t *testing.T) {
 		t.Fatalf("orphaned group and workspace settings remain: %d", n)
 	}
 }
+
+// The default second-opinion runner resolves like the agents default:
+// workspace beats group, two groups is a conflict, and it's validated.
+func TestSecondOpinionDefault(t *testing.T) {
+	s, _, sink := fixture(t)
+	if _, err := s.Put(root(), KindGroup, "fortix", Settings{SecondOpinionRunner: "codex"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.SecondOpinionRunner(root(), "fx/api"); got != "codex" {
+		t.Fatalf("from the group: %q", got)
+	}
+	if _, err := s.Put(root(), KindGroup, "web-team", Settings{SecondOpinionRunner: "opus"}, ""); !errors.Is(err, ErrConflict) {
+		t.Fatalf("a second group setting it for a shared workspace: %v", err)
+	}
+	v, err := s.Put(root(), KindWorkspace, "fx/web", Settings{SecondOpinionRunner: "opus"}, "")
+	if err != nil || v.EffectiveSecondOpinionRunner != "opus" || v.SecondOpinionSource != "workspace" {
+		t.Fatalf("workspace override: %+v %v", v, err)
+	}
+	if !strings.Contains(sink.entries[len(sink.entries)-1].Notes, "second-opinion runner: not set → opus") {
+		t.Fatalf("audited: %+v", sink.entries[len(sink.entries)-1])
+	}
+	if _, err := s.Put(root(), KindWorkspace, "fx/web", Settings{SecondOpinionRunner: "bad runner"}, ""); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("validated: %v", err)
+	}
+	// "none" clears it; the agents default in the same row survives.
+	if _, err := s.Put(root(), KindWorkspace, "fx/web", Settings{AgentsDefault: "solo", SecondOpinionRunner: "opus"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	v, err = s.Put(root(), KindWorkspace, "fx/web", Settings{AgentsDefault: "solo", SecondOpinionRunner: "none"}, "")
+	if err != nil || v.Own.SecondOpinionRunner != "" || v.Own.AgentsDefault != "solo" || v.EffectiveSecondOpinionRunner != "codex" {
+		t.Fatalf("clear falls back to the group: %+v %v", v, err)
+	}
+	if strings.Join(v.UnknownRunners, ",") != "codex" {
+		t.Fatalf("an unknown default runner is flagged: %v", v.UnknownRunners)
+	}
+}

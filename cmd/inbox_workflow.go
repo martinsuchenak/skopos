@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/paularlott/cli"
 )
 
@@ -128,6 +129,31 @@ func inboxWorkflowCmds() []*cli.Command {
 					return fmt.Errorf("--answer is required")
 				}
 				return simpleAction(ctx, cmd, "retry", map[string]string{"answer": a}, "requeued")
+			},
+		},
+		{
+			Name:  "second-opinion",
+			Usage: "Ask for an advisory second opinion on the item's current head (in_review, or blocked by its review)",
+			Flags: workflowFlags(
+				&cli.StringFlag{Name: "runner", Usage: "Runner to review with (default: the workspace's second-opinion runner)"},
+				&cli.BoolFlag{Name: "force", Usage: "Run it even if this runner already reviewed this head"},
+			),
+			Run: func(ctx context.Context, cmd *cli.Command) error {
+				c, id, err := workflowClient(cmd)
+				if err != nil {
+					return err
+				}
+				var out inbox.SecondOpinionRequest
+				body := map[string]any{"runner": strings.TrimSpace(cmd.GetString("runner")), "force": cmd.GetBool("force"), "via": "cli"}
+				if err := c.call(ctx, http.MethodPost, "/api/inbox/"+url.PathEscape(id)+"/second-opinion", body, &out, "requesting a second opinion"); err != nil {
+					return err
+				}
+				head := out.HeadSHA
+				if len(head) > 7 {
+					head = head[:7]
+				}
+				fmt.Printf("second opinion queued: %s reviews %s (run %s); the result is appended to the item\n", out.Runner, head, out.RunID)
+				return nil
 			},
 		},
 		{

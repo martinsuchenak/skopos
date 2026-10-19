@@ -138,6 +138,7 @@ const slackHelp = "*skopos commands* — reply in an item's thread:\n" +
 	"• `done` — approve the review, mark the item done\n" +
 	"• `retry: <answer>` — answer a blocker and requeue\n" +
 	"• `reject` — discard the item\n" +
+	"• `second` / `second <runner>` — an advisory second opinion on the finished branch (`force` re-runs a runner on the same head)\n" +
 	"• `panel` / `solo` / `default` — the item's plan, review and QA stages use the repository's agent panel, one agent, or the repository default (from the next stage)\n" +
 	"Top-level: `new: <what to do>` creates and queues an item; add `#panel` or `#solo` to choose its agents."
 
@@ -211,9 +212,9 @@ func (r *slackRelay) Apply(ctx context.Context, itemID, text string) bool {
 		return false
 	}
 	cmd, sel, arg := strings.ToLower(m[1]), strings.ToLower(strings.TrimSpace(m[2])), strings.TrimSpace(m[3])
-	if sel != "" && cmd != "approve" && cmd != "approved" && cmd != "lgtm" && cmd != "revise" {
-		// Only approve/revise take a selector; anything else with a word
-		// after it is prose, not a command.
+	if sel != "" && cmd != "approve" && cmd != "approved" && cmd != "lgtm" && cmd != "revise" && cmd != "second" {
+		// Only approve/revise (a candidate) and second (a runner) take a
+		// selector; anything else with a word after it is prose.
 		return false
 	}
 	item, err := r.inbox.GetItem(relayCtx(), itemID)
@@ -347,8 +348,51 @@ func (r *slackRelay) applyCommand(ctx context.Context, item *inbox.Item, cmd, se
 			return fail(err)
 		}
 		return true
+	case "second":
+		// `second`, `second codex`, `second: codex`; "force" re-runs a
+		// runner that already reviewed this head.
+		in := inbox.SecondOpinionInput{Via: audit.ViaSlack}
+		for _, w := range append([]string{sel}, strings.Fields(arg)...) {
+			switch w = strings.TrimSpace(w); {
+			case w == "":
+			case strings.EqualFold(w, "force"):
+				in.Force = true
+			case in.Runner == "":
+				in.Runner = w
+			}
+		}
+		req, err := r.inbox.RequestSecondOpinion(relayCtx, item.ID, in)
+		if err != nil {
+			return fail(err)
+		}
+		r.post(ctx, thread, fmt.Sprintf("🔍 Second opinion queued: `%s` reviews %s. I'll post it here when it's done (advisory: the item stays %s).",
+			req.Runner, shortHead(req.HeadSHA), statusWord(item.Status)))
+		return true
 	}
 	return false
+}
+
+// PostSecondOpinion posts a finished second opinion to the item's thread.
+func (r *slackRelay) PostSecondOpinion(ctx context.Context, res runs.SecondOpinionResult) {
+	item, err := r.inbox.GetItem(relayCtx(), res.ItemID)
+	if err != nil || item.SlackThreadTS == "" {
+		return
+	}
+	icon := "🔍"
+	switch res.Verdict {
+	case "pass":
+		icon = "✅"
+	case "fail":
+		icon = "⚠️"
+	}
+	r.post(ctx, item.SlackThreadTS, icon+" *"+res.Heading+"*\n"+truncate(strings.TrimSpace(res.Body), 2800))
+}
+
+func shortHead(sha string) string {
+	if len(sha) > 7 {
+		return "`" + sha[:7] + "`"
+	}
+	return "`" + sha + "`"
 }
 
 // setAgents applies a panel / solo / default reply to the item's switch.
@@ -703,7 +747,7 @@ func (r *slackRelay) drainAll(ctx context.Context) {
 // isCommand: the thread-reply vocabulary.
 func isCommand(w string) bool {
 	switch w {
-	case "approve", "approved", "lgtm", "revise", "changes", "done", "retry", "reject":
+	case "approve", "approved", "lgtm", "revise", "changes", "done", "retry", "reject", "second":
 		return true
 	}
 	return isAgentsCommand(w)

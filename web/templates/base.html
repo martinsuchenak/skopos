@@ -881,6 +881,11 @@
                     </select>
                     <p id="pipe-agents-hint" class="mt-1 text-xs text-zinc-500" x-text="pipeAgentsHint()"></p>
                 </div>
+                <div class="mt-4">
+                    <label class="lbl" for="pipe-second">Second opinions use</label>
+                    <input id="pipe-second" type="text" list="pipe-runners" x-model="pipe.secondOpinion" class="fld max-w-xs" placeholder="e.g. codex" autocomplete="off" aria-describedby="pipe-second-hint" />
+                    <p id="pipe-second-hint" class="mt-1 text-xs text-zinc-500" x-text="pipeSecondHint()"></p>
+                </div>
                 <div class="modal-actions">
                     <button type="button" @click="closePipeline()" class="btn">Cancel</button>
                     <button type="submit" class="btn btn-primary" :disabled="pipe.saving || pipe.readOnly" x-text="pipe.saving ? 'Saving…' : 'Save'"></button>
@@ -1047,6 +1052,20 @@
                         <button type="button" x-show="workflowShowApprove()" @click.stop="requestChangesInboxItem(previewItem.id)" :disabled="!workflowActionReady('request_changes')" class="btn btn-sm btn-ghost text-orange-300" :aria-label="requestChangesLabel() + ' for item ' + previewItem.title" x-text="requestChangesLabel()"></button>
                         <button type="button" x-show="workflowShowRetry()" @click.stop="retryInboxItem(previewItem.id)" :disabled="!workflowActionReady('retry')" class="btn btn-sm text-sky-300" :aria-label="'Retry item ' + previewItem.title">Retry</button>
                         <button type="button" x-show="workflowShowMarkDone()" @click.stop="markDoneInboxItem(previewItem.id)" :disabled="!workflowActionReady('mark_done')" class="btn btn-sm text-emerald-300" :aria-label="'Mark item ' + previewItem.title + ' done'">Mark done</button>
+                        <template x-for="so in secondOpinionRow()" :key="so.key">
+                            <div class="flex w-full flex-wrap items-end gap-2 border-t border-zinc-800 pt-2">
+                                <span x-show="so.running" class="chip tone-info" x-text="'Second opinion running (' + so.running + ')'"></span>
+                                <div x-show="!so.running" class="min-w-0 flex-1 sm:max-w-56">
+                                    <label class="lbl" for="so-runner">Second opinion from</label>
+                                    <input id="so-runner" type="text" list="so-runners" x-model="secondOpinion.runner" class="fld" placeholder="runner, e.g. codex" autocomplete="off" />
+                                </div>
+                                <label x-show="!so.running" class="flex items-center gap-2 text-xs text-zinc-400"><input type="checkbox" x-model="secondOpinion.force" /> again on this head</label>
+                                <button type="button" x-show="!so.running" @click.stop="requestSecondOpinion()" :disabled="secondOpinion.busy" class="btn btn-sm" :aria-label="'Ask for a second opinion on item ' + previewItem.title">Second opinion</button>
+                            </div>
+                        </template>
+                        <datalist id="so-runners">
+                            <template x-for="r in secondOpinion.runners" :key="'so|' + r"><option :value="r"></option></template>
+                        </datalist>
                         <button type="button" x-show="workflowShowReject()" @click.stop="rejectInboxItem(previewItem.id)" :disabled="!workflowActionReady('reject')" class="btn btn-sm btn-ghost text-rose-300" :aria-label="'Reject item ' + previewItem.title">Reject</button>
                     </div>
                 </div>

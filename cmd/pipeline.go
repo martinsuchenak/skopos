@@ -48,6 +48,7 @@ func pipelineCmd(kind string) *cli.Command {
 					&cli.BoolFlag{Name: "early-exit", Usage: "review/qa: decide as soon as the outcome is certain"},
 					&cli.StringFlag{Name: "timeout", Usage: "plan/review/qa with several agents: decide at this deadline (e.g. 45m)"},
 					&cli.StringFlag{Name: "agents-default", Usage: "What items without their own switch get: panel, solo or default"},
+					&cli.StringFlag{Name: "second-opinion", Usage: "Default runner for second opinions (none to clear)"},
 				),
 				Run: func(ctx context.Context, cmd *cli.Command) error {
 					v, err := pipelineGet(ctx, cmd, kind)
@@ -80,8 +81,12 @@ func pipelineCmd(kind string) *cli.Command {
 						own.AgentsDefault = a
 						changed = true
 					}
+					if so := strings.TrimSpace(cmd.GetString("second-opinion")); so != "" {
+						own.SecondOpinionRunner = so
+						changed = true
+					}
 					if !changed {
-						return fmt.Errorf("nothing to set: pass --stage with --runners, and/or --agents-default")
+						return fmt.Errorf("nothing to set: pass --stage with --runners, --agents-default and/or --second-opinion")
 					}
 					return pipelinePut(ctx, cmd, kind, v.OwnerID, own)
 				},
@@ -149,7 +154,8 @@ func pipelinePut(ctx context.Context, cmd *cli.Command, kind, ownerID string, ow
 	if err != nil {
 		return err
 	}
-	body := map[string]any{"stages": own.Stages, "agents_default": own.AgentsDefault, "via": audit.ViaCLI}
+	body := map[string]any{"stages": own.Stages, "agents_default": own.AgentsDefault,
+		"second_opinion_runner": own.SecondOpinionRunner, "via": audit.ViaCLI}
 	var v pipeline.View
 	if err := keysCall(ctx, cmd, http.MethodPut, p, body, &v); err != nil {
 		return err
@@ -209,6 +215,18 @@ func printPipeline(v *pipeline.View) {
 	line := "agents default: " + agents
 	if source != "" && source != pipeline.KindWorkspace {
 		line += "  ← " + strings.Replace(source, "group:", "group ", 1)
+	}
+	fmt.Println(line)
+	second, secondSource := v.Own.SecondOpinionRunner, ""
+	if v.OwnerKind == pipeline.KindWorkspace {
+		second, secondSource = v.EffectiveSecondOpinionRunner, v.SecondOpinionSource
+	}
+	if second == "" {
+		second = "— (name one with each request)"
+	}
+	line = "second opinion: " + second
+	if secondSource != "" && secondSource != pipeline.KindWorkspace {
+		line += "  ← " + strings.Replace(secondSource, "group:", "group ", 1)
 	}
 	fmt.Println(line)
 	for _, c := range v.Conflicts {

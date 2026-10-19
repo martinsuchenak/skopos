@@ -269,6 +269,8 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	runsService.SetPrefsSource(func(ctx context.Context, ws string) *runs.WorkspacePrefs {
 		return pipelineService.Prefs(ctx, ws)
 	})
+	inboxService.SetSecondOpinionDefault(pipelineService.SecondOpinionRunner)
+	inboxService.SetRunLister(testRunLister{runsService})
 	if configure != nil {
 		configure(runsService)
 	}
@@ -559,4 +561,19 @@ func TestIntegrationPlanCandidatesRequestChanges(t *testing.T) {
 	_, r2 := round(item2ID)
 	mustDo(t, approver.req("POST", "/api/inbox/"+item2ID+"/approve", `{"revision_id":"`+c2[1]["id"].(string)+`"}`), 409)
 	mustDo(t, approver.req("POST", "/api/inbox/"+item2ID+"/approve", `{"revision_id":"`+r2[0]["id"].(string)+`"}`), 200)
+}
+
+// testRunLister is serve.go's runsListerAdapter for the test stack.
+type testRunLister struct{ runs *runs.Service }
+
+func (a testRunLister) ListRuns(ctx context.Context, itemID string) ([]inbox.RunSummary, error) {
+	rs, err := a.runs.ListRuns(ctx, itemID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]inbox.RunSummary, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, inbox.RunSummary{ID: r.ID, Stage: r.Stage, Status: r.Status, Runner: r.Runner, Branch: r.Branch, HeadSHA: r.HeadSHA})
+	}
+	return out, nil
 }

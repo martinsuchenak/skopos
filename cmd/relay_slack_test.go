@@ -720,3 +720,53 @@ func TestRelayCandidatesGate(t *testing.T) {
 		t.Fatalf("glm's candidate must be the plan: %+v", plan.Items)
 	}
 }
+
+// `second codex` in an item's thread queues a second opinion on the head
+// waiting for approval; when it finishes, the verdict is posted back to the
+// thread and the item stays in_review. Prose after the word isn't a command.
+func TestRelaySecondOpinion(t *testing.T) {
+	svc, runsSvc, plansSvc, fake, relay := relayStack(t)
+	runsSvc.SetSecondOpinionNotifier(func(ctx context.Context, r runs.SecondOpinionResult) { relay.PostSecondOpinion(ctx, r) })
+	root := context.Background()
+	item := mustReachGate(t, svc, plansSvc, "second opinion")
+	if _, err := svc.Approve(approverCtx(), item.ID, inbox.ApproveInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordRunWithHead(t, runsSvc, item.ID, "abc123def456"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetSlackThread(root, item.ID, "900.1"); err != nil {
+		t.Fatal(err)
+	}
+	if relay.Apply(root, item.ID, "second thoughts on this one") {
+		t.Fatal("prose is not a command")
+	}
+	if !relay.Apply(root, item.ID, "second codex") {
+		t.Fatal("second codex must be handled")
+	}
+	if last := fake.last().text; !strings.Contains(last, "Second opinion queued: `codex` reviews `abc123d`") {
+		t.Fatalf("queued message: %q", last)
+	}
+	run, err := runsSvc.ClaimNext(root, runs.ClaimInput{WorkerID: "w-codex", Runners: []string{"codex"}, Workspaces: []string{"ws-a"}})
+	if err != nil || run == nil || run.Stage != runs.StageSecondOpinion {
+		t.Fatalf("claim: %+v %v", run, err)
+	}
+	if _, err := runsSvc.Report(root, run.ID, runs.ReportInput{WorkerID: "w-codex", Status: runs.StatusSucceeded, Verdict: "fail", Summary: "missing auth check",
+		Findings: []runs.Finding{{Severity: "blocking", Text: "no checkAccess on the new action"}}}, run.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	last := fake.last().text
+	if !strings.Contains(last, "⚠️ *Second opinion — codex @ abc123d*") || !strings.Contains(last, "no checkAccess on the new action") {
+		t.Fatalf("result posted to the thread: %q", last)
+	}
+	if got, _ := svc.GetItem(root, item.ID); got.Status != inbox.StatusInReview {
+		t.Fatalf("advisory: item must stay in_review, is %s", got.Status)
+	}
+	// Again with the same runner on the same head: refused without force.
+	if !relay.Apply(root, item.ID, "second codex") || !strings.Contains(fake.last().text, "already reviewed head") {
+		t.Fatalf("same runner, same head: %q", fake.last().text)
+	}
+	if !relay.Apply(root, item.ID, "second: codex force") || !strings.Contains(fake.last().text, "Second opinion queued") {
+		t.Fatalf("force: %q", fake.last().text)
+	}
+}

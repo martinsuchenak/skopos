@@ -42,12 +42,13 @@ func (s *Storage) Get(ctx context.Context, kind, id string) (Settings, error) {
 	if err := rows.Err(); err != nil {
 		return out, err
 	}
-	var agents sql.NullString
-	err = s.db.QueryRowContext(ctx, `SELECT agents_default FROM pipeline_defaults WHERE owner_kind = ? AND owner_id = ?`, kind, id).Scan(&agents)
+	var agents, second sql.NullString
+	err = s.db.QueryRowContext(ctx, `SELECT agents_default, second_opinion_runner FROM pipeline_defaults WHERE owner_kind = ? AND owner_id = ?`, kind, id).Scan(&agents, &second)
 	if err != nil && err != sql.ErrNoRows {
 		return out, fmt.Errorf("reading pipeline defaults: %w", err)
 	}
 	out.AgentsDefault = agents.String
+	out.SecondOpinionRunner = second.String
 	return out, nil
 }
 
@@ -67,7 +68,7 @@ func (s *Storage) Replace(ctx context.Context, kind, id string, st Settings, by 
 			return err
 		}
 	}
-	if err := writeDefaults(ctx, tx, kind, id, st.AgentsDefault, by, ms); err != nil {
+	if err := writeDefaults(ctx, tx, kind, id, st.AgentsDefault, st.SecondOpinionRunner, by, ms); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -97,7 +98,10 @@ func (s *Storage) AddMissing(ctx context.Context, kind, id string, st Settings, 
 	if st.AgentsDefault != "" {
 		res, err := tx.ExecContext(ctx, `
 			INSERT INTO pipeline_defaults (owner_kind, owner_id, agents_default, updated_ms, updated_by)
-			VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`, kind, id, st.AgentsDefault, ms, by)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT (owner_kind, owner_id) DO UPDATE SET agents_default = excluded.agents_default,
+				updated_ms = excluded.updated_ms, updated_by = excluded.updated_by
+			WHERE pipeline_defaults.agents_default IS NULL`, kind, id, st.AgentsDefault, ms, by)
 		if err != nil {
 			return added, fmt.Errorf("importing agents default: %w", err)
 		}
@@ -133,16 +137,43 @@ func insertStage(ctx context.Context, tx *sql.Tx, kind, id, stage string, set St
 	return nil
 }
 
-func writeDefaults(ctx context.Context, tx *sql.Tx, kind, id, agents, by string, ms int64) error {
-	if agents == "" {
+func writeDefaults(ctx context.Context, tx *sql.Tx, kind, id, agents, second, by string, ms int64) error {
+	if agents == "" && second == "" {
 		_, err := tx.ExecContext(ctx, `DELETE FROM pipeline_defaults WHERE owner_kind = ? AND owner_id = ?`, kind, id)
 		return err
 	}
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO pipeline_defaults (owner_kind, owner_id, agents_default, updated_ms, updated_by) VALUES (?, ?, ?, ?, ?)
+		INSERT INTO pipeline_defaults (owner_kind, owner_id, agents_default, second_opinion_runner, updated_ms, updated_by) VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT (owner_kind, owner_id) DO UPDATE SET agents_default = excluded.agents_default,
-			updated_ms = excluded.updated_ms, updated_by = excluded.updated_by`, kind, id, agents, ms, by)
+			second_opinion_runner = excluded.second_opinion_runner,
+			updated_ms = excluded.updated_ms, updated_by = excluded.updated_by`, kind, id, nullable(agents), nullable(second), ms, by)
 	return err
+}
+
+func nullable(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// GroupsSettingSecondOpinion lists the groups that set a default
+// second-opinion runner.
+func (s *Storage) GroupsSettingSecondOpinion(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT owner_id FROM pipeline_defaults WHERE owner_kind = 'group' AND second_opinion_runner IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }
 
 // GroupsSettingStage lists the groups that set a stage (conflict check).

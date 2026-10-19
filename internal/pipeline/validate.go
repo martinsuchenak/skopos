@@ -140,6 +140,14 @@ func Normalize(in Settings) (Settings, error) {
 	default:
 		return out, fmt.Errorf("%w: agents_default must be panel or solo, not %q", ErrInvalidInput, in.AgentsDefault)
 	}
+	switch r := strings.TrimSpace(in.SecondOpinionRunner); strings.ToLower(r) {
+	case "", "none", "default":
+	default:
+		if !reRunner.MatchString(r) {
+			return out, fmt.Errorf("%w: second_opinion_runner %q: letters, digits, '.', '_' or '-'", ErrInvalidInput, r)
+		}
+		out.SecondOpinionRunner = r
+	}
 	for stage, st := range in.Stages {
 		stage = strings.ToLower(strings.TrimSpace(stage))
 		members := make([]runs.Member, 0, len(st.Members))

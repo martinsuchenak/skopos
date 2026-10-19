@@ -41,6 +41,9 @@ type StageSetting struct {
 type Settings struct {
 	Stages        map[string]StageSetting `json:"stages"`
 	AgentsDefault string                  `json:"agents_default,omitempty"`
+	// SecondOpinionRunner is the runner a plain "second opinion" request
+	// uses (dashboard preselect, Slack `second`); "" = none at this level.
+	SecondOpinionRunner string `json:"second_opinion_runner,omitempty"`
 }
 
 // EffectiveStage is a resolved stage with where it came from:
@@ -66,8 +69,11 @@ type View struct {
 	Effective              map[string]EffectiveStage `json:"effective,omitempty"`
 	EffectiveAgentsDefault string                    `json:"effective_agents_default,omitempty"`
 	AgentsDefaultSource    string                    `json:"agents_default_source,omitempty"`
-	Groups                 []GroupRef                `json:"groups,omitempty"`
-	Conflicts              []string                  `json:"conflicts,omitempty"`
+	// Effective default second-opinion runner, and where it comes from.
+	EffectiveSecondOpinionRunner string     `json:"effective_second_opinion_runner,omitempty"`
+	SecondOpinionSource          string     `json:"second_opinion_source,omitempty"`
+	Groups                       []GroupRef `json:"groups,omitempty"`
+	Conflicts                    []string   `json:"conflicts,omitempty"`
 	// UnknownRunners: effective runners no worker serving this workspace
 	// offers yet — their runs wait until one does.
 	UnknownRunners []string `json:"unknown_runners,omitempty"`

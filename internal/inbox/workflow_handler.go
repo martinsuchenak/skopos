@@ -116,6 +116,31 @@ func (h *Handler) RequestChanges(w http.ResponseWriter, r *http.Request) {
 	h.respondTransition(w, item, err)
 }
 
+// SecondOpinion handles POST /api/inbox/{id}/second-opinion: queue one
+// advisory review of the item's current head on a runner (approver-only).
+func (h *Handler) SecondOpinion(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var in SecondOpinionInput
+	if err := rest.DecodeJSON(w, r, &in); err != nil {
+		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	in.Via = viaFrom(r, in.Via)
+	req, err := h.service.RequestSecondOpinion(r.Context(), r.PathValue("id"), in)
+	if err != nil {
+		if errors.Is(err, ErrSecondOpinionConflict) {
+			rest.RespondError(w, http.StatusConflict, err.Error())
+			return
+		}
+		h.respondTransition(w, nil, err)
+		return
+	}
+	rest.RespondJSON(w, http.StatusAccepted, req)
+}
+
 func (h *Handler) Retry(w http.ResponseWriter, r *http.Request) {
 	if !h.authorized(r) {
 		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")

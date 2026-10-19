@@ -14,15 +14,18 @@ import (
 )
 
 type Service struct {
-	store        Store
-	now          func() time.Time
-	publisher    events.Publisher
-	auditSink    AuditRecorder
-	plans        PlanRevisions
-	approvals    ApprovalLog
-	runQueuer    RunQueuer
-	runLister    RunLister
-	itemNotifier ItemNotifier
+	store     Store
+	now       func() time.Time
+	publisher events.Publisher
+	auditSink AuditRecorder
+	plans     PlanRevisions
+	approvals ApprovalLog
+	runQueuer RunQueuer
+	// secondOpinionDefault resolves a workspace's default second-opinion
+	// runner (pipeline settings); nil = a runner must always be named.
+	secondOpinionDefault func(ctx context.Context, workspaceID string) string
+	runLister            RunLister
+	itemNotifier         ItemNotifier
 }
 
 func NewService(store Store) *Service {
@@ -59,9 +62,12 @@ type RunLister interface {
 
 // RunSummary is the inbox-facing slice of a run.
 type RunSummary struct {
-	ID     string `json:"id"`
-	Stage  string `json:"stage"`
-	Status string `json:"status"`
+	ID      string `json:"id"`
+	Stage   string `json:"stage"`
+	Status  string `json:"status"`
+	Runner  string `json:"runner,omitempty"`
+	Branch  string `json:"branch,omitempty"`
+	HeadSHA string `json:"head_sha,omitempty"`
 }
 
 func (s *Service) SetRunLister(l RunLister) { s.runLister = l }

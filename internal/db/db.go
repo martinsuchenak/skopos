@@ -174,6 +174,10 @@ func RunMigrations(db *sql.DB) error {
 			return err
 		}
 	}
+	// Default second-opinion runner per workspace/group (NULL = none).
+	if err := ensureColumn(db, "pipeline_defaults", "second_opinion_runner", "TEXT"); err != nil {
+		return err
+	}
 	// Per-item multi-agent switch: NULL = the repository default.
 	if err := ensureColumn(db, "inbox_items", "agents", "TEXT CHECK (agents IS NULL OR agents IN ('solo', 'panel'))"); err != nil {
 		return err

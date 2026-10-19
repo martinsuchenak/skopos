@@ -54,6 +54,12 @@ const (
 	// a failure never blocks — the gate opens without them.
 	StageCompare    = "compare"
 	StageSynthesize = "synthesize"
+	// StageSecondOpinion is an advisory review Martin asks for on an item
+	// at in_review (or blocked by its review): one run, pinned to the
+	// runner he picked and to the head it reviews. Its result is appended
+	// to the item; it never moves or blocks it (tmp/second-opinion-review
+	// — design.md).
+	StageSecondOpinion = "second_opinion"
 )
 
 // ResumeKind: how a takeover may continue (affinity's escape hatch).
@@ -211,6 +217,9 @@ type ReportInput struct {
 	CostUSD *float64 `json:"cost_usd,omitempty"`
 	// Findings: review/QA structured findings (severity + text).
 	Findings []Finding `json:"findings,omitempty"`
+	// Verdict: a second opinion's pass/fail. It reports succeeded either
+	// way (the review itself ran); the verdict is advisory.
+	Verdict string `json:"verdict,omitempty"`
 }
 
 // WorkspacePrefs is the per-workspace routing config: which runner each stage
@@ -321,4 +330,6 @@ type QueueInput struct {
 	// preference; Single never opens a group (a seeded plan revise).
 	Runner string
 	Single bool
+	// HeadSHA pins a second opinion to the commit it reviews.
+	HeadSHA string
 }

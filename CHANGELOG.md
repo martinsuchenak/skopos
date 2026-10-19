@@ -4,6 +4,29 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Second opinions.** On an item at `in_review` (or blocked by its review),
+  ask for one extra, advisory review of the exact head waiting for approval,
+  by a runner you pick.
+  - **Result:** appended as `Second opinion — <runner> @ <sha>`; the item's
+    status never changes.
+  - **Where:** the dashboard preview, Slack `second [runner]` (result posted
+    to the thread), `skopos inbox second-opinion`,
+    `POST /api/inbox/{id}/second-opinion`.
+  - **Default runner:** a per-workspace or per-group setting in pipeline
+    settings (`--second-opinion` on `skopos workspace|group pipeline set`).
+  - **Limits:** approver-only, one at a time per item, `force` to repeat a
+    runner on the same head, audited as `inbox.second_opinion`.
+  - Design: `tmp/second-opinion-review — design.md`.
+
+### Changed
+
+- A run report without `head_sha` keeps the run's recorded head instead of
+  clearing it.
+
 ## [0.17.0] — 2026-10-19
 
 ### Added

@@ -89,6 +89,8 @@ type resolved struct {
 	effective    map[string]EffectiveStage
 	agents       string
 	agentsSource string
+	second       string
+	secondSource string
 	groups       []GroupRef
 	conflicts    []string
 }
@@ -144,6 +146,20 @@ func (s *Service) resolve(ctx context.Context, ws string) (*resolved, error) {
 	} else if len(agentSetters) > 1 {
 		r.conflicts = append(r.conflicts, fmt.Sprintf("the agents default is set by groups %s; using %s", strings.Join(agentSetters, ", "), agentSetters[0]))
 	}
+	var secondSetters []string
+	for i, g := range groups {
+		if gsets[i].SecondOpinionRunner != "" {
+			if len(secondSetters) == 0 {
+				r.second, r.secondSource = gsets[i].SecondOpinionRunner, "group:"+g.Name
+			}
+			secondSetters = append(secondSetters, g.Name)
+		}
+	}
+	if own.SecondOpinionRunner != "" {
+		r.second, r.secondSource = own.SecondOpinionRunner, KindWorkspace
+	} else if len(secondSetters) > 1 {
+		r.conflicts = append(r.conflicts, fmt.Sprintf("the second-opinion runner is set by groups %s; using %s", strings.Join(secondSetters, ", "), secondSetters[0]))
+	}
 	return r, nil
 }
 
@@ -167,7 +183,8 @@ func (s *Service) Get(ctx context.Context, kind, id string) (*View, error) {
 		return nil, err
 	}
 	v := &View{OwnerKind: kind, OwnerID: id, Own: r.own, Effective: r.effective,
-		EffectiveAgentsDefault: r.agents, AgentsDefaultSource: r.agentsSource, Groups: r.groups, Conflicts: r.conflicts}
+		EffectiveAgentsDefault: r.agents, AgentsDefaultSource: r.agentsSource, Groups: r.groups, Conflicts: r.conflicts,
+		EffectiveSecondOpinionRunner: r.second, SecondOpinionSource: r.secondSource}
 	if offered, err := s.storage.RunnersServing(ctx, id); err == nil {
 		unknown := map[string]bool{}
 		for _, e := range r.effective {
@@ -176,6 +193,9 @@ func (s *Service) Get(ctx context.Context, kind, id string) (*View, error) {
 					unknown[m.Runner] = true
 				}
 			}
+		}
+		if r.second != "" && !offered[r.second] {
+			unknown[r.second] = true
 		}
 		for name := range unknown {
 			v.UnknownRunners = append(v.UnknownRunners, name)
@@ -296,6 +316,15 @@ func (s *Service) checkGroupConflicts(ctx context.Context, groupID string, next 
 			return err
 		}
 	}
+	if next.SecondOpinionRunner != "" {
+		setters, err := s.storage.GroupsSettingSecondOpinion(ctx)
+		if err != nil {
+			return err
+		}
+		if err := check("second-opinion runner", setters); err != nil {
+			return err
+		}
+	}
 	if next.AgentsDefault != "" {
 		setters, err := s.storage.GroupsSettingAgentsDefault(ctx)
 		if err != nil {
@@ -354,6 +383,9 @@ func diff(before, after Settings) string {
 			to = describe(a)
 		}
 		parts = append(parts, fmt.Sprintf("%s: %s → %s", stage, from, to))
+	}
+	if before.SecondOpinionRunner != after.SecondOpinionRunner {
+		parts = append(parts, fmt.Sprintf("second-opinion runner: %s → %s", orDefault(before.SecondOpinionRunner), orDefault(after.SecondOpinionRunner)))
 	}
 	if before.AgentsDefault != after.AgentsDefault {
 		parts = append(parts, fmt.Sprintf("agents default: %s → %s", orDefault(before.AgentsDefault), orDefault(after.AgentsDefault)))
@@ -438,6 +470,17 @@ func (s *Service) Import(ctx context.Context, flags map[string]*runs.WorkspacePr
 	}
 	s.invalidate()
 	return log
+}
+
+// SecondOpinionRunner is a workspace's effective default second-opinion
+// runner ("" = none). Internal (no scope check): the inbox has already
+// authorized the request.
+func (s *Service) SecondOpinionRunner(ctx context.Context, ws string) string {
+	r, err := s.resolve(ctx, ws)
+	if err != nil {
+		return ""
+	}
+	return r.second
 }
 
 // DropOrphans removes settings of deleted workspaces and groups (startup).

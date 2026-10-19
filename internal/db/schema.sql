@@ -394,6 +394,7 @@ CREATE TABLE IF NOT EXISTS pipeline_defaults (
     owner_kind      TEXT    NOT NULL CHECK (owner_kind IN ('workspace', 'group')),
     owner_id        TEXT    NOT NULL,
     agents_default  TEXT    CHECK (agents_default IS NULL OR agents_default IN ('panel', 'solo')),
+    second_opinion_runner TEXT,   -- default runner for on-demand second opinions (NULL = none)
     updated_ms      INTEGER NOT NULL,
     updated_by      TEXT    NOT NULL,
     PRIMARY KEY (owner_kind, owner_id)

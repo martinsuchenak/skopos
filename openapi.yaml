@@ -1503,6 +1503,47 @@ paths:
         "403": { description: Approver permission required }
         "404": { description: Not found }
 
+  /api/inbox/{id}/second-opinion:
+    post:
+      summary: Ask for an advisory second opinion on the item's current head (approver)
+      description: >-
+        Queues one extra review of the exact head the item is waiting on (its
+        newest successful implementation), by the named runner or the
+        workspace's default second-opinion runner. Allowed at in_review, or
+        when the item is blocked by its review. The result is appended to the
+        item as "Second opinion — <runner> @ <sha>"; the item's status never
+        changes. Audited as inbox.second_opinion.
+      operationId: inboxSecondOpinion
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                runner: { type: string, description: "Runner to review with; omit for the workspace default" }
+                force: { type: boolean, description: "Run it even if this runner already reviewed this head" }
+                via: { type: string, description: Surface label for the audit log }
+      responses:
+        "202":
+          description: Queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  run_id: { type: string }
+                  runner: { type: string }
+                  head_sha: { type: string }
+        "400": { description: "Not applicable (status, no implemented head, no runner and no default)" }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the approver permission }
+        "404": { description: Not found or out of scope }
+        "409": { description: "One is already running for the item, or this runner already reviewed this head (pass force)" }
+
   /api/inbox/{id}/retry:
     post:
       summary: Answer a blocked or failed item and resume it (approver permission required)
@@ -2094,6 +2135,7 @@ components:
           description: "Keyed by stage: plan, compare, synthesize, implement, review, qa"
           additionalProperties: { $ref: "#/components/schemas/PipelineStage" }
         agents_default: { type: string, enum: [panel, solo, default, ""], description: What items without their own switch get }
+        second_opinion_runner: { type: string, description: "Default runner for second opinions; none or empty clears it" }
         via: { type: string, description: Surface label for the audit log }
     PipelineView:
       type: object
@@ -2105,6 +2147,7 @@ components:
           properties:
             stages: { type: object, additionalProperties: { $ref: "#/components/schemas/PipelineStage" } }
             agents_default: { type: string }
+            second_opinion_runner: { type: string }
         effective:
           type: object
           description: "Workspace only: the resolved stages, each with source (workspace or group:<name>)"
@@ -2115,6 +2158,8 @@ components:
                 properties:
                   source: { type: string }
         effective_agents_default: { type: string }
+        effective_second_opinion_runner: { type: string }
+        second_opinion_source: { type: string }
         agents_default_source: { type: string }
         groups:
           type: array
@@ -2435,7 +2480,7 @@ components:
         workspace_id: { type: string }
         item_id: { type: string }
         plan_rev_id: { type: string }
-        stage: { type: string, enum: [plan, implement, review, qa, compare, synthesize] }
+        stage: { type: string, enum: [plan, implement, review, qa, compare, synthesize, second_opinion] }
         runner: { type: string, description: The resolved stage preference at queue time }
         worker_id: { type: string, description: Affinity owner }
         status: { type: string, enum: [queued, claimed, running, paused, succeeded, failed, interrupted, cancelled] }

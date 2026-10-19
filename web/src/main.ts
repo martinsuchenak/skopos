@@ -34,7 +34,7 @@ type WorkerSeen = { id: string; runners: string[]; workspaces: string[]; last_se
 // Pipeline settings (which agents run each stage, per workspace or group).
 type PipeMember = { runner: string; focus?: string };
 type PipeStage = { members: PipeMember[]; policy?: string; early_exit?: boolean; timeout_ms?: number };
-type PipeView = { owner_kind: string; owner_id: string; own: { stages: Record<string, PipeStage> | null; agents_default?: string }; effective?: Record<string, PipeStage & { source: string }>; effective_agents_default?: string; agents_default_source?: string; groups?: { id: string; name: string }[]; conflicts?: string[]; unknown_runners?: string[] };
+type PipeView = { owner_kind: string; owner_id: string; own: { stages: Record<string, PipeStage> | null; agents_default?: string; second_opinion_runner?: string }; effective?: Record<string, PipeStage & { source: string }>; effective_agents_default?: string; agents_default_source?: string; effective_second_opinion_runner?: string; second_opinion_source?: string; groups?: { id: string; name: string }[]; conflicts?: string[]; unknown_runners?: string[] };
 // One dialog row per stage. mode: own (set at this level, editable),
 // inherited (from a group; Override copies it here), unset.
 type PipeRow = { stage: string; label: string; multi: boolean; rule: boolean; mode: string; members: PipeMember[]; policy: string; earlyExit: boolean; timeoutMin: string; inherited: PipeStage | null; inheritedFrom: string; addRunner: string; addFocus: string };
@@ -103,6 +103,9 @@ const appState = () => ({
   previewLoading: false,
   previewItem: null as InboxDetail | null,
   previewRuns: [] as RunRow[],
+  // Second opinion on the previewed item: runner field (prefilled with the
+  // workspace default), suggestions from workers in scope.
+  secondOpinion: { runner: '', force: false, busy: false, runners: [] as string[] },
   previewRunsLoading: false,
   // The plan revision the preview shows for an item at the gate — Approve
   // names exactly this one (M2), so the server refuses it if the planner
@@ -155,7 +158,7 @@ const appState = () => ({
   // re-evaluates when a dialog reopens for different data (CSP build)
   formNonce: 0,
   showGroupModal: false,
-  pipe: { open: false, kind: 'workspace', id: '', label: '', saving: false, readOnly: false, rev: 0, rows: [] as PipeRow[], agentsDefault: '', agentsInherited: '', agentsInheritedFrom: '', notes: [] as { key: string; tone: string; text: string }[], runnerOptions: [] as string[] },
+  pipe: { open: false, kind: 'workspace', id: '', label: '', saving: false, readOnly: false, rev: 0, rows: [] as PipeRow[], agentsDefault: '', agentsInherited: '', agentsInheritedFrom: '', secondOpinion: '', secondInherited: '', notes: [] as { key: string; tone: string; text: string }[], runnerOptions: [] as string[] },
   groupModalMode: 'create' as 'create' | 'edit',
   groupSaving: false,
   groupErrors: {} as Record<string, string>,
@@ -369,7 +372,7 @@ const appState = () => ({
       },
       entry: { bug: 'danger', debt: 'warn', warning: 'warn', finding: 'active', decision: 'success', context: 'neutral' },
       scope: { session: 'neutral', branch: 'accent', project: 'secondary' },
-      stage: { plan: 'accent', implement: 'active', review: 'review', qa: 'review' },
+      stage: { plan: 'accent', implement: 'active', review: 'review', qa: 'review', second_opinion: 'review' },
     };
     return 'tone-' + (maps[kind][v] ?? 'neutral');
   },
@@ -987,6 +990,51 @@ const appState = () => ({
     this.workflowNote = '';
     this.fetchPreviewRuns(item.id);
     this.fetchPreviewRevision();
+    this.loadSecondOpinion();
+  },
+  // ---- second opinion (advisory review of the head waiting for approval) ----
+  secondOpinionApplies(): boolean {
+    return !!this.previewItem && (this.previewItem.status === 'in_review' || this.previewItem.status === 'blocked');
+  },
+  async loadSecondOpinion() {
+    this.secondOpinion = { runner: '', force: false, busy: false, runners: [] };
+    const item = this.previewItem;
+    if (!item || !this.secondOpinionApplies() || !item.workspace_id) return;
+    const [wres, pres] = await Promise.all([
+      this.authFetch('/api/workers'),
+      this.authFetch('/api/workspaces/' + encodeURIComponent(item.workspace_id) + '/pipeline'),
+    ]);
+    if (!this.previewItem || this.previewItem.id !== item.id) return;
+    const runners: string[] = [];
+    if (wres.ok) for (const w of (await wres.json()) as WorkerSeen[]) for (const r of w.runners || []) if (!runners.includes(r)) runners.push(r);
+    let dflt = '';
+    if (pres.ok) dflt = ((await pres.json()) as PipeView).effective_second_opinion_runner || '';
+    this.secondOpinion = { runner: dflt, force: false, busy: false, runners: runners.sort() };
+  },
+  secondOpinionRunning(): RunRow | undefined {
+    return this.previewRuns.find((r: RunRow) => r.stage === 'second_opinion' && ['queued', 'claimed', 'running', 'paused'].includes(r.status));
+  },
+  // Keyed row (CSP build: x-show on outer state inside the preview does not
+  // re-run; a keyed x-for re-renders): [] when it doesn't apply.
+  secondOpinionRow(): { key: string; running: string }[] {
+    if (!this.secondOpinionApplies()) return [];
+    const running = this.secondOpinionRunning();
+    return [{ key: (this.previewItem ? this.previewItem.status : '') + '|' + (running ? running.id + running.status : 'idle'), running: running ? (running.runner || '') : '' }];
+  },
+  async requestSecondOpinion() {
+    const item = this.previewItem;
+    if (!item || this.secondOpinion.busy) return;
+    this.secondOpinion.busy = true;
+    try {
+      const res = await this.authFetch('/api/inbox/' + encodeURIComponent(item.id) + '/second-opinion', {
+        method: 'POST', body: JSON.stringify({ runner: this.secondOpinion.runner.trim(), force: this.secondOpinion.force, via: 'dashboard' }),
+      });
+      if (!await this.handleBad(res, 'Second opinion not queued')) return;
+      const out = (await res.json()) as { runner: string; head_sha: string };
+      this.notify('Second opinion queued: ' + out.runner + ' reviews ' + out.head_sha.slice(0, 7), 'success');
+      this.secondOpinion.force = false;
+      await this.fetchPreviewRuns(item.id);
+    } finally { this.secondOpinion.busy = false; }
   },
   closeInboxPreview() { this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.previewCandidates = []; this.workflowNote = ''; this.workflowBusy = false; },
   // The newest revision of the previewed item's plan, while it waits at the
@@ -1193,6 +1241,9 @@ const appState = () => ({
     const fromGroup = kind === 'workspace' && v.agents_default_source && v.agents_default_source !== 'workspace';
     this.pipe.agentsInherited = fromGroup ? (v.effective_agents_default || '') : '';
     this.pipe.agentsInheritedFrom = fromGroup ? (v.agents_default_source || '').replace('group:', '') : '';
+    this.pipe.secondOpinion = v.own.second_opinion_runner || '';
+    const secondFromGroup = kind === 'workspace' && v.second_opinion_source && v.second_opinion_source !== 'workspace';
+    this.pipe.secondInherited = secondFromGroup ? (v.effective_second_opinion_runner || '') + ' (group ' + (v.second_opinion_source || '').replace('group:', '') + ')' : '';
     const labels: Record<string, string> = { plan: 'Plan', compare: 'Compare (judge)', synthesize: 'Synthesize (merge)', implement: 'Implement', review: 'Review', qa: 'QA' };
     const own = v.own.stages || {};
     this.pipe.rows = ['plan', 'compare', 'synthesize', 'implement', 'review', 'qa'].map((stage: string) => {
@@ -1276,6 +1327,11 @@ const appState = () => ({
   },
   pipeCanAdd(r: PipeRow): boolean { return r.multi || r.members.length === 0; },
   pipeShowGroupOptions(r: PipeRow): boolean { return r.multi && r.members.length > 1; },
+  pipeSecondHint(): string {
+    if (this.pipe.secondOpinion.trim()) return 'A plain second-opinion request (dashboard, Slack `second`) uses this runner.';
+    if (this.pipe.secondInherited) return 'Inherited: ' + this.pipe.secondInherited + '.';
+    return 'Not set: each second-opinion request must name a runner.';
+  },
   pipeAgentsHint(): string {
     if (this.pipe.agentsDefault) return '';
     if (this.pipe.agentsInherited) return 'Inherited: ' + (this.pipe.agentsInherited === 'solo' ? 'one agent' : 'agent panel') + ' (group ' + this.pipe.agentsInheritedFrom + ')';
@@ -1300,7 +1356,7 @@ const appState = () => ({
     this.pipe.saving = true;
     try {
       const base = this.pipe.kind === 'group' ? '/api/groups/' : '/api/workspaces/';
-      const res = await this.authFetch(base + encodeURIComponent(this.pipe.id) + '/pipeline', { method: 'PUT', body: JSON.stringify({ stages, agents_default: this.pipe.agentsDefault, via: 'dashboard' }) });
+      const res = await this.authFetch(base + encodeURIComponent(this.pipe.id) + '/pipeline', { method: 'PUT', body: JSON.stringify({ stages, agents_default: this.pipe.agentsDefault, second_opinion_runner: this.pipe.secondOpinion.trim(), via: 'dashboard' }) });
       if (!await this.handleBad(res, 'Pipeline not saved')) return;
       this.notify('Pipeline saved — applies from the next stage', 'success');
       this.pipe.open = false;

@@ -181,6 +181,9 @@ func TestPhaseAdmissible(t *testing.T) {
 		{"queued", "plan", true}, {"planning", "plan", true}, {"approved", "plan", false},
 		{"approved", "implement", true}, {"implementing", "implement", true}, {"queued", "implement", false},
 		{"implementing", "review", true}, {"discarded", "implement", false}, {"in_review", "implement", false},
+		// A second opinion runs on a finished branch, never on a moving one.
+		{"in_review", "second_opinion", true}, {"blocked", "second_opinion", true},
+		{"implementing", "second_opinion", false}, {"done", "second_opinion", false}, {"in_review", "review", false},
 	}
 	for _, c := range cases {
 		if got := PhaseAdmissible(c.item, c.stage); got != c.ok {

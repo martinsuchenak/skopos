@@ -245,6 +245,43 @@ skopos workspace pipeline set --workspace github.com/you/repo --agents-default s
 - **Without a list** for a stage, `panel` has nothing to fan out to and the
   stage runs on its one runner.
 
+#### Second opinions (on demand)
+
+On an item at `in_review`, or blocked by its review, you can ask for a
+**second opinion**: one extra review of the exact head waiting for your
+approval, by a runner you pick. Ideally that's a different model family
+from the reviewer.
+
+- **Advisory.** The result is appended to the item as `Second opinion —
+  <runner> @ <sha>`: the verdict, the summary, and blocking findings and nits.
+  The item's status never changes; you decide whether to mark done, request
+  changes or reject.
+- **The exact head.** It reviews the newest successful implementation's head
+  (the commit mark-done approves), not the branch tip. If you've requested
+  changes since, it says it reviewed an older head.
+- **Where you ask for one:**
+  - **Dashboard:** the item preview has a **Second opinion** field and button.
+    The runner field suggests your workers' runners and is prefilled with the
+    default.
+  - **Slack:** reply `second`, `second codex` or `second: codex` in the
+    item's thread. The result is posted back to the thread.
+  - **CLI:** `skopos inbox second-opinion --id <item> [--runner codex] [--force]`.
+  - **REST:** `POST /api/inbox/{id}/second-opinion`.
+  - **MCP:** agents can read the result (it's part of the item), but can't
+    ask for one.
+- **Default runner.** Set "Second opinions use" in a workspace's or group's
+  Pipeline dialog, or `skopos workspace|group pipeline set --second-opinion
+  <runner>` (`none` clears it). It resolves like the agents default: the
+  workspace wins over its group. Without one, every request must name a
+  runner.
+- **Limits.**
+  - Approver keys only.
+  - One second opinion at a time per item.
+  - Repeating a runner on a head it already reviewed needs `force`.
+  - Every request is audit-logged (`inbox.second_opinion`).
+- **The runner** needs a worker that offers it, like any pinned run. It runs
+  with the repo's `review` profile, so a contained stage keeps its tools.
+
 ## Slack relay (server)
 
 Enabled when all three `SKOPOS_SLACK_*` variables are set on `skopos serve`;
@@ -266,7 +303,9 @@ scopes and the `message.im` event subscription.
 | `SKOPOS_SLACK_DEFAULT_WORKSPACE` | Workspace for `new: <what>` capture (unset disables capture) |
 
 Commands (replies in an item's thread): `approve` [`: <notes>`], `revise:
-<notes>`, `changes: <notes>`, `done`, `retry: <answer>`, `reject`, and
+<notes>`, `changes: <notes>`, `done`, `retry: <answer>`, `reject`,
+`second` / `second <runner>` (an advisory [second opinion](#second-opinions-on-demand),
+`force` to repeat a runner on the same head), and
 `panel` / `solo` / `default` (the item's [agents switch](#per-item-switch-panel-or-solo),
 applied at once, even mid-run). A command is
 the bare word or `word: <text>` on its own — "done with lunch" is not `done`

@@ -106,10 +106,10 @@ func insertRun(ctx context.Context, db execer, r Run) error {
 	}
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO runs (id, workspace_id, item_id, plan_rev_id, stage, runner, status, attempt,
-			branch, base_sha, checks, created_at, updated_at, group_id, focus)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			branch, base_sha, head_sha, checks, created_at, updated_at, group_id, focus)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.ID, r.WorkspaceID, r.ItemID, r.PlanRevID, r.Stage, r.Runner, StatusQueued, 1,
-		r.Branch, r.BaseSHA, string(checks), formatTime(r.CreatedAt), formatTime(r.UpdatedAt),
+		r.Branch, r.BaseSHA, r.HeadSHA, string(checks), formatTime(r.CreatedAt), formatTime(r.UpdatedAt),
 		nullIfEmpty(r.GroupID), nullIfEmpty(r.Focus)); err != nil {
 		return fmt.Errorf("inserting run: %w", err)
 	}
@@ -530,14 +530,14 @@ func (s *Storage) Report(ctx context.Context, id, workerID, keyID, tokenHash str
 		checks = []byte("[]")
 	}
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE runs SET status = ?, result_summary = ?, head_sha = ?, diffstat = ?, checks = ?,
+		UPDATE runs SET status = ?, result_summary = ?, head_sha = CASE WHEN ? != '' THEN ? ELSE head_sha END, diffstat = ?, checks = ?,
 			log_ref = ?, fail_reason = ?, branch = CASE WHEN ? != '' THEN ? ELSE branch END,
 			base_sha = CASE WHEN ? != '' THEN ? ELSE base_sha END,
 			executor = CASE WHEN ? != '' THEN ? ELSE executor END,
 			cost_usd = COALESCE(?, cost_usd), findings = COALESCE(?, findings),
 			lease_expires_at = '', resume_after = '', updated_at = ?
 		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
-		string(in.Status), in.Summary, in.HeadSHA, in.Diffstat, string(checks),
+		string(in.Status), in.Summary, in.HeadSHA, in.HeadSHA, in.Diffstat, string(checks),
 		in.LogRef, in.Reason, in.Branch, in.Branch, in.BaseSHA, in.BaseSHA, in.Executor, in.Executor,
 		costArg(in.CostUSD), findingsJSON(in.Findings),
 		formatTime(now), id, workerID, keyID, tokenHash, string(StatusClaimed), string(StatusRunning), string(StatusPaused))

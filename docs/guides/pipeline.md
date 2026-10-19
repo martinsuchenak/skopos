@@ -253,6 +253,17 @@ on the item, and the run list (runner, executor, head commit). Then:
   commit;
 - or **Request changes**, with notes, sends it back to implementation.
 
+**Want another pair of eyes first?** Ask for a **second opinion** in the
+preview (or `second codex` in Slack).
+- **What runs:** one extra review of that exact head, by the runner you
+  pick, ideally a different model family from the reviewer.
+- **Advisory:** the result is appended to the item, and the status doesn't
+  change.
+- **Also when blocked:** it works when the item is blocked by its review, to
+  get a counter-opinion on a disputed finding.
+- **Default runner:** set one in the workspace's Pipeline dialog. See
+  [Second opinions](../configuration.md#second-opinions-on-demand).
+
 **Blocked?** If an agent needs an answer, the item is `blocked` with its
 question. Click **Retry** with your answer; it's appended to the item and the
 next run reads it.
@@ -284,6 +295,8 @@ the current plan and asks again. You reply with:
 - `done`;
 - `retry: answer`;
 - `reject`;
+- `second` or `second <runner>` for an advisory second opinion on the
+  finished branch;
 - `panel`, `solo` or `default` to switch the item's agents (applied at once,
   even mid-run; it takes effect from the next stage).
 

@@ -441,6 +441,9 @@ func serveCmd() *cli.Command {
 					log.Warn("pipeline settings: " + err.Error())
 				}
 			})
+			// Second opinions: a plain request uses the workspace's default
+			// runner from the pipeline settings.
+			inboxService.SetSecondOpinionDefault(pipelineService.SecondOpinionRunner)
 			runsService.SetPrefsSource(func(ctx context.Context, ws string) *runs.WorkspacePrefs {
 				return pipelineService.Prefs(ctx, ws)
 			})
@@ -517,6 +520,11 @@ func serveCmd() *cli.Command {
 				// Async: a Slack post (and the buffered replies it drains)
 				// must never ride a request goroutine (review M3).
 				inboxService.SetItemNotifier(inbox.NewAsyncNotifier(ctx, relay, log))
+				// A finished second opinion is posted to the item's thread —
+				// off the worker's report request (review M3).
+				runsService.SetSecondOpinionNotifier(func(_ context.Context, res runs.SecondOpinionResult) {
+					go relay.PostSecondOpinion(ctx, res)
+				})
 				go func() { _ = notifySvc.Run(ctx) }()
 				go func() { relay.Run(ctx) }()
 			}
@@ -819,7 +827,7 @@ func (a runsListerAdapter) ListRuns(ctx context.Context, itemID string) ([]inbox
 	}
 	out := make([]inbox.RunSummary, 0, len(rs))
 	for _, r := range rs {
-		out = append(out, inbox.RunSummary{ID: r.ID, Stage: r.Stage, Status: r.Status})
+		out = append(out, inbox.RunSummary{ID: r.ID, Stage: r.Stage, Status: r.Status, Runner: r.Runner, Branch: r.Branch, HeadSHA: r.HeadSHA})
 	}
 	return out, nil
 }

@@ -386,6 +386,17 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 	if run.Branch == "" {
 		return fmt.Errorf("review run has no branch to review")
 	}
+	// A second opinion reviews exactly the head it was queued for (the one
+	// waiting for approval), never whatever the branch tip is now; it runs
+	// with the review profile and reports its verdict without failing.
+	second := run.Stage == "second_opinion"
+	if second && run.HeadSHA == "" {
+		return fmt.Errorf("second opinion run has no head to review")
+	}
+	phase := run.Stage
+	if second {
+		phase = "review"
+	}
 	account := w.pickAccount(run, log)
 	if account == nil {
 		return w.noAccount(run, "review")
@@ -400,8 +411,12 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 	if _, err := git(ctx, repo.Path, "fetch", "--quiet", "origin", run.Branch); err != nil {
 		return fmt.Errorf("review: branch %s not pushed: %w", run.Branch, err)
 	}
-	if err := createDetached(ctx, repo.Path, wt, "origin/"+run.Branch); err != nil {
-		return fmt.Errorf("review worktree: %w", err)
+	ref := "origin/" + run.Branch
+	if second {
+		ref = run.HeadSHA
+	}
+	if err := createDetached(ctx, repo.Path, wt, ref); err != nil {
+		return fmt.Errorf("review worktree at %s: %w", ref, err)
 	}
 	defer removeWorktree(ctx, repo.Path, wt)
 	base := run.BaseSHA
@@ -457,15 +472,15 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 	prompt, err := renderPrompt("review.md", map[string]any{
 		"Base": repo.DefaultBranch, "Stage": run.Stage, "Steps": steps,
 		"Instructions": instructions, "Skills": skillBodies, "Focus": focus,
-		"Decisions": decisions,
+		"Decisions": decisions, "SecondOpinion": second,
 	})
 	if err != nil {
 		return err
 	}
 	log.Info("reviewing", "account", account.Name, "stage", run.Stage, "branch", run.Branch)
-	res := w.runAgent(ctx, w.agentRun(wt, prompt, reviewSchema, reviewTools, w.cfg.PlanTimeout, account, run, run.Stage))
+	res := w.runAgent(ctx, w.agentRun(wt, prompt, reviewSchema, reviewTools, w.cfg.PlanTimeout, account, run, phase))
 	w.addCost(run, res)
-	if err := w.handleAgentOutcome(ctx, run, res, account, run.Stage); err != nil {
+	if err := w.handleAgentOutcome(ctx, run, res, account, phase); err != nil {
 		return err
 	}
 	var rr reviewResult
@@ -473,6 +488,14 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 		return fmt.Errorf("review returned no verdict: %s", firstLine(res.Text))
 	}
 	rr.normalise()
+	if second {
+		// The server writes the section (runner and head from the run
+		// record), and the verdict is advisory: the run itself succeeded.
+		log.Info("second opinion finished", "verdict", rr.Verdict, "findings", len(rr.Findings), "head", run.HeadSHA, "cost_usd", res.CostUSD)
+		return w.report(ctx, run, true, map[string]any{
+			"summary": rr.Summary, "findings": rr.Findings, "verdict": rr.Verdict, "head_sha": run.HeadSHA,
+		})
+	}
 	passed := rr.Verdict == "pass"
 	heading := run.Stage + " — " + account.Name
 	if run.Focus != "" {

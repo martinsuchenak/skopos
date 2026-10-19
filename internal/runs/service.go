@@ -33,6 +33,9 @@ type Service struct {
 	// itemAppend writes a section into the item (a stage group's summary) —
 	// wired to inbox.AppendSection. Nil skips the summary.
 	itemAppend func(ctx context.Context, itemID, heading, body string) error
+	// secondOpinionNotify hears about every finished second opinion (the
+	// Slack relay posts it to the item's thread).
+	secondOpinionNotify func(ctx context.Context, r SecondOpinionResult)
 	// Plan groups (multi-agent planning), wired in serve.go: planRoundStart
 	// closes the previous round (supersedes its open candidates) when a new
 	// plan group opens; ensurePlan creates and links the item's plan when
@@ -137,6 +140,13 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 	}
 	switch in.Stage {
 	case StagePlan, StageImplement, StageReview, StageQA, StageCompare, StageSynthesize:
+	case StageSecondOpinion:
+		// Advisory and explicit: the runner Martin picked and the head it
+		// reviews, never routed through pipeline settings.
+		if strings.TrimSpace(in.Runner) == "" || strings.TrimSpace(in.HeadSHA) == "" {
+			return nil, fmt.Errorf("%w: a second opinion needs a runner and the head it reviews", ErrInvalidInput)
+		}
+		in.Single = true
 	default:
 		return nil, fmt.Errorf("%w: unknown stage %q", ErrInvalidInput, in.Stage)
 	}
@@ -178,6 +188,7 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 		Focus:       s.prefsOf(ctx, in.WorkspaceID).SingleFocus(in.Stage),
 		Branch:      strings.TrimSpace(in.Branch),
 		BaseSHA:     strings.TrimSpace(in.BaseSHA),
+		HeadSHA:     strings.TrimSpace(in.HeadSHA),
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -400,6 +411,11 @@ func (s *Service) Report(ctx context.Context, id string, in ReportInput, leaseTo
 // failures are recorded on the run (the worker's report stays truthful
 // about the stage; the chain outcome lands in fail_reason for diagnosis).
 func (s *Service) chain(ctx context.Context, run *Run, in ReportInput) {
+	// A second opinion only adds a section; it never moves the item.
+	if run.Stage == StageSecondOpinion {
+		s.secondOpinionDone(ctx, run, in)
+		return
+	}
 	if s.itemTransition == nil {
 		return
 	}
@@ -573,6 +589,7 @@ type RunSummary struct {
 	ID       string `json:"id"`
 	Stage    string `json:"stage"`
 	Status   string `json:"status"`
+	Runner   string `json:"runner,omitempty"`
 	Branch   string `json:"branch,omitempty"`
 	HeadSHA  string `json:"head_sha,omitempty"`
 	Diffstat string `json:"diffstat,omitempty"`
@@ -590,7 +607,7 @@ func (s *Service) ListRuns(ctx context.Context, itemID string) ([]RunSummary, er
 	}
 	out := make([]RunSummary, 0, len(all))
 	for _, r := range all {
-		out = append(out, RunSummary{ID: r.ID, Stage: r.Stage, Status: string(r.Status),
+		out = append(out, RunSummary{ID: r.ID, Stage: r.Stage, Status: string(r.Status), Runner: r.Runner,
 			Branch: r.Branch, HeadSHA: r.HeadSHA, Diffstat: r.Diffstat, Summary: r.ResultSummary, GroupID: r.GroupID})
 	}
 	return out, nil
