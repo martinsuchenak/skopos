@@ -275,7 +275,18 @@ func (e *quotaError) Error() string { return "quota: " + e.detail }
 func (w *Worker) noAccount(run *Run, what string) error {
 	runner := run.Runner
 	if runner == "" {
-		return &quotaError{detail: "no available account for " + what}
+		// Unpinned: wait for the first account that can run this stage —
+		// not merely any account (a read-only runner's never can implement).
+		var reset time.Time
+		for _, a := range w.cfg.Accounts {
+			if !w.cfg.canRunStage(accountRunner(a), run.Stage) {
+				continue
+			}
+			if reset.IsZero() || a.exhaustedUntil.Before(reset) {
+				reset = a.exhaustedUntil
+			}
+		}
+		return &quotaError{detail: "no available account for " + what, resetAt: reset}
 	}
 	reset, found := w.cfg.NextAvailable(runner, time.Now())
 	if !found {
@@ -314,9 +325,11 @@ func (w *Worker) pickAccount(run *Run, log *slog.Logger) *Account {
 	a := w.cfg.AccountFor(runner, now)
 	if a == nil && !pinned {
 		// Fall back to any account of any runner offered (single-runner
-		// deployments have exactly one).
+		// deployments have exactly one) — one whose runner can run the
+		// stage: a read-only runner (codex) would refuse implement and fail
+		// the item, where waiting for a claude reset only pauses it.
 		for _, cand := range w.cfg.Accounts {
-			if now.After(cand.exhaustedUntil) {
+			if now.After(cand.exhaustedUntil) && w.cfg.canRunStage(accountRunner(cand), run.Stage) {
 				a = cand
 				break
 			}

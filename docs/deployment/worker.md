@@ -129,7 +129,9 @@ block.
 Codex takes the read-only stages: plan, review, compare and second
 opinions (a different model family is the point of a second opinion). It
 refuses implement, because its sandbox keeps `.git` read-only and an
-implementer couldn't commit.
+implementer couldn't commit. An implement run with no runner preference
+never falls back to a Codex account: when every Claude account is at its
+limit, it pauses until the first one resets.
 
 Give each Codex account a login directory of its own:
 

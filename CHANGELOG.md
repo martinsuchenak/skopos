@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **An unpinned implement run no longer lands on Codex.** With every Claude
+  account at its usage limit, the worker's fallback for a stage with no
+  runner preference could pick a Codex account, which refuses implement —
+  the item failed instead of waiting. The fallback now skips runners that
+  can't run the stage, and the run pauses until the first capable account
+  resets. Read-only stages still fall back to Codex.
+- **`skopos worker runner list` pointed at the deprecated `--run-stage`
+  flag.** Its closing hint (and the `runner add` prompts) now name
+  `skopos workspace pipeline set` and the dashboard's Workspaces → Pipeline.
+
 ## [0.18.0] — 2026-10-31
 
 ### Added

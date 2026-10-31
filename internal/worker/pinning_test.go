@@ -100,3 +100,33 @@ func TestQuotaPauseDoesNotStallOtherAccounts(t *testing.T) {
 		t.Fatalf("must pause the run and return at once while glm is usable (took %s, pauses %d)", time.Since(start), paused)
 	}
 }
+
+// An unpinned run falls back to another runner's account only when that
+// runner can run the stage: implement never lands on read-only codex (it
+// would refuse and fail the item) — it pauses until claude resets.
+func TestPickAccountFallbackSkipsReadOnlyRunner(t *testing.T) {
+	now := time.Now()
+	claude := &Account{Name: "claude-max"}
+	claude.exhaustedUntil = now.Add(3 * time.Hour)
+	cfg := &Config{
+		Runners:  []string{"claude", "codex"},
+		Accounts: []*Account{claude, {Name: "codex", Runner: "codex"}},
+	}
+	w := &Worker{cfg: cfg, accounts: map[string]string{}, sessions: map[string]string{}}
+	log := slog.Default()
+	if a := w.pickAccount(&Run{ID: "r1", Stage: "implement"}, log); a != nil {
+		t.Fatalf("an unpinned implement run must not fall back to %q", a.Name)
+	}
+	var q *quotaError
+	if err := w.noAccount(&Run{Stage: "implement"}, "implementation"); !errors.As(err, &q) {
+		t.Fatalf("unpinned implement with no capable account must pause: %v", err)
+	}
+	if d := q.resetAt.Sub(claude.exhaustedUntil); d < -time.Second || d > time.Second {
+		t.Fatalf("pause must last until the claude reset, not codex's: %v", q.resetAt)
+	}
+	for _, stage := range []string{"plan", "review", "compare", "second_opinion"} {
+		if a := w.pickAccount(&Run{ID: "r-" + stage, Stage: stage}, log); a == nil || a.Name != "codex" {
+			t.Fatalf("unpinned %s may still fall back to codex: %+v", stage, a)
+		}
+	}
+}
