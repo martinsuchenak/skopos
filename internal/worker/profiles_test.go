@@ -365,3 +365,40 @@ func TestStageCommands(t *testing.T) {
 		t.Fatalf("plan stage has no shell: %v", got)
 	}
 }
+
+// A push block must say how to push: without a kind it used to mean "none"
+// silently, so the worker never pushed and nothing said why.
+func TestPushValidation(t *testing.T) {
+	repo := func(kind, url, tokenEnv string) Config {
+		r := &Repo{Path: "/x"}
+		r.Push.Kind, r.Push.RemoteURL, r.Push.TokenEnv = kind, url, tokenEnv
+		return Config{Repos: map[string]*Repo{"ws": r}}
+	}
+	cases := []struct {
+		name string
+		cfg  Config
+		want string // "" = valid
+	}{
+		{"no push block", repo("", "", ""), ""},
+		{"kind missing", repo("", "https://github.com/o/r.git", "GH_TOKEN"), "push.kind is required"},
+		{"unknown kind", repo("GitHub", "https://github.com/o/r.git", "GH_TOKEN"), "not one of"},
+		{"remote missing", repo("github", "", "GH_TOKEN"), "push.remote_url is required"},
+		{"explicit none", repo("none", "", ""), ""},
+		{"github", repo("github", "https://github.com/o/r.git", "GH_TOKEN"), ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := tc.cfg
+			err := cfg.Default(t.TempDir())
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("want valid, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want error containing %q, got %v", tc.want, err)
+			}
+		})
+	}
+}

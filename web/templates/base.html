@@ -1095,8 +1095,11 @@
                                     <label class="lbl" for="so-runner">Second opinion from</label>
                                     <input id="so-runner" type="text" list="so-runners" x-model="secondOpinion.runner" class="fld" placeholder="runner, e.g. codex" autocomplete="off" />
                                 </div>
-                                <label x-show="!so.running" class="flex items-center gap-2 text-xs text-zinc-400"><input type="checkbox" x-model="secondOpinion.force" /> again on this head</label>
-                                <button type="button" x-show="!so.running" @click.stop="requestSecondOpinion()" :disabled="secondOpinionDisabled()" class="btn btn-sm btn-accent-soft" :aria-label="'Ask for a second opinion on item ' + previewItem.title">Second opinion</button>
+                                <!-- Field height, so the checkbox and button centre on the input. -->
+                                <div x-show="!so.running" class="flex min-h-[var(--ctl-md)] items-center gap-3">
+                                    <label class="flex items-center gap-2 text-xs text-zinc-400"><input type="checkbox" x-model="secondOpinion.force" /> again on this head</label>
+                                    <button type="button" @click.stop="requestSecondOpinion()" :disabled="secondOpinionDisabled()" class="btn btn-sm btn-accent-soft" :aria-label="'Ask for a second opinion on item ' + previewItem.title">Second opinion</button>
+                                </div>
                                 <p x-show="!so.running && secondOpinionBlockedReason()" class="w-full text-xs text-amber-300" x-text="secondOpinionBlockedReason()"></p>
                             </div>
                         </template>

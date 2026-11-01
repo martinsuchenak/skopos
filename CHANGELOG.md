@@ -16,9 +16,14 @@ versions follow [Semantic Versioning](https://semver.org/).
   opinion, which can't fetch the branch either. For runs from older
   workers, it reads the same thing from a review that failed to fetch the
   branch.
+- **A push block without `kind` is refused at startup.** It used to mean
+  "don't push" silently, so the branch stayed on the worker and links and
+  reviews failed far from the cause. An unknown `kind`, or a push without
+  `remote_url`, is refused too.
 - **The Second opinion button stands out.** It has a tinted violet fill in
   both themes instead of the plain style that blended into the sign-off
-  card.
+  card. The "again on this head" checkbox and the button now line up with
+  the middle of the runner field.
 
 ## [0.18.2] — 2026-11-01
 

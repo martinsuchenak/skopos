@@ -367,7 +367,21 @@ func (c *Config) Default(home string) error {
 			return fmt.Errorf("repo %s: push.token_env is required (tokens come from the environment)", ws)
 		}
 		if r.Push.Kind == "" {
+			// A push block without a kind used to fall back to "none"
+			// silently: the worker never pushed, and links and reviews
+			// failed far from the cause.
+			if r.Push.RemoteURL != "" || r.Push.TokenEnv != "" {
+				return fmt.Errorf("repo %s: push.kind is required when push is configured (github, gitea or none)", ws)
+			}
 			r.Push.Kind = "none"
+		}
+		switch r.Push.Kind {
+		case "github", "gitea", "none":
+		default:
+			return fmt.Errorf("repo %s: push.kind %q is not one of github, gitea, none", ws, r.Push.Kind)
+		}
+		if r.Push.Kind != "none" && r.Push.RemoteURL == "" {
+			return fmt.Errorf("repo %s: push.remote_url is required for push.kind %q", ws, r.Push.Kind)
 		}
 	}
 	if c.MCPConfig != "" {

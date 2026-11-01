@@ -77,7 +77,7 @@ poll_every = "30s"
 # checks = ["task test"]
 # protected_branches = ["PROD", "main", "master", "develop", "release/**"]
 # [worker.repos."github.com/you/repo".push]
-# kind = "gitea"                   # gitea | github | none
+# kind = "gitea"                   # gitea | github | none (required: no kind is a startup error)
 # remote_url = "https://git.example.com/you/repo.git"
 # token_env = "GITEA_PUSH_TOKEN"   # set the value in skopos-worker.env, never here
 
