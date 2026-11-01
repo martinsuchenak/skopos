@@ -155,7 +155,7 @@ path = "~/clones/repo"
 checks = ["task test"]            # the worker runs these after every implementation
 
 [worker.repos."github.com/you/repo".push]
-kind = "gitea"                    # gitea | github | none
+kind = "gitea"                    # gitea | github | none (github: a personal access token with Contents read/write)
 remote_url = "https://git.example.com/you/repo.git"
 token_env = "GITEA_PUSH_TOKEN"
 ```

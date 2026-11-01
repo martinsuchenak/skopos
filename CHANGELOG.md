@@ -4,6 +4,17 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Pushes to GitHub failed with "remote: invalid credentials".** A
+  `kind = "github"` push sent the token as `Authorization: Bearer`, which
+  GitHub's git over HTTPS rejects. It now uses HTTP Basic with the user
+  `x-access-token`, which works with classic and fine-grained personal
+  access tokens and GitHub App installation tokens. Gitea pushes are
+  unchanged.
+
 ## [0.18.0] — 2026-10-31
 
 ### Added

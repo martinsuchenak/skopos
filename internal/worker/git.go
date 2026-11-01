@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -112,16 +113,26 @@ func pushBranch(ctx context.Context, worktree, remoteURL, token, authKind, branc
 	if cur != branch {
 		return fmt.Errorf("push refused: HEAD is %q, refusing to push %q", cur, branch)
 	}
-	header := "Authorization: token " + token
-	if authKind == "github" {
-		header = "Authorization: Bearer " + token
-	}
 	_, err = gitEnv(ctx, worktree, []string{
 		"GIT_CONFIG_COUNT=2",
-		"GIT_CONFIG_KEY_0=http.extraHeader", "GIT_CONFIG_VALUE_0=" + header,
+		"GIT_CONFIG_KEY_0=http.extraHeader", "GIT_CONFIG_VALUE_0=" + pushAuthHeader(authKind, token),
 		"GIT_CONFIG_KEY_1=http.sslVerify", "GIT_CONFIG_VALUE_1=true",
 	}, "push", remoteURL, "refs/heads/"+branch+":refs/heads/"+branch)
 	return err
+}
+
+// pushAuthHeader is the HTTP header that carries the push token.
+//   - github: HTTP Basic with the token as the password and the
+//     conventional user x-access-token. GitHub's git-over-HTTPS rejects a
+//     Bearer header ("remote: invalid credentials", found on the first
+//     live push); Basic works for classic and fine-grained personal
+//     access tokens and GitHub App installation tokens alike.
+//   - gitea (and the default): Gitea's "token <t>" scheme.
+func pushAuthHeader(kind, token string) string {
+	if kind == "github" {
+		return "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:"+token))
+	}
+	return "Authorization: token " + token
 }
 
 func commitCount(ctx context.Context, worktree, base string) int {

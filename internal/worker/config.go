@@ -194,8 +194,10 @@ type Repo struct {
 	Stages  map[string]*StageProfile `toml:"stages"`
 
 	// Push: remote-agnostic. Token from env (never argv); Kind selects the
-	// credential flavor — "gitea" (token auth header) is first, "github"
-	// (App installation token) plugs in with the same shape.
+	// credential flavor (pushAuthHeader): "gitea" sends Gitea's token
+	// header; "github" sends HTTP Basic with user x-access-token — any
+	// GitHub personal access token (classic or fine-grained) or App
+	// installation token.
 	Push struct {
 		Kind      string `toml:"kind"`       // gitea | github | none
 		RemoteURL string `toml:"remote_url"` // https push URL
