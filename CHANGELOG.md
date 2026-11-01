@@ -4,6 +4,31 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.18.7] — 2026-11-02
+
+### Added
+
+- **Checks are their own step in the item preview.** The tracker now has seven
+  steps: Queued, Plan, Plan approval, Implement, **Checks**, Agent review, Your
+  sign-off.
+  - **Checks** lists each check with its output. It's skipped when the repo has
+    no checks, and red when the checks block the item. Implement then still
+    shows the commit it pushed. While the worker runs the checks, or the
+    implementer is in a fix round, the Checks step shows as running: the worker
+    reports the phase with its heartbeats (`runs.phase`). The fix rounds used
+    are recorded on the run (`runs.fix_rounds`).
+  - **Implement** now shows the setup commands that prepared the worktree, with
+    their output, or says that a later round reused the worktree.
+  - **A failed setup** is reported with what each command printed, and the
+    failure reason still carries the error, so the Slack message has it too.
+
+### Fixed
+
+- **Setup runs again if it was interrupted.** A worker that stopped mid-setup
+  left a half-prepared worktree, and the next run reused it without setup. The
+  branch record now marks setup as pending until it finishes, and the next run
+  on that worktree runs setup again.
+
 ## [0.18.6] — 2026-11-01
 
 ### Added
