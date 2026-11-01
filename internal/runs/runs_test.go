@@ -74,8 +74,9 @@ func TestClaimMatching(t *testing.T) {
 	if run.Status != StatusClaimed || run.WorkerID != "w3" || run.Attempt != 1 {
 		t.Fatalf("claim state wrong: %+v", run)
 	}
-	// Queue drained: honest nil.
-	if run, err = s.ClaimNext(ctx, ClaimInput{WorkerID: "w3", Runners: []string{"claude"}, Workspaces: []string{"ws-a"}}); err != nil || run != nil {
+	// Queue drained: honest nil (w4: w3's next claim would take its own
+	// orphaned run back, see TestClaimReturnsOrphanedRun).
+	if run, err = s.ClaimNext(ctx, ClaimInput{WorkerID: "w4", Runners: []string{"claude"}, Workspaces: []string{"ws-a"}}); err != nil || run != nil {
 		t.Fatalf("drained queue must be nil: %+v err %v", run, err)
 	}
 }
@@ -123,6 +124,49 @@ func TestAffinity(t *testing.T) {
 	run4, err := s.ClaimNext(ctx, ClaimInput{WorkerID: "w2", Runners: []string{}, Workspaces: []string{"ws-a"}})
 	if err != nil || run4 == nil || run4.ID != r.ID {
 		t.Fatalf("branch takeover: %+v err %v", run4, err)
+	}
+}
+
+// A claim from an idle worker takes back a run it still holds under the same
+// key — the response to the earlier claim never arrived (client timeout after
+// the commit) or the worker restarted mid-run — at once, not after the lease
+// expires. The old lease token is dead; another worker or another key using
+// the same worker id gets nothing.
+func TestClaimReturnsOrphanedRun(t *testing.T) {
+	s := testService(t)
+	s.SetLease(time.Hour) // nowhere near expiry: only the new rule can free it
+	k1 := scopedCtx("ws-a")
+	r := mustQueue(t, s, rootCtx(), "ws-a", "item-1", StageImplement)
+	lost, err := s.ClaimNext(k1, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	if err != nil || lost == nil || lost.ID != r.ID {
+		t.Fatalf("first claim: %+v err %v", lost, err)
+	}
+	other := auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: "k2", Workspaces: map[string]struct{}{"ws-a": {}}})
+	for name, c := range map[string]struct {
+		ctx    context.Context
+		worker string
+	}{"another worker": {k1, "w2"}, "another key, same worker id": {other, "w1"}} {
+		if got, err := s.ClaimNext(c.ctx, ClaimInput{WorkerID: c.worker, Workspaces: []string{"ws-a"}}); err != nil || got != nil {
+			t.Fatalf("%s must not take the run: %+v err %v", name, got, err)
+		}
+	}
+	for i, wantAttempt := range []int{2, 3} {
+		if i == 1 { // a run that got as far as running is released too
+			if err := s.Heartbeat(k1, r.ID, "w1", lost.LeaseToken); err != nil {
+				t.Fatalf("heartbeat: %v", err)
+			}
+		}
+		got, err := s.ClaimNext(k1, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+		if err != nil || got == nil || got.ID != r.ID || got.Status != StatusClaimed || got.Attempt != wantAttempt {
+			t.Fatalf("re-claim %d: %+v err %v", i+1, got, err)
+		}
+		if got.LeaseToken == lost.LeaseToken {
+			t.Fatal("re-claim must issue a new lease token")
+		}
+		if err := s.Heartbeat(k1, r.ID, "w1", lost.LeaseToken); !errors.Is(err, ErrLeaseHeld) {
+			t.Fatalf("the old token must be fenced off: %v", err)
+		}
+		lost = got
 	}
 }
 
@@ -607,7 +651,7 @@ func TestClaimOrderWithinOneSecond(t *testing.T) {
 	}
 	s.now = func() time.Time { return base.Add(time.Second) }
 	for i := range ids {
-		got, err := s.ClaimNext(rootCtx(), ClaimInput{WorkerID: "w", Runners: []string{"claude"}, Workspaces: []string{"ws-a"}})
+		got, err := s.ClaimNext(rootCtx(), ClaimInput{WorkerID: fmt.Sprintf("w%d", i), Runners: []string{"claude"}, Workspaces: []string{"ws-a"}})
 		if err != nil || got == nil || got.ID != ids[i] {
 			t.Fatalf("claim %d: got %+v, want run %s", i, got, ids[i])
 		}

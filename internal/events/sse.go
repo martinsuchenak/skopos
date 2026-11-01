@@ -1,9 +1,11 @@
 package events
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/auth"
@@ -70,13 +72,43 @@ func StreamHandler(hub *Hub) http.HandlerFunc {
 // fragile and shipped broken once; the services that mutate data now call
 // their Publisher directly.
 func Middleware(log logger.Logger, next http.Handler) http.Handler {
+	return MiddlewareWithDBStats(log, nil, next)
+}
+
+// slowRequest is the duration past which a request is logged at warn level
+// instead of debug, so slowness shows in a production log.
+var slowRequest = time.Second
+
+// MiddlewareWithDBStats is Middleware that also reports the database pool on
+// slow requests: how many connections were in use when it finished and what
+// waiting for a free one cost while it ran (pool-wide, so concurrent requests
+// count too). Slow with no pool wait points at SQLite's write lock (each
+// write may wait up to busy_timeout) or at work outside the database.
+// Streams (text/event-stream) are long by design and never logged as slow.
+func MiddlewareWithDBStats(log logger.Logger, dbStats func() sql.DBStats, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		var before sql.DBStats
+		if dbStats != nil {
+			before = dbStats()
+		}
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		if log != nil {
-			log.Debug("http request", "method", r.Method, "path", r.URL.Path, "status", rec.status, "duration", time.Since(start).String())
+		if log == nil {
+			return
 		}
+		took := time.Since(start)
+		if took < slowRequest || strings.HasPrefix(rec.Header().Get("Content-Type"), "text/event-stream") {
+			log.Debug("http request", "method", r.Method, "path", r.URL.Path, "status", rec.status, "duration", took.String())
+			return
+		}
+		kv := []any{"method", r.Method, "path", r.URL.Path, "status", rec.status, "duration", took.Round(time.Millisecond).String()}
+		if dbStats != nil {
+			after := dbStats()
+			kv = append(kv, "db_in_use", after.InUse, "db_open", after.OpenConnections, "db_max_open", after.MaxOpenConnections,
+				"db_pool_waits", after.WaitCount-before.WaitCount, "db_pool_wait", (after.WaitDuration - before.WaitDuration).Round(time.Millisecond).String())
+		}
+		log.Warn("slow http request", kv...)
 	})
 }
 

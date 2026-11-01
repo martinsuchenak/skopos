@@ -523,3 +523,10 @@ Before leaving a worker unattended:
 Worker ids must start with `worker-`; the config refuses anything else. The
 prefix marks worker-created plans so the server's orphan cleanup (empty,
 unlinked, a day old) never deletes a plan a human made.
+
+Give every worker process its own id. A worker runs one stage at a time
+and only polls when idle, so when it polls, skopos hands back any run still
+claimed or running under that id and key. That's how it recovers at once
+from a claim whose response it never received (a timeout) or from its own
+restart mid-run, instead of waiting out the 10-minute lease. Two processes
+sharing an id would keep taking each other's run.

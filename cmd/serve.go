@@ -559,7 +559,7 @@ func serveCmd() *cli.Command {
 
 			httpServer := &http.Server{
 				Addr:              fmt.Sprintf("%s:%d", cmd.GetString("server-host"), cmd.GetInt("server-port")),
-				Handler:           hostAllowed(cmd.GetString("server-host"))(events.Middleware(log, mux)),
+				Handler:           hostAllowed(cmd.GetString("server-host"))(events.MiddlewareWithDBStats(log, sqlDB.Stats, mux)),
 				ReadHeaderTimeout: 10 * time.Second,
 				ReadTimeout:       30 * time.Second,
 				WriteTimeout:      30 * time.Second, // SSE handler clears this per-request

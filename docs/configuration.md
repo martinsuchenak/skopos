@@ -337,6 +337,13 @@ LOG_LEVEL=debug skopos serve        # via env var
 
 With `debug`, every HTTP request is logged (method, path, status, duration) through the single paularlott logger. All log output is consistent (one format, one writer).
 
+At any level, a request that takes over a second is logged as a `slow http request` warning, with the database connection pool's state:
+
+- `db_in_use` / `db_open` / `db_max_open`: connections busy when the request finished, open, and the cap (the number of CPUs, at least 4).
+- `db_pool_waits` / `db_pool_wait`: how often, and for how long, requests waited for a free connection while this one ran (pool-wide, so concurrent requests count).
+
+A slow request with pool waits means the pool was exhausted. A slow request without them points at SQLite's write lock (each write waits up to 5s for it) or at work outside the database. Streams (SSE, MCP streaming) are never logged as slow.
+
 ## Authentication
 
 When `api_key` is set, every endpoint (reads, writes, MCP, SSE) requires the key via:

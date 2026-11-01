@@ -266,6 +266,10 @@ func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 	if err != nil || run == nil {
 		return run, err
 	}
+	// The claim has committed: what follows must not depend on the worker
+	// still waiting for the response (a client timeout used to leave the item
+	// approved while its run sat claimed).
+	ctx = context.WithoutCancel(ctx)
 	// The item enters the run's phase on claim (H1). Re-claims of an item
 	// already in phase fail the matrix quietly — that is fine.
 	if to := phaseForStage(run.Stage); to != "" && s.itemTransition != nil {

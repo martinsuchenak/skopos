@@ -341,6 +341,20 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 		return nil, fmt.Errorf("quota grace flip: %w", err)
 	}
 
+	// A worker claims only when idle (its loop runs one run at a time), so a
+	// run still claimed or running under this worker and key is orphaned: a
+	// claim that committed after the worker gave up waiting for the response,
+	// or a run cut off by a worker restart. Release it now so the affinity
+	// scan below hands it straight back, instead of after its lease expires
+	// with the item left behind in the wrong phase.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE runs SET status = ?, updated_at = ?
+		WHERE worker_id = ? AND claimed_key_id = ? AND status IN (?, ?)`,
+		string(StatusInterrupted), formatTime(now),
+		in.WorkerID, in.KeyID, string(StatusClaimed), string(StatusRunning)); err != nil {
+		return nil, fmt.Errorf("releasing orphaned runs: %w", err)
+	}
+
 	// Re-read candidates inside the transaction. Paused runs are NOT
 	// candidates EXCEPT quota pauses past their resume_after (A2): an
 	// amendment pause has no resume_after and only its approval re-arms it
