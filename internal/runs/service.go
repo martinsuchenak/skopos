@@ -606,6 +606,8 @@ type RunSummary struct {
 	HeadSHA  string `json:"head_sha,omitempty"`
 	Diffstat string `json:"diffstat,omitempty"`
 	Summary  string `json:"result_summary,omitempty"`
+	// FailReason: why a failed run failed (what a Blocked notice quotes).
+	FailReason string `json:"fail_reason,omitempty"`
 	// GroupID: the run was one member of a multi-agent stage (its group's
 	// summary section speaks for the decision, not this member).
 	GroupID string `json:"group_id,omitempty"`
@@ -620,7 +622,7 @@ func (s *Service) ListRuns(ctx context.Context, itemID string) ([]RunSummary, er
 	out := make([]RunSummary, 0, len(all))
 	for _, r := range all {
 		out = append(out, RunSummary{ID: r.ID, Stage: r.Stage, Status: string(r.Status), Runner: r.Runner,
-			Branch: r.Branch, HeadSHA: r.HeadSHA, Diffstat: r.Diffstat, Summary: r.ResultSummary, GroupID: r.GroupID})
+			Branch: r.Branch, HeadSHA: r.HeadSHA, Diffstat: r.Diffstat, Summary: r.ResultSummary, FailReason: r.FailReason, GroupID: r.GroupID})
 	}
 	return out, nil
 }

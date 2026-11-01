@@ -189,6 +189,26 @@ func (c *Client) GetItem(ctx context.Context, id string) (*Item, error) {
 	return &it, nil
 }
 
+// HeadChecks returns the checks the worker ran on head, from the item's
+// newest implement run that reported that head (nil when none did or the
+// runs can't be read).
+func (c *Client) HeadChecks(ctx context.Context, itemID, head string) []Check {
+	var runs []struct {
+		Stage   string  `json:"stage"`
+		HeadSHA string  `json:"head_sha"`
+		Checks  []Check `json:"checks"`
+	}
+	if head == "" || c.do(ctx, http.MethodGet, "/api/runs?item_id="+url.QueryEscape(itemID), nil, &runs) != nil {
+		return nil
+	}
+	for _, r := range runs { // newest first
+		if r.Stage == "implement" && r.HeadSHA == head {
+			return r.Checks
+		}
+	}
+	return nil
+}
+
 // AppendSection appends a markdown section to the item (enrichment, review
 // verdicts ride on the content).
 func (c *Client) AppendSection(ctx context.Context, id, heading, body string) error {

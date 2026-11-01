@@ -43,12 +43,12 @@ type PlanRevisionInfo = { id: string; revision_no: number; content_hash: string;
 // One thing the approver can approve at the gate: the plan revision, or one
 // candidate of a multi-agent plan round.
 type ApproveTarget = { id: string; title: string; meta: string; steps: string[]; candidate: boolean; hash: string; toast: string };
-type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { severity: string; text: string; file?: string }[]; lease_expires_at?: string; pushed?: boolean; pr_url?: string; created_at: string; updated_at: string };
+type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { severity: string; text: string; file?: string }[]; lease_expires_at?: string; pushed?: boolean; pr_url?: string; checks?: { name: string; passed: boolean; output?: string }[]; created_at: string; updated_at: string };
 // One row of the preview's stage tracker. state: done | run | you | bad |
 // up (not reached) | skip (not configured, or never reached on a discarded item).
 type LinkRow = { key: string; href: string; text: string };
-type MoreRow = { key: string; label: string; text: string };
-type StageRow = { key: string; name: string; who: string; state: string; when: string; round: string; lines: string[]; links: LinkRow[]; more: MoreRow[]; warn: string };
+type MoreRow = { key: string; label: string; text: string; mono?: boolean };
+type StageRow = { key: string; name: string; who: string; state: string; when: string; round: string; lines: string[]; links: LinkRow[]; more: MoreRow[]; moreLabel: string; warn: string };
 type TextRow = { key: string; ic: string; text: string; more?: MoreRow[] };
 type AuditEntry = { id: string; action: string; actor: string; via?: string; notes?: string; created_at: string };
 // wsLocked: a workflow item cannot move workspace (its runs, plan and
@@ -1385,6 +1385,17 @@ const appState = () => ({
     if (r.result_summary) out.push({ key: r.id + '|sum', label: 'summary · ' + who, text: r.result_summary });
     return out;
   },
+  // The worker's checks on an implementation: one line, plus each check's
+  // output as a fold-out row. No checks recorded = none configured.
+  checkSummary(r: RunRow): { line: string; more: MoreRow[] } {
+    const cs = r.checks || [];
+    if (!cs.length) return { line: 'No checks configured: nothing built or tested this commit', more: [] };
+    const failed = cs.filter(c => !c.passed);
+    const line = failed.length
+      ? 'Checks: ' + failed.length + ' of ' + cs.length + ' failed (' + failed.map(c => c.name).join(', ') + ')'
+      : (cs.length === 1 ? 'Check passed: ' + cs[0].name : 'All ' + cs.length + ' checks passed');
+    return { line, more: cs.map((c, k) => ({ key: r.id + '|c' + k, label: (c.passed ? '✓ passed' : '✗ failed') + ' · ' + c.name, text: c.output || '(no output)', mono: true })) };
+  },
   reviewerName(r: RunRow): string { return (r.focus || r.stage) + (r.runner ? ' (' + r.runner + ')' : ''); },
   // A running step whose worker went offline, or whose lease ran out, is
   // probably stuck: say so instead of spinning forever.
@@ -1472,8 +1483,10 @@ const appState = () => ({
         const lines = [(impl.runner || impl.worker_id || 'The agent') + (local ? ' committed ' : ' pushed ') + this.shortSha(impl.head_sha || '') + (impl.branch ? (local ? ' on ' : ' to ') + impl.branch : '')];
         const stat = (impl.diffstat || '').split('\n').map((l: string) => l.trim()).filter(Boolean).pop();
         if (stat) lines.push(stat);
+        const checks = this.checkSummary(impl);
+        lines.push(checks.line);
         const warn = local ? 'Not pushed: the branch is only on ' + (impl.worker_id || 'the worker') + ', so there is no link to it and reviewers can\'t fetch it. Set up push for this repository in the worker config.' : '';
-        return { lines, when: this.timeAgo(impl.updated_at), links: this.changesLinks(this.trackBase(impl), impl.head_sha || ''), warn };
+        return { lines, when: this.timeAgo(impl.updated_at), links: this.changesLinks(this.trackBase(impl), impl.head_sha || ''), more: checks.more, warn };
       }
       if (i === 4 && reviews.length) {
         const ok = reviews.filter((r: RunRow) => r.status === 'succeeded').length;
@@ -1503,6 +1516,11 @@ const appState = () => ({
         const failed = main.find((r: RunRow) => this.stageOf(r.stage) === i && r.status === 'failed');
         lines = i === 4 && reviews.length ? reviews.map((r: RunRow) => this.reviewLine(r)) : [(failed && failed.fail_reason) || 'Blocked: open the run history for the reason'];
         if (i === 4) more = reviews.flatMap((r: RunRow) => this.runMore(r, this.reviewerName(r)));
+        // Blocked by its checks: what failed, and the branch it failed on.
+        if (i === 3 && failed && (failed.checks || []).length) {
+          more = this.checkSummary(failed).more;
+          if (failed.head_sha) links = this.changesLinks(this.trackBase(failed), failed.head_sha);
+        }
         when = failed ? this.timeAgo(failed.updated_at) : '';
       }
       // Agent review never ran because none is configured: say so instead
@@ -1519,7 +1537,8 @@ const appState = () => ({
       // The key leaves out `when` (relative time): it changes every minute,
       // and a re-keyed row is re-created, closing an open fold-out. A kept
       // row still updates its time through the bindings.
-      return { key: i + '|' + state + '|' + round + '|' + lines.join('/') + '|' + warn + '|' + more.map((m: MoreRow) => m.key).join(','), name: d.name, who: d.who, state, when, round, lines, links, more, warn };
+      const moreLabel = i === 3 ? 'Check output' : 'Findings and summaries';
+      return { key: i + '|' + state + '|' + round + '|' + lines.join('/') + '|' + warn + '|' + more.map((m: MoreRow) => m.key).join(','), name: d.name, who: d.who, state, when, round, lines, links, more, moreLabel, warn };
     });
     return { rows, current: cur };
   },

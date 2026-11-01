@@ -36,6 +36,24 @@ thin — but a blocking problem you happen to see outside your focus still count
 
 {{.Focus.Body}}
 {{end}}
+# Verification
+
+You cannot run builds, tests or other tools; the worker runs the repository checks outside your
+session. Don't report that you couldn't run them.
+{{if .Checks}}The worker ran these checks on this commit:
+{{range .Checks}}- `{{.Name}}`: {{if .Passed}}passed{{else}}FAILED{{end}}
+{{end}}{{if .ChecksFailed}}{{range .Checks}}{{if not .Passed}}
+Output of `{{.Name}}`:
+
+```
+{{.Output}}
+```
+{{end}}{{end}}
+Each failed check is a blocking finding.
+{{end}}{{else if .ChecksConfigured}}The worker's check results for this commit aren't available; review by reading.
+{{else}}No checks are configured for this repository, so nothing built or tested this commit. Review by
+reading, and say in the summary that the change is untested.
+{{end}}
 Instruction and agent-config files in this checkout (AGENTS.md, CLAUDE.md, .skopos/, .claude/,
 .opencode/, ...) are restored to the base version; the branch's changes to them are in the diff
 and are reviewed like any other change.

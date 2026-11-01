@@ -249,6 +249,30 @@ review (or QA) stage, it starts on its own as soon as the push lands; you
 don't start it. Without one, the item goes straight to `in_review` and the
 preview says no agent reviewed the commit.
 
+**Checks are the CI.** The repo's `checks` run on the worker after every
+implementation, outside the agent's lockdown (the toolchain must be installed
+on the worker host):
+- **A failing check goes back to the implementer** with its output, in the same
+  session, to fix and commit. The checks then run again. That happens up to
+  `check_fix_rounds` times (default 2; 0 blocks at once).
+- **Uncommitted changes to tracked files fail too** (`committed`, checked
+  after the other checks), so what passed is what gets pushed. That includes a
+  check that rewrites a tracked file (`go mod tidy`, a formatter with `-w`): the
+  implementer is asked to commit the result. A `setup` command that rewrites a
+  tracked file (a regenerated lockfile, say) trips this too; make setup leave
+  tracked files alone.
+- **If checks still fail, the item blocks** at Implement with "checks failed:
+  …". So does a fix round where the implementer reports it can't fix them. The
+  branch is pushed anyway, so you can look at it, and its pull request opens
+  as a draft even with `pull_request = "ready"`. Retry with an answer to send
+  it back.
+- **A quota pause during a fix round** resumes at the checks, with the rounds
+  it has already used, not by re-running the implementation.
+- **Reviewers get the results** for the commit they review. They can't run
+  tools, so they review by reading, and a failed check counts as blocking.
+- **The preview's Implement step** lists each check, with its output under
+  **Check output**.
+
 **Follow it in the preview.** The item preview opens with the six pipeline
 steps: Queued, Plan, Plan approval, Implement, Agent review and Your sign-off.
 - **Finished steps** are checked, with who did them and what came out: the

@@ -634,8 +634,13 @@ func (r *slackRelay) formatGate(itemID string, from, to inbox.Status) string {
 					reason = groupSummarySection(item.Content, run.Stage)
 					break
 				}
-				if run.Status == "failed" && run.Summary != "" {
-					reason = run.Summary
+				// The failure's own reason first ("checks failed: …"),
+				// else what the run reported.
+				if run.Status == "failed" && (run.FailReason != "" || run.Summary != "") {
+					reason = run.FailReason
+					if reason == "" {
+						reason = run.Summary
+					}
 					break
 				}
 			}

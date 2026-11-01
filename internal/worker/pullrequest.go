@@ -210,7 +210,7 @@ func (c *prClient) call(ctx context.Context, method, path string, in, out any) e
 // ensurePullRequest opens (or finds) the item's pull request into the
 // default branch: the item title, then the implementer's summary, the
 // approved plan's steps and where the sign-off happens.
-func (w *Worker) ensurePullRequest(ctx context.Context, repo *Repo, token, branch string, item *Item, steps []Step, summary string) (*PullRequest, string, error) {
+func (w *Worker) ensurePullRequest(ctx context.Context, repo *Repo, token, branch string, item *Item, steps []Step, summary string, draft bool) (*PullRequest, string, error) {
 	c, err := newPRClient(repo.Push.Kind, repo.Push.RemoteURL, token)
 	if err != nil {
 		return nil, "", err
@@ -227,5 +227,5 @@ func (w *Worker) ensurePullRequest(ctx context.Context, repo *Repo, token, branc
 		b.WriteString("\n")
 	}
 	fmt.Fprintf(&b, "---\nOpened by the skopos worker `%s` for inbox item `%s`. Sign off in skopos (Mark done), then merge here: skopos never merges.\n", w.cfg.ID, item.ID)
-	return c.Ensure(ctx, branch, repo.DefaultBranch, item.Title, b.String(), repo.Push.PullRequest == "draft")
+	return c.Ensure(ctx, branch, repo.DefaultBranch, item.Title, b.String(), draft)
 }

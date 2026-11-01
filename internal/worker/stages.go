@@ -266,47 +266,96 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	rec.ItemID, rec.WorkspaceID, rec.Branch, rec.Worktree, rec.Pushed = item.ID, run.WorkspaceID, branch, worktree, false
 	w.saveBranch(rec)
 
-	instructions, skillBodies := w.runKnowledge(ctx, repo, run, item.PlanID, baseRef)
-	prompt, err := renderPrompt("implement.md", map[string]any{
-		"Branch": branch, "Base": repo.DefaultBranch, "Title": item.Title,
-		"Content": item.Content, "Steps": steps, "Notes": lastSection(item.Content, "## Change requests"),
-		"ApprovalNotes": lastSection(item.Content, "## Approval notes"),
-		"Instructions":  instructions, "Skills": skillBodies,
-		"Commands": w.stageCommands(run.WorkspaceID, "implement", implTools), "Checks": repo.Checks,
-	})
-	if err != nil {
-		return err
-	}
-	log.Info("implementing", "account", account.Name, "branch", branch, "worktree", worktree)
-	res := w.runAgent(ctx, w.agentRun(worktree, prompt, implSchema, implTools, w.cfg.ImplTimeout, account, run, "implement"))
-	w.addCost(run, res)
-	if err := w.handleAgentOutcome(ctx, run, res, account, "implement"); err != nil {
-		return err
-	}
-
+	// A run resumed after a pause during a fix round (quota) already has
+	// its implementation: it goes straight back to the checks, with the
+	// fix rounds it has used.
 	var ir implResult
-	if err := json.Unmarshal(res.Structured, &ir); err != nil {
-		return fmt.Errorf("no structured result: %s", firstLine(res.Text))
-	}
-	switch ir.Status {
-	case "amendment":
-		return w.proposeAmendment(ctx, run, item, ir)
-	case "blocked":
-		reason := ir.Reason
-		if reason == "" {
-			reason = ir.Summary
+	if rec.ImplementedRun == run.ID {
+		ir = implResult{Status: "done", Summary: rec.ImplementedSummary}
+		log.Info("resuming the check fixes", "fix_rounds_used", rec.FixRounds)
+	} else {
+		instructions, skillBodies := w.runKnowledge(ctx, repo, run, item.PlanID, baseRef)
+		prompt, err := renderPrompt("implement.md", map[string]any{
+			"Branch": branch, "Base": repo.DefaultBranch, "Title": item.Title,
+			"Content": item.Content, "Steps": steps, "Notes": lastSection(item.Content, "## Change requests"),
+			"ApprovalNotes": lastSection(item.Content, "## Approval notes"),
+			"Instructions":  instructions, "Skills": skillBodies,
+			"Commands": w.stageCommands(run.WorkspaceID, "implement", implTools), "Checks": repo.Checks,
+		})
+		if err != nil {
+			return err
 		}
-		return w.report(ctx, run, false, map[string]any{"reason": reason})
+		log.Info("implementing", "account", account.Name, "branch", branch, "worktree", worktree)
+		res := w.runAgent(ctx, w.agentRun(worktree, prompt, implSchema, implTools, w.cfg.ImplTimeout, account, run, "implement"))
+		w.addCost(run, res)
+		if err := w.handleAgentOutcome(ctx, run, res, account, "implement"); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(res.Structured, &ir); err != nil {
+			return fmt.Errorf("no structured result: %s", firstLine(res.Text))
+		}
+		switch ir.Status {
+		case "amendment":
+			return w.proposeAmendment(ctx, run, item, ir)
+		case "blocked":
+			reason := ir.Reason
+			if reason == "" {
+				reason = ir.Summary
+			}
+			return w.report(ctx, run, false, map[string]any{"reason": reason})
+		}
+		if commitCount(ctx, worktree, repo.DefaultBranch) == 0 {
+			return fmt.Errorf("agent reported done but made no commits")
+		}
+		rec.ImplementedRun, rec.ImplementedSummary, rec.FixRounds = run.ID, ir.Summary, 0
+		w.saveBranch(rec)
 	}
-
-	if commitCount(ctx, worktree, repo.DefaultBranch) == 0 {
-		return fmt.Errorf("agent reported done but made no commits")
+	// The checks are the CI: a failure goes back to the implementer (the
+	// same session) for a fix round, then the checks run again. A round
+	// counts once it finished, so a quota pause repeats it on resume.
+	cantFix := ""
+	checks, _, stopped, stopErr := fixChecks(repo.FixRounds()-rec.FixRounds,
+		func() []Check { return w.repoChecks(ctx, repo, worktree) },
+		func(failed []Check, _ int) (bool, error) {
+			round := rec.FixRounds + 1
+			log.Info("checks failed; asking the implementer to fix them", "round", round, "failed", checkNames(failed))
+			fix, err := w.fixChecksRound(ctx, run, item, repo, worktree, branch, account, failed, round)
+			if err != nil {
+				return true, err
+			}
+			rec.FixRounds = round
+			w.saveBranch(rec)
+			switch fix.Status {
+			case "amendment":
+				// Approving it resumes this run with new steps to implement:
+				// not straight at the checks.
+				rec.ImplementedRun = ""
+				w.saveBranch(rec)
+				return true, w.proposeAmendment(ctx, run, item, *fix)
+			case "blocked":
+				// Like a failure that outlasts the rounds: pushed and
+				// recorded with its checks, so it can be looked at.
+				cantFix = fix.Reason
+				if cantFix == "" {
+					cantFix = fix.Summary
+				}
+				return true, nil
+			}
+			return false, nil
+		})
+	if stopped && cantFix == "" {
+		return stopErr
 	}
-	checks := runChecks(ctx, worktree, repo.Checks, w.cfg.TokenEnvs(), w.envFileKeys)
+	rounds := rec.FixRounds
 	head := headSHA(ctx, worktree)
+	failed := failedChecks(checks)
 
-	// The push: validated refspec, env-only token, never force.
+	// The push: validated refspec, env-only token, never force. A branch
+	// whose checks still fail is pushed too, so it can be looked at.
 	summary := ir.Summary
+	if rounds > 0 && len(failed) == 0 {
+		summary += fmt.Sprintf("\n\nThe checks failed at first and were fixed in %s.", plural(rounds, "fix round"))
+	}
 	if repo.Push.Kind != "none" {
 		token := os.Getenv(repo.Push.TokenEnv)
 		if token == "" {
@@ -319,7 +368,9 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		// The pull request is a convenience on top of the push: failing to
 		// open one is noted in the summary and never fails the run.
 		if repo.Push.PullRequest == "draft" || repo.Push.PullRequest == "ready" {
-			pr, action, err := w.ensurePullRequest(ctx, repo, token, branch, item, steps, ir.Summary)
+			// A branch that fails its checks opens as a draft, whatever
+			// pull_request says: it isn't ready for anyone's review.
+			pr, action, err := w.ensurePullRequest(ctx, repo, token, branch, item, steps, ir.Summary, repo.Push.PullRequest == "draft" || len(failed) > 0)
 			if err != nil {
 				log.Warn("pull request not opened", "err", err)
 				summary += "\n\n(The pull request could not be opened: " + firstLine(err.Error()) + ")"
@@ -331,12 +382,51 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		w.saveBranch(rec)
 	}
 
-	log.Info("implementation finished", "head", head, "commits", commitCount(ctx, worktree, repo.DefaultBranch), "cost_usd", res.CostUSD)
-	return w.report(ctx, run, true, map[string]any{
+	fields := map[string]any{
 		"summary": summary, "head_sha": head, "branch": branch,
 		"diffstat": diffStat(ctx, worktree, repo.DefaultBranch), "checks": checks,
 		"pushed": repo.Push.Kind != "none", "pr_url": rec.PRURL,
+	}
+	if len(failed) > 0 {
+		// The gate: a branch that fails its checks never reaches review.
+		reason := "checks failed: " + checkNames(failed)
+		switch {
+		case cantFix != "":
+			reason += " (the implementer couldn't fix them: " + firstLine(cantFix) + ")"
+		case rounds > 0:
+			reason += " (after " + plural(rounds, "fix round") + ")"
+		}
+		log.Warn("implementation blocked by its checks", "head", head, "failed", checkNames(failed), "fix_rounds", rounds)
+		fields["reason"] = reason
+		return w.report(ctx, run, false, fields)
+	}
+	log.Info("implementation finished", "head", head, "commits", commitCount(ctx, worktree, repo.DefaultBranch), "fix_rounds", rounds, "cost_usd", w.costs[run.ID])
+	return w.report(ctx, run, true, fields)
+}
+
+// fixChecksRound hands the failed checks back to the implementer, resuming
+// its session, and returns its structured result (done, blocked or
+// amendment). An agent outcome other than OK (quota, transient, auth) is
+// returned as the stage error, as for the first turn.
+func (w *Worker) fixChecksRound(ctx context.Context, run *Run, item *Item, repo *Repo, worktree, branch string, account *Account, failed []Check, round int) (*implResult, error) {
+	prompt, err := renderPrompt("fix_checks.md", map[string]any{
+		"Title": item.Title, "Branch": branch, "Base": repo.DefaultBranch,
+		"Failed": failed, "Round": round, "Rounds": repo.FixRounds(),
+		"Commands": w.stageCommands(run.WorkspaceID, "implement", implTools),
 	})
+	if err != nil {
+		return nil, err
+	}
+	res := w.runAgent(ctx, w.agentRun(worktree, prompt, implSchema, implTools, w.cfg.ImplTimeout, account, run, "implement"))
+	w.addCost(run, res)
+	if err := w.handleAgentOutcome(ctx, run, res, account, "implement"); err != nil {
+		return nil, err
+	}
+	var ir implResult
+	if err := json.Unmarshal(res.Structured, &ir); err != nil {
+		return nil, fmt.Errorf("fix round %d: no structured result: %s", round, firstLine(res.Text))
+	}
+	return &ir, nil
 }
 
 // reviewSchema makes the verdict machine-checkable (review H6: a substring
@@ -498,10 +588,14 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 		}
 		focus = &f
 	}
+	// What the worker's checks said about this exact commit: the reviewer
+	// can't run tools, and without this it reports that nothing was verified.
+	checks := w.client.HeadChecks(ctx, run.ItemID, headSHA(ctx, wt))
 	prompt, err := renderPrompt("review.md", map[string]any{
 		"Base": repo.DefaultBranch, "Stage": run.Stage, "Steps": steps,
 		"Instructions": instructions, "Skills": skillBodies, "Focus": focus,
 		"Decisions": decisions, "SecondOpinion": second,
+		"Checks": checks, "ChecksFailed": len(failedChecks(checks)) > 0, "ChecksConfigured": len(repo.Checks) > 0,
 	})
 	if err != nil {
 		return err

@@ -106,9 +106,9 @@
                                 </template>
                                 <template x-if="s.more.length > 0">
                                     <details class="stage-more">
-                                        <summary class="fold-summary"><span class="fold-caret" aria-hidden="true">&#9656;</span> <span x-text="'Findings and summaries (' + s.more.length + ')'"></span></summary>
+                                        <summary class="fold-summary"><span class="fold-caret" aria-hidden="true">&#9656;</span> <span x-text="s.moreLabel + ' (' + s.more.length + ')'"></span></summary>
                                         <template x-for="m in s.more" :key="m.key">
-                                            <div class="stage-more-row"><p class="stage-more-label" x-text="m.label"></p><p class="stage-more-text" x-text="m.text"></p></div>
+                                            <div class="stage-more-row"><p class="stage-more-label" x-text="m.label"></p><p class="stage-more-text" :class="m.mono ? 'font-mono text-[11px]' : ''" x-text="m.text"></p></div>
                                         </template>
                                     </details>
                                 </template>

@@ -185,9 +185,12 @@ type Repo struct {
 	Setup         []string `toml:"setup"`         // run in every fresh worktree ({clone} expands)
 	// SetupEnv is extra environment for setup commands (they run with the
 	// scrubbed environment — e.g. a private registry token via ${VAR}).
-	SetupEnv  map[string]string `toml:"setup_env"`
-	Checks    []string          `toml:"checks"` // verification commands
-	Protected []string          `toml:"protected_branches"`
+	SetupEnv map[string]string `toml:"setup_env"`
+	Checks   []string          `toml:"checks"` // verification commands
+	// CheckFixRounds: how many times a failing check goes back to the
+	// implementer before the item blocks (nil = 2; 0 = block at once).
+	CheckFixRounds *int     `toml:"check_fix_rounds"`
+	Protected      []string `toml:"protected_branches"`
 	// Profile names an entry of worker.profiles; Stages overrides single
 	// stages of it (or stands alone).
 	Profile string                   `toml:"profile"`
@@ -399,6 +402,9 @@ func (c *Config) Default(home string) error {
 			}
 		default:
 			return fmt.Errorf("repo %s: push.pull_request %q is not one of draft, ready, none", ws, r.Push.PullRequest)
+		}
+		if r.CheckFixRounds != nil && (*r.CheckFixRounds < 0 || *r.CheckFixRounds > maxCheckFixRounds) {
+			return fmt.Errorf("repo %s: check_fix_rounds %d is not between 0 and %d", ws, *r.CheckFixRounds, maxCheckFixRounds)
 		}
 	}
 	if c.MCPConfig != "" {

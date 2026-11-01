@@ -75,6 +75,7 @@ poll_every = "30s"
 # setup_env = { COMPOSER_AUTH = "${COMPOSER_AUTH}" }   # setup runs with a scrubbed env
 # profile = "php"                 # a [worker.profiles.<name>] entry
 # checks = ["task test"]
+# check_fix_rounds = 2           # a failing check goes back to the implementer this often, then the item blocks
 # protected_branches = ["PROD", "main", "master", "develop", "release/**"]
 # [worker.repos."github.com/you/repo".push]
 # kind = "gitea"                   # gitea | github | none (required: no kind is a startup error)

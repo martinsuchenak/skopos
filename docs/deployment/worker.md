@@ -417,7 +417,10 @@ through a profile. Then:
   actually has;
 - the implementer runs what it can;
 - the worker runs the repo's `checks` after implementation, whatever the
-  agent did, and records the results on the run.
+  agent did, and records the results on the run. A failure goes back to the
+  implementer, with the output, to fix (`check_fix_rounds`, default 2); if the
+  checks still fail, the item blocks instead of going to review. Reviewers get
+  the results for the commit they review.
 
 ## Secrets
 

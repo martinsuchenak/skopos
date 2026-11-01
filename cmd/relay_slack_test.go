@@ -649,6 +649,32 @@ func TestRelayBlockedShowsGroupSummary(t *testing.T) {
 	}
 }
 
+// An implementation blocked by its checks: the Blocked notice quotes why it
+// failed ("checks failed: …"), not the implementer's own summary.
+func TestRelayBlockedQuotesFailReason(t *testing.T) {
+	inboxSvc, runsSvc, _, _, relay := relayStack(t)
+	ctx := context.Background()
+	item, err := inboxSvc.CreateItem(ctx, inbox.CreateInput{WorkspaceID: "ws-a", Title: "slugify", AuthorAgentID: "martin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runsSvc.Queue(ctx, runs.QueueInput{WorkspaceID: "ws-a", ItemID: item.ID, Stage: runs.StageImplement}); err != nil {
+		t.Fatal(err)
+	}
+	r, err := runsSvc.ClaimNext(ctx, runs.ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	if err != nil || r == nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if _, err := runsSvc.Report(ctx, r.ID, runs.ReportInput{WorkerID: "w1", Status: runs.StatusFailed,
+		Summary: "Added Slugify with table tests.", Reason: "checks failed: go test ./... (after 2 fix rounds)"}, r.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	msg := relay.formatGate(item.ID, inbox.StatusImplementing, inbox.StatusBlocked)
+	if !strings.Contains(msg, "checks failed: go test ./... (after 2 fix rounds)") || strings.Contains(msg, "Added Slugify") {
+		t.Fatalf("blocked message must quote the failure reason:\n%s", msg)
+	}
+}
+
 // A multi-agent plan gate in Slack: the candidates are listed and numbered;
 // a bare approve can't pick one; `approve glm: notes` approves exactly that
 // candidate, which becomes the plan.

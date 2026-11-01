@@ -26,6 +26,12 @@ type branchRecord struct {
 	Pushed   bool   `json:"pushed"`
 	PRNumber int    `json:"pr_number,omitempty"`
 	PRURL    string `json:"pr_url,omitempty"`
+	// ImplementedRun: the run whose implement turn finished (committed),
+	// with its summary and the check-fix rounds it has used. A pause during
+	// a fix round resumes that run straight at the checks.
+	ImplementedRun     string `json:"implemented_run,omitempty"`
+	ImplementedSummary string `json:"implemented_summary,omitempty"`
+	FixRounds          int    `json:"fix_rounds,omitempty"`
 	// When the sweep first saw the item discarded, or missing (404), in
 	// Unix ms; 0 = not seen. Both reset if the item comes back.
 	DiscardedSeenMS int64 `json:"discarded_seen_ms,omitempty"`

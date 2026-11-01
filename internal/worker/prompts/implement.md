@@ -34,8 +34,9 @@ branch {{.Branch}}, created from {{.Base}}. Martin approved exactly the plan bel
   Run them one at a time — do not chain them with other commands (`a && b`, `;`, pipes): a chain
   containing any other command is refused as a whole. A refused command does NOT mean the shell is
   unavailable; carry on with the commands above. Use the file tools to read and edit.
-{{end}}{{if .Checks}}- After you finish, the worker runs the repository checks itself: {{range $i, $c := .Checks}}{{if $i}}, {{end}}`{{$c}}`{{end}}. If you cannot run a
-  verification command, skip it — do not block on it.
+{{end}}{{if .Checks}}- After you finish, the worker runs the repository checks itself on your commits: {{range $i, $c := .Checks}}{{if $i}}, {{end}}`{{$c}}`{{end}}.
+  If one fails, you get its output back to fix. If you cannot run a verification command
+  yourself, skip it — do not block on it.
 {{end}}
 - After finishing each step, commit it with two separate commands: `git add -A`, then
   `git commit -m "agent: step N - <step title>"`.
