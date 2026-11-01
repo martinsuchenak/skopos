@@ -50,7 +50,7 @@ func workerRunnerCmd() *cli.Command {
 				Flags: []cli.Flag{
 					envFileFlag(),
 					&cli.StringFlag{Name: "kind", Usage: "claude | opencode | codex | antigravity | command (omit for the wizard)"},
-					&cli.StringFlag{Name: "name", Usage: "Runner name (accounts and --run-stage use it), e.g. opencode-glm"},
+					&cli.StringFlag{Name: "name", Usage: "Runner name (accounts and pipeline settings use it), e.g. opencode-glm"},
 					&cli.StringFlag{Name: "model", Usage: "Model for the account (claude alias, opencode provider/model, or codex model)"},
 					&cli.StringFlag{Name: "account", Usage: "Account name (default: the runner name)"},
 					&cli.IntFlag{Name: "priority", Usage: "Account priority (lower is preferred)"},
@@ -226,7 +226,7 @@ func printRunnerList(ctx context.Context, out io.Writer, cfg *worker.Config) {
 			pf("  account:  none — nothing can run on this runner\n")
 		}
 	}
-	pf("\nPin a stage to a runner on the server: skopos serve --run-stage <workspace>:<stage>=<runner>\n")
+	pf("\nPin a stage to a runner on the server: skopos workspace pipeline set --workspace <ws> --stage <stage> --runners <runner>\n(or the dashboard: Workspaces → Pipeline)\n")
 }
 
 func envSummary(env map[string]string) string {
@@ -685,7 +685,7 @@ func runRunnerWizard(ctx context.Context, in *bufio.Reader, out io.Writer, cfgPa
 		ri.Model = ask("Model (passed as {model}; optional)", "")
 	}
 
-	ri.Name = ask("\nRunner name (accounts and --run-stage use it)", suggestRunnerName(kind, ri.Model, ri.Command))
+	ri.Name = ask("\nRunner name (accounts and pipeline settings use it)", suggestRunnerName(kind, ri.Model, ri.Command))
 	for !reRunnerName.MatchString(ri.Name) {
 		ri.Name = ask("Runner name (letters, digits, - and _)", suggestRunnerName(kind, ri.Model, ri.Command))
 	}

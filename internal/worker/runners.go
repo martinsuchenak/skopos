@@ -35,6 +35,21 @@ type Runner interface {
 	Check(ctx context.Context, pathEnv string) error
 }
 
+// canRunStage: runner can run stage — false only for a read-only runner
+// (codex) on a stage that edits. A runner that does not resolve counts as
+// capable: the run then fails with that error, as before.
+func (c *Config) canRunStage(runner, stage string) bool {
+	if stage != "implement" {
+		return true
+	}
+	r, err := c.RunnerFor(runner)
+	if err != nil {
+		return true
+	}
+	ro, ok := r.(interface{ ReadOnly() bool })
+	return !ok || !ro.ReadOnly()
+}
+
 // RunnerSpec configures a runner name ([worker.runner_config.<name>]).
 // kind defaults to the name; "claude" and "opencode" need no block.
 type RunnerSpec struct {
