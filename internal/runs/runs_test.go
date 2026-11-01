@@ -152,7 +152,7 @@ func TestClaimReturnsOrphanedRun(t *testing.T) {
 	}
 	for i, wantAttempt := range []int{2, 3} {
 		if i == 1 { // a run that got as far as running is released too
-			if err := s.Heartbeat(k1, r.ID, "w1", lost.LeaseToken); err != nil {
+			if err := s.Heartbeat(k1, r.ID, "w1", lost.LeaseToken, ""); err != nil {
 				t.Fatalf("heartbeat: %v", err)
 			}
 		}
@@ -163,7 +163,7 @@ func TestClaimReturnsOrphanedRun(t *testing.T) {
 		if got.LeaseToken == lost.LeaseToken {
 			t.Fatal("re-claim must issue a new lease token")
 		}
-		if err := s.Heartbeat(k1, r.ID, "w1", lost.LeaseToken); !errors.Is(err, ErrLeaseHeld) {
+		if err := s.Heartbeat(k1, r.ID, "w1", lost.LeaseToken, ""); !errors.Is(err, ErrLeaseHeld) {
 			t.Fatalf("the old token must be fenced off: %v", err)
 		}
 		lost = got
@@ -179,7 +179,7 @@ func TestPauseHeartbeatResume(t *testing.T) {
 	_ = mustQueue(t, s, ctx, "ws-a", "item-1", StageImplement)
 
 	run, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
-	if err := s.Heartbeat(ctx, run.ID, "w1", run.LeaseToken); err != nil {
+	if err := s.Heartbeat(ctx, run.ID, "w1", run.LeaseToken, ""); err != nil {
 		t.Fatalf("heartbeat: %v", err)
 	}
 	got, _ := s.Get(ctx, run.ID)
@@ -187,10 +187,10 @@ func TestPauseHeartbeatResume(t *testing.T) {
 		t.Fatalf("heartbeat must flip to running: %s", got.Status)
 	}
 	// Wrong worker or wrong token cannot heartbeat.
-	if err := s.Heartbeat(ctx, run.ID, "w2", run.LeaseToken); !errors.Is(err, ErrLeaseHeld) {
+	if err := s.Heartbeat(ctx, run.ID, "w2", run.LeaseToken, ""); !errors.Is(err, ErrLeaseHeld) {
 		t.Fatalf("foreign heartbeat: %v", err)
 	}
-	if err := s.Heartbeat(ctx, run.ID, "w1", "not-the-token"); !errors.Is(err, ErrLeaseHeld) {
+	if err := s.Heartbeat(ctx, run.ID, "w1", "not-the-token", ""); !errors.Is(err, ErrLeaseHeld) {
 		t.Fatalf("wrong token heartbeat: %v", err)
 	}
 	// A pause still fences on the token, and stays put: only resume_after
@@ -201,7 +201,7 @@ func TestPauseHeartbeatResume(t *testing.T) {
 	if r, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}}); r != nil {
 		t.Fatalf("amendment-style pause must not be claimable: %+v", r)
 	}
-	if err := s.Heartbeat(ctx, run.ID, "w1", "spent-token"); !errors.Is(err, ErrLeaseHeld) {
+	if err := s.Heartbeat(ctx, run.ID, "w1", "spent-token", ""); !errors.Is(err, ErrLeaseHeld) {
 		t.Fatalf("wrong token must not reach a paused run: %v", err)
 	}
 }
@@ -423,7 +423,7 @@ func TestLeaseFencing(t *testing.T) {
 	if run.LeaseToken == "" {
 		t.Fatal("claim must issue a lease token")
 	}
-	if err := s.Heartbeat(ctx, run.ID, "w1", run.LeaseToken); err != nil {
+	if err := s.Heartbeat(ctx, run.ID, "w1", run.LeaseToken, ""); err != nil {
 		t.Fatalf("fresh token heartbeat: %v", err)
 	}
 	// Force expiry, re-claim by the owner (a second attempt, new token).
@@ -634,6 +634,71 @@ func TestReportRecordsPRURL(t *testing.T) {
 	}
 }
 
+// An implement run records the setup commands it ran (the checks' shape),
+// failed or not; a run that ran none keeps none.
+func TestReportRecordsSetup(t *testing.T) {
+	s := testService(t)
+	ctx := rootCtx()
+	for i, setup := range [][]Check{{{Name: "composer install", Passed: true, Output: "done"}, {Name: "bun install", Output: "ENOENT"}}, nil} {
+		_ = mustQueue(t, s, ctx, "ws-a", "item-setup"+strings.Repeat("x", i), StageImplement)
+		run, err := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+		if err != nil || run == nil {
+			t.Fatalf("claim: %v %v", run, err)
+		}
+		if _, err := s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusFailed, Reason: "setup failed", Setup: setup}, run.LeaseToken); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Get(ctx, run.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Setup) != len(setup) || (len(setup) > 0 && (got.Setup[1].Name != "bun install" || got.Setup[1].Passed || got.Setup[0].Output != "done")) {
+			t.Fatalf("setup %+v: got %+v", setup, got.Setup)
+		}
+	}
+}
+
+// A running implement run's heartbeats carry its phase (checks, fixing); an
+// empty phase keeps it, an unknown one is refused, and the report clears it
+// while recording the fix rounds used.
+func TestHeartbeatPhaseAndFixRounds(t *testing.T) {
+	s := testService(t)
+	ctx := rootCtx()
+	_ = mustQueue(t, s, ctx, "ws-a", "item-phase", StageImplement)
+	run, err := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	if err != nil || run == nil {
+		t.Fatalf("claim: %v %v", run, err)
+	}
+	phase := func() string {
+		got, err := s.Get(ctx, run.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.Phase
+	}
+	for _, step := range []struct{ send, want string }{{PhaseChecks, PhaseChecks}, {"", PhaseChecks}, {PhaseFixing, PhaseFixing}} {
+		if err := s.Heartbeat(ctx, run.ID, "w1", run.LeaseToken, step.send); err != nil {
+			t.Fatal(err)
+		}
+		if got := phase(); got != step.want {
+			t.Fatalf("after phase %q: %q, want %q", step.send, got, step.want)
+		}
+	}
+	if err := s.Heartbeat(ctx, run.ID, "w1", run.LeaseToken, "deploying"); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("an unknown phase must be refused, got %v", err)
+	}
+	if _, err := s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded, HeadSHA: "abc", FixRounds: 2}, run.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Phase != "" || got.FixRounds != 2 {
+		t.Fatalf("after the report: phase %q fix_rounds %d", got.Phase, got.FixRounds)
+	}
+}
+
 // Runs created within one second are claimed in creation order: stored
 // timestamps are fixed-width, so the queue's ORDER BY created_at is time
 // order (RFC3339Nano text was not — "…05.12345Z" sorted after
@@ -828,7 +893,7 @@ func TestWorkerPresence(t *testing.T) {
 	// the idle window (and refresh last_seen at most every 30s).
 	seenAtClaim := state().LastSeen
 	clock = clock.Add(5 * time.Minute)
-	if err := s.Heartbeat(k, run.ID, "w1", run.LeaseToken); err != nil {
+	if err := s.Heartbeat(k, run.ID, "w1", run.LeaseToken, ""); err != nil {
 		t.Fatal(err)
 	}
 	if w := state(); w.State != "busy" || w.LastSeen == seenAtClaim {

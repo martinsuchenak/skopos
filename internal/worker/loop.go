@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 )
@@ -104,6 +105,9 @@ type Worker struct {
 	costs map[string]float64
 	// lastSweep: when finished items' worktrees were last cleaned up.
 	lastSweep time.Time
+	// phases: what each running implement run is doing past its first turn
+	// (run id → phase), sent with every heartbeat.
+	phases sync.Map
 }
 
 func New(cfg *Config, client *Client, log *slog.Logger) *Worker {
@@ -175,6 +179,7 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 	log := w.log.With("run", run.ID, "item", run.ItemID, "stage", run.Stage)
 	// Heartbeat while executing.
 	hbCtx, hbStop := context.WithCancel(ctx)
+	defer w.phases.Delete(run.ID)
 	go func() {
 		t := time.NewTicker(30 * time.Second)
 		defer t.Stop()
@@ -183,7 +188,9 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 			case <-hbCtx.Done():
 				return
 			case <-t.C:
-				if err := w.client.Heartbeat(hbCtx, run.ID, w.cfg.ID); err != nil {
+				phase, _ := w.phases.Load(run.ID)
+				p, _ := phase.(string)
+				if err := w.client.Heartbeat(hbCtx, run.ID, w.cfg.ID, p); err != nil {
 					log.Warn("heartbeat failed", "err", err)
 				}
 			}
@@ -227,6 +234,16 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 		}
 		w.finish(ctx, run, log, err)
 		return
+	}
+}
+
+// setPhase records what the run is doing (phaseChecks / phaseFixing)
+// and tells skopos at once, so the dashboard's Checks step shows it running
+// without waiting for the next heartbeat. Later heartbeats repeat it.
+func (w *Worker) setPhase(ctx context.Context, run *Run, phase string) {
+	w.phases.Store(run.ID, phase)
+	if err := w.client.Heartbeat(ctx, run.ID, w.cfg.ID, phase); err != nil {
+		w.log.Warn("phase heartbeat failed", "run", run.ID, "phase", phase, "err", err)
 	}
 }
 

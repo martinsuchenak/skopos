@@ -131,8 +131,14 @@ func (c *Client) Offline(ctx context.Context, workerID string) error {
 	return c.do(ctx, http.MethodPost, "/api/workers/"+url.PathEscape(workerID)+"/offline", map[string]any{}, nil)
 }
 
-func (c *Client) Heartbeat(ctx context.Context, runID, workerID string) error {
-	return c.doHeader(ctx, http.MethodPost, "/api/runs/"+runID+"/heartbeat", map[string]string{"worker_id": workerID}, nil, "X-Skopos-Lease", c.leaseHeader(runID))
+// Heartbeat extends the run's lease; phase ('' = unchanged) says what a
+// running implement run is doing (checks / fixing) for the dashboard.
+func (c *Client) Heartbeat(ctx context.Context, runID, workerID, phase string) error {
+	body := map[string]string{"worker_id": workerID}
+	if phase != "" {
+		body["phase"] = phase
+	}
+	return c.doHeader(ctx, http.MethodPost, "/api/runs/"+runID+"/heartbeat", body, nil, "X-Skopos-Lease", c.leaseHeader(runID))
 }
 
 func (c *Client) Report(ctx context.Context, runID string, in map[string]any) error {

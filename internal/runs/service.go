@@ -316,16 +316,20 @@ func (s *Service) PinGroupBase(ctx context.Context, runID, baseSHA string) (stri
 }
 
 // Heartbeat extends the worker's lease; the first flips claimed -> running.
-func (s *Service) Heartbeat(ctx context.Context, id, workerID, leaseToken string) error {
+// phase ('' = unchanged) says what a running implement run is doing.
+func (s *Service) Heartbeat(ctx context.Context, id, workerID, leaseToken, phase string) error {
 	id = strings.TrimSpace(id)
 	if id == "" || strings.TrimSpace(workerID) == "" {
 		return fmt.Errorf("%w: id and worker_id are required", ErrInvalidInput)
+	}
+	if phase != "" && phase != PhaseChecks && phase != PhaseFixing {
+		return fmt.Errorf("%w: unknown phase %q", ErrInvalidInput, phase)
 	}
 	if err := s.checkScope(ctx, id); err != nil {
 		return err
 	}
 	keyID := callerKeyID(ctx)
-	if err := s.storage.Heartbeat(ctx, id, workerID, keyID, hashLeaseToken(leaseToken), s.lease, s.now().UTC()); err != nil {
+	if err := s.storage.Heartbeat(ctx, id, workerID, keyID, hashLeaseToken(leaseToken), phase, s.lease, s.now().UTC()); err != nil {
 		return err
 	}
 	s.storage.TouchWorker(ctx, workerID, keyID, s.now().UTC())

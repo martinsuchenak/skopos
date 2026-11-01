@@ -17,6 +17,15 @@ var (
 	ErrDuplicateActive = errors.New("item already has an active run for that stage")
 )
 
+// Phases a running implement run reports with its heartbeats, so the
+// dashboard can show the Checks step running: the worker is running the
+// repo's checks, or the implementer is fixing the ones that failed. A claim
+// and a report clear it.
+const (
+	PhaseChecks = "checks"
+	PhaseFixing = "fixing"
+)
+
 // Status is a run's lifecycle state.
 //
 //	queued       waiting for a matching worker
@@ -122,7 +131,15 @@ type Run struct {
 	Pushed *bool `json:"pushed,omitempty"`
 	// PRURL: the pull request the worker opened (or reused) for the
 	// implement branch, when the repo asks for one.
-	PRURL     string    `json:"pr_url,omitempty"`
+	PRURL string `json:"pr_url,omitempty"`
+	// Setup: the setup commands an implement run ran in its fresh worktree
+	// (none when the worktree was reused from an earlier round).
+	Setup []Check `json:"setup,omitempty"`
+	// FixRounds: implement only — the check fix rounds the run used.
+	FixRounds int `json:"fix_rounds,omitempty"`
+	// Phase: what a running implement run is doing past its first turn
+	// (PhaseChecks / PhaseFixing), from its heartbeats; '' otherwise.
+	Phase     string    `json:"phase,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -228,6 +245,10 @@ type ReportInput struct {
 	Pushed *bool `json:"pushed,omitempty"`
 	// PRURL: implement only — the branch's pull request (http(s) URL).
 	PRURL string `json:"pr_url,omitempty"`
+	// Setup: implement only — the setup commands run in a fresh worktree.
+	Setup []Check `json:"setup,omitempty"`
+	// FixRounds: implement only — the check fix rounds used.
+	FixRounds int `json:"fix_rounds,omitempty"`
 	// Verdict: a second opinion's pass/fail. It reports succeeded either
 	// way (the review itself ran); the verdict is advisory.
 	Verdict string `json:"verdict,omitempty"`

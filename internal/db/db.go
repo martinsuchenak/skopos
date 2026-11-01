@@ -160,6 +160,19 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "runs", "pr_url", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	// The setup commands an implement run ran in its fresh worktree (JSON,
+	// the checks' shape; '' = none ran: no setup, or the worktree was reused).
+	if err := ensureColumn(db, "runs", "setup", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	// The check fix rounds an implement run used, and what a running one is
+	// doing past its first turn (checks / fixing, from its heartbeats).
+	if err := ensureColumn(db, "runs", "fix_rounds", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "runs", "phase", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	// Plan candidates (multi-agent planning): a candidate is a revision with
 	// a group; its state moves open → approved | superseded. NULL for every
 	// revision outside a plan group (all existing ones).

@@ -43,7 +43,7 @@ type PlanRevisionInfo = { id: string; revision_no: number; content_hash: string;
 // One thing the approver can approve at the gate: the plan revision, or one
 // candidate of a multi-agent plan round.
 type ApproveTarget = { id: string; title: string; meta: string; steps: string[]; candidate: boolean; hash: string; toast: string };
-type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { severity: string; text: string; file?: string }[]; lease_expires_at?: string; pushed?: boolean; pr_url?: string; checks?: { name: string; passed: boolean; output?: string }[]; created_at: string; updated_at: string };
+type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { severity: string; text: string; file?: string }[]; lease_expires_at?: string; pushed?: boolean; pr_url?: string; checks?: { name: string; passed: boolean; output?: string }[]; setup?: { name: string; passed: boolean; output?: string }[]; fix_rounds?: number; phase?: string; created_at: string; updated_at: string };
 // One row of the preview's stage tracker. state: done | run | you | bad |
 // up (not reached) | skip (not configured, or never reached on a discarded item).
 type LinkRow = { key: string; href: string; text: string };
@@ -1282,10 +1282,13 @@ const appState = () => ({
   stageOf(stage: string): number {
     if (stage === 'plan' || stage === 'compare' || stage === 'synthesize') return 1;
     if (stage === 'implement') return 3;
-    if (stage === 'review' || stage === 'qa') return 4;
+    if (stage === 'review' || stage === 'qa') return 5;
     return -1;
   },
   runActive(r: RunRow): boolean { return r.status === 'queued' || r.status === 'claimed' || r.status === 'running' || r.status === 'paused'; },
+  // The tracker step a run is on: an implement run past its first turn
+  // (its heartbeats say checks / fixing) is on the Checks step.
+  runStep(r: RunRow): number { return r.stage === 'implement' && !!r.phase && this.runActive(r) ? 4 : this.stageOf(r.stage); },
   runTime(r: RunRow): number { return new Date(r.created_at).getTime(); },
   // A configured review/QA stage: a runner or a group. null = unknown (the
   // pipeline could not be read).
@@ -1320,9 +1323,9 @@ const appState = () => ({
     return who + ' passed' + (nits ? ', ' + this.plural(nits, 'nit') : '');
   },
   activeLines(step: number): string[] {
-    return this.previewRuns.filter((r: RunRow) => this.stageOf(r.stage) === step && this.runActive(r)).map((r: RunRow) => {
+    return this.previewRuns.filter((r: RunRow) => this.runStep(r) === step && this.runActive(r)).map((r: RunRow) => {
       const detail = [r.runner, r.focus].filter(Boolean).join(', ');
-      const what = r.stage + (detail ? ' (' + detail + ')' : '');
+      const what = r.phase === 'checks' ? 'the checks' : r.phase === 'fixing' ? 'a fix round for the failed checks' + (r.runner ? ' (' + r.runner + ')' : '') : r.stage + (detail ? ' (' + detail + ')' : '');
       if (r.status === 'queued') return 'Waiting for a worker: ' + what;
       if (r.status === 'paused') return 'Paused: ' + what + (r.fail_reason ? ', ' + r.fail_reason : '');
       return 'Running ' + what + (r.worker_id ? ' on ' + r.worker_id : '');
@@ -1396,12 +1399,30 @@ const appState = () => ({
       : (cs.length === 1 ? 'Check passed: ' + cs[0].name : 'All ' + cs.length + ' checks passed');
     return { line, more: cs.map((c, k) => ({ key: r.id + '|c' + k, label: (c.passed ? '✓ passed' : '✗ failed') + ' · ' + c.name, text: c.output || '(no output)', mono: true })) };
   },
+  // The setup an implementation ran in its fresh worktree: one line and each
+  // command's output. A round that reused the worktree points at the round
+  // that set it up.
+  setupSummary(r: RunRow): { line: string; more: MoreRow[] } {
+    const ss = r.setup || [];
+    // A running implementation reports its setup with its result.
+    if (!ss.length && this.runActive(r)) return { line: '', more: [] };
+    if (!ss.length) {
+      // Only a setup that finished left a worktree to reuse (a failed one
+      // removes it).
+      const earlier = this.previewRuns.find((x: RunRow) => x.stage === 'implement' && x.id !== r.id && (x.setup || []).length > 0 && (x.setup || []).every(c => c.passed)
+        && !!r.branch && x.branch === r.branch && this.runTime(x) < this.runTime(r));
+      return { line: earlier ? 'Setup: ran in an earlier round (the worktree was reused)' : '', more: [] };
+    }
+    const failed = ss.find(c => !c.passed);
+    const line = failed ? 'Setup failed: ' + failed.name : (ss.length === 1 ? 'Setup ran: ' + ss[0].name : 'Setup ran ' + ss.length + ' commands in a fresh worktree');
+    return { line, more: ss.map((c, k) => ({ key: r.id + '|s' + k, label: (c.passed ? '✓ ran' : '✗ failed') + ' · ' + c.name, text: c.output || '(no output)', mono: true })) };
+  },
   reviewerName(r: RunRow): string { return (r.focus || r.stage) + (r.runner ? ' (' + r.runner + ')' : ''); },
   // A running step whose worker went offline, or whose lease ran out, is
   // probably stuck: say so instead of spinning forever.
   activeWarn(step: number): string {
     for (const r of this.previewRuns) {
-      if (this.stageOf(r.stage) !== step || (r.status !== 'claimed' && r.status !== 'running')) continue;
+      if (this.runStep(r) !== step || (r.status !== 'claimed' && r.status !== 'running')) continue;
       const w = this.previewWorkers.find((x: WorkerSeen) => x.id === r.worker_id);
       if (w && w.state === 'offline') return (r.worker_id || 'The worker') + ' is offline (last seen ' + this.timeAgo(w.last_seen) + '). The run resumes when it comes back.';
       if (r.lease_expires_at && Date.parse(r.lease_expires_at) < Date.now()) return 'No heartbeat from ' + (r.worker_id || 'the worker') + ' since ' + this.timeAgo(r.lease_expires_at) + '; it may have stopped.';
@@ -1424,6 +1445,10 @@ const appState = () => ({
     const last = main[0];
     const piped = this.isWorkflowStatus(st) || st === 'open' || ((st === 'done' || st === 'discarded') && main.length > 0);
     if (!piped) return empty;
+    // Blocked by its checks: the implementation committed (Implement is
+    // done) and the Checks step is where it stopped.
+    const checksBlocked = (st === 'blocked' || st === 'failed') && !!last && last.stage === 'implement' && last.status === 'failed'
+      && (last.checks || []).some(c => !c.passed);
     // The current step and how it is drawn.
     let cur = -1;
     let curState = 'run';
@@ -1432,13 +1457,17 @@ const appState = () => ({
       case 'queued': case 'planning': cur = 1; break;
       case 'awaiting_approval': cur = 2; curState = 'you'; break;
       case 'approved': cur = 3; break;
-      case 'implementing': cur = last && this.stageOf(last.stage) === 4 ? 4 : 3; break;
-      case 'in_review': cur = 5; curState = 'you'; break;
-      case 'blocked': case 'failed': cur = last ? Math.max(1, this.stageOf(last.stage)) : 1; curState = 'bad'; break;
-      case 'done': cur = 6; break;
-      case 'discarded': cur = 6; break;
+      case 'implementing': cur = last && this.runStep(last) >= 4 ? this.runStep(last) : 3; break;
+      case 'in_review': cur = 6; curState = 'you'; break;
+      case 'blocked': case 'failed': cur = checksBlocked ? 4 : last ? Math.max(1, this.stageOf(last.stage)) : 1; curState = 'bad'; break;
+      case 'done': cur = 7; break;
+      case 'discarded': cur = 7; break;
     }
     const impl = this.trackImpl();
+    // The implementation the Implement and Checks steps describe: the newest
+    // successful one, the one its checks blocked, or the one being checked.
+    const inChecks = st === 'implementing' && cur === 4;
+    const implRun = checksBlocked || inChecks ? last : impl;
     const reviews = this.trackReviews();
     const planRuns = main.filter((r: RunRow) => r.stage === 'plan' && r.status === 'succeeded');
     const rev = this.previewApprovedRev;
@@ -1458,6 +1487,7 @@ const appState = () => ({
       { name: 'Plan', who: 'agents' },
       { name: 'Plan approval', who: 'you' },
       { name: 'Implement', who: 'agent' },
+      { name: 'Checks', who: 'worker' },
       { name: 'Agent review', who: 'agents' },
       { name: 'Your sign-off', who: 'you' },
     ];
@@ -1478,23 +1508,34 @@ const appState = () => ({
         if (rev.base_sha) text += ' on base ' + this.shortSha(rev.base_sha);
         return { lines: [text], when: rev.locked_at ? this.timeAgo(rev.locked_at) : '' };
       }
-      if (i === 3 && impl) {
-        const local = this.unpushed(impl.head_sha || '');
-        const lines = [(impl.runner || impl.worker_id || 'The agent') + (local ? ' committed ' : ' pushed ') + this.shortSha(impl.head_sha || '') + (impl.branch ? (local ? ' on ' : ' to ') + impl.branch : '')];
-        const stat = (impl.diffstat || '').split('\n').map((l: string) => l.trim()).filter(Boolean).pop();
-        if (stat) lines.push(stat);
-        const checks = this.checkSummary(impl);
-        lines.push(checks.line);
-        const warn = local ? 'Not pushed: the branch is only on ' + (impl.worker_id || 'the worker') + ', so there is no link to it and reviewers can\'t fetch it. Set up push for this repository in the worker config.' : '';
-        return { lines, when: this.timeAgo(impl.updated_at), links: this.changesLinks(this.trackBase(impl), impl.head_sha || ''), more: checks.more, warn };
+      // Being checked: committed, not yet reported (no head yet).
+      if (i === 3 && implRun && !implRun.head_sha) {
+        return { lines: [(implRun.runner || implRun.worker_id || 'The agent') + ' committed' + (implRun.branch ? ' on ' + implRun.branch : '')], when: '' };
       }
-      if (i === 4 && reviews.length) {
+      if (i === 3 && implRun) {
+        const local = this.unpushed(implRun.head_sha || '');
+        const lines = [(implRun.runner || implRun.worker_id || 'The agent') + (local ? ' committed ' : ' pushed ') + this.shortSha(implRun.head_sha || '') + (implRun.branch ? (local ? ' on ' : ' to ') + implRun.branch : '')];
+        const stat = (implRun.diffstat || '').split('\n').map((l: string) => l.trim()).filter(Boolean).pop();
+        if (stat) lines.push(stat);
+        const setup = this.setupSummary(implRun);
+        if (setup.line) lines.push(setup.line);
+        const warn = local ? 'Not pushed: the branch is only on ' + (implRun.worker_id || 'the worker') + ', so there is no link to it and reviewers can\'t fetch it. Set up push for this repository in the worker config.' : '';
+        return { lines, when: this.timeAgo(implRun.updated_at), links: this.changesLinks(this.trackBase(implRun), implRun.head_sha || ''), more: setup.more, warn };
+      }
+      if (i === 4 && implRun && (implRun.checks || []).length) {
+        const checks = this.checkSummary(implRun);
+        const lines = [checks.line];
+        const fixRounds = implRun.fix_rounds || 0;
+        if (fixRounds > 0 && implRun.status === 'succeeded') lines.push('They failed at first; the implementer fixed them in ' + this.plural(fixRounds, 'fix round') + '.');
+        return { lines, when: this.timeAgo(implRun.updated_at), more: checks.more };
+      }
+      if (i === 5 && reviews.length) {
         const ok = reviews.filter((r: RunRow) => r.status === 'succeeded').length;
         const lines = reviews.map((r: RunRow) => this.reviewLine(r));
         if (impl && impl.head_sha) lines.push(ok + ' of ' + reviews.length + ' passed, on ' + this.shortSha(impl.head_sha));
         return { lines, when: this.timeAgo(reviews[0].updated_at), more: reviews.flatMap((r: RunRow) => this.runMore(r, this.reviewerName(r))) };
       }
-      if (i === 5 && st === 'done') {
+      if (i === 6 && st === 'done') {
         const head = impl && impl.head_sha ? impl.head_sha : '';
         const lines = [head ? 'Approved ' + this.shortSha(head) : 'Marked done'];
         if (head && !this.unpushed(head)) lines.push(this.pullRequestURL(head) ? 'Merge the pull request to land it.' : 'Merge the branch to land it.');
@@ -1513,19 +1554,24 @@ const appState = () => ({
       if (state === 'run') { lines = this.activeLines(i); if (!lines.length) lines = [i === 3 && st === 'approved' ? 'Starting' : 'Waiting for a worker']; warn = this.activeWarn(i); }
       if (state === 'you') when = 'waiting ' + this.timeAgo(waitingSince).replace(' ago', '').replace('just now', 'under a minute');
       if (state === 'bad') {
-        const failed = main.find((r: RunRow) => this.stageOf(r.stage) === i && r.status === 'failed');
-        lines = i === 4 && reviews.length ? reviews.map((r: RunRow) => this.reviewLine(r)) : [(failed && failed.fail_reason) || 'Blocked: open the run history for the reason'];
-        if (i === 4) more = reviews.flatMap((r: RunRow) => this.runMore(r, this.reviewerName(r)));
-        // Blocked by its checks: what failed, and the branch it failed on.
-        if (i === 3 && failed && (failed.checks || []).length) {
-          more = this.checkSummary(failed).more;
-          if (failed.head_sha) links = this.changesLinks(this.trackBase(failed), failed.head_sha);
-        }
+        const failed = i === 4 ? last : main.find((r: RunRow) => this.stageOf(r.stage) === i && r.status === 'failed');
+        lines = i === 5 && reviews.length ? reviews.map((r: RunRow) => this.reviewLine(r)) : [(failed && failed.fail_reason) || 'Blocked: open the run history for the reason'];
+        if (i === 5) more = reviews.flatMap((r: RunRow) => this.runMore(r, this.reviewerName(r)));
+        // A failed setup: what ran and what it printed.
+        if (i === 3 && failed) more = this.setupSummary(failed).more;
+        // Blocked by its checks: each check with its output.
+        if (i === 4 && failed) more = this.checkSummary(failed).more;
         when = failed ? this.timeAgo(failed.updated_at) : '';
+      }
+      // No checks configured: say the commit went untested instead of a
+      // green check.
+      if (i === 4 && state === 'done' && implRun && !(implRun.checks || []).length) {
+        state = 'skip';
+        lines = ['No checks configured for this repository, so nothing built or tested this commit. Add checks to its repo block in the worker config.'];
       }
       // Agent review never ran because none is configured: say so instead
       // of a green check (passed) or an empty step (waiting).
-      if (i === 4 && state !== 'run' && state !== 'bad' && !reviews.length && (state === 'done' || configured === false)) {
+      if (i === 5 && state !== 'run' && state !== 'bad' && !reviews.length && ((state === 'done' && !!impl) || configured === false)) {
         state = 'skip';
         lines = [configured === false
           ? 'No review stage is configured for this workspace, so no agent reviews the commit. Set one under Workspaces → Pipeline.'
@@ -1533,11 +1579,11 @@ const appState = () => ({
       }
       // A discarded item: the steps it never finished are greyed out.
       if (st === 'discarded' && state === 'done' && !lines.length && i > 0) state = 'skip';
-      const round = (i === 3 || i === 4 || i === 5) && rounds > 1 && state !== 'up' ? 'round ' + rounds : '';
+      const round = i >= 3 && i <= 6 && rounds > 1 && state !== 'up' ? 'round ' + rounds : '';
       // The key leaves out `when` (relative time): it changes every minute,
       // and a re-keyed row is re-created, closing an open fold-out. A kept
       // row still updates its time through the bindings.
-      const moreLabel = i === 3 ? 'Check output' : 'Findings and summaries';
+      const moreLabel = i === 3 ? 'Setup output' : i === 4 ? 'Check output' : 'Findings and summaries';
       return { key: i + '|' + state + '|' + round + '|' + lines.join('/') + '|' + warn + '|' + more.map((m: MoreRow) => m.key).join(','), name: d.name, who: d.who, state, when, round, lines, links, more, moreLabel, warn };
     });
     return { rows, current: cur };
@@ -1577,8 +1623,8 @@ const appState = () => ({
     const words: Record<string, string> = { done: 'finished', run: 'in progress', you: 'waiting for you', bad: 'blocked', up: 'not reached yet', skip: 'skipped' };
     return s.name + ': ' + (words[s.state] || s.state);
   },
-  stageTrackHead(): StageRow[] { const m = this.stageModel(); return m.current >= 6 ? m.rows : m.rows.slice(0, m.current + 1); },
-  stageTrackTail(): StageRow[] { const m = this.stageModel(); return m.current >= 6 || m.current < 0 ? [] : m.rows.slice(m.current + 1); },
+  stageTrackHead(): StageRow[] { const m = this.stageModel(); return m.current >= 7 ? m.rows : m.rows.slice(0, m.current + 1); },
+  stageTrackTail(): StageRow[] { const m = this.stageModel(); return m.current >= 7 || m.current < 0 ? [] : m.rows.slice(m.current + 1); },
   // The header pill: where the item stands, in words.
   stageSummary(): { key: string; text: string; tone: string }[] {
     const m = this.stageModel();
@@ -1668,17 +1714,17 @@ const appState = () => ({
     if (st === 'awaiting_approval' || st === 'in_review' || st === 'open') return 'stage-gate';
     return '';
   },
-  // Kanban card strip: the same six steps from the status alone (cards
+  // Kanban card strip: the same seven steps from the status alone (cards
   // carry no runs). Blocked items get no strip; their badge says blocked
   // and the preview shows where.
   cardStage(item: InboxItem): { key: string; label: string; dots: { key: string; cls: string }[] }[] {
     const pos: Record<string, [number, string, string]> = {
       queued: [1, 'run', 'plan'], planning: [1, 'run', 'plan'], awaiting_approval: [2, 'you', 'plan approval: your turn'],
-      approved: [3, 'run', 'implement'], implementing: [3, 'run', 'implement or review'], in_review: [5, 'you', 'your sign-off'],
+      approved: [3, 'run', 'implement'], implementing: [3, 'run', 'implement or review'], in_review: [6, 'you', 'your sign-off'],
     };
     const p = pos[item.status];
     if (!p) return [];
-    const dots = [0, 1, 2, 3, 4, 5].map((i: number) => ({ key: item.id + '|' + i + '|' + item.status, cls: i < p[0] ? 'stage-dot stage-dot-done' : i === p[0] ? 'stage-dot stage-dot-' + p[1] : 'stage-dot' }));
+    const dots = [0, 1, 2, 3, 4, 5, 6].map((i: number) => ({ key: item.id + '|' + i + '|' + item.status, cls: i < p[0] ? 'stage-dot stage-dot-done' : i === p[0] ? 'stage-dot stage-dot-' + p[1] : 'stage-dot' }));
     return [{ key: item.id + '|' + item.status, label: p[2], dots }];
   },
 

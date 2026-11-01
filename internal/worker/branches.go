@@ -32,6 +32,12 @@ type branchRecord struct {
 	ImplementedRun     string `json:"implemented_run,omitempty"`
 	ImplementedSummary string `json:"implemented_summary,omitempty"`
 	FixRounds          int    `json:"fix_rounds,omitempty"`
+	// SetupRun: the run that set the worktree up, with the setup results
+	// its report carries. SetupPending: setup started in the worktree but
+	// never finished, so the next run on it runs setup again.
+	SetupRun     string  `json:"setup_run,omitempty"`
+	Setup        []Check `json:"setup,omitempty"`
+	SetupPending bool    `json:"setup_pending,omitempty"`
 	// When the sweep first saw the item discarded, or missing (404), in
 	// Unix ms; 0 = not seen. Both reset if the item comes back.
 	DiscardedSeenMS int64 `json:"discarded_seen_ms,omitempty"`

@@ -35,19 +35,19 @@ func parseTime(s string) time.Time {
 const runColumns = `id, workspace_id, item_id, plan_rev_id, stage, runner, worker_id, status,
 	resume_kind, lease_expires_at, resume_after, attempt, branch, base_sha, head_sha,
 	result_summary, diffstat, checks, log_ref, fail_reason, lease_token_hash, claimed_key_id, created_at, updated_at, executor,
-	group_id, focus, cost_usd, findings, pushed, pr_url`
+	group_id, focus, cost_usd, findings, pushed, pr_url, setup, fix_rounds, phase`
 
 func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	var r Run
 	var lease, resumeAfter, createdAt, updatedAt string
-	var checks string
+	var checks, setup string
 	var groupID, focus, findings sql.NullString
 	var cost sql.NullFloat64
 	var pushed sql.NullBool
 	if err := row.Scan(&r.ID, &r.WorkspaceID, &r.ItemID, &r.PlanRevID, &r.Stage, &r.Runner, &r.WorkerID, &r.Status,
 		&r.ResumeKind, &lease, &resumeAfter, &r.Attempt, &r.Branch, &r.BaseSHA, &r.HeadSHA,
 		&r.ResultSummary, &r.Diffstat, &checks, &r.LogRef, &r.FailReason, &r.LeaseTokenHash, &r.ClaimedKeyID, &createdAt, &updatedAt, &r.Executor,
-		&groupID, &focus, &cost, &findings, &pushed, &r.PRURL); err != nil {
+		&groupID, &focus, &cost, &findings, &pushed, &r.PRURL, &setup, &r.FixRounds, &r.Phase); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -59,6 +59,9 @@ func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	r.UpdatedAt = parseTime(updatedAt)
 	if checks != "" && checks != "[]" {
 		_ = json.Unmarshal([]byte(checks), &r.Checks)
+	}
+	if setup != "" {
+		_ = json.Unmarshal([]byte(setup), &r.Setup)
 	}
 	r.GroupID, r.Focus = groupID.String, focus.String
 	if cost.Valid {
@@ -476,7 +479,7 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 	tokenHash := hashLeaseToken(token)
 	res, err := tx.ExecContext(ctx, `
 		UPDATE runs SET status = ?, worker_id = ?, resume_kind = ?, lease_expires_at = ?, resume_after = '',
-			attempt = ?, lease_token_hash = ?, claimed_key_id = ?, updated_at = ?
+			attempt = ?, lease_token_hash = ?, claimed_key_id = ?, phase = '', updated_at = ?
 		WHERE id = ? AND status = ?`,
 		string(StatusClaimed), in.WorkerID, resumeKind, formatTime(now.Add(lease)),
 		attempt, tokenHash, in.KeyID, formatTime(now), cand.ID, string(cand.Status))
@@ -531,14 +534,16 @@ func hashLeaseToken(tok string) string {
 }
 
 // Heartbeat extends the lease of a run the worker holds; first heartbeat
-// after a claim also flips claimed -> running.
-func (s *Storage) Heartbeat(ctx context.Context, id, workerID, keyID, tokenHash string, lease time.Duration, now time.Time) error {
+// after a claim also flips claimed -> running. A non-empty phase replaces
+// the run's phase.
+func (s *Storage) Heartbeat(ctx context.Context, id, workerID, keyID, tokenHash, phase string, lease time.Duration, now time.Time) error {
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE runs SET lease_expires_at = ?,
 			status = CASE WHEN status = ? THEN ? ELSE status END,
+			phase = CASE WHEN ? != '' THEN ? ELSE phase END,
 			updated_at = ?
 		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
-		formatTime(now.Add(lease)), string(StatusClaimed), string(StatusRunning), formatTime(now),
+		formatTime(now.Add(lease)), string(StatusClaimed), string(StatusRunning), phase, phase, formatTime(now),
 		id, workerID, keyID, tokenHash, string(StatusClaimed), string(StatusRunning), string(StatusPaused))
 	if err != nil {
 		return fmt.Errorf("heartbeat: %w", err)
@@ -555,17 +560,24 @@ func (s *Storage) Report(ctx context.Context, id, workerID, keyID, tokenHash str
 	if err != nil {
 		checks = []byte("[]")
 	}
+	setupJSON := ""
+	if len(in.Setup) > 0 {
+		if b, err := json.Marshal(in.Setup); err == nil {
+			setupJSON = string(b)
+		}
+	}
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE runs SET status = ?, result_summary = ?, head_sha = CASE WHEN ? != '' THEN ? ELSE head_sha END, diffstat = ?, checks = ?,
 			log_ref = ?, fail_reason = ?, branch = CASE WHEN ? != '' THEN ? ELSE branch END,
 			base_sha = CASE WHEN ? != '' THEN ? ELSE base_sha END,
 			executor = CASE WHEN ? != '' THEN ? ELSE executor END,
 			pr_url = CASE WHEN ? != '' THEN ? ELSE pr_url END,
+			setup = CASE WHEN ? != '' THEN ? ELSE setup END, fix_rounds = ?, phase = '',
 			cost_usd = COALESCE(?, cost_usd), findings = COALESCE(?, findings), pushed = COALESCE(?, pushed),
 			lease_expires_at = '', resume_after = '', updated_at = ?
 		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
 		string(in.Status), in.Summary, in.HeadSHA, in.HeadSHA, in.Diffstat, string(checks),
-		in.LogRef, in.Reason, in.Branch, in.Branch, in.BaseSHA, in.BaseSHA, in.Executor, in.Executor, in.PRURL, in.PRURL,
+		in.LogRef, in.Reason, in.Branch, in.Branch, in.BaseSHA, in.BaseSHA, in.Executor, in.Executor, in.PRURL, in.PRURL, setupJSON, setupJSON, in.FixRounds,
 		costArg(in.CostUSD), findingsJSON(in.Findings), boolArg(in.Pushed),
 		formatTime(now), id, workerID, keyID, tokenHash, string(StatusClaimed), string(StatusRunning), string(StatusPaused))
 	if err != nil {

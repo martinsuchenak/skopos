@@ -57,12 +57,13 @@ func (h *Handler) Claim(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		WorkerID string `json:"worker_id"`
+		Phase    string `json:"phase"`
 	}
 	if err := rest.DecodeJSON(w, r, &in); err != nil {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if err := h.service.Heartbeat(r.Context(), r.PathValue("id"), in.WorkerID, r.Header.Get("X-Skopos-Lease")); err != nil {
+	if err := h.service.Heartbeat(r.Context(), r.PathValue("id"), in.WorkerID, r.Header.Get("X-Skopos-Lease"), in.Phase); err != nil {
 		h.respondRunError(w, err, "heartbeat")
 		return
 	}

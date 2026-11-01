@@ -250,21 +250,35 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		}
 	}
 	worktree := filepath.Join(w.cfg.StateDir, "worktrees", filepath.Base(repo.Path), strings.ReplaceAll(branch, "/", "-"))
-	if !dirExists(worktree) {
-		if err := prepareImplementWorktree(ctx, repo.Path, worktree, branch, baseRef); err != nil {
-			return fmt.Errorf("worktree: %w", err)
-		}
-		if err := runSetup(ctx, worktree, repo.Setup, repo.Path, repo.SetupEnv, w.cfg.TokenEnvs(), w.envFileKeys, 10*time.Minute); err != nil {
-			removeWorktree(ctx, repo.Path, worktree)
-			return err
-		}
-	}
 	// What this item leaves on the worker, for the cleanup sweep. A later
 	// round keeps the pull request the first one opened, but not Pushed:
 	// until this round pushes, its commits exist only here.
 	rec, _ := w.loadBranch(item.ID)
 	rec.ItemID, rec.WorkspaceID, rec.Branch, rec.Worktree, rec.Pushed = item.ID, run.WorkspaceID, branch, worktree, false
+	fresh := !dirExists(worktree)
+	if fresh {
+		if err := prepareImplementWorktree(ctx, repo.Path, worktree, branch, baseRef); err != nil {
+			return fmt.Errorf("worktree: %w", err)
+		}
+	}
+	// Setup runs in a fresh worktree, and again in one whose setup never
+	// finished (the worker died or lost the run mid-setup). Its results ride
+	// on this run's report (kept in the record across a pause).
+	if fresh || rec.SetupPending {
+		rec.SetupPending = len(repo.Setup) > 0
+		w.saveBranch(rec)
+		setup, err := runSetup(ctx, worktree, repo.Setup, repo.Path, repo.SetupEnv, w.cfg.TokenEnvs(), w.envFileKeys, 10*time.Minute)
+		if err != nil {
+			removeWorktree(ctx, repo.Path, worktree)
+			return w.report(ctx, run, false, map[string]any{"reason": err.Error(), "setup": setup})
+		}
+		rec.SetupPending, rec.SetupRun, rec.Setup = false, run.ID, setup
+	}
 	w.saveBranch(rec)
+	var setup []Check
+	if rec.SetupRun == run.ID {
+		setup = rec.Setup
+	}
 
 	// A run resumed after a pause during a fix round (quota) already has
 	// its implementation: it goes straight back to the checks, with the
@@ -302,7 +316,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			if reason == "" {
 				reason = ir.Summary
 			}
-			return w.report(ctx, run, false, map[string]any{"reason": reason})
+			return w.report(ctx, run, false, map[string]any{"reason": reason, "setup": setup})
 		}
 		if commitCount(ctx, worktree, repo.DefaultBranch) == 0 {
 			return fmt.Errorf("agent reported done but made no commits")
@@ -315,8 +329,12 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	// counts once it finished, so a quota pause repeats it on resume.
 	cantFix := ""
 	checks, _, stopped, stopErr := fixChecks(repo.FixRounds()-rec.FixRounds,
-		func() []Check { return w.repoChecks(ctx, repo, worktree) },
+		func() []Check {
+			w.setPhase(ctx, run, phaseChecks)
+			return w.repoChecks(ctx, repo, worktree)
+		},
 		func(failed []Check, _ int) (bool, error) {
+			w.setPhase(ctx, run, phaseFixing)
 			round := rec.FixRounds + 1
 			log.Info("checks failed; asking the implementer to fix them", "round", round, "failed", checkNames(failed))
 			fix, err := w.fixChecksRound(ctx, run, item, repo, worktree, branch, account, failed, round)
@@ -385,7 +403,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	fields := map[string]any{
 		"summary": summary, "head_sha": head, "branch": branch,
 		"diffstat": diffStat(ctx, worktree, repo.DefaultBranch), "checks": checks,
-		"pushed": repo.Push.Kind != "none", "pr_url": rec.PRURL,
+		"pushed": repo.Push.Kind != "none", "pr_url": rec.PRURL, "setup": setup, "fix_rounds": rounds,
 	}
 	if len(failed) > 0 {
 		// The gate: a branch that fails its checks never reaches review.

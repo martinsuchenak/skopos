@@ -182,24 +182,30 @@ func diffStat(ctx context.Context, worktree, base string) string {
 // scrubbed environment (review: they inherited every daemon secret — env
 // file, skopos key, push tokens, SSH agent) plus the repo's setup_env, and
 // the setup timeout bounds them all.
-func runSetup(ctx context.Context, worktree string, setup []string, clone string, setupEnv map[string]string, tokenEnvs, fileEnvKeys []string, timeout time.Duration) error {
+//
+// Each command's result is returned in the checks' shape (the dashboard and
+// the run record show them); the first failure stops the rest and is also
+// returned as the error.
+func runSetup(ctx context.Context, worktree string, setup []string, clone string, setupEnv map[string]string, tokenEnvs, fileEnvKeys []string, timeout time.Duration) ([]Check, error) {
 	if len(setup) == 0 {
-		return nil
+		return nil, nil
 	}
 	sctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	env := scrubEnv(setupEnv, tokenEnvs, fileEnvKeys)
+	var results []Check
 	for _, c := range setup {
 		c = strings.ReplaceAll(c, "{clone}", clone)
 		cmd := exec.CommandContext(sctx, "sh", "-c", c)
 		cmd.Dir = worktree
 		cmd.Env = env
 		out, err := cmd.CombinedOutput()
+		results = append(results, Check{Name: c, Passed: err == nil, Output: tail(string(out), 2000)})
 		if err != nil {
-			return fmt.Errorf("setup %q failed: %v: %s", c, err, tail(string(out), 300))
+			return results, fmt.Errorf("setup %q failed: %v: %s", c, err, tail(string(out), 300))
 		}
 	}
-	return nil
+	return results, nil
 }
 
 func runChecks(ctx context.Context, worktree string, checks []string, tokenEnvs, fileEnvKeys []string) []Check {

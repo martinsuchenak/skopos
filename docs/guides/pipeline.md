@@ -270,14 +270,19 @@ on the worker host):
   it has already used, not by re-running the implementation.
 - **Reviewers get the results** for the commit they review. They can't run
   tools, so they review by reading, and a failed check counts as blocking.
-- **The preview's Implement step** lists each check, with its output under
-  **Check output**.
+- **The preview's Checks step** lists each check, with its output under
+  **Check output**. It shows as skipped when the repo has no checks, and red
+  when the checks block the item. While the checks run, or the implementer
+  fixes the ones that failed, the step shows as running.
 
-**Follow it in the preview.** The item preview opens with the six pipeline
-steps: Queued, Plan, Plan approval, Implement, Agent review and Your sign-off.
+**Follow it in the preview.** The item preview opens with the seven pipeline
+steps: Queued, Plan, Plan approval, Implement, Checks, Agent review and Your
+sign-off.
 - **Finished steps** are checked, with who did them and what came out: the
   plan revision, the pushed commit with a **View changes** link (the base to
-  head comparison on GitHub or Gitea), and each reviewer's verdict. The
+  head comparison on GitHub or Gitea), the setup commands that prepared the
+  worktree (output under **Setup output**), the checks, and each reviewer's
+  verdict. The
   review findings and summaries unfold under the step. A repository with no
   `push` block in the worker config keeps the branch on the worker: the
   preview says so, shows no link, and won't offer a second opinion, because
@@ -295,7 +300,7 @@ steps: Queued, Plan, Plan approval, Implement, Agent review and Your sign-off.
 shows how many items in the selected workspace (all of them under "All
 workspaces") wait for you: plan approval, sign-off, or blocked. The browser
 tab title carries the same number. Click the count, or the **Needs you**
-chip in the list, to see just those. Board cards show the six steps as dots.
+chip in the list, to see just those. Board cards show the seven steps as dots.
 
 **Review and finish.** At `in_review`, look at the branch (or its pull
 request), the review verdicts and the run history. Then:

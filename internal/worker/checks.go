@@ -14,6 +14,11 @@ const (
 	// committedCheck names the check that the tested tree is the pushed
 	// one: checks run on the worktree, the push sends commits only.
 	committedCheck = "committed"
+	// The phases a running implement run reports past its first turn (the
+	// server's runs.PhaseChecks / PhaseFixing): the dashboard's Checks step
+	// shows them running.
+	phaseChecks = "checks"
+	phaseFixing = "fixing"
 )
 
 // FixRounds is the repo's check_fix_rounds, defaulted.

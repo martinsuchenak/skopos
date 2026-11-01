@@ -50,6 +50,7 @@ type gateStack struct {
 	calls   string
 	mu      sync.Mutex
 	reports []map[string]any
+	phases  []string // the phases heartbeats carried, in order
 }
 
 func (g *gateStack) lastReport(t *testing.T) map[string]any {
@@ -70,7 +71,7 @@ func (g *gateStack) callLog(t *testing.T) string {
 
 // newGateStack: a clone with origin/main at its base, a fake skopos API
 // (item, plan, reports) and a worker whose claude is fakeImplementer.
-func newGateStack(t *testing.T, fix string, rounds *int) *gateStack {
+func newGateStack(t *testing.T, fix string, rounds *int, setup ...string) *gateStack {
 	t.Helper()
 	dir, base := gitRepo(t)
 	if out, err := exec.Command("git", "-C", dir, "update-ref", "refs/remotes/origin/main", base).CombinedOutput(); err != nil {
@@ -83,6 +84,13 @@ func newGateStack(t *testing.T, fix string, rounds *int) *gateStack {
 			_, _ = io.WriteString(w, `{"id":"01a19700-0000-7000-8000-00000000c0de","workspace_id":"ws","title":"Add state","content":"c","plan_id":"plan-1","status":"implementing"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/plans/plan-1":
 			_, _ = io.WriteString(w, `{"id":"plan-1","items":[{"title":"Write the state file","description":"d"}]}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/runs/run-1/heartbeat":
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			g.mu.Lock()
+			g.phases = append(g.phases, body["phase"])
+			g.mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/runs/run-1/report":
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -95,7 +103,7 @@ func newGateStack(t *testing.T, fix string, rounds *int) *gateStack {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	repo := &Repo{Path: dir, DefaultBranch: "main", BranchPrefix: "agent/", Checks: []string{`test "$(cat state)" = good`}, CheckFixRounds: rounds}
+	repo := &Repo{Path: dir, DefaultBranch: "main", BranchPrefix: "agent/", Checks: []string{`test "$(cat state)" = good`}, CheckFixRounds: rounds, Setup: setup}
 	repo.Push.Kind, repo.Push.PullRequest = "none", "none"
 	cfg := &Config{
 		ID: "worker-test", Bin: fakeCLI(t, fakeImplementer), StateDir: t.TempDir(), ImplTimeout: time.Minute,
@@ -127,7 +135,7 @@ func TestImplementChecksGate(t *testing.T) {
 	const check = `test "$(cat state)" = good`
 	zero := 0
 	t.Run("a fix round fixes it", func(t *testing.T) {
-		g := newGateStack(t, "fix", nil)
+		g := newGateStack(t, "fix", nil, "echo prepared > setup.log")
 		if err := g.w.stageImplement(t.Context(), g.run, g.w.log); err != nil {
 			t.Fatal(err)
 		}
@@ -135,8 +143,18 @@ func TestImplementChecksGate(t *testing.T) {
 		if rep["status"] != "succeeded" || !strings.Contains(rep["summary"].(string), "fixed in 1 fix round") {
 			t.Fatalf("report: %v", rep)
 		}
+		if setup, _ := rep["setup"].([]any); len(setup) != 1 || setup[0].(map[string]any)["passed"] != true {
+			t.Fatalf("the report must carry the setup that ran: %v", rep["setup"])
+		}
 		if checkNamed(t, rep, check)["passed"] != true || checkNamed(t, rep, committedCheck)["passed"] != true {
 			t.Fatalf("checks: %v", rep["checks"])
+		}
+		if rep["fix_rounds"] != float64(1) {
+			t.Fatalf("the report must carry the fix rounds used: %v", rep["fix_rounds"])
+		}
+		// The dashboard's Checks step: checks running, the fix, checks again.
+		if got := strings.Join(g.phases, ","); got != "checks,fixing,checks" {
+			t.Fatalf("phases %s", got)
 		}
 		if got := g.callLog(t); got != "impl,fix" {
 			t.Fatalf("calls %s", got)
@@ -180,8 +198,51 @@ func TestImplementChecksGate(t *testing.T) {
 			t.Fatalf("report: %v", rep)
 		}
 	})
+	t.Run("a failing setup is reported with its output", func(t *testing.T) {
+		g := newGateStack(t, "fix", nil, "echo ok", "echo missing toolchain; false", "echo never")
+		if err := g.w.stageImplement(t.Context(), g.run, g.w.log); err != nil {
+			t.Fatal(err)
+		}
+		rep := g.lastReport(t)
+		setup, _ := rep["setup"].([]any)
+		reason, _ := rep["reason"].(string)
+		if rep["status"] != "failed" || !strings.HasPrefix(reason, `setup "echo missing toolchain; false" failed`) || !strings.Contains(reason, "missing toolchain") || len(setup) != 2 {
+			t.Fatalf("report: %v", rep)
+		}
+		if last := setup[1].(map[string]any); last["passed"] == true || !strings.Contains(last["output"].(string), "missing toolchain") {
+			t.Fatalf("the failed setup command must carry its output: %v", last)
+		}
+		if got := g.callLog(t); got != "" {
+			t.Fatalf("no agent runs after a failed setup, calls %s", got)
+		}
+	})
+	t.Run("a worktree whose setup never finished is set up again", func(t *testing.T) {
+		mark := filepath.Join(t.TempDir(), "setup-runs")
+		g := newGateStack(t, "fix", nil, "echo ran >> "+mark)
+		runs := func() int {
+			b, _ := os.ReadFile(mark)
+			return strings.Count(string(b), "ran")
+		}
+		for i, pending := range []bool{false, false, true} {
+			if pending {
+				// What a worker that died mid-setup leaves behind.
+				rec, _ := g.w.loadBranch(g.run.ItemID)
+				rec.SetupPending = true
+				g.w.saveBranch(rec)
+			}
+			if err := g.w.stageImplement(t.Context(), g.run, g.w.log); err != nil {
+				t.Fatal(err)
+			}
+			if want := map[int]int{0: 1, 1: 1, 2: 2}[i]; runs() != want {
+				t.Fatalf("pass %d: setup ran %d times, want %d", i, runs(), want)
+			}
+		}
+		if rec, _ := g.w.loadBranch(g.run.ItemID); rec.SetupPending {
+			t.Fatal("a finished setup must clear the pending mark")
+		}
+	})
 	t.Run("a quota pause mid-fix resumes at the checks", func(t *testing.T) {
-		g := newGateStack(t, "quota", nil)
+		g := newGateStack(t, "quota", nil, "echo prepared")
 		err := g.w.stageImplement(t.Context(), g.run, g.w.log)
 		var qe *quotaError
 		if !errors.As(err, &qe) {
@@ -193,6 +254,9 @@ func TestImplementChecksGate(t *testing.T) {
 		rep := g.lastReport(t)
 		if rep["status"] != "succeeded" || !strings.Contains(rep["summary"].(string), "implemented") {
 			t.Fatalf("report: %v", rep)
+		}
+		if setup, _ := rep["setup"].([]any); len(setup) != 1 {
+			t.Fatalf("the resumed run must still report the setup it ran: %v", rep["setup"])
 		}
 		// One implement turn: the resume went straight back to fixing.
 		if got := g.callLog(t); got != "impl,fix,fix" {
