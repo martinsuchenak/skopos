@@ -22,7 +22,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 - **Six-dot pipeline strip on board cards**, so items waiting for you stand
   out without opening them.
 - **"Needs you" view.** A count of items waiting for you (plan approval,
-  sign-off, blocked) on the sidebar's Inbox entry and in the browser tab
+  sign-off, blocked) in the selected workspace (all of them under "All
+  workspaces") beside the sidebar's Inbox entry and in the browser tab
   title; clicking it, or the new **Needs you** chip, lists just those. The
   inbox list API and MCP `inbox_list` accept `status=needs_you`.
 - **View changes links**: the Implement step and the sign-off card link to
@@ -38,6 +39,11 @@ versions follow [Semantic Versioning](https://semver.org/).
   preview header, and a **full-screen preview on phones**.
 
 ### Fixed
+
+- **Bulk delete with an aggregate filter** (`status=workflow` or
+  `needs_you`) reported success and deleted nothing; it is now refused, and
+  the board's Agent workflow lane no longer offers "Delete all" (pipeline
+  items leave through Reject).
 
 - **The item preview stopped updating live at `in_review`.** Second opinion
   results and new runs only appeared after closing and reopening it. The

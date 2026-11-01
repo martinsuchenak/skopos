@@ -69,6 +69,16 @@ function clearInboxDropMarker() {
   if (inboxDropMarker) { inboxDropMarker.classList.remove('drop-before', 'drop-after', 'drop-into'); inboxDropMarker = null; }
 }
 
+// The preview's stage model, computed once per change of its inputs (the
+// tracker, header pill and action card all read it during one render).
+// Outside Alpine state: writing reactive state while rendering would loop.
+// Keyed on the identities of the reactive inputs, which change on refetch.
+let stageCache: { inputs: unknown[]; model: unknown } | null = null;
+
+// The open preview's slow poll: run state that changes without an inbox
+// event (a review run starting, a worker going offline, a lease running out).
+let previewPoll: ReturnType<typeof setInterval> | null = null;
+
 declare global { interface Window { Alpine: typeof Alpine; app: () => object } }
 
 const appState = () => ({
@@ -964,11 +974,16 @@ const appState = () => ({
       { key: '', label: 'All' },
     ];
   },
-  // Items waiting for an approver (plan gate, sign-off, blocked/failed)
-  // across the key's scope, for the sidebar badge and the tab title.
+  // Items waiting for an approver (plan gate, sign-off, blocked/failed) in
+  // the active workspace (all of the key's scope when none is picked), for
+  // the sidebar badge and the tab title.
   async fetchNeedsYou() {
     try {
-      const res = await this.authFetch('/api/inbox?status=needs_you');
+      // The same scope as the list the badge opens: the active workspace,
+      // or every workspace in the key's scope under "All workspaces".
+      const p = new URLSearchParams({ status: 'needs_you' });
+      if (this.activeWorkspace) p.set('workspace', this.activeWorkspace);
+      const res = await this.authFetch('/api/inbox?' + p.toString());
       if (!res.ok) return;
       this.needsYouCount = (((await res.json()) as InboxItem[]) ?? []).length;
     } catch { return; }
@@ -1056,11 +1071,24 @@ const appState = () => ({
     this.previewStatusSeen = '';
     this.previewPipe = null;
     this.syncPreviewSections();
+    this.secondOpinion = { runner: '', force: false, busy: false, runners: [] };
     this.fetchPreviewRuns(item.id);
     this.fetchPreviewRevision();
-    this.fetchPreviewPipe();
+    // Workers and the pipeline feed both the tracker and the second-opinion
+    // row: loaded once, then the row's defaults come from them.
+    Promise.all([this.fetchPreviewPipe(), this.fetchPreviewExtras(item.id)]).then(() => this.fillSecondOpinion());
+    if (previewPoll) clearInterval(previewPoll);
+    previewPoll = setInterval(() => this.pollPreview(), 20000);
+  },
+  // Every 20s while the preview is open on an item the pipeline is working
+  // on: refetch runs and workers. Inbox events only fire on item changes, so
+  // a review run starting or a worker dying would otherwise go unseen.
+  pollPreview() {
+    const item = this.previewItem;
+    if (!this.showInboxPreview || !item) return;
+    if (!['queued', 'planning', 'approved', 'implementing', 'in_review'].includes(item.status)) return;
+    this.fetchPreviewRuns(item.id);
     this.fetchPreviewExtras(item.id);
-    this.loadSecondOpinion();
   },
   // Workers (stuck-run warning) and the audit trail (History): refetched with
   // the runs on every live refresh.
@@ -1096,20 +1124,15 @@ const appState = () => ({
   secondOpinionApplies(): boolean {
     return !!this.previewItem && (this.previewItem.status === 'in_review' || this.previewItem.status === 'blocked');
   },
-  async loadSecondOpinion() {
-    this.secondOpinion = { runner: '', force: false, busy: false, runners: [] };
-    const item = this.previewItem;
-    if (!item || !this.secondOpinionApplies() || !item.workspace_id) return;
-    const [wres, pres] = await Promise.all([
-      this.authFetch('/api/workers'),
-      this.authFetch('/api/workspaces/' + encodeURIComponent(item.workspace_id) + '/pipeline'),
-    ]);
-    if (!this.previewItem || this.previewItem.id !== item.id) return;
+  // The second-opinion row's runner suggestions (from the workers in scope)
+  // and default (the workspace's), from the loads the preview already made.
+  // The runner field is only filled while empty, so a live refresh never
+  // overwrites what the user typed.
+  fillSecondOpinion() {
     const runners: string[] = [];
-    if (wres.ok) for (const w of (await wres.json()) as WorkerSeen[]) for (const r of w.runners || []) if (!runners.includes(r)) runners.push(r);
-    let dflt = '';
-    if (pres.ok) dflt = ((await pres.json()) as PipeView).effective_second_opinion_runner || '';
-    this.secondOpinion = { runner: dflt, force: false, busy: false, runners: runners.sort() };
+    for (const w of this.previewWorkers) for (const r of w.runners || []) if (!runners.includes(r)) runners.push(r);
+    this.secondOpinion.runners = runners.sort();
+    if (!this.secondOpinion.runner && this.previewPipe) this.secondOpinion.runner = this.previewPipe.effective_second_opinion_runner || '';
   },
   secondOpinionRunning(): RunRow | undefined {
     return this.previewRuns.find((r: RunRow) => r.stage === 'second_opinion' && ['queued', 'claimed', 'running', 'paused'].includes(r.status));
@@ -1147,7 +1170,7 @@ const appState = () => ({
       await this.fetchPreviewRuns(item.id);
     } finally { this.secondOpinion.busy = false; }
   },
-  closeInboxPreview() { this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.previewCandidates = []; this.previewApprovedRev = null; this.previewPipe = null; this.previewStatusSeen = ''; this.previewWorkers = []; this.previewTimeline = []; this.workflowNote = ''; this.workflowBusy = false; },
+  closeInboxPreview() { if (previewPoll) { clearInterval(previewPoll); previewPoll = null; } this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.previewCandidates = []; this.previewApprovedRev = null; this.previewPipe = null; this.previewStatusSeen = ''; this.previewWorkers = []; this.previewTimeline = []; this.workflowNote = ''; this.workflowBusy = false; },
   // The newest revision of the previewed item's plan, while it waits at the
   // gate (revisions list newest first).
   async fetchPreviewRevision() {
@@ -1342,6 +1365,13 @@ const appState = () => ({
     return '';
   },
   stageModel(): { rows: StageRow[]; current: number } {
+    const inputs = [this.previewItem, this.previewRuns, this.previewApprovedRev, this.previewPipe, this.previewWorkers];
+    if (stageCache && stageCache.inputs.every((v, i) => v === inputs[i])) return stageCache.model as { rows: StageRow[]; current: number };
+    const model = this.buildStageModel();
+    stageCache = { inputs, model };
+    return model;
+  },
+  buildStageModel(): { rows: StageRow[]; current: number } {
     const item = this.previewItem;
     const empty = { rows: [] as StageRow[], current: -1 };
     if (!item) return empty;
@@ -1369,7 +1399,16 @@ const appState = () => ({
     const planRuns = main.filter((r: RunRow) => r.stage === 'plan' && r.status === 'succeeded');
     const rev = this.previewApprovedRev;
     const configured = this.reviewConfigured();
-    const rounds = main.filter((r: RunRow) => r.stage === 'implement' && r.status === 'succeeded').length;
+    // The implementation round: one per successful push, plus the one under
+    // way (or failed) when the newest implement run has not succeeded.
+    const newestImpl = main.find((r: RunRow) => r.stage === 'implement');
+    const rounds = main.filter((r: RunRow) => r.stage === 'implement' && r.status === 'succeeded').length
+      + (newestImpl && newestImpl.status !== 'succeeded' ? 1 : 0);
+    // Since when the item has waited for the approver: the newest finished
+    // run handed it over (item.updated_at moves on any edit, e.g. a second
+    // opinion's section); an item no run touched yet waits since creation.
+    const lastDone = main.find((r: RunRow) => !this.runActive(r));
+    const waitingSince = lastDone ? lastDone.updated_at : item.created_at;
     const defs = [
       { name: 'Queued', who: 'you' },
       { name: 'Plan', who: 'agents' },
@@ -1421,7 +1460,7 @@ const appState = () => ({
       let warn = '';
       if (state === 'done') { const d = doneLines(i); lines = d.lines; when = d.when; links = d.links || []; more = d.more || []; }
       if (state === 'run') { lines = this.activeLines(i); if (!lines.length) lines = [i === 3 && st === 'approved' ? 'Starting' : 'Waiting for a worker']; warn = this.activeWarn(i); }
-      if (state === 'you') when = 'waiting ' + this.timeAgo(item.updated_at).replace(' ago', '');
+      if (state === 'you') when = 'waiting ' + this.timeAgo(waitingSince).replace(' ago', '').replace('just now', 'under a minute');
       if (state === 'bad') {
         const failed = main.find((r: RunRow) => this.stageOf(r.stage) === i && r.status === 'failed');
         lines = i === 4 && reviews.length ? reviews.map((r: RunRow) => this.reviewLine(r)) : [(failed && failed.fail_reason) || 'Blocked: open the run history for the reason'];
@@ -1439,7 +1478,10 @@ const appState = () => ({
       // A discarded item: the steps it never finished are greyed out.
       if (st === 'discarded' && state === 'done' && !lines.length && i > 0) state = 'skip';
       const round = (i === 3 || i === 4 || i === 5) && rounds > 1 && state !== 'up' ? 'round ' + rounds : '';
-      return { key: i + '|' + state + '|' + when + '|' + lines.join('/') + '|' + warn + '|' + more.length, name: d.name, who: d.who, state, when, round, lines, links, more, warn };
+      // The key leaves out `when` (relative time): it changes every minute,
+      // and a re-keyed row is re-created, closing an open fold-out. A kept
+      // row still updates its time through the bindings.
+      return { key: i + '|' + state + '|' + round + '|' + lines.join('/') + '|' + warn + '|' + more.map((m: MoreRow) => m.key).join(','), name: d.name, who: d.who, state, when, round, lines, links, more, warn };
     });
     return { rows, current: cur };
   },
@@ -1598,7 +1640,7 @@ const appState = () => ({
     this.syncPreviewSections();
     this.fetchPreviewRuns(id);
     this.fetchPreviewRevision();
-    this.fetchPreviewExtras(id);
+    this.fetchPreviewExtras(id).then(() => this.fillSecondOpinion());
   },
   inboxCanRank(item: InboxItem): boolean { return this.inboxItemEditable(item); },
   // "updated 2m ago" beside the created age once the item has been touched

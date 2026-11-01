@@ -725,8 +725,10 @@ func (s *Service) Purge(ctx context.Context, workspaceID string, status Status) 
 	if workspaceID == "" {
 		return 0, fmt.Errorf("%w: workspace_id is required (derive it with `skopos workspace` or the git remote)", ErrInvalidInput)
 	}
-	if status != "" && !ValidStatus(status) {
-		return 0, fmt.Errorf("%w: invalid status %q. Use: open, in_progress, converted, done, or discarded", ErrInvalidInput, status)
+	// The aggregate list filters (workflow, needs_you) are not statuses: a
+	// purge with one would match nothing and report success.
+	if status != "" && (!ValidStatus(status) || status == "workflow" || status == StatusNeedsYou) {
+		return 0, fmt.Errorf("%w: invalid status %q. Use: open, in_progress, converted, done, discarded, or one workflow phase", ErrInvalidInput, status)
 	}
 	if err := auth.RequireWorkspace(ctx, workspaceID); err != nil {
 		return 0, err

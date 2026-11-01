@@ -41,7 +41,7 @@ body.modal-open { overflow: hidden; }
      pointer (WCAG 2.5.8 everywhere, 2.5.5 on touch). Buttons and fields of
      the same step line up exactly: same height, radius and text size. */
   .btn {
-    @apply inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-zinc-700 bg-zinc-800/60 px-3.5 text-sm font-medium text-zinc-100 shadow-sm transition-colors cursor-pointer select-none;
+    @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800/60 px-3.5 py-1 text-center text-sm font-medium text-zinc-100 shadow-sm transition-colors cursor-pointer select-none;
     @apply hover:border-zinc-600 hover:bg-zinc-800;
     @apply focus:outline-none;
     @apply disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none;
@@ -49,7 +49,7 @@ body.modal-open { overflow: hidden; }
     line-height: 1.25rem;
   }
   .btn-sm { @apply px-3 text-[13px]; min-height: var(--ctl-sm); }
-  .btn-xs { @apply gap-1 rounded-md px-2.5 text-xs; min-height: var(--ctl-xs); }
+  .btn-xs { @apply gap-1 rounded-md px-2.5 py-0.5 text-xs; min-height: var(--ctl-xs); }
   /* Square icon button at the size it is combined with. */
   .btn-icon { @apply px-0; min-width: var(--ctl-md); }
   .btn-sm.btn-icon { min-width: var(--ctl-sm); }
@@ -172,6 +172,8 @@ body.modal-open { overflow: hidden; }
   .nav-item[aria-current="page"] {
     @apply bg-cyan-500/10 text-cyan-200;
   }
+  /* The count beside a nav item (its own button, 24px target). */
+  .nav-count { @apply absolute right-2 top-1/2 inline-flex h-6 min-w-6 -translate-y-1/2 items-center justify-center rounded-md px-1.5 text-xs font-semibold cursor-pointer; }
 }
 
 /* ---- Tones ----
@@ -330,6 +332,9 @@ html.light { color-scheme: light; }
 .light .fld { background-color: #ffffff; border-color: #71717a; color: #18181b; }
 .light .fld-sm { background-color: #ffffff; border-color: #71717a; color: #18181b; }
 .light .fld::placeholder { color: #52525b; }
+/* Field focus on light: cyan-700 border and ring (5.4:1 on white), where the
+   dark theme's cyan-500 would be 2.4:1 (WCAG 1.4.11). */
+.light .fld:focus-visible, .light .fld-sm:focus-visible { border-color: #0e7490; box-shadow: 0 0 0 1px #0e7490, 0 0 0 4px rgb(14 116 144 / 0.2); }
 .light .fld-sm::placeholder { color: #52525b; }
 
 /* Recess inputs slightly from the card surface in dark too */

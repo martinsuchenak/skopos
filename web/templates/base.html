@@ -34,14 +34,17 @@
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
                 Plans
             </button>
-            <button type="button" @click="switchView('inbox')" class="nav-item" :aria-current="activeView === 'inbox' ? 'page' : null">
-                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 3h1a2 2 0 012 2v12a2 2 0 002 2h12a2 2 0 002-2v-6M2 3v0zm20 0h-6m6 0v6m0-6L13 12"/></svg>
-                Inbox
-                <span class="ml-auto flex items-center gap-1">
-                    <span x-show="activeView === 'inbox' && !inboxTagFilter && (inboxLayout === 'lanes' || inboxStatus === 'open') && inboxOpenCount() > 0" class="badge tone-muted" title="Open items in view" x-text="inboxOpenCount()"></span>
-                    <span x-show="needsYouCount > 0" @click.stop="openNeedsYou()" class="badge cursor-pointer tone-warn" :title="needsYouCount + ' waiting for you: plan approval, sign-off or blocked'" x-text="needsYouCount"></span>
-                </span>
-            </button><button type="button" @click="switchView('index')" class="nav-item" :aria-current="activeView === 'index' ? 'page' : null">
+            <!-- The "waiting for you" count is its own button beside the nav
+                 item (a control nested in a button is unreachable by keyboard
+                 and unnamed for screen readers): 24px target, labelled. -->
+            <div class="relative">
+                <button type="button" @click="switchView('inbox')" class="nav-item pr-12" :aria-current="activeView === 'inbox' ? 'page' : null">
+                    <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 3h1a2 2 0 012 2v12a2 2 0 002 2h12a2 2 0 002-2v-6M2 3v0zm20 0h-6m6 0v6m0-6L13 12"/></svg>
+                    Inbox
+                    <span x-show="activeView === 'inbox' && !inboxTagFilter && (inboxLayout === 'lanes' || inboxStatus === 'open') && inboxOpenCount() > 0" class="badge ml-auto tone-muted" title="Open items in view"><span x-text="inboxOpenCount()"></span><span class="sr-only"> open</span></span>
+                </button>
+                <button type="button" x-show="needsYouCount > 0" @click="openNeedsYou()" class="nav-count tone-warn" :aria-label="needsYouCount + ' waiting for you (plan approval, sign-off or blocked): show them'" :title="needsYouCount + ' waiting for you: plan approval, sign-off or blocked'" x-text="needsYouCount"></button>
+            </div><button type="button" @click="switchView('index')" class="nav-item" :aria-current="activeView === 'index' ? 'page' : null">
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 1.1.9 2 2 2h9M4 7l4-4 4 4M4 7h10a2 2 0 012 2v2m4 4l-4-2v4l4-2z m0 0v0z m-4-2l4 2"/></svg>
                 Index
             </button>
@@ -478,7 +481,7 @@
                                 <span class="flex items-center gap-1">
                                     <span x-show="lane.key === 'converted'" class="text-[10px] text-zinc-600" title="Conversion links a plan (Convert on a card)">auto</span>
                                     <span x-show="lane.key === 'done'" class="text-[10px] text-zinc-600" title="Linked plans flip their items here on completion; drag a card here to mark it done manually; drag it back to Open to reopen">auto</span>
-                                    <button x-show="!!activeWorkspace" type="button" @click="requestInboxPurge(lane.key, lane.label)" class="btn btn-xs btn-ghost btn-bad" :title="'Permanently delete every ' + lane.label.toLowerCase() + ' item in ' + activeWorkspace" :aria-label="'Delete every ' + lane.label.toLowerCase() + ' item in ' + activeWorkspace">Delete all</button>
+                                    <button x-show="!!activeWorkspace && lane.key !== 'workflow'" type="button" @click="requestInboxPurge(lane.key, lane.label)" class="btn btn-xs btn-ghost btn-bad" :title="'Permanently delete every ' + lane.label.toLowerCase() + ' item in ' + activeWorkspace" :aria-label="'Delete every ' + lane.label.toLowerCase() + ' item in ' + activeWorkspace">Delete all</button>
                                 </span>
                             </div>
                             <!-- Drop handlers live on a CHILD of the x-for root: the

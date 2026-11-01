@@ -238,6 +238,11 @@ func TestServicePurgeValidationAndScope(t *testing.T) {
 	if _, err := svc.Purge(ctx, "", StatusDone); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("missing workspace: %v", err)
 	}
+	for _, aggregate := range []Status{"workflow", StatusNeedsYou} { // list filters, not statuses
+		if _, err := svc.Purge(ctx, "ws-a", aggregate); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("purge status=%s: %v, want invalid input", aggregate, err)
+		}
+	}
 	if _, err := svc.Purge(ctx, "ws-a", Status("paused")); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("invalid status: %v", err)
 	}

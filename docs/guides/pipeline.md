@@ -264,8 +264,9 @@ steps: Queued, Plan, Plan approval, Implement, Agent review and Your sign-off.
   header shows what the agent runs cost, when the runners report it. On a
   phone the preview fills the screen.
 
-**What's waiting for you.** The Inbox entry in the sidebar shows how many
-items wait for you (plan approval, sign-off, or blocked), and the browser
+**What's waiting for you.** Beside the Inbox entry in the sidebar, a count
+shows how many items in the selected workspace (all of them under "All
+workspaces") wait for you: plan approval, sign-off, or blocked. The browser
 tab title carries the same number. Click the count, or the **Needs you**
 chip in the list, to see just those. Board cards show the six steps as dots.
 
