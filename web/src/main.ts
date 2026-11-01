@@ -1016,10 +1016,21 @@ const appState = () => ({
   },
   // Keyed row (CSP build: x-show on outer state inside the preview does not
   // re-run; a keyed x-for re-renders): [] when it doesn't apply.
+  // Offered only where the server accepts one: in_review, or blocked by a
+  // review/QA run (the newest run apart from second opinions) — never on an
+  // item blocked by planning or implementation.
+  secondOpinionOffered(): boolean {
+    if (!this.previewItem) return false;
+    if (this.previewItem.status === 'in_review') return true;
+    if (this.previewItem.status !== 'blocked') return false;
+    const last = this.previewRuns.find((r: RunRow) => r.stage !== 'second_opinion');
+    return !!last && (last.stage === 'review' || last.stage === 'qa');
+  },
   secondOpinionRow(): { key: string; running: string }[] {
-    if (!this.secondOpinionApplies()) return [];
+    if (!this.secondOpinionOffered()) return [];
     const running = this.secondOpinionRunning();
-    return [{ key: (this.previewItem ? this.previewItem.status : '') + '|' + (running ? running.id + running.status : 'idle'), running: running ? (running.runner || '') : '' }];
+    const last = this.previewRuns.find((r: RunRow) => r.stage !== 'second_opinion');
+    return [{ key: (this.previewItem ? this.previewItem.status : '') + '|' + (last ? last.id : '') + '|' + (running ? running.id + running.status : 'idle'), running: running ? (running.runner || '') : '' }];
   },
   async requestSecondOpinion() {
     const item = this.previewItem;
@@ -1110,17 +1121,28 @@ const appState = () => ({
     this.previewRunsLoading = false;
     if (!res.ok) { this.previewRuns = []; return; }
     this.previewRuns = (await res.json()) as RunRow[];
-    this.autoFillWorkflowNote();
   },
   refreshPreviewRuns() { if (this.previewItem) this.fetchPreviewRuns(this.previewItem.id); },
-  // Mark-done names the head commit the review approves: prefill it from
-  // the latest successful implement run's pushed head.
-  autoFillWorkflowNote() {
-    if (!this.previewItem || this.previewItem.status !== 'in_review' || this.workflowNote) return;
+  // The commit Mark done approves: the head the latest successful
+  // implementation pushed (runs are newest first). Shown read-only and
+  // computed from the run list, so it follows a new push live. It used to
+  // be pre-filled into the note field, which read as something to type and
+  // stopped every live refresh at in_review (a non-empty note means "the
+  // user is typing").
+  reviewHead(): string {
     const impl = this.previewRuns.find((r: RunRow) => r.stage === 'implement' && r.status === 'succeeded' && !!r.head_sha);
-    const fallback = this.previewRuns.find((r: RunRow) => r.status === 'succeeded' && !!r.head_sha);
-    const run = impl || fallback;
-    if (run) this.workflowNote = run.head_sha;
+    return impl ? impl.head_sha : '';
+  },
+  // Keyed x-for row (the CSP build's reliable re-render): [] while there is
+  // no head yet.
+  reviewHeadRow(): { key: string; short: string; full: string }[] {
+    if (!this.workflowShowMarkDone()) return [];
+    const head = this.reviewHead();
+    return [{ key: 'head|' + head, short: head ? this.shortSha(head) : '', full: head }];
+  },
+  markDoneLabel(): string {
+    const head = this.reviewHead();
+    return head ? 'Mark done (approve ' + this.shortSha(head) + ')' : 'Mark done';
   },
   // Refresh the open modal after an action — the note input is KEPT (only
   // openInboxPreview resets it), so an approve-with-notes flow survives.
@@ -1156,17 +1178,20 @@ const appState = () => ({
   workflowShowApprove(): boolean { return !!this.previewItem && this.previewItem.status === 'awaiting_approval'; },
   workflowShowRetry(): boolean { return !!this.previewItem && (this.previewItem.status === 'blocked' || this.previewItem.status === 'failed'); },
   workflowShowMarkDone(): boolean { return !!this.previewItem && this.previewItem.status === 'in_review'; },
+  // At in_review the branch can go back to implementation with notes (the
+  // dashboard had no way to; Slack `changes:` and the CLI did).
+  workflowShowReviewChanges(): boolean { return this.workflowShowMarkDone(); },
   workflowShowReject(): boolean { return !!this.previewItem && this.isWorkflowStatus(this.previewItem.status); },
   workflowShowInput(): boolean { return this.workflowShowApprove() || this.workflowShowRetry() || this.workflowShowMarkDone(); },
   workflowNoteLabel(): string {
     if (this.workflowShowRetry()) return 'Answer to the blocker (sent to the agent)';
-    if (this.workflowShowMarkDone()) return 'Head SHA being approved';
+    if (this.workflowShowMarkDone()) return 'Notes for Request changes (sent to the implementer)';
     if (this.workflowShowApprove()) return 'Notes (required for Request changes)';
     return '';
   },
   workflowNotePlaceholder(): string {
     if (this.workflowShowRetry()) return 'answer to the blocker (required)';
-    if (this.workflowShowMarkDone()) return 'head sha being approved (required)';
+    if (this.workflowShowMarkDone()) return 'what to change (required for Request changes)';
     if (this.workflowShowApprove()) return 'notes (required for Request changes)';
     return '';
   },
@@ -1177,6 +1202,7 @@ const appState = () => ({
     if (this.workflowBusy) return false;
     if (action === 'approve') return true;
     if (action === 'queue' || action === 'reject') return true;
+    if (action === 'mark_done') return this.reviewHead() !== '';
     return !!this.workflowNote && this.workflowNote.trim().length > 0;
   },
   async postWorkflowAction(id: string, action: string, body: Record<string, string> | null, okMessage: string) {
@@ -1209,7 +1235,7 @@ const appState = () => ({
   },
   requestChangesInboxItem(id: string) { if (this.workflowNote.trim()) this.postWorkflowAction(id, 'request-changes', { notes: this.workflowNote }, 'Change requested'); },
   retryInboxItem(id: string) { if (this.workflowNote.trim()) this.postWorkflowAction(id, 'retry', { answer: this.workflowNote }, 'Requeued'); },
-  markDoneInboxItem(id: string) { if (this.workflowNote.trim()) this.postWorkflowAction(id, 'mark-done', { head_sha: this.workflowNote }, 'Marked done'); },
+  markDoneInboxItem(id: string) { const head = this.reviewHead(); if (head) this.postWorkflowAction(id, 'mark-done', { head_sha: head }, 'Marked done'); },
   // The quick action for a card/row is the one that needs no input; Retry
   // and Mark done live in the modal (answer / head sha required).
   // A plan at the gate is never approved from a card: the quick action

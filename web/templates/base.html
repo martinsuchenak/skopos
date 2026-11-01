@@ -960,7 +960,7 @@
 
     <!-- Inbox preview modal: the universal read view (workflow items are
          frozen for inline editing; this works for every status). -->
-    {{template "modal-open" (dict "ID" "preview-modal" "Show" "showInboxPreview" "Close" "closeInboxPreview()" "Size" "flex max-h-[85vh] max-w-2xl flex-col")}}
+    {{template "modal-open" (dict "ID" "preview-modal" "Show" "showInboxPreview" "Close" "closeInboxPreview()" "Size" "flex max-h-[92vh] max-w-4xl flex-col")}}
             <div x-show="previewLoading" class="text-sm text-zinc-500">Loading&hellip;</div>
             <template x-if="previewItem">
                 <div class="flex min-h-0 flex-1 flex-col">
@@ -986,7 +986,12 @@
                             <button type="button" x-show="inboxContentEditable(previewItem)" @click="editFromPreview()" class="btn btn-sm" :aria-label="'Edit item ' + previewItem.title">Edit</button>
                         </div>
                     </div>
-                    <div class="md-body min-h-0 flex-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950/50 p-4" data-md-preview aria-live="polite"></div>
+                    <!-- One scroll area for everything under the title: content,
+                         runs and actions. A content pane that alone had to
+                         shrink was squeezed to a sliver once the runs and the
+                         in_review actions stacked up below it. -->
+                    <div class="-mr-2 min-h-0 flex-1 overflow-y-auto pr-2" data-preview-body>
+                    <div class="md-body rounded-lg border border-zinc-800 bg-zinc-950/50 p-4" data-md-preview aria-live="polite"></div>
                     <p x-show="previewItem && !previewItem.content" class="mt-2 text-sm text-zinc-500">No content.</p>
                     <!-- Runs: where this item is (or was) processed — stage,
                          worker, attempt, branch, head; live-refreshed on inbox
@@ -996,7 +1001,7 @@
                             <span class="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Runs</span>
                             <button type="button" @click.stop="refreshPreviewRuns()" class="btn btn-ghost btn-sm !min-h-6 !px-2 !py-0 text-xs" :disabled="previewRunsLoading" aria-label="Refresh runs">&#8635;</button>
                         </div>
-                        <div class="max-h-40 overflow-y-auto">
+                        <div class="max-h-72 overflow-y-auto">
                             <p x-show="previewRunsLoading && previewRuns.length === 0" class="px-3 py-2 text-xs text-zinc-500">Loading&hellip;</p>
                             <p x-show="!previewRunsLoading && previewRuns.length === 0" class="px-3 py-2 text-xs text-zinc-500">No runs yet &mdash; queue the item to start the pipeline.</p>
                             <template x-for="run in previewRuns" :key="run.id + '|' + run.status + '|' + run.updated_at">
@@ -1023,6 +1028,14 @@
                         <!-- Labeled, multi-line: retry answers and change
                              requests carry real sentences, and the input was a
                              single xs-height line with only a placeholder. -->
+                        <!-- What Mark done approves: the exact commit the review
+                             checked, read-only (keyed x-for, CSP build). -->
+                        <template x-for="h in reviewHeadRow()" :key="h.key">
+                            <p class="w-full text-xs text-zinc-300">
+                                <span x-show="h.full">Approving commit <code class="font-mono" :title="h.full" x-text="h.short"></code>, the branch head the review checked. Mark done approves exactly this commit; a later push needs a new approval.</span>
+                                <span x-show="!h.full" class="text-zinc-400">No pushed commit recorded for this item yet, so there is nothing to approve.</span>
+                            </p>
+                        </template>
                         <div class="flex min-w-56 flex-1 flex-col gap-1" x-show="workflowShowInput()">
                             <label for="workflow-note" class="text-[11px] font-medium text-zinc-400" x-text="workflowNoteLabel()"></label>
                             <textarea id="workflow-note" x-model="workflowNote" rows="3" class="fld w-full resize-y text-sm" :placeholder="workflowNotePlaceholder()" :aria-label="workflowNoteLabel()"></textarea>
@@ -1051,7 +1064,8 @@
                         </template>
                         <button type="button" x-show="workflowShowApprove()" @click.stop="requestChangesInboxItem(previewItem.id)" :disabled="!workflowActionReady('request_changes')" class="btn btn-sm btn-ghost text-orange-300" :aria-label="requestChangesLabel() + ' for item ' + previewItem.title" x-text="requestChangesLabel()"></button>
                         <button type="button" x-show="workflowShowRetry()" @click.stop="retryInboxItem(previewItem.id)" :disabled="!workflowActionReady('retry')" class="btn btn-sm text-sky-300" :aria-label="'Retry item ' + previewItem.title">Retry</button>
-                        <button type="button" x-show="workflowShowMarkDone()" @click.stop="markDoneInboxItem(previewItem.id)" :disabled="!workflowActionReady('mark_done')" class="btn btn-sm text-emerald-300" :aria-label="'Mark item ' + previewItem.title + ' done'">Mark done</button>
+                        <button type="button" x-show="workflowShowReviewChanges()" @click.stop="requestChangesInboxItem(previewItem.id)" :disabled="!workflowActionReady('request_changes')" class="btn btn-sm btn-ghost text-orange-300" :aria-label="'Request changes on the branch of item ' + previewItem.title">Request changes</button>
+                        <button type="button" x-show="workflowShowMarkDone()" @click.stop="markDoneInboxItem(previewItem.id)" :disabled="!workflowActionReady('mark_done')" class="btn btn-sm text-emerald-300" :aria-label="'Mark item ' + previewItem.title + ' done, approving its head commit'" x-text="markDoneLabel()"></button>
                         <template x-for="so in secondOpinionRow()" :key="so.key">
                             <div class="flex w-full flex-wrap items-end gap-2 border-t border-zinc-800 pt-2">
                                 <span x-show="so.running" class="chip tone-info" x-text="'Second opinion running (' + so.running + ')'"></span>
@@ -1067,6 +1081,7 @@
                             <template x-for="r in secondOpinion.runners" :key="'so|' + r"><option :value="r"></option></template>
                         </datalist>
                         <button type="button" x-show="workflowShowReject()" @click.stop="rejectInboxItem(previewItem.id)" :disabled="!workflowActionReady('reject')" class="btn btn-sm btn-ghost text-rose-300" :aria-label="'Reject item ' + previewItem.title">Reject</button>
+                    </div>
                     </div>
                 </div>
             </template>

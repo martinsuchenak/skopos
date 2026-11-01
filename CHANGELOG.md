@@ -4,6 +4,33 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **The item preview stopped updating live at `in_review`.** Second opinion
+  results and new runs only appeared after closing and reopening it. The
+  commit to approve was pre-filled into the note field, and a non-empty
+  note pauses live refresh (to keep what you're typing).
+- **Text in dialogs couldn't be selected or copied** (run errors, for
+  example). Clicking plain text let the dialog's focus trap pull focus back
+  to a button, which cancelled the selection. Dialog panels now take the
+  focus themselves.
+- **The second-opinion row appeared on items blocked by planning or
+  implementation**, where the server refuses one. It now shows only at
+  `in_review` or when a review or QA run blocked the item.
+
+### Changed
+
+- **Mark done shows the commit it approves**, read-only: "Approving commit
+  3f2a1bc, the branch head the review checked", with the button reading
+  "Mark done (approve 3f2a1bc)". It follows a new push live.
+- **Request changes at `in_review` in the dashboard**: the notes field there
+  now sends the branch back to implementation (Slack `changes:` and the CLI
+  already could).
+- **The item preview is larger**, and its content, runs and actions scroll
+  together, so the text is no longer squeezed by the actions below it.
+
 ## [0.18.1] — 2026-11-01
 
 ### Fixed

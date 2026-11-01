@@ -17,10 +17,14 @@
     Alert    true → role=alertdialog, described by "<ID>-desc"
     NoX      true → no close button (the dialog has its own)
     NoBackdropDismiss  true → clicking outside does nothing
+  The panel is focusable (tabindex -1): a click on plain text focuses the
+  panel, inside the trap, instead of the body. Otherwise the trap pulled
+  focus back to a button on mousedown, which cancelled every text
+  selection (run errors could not be copied).
 */}}
 {{define "modal-open"}}<div x-show="{{.Show}}" x-cloak class="modal" role="{{if .Alert}}alertdialog{{else}}dialog{{end}}" aria-modal="true" aria-labelledby="{{.ID}}-title"{{if .Alert}} aria-describedby="{{.ID}}-desc"{{end}} @keydown.escape.window="{{.Close}}" x-trap="{{.Show}}">
         <div class="modal-backdrop"{{if not .NoBackdropDismiss}} @click="{{or .Dismiss .Close}}"{{end}} aria-hidden="true"></div>
-        <div class="card modal-panel {{or .Size "max-w-md"}}">{{if not .NoX}}
+        <div class="card modal-panel focus:outline-none {{or .Size "max-w-md"}}" tabindex="-1">{{if not .NoX}}
             <button type="button" @click="{{or .Dismiss .Close}}" class="modal-x" aria-label="Close dialog">
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
             </button>{{end}}{{end}}
