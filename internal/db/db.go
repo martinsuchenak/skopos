@@ -150,6 +150,12 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "runs", "findings", "TEXT CHECK (findings IS NULL OR json_valid(findings))"); err != nil {
 		return err
 	}
+	// Whether an implement run pushed its branch: 1/0, NULL = not reported
+	// (older workers, other stages). The dashboard links the commit on the
+	// forge only when it was pushed.
+	if err := ensureColumn(db, "runs", "pushed", "INTEGER CHECK (pushed IS NULL OR pushed IN (0, 1))"); err != nil {
+		return err
+	}
 	// Plan candidates (multi-agent planning): a candidate is a revision with
 	// a group; its state moves open → approved | superseded. NULL for every
 	// revision outside a plan group (all existing ones).

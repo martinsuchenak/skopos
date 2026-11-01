@@ -4,6 +4,22 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **View changes no longer links to a 404 for unpushed commits.** A worker
+  with no `push` for the repository keeps the branch to itself, so the
+  forge has nothing to show. Workers now report whether they pushed. The
+  preview then says "committed" instead of "pushed", warns that the branch
+  is only on the worker, and drops the link. It also disables Second
+  opinion, which can't fetch the branch either. For runs from older
+  workers, it reads the same thing from a review that failed to fetch the
+  branch.
+- **The Second opinion button stands out.** It has a tinted violet fill in
+  both themes instead of the plain style that blended into the sign-off
+  card.
+
 ## [0.18.2] — 2026-11-01
 
 ### Added

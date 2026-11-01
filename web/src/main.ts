@@ -43,7 +43,7 @@ type PlanRevisionInfo = { id: string; revision_no: number; content_hash: string;
 // One thing the approver can approve at the gate: the plan revision, or one
 // candidate of a multi-agent plan round.
 type ApproveTarget = { id: string; title: string; meta: string; steps: string[]; candidate: boolean; hash: string; toast: string };
-type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { severity: string; text: string; file?: string }[]; lease_expires_at?: string; created_at: string; updated_at: string };
+type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { severity: string; text: string; file?: string }[]; lease_expires_at?: string; pushed?: boolean; created_at: string; updated_at: string };
 // One row of the preview's stage tracker. state: done | run | you | bad |
 // up (not reached) | skip (not configured, or never reached on a discarded item).
 type LinkRow = { key: string; href: string; text: string };
@@ -1337,9 +1337,23 @@ const appState = () => ({
   // /compare/a...b form), or the commit alone without a base.
   changesLinks(base: string, head: string): LinkRow[] {
     const root = this.repoWebBase(this.previewItem ? this.previewItem.workspace_id || '' : '');
-    if (!root || !head) return [];
+    if (!root || !head || this.unpushed(head)) return [];
     if (base) return [{ key: 'cmp|' + base + '|' + head, href: root + '/compare/' + base + '...' + head, text: 'View changes ' + this.shortSha(base) + '…' + this.shortSha(head) }];
     return [{ key: 'commit|' + head, href: root + '/commit/' + head, text: 'View commit ' + this.shortSha(head) }];
+  },
+  // True when the commit exists only on the worker, so the forge has
+  // nothing to show: the implement run said it did not push (no push set up
+  // for the repo), or — from workers that don't say — the newest review of
+  // that head or branch failed because the branch wasn't on the remote.
+  unpushed(head: string): boolean {
+    const impl = this.previewRuns.find((r: RunRow) => r.stage === 'implement' && r.head_sha === head);
+    if (!impl) return false;
+    if (impl.pushed !== undefined) return !impl.pushed;
+    const since = Date.parse(impl.created_at);
+    const check = this.previewRuns.find((r: RunRow) => ['review', 'qa', 'second_opinion'].includes(r.stage)
+      && (r.status === 'succeeded' || r.status === 'failed') && Date.parse(r.created_at) >= since
+      && (r.head_sha === head || (!!impl.branch && r.branch === impl.branch)));
+    return !!check && check.status === 'failed' && (check.fail_reason || '').includes(' not pushed');
   },
   // The base the implementation branched from: the run's, else the approved plan's.
   trackBase(impl: RunRow | undefined): string {
@@ -1418,7 +1432,7 @@ const appState = () => ({
       { name: 'Your sign-off', who: 'you' },
     ];
     // Evidence for a finished step.
-    const doneLines = (i: number): { lines: string[]; when: string; links?: LinkRow[]; more?: MoreRow[] } => {
+    const doneLines = (i: number): { lines: string[]; when: string; links?: LinkRow[]; more?: MoreRow[]; warn?: string } => {
       if (i === 1 && planRuns.length) {
         const newest = planRuns[0];
         const round = newest.group_id ? planRuns.filter((r: RunRow) => r.group_id === newest.group_id) : [newest];
@@ -1435,10 +1449,12 @@ const appState = () => ({
         return { lines: [text], when: rev.locked_at ? this.timeAgo(rev.locked_at) : '' };
       }
       if (i === 3 && impl) {
-        const lines = [(impl.runner || impl.worker_id || 'The agent') + ' pushed ' + this.shortSha(impl.head_sha || '') + (impl.branch ? ' to ' + impl.branch : '')];
+        const local = this.unpushed(impl.head_sha || '');
+        const lines = [(impl.runner || impl.worker_id || 'The agent') + (local ? ' committed ' : ' pushed ') + this.shortSha(impl.head_sha || '') + (impl.branch ? (local ? ' on ' : ' to ') + impl.branch : '')];
         const stat = (impl.diffstat || '').split('\n').map((l: string) => l.trim()).filter(Boolean).pop();
         if (stat) lines.push(stat);
-        return { lines, when: this.timeAgo(impl.updated_at), links: this.changesLinks(this.trackBase(impl), impl.head_sha || '') };
+        const warn = local ? 'Not pushed: the branch is only on ' + (impl.worker_id || 'the worker') + ', so there is no link to it and reviewers can\'t fetch it. Set up push for this repository in the worker config.' : '';
+        return { lines, when: this.timeAgo(impl.updated_at), links: this.changesLinks(this.trackBase(impl), impl.head_sha || ''), warn };
       }
       if (i === 4 && reviews.length) {
         const ok = reviews.filter((r: RunRow) => r.status === 'succeeded').length;
@@ -1458,7 +1474,7 @@ const appState = () => ({
       let links: LinkRow[] = [];
       let more: MoreRow[] = [];
       let warn = '';
-      if (state === 'done') { const d = doneLines(i); lines = d.lines; when = d.when; links = d.links || []; more = d.more || []; }
+      if (state === 'done') { const d = doneLines(i); lines = d.lines; when = d.when; links = d.links || []; more = d.more || []; warn = d.warn || ''; }
       if (state === 'run') { lines = this.activeLines(i); if (!lines.length) lines = [i === 3 && st === 'approved' ? 'Starting' : 'Waiting for a worker']; warn = this.activeWarn(i); }
       if (state === 'you') when = 'waiting ' + this.timeAgo(waitingSince).replace(' ago', '').replace('just now', 'under a minute');
       if (state === 'bad') {
@@ -1566,7 +1582,7 @@ const appState = () => ({
       out.push({ key: 'g-head|' + head, ic: 'y', text: 'Commit ' + this.shortSha(head) + ' is the branch head, and the reviewers checked it' });
       out.push({ key: 'g-rev|' + ok + '|' + reviews.length, ic: ok === reviews.length ? 'y' : 'w', text: 'Agent review: ' + ok + ' of ' + reviews.length + ' passed' + (nits ? ', ' + this.plural(nits, 'nit') : '') + (ok === reviews.length ? ', no blocking findings' : '') });
     } else {
-      out.push({ key: 'g-head|' + head, ic: 'w', text: 'Commit ' + this.shortSha(head) + ' is the branch head. No agent reviewed it, so check it yourself or ask for a second opinion.' });
+      out.push({ key: 'g-head|' + head, ic: 'w', text: 'Commit ' + this.shortSha(head) + ' is the branch head. No agent reviewed it, so check it yourself' + (this.unpushed(head) ? ' on the worker.' : ' or ask for a second opinion.') });
     }
     return out;
   },
@@ -1597,6 +1613,7 @@ const appState = () => ({
   secondOpinionBlockedReason(): string {
     const runner = this.secondOpinion.runner.trim();
     const head = this.reviewHead();
+    if (head && this.unpushed(head)) return 'The branch isn\'t pushed, so a second opinion can\'t fetch ' + this.shortSha(head) + '.';
     if (!runner || !head || this.secondOpinion.force) return '';
     const dup = this.previewRuns.some((r: RunRow) => r.stage === 'second_opinion' && r.status === 'succeeded' && r.runner === runner && r.head_sha === head);
     return dup ? runner + ' already checked ' + this.shortSha(head) + '. Tick "again on this head" to ask again, or name another runner.' : '';

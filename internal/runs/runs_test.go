@@ -540,6 +540,31 @@ func TestReportRecordsExecutor(t *testing.T) {
 	}
 }
 
+// An implement report says whether the branch was pushed; a report without
+// it (older workers) leaves the flag unknown.
+func TestReportRecordsPushed(t *testing.T) {
+	s := testService(t)
+	ctx := rootCtx()
+	no := false
+	for i, pushed := range []*bool{&no, nil} {
+		_ = mustQueue(t, s, ctx, "ws-a", "item-p"+strings.Repeat("x", i), StagePlan)
+		run, err := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+		if err != nil || run == nil {
+			t.Fatalf("claim: %v %v", run, err)
+		}
+		got, err := s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded, Summary: "ok", HeadSHA: "abc", Pushed: pushed}, run.LeaseToken)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pushed == nil && got.Pushed != nil {
+			t.Fatalf("unreported push must stay unknown: %v", *got.Pushed)
+		}
+		if pushed != nil && (got.Pushed == nil || *got.Pushed != *pushed) {
+			t.Fatalf("pushed: %v", got.Pushed)
+		}
+	}
+}
+
 // Runs created within one second are claimed in creation order: stored
 // timestamps are fixed-width, so the queue's ORDER BY created_at is time
 // order (RFC3339Nano text was not — "…05.12345Z" sorted after

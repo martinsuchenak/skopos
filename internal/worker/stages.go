@@ -314,6 +314,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	return w.report(ctx, run, true, map[string]any{
 		"summary": ir.Summary, "head_sha": head, "branch": branch,
 		"diffstat": diffStat(ctx, worktree, repo.DefaultBranch), "checks": checks,
+		"pushed": repo.Push.Kind != "none",
 	})
 }
 

@@ -116,7 +116,10 @@ type Run struct {
 	// CostUSD is what the agent run cost, when the runner reports it.
 	CostUSD *float64 `json:"cost_usd,omitempty"`
 	// Findings are a review/QA member's structured findings.
-	Findings  []Finding `json:"findings,omitempty"`
+	Findings []Finding `json:"findings,omitempty"`
+	// Pushed: whether an implement run pushed its branch to the remote; nil
+	// when the worker did not say (older workers, other stages).
+	Pushed    *bool     `json:"pushed,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -217,6 +220,9 @@ type ReportInput struct {
 	CostUSD *float64 `json:"cost_usd,omitempty"`
 	// Findings: review/QA structured findings (severity + text).
 	Findings []Finding `json:"findings,omitempty"`
+	// Pushed: implement only — false when the repo has no push configured,
+	// so the head exists on the worker alone.
+	Pushed *bool `json:"pushed,omitempty"`
 	// Verdict: a second opinion's pass/fail. It reports succeeded either
 	// way (the review itself ran); the verdict is advisory.
 	Verdict string `json:"verdict,omitempty"`

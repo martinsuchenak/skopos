@@ -68,6 +68,9 @@ body.modal-open { overflow: hidden; }
   .btn-bad    { @apply text-rose-300 hover:bg-rose-500/10 hover:text-rose-200; }
   .btn-info   { @apply text-sky-300 hover:bg-sky-500/10 hover:text-sky-200; }
   .btn-accent { @apply text-violet-300 hover:bg-violet-500/10 hover:text-violet-200; }
+  /* Tinted secondary: a filled tone for an optional action that must still
+     stand out on a tinted card (Second opinion on the amber gate). */
+  .btn-accent-soft { @apply border-violet-400/60 bg-violet-500/20 text-violet-100 hover:border-violet-300/70 hover:bg-violet-500/30 hover:text-white; }
   /* Toggle buttons (filters, layout): the pressed one is tinted. */
   .btn[aria-pressed="true"] { @apply border-cyan-500/60 bg-cyan-500/10 text-cyan-200; }
   .btn[aria-pressed="false"] { @apply text-zinc-400; }
@@ -362,6 +365,8 @@ html.light { color-scheme: light; }
 .light .btn-bad:hover { background-color: #fff1f2; }
 .light .btn-info:hover { background-color: #f0f9ff; }
 .light .btn-accent:hover { background-color: #f5f3ff; }
+.light .btn-accent-soft { background-color: #ede9fe; border-color: #a78bfa; color: #4c1d95; }
+.light .btn-accent-soft:hover { background-color: #ddd6fe; border-color: #8b5cf6; }
 .light .btn[aria-pressed="true"] { background-color: #ecfeff; border-color: #0891b2; color: #155e75; }
 .light .btn[aria-pressed="false"] { color: #52525b; }
 .light .seg { background-color: #f4f4f5; border-color: #d4d4d8; }

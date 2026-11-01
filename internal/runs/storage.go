@@ -35,7 +35,7 @@ func parseTime(s string) time.Time {
 const runColumns = `id, workspace_id, item_id, plan_rev_id, stage, runner, worker_id, status,
 	resume_kind, lease_expires_at, resume_after, attempt, branch, base_sha, head_sha,
 	result_summary, diffstat, checks, log_ref, fail_reason, lease_token_hash, claimed_key_id, created_at, updated_at, executor,
-	group_id, focus, cost_usd, findings`
+	group_id, focus, cost_usd, findings, pushed`
 
 func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	var r Run
@@ -43,10 +43,11 @@ func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	var checks string
 	var groupID, focus, findings sql.NullString
 	var cost sql.NullFloat64
+	var pushed sql.NullBool
 	if err := row.Scan(&r.ID, &r.WorkspaceID, &r.ItemID, &r.PlanRevID, &r.Stage, &r.Runner, &r.WorkerID, &r.Status,
 		&r.ResumeKind, &lease, &resumeAfter, &r.Attempt, &r.Branch, &r.BaseSHA, &r.HeadSHA,
 		&r.ResultSummary, &r.Diffstat, &checks, &r.LogRef, &r.FailReason, &r.LeaseTokenHash, &r.ClaimedKeyID, &createdAt, &updatedAt, &r.Executor,
-		&groupID, &focus, &cost, &findings); err != nil {
+		&groupID, &focus, &cost, &findings, &pushed); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -67,6 +68,10 @@ func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	if findings.Valid && findings.String != "" {
 		_ = json.Unmarshal([]byte(findings.String), &r.Findings)
 	}
+	if pushed.Valid {
+		b := pushed.Bool
+		r.Pushed = &b
+	}
 	return &r, nil
 }
 
@@ -76,6 +81,13 @@ func nullIfEmpty(s string) any {
 		return nil
 	}
 	return s
+}
+
+func boolArg(b *bool) any {
+	if b == nil {
+		return nil
+	}
+	return *b
 }
 
 // findingsJSON stores findings as a JSON array, or NULL when there are none.
@@ -534,12 +546,12 @@ func (s *Storage) Report(ctx context.Context, id, workerID, keyID, tokenHash str
 			log_ref = ?, fail_reason = ?, branch = CASE WHEN ? != '' THEN ? ELSE branch END,
 			base_sha = CASE WHEN ? != '' THEN ? ELSE base_sha END,
 			executor = CASE WHEN ? != '' THEN ? ELSE executor END,
-			cost_usd = COALESCE(?, cost_usd), findings = COALESCE(?, findings),
+			cost_usd = COALESCE(?, cost_usd), findings = COALESCE(?, findings), pushed = COALESCE(?, pushed),
 			lease_expires_at = '', resume_after = '', updated_at = ?
 		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
 		string(in.Status), in.Summary, in.HeadSHA, in.HeadSHA, in.Diffstat, string(checks),
 		in.LogRef, in.Reason, in.Branch, in.Branch, in.BaseSHA, in.BaseSHA, in.Executor, in.Executor,
-		costArg(in.CostUSD), findingsJSON(in.Findings),
+		costArg(in.CostUSD), findingsJSON(in.Findings), boolArg(in.Pushed),
 		formatTime(now), id, workerID, keyID, tokenHash, string(StatusClaimed), string(StatusRunning), string(StatusPaused))
 	if err != nil {
 		return nil, fmt.Errorf("reporting run: %w", err)

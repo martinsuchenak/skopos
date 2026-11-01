@@ -254,7 +254,10 @@ steps: Queued, Plan, Plan approval, Implement, Agent review and Your sign-off.
 - **Finished steps** are checked, with who did them and what came out: the
   plan revision, the pushed commit with a **View changes** link (the base to
   head comparison on GitHub or Gitea), and each reviewer's verdict. The
-  review findings and summaries unfold under the step.
+  review findings and summaries unfold under the step. A repository with no
+  `push` block in the worker config keeps the branch on the worker: the
+  preview says so, shows no link, and won't offer a second opinion, because
+  reviewers fetch the branch from the remote.
 - **The step waiting for you** holds the buttons, under a short list of what
   you're approving. At plan approval the plan's steps are listed.
 - **A running step** warns when its worker has gone offline or stopped
