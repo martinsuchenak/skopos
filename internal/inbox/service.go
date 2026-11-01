@@ -220,7 +220,7 @@ func (s *Service) ListItems(ctx context.Context, workspaceID, status, tag, query
 	workspaceID = strings.TrimSpace(workspaceID)
 	status = strings.TrimSpace(status)
 	if status != "" && !ValidStatus(Status(status)) {
-		return nil, fmt.Errorf("%w: invalid status %q. Use: open, in_progress, converted, done, discarded, a workflow phase, or workflow", ErrInvalidInput, status)
+		return nil, fmt.Errorf("%w: invalid status %q. Use: open, in_progress, converted, done, discarded, a workflow phase, workflow, or needs_you", ErrInvalidInput, status)
 	}
 	tag = strings.ToLower(strings.TrimSpace(tag))
 	if workspaceID != "" {
@@ -819,8 +819,8 @@ func ValidStatus(s Status) bool {
 	case StatusQueued, StatusPlanning, StatusAwaitingApproval, StatusApproved,
 		StatusImplementing, StatusInReview, StatusFailed, StatusBlocked:
 		return true // agent-pipeline workflow phases (docs/design/agent-pipeline.md §1)
-	case Status("workflow"):
-		return true // the dashboard's aggregate chip (storage expands it)
+	case Status("workflow"), StatusNeedsYou:
+		return true // the dashboard's aggregate chips (storage expands them)
 	}
 	return false
 }

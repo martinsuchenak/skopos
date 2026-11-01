@@ -21,6 +21,21 @@ versions follow [Semantic Versioning](https://semver.org/).
   commit.
 - **Six-dot pipeline strip on board cards**, so items waiting for you stand
   out without opening them.
+- **"Needs you" view.** A count of items waiting for you (plan approval,
+  sign-off, blocked) on the sidebar's Inbox entry and in the browser tab
+  title; clicking it, or the new **Needs you** chip, lists just those. The
+  inbox list API and MCP `inbox_list` accept `status=needs_you`.
+- **View changes links**: the Implement step and the sign-off card link to
+  the base to head comparison on GitHub or Gitea (from the workspace id).
+- **Review findings and summaries unfold** under the Agent review step, and
+  each second opinion's text opens from its line.
+- **Plan steps at plan approval** for a single plan, not only for competing
+  candidates.
+- **Stuck-run warning**: a running step says so when its worker is offline
+  or its heartbeat has stopped.
+- **Item history** in the preview (who queued, approved, asked for changes,
+  signed off, and pipeline failures), the **total agent cost** in the
+  preview header, and a **full-screen preview on phones**.
 
 ### Fixed
 

@@ -251,10 +251,23 @@ preview says no agent reviewed the commit.
 
 **Follow it in the preview.** The item preview opens with the six pipeline
 steps: Queued, Plan, Plan approval, Implement, Agent review and Your sign-off.
-Finished steps are checked, with who did them and what came out (the plan
-revision, the pushed commit, each reviewer's verdict). The step waiting for
-you holds the buttons, under a short list of what you're approving. The board
-cards show the same steps as six dots.
+- **Finished steps** are checked, with who did them and what came out: the
+  plan revision, the pushed commit with a **View changes** link (the base to
+  head comparison on GitHub or Gitea), and each reviewer's verdict. The
+  review findings and summaries unfold under the step.
+- **The step waiting for you** holds the buttons, under a short list of what
+  you're approving. At plan approval the plan's steps are listed.
+- **A running step** warns when its worker has gone offline or stopped
+  sending heartbeats, instead of spinning forever.
+- **Below the steps:** the item description, the run history and a short
+  history of who queued, approved, asked for changes or signed off. The
+  header shows what the agent runs cost, when the runners report it. On a
+  phone the preview fills the screen.
+
+**What's waiting for you.** The Inbox entry in the sidebar shows how many
+items wait for you (plan approval, sign-off, or blocked), and the browser
+tab title carries the same number. Click the count, or the **Needs you**
+chip in the list, to see just those. Board cards show the six steps as dots.
 
 **Review and finish.** At `in_review`, look at the branch, the review verdicts
 and the run history. Then:

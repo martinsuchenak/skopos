@@ -183,6 +183,18 @@ body.modal-open { overflow: hidden; }
 .stage-ic-y { color: #34d399; }
 .stage-ic-w { color: #fbbf24; }
 .stage-ic-n { color: #71717a; }
+.stage-warn { margin-top: 0.25rem; font-size: 0.8125rem; color: #fcd34d; }
+.stage-link { display: inline-block; margin-top: 0.25rem; margin-right: 0.75rem; font-size: 0.8125rem; color: #7dd3fc; text-decoration: underline; text-underline-offset: 2px; }
+.stage-more { margin-top: 0.25rem; font-size: 0.8125rem; color: #a1a1aa; }
+.stage-more > summary { cursor: pointer; }
+.stage-more-row { margin-top: 0.375rem; border-left: 2px solid #3f3f46; padding-left: 0.5rem; }
+.stage-more-label { font: 500 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: #71717a; }
+.stage-more-text { white-space: pre-wrap; overflow-wrap: anywhere; color: #d4d4d8; }
+.light .stage-warn { color: #92400e; }
+.light .stage-link { color: #0369a1; }
+.light .stage-more { color: #52525b; }
+.light .stage-more-row { border-left-color: #d4d4d8; }
+.light .stage-more-text { color: #27272a; }
 .fold-summary { list-style: none; }
 .fold-summary::-webkit-details-marker { display: none; }
 .fold-caret { display: inline-block; transition: transform 0.15s; }

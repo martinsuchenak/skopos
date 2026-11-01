@@ -43,6 +43,9 @@ const (
 	StatusConverted        Status = "converted"
 	StatusDone             Status = "done"
 	StatusDiscarded        Status = "discarded"
+	// StatusNeedsYou is a list filter only, never an item's status: the
+	// phases that wait for an approver (plan gate, sign-off, blocked/failed).
+	StatusNeedsYou Status = "needs_you"
 )
 
 // Transition classes: who may perform a status change. Human actions

@@ -95,7 +95,7 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 		mcplib.NewTool("inbox_list",
 			"List inbox items. Defaults to open (unprocessed) items; pass status=all for every item. With the root key, omit workspace_id to list every workspace's items including unfiled captures. Rows carry each item's priority — in the other inbox tools, workspace_id + priority can stand in for item_id to address a prioritized item by its number.",
 			wsParam(),
-			mcplib.String("status", "Filter: open (default), in_progress, converted, done, discarded, or all"),
+			mcplib.String("status", "Filter: open (default), in_progress, converted, done, discarded, needs_you (waiting for an approver), or all"),
 			mcplib.String("tag", "Filter by tag"),
 			mcplib.String("q", "Substring search over title and content"),
 		),

@@ -37,7 +37,10 @@
             <button type="button" @click="switchView('inbox')" class="nav-item" :aria-current="activeView === 'inbox' ? 'page' : null">
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 3h1a2 2 0 012 2v12a2 2 0 002 2h12a2 2 0 002-2v-6M2 3v0zm20 0h-6m6 0v6m0-6L13 12"/></svg>
                 Inbox
-                <span x-show="activeView === 'inbox' && !inboxTagFilter && (inboxLayout === 'lanes' || inboxStatus === 'open') && inboxOpenCount() > 0" class="badge ml-auto tone-warn" x-text="inboxOpenCount()"></span>
+                <span class="ml-auto flex items-center gap-1">
+                    <span x-show="activeView === 'inbox' && !inboxTagFilter && (inboxLayout === 'lanes' || inboxStatus === 'open') && inboxOpenCount() > 0" class="badge tone-muted" title="Open items in view" x-text="inboxOpenCount()"></span>
+                    <span x-show="needsYouCount > 0" @click.stop="openNeedsYou()" class="badge cursor-pointer tone-warn" :title="needsYouCount + ' waiting for you: plan approval, sign-off or blocked'" x-text="needsYouCount"></span>
+                </span>
             </button><button type="button" @click="switchView('index')" class="nav-item" :aria-current="activeView === 'index' ? 'page' : null">
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 1.1.9 2 2 2h9M4 7l4-4 4 4M4 7h10a2 2 0 012 2v2m4 4l-4-2v4l4-2z m0 0v0z m-4-2l4 2"/></svg>
                 Index
@@ -968,7 +971,7 @@
 
     <!-- Inbox preview modal: the universal read view (workflow items are
          frozen for inline editing; this works for every status). -->
-    {{template "modal-open" (dict "ID" "preview-modal" "Show" "showInboxPreview" "Close" "closeInboxPreview()" "Size" "flex max-h-[92vh] max-w-4xl flex-col")}}
+    {{template "modal-open" (dict "ID" "preview-modal" "Show" "showInboxPreview" "Close" "closeInboxPreview()" "Size" "flex max-h-[92vh] max-w-4xl flex-col max-sm:h-[100dvh] max-sm:max-h-[100dvh] max-sm:rounded-none max-sm:p-4" "Wrap" "max-sm:p-0")}}
             <div x-show="previewLoading" class="text-sm text-zinc-500">Loading&hellip;</div>
             <template x-if="previewItem">
                 <div class="flex min-h-0 flex-1 flex-col">
@@ -980,6 +983,9 @@
                                     <span class="badge font-medium" :class="sp.tone" x-text="sp.text"></span>
                                 </template>
                                 <span class="badge" :class="toneOf('status', previewItem.status)" x-text="previewItem.status"></span>
+                                <template x-for="c in previewCost()" :key="c.key">
+                                    <span class="badge tone-muted font-mono" title="What the agent runs on this item cost" x-text="c.text"></span>
+                                </template>
                                 <span x-show="previewItem.workspace_id" class="badge max-w-48 truncate tone-info" :title="previewItem.workspace_id" x-text="workspaceLabel(previewItem.workspace_id)"></span>
                                 <span x-show="!previewItem.workspace_id" class="badge tone-warn">unfiled</span>
                                 <span x-show="previewItem.agents" class="badge tone-accent" x-text="agentsLabel(previewItem.agents)" :title="agentsTitle(previewItem.agents)"></span>
@@ -1017,6 +1023,9 @@
                         <template x-for="g in gateChecks()" :key="g.key">
                             <p class="stage-check w-full"><span class="stage-ic" :class="'stage-ic-' + g.ic" x-text="g.ic === 'y' ? '✓' : (g.ic === 'w' ? '!' : '○')"></span><span x-text="g.text"></span></p>
                         </template>
+                        <template x-for="lk in signoffLinks()" :key="lk.key">
+                            <p class="w-full"><a class="btn btn-sm" :href="lk.href" target="_blank" rel="noopener noreferrer" x-text="lk.text + ' ↗'"></a></p>
+                        </template>
                         <!-- Labeled, multi-line: retry answers and change
                              requests carry real sentences, and the input was a
                              single xs-height line with only a placeholder. -->
@@ -1039,7 +1048,7 @@
                                         <button type="button" x-show="c.candidate" @click.stop="reviseCandidate(c.id)" :disabled="!workflowActionReady('request_changes')" class="btn btn-sm btn-ghost text-orange-300" :aria-label="'Revise ' + c.title + ' with the notes'">Revise</button>
                                     </span>
                                 </div>
-                                <ol x-show="c.candidate" class="mt-2 list-decimal space-y-0.5 pl-5 text-xs text-zinc-300">
+                                <ol x-show="c.steps.length > 0" class="mt-2 list-decimal space-y-0.5 pl-5 text-xs text-zinc-300">
                                     <template x-for="(st, si) in c.steps" :key="c.id + '|' + si">
                                         <li x-text="st"></li>
                                     </template>
@@ -1058,10 +1067,20 @@
                             <div class="flex w-full flex-wrap items-end gap-2 border-t border-dashed border-zinc-700 pt-2">
                                 <p class="w-full text-xs"><span class="font-semibold text-zinc-200">Second opinions</span> <span class="text-zinc-500">optional; they never change the status</span></p>
                                 <template x-for="r in secondOpinionResults()" :key="r.key">
-                                    <p class="stage-check w-full"><span class="stage-ic" :class="'stage-ic-' + r.ic" x-text="r.ic === 'y' ? '✓' : (r.ic === 'w' ? '!' : '○')"></span><span x-text="r.text"></span></p>
+                                    <div class="w-full">
+                                        <p class="stage-check"><span class="stage-ic" :class="'stage-ic-' + r.ic" x-text="r.ic === 'y' ? '✓' : (r.ic === 'w' ? '!' : '○')"></span><span x-text="r.text"></span></p>
+                                        <template x-if="r.more.length > 0">
+                                            <details class="stage-more ml-6">
+                                                <summary class="fold-summary"><span class="fold-caret" aria-hidden="true">&#9656;</span> Read it</summary>
+                                                <template x-for="m in r.more" :key="m.key">
+                                                    <div class="stage-more-row"><p class="stage-more-label" x-text="m.label"></p><p class="stage-more-text" x-text="m.text"></p></div>
+                                                </template>
+                                            </details>
+                                        </template>
+                                    </div>
                                 </template>
                                 <span x-show="so.running" class="chip tone-info" x-text="'Second opinion running (' + so.running + ')'"></span>
-                                <div x-show="!so.running" class="min-w-0 flex-1 sm:max-w-56">
+                                <div x-show="!so.running" class="min-w-0 flex-1 basis-full sm:basis-auto sm:max-w-56">
                                     <label class="lbl" for="so-runner">Second opinion from</label>
                                     <input id="so-runner" type="text" list="so-runners" x-model="secondOpinion.runner" class="fld" placeholder="runner, e.g. codex" autocomplete="off" />
                                 </div>
@@ -1111,6 +1130,20 @@
                                 </div>
                             </template>
                         </div>
+                    </details>
+                    <!-- History: who queued, approved, asked for changes and
+                         signed off, from the item's audit trail. -->
+                    <details class="mt-3 rounded-lg border border-zinc-800">
+                        <summary class="fold-summary cursor-pointer px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-500"><span class="fold-caret" aria-hidden="true">&#9656;</span> <span x-text="'History (' + historyRows().length + ')'"></span></summary>
+                        <ul class="border-t border-zinc-800">
+                            <template x-for="h in historyRows()" :key="h.key">
+                                <li class="flex flex-wrap items-baseline gap-x-2 border-b border-zinc-800/60 px-3 py-1.5 text-xs last:border-b-0">
+                                    <span class="text-zinc-200" x-text="h.text"></span>
+                                    <span class="ml-auto font-mono text-[11px] text-zinc-500" x-text="h.when"></span>
+                                    <p x-show="h.notes" class="w-full text-zinc-400" x-text="h.notes"></p>
+                                </li>
+                            </template>
+                        </ul>
                     </details>
                     </div>
                 </div>

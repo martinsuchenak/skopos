@@ -43,11 +43,14 @@ type PlanRevisionInfo = { id: string; revision_no: number; content_hash: string;
 // One thing the approver can approve at the gate: the plan revision, or one
 // candidate of a multi-agent plan round.
 type ApproveTarget = { id: string; title: string; meta: string; steps: string[]; candidate: boolean; hash: string; toast: string };
-type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { severity: string; text: string }[]; created_at: string; updated_at: string };
+type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { severity: string; text: string; file?: string }[]; lease_expires_at?: string; created_at: string; updated_at: string };
 // One row of the preview's stage tracker. state: done | run | you | bad |
 // up (not reached) | skip (not configured, or never reached on a discarded item).
-type StageRow = { key: string; name: string; who: string; state: string; when: string; round: string; lines: string[] };
-type TextRow = { key: string; ic: string; text: string };
+type LinkRow = { key: string; href: string; text: string };
+type MoreRow = { key: string; label: string; text: string };
+type StageRow = { key: string; name: string; who: string; state: string; when: string; round: string; lines: string[]; links: LinkRow[]; more: MoreRow[]; warn: string };
+type TextRow = { key: string; ic: string; text: string; more?: MoreRow[] };
+type AuditEntry = { id: string; action: string; actor: string; via?: string; notes?: string; created_at: string };
 // wsLocked: a workflow item cannot move workspace (its runs, plan and
 // branch live there) — the server refuses it; the modal hides the picker.
 type InboxForm = { id: string; title: string; tags: string; workspace: string; agents: string; wsLocked: boolean };
@@ -95,7 +98,11 @@ const appState = () => ({
   inboxItems: [] as InboxItem[],
   inboxLoading: false,
   inboxLayout: (localStorage.getItem('skopos:inboxLayout') === 'lanes' ? 'lanes' : 'list'),
-  inboxStatus: 'open' as '' | 'open' | 'in_progress' | 'converted' | 'done' | 'discarded' | 'workflow',
+  inboxStatus: 'open' as '' | 'open' | 'in_progress' | 'converted' | 'done' | 'discarded' | 'workflow' | 'needs_you',
+  // Items waiting for an approver across the key's scope (sidebar badge and
+  // the browser tab title); refreshed on inbox events.
+  needsYouCount: 0,
+  baseTitle: '',
   inboxTagFilter: '',
   inboxQuery: '',
   inboxSort: (['newest', 'oldest'].includes(localStorage.getItem('skopos:inboxSort') || '') ? localStorage.getItem('skopos:inboxSort') : 'priority') as 'priority' | 'newest' | 'oldest',
@@ -129,6 +136,10 @@ const appState = () => ({
   // live refresh never undoes the user's toggle.
   previewDescOpen: true,
   previewRunsOpen: false,
+  // Workers in scope (an active run on an offline worker is flagged) and the
+  // item's audit trail (the History section).
+  previewWorkers: [] as WorkerSeen[],
+  previewTimeline: [] as AuditEntry[],
   previewStatusSeen: '',
   workflowNote: '',
   workflowBusy: false,
@@ -309,6 +320,7 @@ const appState = () => ({
     else if (type === 'plans') { if (this.activeView === 'plans') this.fetchPlans(); }
     else if (type === 'inbox') {
       if (this.activeView === 'inbox') this.fetchInbox();
+      this.fetchNeedsYou();
       // Workflow transitions publish inbox events at exactly the moments a
       // run changes state (claim moves the phase, report chains). Refresh
       // the open modal fully — status badge and action buttons stay
@@ -663,6 +675,7 @@ const appState = () => ({
     const seen = new Set([...(this.workspaces ?? []), ...this.sessions.map((s: SessionSummary) => s.workspace).filter(Boolean)]);
     this.workspaces = [...seen];
     await this.fetchWhoami();
+    this.fetchNeedsYou();
     await this.fetchWorkspaces();
     await this.autoRegisterWorkspaces();
     this.sanitizeActiveWorkspace();
@@ -924,6 +937,7 @@ const appState = () => ({
   },
   inboxStatusChips(): { key: string; label: string }[] {
     return [
+      { key: 'needs_you', label: 'Needs you' },
       { key: 'open', label: 'Open' },
       { key: 'in_progress', label: 'In progress' },
       { key: 'workflow', label: 'Workflow' },
@@ -932,6 +946,24 @@ const appState = () => ({
       { key: 'discarded', label: 'Discarded' },
       { key: '', label: 'All' },
     ];
+  },
+  // Items waiting for an approver (plan gate, sign-off, blocked/failed)
+  // across the key's scope, for the sidebar badge and the tab title.
+  async fetchNeedsYou() {
+    try {
+      const res = await this.authFetch('/api/inbox?status=needs_you');
+      if (!res.ok) return;
+      this.needsYouCount = (((await res.json()) as InboxItem[]) ?? []).length;
+    } catch { return; }
+    if (!this.baseTitle) this.baseTitle = document.title.replace(/^\(\d+\) /, '');
+    document.title = (this.needsYouCount ? '(' + this.needsYouCount + ') ' : '') + this.baseTitle;
+  },
+  // The sidebar badge opens the inbox list on the Needs you chip.
+  openNeedsYou() {
+    this.inboxStatus = 'needs_you';
+    if (this.inboxLayout !== 'list') { this.inboxLayout = 'list'; localStorage.setItem('skopos:inboxLayout', 'list'); }
+    if (this.activeView === 'inbox') this.fetchInbox();
+    else this.switchView('inbox');
   },
   inboxOpenCount(): number {
     return this.inboxItems.filter((i: InboxItem) => i.status === 'open').length;
@@ -1010,7 +1042,19 @@ const appState = () => ({
     this.fetchPreviewRuns(item.id);
     this.fetchPreviewRevision();
     this.fetchPreviewPipe();
+    this.fetchPreviewExtras(item.id);
     this.loadSecondOpinion();
+  },
+  // Workers (stuck-run warning) and the audit trail (History): refetched with
+  // the runs on every live refresh.
+  async fetchPreviewExtras(id: string) {
+    const [wres, tres] = await Promise.all([
+      this.authFetch('/api/workers'),
+      this.authFetch('/api/inbox/' + encodeURIComponent(id) + '/timeline'),
+    ]);
+    if (!this.showInboxPreview || !this.previewItem || this.previewItem.id !== id) return;
+    if (wres.ok) this.previewWorkers = ((await wres.json()) as WorkerSeen[]) ?? [];
+    if (tres.ok) this.previewTimeline = ((await tres.json()) as AuditEntry[]) ?? [];
   },
   // Section defaults follow the status: the description is open until the
   // plan is approved, the run history is closed. Applied on open and on a
@@ -1086,7 +1130,7 @@ const appState = () => ({
       await this.fetchPreviewRuns(item.id);
     } finally { this.secondOpinion.busy = false; }
   },
-  closeInboxPreview() { this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.previewCandidates = []; this.previewApprovedRev = null; this.previewPipe = null; this.previewStatusSeen = ''; this.workflowNote = ''; this.workflowBusy = false; },
+  closeInboxPreview() { this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.previewCandidates = []; this.previewApprovedRev = null; this.previewPipe = null; this.previewStatusSeen = ''; this.previewWorkers = []; this.previewTimeline = []; this.workflowNote = ''; this.workflowBusy = false; },
   // The newest revision of the previewed item's plan, while it waits at the
   // gate (revisions list newest first).
   async fetchPreviewRevision() {
@@ -1124,7 +1168,9 @@ const appState = () => ({
     const r = this.previewRevision;
     if (!r) return [];
     const skills = r.skills && r.skills.length ? ' · skills: ' + r.skills.join(', ') : '';
-    return [{ id: r.id, title: 'Plan revision #' + r.revision_no, meta: skills.replace(/^ · /, ''), steps: [], candidate: false, hash: r.content_hash, toast: 'Approved revision #' + r.revision_no }];
+    // The steps are listed for a single plan too: Approve locks exactly these.
+    const steps = (r.steps || []).filter(st => st.phase !== 'review').map(st => st.title);
+    return [{ id: r.id, title: 'Plan revision #' + r.revision_no, meta: this.plural(steps.length, 'step') + skills, steps, candidate: false, hash: r.content_hash, toast: 'Approved revision #' + r.revision_no }];
   },
   approveTarget(revisionId: string) {
     const item = this.previewItem;
@@ -1242,6 +1288,42 @@ const appState = () => ({
       return 'Running ' + what + (r.worker_id ? ' on ' + r.worker_id : '');
     });
   },
+  // The repository's web root from the workspace id (host/owner/repo, as
+  // github.com/x/y or a Gitea host) — '' when it does not look like one.
+  repoWebBase(ws: string): string {
+    return /^[a-z0-9-]+(\.[a-z0-9-]+)+\/[\w.-]+\/[\w.-]+$/i.test(ws || '') ? 'https://' + ws : '';
+  },
+  // "View changes": the base...head comparison (GitHub and Gitea share the
+  // /compare/a...b form), or the commit alone without a base.
+  changesLinks(base: string, head: string): LinkRow[] {
+    const root = this.repoWebBase(this.previewItem ? this.previewItem.workspace_id || '' : '');
+    if (!root || !head) return [];
+    if (base) return [{ key: 'cmp|' + base + '|' + head, href: root + '/compare/' + base + '...' + head, text: 'View changes ' + this.shortSha(base) + '…' + this.shortSha(head) }];
+    return [{ key: 'commit|' + head, href: root + '/commit/' + head, text: 'View commit ' + this.shortSha(head) }];
+  },
+  // The base the implementation branched from: the run's, else the approved plan's.
+  trackBase(impl: RunRow | undefined): string {
+    return (impl && impl.base_sha) || (this.previewApprovedRev && this.previewApprovedRev.base_sha) || '';
+  },
+  // Unfoldable detail for a review-like run: each finding with its severity
+  // and file, then the reviewer's summary.
+  runMore(r: RunRow, who: string): MoreRow[] {
+    const out: MoreRow[] = (r.findings || []).map((f, k) => ({ key: r.id + '|f' + k, label: f.severity + ' · ' + who + (f.file ? ' · ' + f.file : ''), text: f.text }));
+    if (r.result_summary) out.push({ key: r.id + '|sum', label: 'summary · ' + who, text: r.result_summary });
+    return out;
+  },
+  reviewerName(r: RunRow): string { return (r.focus || r.stage) + (r.runner ? ' (' + r.runner + ')' : ''); },
+  // A running step whose worker went offline, or whose lease ran out, is
+  // probably stuck: say so instead of spinning forever.
+  activeWarn(step: number): string {
+    for (const r of this.previewRuns) {
+      if (this.stageOf(r.stage) !== step || (r.status !== 'claimed' && r.status !== 'running')) continue;
+      const w = this.previewWorkers.find((x: WorkerSeen) => x.id === r.worker_id);
+      if (w && w.state === 'offline') return (r.worker_id || 'The worker') + ' is offline (last seen ' + this.timeAgo(w.last_seen) + '). The run resumes when it comes back.';
+      if (r.lease_expires_at && Date.parse(r.lease_expires_at) < Date.now()) return 'No heartbeat from ' + (r.worker_id || 'the worker') + ' since ' + this.timeAgo(r.lease_expires_at) + '; it may have stopped.';
+    }
+    return '';
+  },
   stageModel(): { rows: StageRow[]; current: number } {
     const item = this.previewItem;
     const empty = { rows: [] as StageRow[], current: -1 };
@@ -1280,7 +1362,7 @@ const appState = () => ({
       { name: 'Your sign-off', who: 'you' },
     ];
     // Evidence for a finished step.
-    const doneLines = (i: number): { lines: string[]; when: string } => {
+    const doneLines = (i: number): { lines: string[]; when: string; links?: LinkRow[]; more?: MoreRow[] } => {
       if (i === 1 && planRuns.length) {
         const newest = planRuns[0];
         const round = newest.group_id ? planRuns.filter((r: RunRow) => r.group_id === newest.group_id) : [newest];
@@ -1300,13 +1382,13 @@ const appState = () => ({
         const lines = [(impl.runner || impl.worker_id || 'The agent') + ' pushed ' + this.shortSha(impl.head_sha || '') + (impl.branch ? ' to ' + impl.branch : '')];
         const stat = (impl.diffstat || '').split('\n').map((l: string) => l.trim()).filter(Boolean).pop();
         if (stat) lines.push(stat);
-        return { lines, when: this.timeAgo(impl.updated_at) };
+        return { lines, when: this.timeAgo(impl.updated_at), links: this.changesLinks(this.trackBase(impl), impl.head_sha || '') };
       }
       if (i === 4 && reviews.length) {
         const ok = reviews.filter((r: RunRow) => r.status === 'succeeded').length;
         const lines = reviews.map((r: RunRow) => this.reviewLine(r));
         if (impl && impl.head_sha) lines.push(ok + ' of ' + reviews.length + ' passed, on ' + this.shortSha(impl.head_sha));
-        return { lines, when: this.timeAgo(reviews[0].updated_at) };
+        return { lines, when: this.timeAgo(reviews[0].updated_at), more: reviews.flatMap((r: RunRow) => this.runMore(r, this.reviewerName(r))) };
       }
       if (i === 5 && st === 'done') {
         return { lines: [impl && impl.head_sha ? 'Approved ' + this.shortSha(impl.head_sha) : 'Marked done'], when: this.timeAgo(item.updated_at) };
@@ -1317,12 +1399,16 @@ const appState = () => ({
       let state = i < cur ? 'done' : i === cur ? curState : 'up';
       let lines: string[] = [];
       let when = '';
-      if (state === 'done') ({ lines, when } = doneLines(i));
-      if (state === 'run') { lines = this.activeLines(i); if (!lines.length) lines = [i === 3 && st === 'approved' ? 'Starting' : 'Waiting for a worker']; }
+      let links: LinkRow[] = [];
+      let more: MoreRow[] = [];
+      let warn = '';
+      if (state === 'done') { const d = doneLines(i); lines = d.lines; when = d.when; links = d.links || []; more = d.more || []; }
+      if (state === 'run') { lines = this.activeLines(i); if (!lines.length) lines = [i === 3 && st === 'approved' ? 'Starting' : 'Waiting for a worker']; warn = this.activeWarn(i); }
       if (state === 'you') when = 'waiting ' + this.timeAgo(item.updated_at).replace(' ago', '');
       if (state === 'bad') {
         const failed = main.find((r: RunRow) => this.stageOf(r.stage) === i && r.status === 'failed');
         lines = i === 4 && reviews.length ? reviews.map((r: RunRow) => this.reviewLine(r)) : [(failed && failed.fail_reason) || 'Blocked: open the run history for the reason'];
+        if (i === 4) more = reviews.flatMap((r: RunRow) => this.runMore(r, this.reviewerName(r)));
         when = failed ? this.timeAgo(failed.updated_at) : '';
       }
       // Agent review never ran because none is configured: say so instead
@@ -1336,9 +1422,39 @@ const appState = () => ({
       // A discarded item: the steps it never finished are greyed out.
       if (st === 'discarded' && state === 'done' && !lines.length && i > 0) state = 'skip';
       const round = (i === 3 || i === 4 || i === 5) && rounds > 1 && state !== 'up' ? 'round ' + rounds : '';
-      return { key: i + '|' + state + '|' + when + '|' + lines.join('/'), name: d.name, who: d.who, state, when, round, lines };
+      return { key: i + '|' + state + '|' + when + '|' + lines.join('/') + '|' + warn + '|' + more.length, name: d.name, who: d.who, state, when, round, lines, links, more, warn };
     });
     return { rows, current: cur };
+  },
+  // History: the item's audit trail, newest first — who queued, approved,
+  // asked for changes, signed off, and when, plus pipeline failures. Left
+  // out as noise: run claims, plan-lock bookkeeping (Plan approved covers
+  // it) and the worker's own appends (the tracker shows their results).
+  historyRows(): { key: string; text: string; notes: string; when: string }[] {
+    const names: Record<string, string> = {
+      'inbox.queue': 'Queued', 'inbox.approve': 'Plan approved', 'inbox.request_changes': 'Changes requested',
+      'inbox.mark_done': 'Signed off', 'inbox.retry': 'Retried', 'inbox.reject': 'Rejected',
+      'inbox.second_opinion': 'Second opinion requested', 'inbox.link_plan': 'Plan linked', 'inbox.edit': 'Edited',
+      'inbox.transition': 'Pipeline', 'inbox.migrate': 'Migrated',
+    };
+    return this.previewTimeline
+      .filter((e: AuditEntry) => {
+        if (e.action.startsWith('plan.')) return false;
+        if (e.action === 'inbox.edit' && e.via === 'worker') return false;
+        if (e.action === 'inbox.transition') return !!e.notes && !e.notes.startsWith('run claimed');
+        return true;
+      })
+      .map((e: AuditEntry) => ({
+        key: e.id,
+        text: (names[e.action] || e.action) + ' by ' + e.actor + (e.via ? ' via ' + e.via : ''),
+        notes: e.notes || '',
+        when: this.timeAgo(e.created_at),
+      }));
+  },
+  // What the agent runs on this item cost, when the runners report it.
+  previewCost(): { key: string; text: string }[] {
+    const total = this.previewRuns.reduce((n: number, r: RunRow) => n + (r.cost_usd || 0), 0);
+    return total > 0 ? [{ key: 'cost|' + total.toFixed(2), text: '$' + total.toFixed(2) }] : [];
   },
   // Screen-reader text for a row's state (the mark is aria-hidden).
   stageStateLabel(s: StageRow): string {
@@ -1363,6 +1479,12 @@ const appState = () => ({
       else text = row.name + (row.round ? ' · ' + row.round : '');
     }
     return [{ key: text + '|' + tone, text, tone }];
+  },
+  // "View changes" in the sign-off card: the comparison the approval covers.
+  signoffLinks(): LinkRow[] {
+    if (!this.workflowShowMarkDone()) return [];
+    const impl = this.trackImpl();
+    return this.changesLinks(this.trackBase(impl), this.reviewHead());
   },
   // What the approver is signing, as checks inside the action card.
   gateChecks(): TextRow[] {
@@ -1407,7 +1529,7 @@ const appState = () => ({
         else verdict = 'pass' + (nits ? ', ' + this.plural(nits, 'nit') : '');
       }
       const stale = !!head && !!r.head_sha && r.head_sha !== head ? ' (older commit)' : '';
-      return { key: r.id + '|' + r.status + '|' + r.updated_at, ic, text: on + ': ' + verdict + stale };
+      return { key: r.id + '|' + r.status + '|' + r.updated_at, ic, text: on + ': ' + verdict + stale, more: this.runMore(r, r.runner || 'agent') };
     });
   },
   // Why the Second opinion button is disabled, '' when it isn't: the server
@@ -1459,6 +1581,7 @@ const appState = () => ({
     this.syncPreviewSections();
     this.fetchPreviewRuns(id);
     this.fetchPreviewRevision();
+    this.fetchPreviewExtras(id);
   },
   inboxCanRank(item: InboxItem): boolean { return this.inboxItemEditable(item); },
   // "updated 2m ago" beside the created age once the item has been touched

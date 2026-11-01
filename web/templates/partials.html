@@ -22,7 +22,7 @@
   focus back to a button on mousedown, which cancelled every text
   selection (run errors could not be copied).
 */}}
-{{define "modal-open"}}<div x-show="{{.Show}}" x-cloak class="modal" role="{{if .Alert}}alertdialog{{else}}dialog{{end}}" aria-modal="true" aria-labelledby="{{.ID}}-title"{{if .Alert}} aria-describedby="{{.ID}}-desc"{{end}} @keydown.escape.window="{{.Close}}" x-trap="{{.Show}}">
+{{define "modal-open"}}<div x-show="{{.Show}}" x-cloak class="modal{{if .Wrap}} {{.Wrap}}{{end}}" role="{{if .Alert}}alertdialog{{else}}dialog{{end}}" aria-modal="true" aria-labelledby="{{.ID}}-title"{{if .Alert}} aria-describedby="{{.ID}}-desc"{{end}} @keydown.escape.window="{{.Close}}" x-trap="{{.Show}}">
         <div class="modal-backdrop"{{if not .NoBackdropDismiss}} @click="{{or .Dismiss .Close}}"{{end}} aria-hidden="true"></div>
         <div class="card modal-panel focus:outline-none {{or .Size "max-w-md"}}" tabindex="-1">{{if not .NoX}}
             <button type="button" @click="{{or .Dismiss .Close}}" class="modal-x" aria-label="Close dialog">
@@ -99,6 +99,18 @@
                                 </div>
                                 <template x-for="(l, li) in s.lines" :key="s.key + '|' + li">
                                     <p class="stage-line" x-text="l"></p>
+                                </template>
+                                <p x-show="s.warn" class="stage-warn" x-text="s.warn"></p>
+                                <template x-for="lk in s.links" :key="lk.key">
+                                    <a class="stage-link" :href="lk.href" target="_blank" rel="noopener noreferrer" x-text="lk.text"></a>
+                                </template>
+                                <template x-if="s.more.length > 0">
+                                    <details class="stage-more">
+                                        <summary class="fold-summary"><span class="fold-caret" aria-hidden="true">&#9656;</span> <span x-text="'Findings and summaries (' + s.more.length + ')'"></span></summary>
+                                        <template x-for="m in s.more" :key="m.key">
+                                            <div class="stage-more-row"><p class="stage-more-label" x-text="m.label"></p><p class="stage-more-text" x-text="m.text"></p></div>
+                                        </template>
+                                    </details>
                                 </template>
                                 <span class="sr-only" x-text="stageStateLabel(s)"></span>
                             </div>

@@ -310,6 +310,33 @@ func TestListWorkflowStatusFilters(t *testing.T) {
 	}
 }
 
+// needs_you lists exactly the phases waiting for an approver: the plan
+// gate, sign-off and blocked/failed — not running or queued items.
+func TestListNeedsYouFilter(t *testing.T) {
+	svc, _, _ := fullStack(t)
+	root := context.Background()
+	queued := mustCreate(t, svc, root, "still queued")
+	gated := mustCreate(t, svc, root, "plan waiting")
+	for _, it := range []*Item{queued, gated} {
+		if _, err := svc.Queue(approverCtx(), it.ID, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := svc.SystemTransition(root, gated.ID, StatusPlanning, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SystemTransition(root, gated.ID, StatusAwaitingApproval, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	items, err := svc.ListItems(root, "ws-a", "needs_you", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].ID != gated.ID {
+		t.Fatalf("needs_you = %+v, want only the gated item", items)
+	}
+}
+
 func errorsIsInvalidInput(err error) bool {
 	if err == nil {
 		return false

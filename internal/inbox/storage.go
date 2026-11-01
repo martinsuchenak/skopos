@@ -192,6 +192,11 @@ func (s *Storage) ListItems(ctx context.Context, workspaceID, status, tag, query
 			conds = append(conds, "i.status IN (?, ?, ?, ?, ?, ?, ?, ?)")
 			args = append(args, string(StatusQueued), string(StatusPlanning), string(StatusAwaitingApproval),
 				string(StatusApproved), string(StatusImplementing), string(StatusInReview), string(StatusFailed), string(StatusBlocked))
+		} else if status == string(StatusNeedsYou) {
+			// The dashboard's "Needs you" chip and count: every phase that
+			// waits for an approver.
+			conds = append(conds, "i.status IN (?, ?, ?, ?)")
+			args = append(args, string(StatusAwaitingApproval), string(StatusInReview), string(StatusBlocked), string(StatusFailed))
 		} else {
 			conds = append(conds, "i.status = ?")
 			args = append(args, status)
