@@ -57,10 +57,22 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at DESC);
+-- Sessions listed (and deleted) per workspace.
+CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON sessions(workspace, updated_at DESC);
+-- The health ticker's orphan sweep (every minute, under the write lock) only
+-- looks at live sessions; the WHERE must match its query's term exactly.
+CREATE INDEX IF NOT EXISTS idx_sessions_live ON sessions(updated_at)
+    WHERE status NOT IN ('succeeded', 'failed', 'cancelled', 'orphaned');
 CREATE INDEX IF NOT EXISTS idx_agent_states_session_id ON agent_states(session_id);
 CREATE INDEX IF NOT EXISTS idx_agent_states_health ON agent_states(status, updated_at, stuck_at);
+-- The active-agents list (same term as its query).
+CREATE INDEX IF NOT EXISTS idx_agent_states_active ON agent_states(updated_at DESC)
+    WHERE status NOT IN ('succeeded', 'failed', 'cancelled', 'stuck', 'orphaned');
 CREATE INDEX IF NOT EXISTS idx_events_session_created_at ON events(session_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_agent_created_at ON events(agent_id, created_at DESC);
+-- Retention cleanup deletes by created_at alone: without this index every run
+-- scanned the whole table while holding the write lock.
+CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
 
 CREATE TABLE IF NOT EXISTS blackboard_entries (
     id              TEXT PRIMARY KEY,

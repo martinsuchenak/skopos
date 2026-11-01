@@ -23,7 +23,7 @@ Optional — if absent, skopos runs on defaults. The file is gitignored (may con
 | `--api-key` | `SKOPOS_API_KEY` | `auth.api_key` | (empty = auth disabled, loopback only) | API key; when set, required by every endpoint (REST, MCP, SSE) |
 | `--insecure-no-api-key` | `SKOPOS_INSECURE_NO_API_KEY` | — | `false` | Allow running without an API key on a non-loopback bind (authentication stays disabled — know what you are exposing) |
 | `--health-stuck-threshold` | `HEALTH_STUCK_THRESHOLD` | `health.stuck_threshold_minutes` | `15` | Minutes before an active agent is marked stuck (0 disables) |
-| `--cleanup-retention-days` | `CLEANUP_RETENTION_DAYS` | `cleanup.retention_days` | `30` | Days to retain data (0 disables cleanup) |
+| `--cleanup-retention-days` | `CLEANUP_RETENTION_DAYS` | `cleanup.retention_days` | `30` | Days to retain data (0 disables cleanup). The cleanup runs every 10 minutes; a run longer than a second is logged as a `slow cleanup` warning |
 | `--index-dir` | `SKOPOS_INDEX_DIR` | `codeindex.dir` | `.skopos/indexes` | Directory for per-workspace code index databases |
 | `--refresh-interval` | `SKOPOS_REFRESH_INTERVAL` | `codeindex.refresh_interval` | `0` (off) | Poll registered `git_url` workspaces for server-side refresh (e.g. `30m`, `1h`); CI can also POST the refresh endpoint on merge |
 | `--embeddings-url` | `SKOPOS_EMBEDDINGS_URL` | `codeindex.embeddings.url` | (empty = disabled) | OpenAI-compatible `/v1/embeddings` endpoint for semantic code search (local Ollama works) |
@@ -342,7 +342,7 @@ At any level, a request that takes over a second is logged as a `slow http reque
 - `db_in_use` / `db_open` / `db_max_open`: connections busy when the request finished, open, and the cap (the number of CPUs, at least 4).
 - `db_pool_waits` / `db_pool_wait`: how often, and for how long, requests waited for a free connection while this one ran (pool-wide, so concurrent requests count).
 
-A slow request with pool waits means the pool was exhausted. A slow request without them points at SQLite's write lock (each write waits up to 5s for it) or at work outside the database. Streams (SSE, MCP streaming) are never logged as slow.
+A slow request with pool waits means the pool was exhausted. A slow request without them points at SQLite's write lock (each write waits up to 5s for it) or at work outside the database. A `slow cleanup` warning at the same time names the retention cleanup as what held the lock. Streams (SSE, MCP streaming) are never logged as slow.
 
 ## Authentication
 

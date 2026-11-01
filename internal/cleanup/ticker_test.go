@@ -3,10 +3,13 @@ package cleanup
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/db"
+	"github.com/martinsuchenak/skopos/internal/dbtime"
 	"github.com/martinsuchenak/skopos/internal/events"
 	_ "modernc.org/sqlite"
 )
@@ -170,5 +173,56 @@ func TestCleanerOrphanPlans(t *testing.T) {
 	var one int
 	if err := db.QueryRowContext(ctx, `SELECT 1 FROM plans WHERE id = 'orphan'`).Scan(&one); err == nil {
 		t.Fatal("orphan plan must be deleted")
+	}
+}
+
+// Old events go in batches (the write lock is released between them) and
+// through the created_at index; newer events stay.
+func TestCleanerDeletesEventsInBatches(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	old, fresh := dbtime.Format(now.Add(-48*time.Hour)), dbtime.Format(now)
+	if _, err := db.ExecContext(ctx, `INSERT INTO sessions (id, title, workspace, status, started_at, updated_at) VALUES ('s1', 'T', '/repo', 'running', ?, ?)`, fresh, fresh); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO agents (id, type, workspace, first_seen_at, last_seen_at) VALUES ('a1', 'test', '/repo', ?, ?)`, fresh, fresh); err != nil {
+		t.Fatal(err)
+	}
+	const oldN, freshN = 2*eventBatch + 500, 3
+	for i := 0; i < oldN+freshN; i++ {
+		at := old
+		if i >= oldN {
+			at = fresh
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO events (id, session_id, agent_id, agent_type, workspace, status, message, snippet, metadata, created_at) VALUES (?, 's1', 'a1', 'test', '/repo', 'running', '', '', '{}', ?)`,
+			fmt.Sprintf("e%05d", i), at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var plan, detail string
+	rows, err := db.QueryContext(ctx, `EXPLAIN QUERY PLAN SELECT rowid FROM events WHERE created_at < ? LIMIT ?`, fresh, eventBatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var id, parent, unused int
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan += detail + "; "
+	}
+	_ = rows.Close()
+	if !strings.Contains(plan, "idx_events_created_at") {
+		t.Errorf("the batch select must use the created_at index, plan: %s", plan)
+	}
+
+	n, err := NewCleaner(db, 24*time.Hour, nil, nil).deleteEventsBefore(ctx, dbtime.Format(now.Add(-24*time.Hour)))
+	if err != nil || n != oldN {
+		t.Fatalf("deleted %d (err %v), want %d", n, err, oldN)
+	}
+	var left int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events`).Scan(&left); err != nil || left != freshN {
+		t.Fatalf("left %d events (err %v), want %d", left, err, freshN)
 	}
 }

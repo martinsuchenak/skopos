@@ -53,15 +53,42 @@ func (c *Cleaner) RunOnce(ctx context.Context) error {
 	return c.clean(ctx)
 }
 
+// eventBatch bounds one delete statement: the write lock is released between
+// batches, so request writes interleave with a large cleanup instead of
+// waiting for all of it.
+const eventBatch = 1000
+
+// slowCleanup: a cleanup run longer than this is logged at warn.
+const slowCleanup = time.Second
+
+// deleteEventsBefore deletes events older than cutoff in batches.
+func (c *Cleaner) deleteEventsBefore(ctx context.Context, cutoff string) (int64, error) {
+	var total int64
+	for {
+		res, err := c.db.ExecContext(ctx, `
+			DELETE FROM events WHERE rowid IN (
+				SELECT rowid FROM events WHERE created_at < ? LIMIT ?)`, cutoff, eventBatch)
+		if err != nil {
+			return total, err
+		}
+		n, _ := res.RowsAffected()
+		total += n
+		if n < eventBatch || ctx.Err() != nil {
+			return total, ctx.Err()
+		}
+	}
+}
+
 func (c *Cleaner) clean(ctx context.Context) error {
 	cutoff := time.Now().UTC().Add(-c.retention)
 	cutoffStr := dbtime.Format(cutoff)
 
-	eventsResult, err := c.db.ExecContext(ctx, `DELETE FROM events WHERE created_at < ?`, cutoffStr)
+	start := time.Now()
+	eventsDeleted, err := c.deleteEventsBefore(ctx, cutoffStr)
 	if err != nil {
 		return fmt.Errorf("deleting old events: %w", err)
 	}
-	eventsDeleted, _ := eventsResult.RowsAffected()
+	eventsTook := time.Since(start)
 
 	sessionsResult, err := c.db.ExecContext(ctx, `DELETE FROM sessions WHERE status = 'orphaned' AND updated_at < ?`, cutoffStr)
 	if err != nil {
@@ -115,6 +142,12 @@ func (c *Cleaner) clean(ctx context.Context) error {
 	plansDeleted += orphanDeleted
 
 	total := eventsDeleted + sessionsDeleted + bbDeleted + plansDeleted + inboxDeleted + agentsDeleted
+	if took := time.Since(start); took >= slowCleanup && c.log != nil {
+		// Each delete holds SQLite's write lock while it runs, so a slow
+		// cleanup stalls every writer (and, through the pool, readers too).
+		c.log.Warn("slow cleanup", "duration", took.Round(time.Millisecond).String(),
+			"events_duration", eventsTook.Round(time.Millisecond).String(), "events", eventsDeleted)
+	}
 	if total > 0 && c.log != nil {
 		c.log.Info("cleanup completed",
 			"events", eventsDeleted,

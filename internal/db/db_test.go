@@ -126,3 +126,49 @@ func TestSQLiteDSNUsesImmediateTxLock(t *testing.T) {
 		t.Fatalf("production DSN must set _txlock=immediate, got: %s", dsn)
 	}
 }
+
+// The queries on tables that grow with every agent session, and the ones that
+// run under the write lock on a timer, must use an index: a full scan there
+// once stalled every request (the retention cleanup scanned all events while
+// holding the lock). The SQL mirrors the callers named in each case.
+func TestHotQueriesUseIndexes(t *testing.T) {
+	db, err := sql.Open("sqlite", sqliteDSN(":memory:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := RunMigrations(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ caller, query, index string }{
+		{"cleanup: old events", `SELECT rowid FROM events WHERE created_at < ? LIMIT ?`, "idx_events_created_at"},
+		{"health: orphan sweep", `UPDATE sessions SET status = 'orphaned', updated_at = ?
+			WHERE status NOT IN ('succeeded', 'failed', 'cancelled', 'orphaned') AND updated_at < ?`, "idx_sessions_live"},
+		{"status: sessions of a workspace", `SELECT s.id, COUNT(a.agent_id) FROM sessions s
+			LEFT JOIN agent_states a ON a.session_id = s.id WHERE s.workspace = ?
+			GROUP BY s.id ORDER BY s.updated_at DESC`, "idx_sessions_workspace"},
+		{"status: delete a workspace's sessions", `DELETE FROM sessions WHERE workspace = ?`, "idx_sessions_workspace"},
+		{"status: active agents", `SELECT agent_id FROM agent_states
+			WHERE status NOT IN ('succeeded', 'failed', 'cancelled', 'stuck', 'orphaned') ORDER BY updated_at DESC`, "idx_agent_states_active"},
+		{"runs: queue scan", `SELECT id FROM runs WHERE status = ? ORDER BY created_at ASC`, "idx_runs_queue"},
+		{"runs: an item's runs", `SELECT id FROM runs WHERE item_id = ? ORDER BY id DESC`, "idx_runs_item"},
+	} {
+		rows, err := db.Query("EXPLAIN QUERY PLAN "+c.query, make([]any, strings.Count(c.query, "?"))...)
+		if err != nil {
+			t.Fatalf("%s: %v", c.caller, err)
+		}
+		var plan []string
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+				t.Fatal(err)
+			}
+			plan = append(plan, detail)
+		}
+		_ = rows.Close()
+		if p := strings.Join(plan, " | "); !strings.Contains(p, c.index) {
+			t.Errorf("%s must use %s; plan: %s", c.caller, c.index, p)
+		}
+	}
+}
