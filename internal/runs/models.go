@@ -119,7 +119,10 @@ type Run struct {
 	Findings []Finding `json:"findings,omitempty"`
 	// Pushed: whether an implement run pushed its branch to the remote; nil
 	// when the worker did not say (older workers, other stages).
-	Pushed    *bool     `json:"pushed,omitempty"`
+	Pushed *bool `json:"pushed,omitempty"`
+	// PRURL: the pull request the worker opened (or reused) for the
+	// implement branch, when the repo asks for one.
+	PRURL     string    `json:"pr_url,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -223,6 +226,8 @@ type ReportInput struct {
 	// Pushed: implement only — false when the repo has no push configured,
 	// so the head exists on the worker alone.
 	Pushed *bool `json:"pushed,omitempty"`
+	// PRURL: implement only — the branch's pull request (http(s) URL).
+	PRURL string `json:"pr_url,omitempty"`
 	// Verdict: a second opinion's pass/fail. It reports succeeded either
 	// way (the review itself ran); the verdict is advisory.
 	Verdict string `json:"verdict,omitempty"`

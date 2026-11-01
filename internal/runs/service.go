@@ -399,6 +399,11 @@ func (s *Service) Report(ctx context.Context, id string, in ReportInput, leaseTo
 	if in.Executor = strings.TrimSpace(in.Executor); len(in.Executor) > 64 {
 		in.Executor = in.Executor[:64]
 	}
+	// The dashboard renders pr_url as a link: http(s) only, bounded.
+	if in.PRURL = strings.TrimSpace(in.PRURL); len(in.PRURL) > 512 ||
+		(!strings.HasPrefix(in.PRURL, "https://") && !strings.HasPrefix(in.PRURL, "http://")) {
+		in.PRURL = ""
+	}
 	run, err := s.storage.Report(ctx, id, in.WorkerID, callerKeyID(ctx), hashLeaseToken(leaseToken), in, s.now().UTC())
 	if err != nil {
 		return nil, err

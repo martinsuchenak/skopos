@@ -1034,9 +1034,11 @@
                         <template x-for="g in gateChecks()" :key="g.key">
                             <p class="stage-check w-full"><span class="stage-ic" :class="'stage-ic-' + g.ic" x-text="g.ic === 'y' ? '✓' : (g.ic === 'w' ? '!' : '○')"></span><span x-text="g.text"></span></p>
                         </template>
-                        <template x-for="lk in signoffLinks()" :key="lk.key">
-                            <p class="w-full"><a class="btn btn-sm" :href="lk.href" target="_blank" rel="noopener noreferrer" x-text="lk.text + ' ↗'"></a></p>
-                        </template>
+                        <div class="flex w-full flex-wrap gap-2" x-show="signoffLinks().length > 0">
+                            <template x-for="lk in signoffLinks()" :key="lk.key">
+                                <a class="btn btn-sm" :href="lk.href" target="_blank" rel="noopener noreferrer" x-text="lk.text + ' ↗'"></a>
+                            </template>
+                        </div>
                         <!-- Labeled, multi-line: retry answers and change
                              requests carry real sentences, and the input was a
                              single xs-height line with only a placeholder. -->

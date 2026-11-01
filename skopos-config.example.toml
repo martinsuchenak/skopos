@@ -80,6 +80,7 @@ poll_every = "30s"
 # kind = "gitea"                   # gitea | github | none (required: no kind is a startup error)
 # remote_url = "https://git.example.com/you/repo.git"
 # token_env = "GITEA_PUSH_TOKEN"   # set the value in skopos-worker.env, never here
+# pull_request = "draft"           # draft | ready | none: open a PR after the push (token needs PR write)
 
 # The credential pool: picked at run start; a session stays on the account
 # that created it. env values are injected into the agent run only.

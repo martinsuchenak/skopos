@@ -43,7 +43,7 @@ type PlanRevisionInfo = { id: string; revision_no: number; content_hash: string;
 // One thing the approver can approve at the gate: the plan revision, or one
 // candidate of a multi-agent plan round.
 type ApproveTarget = { id: string; title: string; meta: string; steps: string[]; candidate: boolean; hash: string; toast: string };
-type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { severity: string; text: string; file?: string }[]; lease_expires_at?: string; pushed?: boolean; created_at: string; updated_at: string };
+type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { severity: string; text: string; file?: string }[]; lease_expires_at?: string; pushed?: boolean; pr_url?: string; created_at: string; updated_at: string };
 // One row of the preview's stage tracker. state: done | run | you | bad |
 // up (not reached) | skip (not configured, or never reached on a discarded item).
 type LinkRow = { key: string; href: string; text: string };
@@ -1267,7 +1267,7 @@ const appState = () => ({
     if (!this.workflowShowMarkDone()) return [];
     const head = this.reviewHead();
     return [{ key: 'head|' + head, text: head
-      ? 'Mark done records your sign-off on commit ' + this.shortSha(head) + '. If anything is pushed after it, the item needs a new sign-off.'
+      ? 'Mark done records your sign-off on commit ' + this.shortSha(head) + '. It doesn\'t merge: merge the ' + (this.pullRequestURL(head) ? 'pull request' : 'branch') + ' yourself. If anything is pushed after it, the item needs a new sign-off.'
       : 'No pushed commit is recorded for this item yet, so there is nothing to approve.' }];
   },
   markDoneLabel(): string {
@@ -1335,11 +1335,29 @@ const appState = () => ({
   },
   // "View changes": the base...head comparison (GitHub and Gitea share the
   // /compare/a...b form), or the commit alone without a base.
+  // The branch's pull request comes first when the worker opened one.
   changesLinks(base: string, head: string): LinkRow[] {
+    if (!head || this.unpushed(head)) return [];
+    const out: LinkRow[] = [];
+    const pr = this.pullRequestURL(head);
+    if (pr) {
+      const n = /\/pulls?\/(\d+)/.exec(pr);
+      out.push({ key: 'pr|' + pr, href: pr, text: n ? 'Pull request #' + n[1] : 'Pull request' });
+    }
     const root = this.repoWebBase(this.previewItem ? this.previewItem.workspace_id || '' : '');
-    if (!root || !head || this.unpushed(head)) return [];
-    if (base) return [{ key: 'cmp|' + base + '|' + head, href: root + '/compare/' + base + '...' + head, text: 'View changes ' + this.shortSha(base) + '…' + this.shortSha(head) }];
-    return [{ key: 'commit|' + head, href: root + '/commit/' + head, text: 'View commit ' + this.shortSha(head) }];
+    if (!root) return out;
+    if (base) out.push({ key: 'cmp|' + base + '|' + head, href: root + '/compare/' + base + '...' + head, text: 'View changes ' + this.shortSha(base) + '…' + this.shortSha(head) });
+    else out.push({ key: 'commit|' + head, href: root + '/commit/' + head, text: 'View commit ' + this.shortSha(head) });
+    return out;
+  },
+  // The pull request for the branch that holds head: every round pushes
+  // to the same branch and reuses the PR, so the newest one on it counts.
+  pullRequestURL(head: string): string {
+    const impl = this.previewRuns.find((r: RunRow) => r.stage === 'implement' && r.head_sha === head);
+    if (!impl) return '';
+    if (impl.pr_url) return impl.pr_url;
+    const same = this.previewRuns.find((r: RunRow) => r.stage === 'implement' && !!r.pr_url && !!impl.branch && r.branch === impl.branch);
+    return same ? same.pr_url || '' : '';
   },
   // True when the commit exists only on the worker, so the forge has
   // nothing to show: the implement run said it did not push (no push set up
@@ -1463,7 +1481,10 @@ const appState = () => ({
         return { lines, when: this.timeAgo(reviews[0].updated_at), more: reviews.flatMap((r: RunRow) => this.runMore(r, this.reviewerName(r))) };
       }
       if (i === 5 && st === 'done') {
-        return { lines: [impl && impl.head_sha ? 'Approved ' + this.shortSha(impl.head_sha) : 'Marked done'], when: this.timeAgo(item.updated_at) };
+        const head = impl && impl.head_sha ? impl.head_sha : '';
+        const lines = [head ? 'Approved ' + this.shortSha(head) : 'Marked done'];
+        if (head && !this.unpushed(head)) lines.push(this.pullRequestURL(head) ? 'Merge the pull request to land it.' : 'Merge the branch to land it.');
+        return { lines, when: this.timeAgo(item.updated_at), links: head ? this.changesLinks(this.trackBase(impl), head) : [] };
       }
       return { lines: [], when: '' };
     };

@@ -259,6 +259,11 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			return err
 		}
 	}
+	// What this item leaves on the worker, for the cleanup sweep. A later
+	// round keeps the pull request the first one opened.
+	rec, _ := w.loadBranch(item.ID)
+	rec.ItemID, rec.WorkspaceID, rec.Branch, rec.Worktree = item.ID, run.WorkspaceID, branch, worktree
+	w.saveBranch(rec)
 
 	instructions, skillBodies := w.runKnowledge(ctx, repo, run, item.PlanID, baseRef)
 	prompt, err := renderPrompt("implement.md", map[string]any{
@@ -300,6 +305,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	head := headSHA(ctx, worktree)
 
 	// The push: validated refspec, env-only token, never force.
+	summary := ir.Summary
 	if repo.Push.Kind != "none" {
 		token := os.Getenv(repo.Push.TokenEnv)
 		if token == "" {
@@ -308,13 +314,27 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		if err := pushBranch(ctx, worktree, repo.Push.RemoteURL, token, repo.Push.Kind, branch, repo.BranchPrefix, repo.Protected); err != nil {
 			return fmt.Errorf("push: %w", err)
 		}
+		rec.Pushed = true
+		// The pull request is a convenience on top of the push: failing to
+		// open one is noted in the summary and never fails the run.
+		if repo.Push.PullRequest != "none" {
+			pr, created, err := w.ensurePullRequest(ctx, repo, token, branch, item, steps, ir.Summary)
+			if err != nil {
+				log.Warn("pull request not opened", "err", err)
+				summary += "\n\n(The pull request could not be opened: " + firstLine(err.Error()) + ")"
+			} else {
+				rec.PRNumber, rec.PRURL = pr.Number, pr.URL
+				log.Info("pull request ready", "url", pr.URL, "created", created)
+			}
+		}
+		w.saveBranch(rec)
 	}
 
 	log.Info("implementation finished", "head", head, "commits", commitCount(ctx, worktree, repo.DefaultBranch), "cost_usd", res.CostUSD)
 	return w.report(ctx, run, true, map[string]any{
-		"summary": ir.Summary, "head_sha": head, "branch": branch,
+		"summary": summary, "head_sha": head, "branch": branch,
 		"diffstat": diffStat(ctx, worktree, repo.DefaultBranch), "checks": checks,
-		"pushed": repo.Push.Kind != "none",
+		"pushed": repo.Push.Kind != "none", "pr_url": rec.PRURL,
 	})
 }
 

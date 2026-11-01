@@ -296,6 +296,44 @@ The daemon refuses to start, and `worker check` reports it, when a runner's
 CLI can't do its lockdown (for example, an older Claude Code without
 `--restricted`).
 
+## Pushing and pull requests
+
+Each repo's `push` block decides what happens to a finished implementation:
+
+```toml
+[worker.repos."github.com/you/repo".push]
+kind         = "github"                          # github | gitea | none (required)
+remote_url   = "https://github.com/you/repo.git"
+token_env    = "REPO_PUSH_TOKEN"                 # the value lives in skopos-worker.env
+pull_request = "draft"                           # draft | ready | none (default none)
+```
+
+- **No push block:** the branch stays on the worker. The dashboard says so
+  and shows no link, and reviews and second opinions can't fetch it.
+- **Push:** the worker pushes the branch after the checks run.
+- **`pull_request`:** after the push, the worker opens a pull request into
+  the default branch, or reuses the open one for that branch, since
+  change-request rounds push to the same branch. Its link appears in the
+  item preview. On GitHub, `draft` opens a draft; Gitea has no draft flag, so
+  the title starts with `WIP:`. If the pull request can't be opened, the run
+  still succeeds and its summary says why. The token then also needs
+  pull-request write access: for a fine-grained GitHub token, **Contents** and
+  **Pull requests**, both read and write.
+- **The worker never merges.** Mark done records your sign-off; merging the
+  pull request (or the branch) is yours.
+
+**Cleanup.** When idle, every 5 minutes, the worker looks up the items it
+implemented:
+
+- **Rejected or deleted:** it closes the item's pull request without merging.
+- **Done, rejected or deleted:** it removes the item's worktree, and the local
+  branch too if it was pushed. An unpushed branch is the only copy of the
+  work, so it stays.
+
+Records for this live in `<state_dir>/branches/`. Worktrees left from before
+this release have no record, so remove them by hand (`git worktree list` in
+the clone).
+
 ## Containing agent runs
 
 skopos provides no isolation; it delegates. How a stage is contained is your

@@ -374,6 +374,10 @@ func TestPushValidation(t *testing.T) {
 		r.Push.Kind, r.Push.RemoteURL, r.Push.TokenEnv = kind, url, tokenEnv
 		return Config{Repos: map[string]*Repo{"ws": r}}
 	}
+	withPR := func(c Config, mode string) Config {
+		c.Repos["ws"].Push.PullRequest = mode
+		return c
+	}
 	cases := []struct {
 		name string
 		cfg  Config
@@ -385,6 +389,10 @@ func TestPushValidation(t *testing.T) {
 		{"remote missing", repo("github", "", "GH_TOKEN"), "push.remote_url is required"},
 		{"explicit none", repo("none", "", ""), ""},
 		{"github", repo("github", "https://github.com/o/r.git", "GH_TOKEN"), ""},
+		{"pull request without push", withPR(repo("none", "", ""), "draft"), "needs a push"},
+		{"unknown pull request mode", withPR(repo("github", "https://github.com/o/r.git", "GH_TOKEN"), "always"), "not one of draft"},
+		{"pull request on an SSH remote", withPR(repo("github", "git@github.com:o/r.git", "GH_TOKEN"), "draft"), "not an http(s) URL"},
+		{"draft pull request", withPR(repo("github", "https://github.com/o/r.git", "GH_TOKEN"), "draft"), ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -6,6 +6,22 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Pull requests for implementations.** Set `pull_request = "draft"` (or
+  `"ready"`) in a repo's push config, and the worker opens a pull request into
+  the default branch after it pushes. Change-request rounds reuse it. The
+  item preview links it next to View changes, and once the item is done it
+  reminds you to merge it. Skopos still never merges.
+- **Cleanup after finished items.** When idle, the worker closes the pull
+  request of a rejected item. It removes the worktree of every finished item,
+  and the local branch too if it was pushed.
+
+### Changed
+
+- **Mark done says it doesn't merge.** The sign-off card now says to merge the
+  pull request or branch yourself.
+
 ### Fixed
 
 - **View changes no longer links to a 404 for unpushed commits.** A worker

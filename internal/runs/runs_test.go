@@ -565,6 +565,31 @@ func TestReportRecordsPushed(t *testing.T) {
 	}
 }
 
+// The implement report carries the branch's pull request; only http(s)
+// URLs are kept, since the dashboard links them.
+func TestReportRecordsPRURL(t *testing.T) {
+	s := testService(t)
+	ctx := rootCtx()
+	for i, tc := range []struct{ in, want string }{
+		{" https://github.com/o/r/pull/7 ", "https://github.com/o/r/pull/7"},
+		{"javascript:alert(1)", ""},
+		{"", ""},
+	} {
+		_ = mustQueue(t, s, ctx, "ws-a", "item-pr"+strings.Repeat("x", i), StagePlan)
+		run, err := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+		if err != nil || run == nil {
+			t.Fatalf("claim: %v %v", run, err)
+		}
+		got, err := s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded, Summary: "ok", PRURL: tc.in}, run.LeaseToken)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.PRURL != tc.want {
+			t.Fatalf("pr_url %q: got %q, want %q", tc.in, got.PRURL, tc.want)
+		}
+	}
+}
+
 // Runs created within one second are claimed in creation order: stored
 // timestamps are fixed-width, so the queue's ORDER BY created_at is time
 // order (RFC3339Nano text was not — "…05.12345Z" sorted after

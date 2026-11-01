@@ -202,6 +202,10 @@ type Repo struct {
 		Kind      string `toml:"kind"`       // gitea | github | none
 		RemoteURL string `toml:"remote_url"` // https push URL
 		TokenEnv  string `toml:"token_env"`  // env var holding the token
+		// PullRequest: after pushing an implementation, open (or reuse) a
+		// pull request into the default branch — "draft", "ready", or ""
+		// / "none" for none. The token needs pull-request write access.
+		PullRequest string `toml:"pull_request"`
 	} `toml:"push"`
 }
 
@@ -382,6 +386,19 @@ func (c *Config) Default(home string) error {
 		}
 		if r.Push.Kind != "none" && r.Push.RemoteURL == "" {
 			return fmt.Errorf("repo %s: push.remote_url is required for push.kind %q", ws, r.Push.Kind)
+		}
+		switch r.Push.PullRequest {
+		case "", "none":
+			r.Push.PullRequest = "none"
+		case "draft", "ready":
+			if r.Push.Kind == "none" {
+				return fmt.Errorf("repo %s: push.pull_request needs a push (push.kind github or gitea)", ws)
+			}
+			if _, err := newPRClient(r.Push.Kind, r.Push.RemoteURL, ""); err != nil {
+				return fmt.Errorf("repo %s: push.pull_request: %w", ws, err)
+			}
+		default:
+			return fmt.Errorf("repo %s: push.pull_request %q is not one of draft, ready, none", ws, r.Push.PullRequest)
 		}
 	}
 	if c.MCPConfig != "" {

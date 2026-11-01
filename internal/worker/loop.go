@@ -102,6 +102,8 @@ type Worker struct {
 	executors map[string]string
 	// costs: what each run's agent turns cost, sent with its report.
 	costs map[string]float64
+	// lastSweep: when finished items' worktrees were last cleaned up.
+	lastSweep time.Time
 }
 
 func New(cfg *Config, client *Client, log *slog.Logger) *Worker {
@@ -127,6 +129,7 @@ func (w *Worker) Loop(ctx context.Context) error {
 			continue
 		}
 		if run == nil {
+			w.maybeSweep(ctx)
 			if !sleepCtx(ctx, w.cfg.PollEvery) {
 				return ctx.Err()
 			}

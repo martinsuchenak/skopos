@@ -273,11 +273,16 @@ workspaces") wait for you: plan approval, sign-off, or blocked. The browser
 tab title carries the same number. Click the count, or the **Needs you**
 chip in the list, to see just those. Board cards show the six steps as dots.
 
-**Review and finish.** At `in_review`, look at the branch, the review verdicts
-and the run history. Then:
+**Review and finish.** At `in_review`, look at the branch (or its pull
+request), the review verdicts and the run history. Then:
 - **Mark done (approve `<commit>`)**: this approves exactly the commit the
   reviewers checked. A push after it needs a new sign-off;
 - or **Request changes**, with notes, sends it back to implementation.
+
+Mark done doesn't merge. Merge the pull request or the branch yourself: skopos
+never merges. With `pull_request = "draft"` in the repo's push config, the
+worker opens the pull request when it pushes. Rejecting an item closes its
+pull request. See [Pushing and pull requests](../deployment/worker.md#pushing-and-pull-requests).
 
 **Want another pair of eyes first?** Ask for a **second opinion** in the
 preview (or `second codex` in Slack).
