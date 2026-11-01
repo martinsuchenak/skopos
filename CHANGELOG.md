@@ -4,6 +4,43 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.18.6] — 2026-11-01
+
+### Added
+
+- **Checks gate the pipeline, like CI.** The repo's `checks` already ran
+  after every implementation, but nothing acted on the result. Now:
+  - a failing check goes back to the implementer with its output, in the same
+    session, to fix. The checks then run again, up to `check_fix_rounds` times
+    (default 2; 0 blocks at once);
+  - uncommitted changes to tracked files after the checks fail too (left by the
+    implementer, or written by a check like `go mod tidy`), so what passed is
+    what gets pushed;
+  - if the checks still fail, or the implementer says it can't fix them, the
+    item blocks at Implement with "checks failed: …" instead of going to
+    review. The branch is pushed so you can look at it, and its pull request
+    opens as a draft. Slack's Blocked notice quotes that reason;
+  - a quota pause during a fix round resumes at the checks, not by
+    implementing again;
+  - reviewers get the results for the commit they review. They no longer report
+    that they couldn't run the build, and a failed check counts as blocking;
+  - the preview's Implement step lists each check, with its output.
+
+  **Upgrade note:** a branch whose checks fail used to reach review anyway; now
+  it blocks. If a check is flaky or needs a toolchain the worker lacks, fix that
+  first, or remove it from `checks`.
+- **A warning when the database is on a network filesystem.** At startup,
+  skopos warns if the database or the code index directory is on NFS, SMB,
+  CIFS, Ceph, a FUSE mount (SeaweedFS, GlusterFS, sshfs) or similar. SQLite there turns every commit into a network round
+  trip: request changes took 15–20 seconds, and every other request queued
+  behind it. Its WAL mode can also corrupt the database there.
+- **Nomad job with Litestream.** `skopos.nomad` now keeps the database on the
+  allocation's local disk (`ephemeral_disk`, sticky and migrating) and runs
+  Litestream as a sidecar. Litestream streams every commit to a shared volume,
+  and a prestart task restores from it when the job lands on a new node. The
+  first run seeds from a database left on the shared volume, so moving off NFS
+  is just stop and redeploy. See [the Nomad guide](docs/deployment/nomad.md).
+
 ## [0.18.5] — 2026-11-01
 
 ### Fixed
