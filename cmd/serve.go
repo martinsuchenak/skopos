@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -194,6 +195,16 @@ func serveCmd() *cli.Command {
 			defer func() { _ = sqlDB.Close() }()
 			if err := db.RunMigrations(sqlDB); err != nil {
 				return err
+			}
+			// SQLite on NFS/SMB once stalled every request for 15-20s (each
+			// commit a network round trip) and its WAL mode can corrupt there.
+			if fs := db.NetworkFilesystem(cmd.GetString("database-path")); fs != "" {
+				log.Warn("the database looks like it is on a network filesystem: expect slow writes and a risk of corruption; keep it on local disk (see docs/deployment/nomad.md for replicating it with Litestream)",
+					"path", cmd.GetString("database-path"), "filesystem", fs)
+			}
+			if fs := db.NetworkFilesystem(filepath.Join(cmd.GetString("index-dir"), "index.db")); fs != "" {
+				log.Warn("the code index directory looks like it is on a network filesystem; the indexes are rebuildable, keep them on local disk",
+					"path", cmd.GetString("index-dir"), "filesystem", fs)
 			}
 
 			// Created before the services: mutations publish through it, and

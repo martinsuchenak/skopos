@@ -22,7 +22,7 @@ docker run -d \
   skopos serve
 ```
 
-The SQLite database (`skopos.db`) is written to `/app`. Mount a volume to persist data across restarts.
+The SQLite database (`skopos.db`) is written to `/app`. Mount a volume to persist data across restarts. Use a local Docker volume or a host directory on local disk, not an NFS or SMB mount: SQLite over a network filesystem is slow and can corrupt (skopos warns at startup). For shared storage, see the Litestream setup in the [Nomad guide](nomad.md).
 
 ## Environment variables
 
