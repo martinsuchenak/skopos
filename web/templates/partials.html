@@ -75,3 +75,31 @@
                             <span class="ml-auto text-xs text-zinc-500" x-text="{{.}}.source || ''"></span>
                             <span class="text-xs text-zinc-500" x-text="formatTime({{.}}.built_at)"></span>
                         </li>{{end}}
+
+{{/*
+  stage-row: one step of the item preview's stage tracker (s = a StageRow
+  from stageTrackHead()/stageTrackTail()). The mark encodes the state
+  (done check, running spinner, your-turn person, blocked cross, hollow =
+  not reached, dash = skipped); the lines are the step's evidence.
+*/}}
+{{define "stage-row"}}<li class="stage-row" :class="'stage-' + s.state">
+                            <span class="stage-mark" aria-hidden="true">
+                                <svg x-show="s.state === 'done'" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 8.5l3.2 3L13 4.5"/></svg>
+                                <svg x-show="s.state === 'run'" class="stage-spin" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M8 2a6 6 0 1 1-6 6"/></svg>
+                                <svg x-show="s.state === 'you'" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="5.2" r="2.6"/><path d="M3 14c.4-2.9 2.4-4.4 5-4.4s4.6 1.5 5 4.4z"/></svg>
+                                <svg x-show="s.state === 'bad'" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>
+                                <svg x-show="s.state === 'skip'" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4.5 8h7"/></svg>
+                            </span>
+                            <div class="min-w-0">
+                                <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                                    <span class="stage-name" x-text="s.name"></span>
+                                    <span x-show="s.round" class="font-mono text-[11px] text-violet-300" x-text="s.round"></span>
+                                    <span class="stage-who" :class="s.who === 'you' ? 'stage-who-you' : ''" x-text="s.who"></span>
+                                    <span x-show="s.when" class="ml-auto font-mono text-[11px] text-zinc-500" x-text="s.when"></span>
+                                </div>
+                                <template x-for="(l, li) in s.lines" :key="s.key + '|' + li">
+                                    <p class="stage-line" x-text="l"></p>
+                                </template>
+                                <span class="sr-only" x-text="stageStateLabel(s)"></span>
+                            </div>
+                        </li>{{end}}

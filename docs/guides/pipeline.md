@@ -244,13 +244,22 @@ it becomes the plan. *Revise* sends one candidate back to its planner with
 your notes; *Re-plan all* runs every planner again.
 
 **Implementation runs.** The worker branches from the approved base, the agent
-commits each step, the worker runs `checks`, pushes, and the configured
-review stage runs.
+commits each step, the worker runs `checks` and pushes. If the workspace has a
+review (or QA) stage, it starts on its own as soon as the push lands; you
+don't start it. Without one, the item goes straight to `in_review` and the
+preview says no agent reviewed the commit.
 
-**Review and finish.** At `in_review`, look at the branch, the review verdict
-on the item, and the run list (runner, executor, head commit). Then:
-- **Mark done** with the prefilled head commit: this approves exactly that
-  commit;
+**Follow it in the preview.** The item preview opens with the six pipeline
+steps: Queued, Plan, Plan approval, Implement, Agent review and Your sign-off.
+Finished steps are checked, with who did them and what came out (the plan
+revision, the pushed commit, each reviewer's verdict). The step waiting for
+you holds the buttons, under a short list of what you're approving. The board
+cards show the same steps as six dots.
+
+**Review and finish.** At `in_review`, look at the branch, the review verdicts
+and the run history. Then:
+- **Mark done (approve `<commit>`)**: this approves exactly the commit the
+  reviewers checked. A push after it needs a new sign-off;
 - or **Request changes**, with notes, sends it back to implementation.
 
 **Want another pair of eyes first?** Ask for a **second opinion** in the

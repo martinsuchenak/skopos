@@ -499,6 +499,14 @@
                                                     <span x-show="item.priority != null" class="chip tone-warn mr-1 font-mono" x-text="'#' + item.priority" :aria-label="'Rank ' + item.priority"></span>
                                                     <span class="text-sm font-medium text-zinc-100" x-text="item.title"></span>
                                                 </div>
+                                                <!-- Six-step pipeline strip (the preview's tracker, from
+                                                     the status alone): spots items waiting for you. -->
+                                                <template x-for="cs in cardStage(item)" :key="cs.key">
+                                                    <div class="mt-1.5 flex items-center gap-1" role="img" :aria-label="'Pipeline: ' + cs.label">
+                                                        <template x-for="d in cs.dots" :key="d.key"><i :class="d.cls"></i></template>
+                                                        <span class="ml-1.5 text-[11px] text-zinc-400" x-text="cs.label"></span>
+                                                    </div>
+                                                </template>
                                                 <div class="mt-1 flex flex-wrap items-center gap-1">
                                                     <button type="button" @click.stop="openInboxPreview(item)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Preview item ' + item.title">View</button>
                                                     <button type="button" x-show="workflowQuickAction(item)" x-text="workflowQuickAction(item)" @click.stop="runQuickWorkflowAction(item)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs text-sky-300" :aria-label="'Workflow action for item ' + item.title"></button>
@@ -968,6 +976,9 @@
                         <div class="min-w-0">
                             <h2 id="preview-modal-title" class="text-lg font-semibold leading-tight" x-text="previewItem.title"></h2>
                             <div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
+                                <template x-for="sp in stageSummary()" :key="sp.key">
+                                    <span class="badge font-medium" :class="sp.tone" x-text="sp.text"></span>
+                                </template>
                                 <span class="badge" :class="toneOf('status', previewItem.status)" x-text="previewItem.status"></span>
                                 <span x-show="previewItem.workspace_id" class="badge max-w-48 truncate tone-info" :title="previewItem.workspace_id" x-text="workspaceLabel(previewItem.workspace_id)"></span>
                                 <span x-show="!previewItem.workspace_id" class="badge tone-warn">unfiled</span>
@@ -991,51 +1002,24 @@
                          shrink was squeezed to a sliver once the runs and the
                          in_review actions stacked up below it. -->
                     <div class="-mr-2 min-h-0 flex-1 overflow-y-auto pr-2" data-preview-body>
-                    <div class="md-body rounded-lg border border-zinc-800 bg-zinc-950/50 p-4" data-md-preview aria-live="polite"></div>
-                    <p x-show="previewItem && !previewItem.content" class="mt-2 text-sm text-zinc-500">No content.</p>
-                    <!-- Runs: where this item is (or was) processed — stage,
-                         worker, attempt, branch, head; live-refreshed on inbox
-                         SSE events while the modal is open. -->
-                    <div class="mt-3 shrink-0 rounded-lg border border-zinc-800">
-                        <div class="flex items-center justify-between border-b border-zinc-800 px-3 py-1.5">
-                            <span class="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Runs</span>
-                            <button type="button" @click.stop="refreshPreviewRuns()" class="btn btn-ghost btn-sm !min-h-6 !px-2 !py-0 text-xs" :disabled="previewRunsLoading" aria-label="Refresh runs">&#8635;</button>
-                        </div>
-                        <div class="max-h-72 overflow-y-auto">
-                            <p x-show="previewRunsLoading && previewRuns.length === 0" class="px-3 py-2 text-xs text-zinc-500">Loading&hellip;</p>
-                            <p x-show="!previewRunsLoading && previewRuns.length === 0" class="px-3 py-2 text-xs text-zinc-500">No runs yet &mdash; queue the item to start the pipeline.</p>
-                            <template x-for="run in previewRuns" :key="run.id + '|' + run.status + '|' + run.updated_at">
-                                <div class="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-zinc-800/60 px-3 py-1.5 text-[11px] last:border-b-0">
-                                    <span class="badge" :class="toneOf('stage', run.stage)" x-text="run.stage"></span>
-                                    <span class="badge" :class="toneOf('status', run.status)" x-text="run.status"></span>
-                                    <span x-show="run.focus" class="chip tone-accent" :title="run.group_id ? 'One of several agents on this stage — focus brief .skopos/focus/' + run.focus + '.md' : 'Focus brief .skopos/focus/' + run.focus + '.md'" x-text="run.focus"></span>
-                                    <span x-show="runCost(run)" class="text-zinc-400" title="What this run cost" x-text="runCost(run)"></span>
-                                    <span x-show="run.worker_id" class="max-w-32 truncate text-zinc-400" :title="run.worker_id" x-text="run.worker_id"></span>
-                                    <span class="text-zinc-500" x-text="'try ' + run.attempt"></span>
-                                    <span x-show="run.executor" class="badge bg-zinc-800 font-mono text-zinc-400" title="How the worker ran this stage (capability profile)" x-text="run.executor"></span>
-                                    <span x-show="run.branch" class="badge max-w-40 truncate tone-muted" :title="run.branch" x-text="run.branch"></span>
-                                    <span x-show="run.head_sha" class="font-mono text-zinc-500" :title="run.head_sha" x-text="shortSha(run.head_sha)"></span>
-                                    <span class="ml-auto shrink-0 text-zinc-600" x-text="timeAgo(run.updated_at)"></span>
-                                    <p x-show="runHasFailed(run)" class="w-full text-rose-300" x-text="run.fail_reason"></p>
-                                </div>
-                            </template>
-                        </div>
-                    </div>
+                    <!-- Stage tracker: the six pipeline steps up to the
+                         current one; the action card follows right under it
+                         (the checks are read before the buttons), then the
+                         steps not reached yet. Keyed rows (CSP build). -->
+                    <ol class="stage-track" aria-label="Pipeline stages">
+                        <template x-for="s in stageTrackHead()" :key="s.key">{{template "stage-row"}}</template>
+                    </ol>
                     <!-- Workflow actions: the gated human moves, one set per
                          status. The server authorizes (a non-approver key
                          gets the 403 as a toast). -->
-                    <div class="mt-3 flex shrink-0 flex-wrap items-center gap-2" x-show="workflowShowQueue() || workflowShowApprove() || workflowShowRetry() || workflowShowMarkDone() || workflowShowReject()">
+                    <div class="stage-actions flex shrink-0 flex-wrap items-center gap-2" :class="gateTone()" x-show="workflowShowQueue() || workflowShowApprove() || workflowShowRetry() || workflowShowMarkDone() || workflowShowReject()">
+                        <!-- What the approver signs, as checks (keyed x-for). -->
+                        <template x-for="g in gateChecks()" :key="g.key">
+                            <p class="stage-check w-full"><span class="stage-ic" :class="'stage-ic-' + g.ic" x-text="g.ic === 'y' ? '✓' : (g.ic === 'w' ? '!' : '○')"></span><span x-text="g.text"></span></p>
+                        </template>
                         <!-- Labeled, multi-line: retry answers and change
                              requests carry real sentences, and the input was a
                              single xs-height line with only a placeholder. -->
-                        <!-- What Mark done approves: the exact commit the review
-                             checked, read-only (keyed x-for, CSP build). -->
-                        <template x-for="h in reviewHeadRow()" :key="h.key">
-                            <p class="w-full text-xs text-zinc-300">
-                                <span x-show="h.full">Approving commit <code class="font-mono" :title="h.full" x-text="h.short"></code>, the branch head the review checked. Mark done approves exactly this commit; a later push needs a new approval.</span>
-                                <span x-show="!h.full" class="text-zinc-400">No pushed commit recorded for this item yet, so there is nothing to approve.</span>
-                            </p>
-                        </template>
                         <div class="flex min-w-56 flex-1 flex-col gap-1" x-show="workflowShowInput()">
                             <label for="workflow-note" class="text-[11px] font-medium text-zinc-400" x-text="workflowNoteLabel()"></label>
                             <textarea id="workflow-note" x-model="workflowNote" rows="3" class="fld w-full resize-y text-sm" :placeholder="workflowNotePlaceholder()" :aria-label="workflowNoteLabel()"></textarea>
@@ -1066,15 +1050,24 @@
                         <button type="button" x-show="workflowShowRetry()" @click.stop="retryInboxItem(previewItem.id)" :disabled="!workflowActionReady('retry')" class="btn btn-sm text-sky-300" :aria-label="'Retry item ' + previewItem.title">Retry</button>
                         <button type="button" x-show="workflowShowReviewChanges()" @click.stop="requestChangesInboxItem(previewItem.id)" :disabled="!workflowActionReady('request_changes')" class="btn btn-sm btn-ghost text-orange-300" :aria-label="'Request changes on the branch of item ' + previewItem.title">Request changes</button>
                         <button type="button" x-show="workflowShowMarkDone()" @click.stop="markDoneInboxItem(previewItem.id)" :disabled="!workflowActionReady('mark_done')" class="btn btn-sm text-emerald-300" :aria-label="'Mark item ' + previewItem.title + ' done, approving its head commit'" x-text="markDoneLabel()"></button>
+                        <!-- What Mark done records (keyed x-for, CSP build). -->
+                        <template x-for="h in reviewHeadRow()" :key="h.key">
+                            <p class="w-full text-xs text-zinc-400" x-text="h.text"></p>
+                        </template>
                         <template x-for="so in secondOpinionRow()" :key="so.key">
-                            <div class="flex w-full flex-wrap items-end gap-2 border-t border-zinc-800 pt-2">
+                            <div class="flex w-full flex-wrap items-end gap-2 border-t border-dashed border-zinc-700 pt-2">
+                                <p class="w-full text-xs"><span class="font-semibold text-zinc-200">Second opinions</span> <span class="text-zinc-500">optional; they never change the status</span></p>
+                                <template x-for="r in secondOpinionResults()" :key="r.key">
+                                    <p class="stage-check w-full"><span class="stage-ic" :class="'stage-ic-' + r.ic" x-text="r.ic === 'y' ? '✓' : (r.ic === 'w' ? '!' : '○')"></span><span x-text="r.text"></span></p>
+                                </template>
                                 <span x-show="so.running" class="chip tone-info" x-text="'Second opinion running (' + so.running + ')'"></span>
                                 <div x-show="!so.running" class="min-w-0 flex-1 sm:max-w-56">
                                     <label class="lbl" for="so-runner">Second opinion from</label>
                                     <input id="so-runner" type="text" list="so-runners" x-model="secondOpinion.runner" class="fld" placeholder="runner, e.g. codex" autocomplete="off" />
                                 </div>
                                 <label x-show="!so.running" class="flex items-center gap-2 text-xs text-zinc-400"><input type="checkbox" x-model="secondOpinion.force" /> again on this head</label>
-                                <button type="button" x-show="!so.running" @click.stop="requestSecondOpinion()" :disabled="secondOpinion.busy" class="btn btn-sm" :aria-label="'Ask for a second opinion on item ' + previewItem.title">Second opinion</button>
+                                <button type="button" x-show="!so.running" @click.stop="requestSecondOpinion()" :disabled="secondOpinionDisabled()" class="btn btn-sm" :aria-label="'Ask for a second opinion on item ' + previewItem.title">Second opinion</button>
+                                <p x-show="!so.running && secondOpinionBlockedReason()" class="w-full text-xs text-amber-300" x-text="secondOpinionBlockedReason()"></p>
                             </div>
                         </template>
                         <datalist id="so-runners">
@@ -1082,6 +1075,43 @@
                         </datalist>
                         <button type="button" x-show="workflowShowReject()" @click.stop="rejectInboxItem(previewItem.id)" :disabled="!workflowActionReady('reject')" class="btn btn-sm btn-ghost text-rose-300" :aria-label="'Reject item ' + previewItem.title">Reject</button>
                     </div>
+                    <ol class="stage-track stage-track-tail" aria-label="Pipeline stages not reached yet">
+                        <template x-for="s in stageTrackTail()" :key="s.key">{{template "stage-row"}}</template>
+                    </ol>
+                    <details class="mt-3 rounded-lg border border-zinc-800" :open="previewDescOpen" @toggle="onPreviewDescToggle($event)">
+                        <summary class="fold-summary cursor-pointer px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-500"><span class="fold-caret" aria-hidden="true">&#9656;</span> Item description</summary>
+                        <div class="md-body border-t border-zinc-800 bg-zinc-950/50 p-4" data-md-preview aria-live="polite"></div>
+                        <p x-show="previewItem && !previewItem.content" class="px-3 pb-2 text-sm text-zinc-500">No content.</p>
+                    </details>
+                    <!-- Runs: where this item is (or was) processed — stage,
+                         worker, attempt, branch, head; live-refreshed on inbox
+                         SSE events while the modal is open. Collapsed by
+                         default: the tracker above summarises it. -->
+                    <details class="mt-3 rounded-lg border border-zinc-800" :open="previewRunsOpen" @toggle="onPreviewRunsToggle($event)">
+                        <summary class="fold-summary flex cursor-pointer items-center justify-between px-3 py-1.5">
+                            <span class="text-[11px] font-semibold uppercase tracking-wide text-zinc-500"><span class="fold-caret" aria-hidden="true">&#9656;</span> <span x-text="'Run history (' + previewRuns.length + ')'"></span></span>
+                            <button type="button" @click.stop.prevent="refreshPreviewRuns()" class="btn btn-ghost btn-sm !min-h-6 !px-2 !py-0 text-xs" :disabled="previewRunsLoading" aria-label="Refresh runs">&#8635;</button>
+                        </summary>
+                        <div class="max-h-72 overflow-y-auto border-t border-zinc-800">
+                            <p x-show="previewRunsLoading && previewRuns.length === 0" class="px-3 py-2 text-xs text-zinc-500">Loading&hellip;</p>
+                            <p x-show="!previewRunsLoading && previewRuns.length === 0" class="px-3 py-2 text-xs text-zinc-500">No runs yet &mdash; queue the item to start the pipeline.</p>
+                            <template x-for="run in previewRuns" :key="run.id + '|' + run.status + '|' + run.updated_at">
+                                <div class="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-zinc-800/60 px-3 py-1.5 text-[11px] last:border-b-0">
+                                    <span class="badge" :class="toneOf('stage', run.stage)" x-text="run.stage"></span>
+                                    <span class="badge" :class="toneOf('status', run.status)" x-text="run.status"></span>
+                                    <span x-show="run.focus" class="chip tone-accent" :title="run.group_id ? 'One of several agents on this stage — focus brief .skopos/focus/' + run.focus + '.md' : 'Focus brief .skopos/focus/' + run.focus + '.md'" x-text="run.focus"></span>
+                                    <span x-show="runCost(run)" class="text-zinc-400" title="What this run cost" x-text="runCost(run)"></span>
+                                    <span x-show="run.worker_id" class="max-w-32 truncate text-zinc-400" :title="run.worker_id" x-text="run.worker_id"></span>
+                                    <span class="text-zinc-500" x-text="'try ' + run.attempt"></span>
+                                    <span x-show="run.executor" class="badge bg-zinc-800 font-mono text-zinc-400" title="How the worker ran this stage (capability profile)" x-text="run.executor"></span>
+                                    <span x-show="run.branch" class="badge max-w-40 truncate tone-muted" :title="run.branch" x-text="run.branch"></span>
+                                    <span x-show="run.head_sha" class="font-mono text-zinc-500" :title="run.head_sha" x-text="shortSha(run.head_sha)"></span>
+                                    <span class="ml-auto shrink-0 text-zinc-600" x-text="timeAgo(run.updated_at)"></span>
+                                    <p x-show="runHasFailed(run)" class="w-full text-rose-300" x-text="run.fail_reason"></p>
+                                </div>
+                            </template>
+                        </div>
+                    </details>
                     </div>
                 </div>
             </template>

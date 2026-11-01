@@ -39,11 +39,15 @@ type PipeView = { owner_kind: string; owner_id: string; own: { stages: Record<st
 // inherited (from a group; Override copies it here), unset.
 type PipeRow = { stage: string; label: string; multi: boolean; rule: boolean; mode: string; members: PipeMember[]; policy: string; earlyExit: boolean; timeoutMin: string; inherited: PipeStage | null; inheritedFrom: string; addRunner: string; addFocus: string };
 
-type PlanRevisionInfo = { id: string; revision_no: number; content_hash: string; skills?: string[]; base_sha?: string; group_id?: string; label?: string; candidate_state?: string; steps?: { title: string; phase?: string }[] };
+type PlanRevisionInfo = { id: string; revision_no: number; content_hash: string; skills?: string[]; base_sha?: string; group_id?: string; label?: string; candidate_state?: string; steps?: { title: string; phase?: string }[]; locked_at?: string };
 // One thing the approver can approve at the gate: the plan revision, or one
 // candidate of a multi-agent plan round.
 type ApproveTarget = { id: string; title: string; meta: string; steps: string[]; candidate: boolean; hash: string; toast: string };
-type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; created_at: string; updated_at: string };
+type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { severity: string; text: string }[]; created_at: string; updated_at: string };
+// One row of the preview's stage tracker. state: done | run | you | bad |
+// up (not reached) | skip (not configured, or never reached on a discarded item).
+type StageRow = { key: string; name: string; who: string; state: string; when: string; round: string; lines: string[] };
+type TextRow = { key: string; ic: string; text: string };
 // wsLocked: a workflow item cannot move workspace (its runs, plan and
 // branch live there) — the server refuses it; the modal hides the picker.
 type InboxForm = { id: string; title: string; tags: string; workspace: string; agents: string; wsLocked: boolean };
@@ -114,6 +118,18 @@ const appState = () => ({
   // Open candidates of the current multi-agent plan round, oldest first
   // (numbered 1..n, the same order Slack and the CLI use).
   previewCandidates: [] as PlanRevisionInfo[],
+  // The approved (locked) revision of the item's plan, for the tracker's
+  // "Plan approval" line, and the workspace's effective pipeline (is a
+  // review stage configured at all?).
+  previewApprovedRev: null as PlanRevisionInfo | null,
+  previewPipe: null as PipeView | null,
+  // Collapsible preview sections. The description starts open until the
+  // plan is approved (read by then); the run history starts closed (the
+  // tracker summarises it). Re-defaulted only when the status changes, so a
+  // live refresh never undoes the user's toggle.
+  previewDescOpen: true,
+  previewRunsOpen: false,
+  previewStatusSeen: '',
   workflowNote: '',
   workflowBusy: false,
   expandedInbox: null as InboxDetail | null,
@@ -988,9 +1004,32 @@ const appState = () => ({
       document.querySelectorAll('[data-md-preview]').forEach((el) => { el.innerHTML = html; });
     });
     this.workflowNote = '';
+    this.previewStatusSeen = '';
+    this.previewPipe = null;
+    this.syncPreviewSections();
     this.fetchPreviewRuns(item.id);
     this.fetchPreviewRevision();
+    this.fetchPreviewPipe();
     this.loadSecondOpinion();
+  },
+  // Section defaults follow the status: the description is open until the
+  // plan is approved, the run history is closed. Applied on open and on a
+  // status change only.
+  syncPreviewSections() {
+    const st = this.previewItem ? this.previewItem.status : '';
+    if (st === this.previewStatusSeen) return;
+    this.previewStatusSeen = st;
+    this.previewDescOpen = ['open', 'in_progress', 'queued', 'planning', 'awaiting_approval', 'converted'].includes(st);
+    this.previewRunsOpen = false;
+  },
+  onPreviewDescToggle(e: globalThis.Event) { this.previewDescOpen = (e.target as HTMLDetailsElement).open; },
+  onPreviewRunsToggle(e: globalThis.Event) { this.previewRunsOpen = (e.target as HTMLDetailsElement).open; },
+  async fetchPreviewPipe() {
+    const item = this.previewItem;
+    if (!item || !item.workspace_id) return;
+    const res = await this.authFetch('/api/workspaces/' + encodeURIComponent(item.workspace_id) + '/pipeline');
+    if (!res.ok || !this.previewItem || this.previewItem.id !== item.id) return;
+    this.previewPipe = (await res.json()) as PipeView;
   },
   // ---- second opinion (advisory review of the head waiting for approval) ----
   secondOpinionApplies(): boolean {
@@ -1047,17 +1086,20 @@ const appState = () => ({
       await this.fetchPreviewRuns(item.id);
     } finally { this.secondOpinion.busy = false; }
   },
-  closeInboxPreview() { this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.previewCandidates = []; this.workflowNote = ''; this.workflowBusy = false; },
+  closeInboxPreview() { this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.previewCandidates = []; this.previewApprovedRev = null; this.previewPipe = null; this.previewStatusSeen = ''; this.workflowNote = ''; this.workflowBusy = false; },
   // The newest revision of the previewed item's plan, while it waits at the
   // gate (revisions list newest first).
   async fetchPreviewRevision() {
     const item = this.previewItem;
     this.previewRevision = null;
     this.previewCandidates = [];
-    if (!item || item.status !== 'awaiting_approval' || !item.plan_id) return;
+    if (!item || !item.plan_id) { this.previewApprovedRev = null; return; }
     const res = await this.authFetch('/api/plans/' + encodeURIComponent(item.plan_id) + '/revisions');
     if (!res.ok || !this.previewItem || this.previewItem.id !== item.id) return;
     const revs = (await res.json()) as PlanRevisionInfo[]; // newest first
+    // The tracker's "Plan approval" line: the newest locked revision.
+    this.previewApprovedRev = revs.find((r: PlanRevisionInfo) => !!r.locked_at) || null;
+    if (item.status !== 'awaiting_approval') return;
     const live = revs.filter((r: PlanRevisionInfo) => r.candidate_state !== 'superseded');
     this.previewRevision = live.length > 0 ? live[0] : null;
     // The current round = the newest candidate's group; its open ones.
@@ -1135,15 +1177,272 @@ const appState = () => ({
   },
   // Keyed x-for row (the CSP build's reliable re-render): [] while there is
   // no head yet.
-  reviewHeadRow(): { key: string; short: string; full: string }[] {
+  reviewHeadRow(): { key: string; text: string }[] {
     if (!this.workflowShowMarkDone()) return [];
     const head = this.reviewHead();
-    return [{ key: 'head|' + head, short: head ? this.shortSha(head) : '', full: head }];
+    return [{ key: 'head|' + head, text: head
+      ? 'Mark done records your sign-off on commit ' + this.shortSha(head) + '. If anything is pushed after it, the item needs a new sign-off.'
+      : 'No pushed commit is recorded for this item yet, so there is nothing to approve.' }];
   },
   markDoneLabel(): string {
     const head = this.reviewHead();
     return head ? 'Mark done (approve ' + this.shortSha(head) + ')' : 'Mark done';
   },
+  // ---- stage tracker (the preview's "where is this item" list) ----
+  // Six fixed steps; two are the approver's. Built from what the preview
+  // already loads (status, runs, the approved revision, the pipeline), so
+  // a live refresh re-renders it. The rows split around the current step:
+  // the action card sits right under it, the steps not reached below.
+  stageOf(stage: string): number {
+    if (stage === 'plan' || stage === 'compare' || stage === 'synthesize') return 1;
+    if (stage === 'implement') return 3;
+    if (stage === 'review' || stage === 'qa') return 4;
+    return -1;
+  },
+  runActive(r: RunRow): boolean { return r.status === 'queued' || r.status === 'claimed' || r.status === 'running' || r.status === 'paused'; },
+  runTime(r: RunRow): number { return new Date(r.created_at).getTime(); },
+  // A configured review/QA stage: a runner or a group. null = unknown (the
+  // pipeline could not be read).
+  reviewConfigured(): boolean | null {
+    const p = this.previewPipe;
+    if (!p) return null;
+    const eff = p.effective || {};
+    return ['review', 'qa'].some((s: string) => !!eff[s] && (eff[s].members || []).length > 0);
+  },
+  // The newest successful implementation (its head is what sign-off
+  // approves) and the review/QA results on it.
+  trackImpl(): RunRow | undefined {
+    return this.previewRuns.find((r: RunRow) => r.stage === 'implement' && r.status === 'succeeded' && !!r.head_sha);
+  },
+  trackReviews(): RunRow[] {
+    const impl = this.trackImpl();
+    if (!impl) return [];
+    const since = this.runTime(impl);
+    const done = this.previewRuns.filter((r: RunRow) => (r.stage === 'review' || r.stage === 'qa') && (r.status === 'succeeded' || r.status === 'failed') && this.runTime(r) >= since);
+    // Blocking results first: a blocked step draws its first line red.
+    return done.filter((r: RunRow) => r.status === 'failed').concat(done.filter((r: RunRow) => r.status !== 'failed'));
+  },
+  findingCount(r: RunRow, severity: string): number { return (r.findings || []).filter(f => f.severity === severity).length; },
+  plural(n: number, word: string): string { return n + ' ' + word + (n === 1 ? '' : 's'); },
+  reviewLine(r: RunRow): string {
+    const who = (r.focus || r.stage) + (r.runner ? ' (' + r.runner + ')' : '');
+    if (r.status === 'failed') {
+      const blocking = (r.findings || []).find(f => f.severity === 'blocking');
+      return who + ' blocking: ' + (blocking ? blocking.text : (r.fail_reason || 'failed'));
+    }
+    const nits = this.findingCount(r, 'nit');
+    return who + ' passed' + (nits ? ', ' + this.plural(nits, 'nit') : '');
+  },
+  activeLines(step: number): string[] {
+    return this.previewRuns.filter((r: RunRow) => this.stageOf(r.stage) === step && this.runActive(r)).map((r: RunRow) => {
+      const detail = [r.runner, r.focus].filter(Boolean).join(', ');
+      const what = r.stage + (detail ? ' (' + detail + ')' : '');
+      if (r.status === 'queued') return 'Waiting for a worker: ' + what;
+      if (r.status === 'paused') return 'Paused: ' + what + (r.fail_reason ? ', ' + r.fail_reason : '');
+      return 'Running ' + what + (r.worker_id ? ' on ' + r.worker_id : '');
+    });
+  },
+  stageModel(): { rows: StageRow[]; current: number } {
+    const item = this.previewItem;
+    const empty = { rows: [] as StageRow[], current: -1 };
+    if (!item) return empty;
+    const st = item.status;
+    const main = this.previewRuns.filter((r: RunRow) => r.stage !== 'second_opinion'); // newest first
+    const last = main[0];
+    const piped = this.isWorkflowStatus(st) || st === 'open' || ((st === 'done' || st === 'discarded') && main.length > 0);
+    if (!piped) return empty;
+    // The current step and how it is drawn.
+    let cur = -1;
+    let curState = 'run';
+    switch (st) {
+      case 'open': cur = 0; curState = 'you'; break;
+      case 'queued': case 'planning': cur = 1; break;
+      case 'awaiting_approval': cur = 2; curState = 'you'; break;
+      case 'approved': cur = 3; break;
+      case 'implementing': cur = last && this.stageOf(last.stage) === 4 ? 4 : 3; break;
+      case 'in_review': cur = 5; curState = 'you'; break;
+      case 'blocked': case 'failed': cur = last ? Math.max(1, this.stageOf(last.stage)) : 1; curState = 'bad'; break;
+      case 'done': cur = 6; break;
+      case 'discarded': cur = 6; break;
+    }
+    const impl = this.trackImpl();
+    const reviews = this.trackReviews();
+    const planRuns = main.filter((r: RunRow) => r.stage === 'plan' && r.status === 'succeeded');
+    const rev = this.previewApprovedRev;
+    const configured = this.reviewConfigured();
+    const rounds = main.filter((r: RunRow) => r.stage === 'implement' && r.status === 'succeeded').length;
+    const defs = [
+      { name: 'Queued', who: 'you' },
+      { name: 'Plan', who: 'agents' },
+      { name: 'Plan approval', who: 'you' },
+      { name: 'Implement', who: 'agent' },
+      { name: 'Agent review', who: 'agents' },
+      { name: 'Your sign-off', who: 'you' },
+    ];
+    // Evidence for a finished step.
+    const doneLines = (i: number): { lines: string[]; when: string } => {
+      if (i === 1 && planRuns.length) {
+        const newest = planRuns[0];
+        const round = newest.group_id ? planRuns.filter((r: RunRow) => r.group_id === newest.group_id) : [newest];
+        const names = round.map((r: RunRow) => r.runner || r.worker_id || 'The agent').filter((v: string, k: number, a: string[]) => a.indexOf(v) === k);
+        let text = round.length > 1 ? names.join(', ') + ' wrote ' + round.length + ' candidates' : names[0] + ' wrote the plan';
+        if (main.some((r: RunRow) => r.stage === 'compare' && r.status === 'succeeded')) text += ', compared';
+        if (main.some((r: RunRow) => r.stage === 'synthesize' && r.status === 'succeeded')) text += ', plus a synthesis';
+        return { lines: [text], when: this.timeAgo(newest.updated_at) };
+      }
+      if (i === 2 && rev) {
+        const steps = (rev.steps || []).filter(x => x.phase !== 'review').length;
+        let text = 'Approved revision #' + rev.revision_no + (rev.label ? ' (' + rev.label + ')' : '') + ', ' + this.plural(steps, 'step');
+        if (rev.base_sha) text += ' on base ' + this.shortSha(rev.base_sha);
+        return { lines: [text], when: rev.locked_at ? this.timeAgo(rev.locked_at) : '' };
+      }
+      if (i === 3 && impl) {
+        const lines = [(impl.runner || impl.worker_id || 'The agent') + ' pushed ' + this.shortSha(impl.head_sha || '') + (impl.branch ? ' to ' + impl.branch : '')];
+        const stat = (impl.diffstat || '').split('\n').map((l: string) => l.trim()).filter(Boolean).pop();
+        if (stat) lines.push(stat);
+        return { lines, when: this.timeAgo(impl.updated_at) };
+      }
+      if (i === 4 && reviews.length) {
+        const ok = reviews.filter((r: RunRow) => r.status === 'succeeded').length;
+        const lines = reviews.map((r: RunRow) => this.reviewLine(r));
+        if (impl && impl.head_sha) lines.push(ok + ' of ' + reviews.length + ' passed, on ' + this.shortSha(impl.head_sha));
+        return { lines, when: this.timeAgo(reviews[0].updated_at) };
+      }
+      if (i === 5 && st === 'done') {
+        return { lines: [impl && impl.head_sha ? 'Approved ' + this.shortSha(impl.head_sha) : 'Marked done'], when: this.timeAgo(item.updated_at) };
+      }
+      return { lines: [], when: '' };
+    };
+    const rows: StageRow[] = defs.map((d, i) => {
+      let state = i < cur ? 'done' : i === cur ? curState : 'up';
+      let lines: string[] = [];
+      let when = '';
+      if (state === 'done') ({ lines, when } = doneLines(i));
+      if (state === 'run') { lines = this.activeLines(i); if (!lines.length) lines = [i === 3 && st === 'approved' ? 'Starting' : 'Waiting for a worker']; }
+      if (state === 'you') when = 'waiting ' + this.timeAgo(item.updated_at).replace(' ago', '');
+      if (state === 'bad') {
+        const failed = main.find((r: RunRow) => this.stageOf(r.stage) === i && r.status === 'failed');
+        lines = i === 4 && reviews.length ? reviews.map((r: RunRow) => this.reviewLine(r)) : [(failed && failed.fail_reason) || 'Blocked: open the run history for the reason'];
+        when = failed ? this.timeAgo(failed.updated_at) : '';
+      }
+      // Agent review never ran because none is configured: say so instead
+      // of a green check (passed) or an empty step (waiting).
+      if (i === 4 && state !== 'run' && state !== 'bad' && !reviews.length && (state === 'done' || configured === false)) {
+        state = 'skip';
+        lines = [configured === false
+          ? 'No review stage is configured for this workspace, so no agent reviews the commit. Set one under Workspaces → Pipeline.'
+          : 'No agent reviewed this commit'];
+      }
+      // A discarded item: the steps it never finished are greyed out.
+      if (st === 'discarded' && state === 'done' && !lines.length && i > 0) state = 'skip';
+      const round = (i === 3 || i === 4 || i === 5) && rounds > 1 && state !== 'up' ? 'round ' + rounds : '';
+      return { key: i + '|' + state + '|' + when + '|' + lines.join('/'), name: d.name, who: d.who, state, when, round, lines };
+    });
+    return { rows, current: cur };
+  },
+  // Screen-reader text for a row's state (the mark is aria-hidden).
+  stageStateLabel(s: StageRow): string {
+    const words: Record<string, string> = { done: 'finished', run: 'in progress', you: 'waiting for you', bad: 'blocked', up: 'not reached yet', skip: 'skipped' };
+    return s.name + ': ' + (words[s.state] || s.state);
+  },
+  stageTrackHead(): StageRow[] { const m = this.stageModel(); return m.current >= 6 ? m.rows : m.rows.slice(0, m.current + 1); },
+  stageTrackTail(): StageRow[] { const m = this.stageModel(); return m.current >= 6 || m.current < 0 ? [] : m.rows.slice(m.current + 1); },
+  // The header pill: where the item stands, in words.
+  stageSummary(): { key: string; text: string; tone: string }[] {
+    const m = this.stageModel();
+    const st = this.previewItem ? this.previewItem.status : '';
+    if (m.current < 0) return [];
+    let text = '';
+    let tone = 'tone-info';
+    if (st === 'done') { text = 'Done'; tone = 'tone-success'; }
+    else if (st === 'discarded') { text = 'Discarded'; tone = 'tone-muted'; }
+    else {
+      const row = m.rows[m.current];
+      if (row.state === 'you') { text = row.name === 'Queued' ? 'Ready to queue' : row.name + ': your turn'; tone = 'tone-warn'; }
+      else if (row.state === 'bad') { text = 'Blocked at ' + row.name.toLowerCase(); tone = 'tone-danger'; }
+      else text = row.name + (row.round ? ' · ' + row.round : '');
+    }
+    return [{ key: text + '|' + tone, text, tone }];
+  },
+  // What the approver is signing, as checks inside the action card.
+  gateChecks(): TextRow[] {
+    const item = this.previewItem;
+    if (!item) return [];
+    const out: TextRow[] = [];
+    const rev = this.previewApprovedRev;
+    if (item.status === 'awaiting_approval') {
+      out.push({ key: 'g-none', ic: 'n', text: 'Nothing is implemented yet. Approving locks this plan and starts implementation.' });
+      return out;
+    }
+    if (item.status !== 'in_review') return out;
+    if (rev) out.push({ key: 'g-rev|' + rev.id, ic: 'y', text: 'The plan you approved: revision #' + rev.revision_no + (rev.label ? ' (' + rev.label + ')' : '') });
+    const head = this.reviewHead();
+    const reviews = this.trackReviews();
+    if (!head) return out;
+    if (reviews.length) {
+      const ok = reviews.filter((r: RunRow) => r.status === 'succeeded').length;
+      const nits = reviews.reduce((n: number, r: RunRow) => n + this.findingCount(r, 'nit'), 0);
+      out.push({ key: 'g-head|' + head, ic: 'y', text: 'Commit ' + this.shortSha(head) + ' is the branch head, and the reviewers checked it' });
+      out.push({ key: 'g-rev|' + ok + '|' + reviews.length, ic: ok === reviews.length ? 'y' : 'w', text: 'Agent review: ' + ok + ' of ' + reviews.length + ' passed' + (nits ? ', ' + this.plural(nits, 'nit') : '') + (ok === reviews.length ? ', no blocking findings' : '') });
+    } else {
+      out.push({ key: 'g-head|' + head, ic: 'w', text: 'Commit ' + this.shortSha(head) + ' is the branch head. No agent reviewed it, so check it yourself or ask for a second opinion.' });
+    }
+    return out;
+  },
+  // Second opinions already asked for, newest first: runner, commit, verdict
+  // (a blocking finding = the reviewer would block). An opinion on an older
+  // commit is marked, since it does not cover what sign-off approves.
+  secondOpinionResults(): TextRow[] {
+    const head = this.reviewHead();
+    return this.previewRuns.filter((r: RunRow) => r.stage === 'second_opinion').map((r: RunRow) => {
+      const on = (r.runner || 'agent') + ' on ' + this.shortSha(r.head_sha || '');
+      let ic = 'y';
+      let verdict = '';
+      if (this.runActive(r)) { ic = 'n'; verdict = r.status === 'queued' ? 'waiting for a worker' : 'running'; }
+      else if (r.status === 'failed') { ic = 'w'; verdict = 'did not finish: ' + (r.fail_reason || 'no reason given'); }
+      else {
+        const blocking = (r.findings || []).find(f => f.severity === 'blocking');
+        const nits = this.findingCount(r, 'nit');
+        if (blocking) { ic = 'w'; verdict = 'would block: ' + blocking.text; }
+        else verdict = 'pass' + (nits ? ', ' + this.plural(nits, 'nit') : '');
+      }
+      const stale = !!head && !!r.head_sha && r.head_sha !== head ? ' (older commit)' : '';
+      return { key: r.id + '|' + r.status + '|' + r.updated_at, ic, text: on + ': ' + verdict + stale };
+    });
+  },
+  // Why the Second opinion button is disabled, '' when it isn't: the server
+  // refuses a second run of the same runner on the same commit unless
+  // "again on this head" is ticked.
+  secondOpinionBlockedReason(): string {
+    const runner = this.secondOpinion.runner.trim();
+    const head = this.reviewHead();
+    if (!runner || !head || this.secondOpinion.force) return '';
+    const dup = this.previewRuns.some((r: RunRow) => r.stage === 'second_opinion' && r.status === 'succeeded' && r.runner === runner && r.head_sha === head);
+    return dup ? runner + ' already checked ' + this.shortSha(head) + '. Tick "again on this head" to ask again, or name another runner.' : '';
+  },
+  secondOpinionDisabled(): boolean { return this.secondOpinion.busy || this.secondOpinionBlockedReason() !== ''; },
+  // The action card's look: amber while it waits for the approver, red
+  // when the item is blocked.
+  gateTone(): string {
+    const st = this.previewItem ? this.previewItem.status : '';
+    if (st === 'blocked' || st === 'failed') return 'stage-gate stage-gate-bad';
+    if (st === 'awaiting_approval' || st === 'in_review' || st === 'open') return 'stage-gate';
+    return '';
+  },
+  // Kanban card strip: the same six steps from the status alone (cards
+  // carry no runs). Blocked items get no strip; their badge says blocked
+  // and the preview shows where.
+  cardStage(item: InboxItem): { key: string; label: string; dots: { key: string; cls: string }[] }[] {
+    const pos: Record<string, [number, string, string]> = {
+      queued: [1, 'run', 'plan'], planning: [1, 'run', 'plan'], awaiting_approval: [2, 'you', 'plan approval: your turn'],
+      approved: [3, 'run', 'implement'], implementing: [3, 'run', 'implement or review'], in_review: [5, 'you', 'your sign-off'],
+    };
+    const p = pos[item.status];
+    if (!p) return [];
+    const dots = [0, 1, 2, 3, 4, 5].map((i: number) => ({ key: item.id + '|' + i + '|' + item.status, cls: i < p[0] ? 'stage-dot stage-dot-done' : i === p[0] ? 'stage-dot stage-dot-' + p[1] : 'stage-dot' }));
+    return [{ key: item.id + '|' + item.status, label: p[2], dots }];
+  },
+
   // Refresh the open modal after an action — the note input is KEPT (only
   // openInboxPreview resets it), so an approve-with-notes flow survives.
   async reloadPreview() {
@@ -1157,6 +1456,7 @@ const appState = () => ({
     this.$nextTick(() => {
       document.querySelectorAll('[data-md-preview]').forEach((el) => { el.innerHTML = html; });
     });
+    this.syncPreviewSections();
     this.fetchPreviewRuns(id);
     this.fetchPreviewRevision();
   },

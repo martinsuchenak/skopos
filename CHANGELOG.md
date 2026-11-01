@@ -6,6 +6,22 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Stage tracker in the item preview.** It lists the six pipeline steps
+  (Queued, Plan, Plan approval, Implement, Agent review, Your sign-off), each
+  with a state mark and one line of evidence: who did it, the plan revision,
+  the pushed commit, each reviewer's verdict and nits. The step waiting for
+  you holds the buttons, under a short list of what you're approving. When a
+  workspace has no review stage, the Agent review step says so instead of
+  looking passed, and sign-off warns that no agent reviewed the commit.
+- **Second opinions are listed under your sign-off** with runner, commit and
+  verdict ("older commit" when they don't cover the current head). The
+  button explains why it's disabled when that runner already checked this
+  commit.
+- **Six-dot pipeline strip on board cards**, so items waiting for you stand
+  out without opening them.
+
 ### Fixed
 
 - **The item preview stopped updating live at `in_review`.** Second opinion
@@ -22,9 +38,12 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- **Mark done shows the commit it approves**, read-only: "Approving commit
-  3f2a1bc, the branch head the review checked", with the button reading
-  "Mark done (approve 3f2a1bc)". It follows a new push live.
+- **Mark done shows the commit it approves**: the button reads "Mark done
+  (approve 3f2a1bc)", and the line under it says a later push needs a new
+  sign-off. It follows a new push live.
+- **The item description and run history fold away.** The description
+  starts folded once the plan is approved, and the run history always starts
+  folded; the tracker summarises both.
 - **Request changes at `in_review` in the dashboard**: the notes field there
   now sends the branch back to implementation (Slack `changes:` and the CLI
   already could).
