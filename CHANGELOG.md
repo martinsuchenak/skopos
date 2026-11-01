@@ -4,6 +4,27 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.18.5] — 2026-11-01
+
+### Fixed
+
+- **The retention cleanup no longer stalls the server.** Every 10 minutes it
+  deleted old status events with a full scan of the events table, holding
+  SQLite's write lock throughout. Every write waited, and readers then ran
+  out of connections, so dashboard actions took 20 seconds or more. The events
+  table is now indexed by time, and old events are deleted in batches of
+  1,000, so other writes get through between batches. A cleanup run over a
+  second is logged as a `slow cleanup` warning.
+- **Other queries on tables that grow with agent activity use indexes.** A
+  scan of every query plan found three more full scans:
+  - the health check's minute-by-minute orphan sweep, which runs under the
+    write lock (it now reads only live sessions);
+  - listing or deleting a workspace's sessions;
+  - the active-agents list.
+
+  The first start after upgrading builds the new indexes once, which takes a
+  moment on a large database.
+
 ## [0.18.4] — 2026-11-01
 
 ### Fixed
