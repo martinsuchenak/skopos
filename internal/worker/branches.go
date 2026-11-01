@@ -20,14 +20,34 @@ type branchRecord struct {
 	WorkspaceID string `json:"workspace_id"`
 	Branch      string `json:"branch"`
 	Worktree    string `json:"worktree"`
-	Pushed      bool   `json:"pushed"`
-	PRNumber    int    `json:"pr_number,omitempty"`
-	PRURL       string `json:"pr_url,omitempty"`
+	// Pushed: the latest round pushed everything on the branch. Reset at
+	// the start of every round, so commits a round never pushed are never
+	// deleted with the local branch.
+	Pushed   bool   `json:"pushed"`
+	PRNumber int    `json:"pr_number,omitempty"`
+	PRURL    string `json:"pr_url,omitempty"`
+	// When the sweep first saw the item discarded, or missing (404), in
+	// Unix ms; 0 = not seen. Both reset if the item comes back.
+	DiscardedSeenMS int64 `json:"discarded_seen_ms,omitempty"`
+	MissingSeenMS   int64 `json:"missing_seen_ms,omitempty"`
 }
 
-// sweepEvery spaces the idle-time cleanup: it costs one item lookup per
-// record, and nothing is urgent about removing a finished worktree.
-const sweepEvery = 5 * time.Minute
+const (
+	// sweepEvery spaces the idle-time cleanup: it costs one item lookup
+	// per record, and nothing is urgent about removing a finished worktree.
+	sweepEvery = 5 * time.Minute
+	// sweepBudget bounds one sweep, so a slow forge or server never keeps
+	// the worker from claiming work for long.
+	sweepBudget = 2 * time.Minute
+	// discardGrace: a rejected item can be restored (the undo for an
+	// accidental discard), so its pull request and branch outlive the
+	// Reject by a day.
+	discardGrace = 24 * time.Hour
+	// missingGrace: skopos answers 404 both for a deleted item and for one
+	// outside the worker key's scope, so a 404 never closes anything. After
+	// a week of 404s the worktree goes; the branch and pull request stay.
+	missingGrace = 7 * 24 * time.Hour
+)
 
 var reRecordID = regexp.MustCompile(`^[0-9a-fA-F-]{8,64}$`)
 
@@ -64,33 +84,37 @@ func (w *Worker) dropBranch(itemID string) {
 }
 
 // maybeSweep runs sweepBranches at most every sweepEvery (called on idle
-// polls, so it never delays a run).
+// polls, so it never delays a run), within sweepBudget.
 func (w *Worker) maybeSweep(ctx context.Context) {
 	if time.Since(w.lastSweep) < sweepEvery {
 		return
 	}
 	w.lastSweep = time.Now()
-	w.sweepBranches(ctx)
+	ctx, cancel := context.WithTimeout(ctx, sweepBudget)
+	defer cancel()
+	w.sweepBranches(ctx, time.Now())
 }
 
 // sweepBranches cleans up after finished items:
-//   - discarded (rejected) or deleted: close the item's pull request,
-//     unmerged;
-//   - done or discarded or deleted: remove the worktree, and the local
-//     branch when it was pushed (an unpushed branch is the only copy of
-//     the work, so it stays).
+//   - done: remove the worktree, and the local branch when the last round
+//     pushed it (an unpushed branch is the only copy of the work). The pull
+//     request stays: merging it is the approver's step.
+//   - discarded for over discardGrace: close the pull request unmerged,
+//     then clean up as for done.
+//   - missing (404) for over missingGrace: remove the worktree only.
 //
-// Done leaves the pull request alone: merging it is the approver's step.
 // A lookup or close that fails for a transient reason keeps the record for
 // the next sweep.
-func (w *Worker) sweepBranches(ctx context.Context) {
+func (w *Worker) sweepBranches(ctx context.Context, now time.Time) {
 	entries, err := os.ReadDir(w.branchesDir())
 	if err != nil {
 		return
 	}
 	for _, e := range entries {
-		id := strings.TrimSuffix(e.Name(), ".json")
-		rec, ok := w.loadBranch(id)
+		if ctx.Err() != nil {
+			return
+		}
+		rec, ok := w.loadBranch(strings.TrimSuffix(e.Name(), ".json"))
 		if !ok {
 			continue
 		}
@@ -98,21 +122,46 @@ func (w *Worker) sweepBranches(ctx context.Context) {
 		if it, err := w.client.GetItem(ctx, rec.ItemID); err == nil {
 			status = it.Status
 		} else if strings.Contains(err.Error(), ": 404 ") {
-			status = "deleted"
+			status = "missing"
 		} else {
 			continue
 		}
-		if status != "done" && status != "discarded" && status != "deleted" {
+		log := w.log.With("item", rec.ItemID, "branch", rec.Branch, "status", status)
+		// seen marks when a status was first seen, and reports whether it
+		// has lasted past grace.
+		seen := func(at *int64, grace time.Duration) bool {
+			if *at == 0 {
+				*at = now.UnixMilli()
+				w.saveBranch(rec)
+				return false
+			}
+			return now.Sub(time.UnixMilli(*at)) >= grace
+		}
+		switch status {
+		case "done":
+		case "discarded":
+			if !seen(&rec.DiscardedSeenMS, discardGrace) {
+				continue
+			}
+		case "missing":
+			if !seen(&rec.MissingSeenMS, missingGrace) {
+				continue
+			}
+		default:
+			// Live (or restored, or back in scope): forget any marks.
+			if rec.DiscardedSeenMS != 0 || rec.MissingSeenMS != 0 {
+				rec.DiscardedSeenMS, rec.MissingSeenMS = 0, 0
+				w.saveBranch(rec)
+			}
 			continue
 		}
-		log := w.log.With("item", rec.ItemID, "branch", rec.Branch, "status", status)
 		repo := w.cfg.Repos[rec.WorkspaceID]
 		if repo == nil {
 			log.Warn("finished item's repo is no longer configured; forgetting its worktree", "worktree", rec.Worktree)
 			w.dropBranch(rec.ItemID)
 			continue
 		}
-		if status != "done" && rec.PRNumber > 0 {
+		if status == "discarded" && rec.PRNumber > 0 {
 			if err := w.closePullRequest(ctx, repo, rec.PRNumber); err != nil {
 				// Retry an outage (network, 5xx); a 4xx or a push config
 				// that no longer allows pull requests is final.
@@ -128,11 +177,12 @@ func (w *Worker) sweepBranches(ctx context.Context) {
 			}
 		}
 		removeWorktree(ctx, repo.Path, rec.Worktree)
-		if rec.Pushed {
+		deleteBranch := rec.Pushed && status != "missing"
+		if deleteBranch {
 			_, _ = git(ctx, repo.Path, "branch", "-D", rec.Branch)
 		}
 		w.dropBranch(rec.ItemID)
-		log.Info("cleaned up the finished item's worktree", "worktree", rec.Worktree, "local_branch_deleted", rec.Pushed)
+		log.Info("cleaned up the finished item's worktree", "worktree", rec.Worktree, "local_branch_deleted", deleteBranch)
 	}
 }
 

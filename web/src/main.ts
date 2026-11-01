@@ -1371,6 +1371,7 @@ const appState = () => ({
     const check = this.previewRuns.find((r: RunRow) => ['review', 'qa', 'second_opinion'].includes(r.stage)
       && (r.status === 'succeeded' || r.status === 'failed') && Date.parse(r.created_at) >= since
       && (r.head_sha === head || (!!impl.branch && r.branch === impl.branch)));
+    // ' not pushed' is the worker's notPushedMarker (internal/worker/stages.go).
     return !!check && check.status === 'failed' && (check.fail_reason || '').includes(' not pushed');
   },
   // The base the implementation branched from: the run's, else the approved plan's.

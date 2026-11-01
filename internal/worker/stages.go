@@ -251,7 +251,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	}
 	worktree := filepath.Join(w.cfg.StateDir, "worktrees", filepath.Base(repo.Path), strings.ReplaceAll(branch, "/", "-"))
 	if !dirExists(worktree) {
-		if err := createWorktreeAt(ctx, repo.Path, worktree, branch, baseRef); err != nil {
+		if err := prepareImplementWorktree(ctx, repo.Path, worktree, branch, baseRef); err != nil {
 			return fmt.Errorf("worktree: %w", err)
 		}
 		if err := runSetup(ctx, worktree, repo.Setup, repo.Path, repo.SetupEnv, w.cfg.TokenEnvs(), w.envFileKeys, 10*time.Minute); err != nil {
@@ -260,9 +260,10 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		}
 	}
 	// What this item leaves on the worker, for the cleanup sweep. A later
-	// round keeps the pull request the first one opened.
+	// round keeps the pull request the first one opened, but not Pushed:
+	// until this round pushes, its commits exist only here.
 	rec, _ := w.loadBranch(item.ID)
-	rec.ItemID, rec.WorkspaceID, rec.Branch, rec.Worktree = item.ID, run.WorkspaceID, branch, worktree
+	rec.ItemID, rec.WorkspaceID, rec.Branch, rec.Worktree, rec.Pushed = item.ID, run.WorkspaceID, branch, worktree, false
 	w.saveBranch(rec)
 
 	instructions, skillBodies := w.runKnowledge(ctx, repo, run, item.PlanID, baseRef)
@@ -317,14 +318,14 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		rec.Pushed = true
 		// The pull request is a convenience on top of the push: failing to
 		// open one is noted in the summary and never fails the run.
-		if repo.Push.PullRequest != "none" {
-			pr, created, err := w.ensurePullRequest(ctx, repo, token, branch, item, steps, ir.Summary)
+		if repo.Push.PullRequest == "draft" || repo.Push.PullRequest == "ready" {
+			pr, action, err := w.ensurePullRequest(ctx, repo, token, branch, item, steps, ir.Summary)
 			if err != nil {
 				log.Warn("pull request not opened", "err", err)
 				summary += "\n\n(The pull request could not be opened: " + firstLine(err.Error()) + ")"
 			} else {
 				rec.PRNumber, rec.PRURL = pr.Number, pr.URL
-				log.Info("pull request ready", "url", pr.URL, "created", created)
+				log.Info("pull request ready", "url", pr.URL, "action", action)
 			}
 		}
 		w.saveBranch(rec)
@@ -395,6 +396,13 @@ func (rr *reviewResult) normalise() {
 	}
 }
 
+// notPushedMarker is in a review's failure reason when the branch isn't on
+// the remote. The dashboard matches it (unpushed() in web/src/main.ts) to
+// tell, for runs from workers that don't report `pushed`, that a head
+// exists only on the worker; TestNotPushedMarkerMatchesDashboard ties the
+// two together.
+const notPushedMarker = "not pushed"
+
 // stageReview: a second opinion over the pushed branch (the review/QA
 // stages — the account pool makes this a DIFFERENT agent than the
 // implementer). Always reviews a fresh checkout of the pushed branch, never
@@ -430,7 +438,7 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 	wt := filepath.Join(w.cfg.StateDir, "worktrees", filepath.Base(repo.Path), strings.ReplaceAll(run.Branch, "/", "-")+"-"+run.Stage+"-"+shortID(run.ID))
 	removeWorktree(ctx, repo.Path, wt)
 	if _, err := git(ctx, repo.Path, "fetch", "--quiet", "origin", run.Branch); err != nil {
-		return fmt.Errorf("review: branch %s not pushed: %w", run.Branch, err)
+		return fmt.Errorf("review: branch %s "+notPushedMarker+": %w", run.Branch, err)
 	}
 	ref := "origin/" + run.Branch
 	if second {

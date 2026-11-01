@@ -12,14 +12,37 @@ import (
 	"testing"
 )
 
+// configCase is one Config.Default validation: want "" = valid, else a
+// substring of the error.
+type configCase struct {
+	name string
+	cfg  Config
+	want string
+}
+
+func checkConfigCases(t *testing.T, cases []configCase) {
+	t.Helper()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := tc.cfg
+			err := cfg.Default(t.TempDir())
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("want valid, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want error containing %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
 // Fail closed (capability profiles §2): capabilities only on a contained
 // stage; mcp_servers needs mcp_config; unknown stages/profiles are errors.
 func TestProfileValidation(t *testing.T) {
-	cases := []struct {
-		name string
-		cfg  Config
-		want string // "" = valid
-	}{
+	cases := []configCase{
 		{"tools without containment", Config{Profiles: map[string]map[string]*StageProfile{
 			"php": {"implement": {Tools: []string{"Bash(php:*)"}}}}}, "not contained"},
 		{"env without containment", Config{Profiles: map[string]map[string]*StageProfile{
@@ -41,21 +64,7 @@ func TestProfileValidation(t *testing.T) {
 		{"repo stage override fail-closed", Config{Repos: map[string]*Repo{"ws": {Path: "/x", Stages: map[string]*StageProfile{
 			"implement": {Tools: []string{"Bash(go:*)"}}}}}}, "not contained"},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := tc.cfg
-			err := cfg.Default(t.TempDir())
-			if tc.want == "" {
-				if err != nil {
-					t.Fatalf("want valid, got %v", err)
-				}
-				return
-			}
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("want error containing %q, got %v", tc.want, err)
-			}
-		})
-	}
+	checkConfigCases(t, cases)
 }
 
 // Repo stages override the named profile per stage; the executor id is
@@ -378,11 +387,7 @@ func TestPushValidation(t *testing.T) {
 		c.Repos["ws"].Push.PullRequest = mode
 		return c
 	}
-	cases := []struct {
-		name string
-		cfg  Config
-		want string // "" = valid
-	}{
+	cases := []configCase{
 		{"no push block", repo("", "", ""), ""},
 		{"kind missing", repo("", "https://github.com/o/r.git", "GH_TOKEN"), "push.kind is required"},
 		{"unknown kind", repo("GitHub", "https://github.com/o/r.git", "GH_TOKEN"), "not one of"},
@@ -394,19 +399,5 @@ func TestPushValidation(t *testing.T) {
 		{"pull request on an SSH remote", withPR(repo("github", "git@github.com:o/r.git", "GH_TOKEN"), "draft"), "not an http(s) URL"},
 		{"draft pull request", withPR(repo("github", "https://github.com/o/r.git", "GH_TOKEN"), "draft"), ""},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := tc.cfg
-			err := cfg.Default(t.TempDir())
-			if tc.want == "" {
-				if err != nil {
-					t.Fatalf("want valid, got %v", err)
-				}
-				return
-			}
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("want error containing %q, got %v", tc.want, err)
-			}
-		})
-	}
+	checkConfigCases(t, cases)
 }

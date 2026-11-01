@@ -13,12 +13,31 @@ versions follow [Semantic Versioning](https://semver.org/).
   the default branch after it pushes. Change-request rounds reuse it. The
   item preview links it next to View changes, and once the item is done it
   reminds you to merge it. Skopos still never merges.
-- **Cleanup after finished items.** When idle, the worker closes the pull
-  request of a rejected item. It removes the worktree of every finished item,
-  and the local branch too if it was pushed.
+- **Cleanup after finished items.** When idle, the worker tidies up after
+  items it implemented:
+  - Done items lose the worktree at once, and the local branch too if it was
+    pushed.
+  - Rejected items get a day's grace, because Reject can be undone. Then
+    their pull request is closed unmerged, and they are cleaned up like done
+    items.
+  - An item skopos answers 404 for (deleted, or outside the worker key's
+    scope) never has its pull request or branch touched. Only its worktree
+    goes, after a week.
+- **Re-implementation continues the item's branch.** When the worktree is
+  gone, a new round starts from the local branch, or from the one on the
+  remote, instead of the base, so its push stays fast-forward. A closed,
+  unmerged pull request for the branch is reopened instead of a second one
+  being opened.
 
 ### Changed
 
+- **Upgrade note: a worker `push` block now needs `kind`.** A block with
+  `remote_url` or `token_env` but no `kind` used to mean "don't push",
+  silently. The branch then stayed on the worker, and links and reviews
+  failed far from the cause. The worker now refuses to start with such a
+  block, with an unknown `kind`, or with a push that has no `remote_url`. Add
+  `kind = "github"` (or `"gitea"`, or `"none"`) and run `skopos worker check`
+  before restarting the service.
 - **Mark done says it doesn't merge.** The sign-off card now says to merge the
   pull request or branch yourself.
 
@@ -32,10 +51,6 @@ versions follow [Semantic Versioning](https://semver.org/).
   opinion, which can't fetch the branch either. For runs from older
   workers, it reads the same thing from a review that failed to fetch the
   branch.
-- **A push block without `kind` is refused at startup.** It used to mean
-  "don't push" silently, so the branch stayed on the worker and links and
-  reviews failed far from the cause. An unknown `kind`, or a push without
-  `remote_url`, is refused too.
 - **The Second opinion button stands out.** It has a tinted violet fill in
   both themes instead of the plain style that blended into the sign-off
   card. The "again on this head" checkbox and the button now line up with

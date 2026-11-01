@@ -322,13 +322,22 @@ pull_request = "draft"                           # draft | ready | none (default
 - **The worker never merges.** Mark done records your sign-off; merging the
   pull request (or the branch) is yours.
 
-**Cleanup.** When idle, every 5 minutes, the worker looks up the items it
-implemented:
+**Cleanup.** When idle, every 5 minutes (at most 2 minutes per pass), the
+worker looks up the items it implemented:
 
-- **Rejected or deleted:** it closes the item's pull request without merging.
-- **Done, rejected or deleted:** it removes the item's worktree, and the local
-  branch too if it was pushed. An unpushed branch is the only copy of the
-  work, so it stays.
+- **Done:** it removes the item's worktree, and the local branch too if the
+  last round pushed it. An unpushed branch is the only copy of the work, so
+  it stays. The pull request stays for you to merge.
+- **Rejected:** after a day, because Reject can be undone, it closes the pull
+  request without merging and cleans up as for done.
+- **Not found:** skopos answers 404 both for a deleted item and for one
+  outside the worker key's scope, so the worker never closes that item's pull
+  request or deletes its branch. After a week, it removes the worktree.
+
+A new round for an item whose worktree is gone, such as a rejected item that
+was restored, continues the item's branch. It uses the local branch, or the
+one on the remote, so the push stays fast-forward. A pull request closed
+without merging is reopened rather than duplicated.
 
 Records for this live in `<state_dir>/branches/`. Worktrees left from before
 this release have no record, so remove them by hand (`git worktree list` in

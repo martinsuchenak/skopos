@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,7 +31,10 @@ type PullRequest struct {
 	Number int    `json:"number"`
 	URL    string `json:"html_url"`
 	State  string `json:"state"`
-	Head   struct {
+	// Merged: GitHub reports merged_at, Gitea a merged flag.
+	MergedAt *string `json:"merged_at"`
+	Merged   bool    `json:"merged"`
+	Head     struct {
 		Ref string `json:"ref"`
 	} `json:"head"`
 	Base struct {
@@ -72,14 +76,32 @@ func newPRClient(kind, remoteURL, token string) (*prClient, error) {
 	return c, nil
 }
 
-// Ensure returns the open pull request from head into base, opening one
-// when there is none. Change-request rounds push to the same branch, so
-// they find and reuse the PR the first round opened. Gitea has no draft
-// flag in its API; a draft there is a "WIP: " title, which Gitea treats
-// as work in progress.
-func (c *prClient) Ensure(ctx context.Context, head, base, title, body string, draft bool) (*PullRequest, bool, error) {
-	if pr, err := c.find(ctx, head, base); err != nil || pr != nil {
-		return pr, false, err
+// Ensure returns the item's pull request from head into base, and what it
+// did: "reused" an open one, "reopened" one that was closed without being
+// merged (an approver closed it, or the cleanup after a Reject that was
+// then undone), or "opened" a new one. Change-request rounds push to the
+// same branch, so they land on the PR the first round opened. Gitea has no
+// draft flag in its API; a draft there is a "WIP: " title, which Gitea
+// treats as work in progress.
+func (c *prClient) Ensure(ctx context.Context, head, base, title, body string, draft bool) (*PullRequest, string, error) {
+	pr, err := c.find(ctx, head, base)
+	if err != nil {
+		return nil, "", err
+	}
+	if pr != nil && pr.State == "open" {
+		return pr, "reused", nil
+	}
+	if pr != nil && !pr.Merged && pr.MergedAt == nil {
+		var out PullRequest
+		if err := c.call(ctx, http.MethodPatch, fmt.Sprintf("%s/pulls/%d", c.repoPath(), pr.Number), map[string]any{"state": "open"}, &out); err == nil {
+			if out.Number == 0 {
+				out = *pr
+				out.State = "open"
+			}
+			return &out, "reopened", nil
+		}
+		// Not reopenable (the forge refuses, e.g. the branch was rewritten):
+		// open a new one.
 	}
 	in := map[string]any{"title": title, "head": head, "base": base, "body": body}
 	if c.kind == "github" {
@@ -87,11 +109,11 @@ func (c *prClient) Ensure(ctx context.Context, head, base, title, body string, d
 	} else if draft {
 		in["title"] = "WIP: " + title
 	}
-	var pr PullRequest
-	if err := c.call(ctx, http.MethodPost, c.repoPath()+"/pulls", in, &pr); err != nil {
-		return nil, false, err
+	var created PullRequest
+	if err := c.call(ctx, http.MethodPost, c.repoPath()+"/pulls", in, &created); err != nil {
+		return nil, "", err
 	}
-	return &pr, true, nil
+	return &created, "opened", nil
 }
 
 // Close closes a pull request without merging it.
@@ -99,14 +121,24 @@ func (c *prClient) Close(ctx context.Context, number int) error {
 	return c.call(ctx, http.MethodPatch, fmt.Sprintf("%s/pulls/%d", c.repoPath(), number), map[string]any{"state": "closed"}, nil)
 }
 
+// find returns the newest pull request from head into base in any state,
+// or nil. GitHub filters the list by head and base; Gitea looks the pair
+// up directly (GET /pulls/{base}/{head}), so a busy repo's first page of
+// open PRs never hides it.
 func (c *prClient) find(ctx context.Context, head, base string) (*PullRequest, error) {
-	q := url.Values{"state": {"open"}}
-	if c.kind == "github" {
-		q.Set("head", c.owner+":"+head)
-		q.Set("base", base)
-	} else {
-		q.Set("limit", "50")
+	if c.kind == "gitea" {
+		var pr PullRequest
+		err := c.call(ctx, http.MethodGet, c.repoPath()+"/pulls/"+url.PathEscape(base)+"/"+head, nil, &pr)
+		var pe *prError
+		if errors.As(err, &pe) && pe.Status == http.StatusNotFound {
+			return nil, nil
+		}
+		if err != nil || pr.Number == 0 {
+			return nil, err
+		}
+		return &pr, nil
 	}
+	q := url.Values{"state": {"all"}, "head": {c.owner + ":" + head}, "base": {base}, "sort": {"created"}, "direction": {"desc"}, "per_page": {"20"}}
 	var prs []PullRequest
 	if err := c.call(ctx, http.MethodGet, c.repoPath()+"/pulls?"+q.Encode(), nil, &prs); err != nil {
 		return nil, err
@@ -178,10 +210,10 @@ func (c *prClient) call(ctx context.Context, method, path string, in, out any) e
 // ensurePullRequest opens (or finds) the item's pull request into the
 // default branch: the item title, then the implementer's summary, the
 // approved plan's steps and where the sign-off happens.
-func (w *Worker) ensurePullRequest(ctx context.Context, repo *Repo, token, branch string, item *Item, steps []Step, summary string) (*PullRequest, bool, error) {
+func (w *Worker) ensurePullRequest(ctx context.Context, repo *Repo, token, branch string, item *Item, steps []Step, summary string) (*PullRequest, string, error) {
 	c, err := newPRClient(repo.Push.Kind, repo.Push.RemoteURL, token)
 	if err != nil {
-		return nil, false, err
+		return nil, "", err
 	}
 	var b strings.Builder
 	if s := strings.TrimSpace(summary); s != "" {

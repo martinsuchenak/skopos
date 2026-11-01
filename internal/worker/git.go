@@ -74,6 +74,34 @@ func createWorktreeAt(ctx context.Context, clone, worktree, branch, ref string) 
 	return err
 }
 
+// prepareImplementWorktree cuts the implementation worktree. An earlier
+// round's branch wins over the base, so a re-implementation continues the
+// branch its pull request shows and pushes fast-forward (never force): a
+// restored item whose worktree the cleanup removed, or a wiped state dir.
+// First the local branch, then the one pushed to origin, else a new branch
+// from the approved base.
+func prepareImplementWorktree(ctx context.Context, clone, worktree, branch, base string) error {
+	if !reBranch.MatchString(branch) {
+		return fmt.Errorf("refusing branch name %q", branch)
+	}
+	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
+		return err
+	}
+	// A worktree directory removed by hand stays registered and would
+	// block checking its branch out again.
+	_, _ = git(ctx, clone, "worktree", "prune")
+	if _, err := git(ctx, clone, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
+		_, err := git(ctx, clone, "worktree", "add", "--quiet", worktree, branch)
+		return err
+	}
+	if _, err := git(ctx, clone, "fetch", "--quiet", "origin", "refs/heads/"+branch); err == nil {
+		if sha, err := git(ctx, clone, "rev-parse", "--verify", "FETCH_HEAD^{commit}"); err == nil {
+			return createWorktreeAt(ctx, clone, worktree, branch, sha)
+		}
+	}
+	return createWorktreeAt(ctx, clone, worktree, branch, base)
+}
+
 // createDetached checks out a ref without creating a branch (review stage).
 func createDetached(ctx context.Context, clone, worktree, ref string) error {
 	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
