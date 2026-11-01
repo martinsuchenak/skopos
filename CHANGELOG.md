@@ -4,6 +4,24 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.18.4] — 2026-11-01
+
+### Fixed
+
+- **A lost claim response no longer stalls a run for 10 minutes.** When the
+  server recorded a claim but the worker timed out waiting for the reply, the
+  run sat claimed under a lease the worker never got, and its item stayed at
+  "approved", until the lease expired. A worker only polls when idle, so it
+  now gets such a run back on its next poll. The same goes for a worker
+  restarted mid-run. The item's move into its new phase no longer depends on
+  the worker still waiting for the response.
+
+### Added
+
+- **Slow requests are logged.** Any request over a second is logged as a
+  warning with the database connection pool's state, to tell an exhausted
+  pool from SQLite write-lock waits. See [Log levels](docs/configuration.md#log-levels).
+
 ## [0.18.3] — 2026-11-01
 
 ### Added
