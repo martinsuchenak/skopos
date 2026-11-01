@@ -2,6 +2,12 @@
 
 [x-cloak] { display: none !important; }
 
+/* Control heights (see .btn): desktop, then touch screens. */
+:root { --ctl-md: 2.25rem; --ctl-sm: 2rem; --ctl-xs: 1.75rem; }
+@media (pointer: coarse) { :root { --ctl-md: 2.75rem; --ctl-sm: 2.5rem; --ctl-xs: 2.25rem; } }
+
+body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
 /* Everything clickable shows a pointer cursor */
 @layer base {
   button:not(:disabled):not([disabled]),
@@ -28,37 +34,70 @@ body.modal-open { overflow: hidden; }
 .skip-link:focus { top: 0.5rem; }
 
 @layer components {
-  /* Buttons — consistent shape, 44px min target (WCAG 2.5.5/2.5.8) */
+  /* ---- Controls: one height scale ----
+     md 36px (default buttons, form fields), sm 32px (toolbars, dialog
+     actions), xs 28px (row and card actions). On touch screens every step
+     grows to 44/40/36px, so targets stay comfortable where fingers are the
+     pointer (WCAG 2.5.8 everywhere, 2.5.5 on touch). Buttons and fields of
+     the same step line up exactly: same height, radius and text size. */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-md border border-zinc-500 px-4 py-2 text-sm font-medium text-zinc-200 transition cursor-pointer;
-    @apply hover:border-zinc-500 hover:text-white;
-    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500;
-    @apply disabled:opacity-50 disabled:cursor-not-allowed;
-    min-height: 44px;
+    @apply inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-zinc-700 bg-zinc-800/60 px-3.5 text-sm font-medium text-zinc-100 shadow-sm transition-colors cursor-pointer select-none;
+    @apply hover:border-zinc-600 hover:bg-zinc-800;
+    @apply focus:outline-none;
+    @apply disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none;
+    min-height: var(--ctl-md);
+    line-height: 1.25rem;
   }
-  /* Button fills meet 4.5:1 with white text in every state
-     (cyan-700 5.3:1, cyan-800 7.3:1, rose-700 6.3:1, rose-800 8.9:1). */
-  .btn-primary { @apply border-transparent bg-cyan-700 text-white hover:bg-cyan-800; }
-  .btn-danger  { @apply border-transparent bg-rose-700 text-white hover:bg-rose-800; }
-  .btn-ghost   { @apply border-transparent text-zinc-300 hover:bg-zinc-800 hover:text-white; }
-  .btn-sm      { @apply px-3 py-1.5 text-xs; min-height: 36px; }
+  .btn-sm { @apply px-3 text-[13px]; min-height: var(--ctl-sm); }
+  .btn-xs { @apply gap-1 rounded-md px-2.5 text-xs; min-height: var(--ctl-xs); }
+  /* Square icon button at the size it is combined with. */
+  .btn-icon { @apply px-0; min-width: var(--ctl-md); }
+  .btn-sm.btn-icon { min-width: var(--ctl-sm); }
+  .btn-xs.btn-icon { min-width: var(--ctl-xs); }
+  /* Filled buttons meet 4.5:1 with white text in every state (cyan-700
+     5.3:1, rose-700 6.3:1, emerald-700 5.5:1; the hover shades darker). */
+  .btn-primary { @apply border-transparent bg-cyan-700 text-white hover:border-transparent hover:bg-cyan-800; }
+  .btn-danger  { @apply border-transparent bg-rose-700 text-white hover:border-transparent hover:bg-rose-800; }
+  .btn-success { @apply border-transparent bg-emerald-700 text-white hover:border-transparent hover:bg-emerald-800; }
+  .btn-ghost   { @apply border-transparent bg-transparent text-zinc-300 shadow-none hover:border-transparent hover:bg-zinc-800 hover:text-white; }
+  /* Tone variants: the action's meaning in its text colour (approve, warn,
+     destructive, navigate, plan) with a matching tint on hover. Combine with
+     btn-ghost or the bordered default. */
+  .btn-ok     { @apply text-emerald-300 hover:bg-emerald-500/10 hover:text-emerald-200; }
+  .btn-warn   { @apply text-orange-300 hover:bg-orange-500/10 hover:text-orange-200; }
+  .btn-bad    { @apply text-rose-300 hover:bg-rose-500/10 hover:text-rose-200; }
+  .btn-info   { @apply text-sky-300 hover:bg-sky-500/10 hover:text-sky-200; }
+  .btn-accent { @apply text-violet-300 hover:bg-violet-500/10 hover:text-violet-200; }
+  /* Toggle buttons (filters, layout): the pressed one is tinted. */
+  .btn[aria-pressed="true"] { @apply border-cyan-500/60 bg-cyan-500/10 text-cyan-200; }
+  .btn[aria-pressed="false"] { @apply text-zinc-400; }
+  /* Segmented control: adjoining toggles in one frame. */
+  .seg { @apply inline-flex items-center gap-0.5 rounded-lg border border-zinc-700 bg-zinc-900 p-0.5; }
+  .seg > .btn { @apply border-transparent bg-transparent shadow-none; min-height: calc(var(--ctl-sm) - 0.375rem); }
+  .seg > .btn[aria-pressed="true"] { @apply border-transparent bg-zinc-700 text-white; }
 
-  /* Form fields — WCAG-compliant focus + 44px target */
+  /* Form fields: the md step, flush (no margin) so a field and a button in
+     one row align; a label above takes its own spacing (.lbl). */
   .fld {
-    @apply mt-1 w-full rounded-md border border-zinc-500 bg-zinc-900 px-3 py-2 text-sm text-zinc-100;
+    @apply block w-full rounded-lg border border-zinc-500 bg-zinc-900 px-3 text-sm text-zinc-100 shadow-sm transition-colors;
     @apply placeholder:text-zinc-400;
-    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 focus-visible:border-cyan-500;
-    min-height: 44px;
+    @apply focus:outline-none focus-visible:border-cyan-500 focus-visible:ring-2 focus-visible:ring-cyan-500/40;
+    min-height: var(--ctl-md);
+    padding-block: calc((var(--ctl-md) - 1.25rem - 2px) / 2);
+    line-height: 1.25rem;
   }
+  textarea.fld { padding-block: 0.5rem; }
   .fld[aria-invalid="true"] {
-    @apply border-rose-500 focus-visible:ring-rose-500;
+    @apply border-rose-500 focus-visible:ring-rose-500/40;
   }
-  .lbl { @apply block text-sm font-medium text-zinc-300; }
-  /* Compact select for inline toolbar controls */
+  .lbl { @apply mb-1.5 block text-sm font-medium text-zinc-300; }
+  /* Compact field for toolbars (the sm step, next to btn-sm). */
   .fld-sm {
-    @apply rounded-md border border-zinc-500 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-100 placeholder:text-zinc-400;
-    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500;
-    min-height: 36px;
+    @apply rounded-lg border border-zinc-500 bg-zinc-900 px-2.5 text-[13px] text-zinc-100 shadow-sm placeholder:text-zinc-400;
+    @apply focus:outline-none focus-visible:border-cyan-500 focus-visible:ring-2 focus-visible:ring-cyan-500/40;
+    min-height: var(--ctl-sm);
+    padding-block: calc((var(--ctl-sm) - 1.25rem - 2px) / 2);
+    line-height: 1.25rem;
   }
   /* Custom chevron for selects (replaces the OS arrow that looks off on dark) */
   select.fld,
@@ -66,18 +105,35 @@ body.modal-open { overflow: hidden; }
     appearance: none;
     -webkit-appearance: none;
     -moz-appearance: none;
-    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2371717a'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23a1a1aa'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 0.5rem center;
-    background-size: 1.1rem 1.1rem;
+    background-size: 1rem 1rem;
     padding-right: 2rem;
-    line-height: 1.5;
   }
 
-  .card { @apply rounded-lg border border-zinc-700 bg-zinc-900; }
-  .badge { @apply inline-flex items-center rounded px-2 py-0.5 text-xs font-medium; }
-  /* Small inline chip (counts, ids, step labels) — a quieter badge. */
-  .chip { @apply inline-flex items-center rounded px-1.5 py-0.5 text-[11px]; }
+  .card { @apply rounded-xl border border-zinc-800 bg-zinc-900; }
+  /* Badges and chips: one height each, so rows of them line up. A badge
+     that truncates becomes an inline block so the ellipsis shows (a flex
+     box clips its text without one). */
+  .badge { @apply inline-flex h-5 items-center gap-1 whitespace-nowrap rounded-md px-1.5 text-[11px] font-medium leading-none; }
+  .chip { @apply inline-flex h-[1.125rem] items-center whitespace-nowrap rounded-md px-1.5 text-[11px] leading-none; }
+  .badge.truncate, .chip.truncate { display: inline-block; vertical-align: middle; }
+  .badge.truncate { line-height: 1.25rem; }
+  .chip.truncate { line-height: 1.125rem; }
+
+  /* Disclosure menu (row "More" actions): a native <details>, closed by a
+     click elsewhere or Escape (main.ts). Plain buttons inside, no menu
+     role, so it reads as a disclosure with its actions. */
+  .menu { @apply relative; }
+  .menu > summary { list-style: none; }
+  .menu > summary::-webkit-details-marker { display: none; }
+  .menu-panel { @apply absolute right-0 top-full z-30 mt-1 flex min-w-40 flex-col gap-0.5 rounded-xl border border-zinc-700 bg-zinc-900 p-1 shadow-xl; }
+  .menu-item { @apply flex w-full items-center rounded-md px-2.5 text-left text-[13px] text-zinc-200 hover:bg-zinc-800 hover:text-white focus:outline-none cursor-pointer; min-height: var(--ctl-sm); }
+  .menu-item.btn-bad { @apply text-rose-300 hover:bg-rose-500/10; }
+  .menu-item.btn-ok { @apply text-emerald-300 hover:bg-emerald-500/10; }
+  .menu-item.btn-accent { @apply text-violet-300 hover:bg-violet-500/10; }
+  .menu-sep { @apply my-0.5 border-t border-zinc-800; }
 
   /* Empty / loading placeholder for a list or panel. */
   .empty-state { @apply rounded-lg border border-zinc-700 bg-zinc-900 p-6 text-sm text-zinc-400; }
@@ -91,14 +147,15 @@ body.modal-open { overflow: hidden; }
      both edges unreachably (WCAG 1.4.10). flex + items-center would clip
      the top. */
   .modal { @apply fixed inset-0 z-50 flex overflow-y-auto overscroll-contain p-4; }
-  .modal-backdrop { @apply fixed inset-0 bg-black/60; }
-  .modal-panel { @apply relative m-auto w-full p-6 shadow-2xl; }
+  .modal-backdrop { @apply fixed inset-0 bg-black/60 backdrop-blur-[2px]; }
+  .modal-panel { @apply relative m-auto w-full rounded-2xl p-6 shadow-2xl; }
   .modal-title { @apply mb-4 pr-10 text-lg font-semibold; }
   .modal-x {
-    @apply absolute right-3 top-3 inline-flex items-center justify-center rounded-full p-2 text-zinc-400 hover:text-zinc-100;
-    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500;
+    @apply absolute right-3 top-3 inline-flex items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100;
+    @apply focus:outline-none;
+    width: var(--ctl-md); height: var(--ctl-md);
   }
-  .modal-actions { @apply mt-6 flex flex-wrap justify-end gap-3; }
+  .modal-actions { @apply mt-6 flex flex-wrap items-center justify-end gap-2; }
 
   /* Scrollable checkbox list inside a form (templates/partials.html "checklist"). */
   .checklist { @apply space-y-1 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-950 p-2; }
@@ -107,13 +164,13 @@ body.modal-open { overflow: hidden; }
 
   /* Sidebar nav items */
   .nav-item {
-    @apply flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-zinc-400 transition cursor-pointer;
-    @apply hover:bg-zinc-800 hover:text-zinc-100;
-    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500;
-    min-height: 44px;
+    @apply flex w-full items-center gap-3 rounded-lg px-3 text-sm font-medium text-zinc-400 transition-colors cursor-pointer;
+    @apply hover:bg-zinc-800/70 hover:text-zinc-100;
+    @apply focus:outline-none;
+    min-height: var(--ctl-md);
   }
   .nav-item[aria-current="page"] {
-    @apply bg-cyan-600/15 text-cyan-300;
+    @apply bg-cyan-500/10 text-cyan-200;
   }
 }
 
@@ -227,13 +284,17 @@ details[open] > .fold-summary .fold-caret { transform: rotate(90deg); }
 /* Visible focus indicators — WCAG 2.4.7 / 2.4.11 (AA) */
 a:focus-visible,
 button:focus-visible,
+summary:focus-visible,
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible,
 [role="button"]:focus-visible,
 [role="tab"]:focus-visible,
 [tabindex]:focus-visible {
-  outline: 2px solid rgb(6 182 212);       /* cyan-500 */
+  outline: 2px solid rgb(6 182 212);       /* cyan-500: 3:1+ on both themes' surfaces */
   outline-offset: 2px;
-  border-radius: 0.25rem;
 }
+/* Inside a menu or segmented control the offset ring would leave the frame. */
+.menu-item:focus-visible, .seg > .btn:focus-visible { outline-offset: -2px; }
 /* inputs/selects/textarea handled via .fld focus-visible ring */
 
 /* Reduced motion — WCAG 2.3.3 */
@@ -265,8 +326,8 @@ html.light { color-scheme: light; }
 .light .border-zinc-700 { border-color: #d4d4d8; }
 
 /* component classes bake in dark colors via @apply; re-skin them for light */
-.light .card { background-color: #ffffff; border-color: #d4d4d8; }
-.light .fld { background-color: #f4f4f5; border-color: #71717a; color: #18181b; }
+.light .card { background-color: #ffffff; border-color: #e4e4e7; box-shadow: 0 1px 2px rgb(0 0 0 / 0.04); }
+.light .fld { background-color: #ffffff; border-color: #71717a; color: #18181b; }
 .light .fld-sm { background-color: #ffffff; border-color: #71717a; color: #18181b; }
 .light .fld::placeholder { color: #52525b; }
 .light .fld-sm::placeholder { color: #52525b; }
@@ -274,14 +335,41 @@ html.light { color-scheme: light; }
 /* Recess inputs slightly from the card surface in dark too */
 .dark .fld { background-color: #09090b; }
 .light .lbl { color: #52525b; }
-.light .btn { border-color: #71717a; color: #18181b; }
-/* Filled buttons keep WHITE text: the .light .btn color above out-ranks
-   .btn-primary's own (0,2,0 vs 0,1,0) and would drop cyan-700 text to
-   dark-on-cyan at 3.3:1. */
-.light .btn-primary, .light .btn-danger { color: #ffffff; }
-.light .btn:hover { background-color: #f4f4f5; }
-.light .btn-ghost { color: #52525b; }
+.light .btn { background-color: #ffffff; border-color: #d4d4d8; color: #18181b; box-shadow: 0 1px 2px rgb(0 0 0 / 0.05); }
+.light .btn:hover { background-color: #f4f4f5; border-color: #a1a1aa; }
+/* Filled buttons keep WHITE text and their fill: .light .btn above
+   out-ranks the variants' own rules (0,2,0 vs 0,1,0). */
+.light .btn-primary { background-color: #0e7490; border-color: transparent; color: #ffffff; }
+.light .btn-primary:hover { background-color: #155e75; }
+.light .btn-danger { background-color: #be123c; border-color: transparent; color: #ffffff; }
+.light .btn-danger:hover { background-color: #9f1239; }
+.light .btn-success { background-color: #047857; border-color: transparent; color: #ffffff; }
+.light .btn-success:hover { background-color: #065f46; }
+.light .btn-ghost { background-color: transparent; border-color: transparent; box-shadow: none; color: #3f3f46; }
 .light .btn-ghost:hover { background-color: #f4f4f5; color: #18181b; }
+.light .btn-ok { color: #047857; }
+.light .btn-warn { color: #9a3412; }
+.light .btn-bad { color: #be123c; }
+.light .btn-info { color: #0369a1; }
+.light .btn-accent { color: #6d28d9; }
+.light .btn-ok:hover { background-color: #ecfdf5; }
+.light .btn-warn:hover { background-color: #fff7ed; }
+.light .btn-bad:hover { background-color: #fff1f2; }
+.light .btn-info:hover { background-color: #f0f9ff; }
+.light .btn-accent:hover { background-color: #f5f3ff; }
+.light .btn[aria-pressed="true"] { background-color: #ecfeff; border-color: #0891b2; color: #155e75; }
+.light .btn[aria-pressed="false"] { color: #52525b; }
+.light .seg { background-color: #f4f4f5; border-color: #d4d4d8; }
+.light .seg > .btn { background-color: transparent; border-color: transparent; box-shadow: none; }
+.light .seg > .btn[aria-pressed="true"] { background-color: #ffffff; color: #18181b; box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); }
+.light .menu-panel { background-color: #ffffff; border-color: #d4d4d8; }
+.light .menu-item { color: #18181b; }
+.light .menu-item:hover { background-color: #f4f4f5; }
+.light .menu-item.btn-bad { color: #be123c; }
+.light .menu-item.btn-ok { color: #047857; }
+.light .menu-item.btn-accent { color: #6d28d9; }
+.light .menu-sep { border-color: #e4e4e7; }
+.light .modal-x:hover { background-color: #f4f4f5; }
 .light .nav-item { color: #52525b; }
 .light .nav-item:hover { background-color: #f4f4f5; color: #18181b; }
 .light .nav-item[aria-current="page"] { background-color: rgba(6, 182, 212, 0.15); color: #155e75; }
@@ -324,6 +412,8 @@ html.light { color-scheme: light; }
 .cm-host { border: 1px solid #27272a; border-radius: 0.5rem; overflow: hidden; background: #09090b; }
 .light .cm-host { border-color: #d4d4d8; background: #ffffff; }
 .cm-host .cm-editor { max-height: 32rem; }
+/* Room to write: an empty editor reads as a text area, not a single line. */
+.cm-host .cm-scroller { min-height: 8rem; }
 /* Focus ring on the HOST (it owns the border-radius): an outline on the
    inner .cm-editor is rectangular and gets clipped by the host's rounded
    overflow:hidden, leaving corner gaps. box-shadow rings follow the radius,

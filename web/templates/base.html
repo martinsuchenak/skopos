@@ -69,7 +69,7 @@
     <div class="md:ml-64">
         <!-- Header -->
         <header class="sticky top-0 z-20 flex h-16 items-center gap-2 sm:gap-3 border-b border-zinc-800 bg-zinc-950/95 px-4 backdrop-blur">
-            <button type="button" id="nav-toggle" @click="toggleSidebar()" class="btn btn-ghost p-2 md:hidden" aria-label="Menu" aria-controls="main-nav" :aria-expanded="sidebarOpen ? 'true' : 'false'">
+            <button type="button" id="nav-toggle" @click="toggleSidebar()" class="btn btn-ghost btn-icon md:hidden" aria-label="Menu" aria-controls="main-nav" :aria-expanded="sidebarOpen ? 'true' : 'false'">
                 <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
             </button>
             <!-- The page heading: here from sm up; on phones the header has no
@@ -88,7 +88,7 @@
                     <span class="truncate" x-text="activeWorkspace ? workspaceLabel(activeWorkspace) : 'All workspaces'"></span>
                     <svg class="ml-auto h-3.5 w-3.5 shrink-0 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                 </button>
-                <button type="button" x-show="whoamiIsRoot()" x-cloak @click="openNewWorkspaceModal(true)" class="btn btn-sm shrink-0 !min-h-8 sm:!min-h-6 !px-2" aria-label="New workspace" title="New workspace">
+                <button type="button" x-show="whoamiIsRoot()" x-cloak @click="openNewWorkspaceModal(true)" class="btn btn-sm shrink-0" aria-label="New workspace" title="New workspace">
                     <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                     <span class="hidden lg:inline">New</span>
                 </button>
@@ -157,7 +157,7 @@
                             <!-- Visibility driven imperatively by syncSessionPurge:
                                  a new x-show on a static element never re-runs in the
                                  CSP build. Purge-everything is root-only server-side. -->
-                            <button type="button" data-session-purge style="display: none" @click="requestSessionPurge()" class="btn btn-sm btn-ghost text-rose-400" title="Bulk-delete sessions — their events, agent states, and session-scoped blackboard entries go with them">Delete all…</button>
+                            <button type="button" data-session-purge style="display: none" @click="requestSessionPurge()" class="btn btn-sm btn-ghost btn-bad" title="Bulk-delete sessions — their events, agent states, and session-scoped blackboard entries go with them">Delete all…</button>
                         </div>
                     </div>
                     <p x-show="!loading && sessions.length === 0" class="empty-state">No reports yet.</p>
@@ -168,7 +168,7 @@
                                     <button type="button" @click="selectSession(session.id)" class="min-w-0 flex-1 rounded text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" :aria-current="selectedSessionId === session.id ? 'true' : null">
                                         <div class="flex items-center justify-between gap-3">
                                             <span class="truncate text-sm font-medium" x-text="session.title"></span>
-                                            <span class="badge shrink-0" :class="toneOf('status', session.status)" x-text="session.status"></span>
+                                            <span class="badge shrink-0" :class="toneOf('status', session.status)" x-text="statusText(session.status)"></span>
                                         </div>
                                         <div class="mt-2 flex items-center justify-between gap-2 text-xs text-zinc-500">
                                             <span class="truncate" x-text="workspaceLabel(session.workspace)"></span>
@@ -179,7 +179,7 @@
                                             <span class="shrink-0" x-text="'ran ' + sessionDuration(session)"></span>
                                         </div>
                                     </button>
-                                    <button type="button" @click.stop="requestDelete('session', session.id, session.title)" class="btn btn-sm btn-ghost shrink-0 self-start text-rose-400" :aria-label="'Delete session ' + session.title">Delete</button>
+                                    <button type="button" @click.stop="requestDelete('session', session.id, session.title)" class="btn btn-sm btn-ghost shrink-0 self-start btn-bad" :aria-label="'Delete session ' + session.title">Delete</button>
                                 </div>
                             </li>
                         </template>
@@ -211,7 +211,7 @@
                                                 <h3 class="truncate text-sm font-semibold" x-text="agent.agent_id"></h3>
                                                 <p class="text-xs text-zinc-500" x-text="agent.agent_type"></p>
                                             </div>
-                                            <span class="badge" :class="toneOf('status', agent.status)" x-text="agent.status"></span>
+                                            <span class="badge" :class="toneOf('status', agent.status)" x-text="statusText(agent.status)"></span>
                                         </div>
                                         <div class="mt-4 h-2 overflow-hidden rounded bg-zinc-800" role="progressbar" :aria-valuenow="agent.progress || 0" aria-valuemin="0" aria-valuemax="100" :aria-label="'Progress for ' + agent.agent_id">
                                             <div class="h-full bg-cyan-400 transition-all" :style="'width: ' + (agent.progress || 0) + '%'"></div>
@@ -289,7 +289,7 @@
                                 <h3 class="text-sm font-semibold" :class="group.colorClass" x-text="group.label"></h3>
                                 <!-- Purge needs an explicit workspace; re-created
                                      groups (key above) re-evaluate this on switch. -->
-                                <button x-show="!!activeWorkspace" type="button" @click="requestEntryPurge(group.type, group.label)" class="btn btn-sm btn-ghost text-rose-400" :title="entryPurgeTitle(group)" :aria-label="entryPurgeTitle(group)">Delete all</button>
+                                <button x-show="!!activeWorkspace" type="button" @click="requestEntryPurge(group.type, group.label)" class="btn btn-sm btn-ghost btn-bad" :title="entryPurgeTitle(group)" :aria-label="entryPurgeTitle(group)">Delete all</button>
                             </div>
                             <ul class="space-y-2">
                                 <template x-for="entry in group.items" :key="entry.id">
@@ -304,7 +304,7 @@
                                             <div class="flex items-center gap-1">
                                                 <span class="text-xs text-zinc-600" x-text="formatTime(entry.created_at)"></span>
                                                 <button x-show="entry.scope !== 'project'" type="button" @click.stop="promoteEntry(entry.id)" class="btn btn-sm btn-ghost" :aria-label="'Promote entry ' + entry.title + ' to a wider scope'">Promote</button>
-                                                <button type="button" @click.stop="requestDelete('entry', entry.id, entry.title)" class="btn btn-sm btn-ghost text-rose-400" :aria-label="'Delete entry ' + entry.title">Delete</button>
+                                                <button type="button" @click.stop="requestDelete('entry', entry.id, entry.title)" class="btn btn-sm btn-ghost btn-bad" :aria-label="'Delete entry ' + entry.title">Delete</button>
                                             </div>
                                         </div>
                                         <p class="mt-2 text-sm font-medium text-zinc-100" x-text="entry.title"></p>
@@ -346,7 +346,7 @@
                                 <button type="button" @click="togglePlan(plan)" class="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 rounded">
                                     <div class="flex flex-wrap items-center gap-2">
                                         <span class="font-medium text-zinc-100" x-text="plan.name"></span>
-                                        <span class="badge" :class="toneOf('status', plan.status)" x-text="plan.status"></span>
+                                        <span class="badge" :class="toneOf('status', plan.status)" x-text="statusText(plan.status)"></span>
                                         <span x-show="plan.branch_name" class="badge tone-accent" x-text="plan.branch_name"></span>
                                         <span x-show="!plan.branch_name" class="badge tone-secondary">project</span>
                                         {{template "ws-badge" (dict "V" "plan" "Missing" "no workspace")}}
@@ -356,7 +356,7 @@
                                 </button>
                                 <div class="flex flex-wrap items-center gap-1">
                                     <button type="button" x-show="plan.status !== 'archived'" @click.stop="archivePlan(plan.id)" class="btn btn-sm btn-ghost" :aria-label="'Archive plan ' + plan.name">Archive</button>
-                                    <button type="button" @click.stop="requestDelete('plan', plan.id, plan.name)" class="btn btn-sm btn-ghost text-rose-400" :aria-label="'Delete plan ' + plan.name">Delete</button>
+                                    <button type="button" @click.stop="requestDelete('plan', plan.id, plan.name)" class="btn btn-sm btn-ghost btn-bad" :aria-label="'Delete plan ' + plan.name">Delete</button>
                                 </div>
                             </div>
 
@@ -371,7 +371,7 @@
                                                     <li class="flex flex-wrap items-start gap-2 rounded-md border border-zinc-800 bg-zinc-950 p-3">
                                                         <div class="flex w-32 shrink-0 items-center gap-2">
                                                             <span class="chip tone-muted font-mono" x-text="'#' + item.position"></span>
-                                                            <span class="badge" :class="toneOf('status', item.status)" x-text="item.status"></span>
+                                                            <span class="badge" :class="toneOf('status', item.status)" x-text="statusText(item.status)"></span>
                                                         </div>
                                                         <div class="min-w-0 flex-1">
                                                             <p class="text-sm text-zinc-200" x-text="item.title"></p>
@@ -398,7 +398,7 @@
                                                                 </select>
                                                             </div>
                                                         </div>
-                                                        <button type="button" @click.stop="requestDelete('item', plan.id + '|' + item.id, item.title)" class="btn btn-sm btn-ghost self-start text-rose-400" :aria-label="'Delete item ' + item.title">Delete</button>
+                                                        <button type="button" @click.stop="requestDelete('item', plan.id + '|' + item.id, item.title)" class="btn btn-sm btn-ghost self-start btn-bad" :aria-label="'Delete item ' + item.title">Delete</button>
                                                     </li>
                                                 </template>
                                             </ul>
@@ -417,17 +417,17 @@
             <!-- ===================== INBOX ===================== -->
             <section x-show="activeView === 'inbox'" x-cloak>
                 <div class="mb-6 flex flex-wrap items-center gap-3">
-                    <div class="flex items-center gap-1 rounded-md border border-zinc-700 bg-zinc-900 p-1" role="group" aria-label="Inbox layout">
-                        <button type="button" @click="setInboxLayout('list')" :aria-pressed="inboxLayout === 'list' ? 'true' : 'false'" class="btn btn-sm !min-h-8 sm:!min-h-6 px-2 py-1" :class="inboxLayout === 'list' ? 'border-cyan-500 text-cyan-300' : 'border-transparent text-zinc-400'" aria-label="List layout" title="List layout">
+                    <div class="seg" role="group" aria-label="Inbox layout">
+                        <button type="button" @click="setInboxLayout('list')" :aria-pressed="inboxLayout === 'list' ? 'true' : 'false'" class="btn btn-sm btn-icon" aria-label="List layout" title="List layout">
                             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
                         </button>
-                        <button type="button" @click="setInboxLayout('lanes')" :aria-pressed="inboxLayout === 'lanes' ? 'true' : 'false'" class="btn btn-sm !min-h-8 sm:!min-h-6 px-2 py-1" :class="inboxLayout === 'lanes' ? 'border-cyan-500 text-cyan-300' : 'border-transparent text-zinc-400'" aria-label="Board layout (swimlanes)" title="Board layout (swimlanes)">
+                        <button type="button" @click="setInboxLayout('lanes')" :aria-pressed="inboxLayout === 'lanes' ? 'true' : 'false'" class="btn btn-sm btn-icon" aria-label="Board layout (swimlanes)" title="Board layout (swimlanes)">
                             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 4v16m6-16v16M4 4h16M4 20h16"/></svg>
                         </button>
                     </div>
-                    <div x-show="inboxLayout === 'list'" class="flex flex-wrap items-center gap-1" role="group" aria-label="Filter by status">
+                    <div x-show="inboxLayout === 'list'" class="seg flex-wrap" role="group" aria-label="Filter by status">
                         <template x-for="chip in inboxStatusChips()" :key="chip.key || 'all'">
-                            <button type="button" @click="setInboxStatus(chip.key)" :aria-pressed="inboxStatus === chip.key ? 'true' : 'false'" class="btn btn-sm" :class="inboxStatus === chip.key ? 'border-cyan-500 text-cyan-300' : 'border-zinc-700 text-zinc-400'" x-text="chip.label"></button>
+                            <button type="button" @click="setInboxStatus(chip.key)" :aria-pressed="inboxStatus === chip.key ? 'true' : 'false'" class="btn btn-sm" x-text="chip.label"></button>
                         </template>
                     </div>
                     <!-- Top-of-page search + tag filter: item-level tag chips
@@ -478,7 +478,7 @@
                                 <span class="flex items-center gap-1">
                                     <span x-show="lane.key === 'converted'" class="text-[10px] text-zinc-600" title="Conversion links a plan (Convert on a card)">auto</span>
                                     <span x-show="lane.key === 'done'" class="text-[10px] text-zinc-600" title="Linked plans flip their items here on completion; drag a card here to mark it done manually; drag it back to Open to reopen">auto</span>
-                                    <button x-show="!!activeWorkspace" type="button" @click="requestInboxPurge(lane.key, lane.label)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-1.5 !py-0 text-[10px] text-rose-400" :title="'Permanently delete every ' + lane.label.toLowerCase() + ' item in ' + activeWorkspace" :aria-label="'Delete every ' + lane.label.toLowerCase() + ' item in ' + activeWorkspace">Delete all</button>
+                                    <button x-show="!!activeWorkspace" type="button" @click="requestInboxPurge(lane.key, lane.label)" class="btn btn-xs btn-ghost btn-bad" :title="'Permanently delete every ' + lane.label.toLowerCase() + ' item in ' + activeWorkspace" :aria-label="'Delete every ' + lane.label.toLowerCase() + ' item in ' + activeWorkspace">Delete all</button>
                                 </span>
                             </div>
                             <!-- Drop handlers live on a CHILD of the x-for root: the
@@ -511,11 +511,11 @@
                                                     </div>
                                                 </template>
                                                 <div class="mt-1 flex flex-wrap items-center gap-1">
-                                                    <button type="button" @click.stop="openInboxPreview(item)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Preview item ' + item.title">View</button>
-                                                    <button type="button" x-show="workflowQuickAction(item)" x-text="workflowQuickAction(item)" @click.stop="runQuickWorkflowAction(item)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs text-sky-300" :aria-label="'Workflow action for item ' + item.title"></button>
-                                                    <button type="button" x-show="item.status === 'discarded'" @click.stop="restoreInboxItem(item.id)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs">Restore</button>
-                                                    <button type="button" x-show="item.status === 'done'" @click.stop="reopenInboxItem(item.id)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Reopen item ' + item.title + ' back to open'">Reopen</button>
-                                                    <button type="button" x-show="inboxContentEditable(item)" @click.stop="openInboxEditModal(item)" class="btn btn-sm btn-ghost !min-h-8 sm:!min-h-6 !px-2 !py-0.5 text-xs" :aria-label="'Edit item ' + item.title">Edit</button>
+                                                    <button type="button" @click.stop="openInboxPreview(item)" class="btn btn-xs btn-ghost" :aria-label="'Preview item ' + item.title">View</button>
+                                                    <button type="button" x-show="workflowQuickAction(item)" x-text="workflowQuickAction(item)" @click.stop="runQuickWorkflowAction(item)" class="btn btn-xs btn-ghost btn-info" :aria-label="'Workflow action for item ' + item.title"></button>
+                                                    <button type="button" x-show="item.status === 'discarded'" @click.stop="restoreInboxItem(item.id)" class="btn btn-xs btn-ghost">Restore</button>
+                                                    <button type="button" x-show="item.status === 'done'" @click.stop="reopenInboxItem(item.id)" class="btn btn-xs btn-ghost" :aria-label="'Reopen item ' + item.title + ' back to open'">Reopen</button>
+                                                    <button type="button" x-show="inboxContentEditable(item)" @click.stop="openInboxEditModal(item)" class="btn btn-xs btn-ghost" :aria-label="'Edit item ' + item.title">Edit</button>
                                                 </div>
                                             </div>
                                             <!-- Locked meta layout: context badges (workspace/
@@ -525,7 +525,7 @@
                                             <div class="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-zinc-500">
                                                 <!-- The workflow lane holds every pipeline status;
                                                      the badge tells blocked from awaiting approval. -->
-                                                <span x-show="isWorkflowStatus(item.status)" class="badge" :class="toneOf('status', item.status)" x-text="item.status"></span>
+                                                <span x-show="isWorkflowStatus(item.status)" class="badge" :class="toneOf('status', item.status)" x-text="statusText(item.status)"></span>
                                                 {{template "ws-badge" (dict "V" "item" "Missing" "unfiled")}}
                                                 <span x-show="item.agents" class="badge tone-accent" x-text="agentsLabel(item.agents)" :title="agentsTitle(item.agents)"></span>
                                                 <span x-show="item.claimed_by_agent_id" class="truncate max-w-28" x-text="item.claimed_by_agent_id"></span>
@@ -540,7 +540,7 @@
                                                  could not search. Frozen items can't be re-filed,
                                                  so the button hides for them. -->
                                             <div class="mt-2" x-show="!item.workspace_id && inboxItemEditable(item)">
-                                                <button type="button" @click.stop="openFileModal(item)" class="btn btn-sm !min-h-8 w-full justify-start text-xs" :aria-label="'File item ' + item.title + ' into a workspace'">File into workspace…</button>
+                                                <button type="button" @click.stop="openFileModal(item)" class="btn btn-xs w-full justify-start" :aria-label="'File item ' + item.title + ' into a workspace'">File into workspace…</button>
                                             </div>
                                         </div>
                                     </li>
@@ -576,7 +576,7 @@
                                     <div class="flex flex-wrap items-center gap-2">
                                         <span x-show="item.priority != null" class="chip tone-warn font-mono" x-text="'#' + item.priority" :aria-label="'Rank ' + item.priority"></span>
                                         <span class="font-medium text-zinc-100" x-text="item.title"></span>
-                                        <span class="badge" :class="toneOf('status', item.status)" x-text="item.status"></span>
+                                        <span class="badge" :class="toneOf('status', item.status)" x-text="statusText(item.status)"></span>
                                         <span x-show="item.claimed_by_agent_id" class="badge tone-neutral" x-text="'claimed: ' + item.claimed_by_agent_id"></span>
                                         {{template "ws-badge" (dict "V" "item" "Missing" "unfiled")}}
                                         <span x-show="item.agents" class="badge tone-accent" x-text="agentsLabel(item.agents)" :title="agentsTitle(item.agents)"></span>
@@ -599,18 +599,26 @@
                                     <!-- Rank without dragging (WCAG 2.5.7): the board's drag-to-rank, one step at a time. -->
                                     <button type="button" x-show="item.priority != null && inboxSort === 'priority' && inboxCanRank(item)" :disabled="item.priority === 1" @click.stop="moveInboxItem(item.id, -1)" class="btn btn-sm btn-ghost" :aria-label="'Move item ' + item.title + ' up'" title="Move up">↑</button>
                                     <button type="button" x-show="item.priority != null && inboxSort === 'priority' && inboxCanRank(item)" @click.stop="moveInboxItem(item.id, 1)" class="btn btn-sm btn-ghost" :aria-label="'Move item ' + item.title + ' down'" title="Move down">↓</button>
-                                    <button type="button" x-show="inboxCanRank(item)" @click.stop="item.priority != null ? inboxSetPriority(item.id, 0) : pinInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="item.priority != null ? 'Unpin item ' + item.title : 'Pin item ' + item.title + ' to top'" x-text="item.priority != null ? 'Unpin' : 'Pin'"></button>
-                                    <button type="button" x-show="inboxContentEditable(item)" @click.stop="openInboxEditModal(item)" class="btn btn-sm btn-ghost" :aria-label="'Edit item ' + item.title">Edit</button>
+                                    <button type="button" @click.stop="openInboxPreview(item)" class="btn btn-sm btn-ghost" :aria-label="'Preview item ' + item.title">View</button>
+                                    <button type="button" x-show="workflowQuickAction(item)" x-text="workflowQuickAction(item)" @click.stop="runQuickWorkflowAction(item)" class="btn btn-sm btn-ghost btn-info" :aria-label="'Workflow action for item ' + item.title"></button>
                                     <button type="button" x-show="item.status === 'discarded'" @click.stop="restoreInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Restore item ' + item.title + ' to open'">Restore</button>
                                     <button type="button" x-show="item.status === 'done'" @click.stop="reopenInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Reopen item ' + item.title + ' back to open'">Reopen</button>
-                                    <button type="button" x-show="item.status === 'open'" @click.stop="claimInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Claim item ' + item.title">Claim</button>
-                                    <button type="button" x-show="item.status === 'in_progress'" @click.stop="releaseInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Release item ' + item.title">Release</button>
-                                    <button type="button" x-show="!isWorkflowStatus(item.status) && item.status !== 'done' && item.status !== 'discarded'" @click.stop="completeInboxItem(item.id)" class="btn btn-sm btn-ghost text-emerald-300" :aria-label="'Mark item ' + item.title + ' done'">Done</button>
-                                    <button type="button" @click.stop="openInboxPreview(item)" class="btn btn-sm btn-ghost" :aria-label="'Preview item ' + item.title">View</button>
-                                    <button type="button" x-show="workflowQuickAction(item)" x-text="workflowQuickAction(item)" @click.stop="runQuickWorkflowAction(item)" class="btn btn-sm btn-ghost text-sky-300" :aria-label="'Workflow action for item ' + item.title"></button>
-                                    <button type="button" x-show="item.workspace_id && (item.status === 'open' || item.status === 'in_progress')" @click.stop="convertInboxItem(item)" class="btn btn-sm btn-ghost text-violet-300" :aria-label="'Convert item ' + item.title + ' to a plan'">Convert</button>
-                                    <button type="button" x-show="!isWorkflowStatus(item.status) && item.status !== 'done' && item.status !== 'discarded'" @click.stop="discardInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Discard item ' + item.title">Discard</button>
-                                    <button type="button" @click.stop="requestDelete('inboxitem', item.id, item.title)" class="btn btn-sm btn-ghost text-rose-400" :aria-label="'Delete item ' + item.title">Delete</button>
+                                    <button type="button" x-show="inboxContentEditable(item)" @click.stop="openInboxEditModal(item)" class="btn btn-sm btn-ghost" :aria-label="'Edit item ' + item.title">Edit</button>
+                                    <!-- The rest of the row's actions in a disclosure (keeps the row calm;
+                                         every action stays one click away, keyboard reachable). -->
+                                    <details class="menu">
+                                        <summary class="btn btn-sm btn-ghost" :aria-label="'More actions for item ' + item.title">More<svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg></summary>
+                                        <div class="menu-panel">
+                                            <button type="button" x-show="inboxCanRank(item)" @click.stop="item.priority != null ? inboxSetPriority(item.id, 0) : pinInboxItem(item.id)" class="menu-item" :aria-label="item.priority != null ? 'Unpin item ' + item.title : 'Pin item ' + item.title + ' to top'" x-text="item.priority != null ? 'Unpin' : 'Pin'"></button>
+                                            <button type="button" x-show="item.status === 'open'" @click.stop="claimInboxItem(item.id)" class="menu-item" :aria-label="'Claim item ' + item.title">Claim</button>
+                                            <button type="button" x-show="item.status === 'in_progress'" @click.stop="releaseInboxItem(item.id)" class="menu-item" :aria-label="'Release item ' + item.title">Release</button>
+                                            <button type="button" x-show="!isWorkflowStatus(item.status) && item.status !== 'done' && item.status !== 'discarded'" @click.stop="completeInboxItem(item.id)" class="menu-item btn-ok" :aria-label="'Mark item ' + item.title + ' done'">Done</button>
+                                            <button type="button" x-show="item.workspace_id && (item.status === 'open' || item.status === 'in_progress')" @click.stop="convertInboxItem(item)" class="menu-item btn-accent" :aria-label="'Convert item ' + item.title + ' to a plan'">Convert</button>
+                                            <button type="button" x-show="!isWorkflowStatus(item.status) && item.status !== 'done' && item.status !== 'discarded'" @click.stop="discardInboxItem(item.id)" class="menu-item" :aria-label="'Discard item ' + item.title">Discard</button>
+                                            <div class="menu-sep" aria-hidden="true"></div>
+                                            <button type="button" @click.stop="requestDelete('inboxitem', item.id, item.title)" class="menu-item btn-bad" :aria-label="'Delete item ' + item.title">Delete</button>
+                                        </div>
+                                    </details>
                                 </div>
                             </div>
 
@@ -726,8 +734,8 @@
                             </div>
                             <div class="flex flex-wrap items-center gap-1">
                                 <button type="button" x-show="!k.revoked_at" @click="openEditKeyModal(k)" class="btn btn-sm btn-ghost" :aria-label="'Edit key ' + k.name">Edit</button>
-                                <button type="button" x-show="!k.revoked_at" @click="revokeKey(k)" class="btn btn-sm btn-ghost text-rose-400" :aria-label="'Revoke key ' + k.name">Revoke</button>
-                                <button type="button" x-show="k.revoked_at" @click="deleteKey(k)" class="btn btn-sm btn-ghost text-rose-400" :aria-label="'Delete key ' + k.name">Delete</button>
+                                <button type="button" x-show="!k.revoked_at" @click="revokeKey(k)" class="btn btn-sm btn-ghost btn-bad" :aria-label="'Revoke key ' + k.name">Revoke</button>
+                                <button type="button" x-show="k.revoked_at" @click="deleteKey(k)" class="btn btn-sm btn-ghost btn-bad" :aria-label="'Delete key ' + k.name">Delete</button>
                             </div>
                         </li>
                     </template>
@@ -926,7 +934,7 @@
                     <input id="ws-git" type="text" x-model="wsForm.git_url" class="fld" autocomplete="off" />
                 </div>
                 <div>
-                    <span class="lbl mb-1" id="ws-groups-lbl">Group allocation</span>
+                    <span class="lbl" id="ws-groups-lbl">Group allocation</span>
                     {{template "checklist" (dict "LabelID" "ws-groups-lbl" "For" "g in groups" "Key" "g.id" "Value" "g.name" "Text" "g.name" "Path" "wsForm.groups" "Empty" "groups.length === 0" "EmptyText" "No groups yet — create one under Groups first.")}}
                     <p id="ws-groups-err" x-show="wsErrors.groups" class="field-error" x-text="wsErrors.groups"></p>
                 </div>
@@ -952,7 +960,7 @@
                     <input id="group-desc" type="text" x-model="groupForm.description" class="fld" autocomplete="off" />
                 </div>
                 <div>
-                    <span class="lbl mb-1" id="group-members-lbl">Member workspaces</span>
+                    <span class="lbl" id="group-members-lbl">Member workspaces</span>
                     {{template "checklist" (dict "LabelID" "group-members-lbl" "For" "ws in registeredWorkspaces" "Key" "ws.id" "Value" "ws.id" "Text" "ws.name || ws.id" "Path" "groupForm.members" "Empty" "registeredWorkspaces.length === 0" "EmptyText" "No workspaces registered yet.")}}
                 </div>
                 <div>
@@ -982,7 +990,7 @@
                                 <template x-for="sp in stageSummary()" :key="sp.key">
                                     <span class="badge font-medium" :class="sp.tone" x-text="sp.text"></span>
                                 </template>
-                                <span class="badge" :class="toneOf('status', previewItem.status)" x-text="previewItem.status"></span>
+                                <span class="badge" :class="toneOf('status', previewItem.status)" x-text="statusText(previewItem.status)"></span>
                                 <template x-for="c in previewCost()" :key="c.key">
                                     <span class="badge tone-muted font-mono" title="What the agent runs on this item cost" x-text="c.text"></span>
                                 </template>
@@ -1029,11 +1037,11 @@
                         <!-- Labeled, multi-line: retry answers and change
                              requests carry real sentences, and the input was a
                              single xs-height line with only a placeholder. -->
-                        <div class="flex min-w-56 flex-1 flex-col gap-1" x-show="workflowShowInput()">
+                        <div class="flex w-full flex-col gap-1" x-show="workflowShowInput()">
                             <label for="workflow-note" class="text-[11px] font-medium text-zinc-400" x-text="workflowNoteLabel()"></label>
                             <textarea id="workflow-note" x-model="workflowNote" rows="3" class="fld w-full resize-y text-sm" :placeholder="workflowNotePlaceholder()" :aria-label="workflowNoteLabel()"></textarea>
                         </div>
-                        <button type="button" x-show="workflowShowQueue()" @click.stop="queueInboxItem(previewItem.id)" :disabled="!workflowActionReady('queue')" class="btn btn-sm text-sky-300" :aria-label="'Queue item ' + previewItem.title">Queue</button>
+                        <button type="button" x-show="workflowShowQueue()" @click.stop="queueInboxItem(previewItem.id)" :disabled="!workflowActionReady('queue')" class="btn btn-sm btn-primary" :aria-label="'Queue item ' + previewItem.title">Queue</button>
                         <!-- What Approve binds: the plan revision, or one card per
                              candidate of a multi-agent plan round (numbered as in
                              Slack and the CLI). A keyed x-for: it re-renders when
@@ -1044,8 +1052,8 @@
                                     <span class="text-sm font-medium" x-text="c.title"></span>
                                     <span class="text-[11px] text-zinc-400" x-text="c.meta"></span>
                                     <span class="ml-auto flex flex-wrap gap-2">
-                                        <button type="button" @click.stop="approveTarget(c.id)" :disabled="!workflowActionReady('approve')" class="btn btn-sm text-emerald-300" :aria-label="'Approve ' + c.title">Approve</button>
-                                        <button type="button" x-show="c.candidate" @click.stop="reviseCandidate(c.id)" :disabled="!workflowActionReady('request_changes')" class="btn btn-sm btn-ghost text-orange-300" :aria-label="'Revise ' + c.title + ' with the notes'">Revise</button>
+                                        <button type="button" @click.stop="approveTarget(c.id)" :disabled="!workflowActionReady('approve')" class="btn btn-sm btn-success" :aria-label="'Approve ' + c.title">Approve</button>
+                                        <button type="button" x-show="c.candidate" @click.stop="reviseCandidate(c.id)" :disabled="!workflowActionReady('request_changes')" class="btn btn-sm btn-ghost btn-warn" :aria-label="'Revise ' + c.title + ' with the notes'">Revise</button>
                                     </span>
                                 </div>
                                 <ol x-show="c.steps.length > 0" class="mt-2 list-decimal space-y-0.5 pl-5 text-xs text-zinc-300">
@@ -1055,10 +1063,10 @@
                                 </ol>
                             </div>
                         </template>
-                        <button type="button" x-show="workflowShowApprove()" @click.stop="requestChangesInboxItem(previewItem.id)" :disabled="!workflowActionReady('request_changes')" class="btn btn-sm btn-ghost text-orange-300" :aria-label="requestChangesLabel() + ' for item ' + previewItem.title" x-text="requestChangesLabel()"></button>
-                        <button type="button" x-show="workflowShowRetry()" @click.stop="retryInboxItem(previewItem.id)" :disabled="!workflowActionReady('retry')" class="btn btn-sm text-sky-300" :aria-label="'Retry item ' + previewItem.title">Retry</button>
-                        <button type="button" x-show="workflowShowReviewChanges()" @click.stop="requestChangesInboxItem(previewItem.id)" :disabled="!workflowActionReady('request_changes')" class="btn btn-sm btn-ghost text-orange-300" :aria-label="'Request changes on the branch of item ' + previewItem.title">Request changes</button>
-                        <button type="button" x-show="workflowShowMarkDone()" @click.stop="markDoneInboxItem(previewItem.id)" :disabled="!workflowActionReady('mark_done')" class="btn btn-sm text-emerald-300" :aria-label="'Mark item ' + previewItem.title + ' done, approving its head commit'" x-text="markDoneLabel()"></button>
+                        <button type="button" x-show="workflowShowApprove()" @click.stop="requestChangesInboxItem(previewItem.id)" :disabled="!workflowActionReady('request_changes')" class="btn btn-sm btn-ghost btn-warn" :aria-label="requestChangesLabel() + ' for item ' + previewItem.title" x-text="requestChangesLabel()"></button>
+                        <button type="button" x-show="workflowShowRetry()" @click.stop="retryInboxItem(previewItem.id)" :disabled="!workflowActionReady('retry')" class="btn btn-sm btn-primary" :aria-label="'Retry item ' + previewItem.title">Retry</button>
+                        <button type="button" x-show="workflowShowReviewChanges()" @click.stop="requestChangesInboxItem(previewItem.id)" :disabled="!workflowActionReady('request_changes')" class="btn btn-sm btn-ghost btn-warn" :aria-label="'Request changes on the branch of item ' + previewItem.title">Request changes</button>
+                        <button type="button" x-show="workflowShowMarkDone()" @click.stop="markDoneInboxItem(previewItem.id)" :disabled="!workflowActionReady('mark_done')" class="btn btn-sm btn-success" :aria-label="'Mark item ' + previewItem.title + ' done, approving its head commit'" x-text="markDoneLabel()"></button>
                         <!-- What Mark done records (keyed x-for, CSP build). -->
                         <template x-for="h in reviewHeadRow()" :key="h.key">
                             <p class="w-full text-xs text-zinc-400" x-text="h.text"></p>
@@ -1092,7 +1100,7 @@
                         <datalist id="so-runners">
                             <template x-for="r in secondOpinion.runners" :key="'so|' + r"><option :value="r"></option></template>
                         </datalist>
-                        <button type="button" x-show="workflowShowReject()" @click.stop="rejectInboxItem(previewItem.id)" :disabled="!workflowActionReady('reject')" class="btn btn-sm btn-ghost text-rose-300" :aria-label="'Reject item ' + previewItem.title">Reject</button>
+                        <button type="button" x-show="workflowShowReject()" @click.stop="rejectInboxItem(previewItem.id)" :disabled="!workflowActionReady('reject')" class="btn btn-sm btn-ghost btn-bad" :aria-label="'Reject item ' + previewItem.title">Reject</button>
                     </div>
                     <ol class="stage-track stage-track-tail" aria-label="Pipeline stages not reached yet">
                         <template x-for="s in stageTrackTail()" :key="s.key">{{template "stage-row"}}</template>
@@ -1109,15 +1117,15 @@
                     <details class="mt-3 rounded-lg border border-zinc-800" :open="previewRunsOpen" @toggle="onPreviewRunsToggle($event)">
                         <summary class="fold-summary flex cursor-pointer items-center justify-between px-3 py-1.5">
                             <span class="text-[11px] font-semibold uppercase tracking-wide text-zinc-500"><span class="fold-caret" aria-hidden="true">&#9656;</span> <span x-text="'Run history (' + previewRuns.length + ')'"></span></span>
-                            <button type="button" @click.stop.prevent="refreshPreviewRuns()" class="btn btn-ghost btn-sm !min-h-6 !px-2 !py-0 text-xs" :disabled="previewRunsLoading" aria-label="Refresh runs">&#8635;</button>
+                            <button type="button" @click.stop.prevent="refreshPreviewRuns()" class="btn btn-ghost btn-xs" :disabled="previewRunsLoading" aria-label="Refresh runs">&#8635;</button>
                         </summary>
                         <div class="max-h-72 overflow-y-auto border-t border-zinc-800">
                             <p x-show="previewRunsLoading && previewRuns.length === 0" class="px-3 py-2 text-xs text-zinc-500">Loading&hellip;</p>
                             <p x-show="!previewRunsLoading && previewRuns.length === 0" class="px-3 py-2 text-xs text-zinc-500">No runs yet &mdash; queue the item to start the pipeline.</p>
                             <template x-for="run in previewRuns" :key="run.id + '|' + run.status + '|' + run.updated_at">
                                 <div class="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-zinc-800/60 px-3 py-1.5 text-[11px] last:border-b-0">
-                                    <span class="badge" :class="toneOf('stage', run.stage)" x-text="run.stage"></span>
-                                    <span class="badge" :class="toneOf('status', run.status)" x-text="run.status"></span>
+                                    <span class="badge" :class="toneOf('stage', run.stage)" x-text="statusText(run.stage)"></span>
+                                    <span class="badge" :class="toneOf('status', run.status)" x-text="statusText(run.status)"></span>
                                     <span x-show="run.focus" class="chip tone-accent" :title="run.group_id ? 'One of several agents on this stage — focus brief .skopos/focus/' + run.focus + '.md' : 'Focus brief .skopos/focus/' + run.focus + '.md'" x-text="run.focus"></span>
                                     <span x-show="runCost(run)" class="text-zinc-400" title="What this run cost" x-text="runCost(run)"></span>
                                     <span x-show="run.worker_id" class="max-w-32 truncate text-zinc-400" :title="run.worker_id" x-text="run.worker_id"></span>
@@ -1160,7 +1168,7 @@
                 <label class="lbl" for="api-key-input">API key</label>
                 <input id="api-key-input" type="password" x-model="keyDraft" class="fld" placeholder="sk_…" autocomplete="off" autofocus />
                 <div class="modal-actions justify-between">
-                    <button type="button" @click="clearKey()" class="btn btn-ghost text-rose-400">Clear</button>
+                    <button type="button" @click="clearKey()" class="btn btn-ghost btn-bad">Clear</button>
                     <button type="submit" class="btn btn-primary">Save</button>
                 </div>
             </form>
@@ -1182,12 +1190,12 @@
                     All workspaces (current and future)
                 </label>
                 <div x-show="!keyForm.all">
-                    <span class="lbl mb-1" id="apikey-ws-lbl">Workspaces</span>
+                    <span class="lbl" id="apikey-ws-lbl">Workspaces</span>
                     {{template "checklist" (dict "LabelID" "apikey-ws-lbl" "For" "o in workspaceOptions()" "Key" "o.id" "Value" "o.id" "Text" "o.label" "Path" "keyForm.workspaces" "Max" "max-h-44")}}
                     <p id="key-workspaces-err" x-show="keyErrors.workspaces" class="field-error" role="alert" x-text="keyErrors.workspaces"></p>
                 </div>
                 <div x-show="!keyForm.all">
-                    <span class="lbl mb-1" id="apikey-groups-lbl">Groups</span>
+                    <span class="lbl" id="apikey-groups-lbl">Groups</span>
                     {{template "checklist" (dict "LabelID" "apikey-groups-lbl" "For" "g in groups" "Key" "g.id" "Value" "g.name" "Text" "g.name" "Path" "keyForm.groups" "Empty" "groups.length === 0" "EmptyText" "No groups yet — manage them under Workspaces." "Max" "max-h-32")}}
                     <p class="mt-1 text-xs text-zinc-400">Group members and pattern matches widen the key's scope.</p>
                 </div>

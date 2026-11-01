@@ -239,6 +239,23 @@ const appState = () => ({
   toastsPaused: false,
 
   init() {
+    // Disclosure menus (<details class="menu">): one open at a time, closed
+    // by a click elsewhere, by picking an action inside, or by Escape (focus
+    // returns to its toggle). Capture phase: row actions stop propagation.
+    document.addEventListener('click', (e: MouseEvent) => {
+      const t = e.target as Element;
+      document.querySelectorAll('details.menu[open]').forEach((d) => {
+        if (!d.contains(t) || (t.closest && t.closest('.menu-item'))) d.removeAttribute('open');
+      });
+    }, true);
+    document.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      document.querySelectorAll('details.menu[open]').forEach((d) => {
+        d.removeAttribute('open');
+        const sum = d.querySelector('summary');
+        if (sum && d.contains(document.activeElement)) (sum as HTMLElement).focus();
+      });
+    });
     this.theme = (localStorage.getItem('skopos:theme') as 'dark' | 'light' | 'system') || 'system';
     this.applyTheme();
     if (window.matchMedia) {
@@ -1888,6 +1905,9 @@ const appState = () => ({
   },
   // Workflow statuses (agent-pipeline §1): the aggregate lane owns them, so
   // no item can ever be without a lane — the no-invisibility guarantee.
+  // Status and stage names as words in badges (awaiting_approval →
+  // awaiting approval); the underscores are API values, not labels.
+  statusText(s: string): string { return (s || '').replace(/_/g, ' '); },
   isWorkflowStatus(s: string): boolean {
     return s === 'queued' || s === 'planning' || s === 'awaiting_approval' || s === 'approved' || s === 'implementing' || s === 'in_review' || s === 'failed' || s === 'blocked';
   },

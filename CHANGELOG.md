@@ -53,6 +53,22 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **A consistent, calmer dashboard.** Every button and field now follows
+  one height scale (36/32/28px on desktop, growing to 44/40/36px on touch
+  screens), so controls in a row line up; the per-button size overrides are
+  gone. Actions say what they do by colour variant (approve, warn, destroy,
+  navigate), and the main action of a card is a filled button (Approve,
+  Mark done, Queue, Retry). Filters and the layout switch are segmented
+  controls. Badges truncate with an ellipsis instead of clipping, and status
+  names read as words ("awaiting approval"). Cards, dialogs and menus share
+  one radius and surface style in both themes.
+- **Inbox rows keep three or four actions visible** (View, the workflow
+  action, Edit) and put the rest (Pin, Claim, Done, Convert, Discard,
+  Delete) in a **More** menu that closes on Escape or a click elsewhere.
+- **Accessibility:** focus outlines on every control (links, toggles, menu
+  entries, fold-outs and checkboxes included); text contrast verified at
+  4.5:1 or more across the inbox and item preview in both themes; touch
+  targets at least 36px on touch screens and 24px everywhere.
 - **Mark done shows the commit it approves**: the button reads "Mark done
   (approve 3f2a1bc)", and the line under it says a later push needs a new
   sign-off. It follows a new push live.
