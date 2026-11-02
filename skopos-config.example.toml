@@ -73,6 +73,8 @@ poll_every = "30s"
 # branch_prefix = "agent/"
 # setup = []
 # setup_env = { COMPOSER_AUTH = "${COMPOSER_AUTH}" }   # setup runs with a scrubbed env
+# setup_timeout = "10m"          # all setup commands together (default 10m, at most 2h)
+# checkout = "worktree"          # or "branch": implement in the clone itself, on the item's branch
 # profile = "php"                 # a [worker.profiles.<name>] entry
 # checks = ["task test"]
 # check_fix_rounds = 2           # a failing check goes back to the implementer this often, then the item blocks

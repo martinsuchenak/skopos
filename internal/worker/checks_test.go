@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The CI loop: passing checks need no round; a failure goes back to the
@@ -166,5 +167,23 @@ func TestCheckFixRoundsValidation(t *testing.T) {
 	})
 	if got := (&Repo{}).FixRounds(); got != defaultCheckFixRounds {
 		t.Fatalf("default rounds %d", got)
+	}
+}
+
+func TestSetupTimeoutValidation(t *testing.T) {
+	timeout := func(d time.Duration) Config {
+		return Config{Repos: map[string]*Repo{"ws": {Path: "/x", SetupTimeout: d}}}
+	}
+	checkConfigCases(t, []configCase{
+		{"default", timeout(0), ""},
+		{"longer", timeout(45 * time.Minute), ""},
+		{"negative", timeout(-time.Minute), "setup_timeout -1m0s"},
+		{"too long", timeout(maxSetupTimeout + time.Minute), "is not between 0 and"},
+	})
+	if got := (&Repo{}).SetupDeadline(); got != defaultSetupTimeout {
+		t.Fatalf("default setup timeout %s", got)
+	}
+	if got := (&Repo{SetupTimeout: 45 * time.Minute}).SetupDeadline(); got != 45*time.Minute {
+		t.Fatalf("setup timeout %s", got)
 	}
 }

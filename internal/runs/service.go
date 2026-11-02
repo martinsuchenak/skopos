@@ -316,7 +316,7 @@ func (s *Service) PinGroupBase(ctx context.Context, runID, baseSHA string) (stri
 }
 
 // Heartbeat extends the worker's lease; the first flips claimed -> running.
-// phase ('' = unchanged) says what a running implement run is doing.
+// A non-empty phase says what a running implement run is doing.
 func (s *Service) Heartbeat(ctx context.Context, id, workerID, leaseToken, phase string) error {
 	id = strings.TrimSpace(id)
 	if id == "" || strings.TrimSpace(workerID) == "" {

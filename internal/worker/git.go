@@ -74,32 +74,55 @@ func createWorktreeAt(ctx context.Context, clone, worktree, branch, ref string) 
 	return err
 }
 
-// prepareImplementWorktree cuts the implementation worktree. An earlier
+// implementStart says where an implementation's branch starts. An earlier
 // round's branch wins over the base, so a re-implementation continues the
 // branch its pull request shows and pushes fast-forward (never force): a
-// restored item whose worktree the cleanup removed, or a wiped state dir.
-// First the local branch, then the one pushed to origin, else a new branch
-// from the approved base.
-func prepareImplementWorktree(ctx context.Context, clone, worktree, branch, base string) error {
+// restored item whose worktree the cleanup removed, a wiped state dir, or
+// another worker's round. First the local branch (local), then the one
+// pushed to origin (ref = its commit), else ref = the approved base,
+// fetched when the clone doesn't have it (planned on another worker).
+func implementStart(ctx context.Context, clone, branch, base string) (local bool, ref string, err error) {
 	if !reBranch.MatchString(branch) {
-		return fmt.Errorf("refusing branch name %q", branch)
-	}
-	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
-		return err
+		return false, "", fmt.Errorf("refusing branch name %q", branch)
 	}
 	// A worktree directory removed by hand stays registered and would
 	// block checking its branch out again.
 	_, _ = git(ctx, clone, "worktree", "prune")
 	if _, err := git(ctx, clone, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
-		_, err := git(ctx, clone, "worktree", "add", "--quiet", worktree, branch)
-		return err
+		return true, branch, nil
 	}
-	if _, err := git(ctx, clone, "fetch", "--quiet", "origin", "refs/heads/"+branch); err == nil {
-		if sha, err := git(ctx, clone, "rev-parse", "--verify", "FETCH_HEAD^{commit}"); err == nil {
-			return createWorktreeAt(ctx, clone, worktree, branch, sha)
+	// Into its own ref, not FETCH_HEAD: a fetch by another worker process
+	// sharing the clone would overwrite that between the two commands.
+	remote := "refs/remotes/origin/" + branch
+	if _, err := git(ctx, clone, "fetch", "--quiet", "origin", "+refs/heads/"+branch+":"+remote); err == nil {
+		if sha, err := git(ctx, clone, "rev-parse", "--verify", remote+"^{commit}"); err == nil {
+			return false, sha, nil
 		}
 	}
-	return createWorktreeAt(ctx, clone, worktree, branch, base)
+	if _, err := git(ctx, clone, "cat-file", "-e", base); err != nil {
+		if _, ferr := git(ctx, clone, "fetch", "--quiet", "origin"); ferr != nil {
+			return false, "", fmt.Errorf("base ref %q not found: %w", base, err)
+		}
+	}
+	return false, base, nil
+}
+
+// prepareImplementWorktree cuts the implementation worktree where
+// implementStart says the branch starts.
+func prepareImplementWorktree(ctx context.Context, clone, worktree, branch, base string) error {
+	local, ref, err := implementStart(ctx, clone, branch, base)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
+		return err
+	}
+	if local {
+		_, err = git(ctx, clone, "worktree", "add", "--quiet", worktree, branch)
+	} else {
+		_, err = git(ctx, clone, "worktree", "add", "--quiet", "--no-track", "-b", branch, worktree, ref)
+	}
+	return err
 }
 
 // createDetached checks out a ref without creating a branch (review stage).
@@ -163,8 +186,11 @@ func pushAuthHeader(kind, token string) string {
 	return "Authorization: token " + token
 }
 
+// commitCount and diffStat measure the branch against its approved base
+// (a commit), not the clone's origin/<default>, which lags on a worker that
+// didn't plan the item.
 func commitCount(ctx context.Context, worktree, base string) int {
-	s, err := git(ctx, worktree, "rev-list", "--count", "origin/"+base+"..HEAD")
+	s, err := git(ctx, worktree, "rev-list", "--count", base+"..HEAD")
 	if err != nil {
 		return 0
 	}
@@ -174,7 +200,7 @@ func commitCount(ctx context.Context, worktree, base string) int {
 }
 
 func diffStat(ctx context.Context, worktree, base string) string {
-	s, _ := git(ctx, worktree, "diff", "--stat", "origin/"+base+"..HEAD")
+	s, _ := git(ctx, worktree, "diff", "--stat", base+"..HEAD")
 	return strings.TrimSpace(s)
 }
 

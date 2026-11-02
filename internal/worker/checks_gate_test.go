@@ -21,7 +21,8 @@ import (
 //   - fix:     commits state=good, done
 //   - nothing: commits nothing, done (the checks keep failing)
 //   - blocked: returns blocked
-//   - quota:   the first fix call dies on a usage limit, later ones fix
+//   - quota:   the first fix call leaves wip.txt uncommitted and dies on a
+//     usage limit, later ones fix (committing it)
 //
 // Every call appends its kind (impl / fix) to $CALLS.
 const fakeImplementer = `prompt="$2"
@@ -35,7 +36,7 @@ case "$prompt" in
   nothing) done_json "tried" ;;
   blocked) printf '{"type":"result","session_id":"s1","structured_output":{"status":"blocked","steps_done":[1],"summary":"x","reason":"the check needs a database"}}' ;;
   quota)
-    if [ ! -f "$CALLS.quota" ]; then touch "$CALLS.quota"; echo "You've hit your usage limit" >&2; exit 1; fi
+    if [ ! -f "$CALLS.quota" ]; then touch "$CALLS.quota"; echo wip > wip.txt; echo "You've hit your usage limit" >&2; exit 1; fi
     echo good > state; git add -A; c commit -qm fix; done_json "fixed after the pause" ;;
   esac ;;
 *)

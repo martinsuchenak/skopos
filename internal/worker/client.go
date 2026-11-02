@@ -131,8 +131,8 @@ func (c *Client) Offline(ctx context.Context, workerID string) error {
 	return c.do(ctx, http.MethodPost, "/api/workers/"+url.PathEscape(workerID)+"/offline", map[string]any{}, nil)
 }
 
-// Heartbeat extends the run's lease; phase ('' = unchanged) says what a
-// running implement run is doing (checks / fixing) for the dashboard.
+// Heartbeat extends the run's lease. A non-empty phase says what a running
+// implement run is doing (checks / fixing), for the dashboard.
 func (c *Client) Heartbeat(ctx context.Context, runID, workerID, phase string) error {
 	body := map[string]string{"worker_id": workerID}
 	if phase != "" {

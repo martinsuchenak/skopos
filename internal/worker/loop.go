@@ -202,21 +202,7 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 	// one heartbeat goroutine for the whole stage, no nested stacks).
 	const maxTransient = 3
 	for attempt := 0; ; attempt++ {
-		var err error
-		switch run.Stage {
-		case "plan":
-			err = w.stagePlan(ctx, run, log)
-		case "implement":
-			err = w.stageImplement(ctx, run, log)
-		case "review", "qa", "second_opinion":
-			err = w.stageReview(ctx, run, log)
-		case "compare":
-			err = w.stageCompare(ctx, run, log)
-		case "synthesize":
-			err = w.stageSynthesize(ctx, run, log)
-		default:
-			err = fmt.Errorf("unknown stage %q", run.Stage)
-		}
+		err := w.runStage(ctx, run, log)
 		if err == nil {
 			return // the stage reported its own outcome
 		}
@@ -235,6 +221,34 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 		w.finish(ctx, run, log, err)
 		return
 	}
+}
+
+// runStage runs one attempt of the run's stage. A branch-checkout clone is
+// held for the attempt, on its default branch at the start, whatever the
+// stage: plans read its working tree, implementations check out in it, and
+// every stage fetches into it. The back-offs between attempts and after a
+// quota pause run without it.
+func (w *Worker) runStage(ctx context.Context, run *Run, log *slog.Logger) error {
+	if repo := w.cfg.Repos[run.WorkspaceID]; repo != nil && repo.Checkout == checkoutBranch {
+		release, err := w.holdClone(ctx, repo, log)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
+	switch run.Stage {
+	case "plan":
+		return w.stagePlan(ctx, run, log)
+	case "implement":
+		return w.stageImplement(ctx, run, log)
+	case "review", "qa", "second_opinion":
+		return w.stageReview(ctx, run, log)
+	case "compare":
+		return w.stageCompare(ctx, run, log)
+	case "synthesize":
+		return w.stageSynthesize(ctx, run, log)
+	}
+	return fmt.Errorf("unknown stage %q", run.Stage)
 }
 
 // setPhase records what the run is doing (phaseChecks / phaseFixing)

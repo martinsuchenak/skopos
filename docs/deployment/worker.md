@@ -422,6 +422,85 @@ through a profile. Then:
   checks still fail, the item blocks instead of going to review. Reviewers get
   the results for the commit they review.
 
+### Setup
+
+Every item is implemented in its own worktree, a fresh checkout with nothing
+git doesn't track (or in the clone itself: see [Branch checkout](#branch-checkout)). A repo's `setup` commands prepare it before the agent
+starts: dependencies, generated code, local config copied from the clone
+(`{clone}` expands to the clone's path), database updates, an asset build.
+
+```toml
+[worker.repos."github.com/you/app"]
+setup = [
+  "cp {clone}/config/local.php config/local.php",
+  "composer install --no-interaction",
+  "npm ci && npm run build",
+]
+setup_timeout = "30m"
+```
+
+- **When it runs:** once, in a fresh worktree. Later rounds of the same item
+  reuse the worktree and skip it; a setup that was interrupted runs again.
+- **The code is already current.** The plan stage fetches the default branch
+  and pins its newest commit; the worktree branches from that commit. Setup
+  must not fetch, pull or check out: it would move the branch off the
+  approved base, and it has no git credentials anyway.
+- **Environment:** scrubbed like every agent run; `setup_env` passes what it
+  needs.
+- **Time:** `setup_timeout` bounds all the commands together (default `10m`,
+  at most `2h`).
+- **Failure:** the first failing command stops setup, the worktree is removed
+  and the item blocks. The preview shows each command's output.
+
+### Branch checkout
+
+Some repos can't be duplicated into a worktree per item. Their checkout is
+tied to a local database the setup migrates, and to configuration nobody
+wants copied around. Set `checkout = "branch"` and the implementation runs in
+the clone itself:
+
+```toml
+[worker.repos."github.com/you/app"]
+checkout = "branch"
+setup = ["php cli_tools/prepare_checkout.php"]
+setup_timeout = "45m"
+```
+
+1. **Hold:** every run on the repo locks the clone, whatever its stage (a
+   file lock in its `.git`). Another worker process on the same host waits.
+   Plan runs read the clone's working tree, and every stage fetches into it.
+2. **Branch:** an implement run switches the clone to the item's branch:
+   - the branch it already has locally (a later round);
+   - else the one on origin (another worker's earlier round);
+   - else a new branch at the approved base, fetched first when the clone
+     doesn't have that commit yet (another worker planned the item).
+3. **Setup:** setup runs unless the clone is still set up for this branch at
+   this head, for example when a paused run resumes and no other item has
+   been set up in the clone since. Make it idempotent: it runs again whenever
+   another item's branch was set up in between.
+4. **Work:** the agent implements, the checks run, and the branch is pushed,
+   as in a worktree.
+5. **Back:** when the run ends, the clone goes back to the default branch,
+   whether it pushed, failed or paused. Anything left uncommitted (a quota
+   pause mid-turn) is stashed as `skopos:<branch>`. The item's next run
+   applies the stash again, and the cleanup sweep drops it once the item is
+   finished.
+
+A worker killed mid-run leaves the clone on the item's branch. The next run
+on the clone stashes the leftover changes under the branch and puts the clone
+back on the default branch. Uncommitted or untracked files on the default
+branch are different: they aren't skopos's, so every run on the repo stops
+with an error naming them until you commit, remove or `.gitignore` them.
+
+If the repo used worktrees before, an item's old worktree is removed when its
+next implement run starts in the clone. If that worktree has uncommitted
+changes, the run stops instead.
+
+Each worker host needs its own clone (and its own database, if setup migrates
+one). Several workers can serve the same repo, each with its own clone. The
+approved base is a commit, so it doesn't matter which worker planned the
+item. Branch checkout needs a unix host.
+
 ## Secrets
 
 No secrets live in the service definition or the TOML. The daemon loads

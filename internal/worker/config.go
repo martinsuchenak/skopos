@@ -182,11 +182,19 @@ type Repo struct {
 	Path          string   `toml:"path"`
 	DefaultBranch string   `toml:"default_branch"`
 	BranchPrefix  string   `toml:"branch_prefix"` // default "agent/"
-	Setup         []string `toml:"setup"`         // run in every fresh worktree ({clone} expands)
+	Setup         []string `toml:"setup"`         // run in every fresh worktree, or a branch checkout not set up for the branch ({clone} expands)
+	// Checkout: where an implementation runs — "worktree" (default: a
+	// worktree per item beside the clone) or "branch" (the clone itself,
+	// switched to the item's branch for the run and back to the default
+	// branch after it; for a repo whose checkout can't be duplicated, e.g.
+	// one tied to a local database and configuration).
+	Checkout string `toml:"checkout"`
 	// SetupEnv is extra environment for setup commands (they run with the
 	// scrubbed environment — e.g. a private registry token via ${VAR}).
 	SetupEnv map[string]string `toml:"setup_env"`
-	Checks   []string          `toml:"checks"` // verification commands
+	// SetupTimeout bounds all the setup commands together (0 = 10m).
+	SetupTimeout time.Duration `toml:"setup_timeout"`
+	Checks       []string      `toml:"checks"` // verification commands
 	// CheckFixRounds: how many times a failing check goes back to the
 	// implementer before the item blocks (nil = 2; 0 = block at once).
 	CheckFixRounds *int     `toml:"check_fix_rounds"`
@@ -405,6 +413,20 @@ func (c *Config) Default(home string) error {
 		}
 		if r.CheckFixRounds != nil && (*r.CheckFixRounds < 0 || *r.CheckFixRounds > maxCheckFixRounds) {
 			return fmt.Errorf("repo %s: check_fix_rounds %d is not between 0 and %d", ws, *r.CheckFixRounds, maxCheckFixRounds)
+		}
+		if r.SetupTimeout < 0 || r.SetupTimeout > maxSetupTimeout {
+			return fmt.Errorf("repo %s: setup_timeout %s is not between 0 and %s", ws, r.SetupTimeout, maxSetupTimeout)
+		}
+		switch r.Checkout {
+		case "":
+			r.Checkout = checkoutWorktree
+		case checkoutWorktree:
+		case checkoutBranch:
+			if !branchCheckoutSupported {
+				return fmt.Errorf("repo %s: checkout = \"branch\" needs a unix host (the clone lock uses flock)", ws)
+			}
+		default:
+			return fmt.Errorf("repo %s: checkout %q is not one of worktree, branch", ws, r.Checkout)
 		}
 	}
 	if c.MCPConfig != "" {

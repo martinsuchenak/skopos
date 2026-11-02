@@ -108,9 +108,10 @@ func (w *Worker) maybeSweep(ctx context.Context) {
 }
 
 // sweepBranches cleans up after finished items:
-//   - done: remove the worktree, and the local branch when the last round
-//     pushed it (an unpushed branch is the only copy of the work). The pull
-//     request stays: merging it is the approver's step.
+//   - done: remove the worktree, the item's stashed changes (branch
+//     checkout), and the local branch when the last round pushed it (an
+//     unpushed branch is the only copy of the work). The pull request
+//     stays: merging it is the approver's step.
 //   - discarded for over discardGrace: close the pull request unmerged,
 //     then clean up as for done.
 //   - missing (404) for over missingGrace: remove the worktree only.
@@ -188,10 +189,11 @@ func (w *Worker) sweepBranches(ctx context.Context, now time.Time) {
 				log.Info("closed the pull request", "pr", rec.PRURL)
 			}
 		}
-		removeWorktree(ctx, repo.Path, rec.Worktree)
+		// A branch-checkout clone another worker process is using waits
+		// for the next sweep: its branch may be the one checked out.
 		deleteBranch := rec.Pushed && status != "missing"
-		if deleteBranch {
-			_, _ = git(ctx, repo.Path, "branch", "-D", rec.Branch)
+		if !w.cleanUpItem(ctx, repo, rec, deleteBranch, status != "missing") {
+			continue
 		}
 		w.dropBranch(rec.ItemID)
 		log.Info("cleaned up the finished item's worktree", "worktree", rec.Worktree, "local_branch_deleted", deleteBranch)
@@ -199,6 +201,27 @@ func (w *Worker) sweepBranches(ctx context.Context, now time.Time) {
 }
 
 var errNoPRConfig = errors.New("the repo's push config no longer allows pull requests")
+
+// cleanUpItem removes what a finished item left in the clone: its worktree,
+// its local branch (deleteBranch) and its stashed changes (dropStash).
+// False when a branch-checkout clone is busy, for the next sweep.
+func (w *Worker) cleanUpItem(ctx context.Context, repo *Repo, rec branchRecord, deleteBranch, dropStash bool) bool {
+	if repo.Checkout == checkoutBranch {
+		release, ok, err := tryLockClone(ctx, repo.Path)
+		if err != nil || !ok {
+			return false
+		}
+		defer release()
+	}
+	removeWorktree(ctx, repo.Path, rec.Worktree)
+	if deleteBranch {
+		_, _ = git(ctx, repo.Path, "branch", "-D", rec.Branch)
+	}
+	if dropStash {
+		dropStashes(ctx, repo.Path, stashLabel(rec.Branch))
+	}
+	return true
+}
 
 func (w *Worker) closePullRequest(ctx context.Context, repo *Repo, number int) error {
 	c, err := newPRClient(repo.Push.Kind, repo.Push.RemoteURL, os.Getenv(repo.Push.TokenEnv))

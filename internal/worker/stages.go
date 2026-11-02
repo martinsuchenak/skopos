@@ -250,13 +250,47 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		}
 	}
 	worktree := filepath.Join(w.cfg.StateDir, "worktrees", filepath.Base(repo.Path), strings.ReplaceAll(branch, "/", "-"))
+	branchMode := repo.Checkout == checkoutBranch
+	if branchMode {
+		worktree = repo.Path
+	}
 	// What this item leaves on the worker, for the cleanup sweep. A later
 	// round keeps the pull request the first one opened, but not Pushed:
-	// until this round pushes, its commits exist only here.
+	// until this round pushes, its commits exist only here. A branch
+	// checkout leaves no worktree.
 	rec, _ := w.loadBranch(item.ID)
-	rec.ItemID, rec.WorkspaceID, rec.Branch, rec.Worktree, rec.Pushed = item.ID, run.WorkspaceID, branch, worktree, false
+	rec.ItemID, rec.WorkspaceID, rec.Branch, rec.Pushed = item.ID, run.WorkspaceID, branch, false
+	if !branchMode {
+		rec.Worktree = worktree
+	}
 	fresh := !dirExists(worktree)
-	if fresh {
+	if branchMode {
+		// The clone (held by execute) is switched to the item's branch;
+		// when the run ends it goes back to the default branch, and anything
+		// uncommitted (a pause mid-turn) is stashed for the item's next run.
+		// Setup runs unless the clone is still set up for this branch.
+		if rec.Worktree != "" {
+			// From before the repo switched to a branch checkout: the old
+			// worktree has the branch checked out, so it goes, unless it
+			// holds work nothing else has.
+			if dirExists(rec.Worktree) {
+				if dirty, err := git(ctx, rec.Worktree, "status", "--porcelain"); err != nil || dirty != "" {
+					return fmt.Errorf("the item's worktree %s from before the branch checkout has uncommitted changes; commit or remove them to continue in the clone", rec.Worktree)
+				}
+				removeWorktree(ctx, repo.Path, rec.Worktree)
+			}
+			rec.Worktree = ""
+		}
+		if err := checkoutImplementBranch(ctx, repo.Path, branch, baseRef); err != nil {
+			return fmt.Errorf("checkout: %w", err)
+		}
+		defer w.park(repo, branch, log)
+		if err := applyStash(ctx, repo.Path, stashLabel(branch)); err != nil {
+			log.Warn("continuing from the branch's last commit", "err", err)
+		}
+		cs := readCloneSetup(ctx, repo.Path)
+		fresh = cs.Branch != branch || cs.Head != headSHA(ctx, repo.Path)
+	} else if fresh {
 		if err := prepareImplementWorktree(ctx, repo.Path, worktree, branch, baseRef); err != nil {
 			return fmt.Errorf("worktree: %w", err)
 		}
@@ -267,12 +301,21 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	if fresh || rec.SetupPending {
 		rec.SetupPending = len(repo.Setup) > 0
 		w.saveBranch(rec)
-		setup, err := runSetup(ctx, worktree, repo.Setup, repo.Path, repo.SetupEnv, w.cfg.TokenEnvs(), w.envFileKeys, 10*time.Minute)
+		if branchMode {
+			// Set up for nothing until this setup finishes.
+			writeCloneSetup(ctx, repo.Path, cloneSetup{})
+		}
+		setup, err := runSetup(ctx, worktree, repo.Setup, repo.Path, repo.SetupEnv, w.cfg.TokenEnvs(), w.envFileKeys, repo.SetupDeadline())
 		if err != nil {
-			removeWorktree(ctx, repo.Path, worktree)
+			if !branchMode {
+				removeWorktree(ctx, repo.Path, worktree)
+			}
 			return w.report(ctx, run, false, map[string]any{"reason": err.Error(), "setup": setup})
 		}
 		rec.SetupPending, rec.SetupRun, rec.Setup = false, run.ID, setup
+		if branchMode {
+			writeCloneSetup(ctx, repo.Path, cloneSetup{Branch: branch, Head: headSHA(ctx, repo.Path)})
+		}
 	}
 	w.saveBranch(rec)
 	var setup []Check
@@ -318,7 +361,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			}
 			return w.report(ctx, run, false, map[string]any{"reason": reason, "setup": setup})
 		}
-		if commitCount(ctx, worktree, repo.DefaultBranch) == 0 {
+		if commitCount(ctx, worktree, baseRef) == 0 {
 			return fmt.Errorf("agent reported done but made no commits")
 		}
 		rec.ImplementedRun, rec.ImplementedSummary, rec.FixRounds = run.ID, ir.Summary, 0
@@ -402,7 +445,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 
 	fields := map[string]any{
 		"summary": summary, "head_sha": head, "branch": branch,
-		"diffstat": diffStat(ctx, worktree, repo.DefaultBranch), "checks": checks,
+		"diffstat": diffStat(ctx, worktree, baseRef), "checks": checks,
 		"pushed": repo.Push.Kind != "none", "pr_url": rec.PRURL, "setup": setup, "fix_rounds": rounds,
 	}
 	if len(failed) > 0 {
@@ -418,7 +461,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		fields["reason"] = reason
 		return w.report(ctx, run, false, fields)
 	}
-	log.Info("implementation finished", "head", head, "commits", commitCount(ctx, worktree, repo.DefaultBranch), "fix_rounds", rounds, "cost_usd", w.costs[run.ID])
+	log.Info("implementation finished", "head", head, "commits", commitCount(ctx, worktree, baseRef), "fix_rounds", rounds, "cost_usd", w.costs[run.ID])
 	return w.report(ctx, run, true, fields)
 }
 

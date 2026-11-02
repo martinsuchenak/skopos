@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const (
@@ -14,12 +15,26 @@ const (
 	// committedCheck names the check that the tested tree is the pushed
 	// one: checks run on the worktree, the push sends commits only.
 	committedCheck = "committed"
+	// defaultSetupTimeout bounds a repo's setup commands together unless
+	// setup_timeout says otherwise (a big project's dependency installs,
+	// asset build and DB updates can need more).
+	defaultSetupTimeout = 10 * time.Minute
+	maxSetupTimeout     = 2 * time.Hour
 	// The phases a running implement run reports past its first turn (the
 	// server's runs.PhaseChecks / PhaseFixing): the dashboard's Checks step
 	// shows them running.
 	phaseChecks = "checks"
 	phaseFixing = "fixing"
 )
+
+// SetupDeadline is the repo's setup_timeout, defaulted: how long all its
+// setup commands may take together.
+func (r *Repo) SetupDeadline() time.Duration {
+	if r.SetupTimeout > 0 {
+		return r.SetupTimeout
+	}
+	return defaultSetupTimeout
+}
 
 // FixRounds is the repo's check_fix_rounds, defaulted.
 func (r *Repo) FixRounds() int {
