@@ -28,6 +28,7 @@ go.work.sum
 *.swp
 *.swo
 *~
+.zcode/
 
 # OS
 .DS_Store
@@ -56,3 +57,7 @@ docs/integrations/agent-builder/build/
 
 # Stray root-level build output (task build-local writes bin/skopos)
 /skopos
+
+# local files
+tmp/
+.local/
