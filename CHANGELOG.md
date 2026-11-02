@@ -4,6 +4,41 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.18.8] — 2026-11-02
+
+### Added
+
+- **`setup_timeout` per repo.** Setup commands were limited to 10 minutes in
+  total, too little for a big project's first dependency install, asset build
+  and database updates. The limit is now set per repo (default `10m`, at most
+  `2h`). The worker reference has a new Setup section, including why setup
+  shouldn't fetch or pull: the worktree already starts at the newest default
+  branch the plan was written on.
+- **Branch checkout per repo.** With `checkout = "branch"`, an implementation
+  runs in the clone itself instead of a worktree beside it. This is for a repo
+  whose checkout is tied to a local database and configuration. Every run on
+  the repo locks the clone, so worker processes sharing it take turns. An
+  implement run switches the clone to the item's branch. The branch continues
+  an earlier round's branch, or starts at the approved base, fetched when
+  another worker planned the item. Setup runs unless the clone is still set
+  up for that branch, then the agent, the checks and the push. The clone then
+  goes back to the default branch. Uncommitted work from a paused run is
+  stashed for the item's next run, and the cleanup sweep drops the stash once
+  the item is finished. Untracked or uncommitted files on the default branch
+  stop the run instead of being stashed away.
+
+### Fixed
+
+- **The implement report's diffstat and commit count were measured against
+  `origin/<default>`.** On a worker that didn't plan the item, that ref can
+  lag behind the approved base. The diffstat then included other people's
+  commits, and a run with no commits of its own could pass the "made no
+  commits" check. Both are now measured against the approved base.
+- **A re-implementation could start from the wrong commit when two worker
+  processes share a clone.** The worker read the earlier round's branch from
+  `FETCH_HEAD`, which a concurrent fetch can overwrite. It now fetches into
+  the branch's own remote ref.
+
 ## [0.18.7] — 2026-11-02
 
 ### Added
