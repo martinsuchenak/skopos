@@ -36,6 +36,13 @@ archives:
         formats:
           - zip
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  # The bare binary under a name without the version, so
+  # releases/latest/download/skopos_<os>_<arch> always fetches the newest
+  # release (provisioning scripts, `curl -o`).
+  - id: binary
+    formats:
+      - binary
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
   name_template: checksums.txt
@@ -54,6 +61,8 @@ changelog:
 
 homebrew_casks:
   - name: skopos
+    ids:
+      - default
     repository:
       owner: martinsuchenak
       name: homebrew-tap
