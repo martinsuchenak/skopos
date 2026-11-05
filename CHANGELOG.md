@@ -4,6 +4,28 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.18.9] — 2026-11-05
+
+### Added
+
+- **Release binaries without a version in the name.** Every release now also
+  carries the bare binary as `skopos_<os>_<arch>` (`.exe` on Windows). The
+  URL `https://github.com/martinsuchenak/skopos/releases/latest/download/skopos_linux_amd64`
+  therefore always fetches the newest release, for provisioning scripts and
+  `curl -o`. The Homebrew cask keeps using the tarballs.
+
+### Security
+
+- **Built with Go 1.26.10** (was 1.26.4). govulncheck found 21 reachable
+  standard-library vulnerabilities in 1.26.4 (crypto/tls, net/http, net,
+  crypto/x509 and others). `golang.org/x/net` is now v0.62.0, which fixes 5
+  reachable vulnerabilities. govulncheck now reports none.
+- **Dependency updates:** `modernc.org/sqlite` v1.61.1, `goldmark` v1.8.7,
+  and the dependencies' patch releases. On the dashboard's build side, `vite`
+  is now 8.3.6, which clears the dev-server and `source-map-js` advisories;
+  these were never shipped, because the dashboard is built ahead of time.
+  `bun audit` now reports none. The Alpine CSP build is now 3.17.5.
+
 ## [0.18.8] — 2026-11-02
 
 ### Added
