@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.18.11] — 2026-11-06
+
+### Fixed
+
+- **Workspaces with the same repo path looked identical in the dashboard.**
+  Workspace names drop their host, so `github.com/fortix/freedom3` and a
+  mirror's `gitea.adinko.me:2223/fortix/freedom3` both read
+  `fortix/freedom3`. In the key editor, it was easy to scope a worker key to
+  the wrong one, and its claims were then refused ("not found: workspace
+  scope"). When two known workspaces share a path, both now show their full
+  id, everywhere the dashboard names a workspace.
+
 ## [0.18.10] — 2026-11-06
 
 ### Fixed
