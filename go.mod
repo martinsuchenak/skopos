@@ -8,10 +8,10 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/mattn/go-isatty v0.0.24
 	github.com/microcosm-cc/bluemonday v1.0.27
-	github.com/odvcencio/gotreesitter v0.52.0
-	github.com/paularlott/cli v0.9.2
-	github.com/paularlott/logger v0.3.0
-	github.com/paularlott/mcp v0.25.0
+	github.com/odvcencio/gotreesitter v0.56.0
+	github.com/paularlott/cli v0.10.2
+	github.com/paularlott/logger v0.4.0
+	github.com/paularlott/mcp v0.33.1
 	github.com/yuin/goldmark v1.8.7
 	modernc.org/sqlite v1.61.1
 )
