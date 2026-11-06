@@ -7,6 +7,13 @@ export default defineConfig({
   // defaults, silently dropping theme.js from dist after emptyOutDir.
   publicDir: 'public',
   copyPublicDir: true,
+  // One copy of each CodeMirror core package in the bundle: extensions are
+  // checked with instanceof, so a second @codemirror/state (a lockfile that
+  // kept a nested older copy after an update) breaks every editor with
+  // "Unrecognized extension value in extension set".
+  resolve: {
+    dedupe: ['@codemirror/state', '@codemirror/view', '@codemirror/language', '@lezer/common', '@lezer/highlight'],
+  },
   build: {
     outDir: 'dist',
     emptyOutDir: true,

@@ -422,8 +422,11 @@ html.light { color-scheme: light; }
 .cm-host { border: 1px solid #27272a; border-radius: 0.5rem; overflow: hidden; background: #09090b; }
 .light .cm-host { border-color: #d4d4d8; background: #ffffff; }
 .cm-host .cm-editor { max-height: 32rem; }
-/* Room to write: an empty editor reads as a text area, not a single line. */
-.cm-host .cm-scroller { min-height: 8rem; }
+/* Room to write: an empty editor reads as a text area, not a single line.
+   On the content, not the scroller: a click anywhere in the box must land
+   in the editable area (a tall scroller around one line of content took
+   the focus itself, and typing went nowhere). */
+.cm-host .cm-content, .cm-host .cm-gutter { min-height: 8rem; }
 /* Focus ring on the HOST (it owns the border-radius): an outline on the
    inner .cm-editor is rectangular and gets clipped by the host's rounded
    overflow:hidden, leaving corner gaps. box-shadow rings follow the radius,
