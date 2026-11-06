@@ -4,7 +4,11 @@ branch {{.Branch}}, created from {{.Base}}. Martin approved exactly the plan bel
 # Item: {{.Title}}
 
 {{.Content}}
+{{if .QA}}
+# Questions asked about this item and Martin's answers (they hold)
 
+{{.QA}}
+{{end}}
 # Approved plan
 
 {{range $i, $s := .Steps}}{{inc $i}}. {{$s.Title}}
@@ -14,6 +18,10 @@ branch {{.Branch}}, created from {{.Base}}. Martin approved exactly the plan bel
 # Martin's notes with the approval (answers to open questions; they take precedence over the plan where they differ)
 
 {{.ApprovalNotes}}
+{{end}}{{if .LastReview}}
+# The last review of this branch (context for the change requests below)
+
+{{.LastReview}}
 {{end}}{{if .Notes}}
 # Change requests from Martin (address every point)
 

@@ -117,7 +117,7 @@ func (w *Worker) stageCompare(ctx context.Context, run *Run, log *slog.Logger) e
 	}
 	repo := w.cfg.Repos[run.WorkspaceID]
 	prompt, err := renderPrompt("compare.md", map[string]any{
-		"Title": item.Title, "Content": item.Content, "Candidates": candidateViews(cands),
+		"Title": item.Title, "Content": advisoryBrief(item.Content), "Candidates": candidateViews(cands),
 		"Instructions": repoInstructions(ctx, repo.Path, base),
 	})
 	if err != nil {
@@ -177,8 +177,8 @@ func (w *Worker) stageSynthesize(ctx context.Context, run *Run, log *slog.Logger
 	repo := w.cfg.Repos[run.WorkspaceID]
 	skills := repoSkills(ctx, repo.Path, base)
 	prompt, err := renderPrompt("synthesize.md", map[string]any{
-		"Title": item.Title, "Content": item.Content, "Candidates": candidateViews(cands),
-		"Comparison":   lastSection(item.Content, "## Comparison"),
+		"Title": item.Title, "Content": advisoryBrief(item.Content), "Candidates": candidateViews(cands),
+		"Comparison":   newestComparison(item.Content),
 		"Instructions": repoInstructions(ctx, repo.Path, base),
 		"SkillIndex":   skillIndex(skills),
 	})

@@ -85,9 +85,17 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 
 	// Knowledge at the base the planner reads (never a worktree head).
 	skills := repoSkills(ctx, repo.Path, baseSHA)
+	// Martin's text plus the sections current for this round: his answers,
+	// the plan(s) his newest notes are about, and those notes (brief.go).
+	brief, secs := splitItem(item.Content)
+	previous := ""
+	if seed == nil {
+		previous = previousPlans(secs)
+	}
 	prompt, err := renderPrompt("plan.md", map[string]any{
 		"Workspace": run.WorkspaceID, "Base": repo.DefaultBranch,
-		"Title": item.Title, "Content": item.Content, "Notes": lastSection(item.Content, "## Review notes"),
+		"Title": item.Title, "Content": brief, "QA": questionsAndAnswers(secs),
+		"Previous": previous, "Notes": newestBody(secs, "Review notes"),
 		"Instructions": repoInstructions(ctx, repo.Path, baseSHA),
 		"SkillIndex":   skillIndex(skills), "Requested": tagHints(skills, item.Tags),
 		"ImplCommands": w.stageCommands(run.WorkspaceID, "implement", implTools), "Checks": repo.Checks,
@@ -332,10 +340,18 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		log.Info("resuming the check fixes", "fix_rounds_used", rec.FixRounds)
 	} else {
 		instructions, skillBodies := w.runKnowledge(ctx, repo, run, item.PlanID, baseRef)
+		// Martin's text and the current decisions, never the earlier plans:
+		// the approved steps come from the plan revision (brief.go).
+		brief, secs := splitItem(item.Content)
+		notes := newestBody(secs, "Change requests")
+		review := ""
+		if notes != "" {
+			review = lastReview(secs)
+		}
 		prompt, err := renderPrompt("implement.md", map[string]any{
 			"Branch": branch, "Base": repo.DefaultBranch, "Title": item.Title,
-			"Content": item.Content, "Steps": steps, "Notes": lastSection(item.Content, "## Change requests"),
-			"ApprovalNotes": lastSection(item.Content, "## Approval notes"),
+			"Content": brief, "QA": questionsAndAnswers(secs), "Steps": steps, "Notes": notes, "LastReview": review,
+			"ApprovalNotes": newestBody(secs, "Approval notes"),
 			"Instructions":  instructions, "Skills": skillBodies,
 			"Commands": w.stageCommands(run.WorkspaceID, "implement", implTools), "Checks": repo.Checks,
 		})
@@ -793,14 +809,6 @@ type implResult struct {
 }
 
 // --- small helpers ---
-
-func lastSection(content, heading string) string {
-	idx := strings.LastIndex(content, heading)
-	if idx < 0 {
-		return ""
-	}
-	return strings.TrimSpace(content[idx:])
-}
 
 // sectionOnly is the newest "heading" section alone: up to the next "## "
 // heading (lastSection runs to the end of the content).

@@ -6,7 +6,15 @@ Repository: {{.Workspace}} (checked out in the current directory, branch {{.Base
 # Inbox item: {{.Title}}
 
 {{.Content}}
-{{if .Notes}}
+{{if .QA}}
+# Questions asked about this item and Martin's answers (they hold)
+
+{{.QA}}
+{{end}}{{if .Previous}}
+# The previous plan{{if .Notes}} (Martin asked for changes: revise it, keeping what he did not object to){{end}}
+
+{{.Previous}}
+{{end}}{{if .Notes}}
 # Review notes from Martin on the previous plan (address every point)
 
 {{.Notes}}

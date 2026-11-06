@@ -238,6 +238,19 @@ Then either:
 The approval binds to that revision. If the planner wrote a newer one
 meanwhile, the server refuses and the preview reloads with the current plan.
 
+**What the agents read.** The item keeps its whole history: every plan, your
+notes, the answers and the reviews, in the order they happened. The agents
+get your own text, the planner's questions with your answers, and only the
+sections that are current for them:
+- **A re-plan** gets the plan your newest notes are about, and those notes.
+- **The implementer** gets the approved plan, your approval notes and, after a
+  review sent the item back, the latest review with your change requests.
+
+Older plans and notes that were already dealt with stay out of the prompts.
+Your text is everything before the first section the pipeline added, so
+don't give your own text a heading the pipeline uses (`## Review notes`,
+`## Answers` and so on).
+
 **Several planners?** With a `plan` member list (step 4), the gate shows one
 card per **candidate**. Approve the one you want (or `approve 2` in Slack);
 it becomes the plan. *Revise* sends one candidate back to its planner with
