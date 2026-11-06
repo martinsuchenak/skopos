@@ -1,15 +1,34 @@
 # Docker
 
+## Release image
+
+Every release publishes a multi-arch image (`linux/amd64`, `linux/arm64`),
+signed with cosign:
+
+```bash
+docker pull ghcr.io/martinsuchenak/skopos:0.21.0   # or 0.21, or latest
+```
+
+Use it in place of `skopos` in the examples below. Verify the signature with
+`cosign verify ghcr.io/martinsuchenak/skopos:<version>
+--certificate-identity-regexp 'https://github.com/martinsuchenak/skopos/'
+--certificate-oidc-issuer https://token.actions.githubusercontent.com`.
+
 ## Build
 
 ```bash
-docker build -t skopos .
+task docker   # tags skopos:<git describe>, with the version and commit stamped in
+docker build --build-arg VERSION=$(git describe --tags --always) --build-arg COMMIT=$(git rev-parse --short HEAD) -t skopos .
 ```
 
 The Dockerfile is a multi-stage build:
 1. **Frontend stage** — Bun installs + builds the dashboard (`web/dist/`).
 2. **Go stage** — compiles the binary with the frontend embedded (via `go:embed`).
-3. **Runtime stage** — Alpine, runs as non-root `skopos` user, includes `ca-certificates` + `wget` (for healthcheck).
+3. **Runtime stage** — Alpine, runs as the non-root `skopos` user (UID 1000), includes `ca-certificates` + `wget` (for healthcheck).
+
+The binary is at `/usr/local/bin/skopos`, outside `/app`, so the volume
+mounted there never shadows it with an older copy (images before 0.21.0 kept
+it in `/app`). `docker exec <container> skopos …` runs CLI commands.
 
 ## Run
 

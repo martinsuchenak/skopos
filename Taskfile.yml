@@ -1,41 +1,71 @@
 version: '3'
 
+env:
+  # The Go CI, the Dockerfile and releases build with (go.mod's go line).
+  GOTOOLCHAIN: go1.26.10
+
 vars:
   APP_NAME: skopos
+  BUILD_DIR: ./bin
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
   DATE:
     sh: date -u '+%Y-%m-%dT%H:%M:%SZ'
+  COMMIT:
+    sh: git rev-parse --short HEAD 2>/dev/null || echo "unknown"
   GO_CACHE_DIR:
     sh: pwd
-  LDFLAGS: -s -w -X github.com/martinsuchenak/skopos/build.Version={{.VERSION}} -X github.com/martinsuchenak/skopos/build.Date={{.DATE}}
+  PKG: github.com/martinsuchenak/skopos/build
+  LDFLAGS: -s -w -X {{.PKG}}.Version={{.VERSION}} -X {{.PKG}}.Commit={{.COMMIT}} -X {{.PKG}}.Date={{.DATE}}
 
 tasks:
   default:
     cmds:
       - task --list
 
-  build:
-    desc: Build the application
-    deps: [frontend-build]
-    cmds:
-      - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "{{.LDFLAGS}}" -o bin/{{.APP_NAME}}-linux-amd64 .
-      - CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "{{.LDFLAGS}}" -o bin/{{.APP_NAME}}-linux-arm64 .
-      - CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "{{.LDFLAGS}}" -o bin/{{.APP_NAME}}-darwin-amd64 .
-      - CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "{{.LDFLAGS}}" -o bin/{{.APP_NAME}}-darwin-arm64 .
-
   frontend-build:
     desc: Build frontend assets
     dir: web
     cmds:
-      - bun install
+      - bun install --frozen-lockfile
       - bun run build
 
-  build-local:
-    desc: Build for local platform
+  build:
+    desc: Cross-compile all release platforms
     deps: [frontend-build]
     cmds:
-      - CGO_ENABLED=0 go build -ldflags "{{.LDFLAGS}}" -o bin/{{.APP_NAME}} .
+      - task: build:linux
+      - task: build:darwin
+      - task: build:windows
+
+  build:local:
+    desc: Build for local platform
+    aliases: [build-local]
+    deps: [frontend-build]
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - CGO_ENABLED=0 go build -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.APP_NAME}} .
+
+  build:linux:
+    desc: Build for Linux (amd64, arm64)
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.APP_NAME}}-linux-amd64 .
+      - CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.APP_NAME}}-linux-arm64 .
+
+  build:darwin:
+    desc: Build for macOS (amd64, arm64)
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.APP_NAME}}-darwin-amd64 .
+      - CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.APP_NAME}}-darwin-arm64 .
+
+  build:windows:
+    desc: Build for Windows (amd64, arm64)
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.APP_NAME}}-windows-amd64.exe .
+      - CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.APP_NAME}}-windows-arm64.exe .
 
   test:
     desc: Run tests
@@ -45,23 +75,33 @@ tasks:
   test:race:
     desc: Run tests with race detector
     cmds:
-      - go test ./... -v -count=1 -race
+      - go test ./... -v -count=1 -race -timeout 30m
 
-  clean:
-    desc: Clean build artifacts
+  fmt:
+    desc: Format code
     cmds:
-      - rm -rf bin/
-      - go clean
+      - go fmt ./...
 
-  lint:
-    desc: Run linter
+  fmt:check:
+    desc: Fail on unformatted Go files, as CI does (tmp/ is not checked)
     cmds:
-      - GOCACHE={{.GO_CACHE_DIR}}/.cache/go-build golangci-lint run ./...
+      - |
+        unformatted=$(gofmt -l build cmd internal web main.go main_test.go)
+        if [ -n "$unformatted" ]; then
+          echo "Files need gofmt:"
+          echo "$unformatted"
+          exit 1
+        fi
 
   vet:
     desc: Run go vet
     cmds:
       - go vet ./...
+
+  lint:
+    desc: Run linter
+    cmds:
+      - GOCACHE={{.GO_CACHE_DIR}}/.cache/go-build golangci-lint run ./...
 
   tidy:
     desc: Tidy and verify go modules
@@ -69,22 +109,52 @@ tasks:
       - go mod tidy
       - go mod verify
 
-  check:
-    desc: Full CI gate — vet + lint + unit tests with race detector
+  vuln:
+    desc: Check dependencies and the standard library for known vulnerabilities (govulncheck)
     cmds:
+      - govulncheck ./...
+
+  check:
+    desc: Full CI gate — gofmt + vet + lint + tests with race detector
+    cmds:
+      - task: fmt:check
       - task: vet
       - task: lint
       - task: test:race
 
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf {{.BUILD_DIR}} dist
+      - go clean
+
+  docker:
+    desc: Build the Docker image from source
+    cmds:
+      - docker build --build-arg VERSION={{.VERSION}} --build-arg COMMIT={{.COMMIT}} -t {{.APP_NAME}}:{{.VERSION}} .
+
+  release:check:
+    desc: Check the release configuration and build a snapshot in dist/ without publishing (needs goreleaser)
+    deps: [frontend-build]
+    cmds:
+      - goreleaser check
+      - goreleaser release --snapshot --clean --skip=sign,sbom,docker,notarize,homebrew
+
   release:
-    desc: 'Create a version tag and push it (usage: task release -- v0.1.0)'
-    deps: [check, build]
+    # CI tests the exact commit, race detector included, so the release waits
+    # for that instead of running the suite again here.
+    desc: 'Tag a commit CI has passed and push the tag (usage: task release -- v0.1.0)'
     preconditions:
       - sh: 'test -n "{{.CLI_ARGS}}"'
         msg: 'version tag required (e.g. task release -- v0.1.0)'
       - sh: 'git diff --quiet'
         msg: 'working tree has uncommitted changes'
+      - sh: './scripts/changelog-section.sh {{.CLI_ARGS}} >/dev/null'
+        msg: 'CHANGELOG.md has no section for {{.CLI_ARGS}}: rename [Unreleased] to the version and date, then commit'
+      - sh: 'git fetch -q origin && test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"'
+        msg: 'HEAD is not origin/main: push the release commit to main first'
     cmds:
+      - ./scripts/wait-for-ci.sh HEAD
       - git tag {{.CLI_ARGS}}
       - git push origin {{.CLI_ARGS}}
       - echo "Tagged and pushed {{.CLI_ARGS}}"

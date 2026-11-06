@@ -6,6 +6,41 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Signed and notarized macOS binaries.** Releases sign the darwin binaries
+  with a Developer ID certificate and notarize them with Apple (when the
+  `MACOS_*` repository secrets are set), so Gatekeeper accepts a download
+  and the bare `skopos_darwin_*` binaries workers self-upgrade from are the
+  signed ones.
+- **Verifiable releases.** `checksums.txt` and an SPDX SBOM per archive are
+  signed keylessly with cosign, every artifact gets a GitHub build
+  provenance attestation, and the release notes are this file's section.
+- **Release image** `ghcr.io/martinsuchenak/skopos` (`linux/amd64`,
+  `linux/arm64`), tagged with the version, the minor version and `latest`,
+  built from the release binaries and signed with cosign.
+- **Windows on arm64** release builds.
+- **CI** (`.github/workflows/ci.yml`) on every pull request and push to
+  main: gofmt, `go mod tidy`, vet, golangci-lint, tests (also under the race
+  detector), govulncheck, cross-compiles of every release platform, the
+  Docker image and `goreleaser check`. Actions are pinned to commit hashes
+  and kept current by Dependabot.
+- `skopos --version` names the commit too.
+
+### Changed
+
+- **`task release` tags only a commit CI has passed**, on `origin/main`,
+  with a `CHANGELOG.md` section for the version; it no longer runs the
+  suite locally. The release no longer runs the tests either (CI did) and
+  builds the dashboard in a job of its own, apart from the signing secrets.
+- **The Docker image** pins its base images, installs the binary at
+  `/usr/local/bin/skopos` (a volume mounted at `/app` can no longer shadow it
+  with an older copy) and stamps the real version and commit (`git
+  describe` found no `.git` in the build, so images said `dev`). The
+  database stays at `/app/skopos.db` and the user at UID 1000.
+
+## [0.20.0] — 2026-11-06
+
 ### Fixed
 
 - **A hung setup no longer keeps a run busy forever.** `setup_timeout` killed

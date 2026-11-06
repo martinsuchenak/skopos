@@ -1,0 +1,26 @@
+# Only source goes into the build. Local databases, config (API keys, Slack
+# tokens) and scratch files never enter the build context, let alone an image.
+tmp/
+*.db
+*.db-shm
+*.db-wal
+skopos-config.toml
+.env
+*.key
+.skopos/
+.skopos-session
+
+# Build output, caches and tooling (the frontend stage builds web/dist)
+bin/
+dist/
+web/dist/
+web/node_modules/
+.cache/
+.git/
+.github/
+.claude/
+.vscode/
+.zcode/
+.DS_Store
+*.test
+*.out

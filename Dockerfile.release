@@ -1,0 +1,31 @@
+# Release image, built by GoReleaser (dockers_v2) from the binaries the
+# release already produced (dashboard embedded): no compiling here. To build
+# from source, use Dockerfile instead. Keep the runtime in step with its
+# runtime stage.
+FROM alpine:3.24
+
+# UID 1000: skopos.nomad runs Litestream as 1000:1000 on the same files.
+RUN apk add --no-cache ca-certificates tzdata wget \
+    && adduser -D -u 1000 -h /app skopos
+
+ARG TARGETPLATFORM
+COPY $TARGETPLATFORM/skopos /usr/local/bin/skopos
+COPY LICENSE /usr/share/licenses/skopos/
+
+WORKDIR /app
+# Reference only: with no live skopos-config.toml the server runs from
+# flags/env, and serve refuses to start keyless on a non-loopback bind unless
+# SKOPOS_INSECURE_NO_API_KEY is explicitly set.
+COPY skopos-config.example.toml .
+RUN chown -R skopos:skopos /app
+
+USER skopos
+
+# The database (skopos.db) is written to /app; mount a volume there.
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget -qO- http://127.0.0.1:8080/health || exit 1
+
+ENTRYPOINT ["skopos"]
+CMD ["serve"]

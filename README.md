@@ -63,6 +63,7 @@ See [Agent integration](docs/getting-started.md#connecting-an-agent) and [Integr
 | Workers (runners, lockdown, profiles, service install) | [docs/deployment/worker.md](docs/deployment/worker.md) |
 | Integration guides (7 agents) | [docs/integrations/](docs/integrations/) |
 | API spec (OpenAPI) | [openapi.yaml](openapi.yaml) |
+| Development (CI, releasing, macOS signing) | [docs/development.md](docs/development.md) |
 | Changelog | [CHANGELOG.md](CHANGELOG.md) |
 
 ## Shell completion

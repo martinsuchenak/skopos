@@ -10,10 +10,13 @@
 
 ```sh
 task build-local      # build for current OS (runs frontend-build first)
-task build            # cross-compile for linux/darwin amd64+arm64
+task build            # cross-compile for linux/darwin/windows amd64+arm64
 task test             # go test ./... -v -count=1
 task lint             # golangci-lint run ./... (every package, tests included)
-task frontend-build   # bun install && bun run build in web/
+task check            # the CI gate: fmt:check, vet, lint, test:race
+task frontend-build   # bun install --frozen-lockfile && bun run build in web/
+task release:check    # goreleaser check + snapshot release in dist/ (nothing published)
+task release -- vX.Y.Z  # tags origin/main once CI passed on it and CHANGELOG.md has the section
 ```
 
 Running a single test package: `go test ./internal/status/... -v -count=1`
