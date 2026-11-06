@@ -6,6 +6,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-11-06
+
 ### Added
 
 - **Signed and notarized macOS binaries.** Releases sign the darwin binaries
