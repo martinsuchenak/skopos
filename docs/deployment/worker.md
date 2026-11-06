@@ -339,6 +339,12 @@ A new round for an item whose worktree is gone, such as a rejected item that
 was restored, continues the item's branch. It uses the local branch, or the
 one on the remote, so the push stays fast-forward. A local branch behind
 the remote's (another worker pushed a later round) is fast-forwarded first.
+When both have moved on — an interrupted round left commits on this worker
+while another worker pushed its own — the worker pulls, as a developer
+would: it merges the remote's branch into the local one and carries on from
+there. If they don't merge cleanly the run fails, naming the conflicting
+files; keep one of the two (push the one you want and delete the other, or
+delete the worker's local branch to continue from the remote's) and retry.
 A pull request skopos opened and someone closed without merging is reopened
 rather than duplicated.
 
@@ -518,9 +524,72 @@ setup_timeout = "30m"
 - **Environment:** scrubbed like every agent run; `setup_env` passes what it
   needs.
 - **Time:** `setup_timeout` bounds all the commands together (default `10m`,
-  at most `2h`).
-- **Failure:** the first failing command stops setup, the worktree is removed
-  and the item blocks. The preview shows each command's output.
+  at most `2h`). When it runs out, the command is stopped with everything it
+  started (its whole process group), so a script whose child hangs can't
+  keep the run busy forever. `check_timeout` does the same for the checks
+  (all of them together, default `30m`, at most `2h`): the check running
+  when it runs out fails, and the rest fail without running.
+- **Silence:** with `quiet_timeout` set (off by default), a command that
+  prints nothing for that long is stopped the same way, long before the
+  timeout. Set it above the longest silent stretch your setup and checks
+  have (a migration, a test runner without progress output). A check
+  stopped by either timeout is a hang, not a failure for the implementer:
+  no fix round, the run is retried (see [Self-healing](#self-healing)).
+- **Background processes:** a command that exits but leaves something
+  running in the background (a dev server) still counts as finished: the
+  worker stops waiting for its output 10 seconds after it exits.
+- **Failure:** the first failing command stops setup and the worktree is
+  removed. A setup failure is the environment's problem, so the run is
+  retried (see [Self-healing](#self-healing)); the item blocks only once the
+  retries are spent. The preview shows each command's output.
+
+## Self-healing
+
+A worker is meant to finish work without anyone fixing it. Four things keep
+the worker's own problems from blocking items:
+
+- **Retries.** A failure that is the worker's problem goes back to the
+  queue instead of blocking the item: setup failed or hung, a check hung,
+  git (fetch, checkout, worktree) failed, the push was rejected, or the
+  provider kept failing. The retry waits 1 minute, then 5; from the second
+  retry on, the worker that failed it can't take it for 30 minutes more, so
+  another worker serving the repo gets the first go. After 3 attempts the
+  item blocks with the last reason. Failures that need a person block at
+  once, as before: checks still failing after the fix rounds, the agent
+  saying it is blocked, a merge conflict, a branch rewritten since the plan
+  was approved.
+- **Preflight.** `preflight` lists commands that say whether this worker can
+  take the repo's work right now (its database, queue, services):
+
+  ```toml
+  [worker.repos."github.com/you/app"]
+  preflight = ["redis-cli -h $REDIS_HOST ping", "php cli_tools/healthcheck.php"]
+  preflight_interval = "5m"
+  setup_env = { REDIS_HOST = "${REDIS_HOST}" }
+  ```
+
+  The worker runs them in the clone before claiming, at most once per
+  interval (each run bounded to 2 minutes). They get the scrubbed setup
+  environment, so pass what they need through `setup_env`, as above.
+  While one fails, the worker takes none of that repo's work — not even its
+  own interrupted runs, which pass to other workers after the takeover
+  grace — and the Workers view shows why. Slack hears once when a worker
+  stops taking a repo's work, and once when it is back.
+- **Step pushes.** While the implementer works, its commits are pushed as
+  it makes them (checked every 30 s, through the same push path: prefix,
+  protected branches, never force). A round cut off by a restart or a kill
+  leaves its work on origin, and the next round continues from there. Set
+  `push.steps = false` to push only at the end.
+- **Self-upgrade.** The server names its release on every claim. An idle
+  worker on an older release downloads `skopos_<os>_<arch>` from the
+  release (`upgrade_url`, the GitHub releases by default), checks it
+  against the release's `checksums.txt`, makes sure it runs as that
+  version, renames it over its own binary and exits with code 75. systemd
+  (`Restart=on-failure`), launchd (`KeepAlive`) and a supervisor loop start
+  the new one. It never downgrades, never touches a dev build or a
+  pre-release, and a failed upgrade waits an hour before the next try. The
+  binary's directory must be writable by the worker; `auto_upgrade = false`
+  turns it off.
 
 ### Branch checkout
 

@@ -20,6 +20,13 @@ const (
 	// asset build and DB updates can need more).
 	defaultSetupTimeout = 10 * time.Minute
 	maxSetupTimeout     = 2 * time.Hour
+	// defaultCheckTimeout bounds a repo's checks together unless
+	// check_timeout says otherwise.
+	defaultCheckTimeout = 30 * time.Minute
+	maxCheckTimeout     = 2 * time.Hour
+	// maxQuietTimeout bounds quiet_timeout (off unless set: a legitimately
+	// silent migration or test run must not be stopped by a default).
+	maxQuietTimeout = 2 * time.Hour
 	// The phases a running implement run reports past its first turn (the
 	// server's runs.PhaseChecks / PhaseFixing): the dashboard's Checks step
 	// shows them running.
@@ -38,6 +45,24 @@ func (r *Repo) SetupDeadline() time.Duration {
 	return defaultSetupTimeout
 }
 
+// CheckDeadline is the repo's check_timeout, defaulted: how long all its
+// checks may take together.
+func (r *Repo) CheckDeadline() time.Duration {
+	if r.CheckTimeout > 0 {
+		return r.CheckTimeout
+	}
+	return defaultCheckTimeout
+}
+
+// setupLimits / checkLimits bound the repo's setup and check commands.
+func (r *Repo) setupLimits() runLimits {
+	return runLimits{total: r.SetupDeadline(), quiet: r.QuietTimeout}
+}
+
+func (r *Repo) checkLimits() runLimits {
+	return runLimits{total: r.CheckDeadline(), quiet: r.QuietTimeout}
+}
+
 // FixRounds is the repo's check_fix_rounds, defaulted.
 func (r *Repo) FixRounds() int {
 	if r.CheckFixRounds == nil {
@@ -54,12 +79,23 @@ func (w *Worker) repoChecks(ctx context.Context, repo *Repo, worktree string) []
 	if len(repo.Checks) == 0 {
 		return nil
 	}
-	out := runChecks(ctx, worktree, repo.Checks, w.cfg.TokenEnvs(), w.envFileKeys)
+	out := runChecks(ctx, worktree, repo.Checks, w.cfg.TokenEnvs(), w.envFileKeys, repo.checkLimits())
 	if dirty, _ := git(ctx, worktree, "status", "--porcelain", "--untracked-files=no"); strings.TrimSpace(dirty) != "" {
 		out = append(out, Check{Name: committedCheck, Output: "Uncommitted changes to tracked files after the checks ran. Commit them if they belong to the change; " +
 			"if a check rewrote them (go mod tidy, a formatter), commit its result:\n" + tail(dirty, 2000)})
 	} else {
 		out = append(out, Check{Name: committedCheck, Passed: true})
+	}
+	return out
+}
+
+// stoppedChecks: the failed checks that never finished (a timeout).
+func stoppedChecks(checks []Check) []Check {
+	var out []Check
+	for _, c := range checks {
+		if !c.Passed && c.Stopped {
+			out = append(out, c)
+		}
 	}
 	return out
 }

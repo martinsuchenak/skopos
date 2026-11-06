@@ -536,6 +536,11 @@ func serveCmd() *cli.Command {
 				runsService.SetSecondOpinionNotifier(func(_ context.Context, res runs.SecondOpinionResult) {
 					go relay.PostSecondOpinion(ctx, res)
 				})
+				// A worker whose preflight fails (or recovers) — off the
+				// claim request.
+				runsService.SetWorkerHealthNotifier(func(_ context.Context, h runs.WorkerHealth) {
+					go relay.PostWorkerHealth(ctx, h)
+				})
 				go func() { _ = notifySvc.Run(ctx) }()
 				go func() { relay.Run(ctx) }()
 			}

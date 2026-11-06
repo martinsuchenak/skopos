@@ -1926,13 +1926,17 @@ paths:
                 workspaces: { type: array, items: { type: string } }
                 version: { type: string, description: "Presence: the worker's release" }
                 poll_ms: { type: integer, description: "Presence: its idle poll interval" }
+                unhealthy:
+                  type: object
+                  additionalProperties: { type: string }
+                  description: "Offered workspaces whose preflight fails on the worker (workspace → reason). None of their runs is handed out — not even the worker's own interrupted ones, which age into takeovers for other workers. Changes are posted to Slack."
       responses:
         "200":
-          description: The claimed run (lease started)
+          description: The claimed run (lease started). Every response carries a Skopos-Version header (the server's release; idle workers upgrade to it).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Run" }
-        "204": { description: Nothing for this worker }
+        "204": { description: Nothing for this worker (with the Skopos-Version header) }
         "400": { description: Invalid input }
         "401": { description: Unauthorized }
         "404": { description: Workspace out of scope }
@@ -1987,6 +1991,7 @@ paths:
                       output: { type: string }
                 log_ref: { type: string }
                 reason: { type: string, description: On failure }
+                retryable: { type: boolean, description: "On failure: the worker's problem (setup, a hung check, git, the push, the provider). The run goes back to the queue — not claimable for 1 then 5 minutes, and from the second retry not by the failing worker for 30 minutes more — until 3 attempts are spent; only then does the item block." }
                 branch: { type: string }
                 base_sha: { type: string }
                 executor: { type: string }
@@ -2079,6 +2084,10 @@ paths:
                     version: { type: string, description: The worker's skopos release }
                     poll_ms: { type: integer, description: Its idle poll interval }
                     offline_at: { type: string, description: When it said goodbye (clean shutdown) }
+                    unhealthy:
+                      type: object
+                      additionalProperties: { type: string }
+                      description: Workspaces whose preflight fails on it (workspace → reason); it takes none of their work
                     state:
                       type: string
                       enum: [busy, idle, offline]
@@ -2523,6 +2532,7 @@ components:
               name: { type: string }
               passed: { type: boolean }
               output: { type: string }
+              stopped: { type: boolean, description: "The check never finished: check_timeout or quiet_timeout stopped it" }
         log_ref: { type: string }
         fail_reason: { type: string }
         executor: { type: string, description: 'How the worker ran the agent stage: "local", or the stage profile''s "wrapper:<hash>" / "sandbox:<hash>"' }
@@ -2532,6 +2542,9 @@ components:
         findings:
           type: array
           items: { $ref: "#/components/schemas/Finding" }
+        retries: { type: integer, description: How often a retryable failure sent the run back to the queue }
+        retry_after: { type: string, format: date-time, description: A requeued run is not claimable before this }
+        avoid_worker: { type: string, description: The worker that failed it last; kept off it until retry_after + 30 minutes }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 

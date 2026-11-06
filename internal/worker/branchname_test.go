@@ -173,8 +173,8 @@ func TestImplementStartOnExistingBranch(t *testing.T) {
 	head := o.devBranch("WR2-x")
 
 	// Planned against head: implement starts from origin's branch.
-	local, ref, err := implementStart(ctx, o.clone, "WR2-x", head)
-	if err != nil || local || ref != head {
+	local, ref, merge, err := implementStart(ctx, o.clone, "WR2-x", head)
+	if err != nil || local || ref != head || merge != "" {
 		t.Fatalf("from origin: local=%v ref=%q %v", local, ref, err)
 	}
 	// A local copy left by an earlier round, behind origin's: fast-forwarded.
@@ -182,8 +182,8 @@ func TestImplementStartOnExistingBranch(t *testing.T) {
 	o.run(o.w, "checkout", "-q", "WR2-x")
 	newer := o.commit("more.txt", "more", "more work")
 	o.run(o.w, "push", "-q", "origin", "WR2-x")
-	local, ref, err = implementStart(ctx, o.clone, "WR2-x", head)
-	if err != nil || !local || ref != "WR2-x" {
+	local, ref, merge, err = implementStart(ctx, o.clone, "WR2-x", head)
+	if err != nil || !local || ref != "WR2-x" || merge != "" {
 		t.Fatalf("stale local: local=%v ref=%q %v", local, ref, err)
 	}
 	if got := gitOut(t, o.clone, "rev-parse", "refs/heads/WR2-x"); got != newer {
@@ -194,8 +194,72 @@ func TestImplementStartOnExistingBranch(t *testing.T) {
 	o.commit("other.txt", "other", "rewritten")
 	o.run(o.w, "push", "-q", "--force", "origin", "WR2-x")
 	o.run(o.clone, "branch", "-D", "WR2-x")
-	if _, _, err := implementStart(ctx, o.clone, "WR2-x", head); err == nil || !strings.Contains(err.Error(), "rewritten") {
+	if _, _, _, err := implementStart(ctx, o.clone, "WR2-x", head); err == nil || !strings.Contains(err.Error(), "rewritten") {
 		t.Fatalf("rewritten branch: %v", err)
+	}
+}
+
+// A local branch and origin's that both moved on (an interrupted round left
+// commits on this worker while another worker pushed its own) are pulled:
+// merged when they merge, the run refused when they conflict — in both
+// checkout modes.
+func TestImplementStartPullsADivergedBranch(t *testing.T) {
+	for _, mode := range []string{"worktree", "branch"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := t.Context()
+			setup := func(t *testing.T, localFile string) (*originClone, string, string) {
+				o := newOriginClone(t)
+				base := o.run(o.w, "rev-parse", "HEAD")
+				o.run(o.w, "checkout", "-q", "-b", "agent/x", "main")
+				pushed := o.commit("shared.txt", "from the other worker\n", "other worker's round")
+				o.run(o.w, "push", "-q", "origin", "agent/x")
+				o.run(o.w, "checkout", "-q", "main")
+				// This worker's leftover round, from the same base.
+				o.run(o.clone, "checkout", "-q", "-b", "agent/x", base)
+				if err := os.WriteFile(filepath.Join(o.clone, localFile), []byte("from this worker\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				o.run(o.clone, "add", "-A")
+				o.run(o.clone, "commit", "-q", "-m", "leftover round")
+				leftover := o.run(o.clone, "rev-parse", "HEAD")
+				o.run(o.clone, "checkout", "-q", "main")
+				return o, base, pushed + " " + leftover
+			}
+			start := func(o *originClone, base string) (string, error) {
+				if mode == "branch" {
+					return o.clone, checkoutImplementBranch(ctx, o.clone, "agent/x", base)
+				}
+				wt := filepath.Join(t.TempDir(), "wt")
+				return wt, prepareImplementWorktree(ctx, o.clone, wt, "agent/x", base)
+			}
+
+			o, base, both := setup(t, "local.txt")
+			dir, err := start(o, base)
+			if err != nil {
+				t.Fatalf("a clean merge must continue: %v", err)
+			}
+			for _, sha := range strings.Fields(both) {
+				if !isAncestor(ctx, dir, sha, "HEAD") {
+					t.Fatalf("the branch must hold both rounds; %s is missing", sha)
+				}
+			}
+			if got := gitOut(t, dir, "status", "--porcelain"); got != "" {
+				t.Fatalf("the merge must leave a clean tree: %s", got)
+			}
+
+			o, base, _ = setup(t, "shared.txt")
+			before := o.run(o.clone, "rev-parse", "refs/heads/agent/x")
+			_, err = start(o, base)
+			if err == nil || !strings.Contains(err.Error(), "don't merge cleanly") || !strings.Contains(err.Error(), "shared.txt") {
+				t.Fatalf("a conflict must refuse the run naming the files: %v", err)
+			}
+			if got := o.run(o.clone, "rev-parse", "refs/heads/agent/x"); got != before {
+				t.Fatalf("a refused merge must leave the local branch as it was: %s want %s", got, before)
+			}
+			if got := gitOut(t, o.clone, "status", "--porcelain"); got != "" {
+				t.Fatalf("a refused merge must leave the clone clean: %s", got)
+			}
+		})
 	}
 }
 
@@ -394,5 +458,54 @@ func TestDiffLines(t *testing.T) {
 	head := o.commit("big.txt", strings.Repeat("line\n", 250), "big")
 	if n := diffLines(t.Context(), o.w, base, head); n != 250 {
 		t.Fatalf("diffLines = %d", n)
+	}
+}
+
+// An item's existing worktree (a retry on the same worker) is brought up
+// to origin's branch before the run continues: fast-forwarded when behind,
+// merged when both moved on, left alone with uncommitted changes.
+func TestPullWorktree(t *testing.T) {
+	ctx := t.Context()
+	o := newOriginClone(t)
+	base := o.run(o.w, "rev-parse", "HEAD")
+	wt := filepath.Join(t.TempDir(), "wt")
+	if err := prepareImplementWorktree(ctx, o.clone, wt, "agent/x", base); err != nil {
+		t.Fatal(err)
+	}
+	o.run(o.w, "checkout", "-q", "-b", "agent/x", "main")
+	pushed := o.commit("other.txt", "another worker\n", "other round")
+	o.run(o.w, "push", "-q", "origin", "agent/x")
+
+	// Behind: fast-forwarded.
+	if err := pullWorktree(ctx, o.clone, wt, "agent/x"); err != nil {
+		t.Fatal(err)
+	}
+	if got := o.run(wt, "rev-parse", "HEAD"); got != pushed {
+		t.Fatalf("behind origin: HEAD %s, want %s", got, pushed)
+	}
+	// Both moved on: merged.
+	if err := os.WriteFile(filepath.Join(wt, "mine.txt"), []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	o.run(wt, "add", "-A")
+	o.run(wt, "commit", "-q", "-m", "this worker's step")
+	mine := o.run(wt, "rev-parse", "HEAD")
+	newer := o.commit("more.txt", "more\n", "more from the other worker")
+	o.run(o.w, "push", "-q", "origin", "agent/x")
+	if err := pullWorktree(ctx, o.clone, wt, "agent/x"); err != nil {
+		t.Fatal(err)
+	}
+	if !isAncestor(ctx, wt, mine, "HEAD") || !isAncestor(ctx, wt, newer, "HEAD") {
+		t.Fatal("diverged: the worktree must hold both")
+	}
+	// Uncommitted changes: untouched.
+	head := o.run(wt, "rev-parse", "HEAD")
+	o.commit("late.txt", "late\n", "late")
+	o.run(o.w, "push", "-q", "origin", "agent/x")
+	if err := os.WriteFile(filepath.Join(wt, "wip.txt"), []byte("wip\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := pullWorktree(ctx, o.clone, wt, "agent/x"); err != nil || o.run(wt, "rev-parse", "HEAD") != head {
+		t.Fatalf("a dirty worktree must be left alone: %v", err)
 	}
 }

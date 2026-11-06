@@ -196,11 +196,12 @@ func (a antigravityRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 	sub.Bin = a.bin
 	name, argv := agentCommand(sub, args)
 	cmd := exec.CommandContext(cctx, name, argv...)
+	containProcess(cmd) // a timeout stops the agent and every tool process it started
 	cmd.Dir = r.Dir
 	cmd.Env = withPWD(scrubEnv(r.Env, r.TokenEnvs, r.FileEnvKeys), r.Dir) // HOME = the login directory
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	runErr := cmd.Run()
+	runErr := settled(cmd, cmd.Run())
 	writeRunLog(r.LogFile, stdout.Bytes(), stderr.Bytes())
 	return parseAntigravity(stdout.Bytes(), stderr.String(), runErr, cctx.Err(), r, time.Now())
 }

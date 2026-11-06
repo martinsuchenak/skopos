@@ -89,6 +89,17 @@ const (
 // without its owner reclaiming it (review M1).
 const takeoverGrace = 30 * time.Minute
 
+// Retryable failures (tmp/self-healing-workers — design.md §1): up to
+// maxRetries requeues after the first failure, each after its back-off;
+// from the second retry on the failing worker is kept off the run for
+// avoidWindow past the back-off, so another worker gets the first go.
+const (
+	maxRetries  = 2
+	avoidWindow = 30 * time.Minute
+)
+
+var retryBackoff = [maxRetries]time.Duration{time.Minute, 5 * time.Minute}
+
 // Run is one stage of one item's lifecycle on the queue.
 type Run struct {
 	ID          string `json:"id"`
@@ -147,9 +158,15 @@ type Run struct {
 	FixRounds int `json:"fix_rounds,omitempty"`
 	// Phase: what a running implement run is doing past its first turn
 	// (PhaseChecks / PhaseFixing), from its heartbeats; '' otherwise.
-	Phase     string    `json:"phase,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Phase string `json:"phase,omitempty"`
+	// Retries: how often a retryable failure sent the run back to the
+	// queue; RetryAfter: not claimable before; AvoidWorker: the worker that
+	// failed it last, kept off it until RetryAfter + avoidWindow.
+	Retries     int       `json:"retries,omitempty"`
+	RetryAfter  time.Time `json:"retry_after,omitzero"`
+	AvoidWorker string    `json:"avoid_worker,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // Finding is one review/QA observation. Blocking findings fail the member;
@@ -212,6 +229,8 @@ type Check struct {
 	Name   string `json:"name"`
 	Passed bool   `json:"passed"`
 	Output string `json:"output,omitempty"`
+	// Stopped: it never finished (check_timeout / quiet_timeout).
+	Stopped bool `json:"stopped,omitempty"`
 }
 
 // ClaimInput is what a worker brings to the queue: who it is and what it can
@@ -225,6 +244,20 @@ type ClaimInput struct {
 	// silent worker counts as offline).
 	Version string `json:"version,omitempty"`
 	PollMS  int64  `json:"poll_ms,omitempty"`
+	// Unhealthy: offered workspaces whose preflight fails on the worker
+	// (workspace → reason). The claim hands it none of their runs — not
+	// even its own interrupted ones, which age into takeovers for other
+	// workers (tmp/self-healing-workers — design.md §2).
+	Unhealthy map[string]string `json:"unhealthy,omitempty"`
+}
+
+// WorkerHealth is one change in a worker's health for one workspace, for
+// the health notifier.
+type WorkerHealth struct {
+	Worker    string
+	Workspace string
+	Healthy   bool
+	Reason    string // why it is unhealthy ("" when healthy again)
 }
 
 // ReportInput is the worker's result for a claimed run.
@@ -260,6 +293,10 @@ type ReportInput struct {
 	// Verdict: a second opinion's pass/fail. It reports succeeded either
 	// way (the review itself ran); the verdict is advisory.
 	Verdict string `json:"verdict,omitempty"`
+	// Retryable: a failure that was the worker's problem (setup, a hung
+	// check, git, the push, the provider) — the run goes back to the queue
+	// until its retries are spent, instead of blocking the item.
+	Retryable bool `json:"retryable,omitempty"`
 }
 
 // WorkspacePrefs is the per-workspace routing config: which runner each stage

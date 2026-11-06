@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/martinsuchenak/skopos/build"
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/rest"
 )
@@ -41,6 +42,9 @@ func (h *Handler) Claim(w http.ResponseWriter, r *http.Request) {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	// The server's release, so an idle worker can upgrade itself to it
+	// (tmp/self-healing-workers — design.md §5).
+	w.Header().Set("Skopos-Version", build.Version)
 	run, err := h.service.ClaimNext(r.Context(), in)
 	if err != nil {
 		h.respondRunError(w, err, "claim")

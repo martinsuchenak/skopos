@@ -25,6 +25,8 @@ type Client struct {
 	leases    map[string]string // run id -> fencing token
 	mu        sync.Mutex
 	pollMS    int64 // idle poll interval, reported for presence
+	// serverVersion: the release the server named on its last response.
+	serverVersion string
 }
 
 func NewClient(base, key string) *Client {
@@ -83,6 +85,11 @@ func (c *Client) exec(req *http.Request, out any) error {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if v := resp.Header.Get("Skopos-Version"); v != "" {
+		c.mu.Lock()
+		c.serverVersion = v
+		c.mu.Unlock()
+	}
 	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusNoContent {
 		return nil
@@ -97,10 +104,13 @@ func (c *Client) exec(req *http.Request, out any) error {
 }
 
 // Claim polls the queue. (nil, nil) = nothing to do.
-func (c *Client) Claim(ctx context.Context, workerID string, runners, workspaces []string) (*Run, error) {
+func (c *Client) Claim(ctx context.Context, workerID string, runners, workspaces []string, unhealthy map[string]string) (*Run, error) {
 	var run Run
 	req := map[string]any{"worker_id": workerID, "runners": runners, "workspaces": workspaces,
 		"version": build.Version, "poll_ms": c.pollMS}
+	if len(unhealthy) > 0 {
+		req["unhealthy"] = unhealthy
+	}
 	// 204 handling: do() returns nil without touching out.
 	if err := c.do(ctx, http.MethodPost, "/api/runs/claim", req, &run); err != nil {
 		return nil, err
@@ -120,6 +130,14 @@ func (c *Client) leaseHeader(runID string) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.leases[runID]
+}
+
+// ServerVersion is the release the server last named ("" before any poll,
+// or from a server too old to say).
+func (c *Client) ServerVersion() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.serverVersion
 }
 
 // SetPollInterval: reported with every poll, so the server knows when a

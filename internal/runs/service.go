@@ -37,6 +37,9 @@ type Service struct {
 	// secondOpinionNotify hears about every finished second opinion (the
 	// Slack relay posts it to the item's thread).
 	secondOpinionNotify func(ctx context.Context, r SecondOpinionResult)
+	// healthNotify hears when a worker turns unhealthy for a workspace, or
+	// recovers (the Slack relay posts it once).
+	healthNotify func(ctx context.Context, h WorkerHealth)
 	// Plan groups (multi-agent planning), wired in serve.go: planRoundStart
 	// closes the previous round (supersedes its open candidates) when a new
 	// plan group opens; ensurePlan creates and links the item's plan when
@@ -269,10 +272,36 @@ func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 	if in.PollMS < 0 || in.PollMS > int64(24*time.Hour/time.Millisecond) {
 		in.PollMS = 0
 	}
+	offered := map[string]bool{}
 	for _, ws := range in.Workspaces {
 		if err := auth.RequireWorkspaceQuiet(ctx, ws); err != nil {
 			return nil, fmt.Errorf("%w: workspace scope", ErrNotFound)
 		}
+		offered[ws] = true
+	}
+	// Health is a client claim about the offered workspaces: bound it.
+	for ws, reason := range in.Unhealthy {
+		reason = strings.TrimSpace(reason)
+		switch {
+		case !offered[ws]:
+			delete(in.Unhealthy, ws)
+			continue
+		case reason == "":
+			reason = "preflight failed"
+		case len(reason) > 500:
+			reason = reason[:500]
+		}
+		in.Unhealthy[ws] = reason
+	}
+	if s.healthNotify != nil {
+		// What the registry held before and after this poll: a row this
+		// key may not write (another key's worker id) never changes, so it
+		// never notifies.
+		before := s.storage.WorkerUnhealthy(ctx, in.WorkerID)
+		defer func() {
+			hctx := context.WithoutCancel(ctx)
+			s.healthChanged(hctx, in.WorkerID, before, s.storage.WorkerUnhealthy(hctx, in.WorkerID))
+		}()
 	}
 	// Routing of the offered workspaces, resolved once per claim.
 	prefs := make(map[string]*WorkspacePrefs, len(in.Workspaces))
@@ -300,6 +329,30 @@ func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 		}
 	}
 	return run, nil
+}
+
+// SetWorkerHealthNotifier wires the hook told when a worker turns unhealthy
+// for a workspace or recovers.
+func (s *Service) SetWorkerHealthNotifier(fn func(ctx context.Context, h WorkerHealth)) {
+	s.healthNotify = fn
+}
+
+// healthChanged tells the health notifier what changed between the stored
+// health and the claim's: each newly failing workspace, each recovered one.
+// A reason that changes while still failing is not news.
+func (s *Service) healthChanged(ctx context.Context, worker string, before, after map[string]string) {
+	for ws, reason := range after {
+		if before[ws] == "" {
+			slog.Warn("worker unhealthy for a workspace", "worker", worker, "workspace", ws, "reason", reason)
+			s.healthNotify(ctx, WorkerHealth{Worker: worker, Workspace: ws, Reason: reason})
+		}
+	}
+	for ws := range before {
+		if after[ws] == "" {
+			slog.Info("worker healthy again", "worker", worker, "workspace", ws)
+			s.healthNotify(ctx, WorkerHealth{Worker: worker, Workspace: ws, Healthy: true})
+		}
+	}
 }
 
 // QueueSeeded queues one plan run that re-plans from a candidate (revise
@@ -429,12 +482,46 @@ func (s *Service) Report(ctx context.Context, id string, in ReportInput, leaseTo
 		(!strings.HasPrefix(in.PRURL, "https://") && !strings.HasPrefix(in.PRURL, "http://")) {
 		in.PRURL = ""
 	}
+	if in.Status == StatusFailed && in.Retryable {
+		run, requeued, err := s.retry(ctx, id, in, leaseToken)
+		if err != nil || requeued {
+			return run, err
+		}
+		in.Reason = fmt.Sprintf("failed after %d attempts: %s", maxRetries+1, in.Reason)
+	}
 	run, err := s.storage.Report(ctx, id, in.WorkerID, callerKeyID(ctx), hashLeaseToken(leaseToken), in, s.now().UTC())
 	if err != nil {
 		return nil, err
 	}
 	s.chain(ctx, run, in)
 	return run, nil
+}
+
+// retry sends a retryably failed run back to the queue while it has
+// retries left (requeued = true): the item stays where it is and nobody is
+// told — the worker's problem is not Martin's. Spent retries fall through
+// to the ordinary failure (Report + chain → blocked).
+func (s *Service) retry(ctx context.Context, id string, in ReportInput, leaseToken string) (run *Run, requeued bool, err error) {
+	cur, err := s.storage.Get(ctx, id)
+	if err != nil {
+		return nil, false, err
+	}
+	if cur.Retries >= maxRetries {
+		return nil, false, nil
+	}
+	now := s.now().UTC()
+	avoid := ""
+	if cur.Retries >= 1 {
+		// The second retry gives another worker the first go.
+		avoid = in.WorkerID
+	}
+	note := fmt.Sprintf("attempt %d of %d failed on %s, retrying: %s", cur.Retries+1, maxRetries+1, in.WorkerID, firstLine(in.Reason, in.Summary))
+	run, err = s.storage.Requeue(ctx, id, in.WorkerID, callerKeyID(ctx), hashLeaseToken(leaseToken), in, note, now.Add(retryBackoff[cur.Retries]), avoid, now)
+	if err != nil {
+		return nil, false, err
+	}
+	slog.Info("run requeued after a retryable failure", "run", id, "item", run.ItemID, "stage", run.Stage, "worker", in.WorkerID, "retry", run.Retries)
+	return run, true, nil
 }
 
 // chain applies the item-side consequence of a finished run. Item-move
@@ -623,6 +710,11 @@ func (s *Service) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
 			continue
 		}
 		w.Workspaces = mine
+		for ws := range w.Unhealthy {
+			if !p.CanAccess(ws) {
+				delete(w.Unhealthy, ws)
+			}
+		}
 		out = append(out, w)
 	}
 	return out, nil

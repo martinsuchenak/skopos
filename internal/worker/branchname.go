@@ -196,7 +196,7 @@ func fetchBranch(ctx context.Context, clone, branch string) (string, error) {
 	}
 	remote := "refs/remotes/origin/" + branch
 	if _, err := git(ctx, clone, "fetch", "--quiet", "origin", "+refs/heads/"+branch+":"+remote); err != nil {
-		return "", fmt.Errorf("fetching %s: %w", branch, err)
+		return "", retryable(fmt.Errorf("fetching %s: %w", branch, err))
 	}
 	return git(ctx, clone, "rev-parse", "--verify", remote+"^{commit}")
 }

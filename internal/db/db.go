@@ -173,6 +173,14 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "runs", "phase", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	// Retryable failures (tmp/self-healing-workers — design.md §1): a run
+	// whose failure was the worker's problem goes back to the queue — not
+	// claimable before retry_after, and not by avoid_worker for a while.
+	for _, col := range [][2]string{{"retries", "INTEGER NOT NULL DEFAULT 0"}, {"retry_after", "TEXT NOT NULL DEFAULT ''"}, {"avoid_worker", "TEXT NOT NULL DEFAULT ''"}} {
+		if err := ensureColumn(db, "runs", col[0], col[1]); err != nil {
+			return err
+		}
+	}
 	// Plan candidates (multi-agent planning): a candidate is a revision with
 	// a group; its state moves open → approved | superseded. NULL for every
 	// revision outside a plan group (all existing ones).
@@ -192,7 +200,9 @@ func RunMigrations(db *sql.DB) error {
 	}
 	// Worker presence: what a worker reports on every poll (its version and
 	// poll interval) and its clean-shutdown goodbye.
-	for _, col := range [][2]string{{"version", "TEXT"}, {"poll_ms", "INTEGER"}, {"offline_at", "TEXT"}} {
+	// unhealthy: the workspaces whose preflight fails on the worker (JSON
+	// object workspace → reason; NULL = all healthy).
+	for _, col := range [][2]string{{"version", "TEXT"}, {"poll_ms", "INTEGER"}, {"offline_at", "TEXT"}, {"unhealthy", "TEXT"}} {
 		if err := ensureColumn(db, "workers", col[0], col[1]); err != nil {
 			return err
 		}
@@ -313,7 +323,7 @@ var timestampColumns = []struct{ table, column string }{
 	{"api_keys", "created_at"}, {"api_keys", "last_used_at"}, {"api_keys", "revoked_at"},
 	{"workspace_groups", "created_at"},
 	{"audit_log", "created_at"},
-	{"runs", "lease_expires_at"}, {"runs", "resume_after"}, {"runs", "created_at"}, {"runs", "updated_at"},
+	{"runs", "lease_expires_at"}, {"runs", "resume_after"}, {"runs", "retry_after"}, {"runs", "created_at"}, {"runs", "updated_at"},
 	{"workers", "last_seen"}, {"workers", "updated_at"}, {"workers", "offline_at"},
 }
 

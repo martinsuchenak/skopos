@@ -241,11 +241,12 @@ func runClaude(ctx context.Context, r AgentRun) AgentResult {
 	defer cancel()
 	name, argv := agentCommand(r, args)
 	cmd := exec.CommandContext(cctx, name, argv...)
+	containProcess(cmd) // a timeout stops the agent and every tool process it started
 	cmd.Dir = r.Dir
 	cmd.Env = withPWD(scrubEnv(r.Env, r.TokenEnvs, r.FileEnvKeys), r.Dir)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err := cmd.Run()
+	err := settled(cmd, cmd.Run())
 
 	if r.LogFile != "" {
 		_ = os.MkdirAll(logsDirOf(r.LogFile), 0o700)

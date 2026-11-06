@@ -35,11 +35,11 @@ func parseTime(s string) time.Time {
 const runColumns = `id, workspace_id, item_id, plan_rev_id, stage, runner, worker_id, status,
 	resume_kind, lease_expires_at, resume_after, attempt, branch, base_sha, head_sha,
 	result_summary, diffstat, checks, log_ref, fail_reason, lease_token_hash, claimed_key_id, created_at, updated_at, executor,
-	group_id, focus, cost_usd, findings, pushed, pr_url, setup, fix_rounds, phase`
+	group_id, focus, cost_usd, findings, pushed, pr_url, setup, fix_rounds, phase, retries, retry_after, avoid_worker`
 
 func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	var r Run
-	var lease, resumeAfter, createdAt, updatedAt string
+	var lease, resumeAfter, retryAfter, createdAt, updatedAt string
 	var checks, setup string
 	var groupID, focus, findings sql.NullString
 	var cost sql.NullFloat64
@@ -47,7 +47,7 @@ func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	if err := row.Scan(&r.ID, &r.WorkspaceID, &r.ItemID, &r.PlanRevID, &r.Stage, &r.Runner, &r.WorkerID, &r.Status,
 		&r.ResumeKind, &lease, &resumeAfter, &r.Attempt, &r.Branch, &r.BaseSHA, &r.HeadSHA,
 		&r.ResultSummary, &r.Diffstat, &checks, &r.LogRef, &r.FailReason, &r.LeaseTokenHash, &r.ClaimedKeyID, &createdAt, &updatedAt, &r.Executor,
-		&groupID, &focus, &cost, &findings, &pushed, &r.PRURL, &setup, &r.FixRounds, &r.Phase); err != nil {
+		&groupID, &focus, &cost, &findings, &pushed, &r.PRURL, &setup, &r.FixRounds, &r.Phase, &r.Retries, &retryAfter, &r.AvoidWorker); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -55,6 +55,7 @@ func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	}
 	r.LeaseExpires = parseTime(lease)
 	r.ResumeAfter = parseTime(resumeAfter)
+	r.RetryAfter = parseTime(retryAfter)
 	r.CreatedAt = parseTime(createdAt)
 	r.UpdatedAt = parseTime(updatedAt)
 	if checks != "" && checks != "[]" {
@@ -152,6 +153,31 @@ type WorkerSeen struct {
 	PollMS     int64    `json:"poll_ms,omitempty"`
 	OfflineAt  string   `json:"offline_at,omitempty"`
 	State      string   `json:"state"`
+	// Unhealthy: workspaces whose preflight fails there (→ reason).
+	Unhealthy map[string]string `json:"unhealthy,omitempty"`
+}
+
+// unhealthyJSON stores a health map (nil when all healthy).
+func unhealthyJSON(m map[string]string) any {
+	if len(m) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return nil
+	}
+	return string(b)
+}
+
+// WorkerUnhealthy is the stored health of a worker (nil when none).
+func (s *Storage) WorkerUnhealthy(ctx context.Context, workerID string) map[string]string {
+	var raw sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT unhealthy FROM workers WHERE id = ?`, workerID).Scan(&raw); err != nil || !raw.Valid {
+		return nil
+	}
+	var m map[string]string
+	_ = json.Unmarshal([]byte(raw.String), &m)
+	return m
 }
 
 // presenceRefresh: an unchanged worker row is rewritten at most this often
@@ -179,19 +205,20 @@ func recordWorker(ctx context.Context, tx *sql.Tx, in ClaimInput, now time.Time,
 		forced = 1
 	}
 	res, err := tx.ExecContext(ctx, `
-		INSERT INTO workers (id, runners, workspaces, last_seen, updated_at, key_id, version, poll_ms, offline_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+		INSERT INTO workers (id, runners, workspaces, last_seen, updated_at, key_id, version, poll_ms, offline_at, unhealthy)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			runners = excluded.runners, workspaces = excluded.workspaces,
 			last_seen = excluded.last_seen, updated_at = excluded.updated_at, key_id = excluded.key_id,
-			version = excluded.version, poll_ms = excluded.poll_ms, offline_at = NULL
+			version = excluded.version, poll_ms = excluded.poll_ms, offline_at = NULL, unhealthy = excluded.unhealthy
 		WHERE (workers.key_id IS NULL OR workers.key_id = excluded.key_id)
 			AND (? = 1 OR workers.runners != excluded.runners OR workers.workspaces != excluded.workspaces
 				OR COALESCE(workers.version, '') != COALESCE(excluded.version, '')
 				OR COALESCE(workers.poll_ms, 0) != COALESCE(excluded.poll_ms, 0)
+				OR COALESCE(workers.unhealthy, '') != COALESCE(excluded.unhealthy, '')
 				OR workers.offline_at IS NOT NULL OR workers.last_seen < ?)`,
 		in.WorkerID, jsonList(in.Runners), jsonList(in.Workspaces), formatTime(now), formatTime(now), in.KeyID,
-		version, poll, forced, formatTime(now.Add(-presenceRefresh)))
+		version, poll, unhealthyJSON(in.Unhealthy), forced, formatTime(now.Add(-presenceRefresh)))
 	if err != nil {
 		return fmt.Errorf("recording worker: %w", err)
 	}
@@ -241,7 +268,7 @@ func (s *Storage) BusyWorkers(ctx context.Context) (map[string]bool, error) {
 
 // ListWorkers returns every worker that has ever claimed, newest first.
 func (st *Storage) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
-	rows, err := st.db.QueryContext(ctx, `SELECT id, runners, workspaces, last_seen, COALESCE(version, ''), COALESCE(poll_ms, 0), COALESCE(offline_at, '') FROM workers ORDER BY last_seen DESC`)
+	rows, err := st.db.QueryContext(ctx, `SELECT id, runners, workspaces, last_seen, COALESCE(version, ''), COALESCE(poll_ms, 0), COALESCE(offline_at, ''), COALESCE(unhealthy, '') FROM workers ORDER BY last_seen DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("listing workers: %w", err)
 	}
@@ -249,9 +276,12 @@ func (st *Storage) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
 	var out []WorkerSeen
 	for rows.Next() {
 		var w WorkerSeen
-		var runners, workspaces string
-		if err := rows.Scan(&w.ID, &runners, &workspaces, &w.LastSeen, &w.Version, &w.PollMS, &w.OfflineAt); err != nil {
+		var runners, workspaces, unhealthy string
+		if err := rows.Scan(&w.ID, &runners, &workspaces, &w.LastSeen, &w.Version, &w.PollMS, &w.OfflineAt, &unhealthy); err != nil {
 			return nil, err
+		}
+		if unhealthy != "" {
+			_ = json.Unmarshal([]byte(unhealthy), &w.Unhealthy)
 		}
 		_ = json.Unmarshal([]byte(runners), &w.Runners)
 		_ = json.Unmarshal([]byte(workspaces), &w.Workspaces)
@@ -367,8 +397,9 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 		row := tx.QueryRowContext(ctx, `
 			SELECT `+runColumns+` FROM runs
 			WHERE worker_id = ? AND (status = ? OR (status = ? AND resume_after != '' AND resume_after <= ?))
+				AND NOT EXISTS (SELECT 1 FROM json_each(?) WHERE json_each.key = runs.workspace_id)
 			ORDER BY created_at ASC LIMIT 1`,
-			in.WorkerID, string(StatusInterrupted), string(StatusPaused), formatTime(now))
+			in.WorkerID, string(StatusInterrupted), string(StatusPaused), formatTime(now), unhealthyObject(in.Unhealthy))
 		r, err := scanRun(row)
 		if err == nil {
 			cand = r
@@ -401,10 +432,10 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 		}
 		wsSet := map[string]bool{}
 		for _, w := range in.Workspaces {
-			wsSet[w] = true
+			wsSet[w] = in.Unhealthy[w] == ""
 		}
 		for _, r := range queued {
-			if !wsSet[r.WorkspaceID] {
+			if !wsSet[r.WorkspaceID] || retryWaiting(r, in.WorkerID, now) {
 				continue
 			}
 			if claimable(r, prefs, runnerSet) {
@@ -442,7 +473,7 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 		}
 		wsSet := map[string]bool{}
 		for _, w := range in.Workspaces {
-			wsSet[w] = true
+			wsSet[w] = in.Unhealthy[w] == ""
 		}
 		for _, r := range takeover {
 			if !wsSet[r.WorkspaceID] {
@@ -573,12 +604,12 @@ func (s *Storage) Report(ctx context.Context, id, workerID, keyID, tokenHash str
 			executor = CASE WHEN ? != '' THEN ? ELSE executor END,
 			pr_url = CASE WHEN ? != '' THEN ? ELSE pr_url END,
 			setup = CASE WHEN ? != '' THEN ? ELSE setup END, fix_rounds = ?, phase = '',
-			cost_usd = COALESCE(?, cost_usd), findings = COALESCE(?, findings), pushed = COALESCE(?, pushed),
+			cost_usd = `+addCost+`, findings = COALESCE(?, findings), pushed = COALESCE(?, pushed),
 			lease_expires_at = '', resume_after = '', updated_at = ?
 		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
 		string(in.Status), in.Summary, in.HeadSHA, in.HeadSHA, in.Diffstat, string(checks),
 		in.LogRef, in.Reason, in.Branch, in.Branch, in.BaseSHA, in.BaseSHA, in.Executor, in.Executor, in.PRURL, in.PRURL, setupJSON, setupJSON, in.FixRounds,
-		costArg(in.CostUSD), findingsJSON(in.Findings), boolArg(in.Pushed),
+		costArg(in.CostUSD), costArg(in.CostUSD), findingsJSON(in.Findings), boolArg(in.Pushed),
 		formatTime(now), id, workerID, keyID, tokenHash, string(StatusClaimed), string(StatusRunning), string(StatusPaused))
 	if err != nil {
 		return nil, fmt.Errorf("reporting run: %w", err)
@@ -589,6 +620,72 @@ func (s *Storage) Report(ctx context.Context, id, workerID, keyID, tokenHash str
 	row := s.db.QueryRowContext(ctx, `SELECT `+runColumns+` FROM runs WHERE id = ?`, id)
 	return scanRun(row)
 }
+
+// Requeue ends a failed attempt by putting the run back in the queue
+// (a retryable failure): the same fencing as Report; the attempt's setup
+// and checks stay visible, fail_reason says what happened; owner, lease and
+// session go — any worker may claim it after retryAfter, except avoid
+// until avoidUntil (the claim decides).
+func (s *Storage) Requeue(ctx context.Context, id, workerID, keyID, tokenHash string, in ReportInput, note string, retryAfter time.Time, avoid string, now time.Time) (*Run, error) {
+	checks, err := json.Marshal(in.Checks)
+	if err != nil {
+		checks = []byte("[]")
+	}
+	setupJSON := ""
+	if len(in.Setup) > 0 {
+		if b, err := json.Marshal(in.Setup); err == nil {
+			setupJSON = string(b)
+		}
+	}
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE runs SET status = ?, worker_id = '', resume_kind = '', lease_expires_at = '', resume_after = '',
+			lease_token_hash = '', claimed_key_id = '', phase = '', fail_reason = ?, checks = ?,
+			setup = CASE WHEN ? != '' THEN ? ELSE setup END, cost_usd = `+addCost+`,
+			retries = retries + 1, retry_after = ?, avoid_worker = ?, attempt = attempt + 1, updated_at = ?
+		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
+		string(StatusQueued), note, string(checks), setupJSON, setupJSON, costArg(in.CostUSD), costArg(in.CostUSD),
+		formatTime(retryAfter), avoid, formatTime(now),
+		id, workerID, keyID, tokenHash, string(StatusClaimed), string(StatusRunning), string(StatusPaused))
+	if err != nil {
+		return nil, fmt.Errorf("requeueing run: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, ErrLeaseHeld
+	}
+	row := s.db.QueryRowContext(ctx, `SELECT `+runColumns+` FROM runs WHERE id = ?`, id)
+	return scanRun(row)
+}
+
+// retryWaiting: a requeued run not yet claimable by this worker — before
+// its back-off, or (for the worker that failed it last) before the avoid
+// window ends.
+func retryWaiting(r *Run, workerID string, now time.Time) bool {
+	if r.RetryAfter.IsZero() {
+		return false
+	}
+	if now.Before(r.RetryAfter) {
+		return true
+	}
+	return r.AvoidWorker != "" && r.AvoidWorker == workerID && now.Before(r.RetryAfter.Add(avoidWindow))
+}
+
+// unhealthyObject is the health map as a JSON object for json_each ("{}"
+// when all healthy).
+func unhealthyObject(m map[string]string) string {
+	if len(m) == 0 {
+		return "{}"
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
+}
+
+// addCost adds a report's cost to the run's (two costArg parameters): a
+// requeued run is reported once per attempt, and each report carries only
+// what was spent since the last one.
+const addCost = `CASE WHEN ? IS NULL THEN cost_usd ELSE COALESCE(cost_usd, 0) + ? END`
 
 func costArg(c *float64) any {
 	if c == nil {

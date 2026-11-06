@@ -689,7 +689,7 @@
                         <li class="card p-4">
                             <div class="flex items-start justify-between gap-2">
                                 <h2 class="min-w-0 break-all font-mono text-sm font-medium" x-text="w.id"></h2>
-                                <span class="badge shrink-0" :class="workerStatusClass(w)" x-text="workerStatusLabel(w)"></span>
+                                <span class="badge shrink-0" :class="workerStatusClass(w)" x-text="workerBadge(w)"></span>
                             </div>
                             <p class="mt-2 text-sm" x-show="w.active > 0" x-text="w.currentLabel"></p>
                             <dl class="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
@@ -705,6 +705,12 @@
                                 <div x-show="w.lastActive"><dt class="inline text-zinc-300">last run:</dt> <dd class="inline" x-text="timeAgo(w.lastActive)"></dd></div>
                                 <div x-show="w.version"><dt class="inline text-zinc-300">version:</dt> <dd class="inline font-mono" x-text="w.version"></dd></div>
                             </dl>
+                            <div x-show="w.unhealthy.length" class="mt-3 text-xs">
+                                <p class="font-medium text-rose-300">Not taking work (preflight failing):</p>
+                                <ul class="mt-1 space-y-1 text-rose-200">
+                                    <template x-for="u in w.unhealthy" :key="u"><li class="break-words" x-text="u"></li></template>
+                                </ul>
+                            </div>
                         </li>
                     </template>
                 </ul>

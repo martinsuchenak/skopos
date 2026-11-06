@@ -150,16 +150,23 @@ func writeCloneSetup(ctx context.Context, clone string, cs cloneSetup) {
 // checkoutImplementBranch switches the clone to the item's branch, starting
 // where implementStart says.
 func checkoutImplementBranch(ctx context.Context, clone, branch, base string) error {
-	local, ref, err := implementStart(ctx, clone, branch, base)
+	local, ref, merge, err := implementStart(ctx, clone, branch, base)
 	if err != nil {
 		return err
 	}
-	if local {
-		_, err = git(ctx, clone, "checkout", "--quiet", branch)
-	} else {
+	if !local {
 		_, err = git(ctx, clone, "checkout", "--quiet", "--no-track", "-b", branch, ref)
+		return err
 	}
-	return err
+	if _, err := git(ctx, clone, "checkout", "--quiet", branch); err != nil {
+		return err
+	}
+	if merge != "" {
+		// Before the stash of a paused round goes back on: the clone is
+		// clean here, so a failed merge aborts cleanly.
+		return mergeOrigin(ctx, clone, branch, merge)
+	}
+	return nil
 }
 
 // parkClone stashes anything uncommitted (tracked or untracked, never the

@@ -137,11 +137,12 @@ func (o opencodeRunner) invoke(ctx context.Context, r AgentRun, prompt, session 
 	sub.Bin = o.bin
 	name, argv := agentCommand(sub, args)
 	cmd := exec.CommandContext(cctx, name, argv...)
+	containProcess(cmd) // a timeout stops the agent and every tool process it started
 	cmd.Dir = r.Dir
 	cmd.Env = env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	runErr := cmd.Run()
+	runErr := settled(cmd, cmd.Run())
 	writeRunLog(r.LogFile, stdout.Bytes(), stderr.Bytes())
 
 	res := parseOpencodeEvents(stdout.Bytes())

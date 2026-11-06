@@ -202,6 +202,7 @@ func (c codexRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 	sub.Bin = c.bin
 	name, argv := agentCommand(sub, args)
 	cmd := exec.CommandContext(cctx, name, argv...)
+	containProcess(cmd) // a timeout stops the agent and every tool process it started
 	cmd.Dir = r.Dir
 	// The agent's shell can't read the worker user's ~/.gitconfig (outside
 	// the sandbox), and git refuses to run when it exists but is unreadable.
@@ -210,7 +211,7 @@ func (c codexRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 	cmd.Stdin = strings.NewReader(r.Prompt)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	runErr := cmd.Run()
+	runErr := settled(cmd, cmd.Run())
 	writeRunLog(r.LogFile, stdout.Bytes(), stderr.Bytes())
 
 	res := parseCodexEvents(stdout.Bytes(), time.Now())

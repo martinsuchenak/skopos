@@ -31,7 +31,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	// The planner reads the clone's working tree at the base branch; the
 	// recorded base binds Martin's approval to exactly what was read.
 	if _, err := git(ctx, repo.Path, "fetch", "--quiet", "origin", repo.DefaultBranch); err != nil {
-		return err
+		return retryable(err)
 	}
 	if _, err := git(ctx, repo.Path, "merge", "--ff-only", "--quiet", "origin/"+repo.DefaultBranch); err != nil {
 		return fmt.Errorf("clone not fast-forwardable to origin/%s: %w", repo.DefaultBranch, err)
@@ -342,7 +342,8 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			rec.Worktree = ""
 		}
 		if err := checkoutImplementBranch(ctx, repo.Path, branch, baseRef); err != nil {
-			return fmt.Errorf("checkout: %w", err)
+			w.park(repo, branch, log) // a failed merge happens on the branch
+			return retryable(fmt.Errorf("checkout: %w", err))
 		}
 		defer w.park(repo, branch, log)
 		if err := applyStash(ctx, repo.Path, stashLabel(branch)); err != nil {
@@ -352,8 +353,12 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		fresh = cs.Branch != branch || cs.Head != headSHA(ctx, repo.Path)
 	} else if fresh {
 		if err := prepareImplementWorktree(ctx, repo.Path, worktree, branch, baseRef); err != nil {
-			return fmt.Errorf("worktree: %w", err)
+			return retryable(fmt.Errorf("worktree: %w", err))
 		}
+	} else if err := pullWorktree(ctx, repo.Path, worktree, branch); err != nil {
+		// The item's worktree from an earlier attempt: origin may have moved
+		// on since (the push that failed it was rejected).
+		return retryable(fmt.Errorf("worktree: %w", err))
 	}
 	// Setup runs in a fresh worktree, and again in one whose setup never
 	// finished (the worker died or lost the run mid-setup). Its results ride
@@ -365,12 +370,13 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			// Set up for nothing until this setup finishes.
 			writeCloneSetup(ctx, repo.Path, cloneSetup{})
 		}
-		setup, err := runSetup(ctx, worktree, repo.Setup, repo.Path, repo.SetupEnv, w.cfg.TokenEnvs(), w.envFileKeys, repo.SetupDeadline())
+		setup, err := runSetup(ctx, worktree, repo.Setup, repo.Path, repo.SetupEnv, w.cfg.TokenEnvs(), w.envFileKeys, repo.setupLimits())
 		if err != nil {
 			if !branchMode {
 				removeWorktree(ctx, repo.Path, worktree)
 			}
-			return w.report(ctx, run, false, map[string]any{"reason": err.Error(), "setup": setup})
+			// The environment's problem: skopos retries the run.
+			return w.report(ctx, run, false, map[string]any{"reason": err.Error(), "setup": setup, "retryable": true})
 		}
 		rec.SetupPending, rec.SetupRun, rec.Setup = false, run.ID, setup
 		if branchMode {
@@ -382,6 +388,10 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	if rec.SetupRun == run.ID {
 		setup = rec.Setup
 	}
+	// The implementer's commits go to origin as it makes them (and the fix
+	// rounds'), so a round cut off here leaves its work for the next one.
+	stopSteps := w.pushSteps(ctx, repo, worktree, branch, log)
+	defer stopSteps()
 
 	// A run resumed after a pause during a fix round (quota) already has
 	// its implementation: it goes straight back to the checks, with the
@@ -445,6 +455,10 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			return w.repoChecks(ctx, repo, worktree)
 		},
 		func(failed []Check, _ int) (bool, error) {
+			if hung := stoppedChecks(failed); len(hung) > 0 {
+				// A hang is the worker's problem: no fix round for it.
+				return true, retryable(fmt.Errorf("checks stopped before they finished: %s", checkNames(hung)))
+			}
 			w.setPhase(ctx, run, phaseFixing)
 			round := rec.FixRounds + 1
 			log.Info("checks failed; asking the implementer to fix them", "round", round, "failed", checkNames(failed))
@@ -475,6 +489,10 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	if stopped && cantFix == "" {
 		return stopErr
 	}
+	if hung := stoppedChecks(checks); len(hung) > 0 && cantFix == "" {
+		// No fix rounds configured, or a hang in the last run of the checks.
+		return retryable(fmt.Errorf("checks stopped before they finished: %s", checkNames(hung)))
+	}
 	rounds := rec.FixRounds
 	head := headSHA(ctx, worktree)
 	failed := failedChecks(checks)
@@ -485,13 +503,15 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	if rounds > 0 && len(failed) == 0 {
 		summary += fmt.Sprintf("\n\nThe checks failed at first and were fixed in %s.", plural(rounds, "fix round"))
 	}
+	stopSteps() // the final push is the one that counts
 	if repo.Push.Kind != "none" {
 		token := os.Getenv(repo.Push.TokenEnv)
 		if token == "" {
 			return fmt.Errorf("push token env %s is empty", repo.Push.TokenEnv)
 		}
 		if err := pushBranch(ctx, worktree, repo.Push.RemoteURL, token, repo.Push.Kind, branch, repo.BranchPrefix, repo.Protected); err != nil {
-			return fmt.Errorf("push: %w", err)
+			// Rejected (origin moved on) or unreachable: the retry pulls first.
+			return retryable(fmt.Errorf("push: %w", err))
 		}
 		rec.Pushed = true
 		// The pull request is a convenience on top of the push: failing to
@@ -1011,7 +1031,12 @@ func (w *Worker) stageBranchReview(ctx context.Context, run *Run, log *slog.Logg
 	} else {
 		log.Info("checking the branch before its review", "branch", choice.Name, "head", head)
 		if checks, setup, err = w.checkHead(ctx, run, repo, choice.Name, head, log); err != nil {
-			return w.report(ctx, run, false, map[string]any{"reason": err.Error(), "setup": setup, "head_sha": head, "branch": choice.Name})
+			return w.report(ctx, run, false, map[string]any{"reason": err.Error(), "setup": setup, "head_sha": head, "branch": choice.Name, "retryable": true})
+		}
+		if hung := stoppedChecks(checks); len(hung) > 0 {
+			// A hung check says nothing about the branch: check again later.
+			return w.report(ctx, run, false, map[string]any{"reason": "checks stopped before they finished: " + checkNames(hung),
+				"checks": checks, "setup": setup, "head_sha": head, "branch": choice.Name, "retryable": true})
 		}
 	}
 	w.setPhase(ctx, run, phaseReviewing)
@@ -1063,7 +1088,7 @@ func (w *Worker) checkHead(ctx context.Context, run *Run, repo *Repo, branch, he
 		if repo.Checkout == checkoutBranch {
 			writeCloneSetup(ctx, repo.Path, cloneSetup{}) // set up for nothing until this finishes
 		}
-		setup, err = runSetup(ctx, dir, repo.Setup, repo.Path, repo.SetupEnv, w.cfg.TokenEnvs(), w.envFileKeys, repo.SetupDeadline())
+		setup, err = runSetup(ctx, dir, repo.Setup, repo.Path, repo.SetupEnv, w.cfg.TokenEnvs(), w.envFileKeys, repo.setupLimits())
 		if err != nil {
 			return nil, setup, err
 		}

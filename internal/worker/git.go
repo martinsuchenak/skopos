@@ -1,8 +1,10 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -86,12 +89,17 @@ func createWorktreeAt(ctx context.Context, clone, worktree, branch, ref string) 
 // pushed to origin (ref = its commit), else ref = the approved base, fetched
 // when the clone doesn't have it (planned on another worker).
 //
+// A local branch and origin's that have both moved on (an interrupted round
+// left commits here while another worker pushed its own) is what a
+// developer pulls: merge = origin's commit, which the caller merges once the
+// branch is checked out (mergeOrigin), failing only when it doesn't merge.
+//
 // The approved base must be in the start's history: a branch rewritten
 // since the plan was approved (force-pushed, rebased) is refused rather
 // than continued from something nobody approved.
-func implementStart(ctx context.Context, clone, branch, base string) (local bool, ref string, err error) {
+func implementStart(ctx context.Context, clone, branch, base string) (local bool, ref, merge string, err error) {
 	if !validBranch(branch) {
-		return false, "", fmt.Errorf("refusing branch name %q", branch)
+		return false, "", "", fmt.Errorf("refusing branch name %q", branch)
 	}
 	// A worktree directory removed by hand stays registered and would
 	// block checking its branch out again.
@@ -102,20 +110,27 @@ func implementStart(ctx context.Context, clone, branch, base string) (local bool
 	originSHA, _ := fetchBranch(ctx, clone, branch)
 	if _, err := git(ctx, clone, "cat-file", "-e", base+"^{commit}"); err != nil {
 		if _, ferr := git(ctx, clone, "fetch", "--quiet", "origin"); ferr != nil {
-			return false, "", fmt.Errorf("base ref %q not found: %w", base, err)
+			return false, "", "", fmt.Errorf("base ref %q not found: %w", base, err)
 		}
 	}
 	start := base
 	switch {
 	case lerr == nil:
 		local, start = true, localSHA
-		if originSHA != "" && originSHA != localSHA && isAncestor(ctx, clone, localSHA, originSHA) {
+		switch {
+		case originSHA == "" || originSHA == localSHA || isAncestor(ctx, clone, originSHA, localSHA):
+			// Nothing pushed, or local is ahead (a paused round's commits).
+		case isAncestor(ctx, clone, localSHA, originSHA):
 			// The branch isn't checked out anywhere here (a fresh worktree,
 			// or a clone parked on its default branch).
 			if _, err := git(ctx, clone, "update-ref", "refs/heads/"+branch, originSHA, localSHA); err != nil {
-				return false, "", fmt.Errorf("fast-forwarding %s to origin: %w", branch, err)
+				return false, "", "", fmt.Errorf("fast-forwarding %s to origin: %w", branch, err)
 			}
 			start = originSHA
+		default:
+			// Both moved on: the merge brings origin's history in, so the
+			// approved base is checked against that.
+			merge, start = originSHA, originSHA
 		}
 		ref = branch
 	case originSHA != "":
@@ -126,9 +141,60 @@ func implementStart(ctx context.Context, clone, branch, base string) (local bool
 	// Only a pinned base (a commit id) binds: a run without one starts
 	// from origin/<default>, which moves on.
 	if start != base && reSHA.MatchString(base) && !isAncestor(ctx, clone, base, start) {
-		return false, "", fmt.Errorf("branch %s no longer contains the approved base %s: it was rewritten since the plan was approved; plan the item again", branch, shortSHA(base))
+		return false, "", "", needsPerson(fmt.Errorf("branch %s no longer contains the approved base %s: it was rewritten since the plan was approved; plan the item again", branch, shortSHA(base)))
 	}
-	return local, ref, nil
+	return local, ref, merge, nil
+}
+
+// pullWorktree brings an existing worktree's branch up to origin's, as
+// implementStart does for a new one: fast-forward when behind, merge when
+// both moved on (a conflict needs a person), nothing when origin has no
+// such branch or is behind. A worktree with uncommitted changes (a pause
+// mid-turn) is left alone: a merge must never mix with them.
+func pullWorktree(ctx context.Context, clone, worktree, branch string) error {
+	if dirty, err := git(ctx, worktree, "status", "--porcelain"); err != nil || dirty != "" {
+		return nil
+	}
+	origin, err := fetchBranch(ctx, clone, branch)
+	if err != nil || origin == "" {
+		return nil // not on origin (never pushed), or unreachable: the push says
+	}
+	head := headSHA(ctx, worktree)
+	switch {
+	case head == origin || isAncestor(ctx, worktree, origin, head):
+		return nil
+	case isAncestor(ctx, worktree, head, origin):
+		_, err := git(ctx, worktree, "merge", "--ff-only", "--quiet", origin)
+		return err
+	}
+	return mergeOrigin(ctx, worktree, branch, origin)
+}
+
+// mergeOrigin merges origin's commit into the checked-out branch in dir, as
+// a developer's pull would: the run then continues, and later pushes, on
+// top of both. dir is clean (a fresh worktree, or the clone just switched
+// from its clean default branch), so aborting a conflicted merge puts it
+// back exactly. A conflict fails the run: two rounds of the same work
+// rarely merge, and only a person can say which one stays.
+func mergeOrigin(ctx context.Context, dir, branch, origin string) error {
+	var env []string
+	if name, _ := git(ctx, dir, "config", "user.name"); name == "" {
+		// The merge commit needs a committer; the agent's commits take the
+		// clone's identity when it has one.
+		env = []string{"GIT_AUTHOR_NAME=skopos worker", "GIT_AUTHOR_EMAIL=skopos-worker@localhost",
+			"GIT_COMMITTER_NAME=skopos worker", "GIT_COMMITTER_EMAIL=skopos-worker@localhost"}
+	}
+	msg := fmt.Sprintf("Merge origin/%s into %s", branch, branch)
+	if _, err := gitEnv(ctx, dir, env, "merge", "--no-edit", "-m", msg, origin); err != nil {
+		conflicts, _ := git(ctx, dir, "diff", "--name-only", "--diff-filter=U")
+		_, _ = git(ctx, dir, "merge", "--abort")
+		if conflicts == "" {
+			return fmt.Errorf("merging origin's %s (%s) into the local branch: %w", branch, shortSHA(origin), err)
+		}
+		return needsPerson(fmt.Errorf("the local branch %s and origin's (%s) have both moved on and don't merge cleanly (conflicts: %s); keep one of them — push the one you want to origin and delete the other, or delete the worker's local branch to continue from origin's — then retry",
+			branch, shortSHA(origin), strings.Join(strings.Fields(conflicts), ", ")))
+	}
+	return nil
 }
 
 var reSHA = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
@@ -149,19 +215,27 @@ func shortSHA(sha string) string {
 // prepareImplementWorktree cuts the implementation worktree where
 // implementStart says the branch starts.
 func prepareImplementWorktree(ctx context.Context, clone, worktree, branch, base string) error {
-	local, ref, err := implementStart(ctx, clone, branch, base)
+	local, ref, merge, err := implementStart(ctx, clone, branch, base)
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
 		return err
 	}
-	if local {
-		_, err = git(ctx, clone, "worktree", "add", "--quiet", worktree, branch)
-	} else {
+	if !local {
 		_, err = git(ctx, clone, "worktree", "add", "--quiet", "--no-track", "-b", branch, worktree, ref)
+		return err
 	}
-	return err
+	if _, err := git(ctx, clone, "worktree", "add", "--quiet", worktree, branch); err != nil {
+		return err
+	}
+	if merge != "" {
+		if err := mergeOrigin(ctx, worktree, branch, merge); err != nil {
+			removeWorktree(ctx, clone, worktree)
+			return err
+		}
+	}
+	return nil
 }
 
 // createDetached checks out a ref without creating a branch (review stage).
@@ -251,20 +325,20 @@ func diffStat(ctx context.Context, worktree, base string) string {
 // Each command's result is returned in the checks' shape (the dashboard and
 // the run record show them); the first failure stops the rest and is also
 // returned as the error.
-func runSetup(ctx context.Context, worktree string, setup []string, clone string, setupEnv map[string]string, tokenEnvs, fileEnvKeys []string, timeout time.Duration) ([]Check, error) {
+func runSetup(ctx context.Context, worktree string, setup []string, clone string, setupEnv map[string]string, tokenEnvs, fileEnvKeys []string, lim runLimits) ([]Check, error) {
 	if len(setup) == 0 {
 		return nil, nil
 	}
-	sctx, cancel := context.WithTimeout(ctx, timeout)
+	sctx, cancel := context.WithTimeout(ctx, lim.total)
 	defer cancel()
 	env := scrubEnv(setupEnv, tokenEnvs, fileEnvKeys)
 	var results []Check
 	for _, c := range setup {
 		c = strings.ReplaceAll(c, "{clone}", clone)
-		cmd := exec.CommandContext(sctx, "sh", "-c", c)
-		cmd.Dir = worktree
-		cmd.Env = env
-		out, err := cmd.CombinedOutput()
+		out, err := runShell(sctx, worktree, env, c, lim.quiet)
+		if errors.Is(sctx.Err(), context.DeadlineExceeded) {
+			err = fmt.Errorf("setup_timeout (%s) reached; the command was stopped", lim.total)
+		}
 		results = append(results, Check{Name: c, Passed: err == nil, Output: tail(string(out), 2000)})
 		if err != nil {
 			return results, fmt.Errorf("setup %q failed: %v: %s", c, err, tail(string(out), 300))
@@ -273,16 +347,122 @@ func runSetup(ctx context.Context, worktree string, setup []string, clone string
 	return results, nil
 }
 
-func runChecks(ctx context.Context, worktree string, checks []string, tokenEnvs, fileEnvKeys []string) []Check {
+// runLimits bounds a list of setup or check commands: total for all of
+// them together, quiet for any one command printing nothing.
+type runLimits struct{ total, quiet time.Duration }
+
+func runChecks(ctx context.Context, worktree string, checks []string, tokenEnvs, fileEnvKeys []string, lim runLimits) []Check {
+	cctx, cancel := context.WithTimeout(ctx, lim.total)
+	defer cancel()
 	var out []Check
 	for _, c := range checks {
-		cmd := exec.CommandContext(ctx, "sh", "-c", c)
-		cmd.Dir = worktree
-		cmd.Env = scrubEnv(nil, tokenEnvs, fileEnvKeys)
-		outBytes, err := cmd.CombinedOutput()
-		out = append(out, Check{Name: c, Passed: err == nil, Output: tail(string(outBytes), 2000)})
+		if cctx.Err() != nil {
+			out = append(out, Check{Name: c, Stopped: true, Output: fmt.Sprintf("not run: check_timeout (%s) reached", lim.total)})
+			continue
+		}
+		outBytes, err := runShell(cctx, worktree, scrubEnv(nil, tokenEnvs, fileEnvKeys), c, lim.quiet)
+		text := tail(string(outBytes), 2000)
+		stopped := false
+		var qe *quietError
+		switch {
+		case err != nil && errors.Is(cctx.Err(), context.DeadlineExceeded):
+			text, stopped = tail(text+fmt.Sprintf("\n\n(stopped: check_timeout (%s) reached)", lim.total), 2000), true
+		case errors.As(err, &qe):
+			text, stopped = tail(text+"\n\n(stopped: "+qe.Error()+")", 2000), true
+		}
+		out = append(out, Check{Name: c, Passed: err == nil, Stopped: stopped, Output: text})
 	}
 	return out
+}
+
+// quietError: the command printed nothing for too long and was stopped.
+type quietError struct{ after time.Duration }
+
+func (e *quietError) Error() string {
+	return fmt.Sprintf("no output for %s (quiet_timeout); the command was stopped", e.after)
+}
+
+// quietWriter collects a command's output and when it last wrote.
+type quietWriter struct {
+	mu   sync.Mutex
+	buf  bytes.Buffer
+	last time.Time
+}
+
+func (q *quietWriter) Write(p []byte) (int, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.last = time.Now()
+	return q.buf.Write(p)
+}
+
+func (q *quietWriter) silentFor() time.Duration {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return time.Since(q.last)
+}
+
+func (q *quietWriter) bytes() []byte {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return bytes.Clone(q.buf.Bytes())
+}
+
+// processWaitDelay: how long Wait waits for a command's pipes after its
+// top process has gone (containProcess).
+var processWaitDelay = 10 * time.Second
+
+// runShell runs one setup or check command line under sh, contained: a
+// timeout stops its whole process tree, and output pipes a background
+// child keeps open never block the worker.
+func runShell(ctx context.Context, dir string, env []string, line string, quiet time.Duration) ([]byte, error) {
+	cctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	cmd := exec.CommandContext(cctx, "sh", "-c", line)
+	cmd.Dir = dir
+	cmd.Env = env
+	containProcess(cmd)
+	out := &quietWriter{last: time.Now()}
+	cmd.Stdout, cmd.Stderr = out, out
+	done := make(chan struct{})
+	if quiet > 0 {
+		// A command that prints nothing for quiet is presumed hung (waiting
+		// on something that never comes): stopped with its process group,
+		// long before the setup or check timeout would.
+		tick := quiet / 10
+		if tick > 5*time.Second {
+			tick = 5 * time.Second
+		}
+		go func() {
+			t := time.NewTicker(tick)
+			defer t.Stop()
+			for {
+				select {
+				case <-done:
+					return
+				case <-t.C:
+					if out.silentFor() >= quiet {
+						cancel(&quietError{after: quiet})
+						return
+					}
+				}
+			}
+		}()
+	}
+	err := settled(cmd, cmd.Run())
+	close(done)
+	var qe *quietError
+	if cause := context.Cause(cctx); err != nil && errors.As(cause, &qe) {
+		err = qe
+	}
+	return out.bytes(), err
+}
+
+func settled(cmd *exec.Cmd, err error) error {
+	if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+		return nil
+	}
+	return err
 }
 
 func tail(s string, n int) string {

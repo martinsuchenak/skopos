@@ -117,6 +117,13 @@ func workerCmd() *cli.Command {
 				log.Warn("could not mark the worker offline", "err", err)
 			}
 			cancelBye()
+			if errors.Is(loopErr, worker.ErrRestartForUpgrade) {
+				// The binary was replaced: the service manager (systemd
+				// Restart=on-failure, launchd KeepAlive, a supervisor loop)
+				// starts the new one.
+				log.Info("restarting on the upgraded binary", "exit_code", worker.ExitUpgrade)
+				os.Exit(worker.ExitUpgrade)
+			}
 			if loopErr != nil && !errors.Is(loopErr, context.Canceled) {
 				return loopErr
 			}

@@ -182,8 +182,8 @@ func TestImplementChecksGate(t *testing.T) {
 		if err := g.w.stageImplement(t.Context(), g.run, g.w.log); err != nil {
 			t.Fatal(err)
 		}
-		if rep := g.lastReport(t); rep["status"] != "failed" || rep["reason"] != "checks failed: "+check {
-			t.Fatalf("report: %v", rep)
+		if rep := g.lastReport(t); rep["status"] != "failed" || rep["reason"] != "checks failed: "+check || rep["retryable"] != nil {
+			t.Fatalf("failing checks are the implementer's, never retried: %v", rep)
 		}
 		if got := g.callLog(t); got != "impl" {
 			t.Fatalf("calls %s", got)
@@ -207,7 +207,8 @@ func TestImplementChecksGate(t *testing.T) {
 		rep := g.lastReport(t)
 		setup, _ := rep["setup"].([]any)
 		reason, _ := rep["reason"].(string)
-		if rep["status"] != "failed" || !strings.HasPrefix(reason, `setup "echo missing toolchain; false" failed`) || !strings.Contains(reason, "missing toolchain") || len(setup) != 2 {
+		if rep["status"] != "failed" || !strings.HasPrefix(reason, `setup "echo missing toolchain; false" failed`) || !strings.Contains(reason, "missing toolchain") || len(setup) != 2 ||
+			rep["retryable"] != true {
 			t.Fatalf("report: %v", rep)
 		}
 		if last := setup[1].(map[string]any); last["passed"] == true || !strings.Contains(last["output"].(string), "missing toolchain") {
@@ -215,6 +216,20 @@ func TestImplementChecksGate(t *testing.T) {
 		}
 		if got := g.callLog(t); got != "" {
 			t.Fatalf("no agent runs after a failed setup, calls %s", got)
+		}
+	})
+	t.Run("a hung check is retried, not handed to the implementer", func(t *testing.T) {
+		g := newGateStack(t, "fix", nil)
+		repo := g.w.cfg.Repos["ws"]
+		repo.Checks = []string{"sleep 30"}
+		repo.QuietTimeout = 300 * time.Millisecond
+		g.w.execute(t.Context(), g.run)
+		rep := g.lastReport(t)
+		if rep["status"] != "failed" || rep["retryable"] != true || !strings.Contains(rep["reason"].(string), "checks stopped before they finished: sleep 30") {
+			t.Fatalf("report: %v", rep)
+		}
+		if got := g.callLog(t); got != "impl" {
+			t.Fatalf("a hang must not start a fix round, calls %s", got)
 		}
 	})
 	t.Run("a worktree whose setup never finished is set up again", func(t *testing.T) {

@@ -17,11 +17,17 @@ import (
 // A worker is deployment-agnostic: it needs only skopos over HTTP, a local
 // clone per repo, and the agent CLIs installed on the host.
 type Config struct {
-	ID         string           `toml:"id"`
-	StateDir   string           `toml:"state_dir"`
-	Runners    []string         `toml:"runners"`    // what this instance offers ("claude", ...)
-	Workspaces []string         `toml:"workspaces"` // scope: must match the repos below
-	PollEvery  time.Duration    `toml:"poll_every"` // idle claim interval
+	ID         string        `toml:"id"`
+	StateDir   string        `toml:"state_dir"`
+	Runners    []string      `toml:"runners"`    // what this instance offers ("claude", ...)
+	Workspaces []string      `toml:"workspaces"` // scope: must match the repos below
+	PollEvery  time.Duration `toml:"poll_every"` // idle claim interval
+	// AutoUpgrade: an idle worker replaces its own binary with the
+	// server's release and restarts (nil = true; design §5).
+	AutoUpgrade *bool `toml:"auto_upgrade"`
+	// UpgradeURL: where releases are downloaded from — <url>/v<version>/
+	// skopos_<os>_<arch> and checksums.txt ("" = the GitHub releases).
+	UpgradeURL string           `toml:"upgrade_url"`
 	Repos      map[string]*Repo `toml:"repos"`
 
 	// Accounts is the placement pool (lean 1b item 3): per-account
@@ -199,7 +205,19 @@ type Repo struct {
 	SetupEnv map[string]string `toml:"setup_env"`
 	// SetupTimeout bounds all the setup commands together (0 = 10m).
 	SetupTimeout time.Duration `toml:"setup_timeout"`
-	Checks       []string      `toml:"checks"` // verification commands
+	// CheckTimeout bounds all the checks together (0 = 30m).
+	CheckTimeout time.Duration `toml:"check_timeout"`
+	// QuietTimeout stops one setup or check command that prints nothing for
+	// this long (0 = off).
+	QuietTimeout time.Duration `toml:"quiet_timeout"`
+	// Preflight: commands that say whether this worker's environment can
+	// take the repo's work right now (a database, a queue, a service). One
+	// failing keeps the workspace out of the worker's claims until it
+	// passes again (tmp/self-healing-workers — design.md §2).
+	Preflight []string `toml:"preflight"`
+	// PreflightInterval: how often the preflight runs (0 = 5m).
+	PreflightInterval time.Duration `toml:"preflight_interval"`
+	Checks            []string      `toml:"checks"` // verification commands
 	// CheckFixRounds: how many times a failing check goes back to the
 	// implementer before the item blocks (nil = 2; 0 = block at once).
 	CheckFixRounds *int     `toml:"check_fix_rounds"`
@@ -222,7 +240,16 @@ type Repo struct {
 		// pull request into the default branch — "draft", "ready", or ""
 		// / "none" for none. The token needs pull-request write access.
 		PullRequest string `toml:"pull_request"`
+		// Steps: push the implementer's commits as it makes them, so an
+		// interrupted round leaves its work on origin for the next one
+		// (nil = true; tmp/self-healing-workers — design.md §3).
+		Steps *bool `toml:"steps"`
 	} `toml:"push"`
+}
+
+// PushSteps: whether the implementer's commits are pushed as they come.
+func (r *Repo) PushSteps() bool {
+	return r.Push.Kind != "none" && (r.Push.Steps == nil || *r.Push.Steps)
 }
 
 // Account is one credential in the placement pool.
@@ -426,6 +453,15 @@ func (c *Config) Default(home string) error {
 		}
 		if r.SetupTimeout < 0 || r.SetupTimeout > maxSetupTimeout {
 			return fmt.Errorf("repo %s: setup_timeout %s is not between 0 and %s", ws, r.SetupTimeout, maxSetupTimeout)
+		}
+		if r.CheckTimeout < 0 || r.CheckTimeout > maxCheckTimeout {
+			return fmt.Errorf("repo %s: check_timeout %s is not between 0 and %s", ws, r.CheckTimeout, maxCheckTimeout)
+		}
+		if r.QuietTimeout < 0 || r.QuietTimeout > maxQuietTimeout {
+			return fmt.Errorf("repo %s: quiet_timeout %s is not between 0 and %s", ws, r.QuietTimeout, maxQuietTimeout)
+		}
+		if r.PreflightInterval != 0 && (r.PreflightInterval < time.Minute || r.PreflightInterval > maxPreflightInterval) {
+			return fmt.Errorf("repo %s: preflight_interval %s is not between 1m and %s", ws, r.PreflightInterval, maxPreflightInterval)
 		}
 		switch r.Checkout {
 		case "":

@@ -4,8 +4,10 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,10 +110,17 @@ type Worker struct {
 	// phases: what each running implement run is doing past its first turn
 	// (run id → phase), sent with every heartbeat.
 	phases sync.Map
+	// health: each repo's last preflight (workspace → result).
+	health map[string]preflightResult
+	// upgradeTried: when the last self-upgrade attempt failed (retried
+	// after upgradeRetry); exePath and upgradeHTTP are swapped in tests.
+	upgradeTried time.Time
+	exePath      func() (string, error)
+	upgradeHTTP  *http.Client
 }
 
 func New(cfg *Config, client *Client, log *slog.Logger) *Worker {
-	w := &Worker{cfg: cfg, client: client, log: log, sessions: map[string]string{}, accounts: map[string]string{}, executors: map[string]string{}, costs: map[string]float64{}}
+	w := &Worker{cfg: cfg, client: client, log: log, sessions: map[string]string{}, accounts: map[string]string{}, executors: map[string]string{}, costs: map[string]float64{}, health: map[string]preflightResult{}}
 	w.loadSessions()
 	w.ApplyMCPServers()
 	return w
@@ -124,7 +133,7 @@ func (w *Worker) Loop(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		run, err := w.client.Claim(ctx, w.cfg.ID, w.cfg.AvailableRunners(time.Now()), w.cfg.Workspaces)
+		run, err := w.client.Claim(ctx, w.cfg.ID, w.cfg.AvailableRunners(time.Now()), w.cfg.Workspaces, w.checkHealth(ctx))
 		if err != nil {
 			w.log.Error("claim failed", "err", err)
 			if !sleepCtx(ctx, w.cfg.PollEvery) {
@@ -133,6 +142,9 @@ func (w *Worker) Loop(ctx context.Context) error {
 			continue
 		}
 		if run == nil {
+			if w.maybeUpgrade(ctx) {
+				return ErrRestartForUpgrade
+			}
 			w.maybeSweep(ctx)
 			if !sleepCtx(ctx, w.cfg.PollEvery) {
 				return ctx.Err()
@@ -213,7 +225,8 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 			// instead of failing the run and blocking the item (review M4).
 			// The run stays claimed by us throughout.
 			if attempt+1 >= maxTransient {
-				_ = w.report(ctx, run, false, map[string]any{"reason": fmt.Sprintf("transient x%d: %s", maxTransient, tr.detail)})
+				// Still failing: skopos may retry it later, elsewhere.
+				_ = w.report(ctx, run, false, map[string]any{"reason": fmt.Sprintf("transient x%d: %s", maxTransient, tr.detail), "retryable": true})
 				return
 			}
 			log.Warn("transient failure, retrying", "attempt", attempt+1, "detail", tr.detail)
@@ -294,8 +307,12 @@ func (w *Worker) finish(ctx context.Context, run *Run, log *slog.Logger, err err
 		sleepCtx(ctx, wait)
 		return
 	}
-	_ = w.report(ctx, run, false, map[string]any{"reason": err.Error()})
-	log.Error("stage failed", "err", err)
+	fields := map[string]any{"reason": err.Error()}
+	if isRetryable(err) {
+		fields["retryable"] = true
+	}
+	_ = w.report(ctx, run, false, fields)
+	log.Error("stage failed", "err", err, "retryable", fields["retryable"] != nil)
 }
 
 type quotaError struct {
@@ -332,6 +349,41 @@ func (w *Worker) noAccount(run *Run, what string) error {
 	}
 	return &quotaError{detail: fmt.Sprintf("no available %s account for %s", runner, what), resetAt: reset}
 }
+
+// retryableError marks a failure that is the worker's problem, not the
+// item's: setup failed or hung, a check hung, git (fetch, checkout,
+// worktree) failed, the push was rejected, the provider kept failing. The
+// report says retryable, and skopos queues the run again (another worker
+// may take it) until its retries are spent, instead of blocking the item
+// (tmp/self-healing-workers — design.md §1). Anything unmarked blocks.
+type retryableError struct{ err error }
+
+func (e *retryableError) Error() string { return e.err.Error() }
+func (e *retryableError) Unwrap() error { return e.err }
+
+// retryable marks err retryable, unless it needs a person.
+func retryable(err error) error {
+	var p *needsPersonError
+	if err == nil || errors.As(err, &p) {
+		return err
+	}
+	return &retryableError{err: err}
+}
+
+func isRetryable(err error) bool {
+	var r *retryableError
+	return errors.As(err, &r)
+}
+
+// needsPersonError: a failure only a person can resolve (a merge conflict,
+// a branch rewritten since approval), so no retry would help even where
+// the surrounding step is otherwise retryable.
+type needsPersonError struct{ err error }
+
+func (e *needsPersonError) Error() string { return e.err.Error() }
+func (e *needsPersonError) Unwrap() error { return e.err }
+
+func needsPerson(err error) error { return &needsPersonError{err: err} }
 
 type transientError struct{ detail string }
 
@@ -574,4 +626,8 @@ type Check struct {
 	Name   string `json:"name"`
 	Passed bool   `json:"passed"`
 	Output string `json:"output,omitempty"`
+	// Stopped: the check didn't finish — check_timeout or quiet_timeout
+	// stopped it, or the timeout came before it ran. A hang is the
+	// worker's problem, not the implementer's: never a fix round.
+	Stopped bool `json:"stopped,omitempty"`
 }

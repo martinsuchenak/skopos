@@ -388,6 +388,17 @@ func (r *slackRelay) PostSecondOpinion(ctx context.Context, res runs.SecondOpini
 	r.post(ctx, item.SlackThreadTS, icon+" *"+res.Heading+"*\n"+truncate(strings.TrimSpace(res.Body), 2800))
 }
 
+// PostWorkerHealth posts, once per change, that a worker stopped taking a
+// workspace's work because its preflight fails, or that it is back. Top
+// level: it is about a worker, not an item (the items move on elsewhere).
+func (r *slackRelay) PostWorkerHealth(ctx context.Context, h runs.WorkerHealth) {
+	if h.Healthy {
+		r.post(ctx, "", "✅ Worker `"+h.Worker+"` is taking `"+h.Workspace+"` work again (its preflight passes).")
+		return
+	}
+	r.post(ctx, "", "⚠️ Worker `"+h.Worker+"` stopped taking `"+h.Workspace+"` work: its preflight fails. Only other workers serving it pick up its items until it passes.\n"+truncate(h.Reason, 600))
+}
+
 func shortHead(sha string) string {
 	if len(sha) > 7 {
 		return "`" + sha[:7] + "`"

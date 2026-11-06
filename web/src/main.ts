@@ -29,8 +29,8 @@ type ItemForm = { title: string; description: string; phase: string; depends_on:
 type InboxPlanSummary = { id: string; name: string; status: string };
 type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; agents?: string; branch?: string; ref?: string; flow?: string; created_at: string; updated_at: string; excerpt?: string };
 type InboxDetail = InboxItem & { content: string; content_html: string };
-type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string; state: string; version: string; lastSeen: string };
-type WorkerSeen = { id: string; runners: string[]; workspaces: string[]; last_seen: string; version?: string; state?: string };
+type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string; state: string; version: string; lastSeen: string; unhealthy: string[] };
+type WorkerSeen = { id: string; runners: string[]; workspaces: string[]; last_seen: string; version?: string; state?: string; unhealthy?: Record<string, string> };
 // Pipeline settings (which agents run each stage, per workspace or group).
 type PipeMember = { runner: string; focus?: string };
 type PipeStage = { members: PipeMember[]; policy?: string; early_exit?: boolean; timeout_ms?: number };
@@ -43,7 +43,7 @@ type PlanRevisionInfo = { id: string; revision_no: number; content_hash: string;
 // One thing the approver can approve at the gate: the plan revision, or one
 // candidate of a multi-agent plan round.
 type ApproveTarget = { id: string; title: string; meta: string; steps: string[]; candidate: boolean; hash: string; toast: string };
-type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { severity: string; text: string; file?: string }[]; lease_expires_at?: string; pushed?: boolean; pr_url?: string; checks?: { name: string; passed: boolean; output?: string }[]; setup?: { name: string; passed: boolean; output?: string }[]; fix_rounds?: number; phase?: string; created_at: string; updated_at: string };
+type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { severity: string; text: string; file?: string }[]; lease_expires_at?: string; pushed?: boolean; pr_url?: string; checks?: { name: string; passed: boolean; output?: string }[]; setup?: { name: string; passed: boolean; output?: string }[]; fix_rounds?: number; phase?: string; retries?: number; retry_after?: string; created_at: string; updated_at: string };
 // One row of the preview's stage tracker. state: done | run | you | bad |
 // up (not reached) | skip (not configured, or never reached on a discarded item).
 type LinkRow = { key: string; href: string; text: string };
@@ -1356,6 +1356,8 @@ const appState = () => ({
     return this.previewRuns.filter((r: RunRow) => this.runStep(r) === step && this.runActive(r)).map((r: RunRow) => {
       const detail = [r.runner, r.focus].filter(Boolean).join(', ');
       const what = r.stage === 'branch_review' ? (r.phase === 'reviewing' ? 'the review' + (r.runner ? ' (' + r.runner + ')' : '') : 'setup and the checks on ' + (r.branch || 'the branch')) : r.phase === 'checks' ? 'the checks' : r.phase === 'fixing' ? 'a fix round for the failed checks' + (r.runner ? ' (' + r.runner + ')' : '') : r.stage + (detail ? ' (' + detail + ')' : '');
+      // A worker-side failure sent it back to the queue (it retries on its own).
+      if (r.status === 'queued' && r.retries) return 'Retrying ' + what + ' (attempt ' + (r.retries + 1) + ' of 3) after a worker problem: ' + (r.fail_reason || '').replace(/^attempt \d+ of \d+ failed on /, '');
       if (r.status === 'queued') return 'Waiting for a worker: ' + what;
       if (r.status === 'paused') return 'Paused: ' + what + (r.fail_reason ? ', ' + r.fail_reason : '');
       return 'Running ' + what + (r.worker_id ? ' on ' + r.worker_id : '');
@@ -2045,12 +2047,12 @@ const appState = () => ({
     const byWorker = new Map<string, WorkerRow>();
     for (const entry of registered) {
       const reg = entry[1];
-      byWorker.set(entry[0], { id: entry[0], workspaces: [...(reg.workspaces || [])], stages: [], runners: [...(reg.runners || [])], active: 0, succeeded: 0, failed: 0, lastActive: '', currentLabel: '', state: reg.state || '', version: reg.version || '', lastSeen: reg.last_seen || '' });
+      byWorker.set(entry[0], { id: entry[0], workspaces: [...(reg.workspaces || [])], stages: [], runners: [...(reg.runners || [])], active: 0, succeeded: 0, failed: 0, lastActive: '', currentLabel: '', state: reg.state || '', version: reg.version || '', lastSeen: reg.last_seen || '', unhealthy: Object.entries(reg.unhealthy || {}).map(([ws, why]) => ws + ': ' + why) });
     }
     for (const run of runs) {
       if (!run.worker_id) continue; // queued, never claimed
       let w = byWorker.get(run.worker_id);
-      if (!w) { w = { id: run.worker_id, workspaces: [], stages: [], runners: [], active: 0, succeeded: 0, failed: 0, lastActive: run.updated_at, currentLabel: '', state: '', version: '', lastSeen: '' }; byWorker.set(run.worker_id, w); }
+      if (!w) { w = { id: run.worker_id, workspaces: [], stages: [], runners: [], active: 0, succeeded: 0, failed: 0, lastActive: run.updated_at, currentLabel: '', state: '', version: '', lastSeen: '', unhealthy: [] }; byWorker.set(run.worker_id, w); }
       const reg = registered.get(run.worker_id);
       if (reg) { for (const ws of reg.workspaces || []) if (!w.workspaces.includes(ws)) w.workspaces.push(ws); }
       if (run.workspace_id && !w.workspaces.includes(run.workspace_id)) w.workspaces.push(run.workspace_id);
@@ -2074,7 +2076,13 @@ const appState = () => ({
   workerStatusLabel(w: WorkerRow): string { return w.state || (w.active > 0 ? 'busy' : 'offline'); },
   workerStatusClass(w: WorkerRow): string {
     const s = this.workerStatusLabel(w);
+    if (w.unhealthy.length && s !== 'offline') return 'tone-danger';
     return s === 'busy' ? 'tone-success' : s === 'idle' ? 'tone-info' : 'tone-muted';
+  },
+  // The badge: an online worker whose preflight fails somewhere says so.
+  workerBadge(w: WorkerRow): string {
+    const s = this.workerStatusLabel(w);
+    return w.unhealthy.length && s !== 'offline' ? s + ' · unhealthy' : s;
   },
 
   // ---- run rows (preview modal) ----

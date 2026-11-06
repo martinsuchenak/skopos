@@ -389,6 +389,7 @@ func (c commandRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 	sub.Bin = args[0]
 	name, argv := agentCommand(sub, args[1:])
 	cmd := exec.CommandContext(cctx, name, argv...)
+	containProcess(cmd) // a timeout stops the agent and every tool process it started
 	cmd.Dir = r.Dir
 	cmd.Env = withPWD(scrubEnv(r.Env, r.TokenEnvs, r.FileEnvKeys), r.Dir)
 	if !usesPrompt {
@@ -396,7 +397,7 @@ func (c commandRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err := cmd.Run()
+	err := settled(cmd, cmd.Run())
 	writeRunLog(r.LogFile, stdout.Bytes(), stderr.Bytes())
 	res := AgentResult{Text: stdout.String()}
 	if errors.Is(cctx.Err(), context.DeadlineExceeded) {
