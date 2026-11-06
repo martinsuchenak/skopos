@@ -4,6 +4,28 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.18.12] — 2026-11-06
+
+### Changed
+
+- **Agents get the current plan and notes, not the item's whole history.**
+  The item's content keeps every plan, note, answer and review, and the
+  planner and implementer used to receive all of it. From a third plan
+  round on, the planner saw every earlier plan and every round of notes,
+  with nothing saying which plan was current. The implementer read rejected
+  plans before the approved one. Each agent now gets your text before the
+  first pipeline section, plus the planner's questions with your answers,
+  plus only what is current for it:
+  - **A re-plan:** the plan your newest notes are about, and those notes.
+  - **The implementer:** the approved plan, your newest approval notes and,
+    after a review sent the item back, the latest review and your change
+    requests.
+  - **The compare and synthesize stages:** your text, the answers and your
+    newest notes.
+
+  The dashboard still shows the full history. A test checks that every
+  section the code appends uses a known heading.
+
 ## [0.18.11] — 2026-11-06
 
 ### Fixed
