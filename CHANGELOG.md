@@ -4,6 +4,53 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **A hung setup no longer keeps a run busy forever.** `setup_timeout` killed
+  only the shell at the top of a setup command; a child it had started
+  (`php prepare_checkout.php`, waiting on a pool manager that would never
+  stop) kept the output pipe open, so the worker waited on it indefinitely
+  while its heartbeats made the run look alive. Setup and check commands,
+  and agent runs, now run in their own process group, and a timeout stops
+  the whole group. A command that exits but leaves a background process
+  holding its output no longer blocks the worker either.
+- **A worker's leftover branch no longer makes the push fail.** When an
+  interrupted round had left commits on one worker while another worker
+  pushed its own round, the next implement on the first worker started from
+  its local branch alone and its push was rejected ("fetch first"). The
+  worker now pulls: it merges origin's branch into the local one before the
+  agent starts, and fails the run up front, naming the conflicting files,
+  only when the two don't merge.
+
+### Added
+
+- **Workers heal themselves** (`tmp/self-healing-workers — design.md`):
+  - **Retries.** A failure that is the worker's problem goes back to the
+    queue instead of blocking the item: setup failed or hung, a check hung,
+    git failed, the push was rejected, the provider kept failing. It waits 1
+    minute, then 5; from the second retry another worker gets the first go.
+    After 3 attempts the item blocks as before. Failures that need a person
+    still block at once.
+  - **`preflight`** per repo: commands that say whether the worker can take
+    the repo's work right now. While one fails, the worker claims none of
+    that repo's runs, so other workers take them; the Workers view shows
+    why, and Slack hears once when it stops and once when it is back.
+  - **Step pushes.** The implementer's commits are pushed as it makes them,
+    so an interrupted round leaves its work on origin for the next one
+    (`push.steps = false` to turn off).
+  - **`quiet_timeout`** per repo (off by default): a setup or check command
+    that prints nothing that long is stopped as a hang. A check stopped by
+    either timeout is retried, never handed to the implementer as a fix
+    round.
+  - **Self-upgrade.** An idle worker behind the server's release downloads
+    it, verifies its checksum, replaces its own binary and exits with code
+    75 for its service manager to restart it (`auto_upgrade = false` to turn
+    off).
+- **`check_timeout`** per repo (default `30m`, at most `2h`) bounds the
+  checks together; checks used to have no time limit.
+
 ## [0.19.0] — 2026-11-06
 
 ### Added
