@@ -12,6 +12,13 @@ updates:
     groups:
       go-minor-patch:
         update-types: [minor, patch]
+    # paularlott/mcp 0.33.x takes any request carrying Mcp-Method for the
+    # 2026-07-25 protocol and refuses 2025-11-25 clients (mcp-remote, Claude
+    # Code) with "Header mismatch" (skopos 0.21.1). Pinned at 0.25.0 until a
+    # release accepts them; cmd/mcp's TestLegacyClientHeadersAreAccepted
+    # checks a bump.
+    ignore:
+      - dependency-name: github.com/paularlott/mcp
     commit-message:
       prefix: deps
 

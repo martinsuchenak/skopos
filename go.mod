@@ -11,7 +11,7 @@ require (
 	github.com/odvcencio/gotreesitter v0.56.0
 	github.com/paularlott/cli v0.10.2
 	github.com/paularlott/logger v0.4.0
-	github.com/paularlott/mcp v0.33.1
+	github.com/paularlott/mcp v0.25.0
 	github.com/yuin/goldmark v1.8.7
 	modernc.org/sqlite v1.61.1
 )

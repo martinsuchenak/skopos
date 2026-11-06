@@ -6,6 +6,16 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.2] — 2026-11-06
+
+### Fixed
+
+- **MCP clients work again.** 0.21.1's `paularlott/mcp` 0.33.1 refused every
+  tool call from clients on the 2025-11-25 protocol (mcp-remote, Claude
+  Code): "Header mismatch: MCP-Protocol-Version header value \"2025-11-25\"
+  does not match body value \"\"". The library is back at 0.25.0, and a test
+  now sends those clients' headers.
+
 ## [0.21.1] — 2026-11-06
 
 ### Changed
