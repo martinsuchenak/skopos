@@ -179,10 +179,15 @@ func (c *Config) StageProfile(workspace, stage string) *StageProfile {
 
 // Repo is one workspace's local clone: worktrees are cut from it per run.
 type Repo struct {
-	Path          string   `toml:"path"`
-	DefaultBranch string   `toml:"default_branch"`
-	BranchPrefix  string   `toml:"branch_prefix"` // default "agent/"
-	Setup         []string `toml:"setup"`         // run in every fresh worktree, or a branch checkout not set up for the branch ({clone} expands)
+	Path          string `toml:"path"`
+	DefaultBranch string `toml:"default_branch"`
+	BranchPrefix  string `toml:"branch_prefix"` // default "agent/"
+	// BranchTemplate names an item's branch (default
+	// "{prefix}{tail}-{slug}"): {prefix}, {tail} (the item id's tail),
+	// {slug} (the title), {ref} (the item's reference). Needs {tail} or
+	// {ref}. An item's own branch field overrides it.
+	BranchTemplate string   `toml:"branch_template"`
+	Setup          []string `toml:"setup"` // run in every fresh worktree, or a branch checkout not set up for the branch ({clone} expands)
 	// Checkout: where an implementation runs — "worktree" (default: a
 	// worktree per item beside the clone) or "branch" (the clone itself,
 	// switched to the item's branch for the run and back to the default
@@ -375,6 +380,11 @@ func (c *Config) Default(home string) error {
 		if r.BranchPrefix == "" {
 			r.BranchPrefix = "agent/"
 		}
+		if r.BranchTemplate != "" {
+			if err := validateBranchTemplate(r.BranchTemplate); err != nil {
+				return fmt.Errorf("repo %s: %w", ws, err)
+			}
+		}
 		if len(r.Protected) == 0 {
 			r.Protected = []string{"PROD", "main", "master", "develop", "release/**", "hotfix/**"}
 		}
@@ -536,19 +546,11 @@ func (c *Config) TokenEnvs() []string {
 	return out
 }
 
-// normalizeBranch makes a safe, collision-free branch name: the item id's
-// tail guarantees uniqueness (two same-titled items must never share a
-// branch or worktree — review finding 5), then a readable slug.
+// normalizeBranch is the default template's name: the item id's tail
+// guarantees uniqueness (two same-titled items must never share a branch or
+// worktree — review finding 5), then a readable slug.
 func normalizeBranch(itemID, title, prefix string) string {
-	slug := branchSlug(title)
-	// Last TWO segments of the UUIDv7 text id: enough to be unique and
-	// time-recognizable without the full 36 chars.
-	segs := strings.Split(itemID, "-")
-	tail := itemID
-	if len(segs) >= 2 {
-		tail = segs[len(segs)-2] + "-" + segs[len(segs)-1]
-	}
-	return prefix + tail + "-" + slug
+	return prefix + idTail(itemID) + "-" + branchSlug(title)
 }
 
 func branchSlug(title string) string {

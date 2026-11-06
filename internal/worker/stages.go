@@ -38,6 +38,25 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	}
 	baseSHA, _ := git(ctx, repo.Path, "rev-parse", "origin/"+repo.DefaultBranch)
 
+	// The item's branch, and whether someone already started it. Several
+	// candidates and no exact match: Martin picks (the worker never guesses
+	// whose branch to continue). A branch that exists is a handover: the
+	// plan is made against its head, and the approval names that head.
+	choice, err := resolveBranch(ctx, repo, item)
+	if err != nil {
+		return w.report(ctx, run, false, map[string]any{"reason": "branch: " + err.Error()})
+	}
+	if choice.Question != "" {
+		_ = w.client.AppendSection(ctx, run.ItemID, "Questions — planner", "- "+choice.Question)
+		return w.report(ctx, run, false, map[string]any{"reason": "needs clarification: " + choice.Question})
+	}
+	branch := choice.Name
+	if choice.Exists {
+		if baseSHA, err = fetchBranch(ctx, repo.Path, branch); err != nil {
+			return err
+		}
+	}
+
 	// A multi-agent plan round: every candidate plans at the group's pinned
 	// base (the first member's), so candidates differ in judgement, not in
 	// what they read. When the clone has moved on, plan in a detached
@@ -58,10 +77,28 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 			dir, baseSHA = wt, pinned
 		}
 	}
+	var ho *handover
+	if choice.Exists {
+		if dir == repo.Path {
+			wt := filepath.Join(w.cfg.StateDir, "worktrees", filepath.Base(repo.Path), "plan-"+shortID(run.ID))
+			removeWorktree(ctx, repo.Path, wt)
+			if err := createDetached(ctx, repo.Path, wt, baseSHA); err != nil {
+				return fmt.Errorf("plan worktree at %s's head %s: %w", branch, shortSHA(baseSHA), err)
+			}
+			defer removeWorktree(ctx, repo.Path, wt)
+			dir = wt
+		}
+		if ho, err = handoverContext(ctx, repo, branch, baseSHA); err != nil {
+			return fmt.Errorf("reading the work on %s: %w", branch, err)
+		}
+	}
+	// Knowledge comes from the default branch's history, never from a
+	// branch being taken over.
+	kbase := knowledgeBase(ctx, repo, baseSHA)
 	// Optional focus brief (plan members may have one), read at the base.
 	var focus *Skill
 	if run.Focus != "" {
-		f, ferr := repoFocus(ctx, repo.Path, baseSHA, run.Focus)
+		f, ferr := repoFocus(ctx, repo.Path, kbase, run.Focus)
 		if ferr != nil {
 			return w.report(ctx, run, false, map[string]any{"reason": "plan: " + ferr.Error()})
 		}
@@ -84,7 +121,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	}
 
 	// Knowledge at the base the planner reads (never a worktree head).
-	skills := repoSkills(ctx, repo.Path, baseSHA)
+	skills := repoSkills(ctx, repo.Path, kbase)
 	// Martin's text plus the sections current for this round: his answers,
 	// the plan(s) his newest notes are about, and those notes (brief.go).
 	brief, secs := splitItem(item.Content)
@@ -92,11 +129,20 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	if seed == nil {
 		previous = previousPlans(secs)
 	}
+	// A reviewed branch that nobody planned (a review-only item Martin
+	// asked changes for): his change requests and the review they answer.
+	changes, review := "", ""
+	if item.PlanID == "" {
+		if changes = newestBody(secs, "Change requests"); changes != "" {
+			review = lastReview(secs)
+		}
+	}
 	prompt, err := renderPrompt("plan.md", map[string]any{
 		"Workspace": run.WorkspaceID, "Base": repo.DefaultBranch,
 		"Title": item.Title, "Content": brief, "QA": questionsAndAnswers(secs),
 		"Previous": previous, "Notes": newestBody(secs, "Review notes"),
-		"Instructions": repoInstructions(ctx, repo.Path, baseSHA),
+		"Handover": ho, "Changes": changes, "LastReview": review,
+		"Instructions": repoInstructions(ctx, repo.Path, kbase),
 		"SkillIndex":   skillIndex(skills), "Requested": tagHints(skills, item.Tags),
 		"ImplCommands": w.stageCommands(run.WorkspaceID, "implement", implTools), "Checks": repo.Checks,
 		"Focus": focus, "Seed": seedSteps,
@@ -104,7 +150,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	if err != nil {
 		return err
 	}
-	log.Info("planning", "account", account.Name, "base", baseSHA, "group", run.GroupID != "", "seeded", seed != nil)
+	log.Info("planning", "account", account.Name, "base", baseSHA, "branch", branch, "handover", choice.Exists, "group", run.GroupID != "", "seeded", seed != nil)
 	res := w.runAgent(ctx, w.agentRun(dir, prompt, planSchema, planTools, w.cfg.PlanTimeout, account, run, "plan"))
 	w.addCost(run, res)
 	if err := w.handleAgentOutcome(ctx, run, res, account, "plan"); err != nil {
@@ -127,7 +173,6 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 		})
 	}
 
-	branch := normalizeBranch(item.ID, item.Title, repo.BranchPrefix)
 	if run.GroupID != "" {
 		return w.submitCandidate(ctx, run, item, pr, skills, baseSHA, branch, label, res, log)
 	}
@@ -156,6 +201,9 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 		planID, pr.Size, branch, baseSHA[:min(10, len(baseSHA))], rev.ID, pr.Summary, numberedSteps(pr.Steps))
 	if len(selected) > 0 {
 		enrich += "\n**Skills:** " + strings.Join(selected, ", ") + "\n"
+	}
+	if choice.Exists {
+		enrich += fmt.Sprintf("\n**Handover:** continues the existing branch `%s` from `%s`.\n", branch, shortSHA(baseSHA))
 	}
 	_ = w.client.AppendSection(ctx, run.ItemID, "Enrichment — skopos worker", enrich)
 
@@ -235,7 +283,11 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 
 	branch := run.Branch
 	if branch == "" {
-		branch = normalizeBranch(item.ID, item.Title, repo.BranchPrefix)
+		// The plan stage resolved the same name (an existing branch is
+		// continued: implementStart prefers it over the base).
+		if branch, err = branchFor(item, repo); err != nil {
+			return w.report(ctx, run, false, map[string]any{"reason": "branch: " + err.Error()})
+		}
 	}
 	// H3: the run carries the approved revision and base. Branch from the
 	// approved base_sha — "what runs is exactly what was approved" — not
@@ -453,6 +505,8 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 				summary += "\n\n(The pull request could not be opened: " + firstLine(err.Error()) + ")"
 			} else {
 				rec.PRNumber, rec.PRURL = pr.Number, pr.URL
+				owned := action == "opened" || ownsPullRequest(pr, item.ID)
+				rec.PROwned = &owned
 				log.Info("pull request ready", "url", pr.URL, "action", action)
 			}
 		}
@@ -575,6 +629,12 @@ const notPushedMarker = "not pushed"
 // implementer). Always reviews a fresh checkout of the pushed branch, never
 // the clone's default branch where the diff would be empty.
 func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) error {
+	return w.review(ctx, run, log, nil)
+}
+
+// review is the review/QA/second-opinion stage; br is set for a review-only
+// item's branch_review (the head it checked and the checks' results).
+func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *branchReview) error {
 	repo := w.cfg.Repos[run.WorkspaceID]
 	if repo == nil {
 		return w.failNoRepo(run.WorkspaceID)
@@ -590,7 +650,7 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 		return fmt.Errorf("second opinion run has no head to review")
 	}
 	phase := run.Stage
-	if second {
+	if second || br != nil {
 		phase = "review"
 	}
 	account := w.pickAccount(run, log)
@@ -608,8 +668,11 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 		return fmt.Errorf("review: branch %s "+notPushedMarker+": %w", run.Branch, err)
 	}
 	ref := "origin/" + run.Branch
-	if second {
+	switch {
+	case second:
 		ref = run.HeadSHA
+	case br != nil:
+		ref = br.Head
 	}
 	if err := createDetached(ctx, repo.Path, wt, ref); err != nil {
 		return fmt.Errorf("review worktree at %s: %w", ref, err)
@@ -619,6 +682,19 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 	if base == "" {
 		base = "origin/" + repo.DefaultBranch
 	}
+	if br != nil {
+		base = br.Head // its fork point, below
+	}
+	// A handover's base is the branch head the plan was made against: the
+	// commits up to it were someone else's. The reviewer reviews them all
+	// (they merge together) but is told which are which.
+	handoverBase := ""
+	if run.BaseSHA != "" && !onDefaultBranch(ctx, repo, run.BaseSHA) {
+		handoverBase = run.BaseSHA
+	}
+	// Instructions and knowledge from the default branch's history, never
+	// from the branch under review.
+	base = knowledgeBase(ctx, repo, base)
 	if err := restoreInstructionFiles(ctx, wt, base); err != nil {
 		return fmt.Errorf("review: restoring instruction files to %s: %w", base, err)
 	}
@@ -635,7 +711,17 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 	var instructions string
 	var skillBodies []Skill
 	var decisions []string
-	if item, ierr := w.client.GetItem(ctx, run.ItemID); ierr == nil && item.PlanID != "" {
+	brief := ""
+	if br != nil {
+		// Nobody planned this branch: what it is for is the item's text and
+		// Martin's answers.
+		b, secs := splitItem(br.Item.Content)
+		brief = b
+		if qa := questionsAndAnswers(secs); qa != "" {
+			brief += "\n\n" + qa
+		}
+		instructions = repoInstructions(ctx, repo.Path, base)
+	} else if item, ierr := w.client.GetItem(ctx, run.ItemID); ierr == nil && item.PlanID != "" {
 		// Martin's decisions (answers to the planner's questions, approval
 		// notes, change requests) are part of the spec: a reviewer that
 		// cannot see them blocks on behaviour he explicitly accepted (found
@@ -667,11 +753,16 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 	}
 	// What the worker's checks said about this exact commit: the reviewer
 	// can't run tools, and without this it reports that nothing was verified.
-	checks := w.client.HeadChecks(ctx, run.ItemID, headSHA(ctx, wt))
+	var checks []Check
+	if br != nil {
+		checks = br.Checks
+	} else {
+		checks = w.client.HeadChecks(ctx, run.ItemID, headSHA(ctx, wt))
+	}
 	prompt, err := renderPrompt("review.md", map[string]any{
-		"Base": repo.DefaultBranch, "Stage": run.Stage, "Steps": steps,
+		"Base": repo.DefaultBranch, "Stage": run.Stage, "Steps": steps, "Brief": brief, "BranchReview": br != nil,
 		"Instructions": instructions, "Skills": skillBodies, "Focus": focus,
-		"Decisions": decisions, "SecondOpinion": second,
+		"Decisions": decisions, "SecondOpinion": second, "HandoverBase": handoverBase,
 		"Checks": checks, "ChecksFailed": len(failedChecks(checks)) > 0, "ChecksConfigured": len(repo.Checks) > 0,
 	})
 	if err != nil {
@@ -694,6 +785,21 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 		log.Info("second opinion finished", "verdict", rr.Verdict, "findings", len(rr.Findings), "head", run.HeadSHA, "cost_usd", res.CostUSD)
 		return w.report(ctx, run, true, map[string]any{
 			"summary": rr.Summary, "findings": rr.Findings, "verdict": rr.Verdict, "head_sha": run.HeadSHA,
+		})
+	}
+	if br != nil {
+		// The verdict is what Martin asked for: written into the item, and
+		// the run succeeds whatever it says (he decides at in_review).
+		heading := "review — " + account.Name
+		if run.Focus != "" {
+			heading = "review — " + run.Focus + " · " + account.Name
+		}
+		_ = w.client.AppendSection(ctx, run.ItemID, heading, reviewSection(rr))
+		log.Info("branch review finished", "verdict", rr.Verdict, "findings", len(rr.Findings), "branch", run.Branch, "head", br.Head, "cost_usd", res.CostUSD)
+		return w.report(ctx, run, true, map[string]any{
+			"summary": rr.Summary, "findings": rr.Findings, "verdict": rr.Verdict,
+			"head_sha": br.Head, "branch": run.Branch, "checks": br.Checks, "setup": br.Setup,
+			"diffstat": diffStat(ctx, wt, base),
 		})
 	}
 	passed := rr.Verdict == "pass"
@@ -768,6 +874,7 @@ func (w *Worker) proposeAmendment(ctx context.Context, run *Run, item *Item, ir 
 // instructions and the bodies of the APPROVED revision's skills, both read
 // from the clone at base (capability profiles §3).
 func (w *Worker) runKnowledge(ctx context.Context, repo *Repo, run *Run, planID, base string) (string, []Skill) {
+	base = knowledgeBase(ctx, repo, base)
 	instructions := repoInstructions(ctx, repo.Path, base)
 	if planID == "" {
 		return instructions, nil
@@ -850,4 +957,120 @@ func min(a, b int) int {
 func dirExists(p string) bool {
 	st, err := os.Stat(p)
 	return err == nil && st.IsDir()
+}
+
+// branchReview is what a review-only item's run checked before its review:
+// the branch head and the checks' (and setup's) results there.
+type branchReview struct {
+	Item   *Item
+	Head   string
+	Checks []Check
+	Setup  []Check
+}
+
+// stageBranchReview reviews a review-only item's existing branch
+// (tmp/branch-handover — design.md §4): the repository's setup and checks at
+// the branch head, read-only — no fix rounds, nothing committed or pushed —
+// then the review, which gets the check results. Failed checks don't stop
+// it: they are findings. The run succeeds whatever the verdict; Martin
+// decides at in_review.
+func (w *Worker) stageBranchReview(ctx context.Context, run *Run, log *slog.Logger) error {
+	repo := w.cfg.Repos[run.WorkspaceID]
+	if repo == nil {
+		return w.failNoRepo(run.WorkspaceID)
+	}
+	item, err := w.client.GetItem(ctx, run.ItemID)
+	if err != nil {
+		return err
+	}
+	choice, err := resolveBranch(ctx, repo, item)
+	if err != nil {
+		return w.report(ctx, run, false, map[string]any{"reason": "branch: " + err.Error()})
+	}
+	if choice.Question != "" {
+		_ = w.client.AppendSection(ctx, run.ItemID, "Questions — planner", "- "+choice.Question)
+		return w.report(ctx, run, false, map[string]any{"reason": "needs clarification: " + choice.Question})
+	}
+	if !choice.Exists {
+		return w.report(ctx, run, false, map[string]any{"reason": fmt.Sprintf("branch %s is not on origin: nothing to review", choice.Name)})
+	}
+	head, err := fetchBranch(ctx, repo.Path, choice.Name)
+	if err != nil {
+		return err
+	}
+	run.Branch = choice.Name
+	// A review panel: every member reviews the same head, and the first
+	// to finish its checks reports them; later members reuse those rather
+	// than running setup and the checks again.
+	var checks, setup []Check
+	if run.GroupID != "" {
+		checks = w.client.GroupChecks(ctx, run.ItemID, run.GroupID, head)
+	}
+	if len(checks) > 0 {
+		log.Info("reusing the checks another reviewer ran on this head", "branch", choice.Name, "head", head)
+	} else {
+		log.Info("checking the branch before its review", "branch", choice.Name, "head", head)
+		if checks, setup, err = w.checkHead(ctx, run, repo, choice.Name, head, log); err != nil {
+			return w.report(ctx, run, false, map[string]any{"reason": err.Error(), "setup": setup, "head_sha": head, "branch": choice.Name})
+		}
+	}
+	w.setPhase(ctx, run, phaseReviewing)
+	return w.review(ctx, run, log, &branchReview{Item: item, Head: head, Checks: checks, Setup: setup})
+}
+
+// checkHead runs the repository's setup and checks at a branch head without
+// touching the branch. A branch checkout uses the clone (held for the run),
+// detached at the head; setup is skipped when the clone is already set up
+// for this branch at this head, and whatever the checks changed is thrown
+// away before the clone goes back to its default branch — files a check
+// writes are not anyone's work. A worktree checkout uses a detached worktree
+// it removes afterwards. A setup failure is returned as the error.
+func (w *Worker) checkHead(ctx context.Context, run *Run, repo *Repo, branch, head string, log *slog.Logger) (checks, setup []Check, err error) {
+	if len(repo.Setup) == 0 && len(repo.Checks) == 0 {
+		return nil, nil, nil
+	}
+	dir := repo.Path
+	needSetup := true
+	if repo.Checkout == checkoutBranch {
+		// The marker tells readyClone, after a worker killed mid-checks,
+		// that the detached, dirty clone is this run's leftovers to throw
+		// away (not someone's work to refuse to touch).
+		setCheckMarker(ctx, repo.Path, true)
+		if _, err := git(ctx, repo.Path, "checkout", "--quiet", "--detach", head); err != nil {
+			setCheckMarker(ctx, repo.Path, false)
+			return nil, nil, fmt.Errorf("checkout %s: %w", shortSHA(head), err)
+		}
+		defer func() {
+			// On its own context: a cancelled run still leaves the clone
+			// clean, on its default branch.
+			pctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			if err := discardCheckRun(pctx, repo); err != nil {
+				log.Warn("could not put the clone back on its default branch", "clone", repo.Path, "err", err)
+			}
+		}()
+		cs := readCloneSetup(ctx, repo.Path)
+		needSetup = cs.Branch != branch || cs.Head != head
+	} else {
+		dir = filepath.Join(w.cfg.StateDir, "worktrees", filepath.Base(repo.Path), "check-"+shortID(run.ID))
+		removeWorktree(ctx, repo.Path, dir)
+		if err := createDetached(ctx, repo.Path, dir, head); err != nil {
+			return nil, nil, fmt.Errorf("worktree at %s: %w", shortSHA(head), err)
+		}
+		defer removeWorktree(ctx, repo.Path, dir)
+	}
+	if needSetup && len(repo.Setup) > 0 {
+		if repo.Checkout == checkoutBranch {
+			writeCloneSetup(ctx, repo.Path, cloneSetup{}) // set up for nothing until this finishes
+		}
+		setup, err = runSetup(ctx, dir, repo.Setup, repo.Path, repo.SetupEnv, w.cfg.TokenEnvs(), w.envFileKeys, repo.SetupDeadline())
+		if err != nil {
+			return nil, setup, err
+		}
+		if repo.Checkout == checkoutBranch {
+			writeCloneSetup(ctx, repo.Path, cloneSetup{Branch: branch, Head: head})
+		}
+	}
+	w.setPhase(ctx, run, phaseChecks)
+	return w.repoChecks(ctx, repo, dir), setup, nil
 }

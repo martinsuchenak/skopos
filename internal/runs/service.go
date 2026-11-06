@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -147,6 +148,12 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 			return nil, fmt.Errorf("%w: a second opinion needs a runner and the head it reviews", ErrInvalidInput)
 		}
 		in.Single = true
+	case StageBranchReview:
+		// Routed like the review stage, so a branch is reviewed the way an
+		// implementation would be: the review panel (each member with its
+		// focus) for an item on panel, else one reviewer — the review
+		// runner, or the panel's first member without its focus (solo).
+		in.Single = true
 	default:
 		return nil, fmt.Errorf("%w: unknown stage %q", ErrInvalidInput, in.Stage)
 	}
@@ -167,8 +174,9 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 	// The item's switch decides, at every queue: panel (or the workspace
 	// default) opens the group; solo runs the first member alone, without
 	// its focus brief.
-	if groupStage(in.Stage) && !in.Single {
-		if members := s.prefsOf(ctx, in.WorkspaceID).GroupMembers(in.Stage); members != nil {
+	route := routeStage(in.Stage)
+	if groupStage(in.Stage) && (!in.Single || in.Stage == StageBranchReview) {
+		if members := s.prefsOf(ctx, in.WorkspaceID).GroupMembers(route); members != nil {
 			if s.prefsOf(ctx, in.WorkspaceID).Panel(s.agentsFor(ctx, in.ItemID)) {
 				return s.queueGroup(ctx, in, members)
 			}
@@ -185,7 +193,7 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 		PlanRevID:   strings.TrimSpace(in.PlanRevID),
 		Stage:       in.Stage,
 		Runner:      runnerFor(in, s.prefsOf(ctx, in.WorkspaceID)),
-		Focus:       s.prefsOf(ctx, in.WorkspaceID).SingleFocus(in.Stage),
+		Focus:       s.prefsOf(ctx, in.WorkspaceID).SingleFocus(route),
 		Branch:      strings.TrimSpace(in.Branch),
 		BaseSHA:     strings.TrimSpace(in.BaseSHA),
 		HeadSHA:     strings.TrimSpace(in.HeadSHA),
@@ -213,7 +221,16 @@ func runnerFor(in QueueInput, p *WorkspacePrefs) string {
 	if r := strings.TrimSpace(in.Runner); r != "" {
 		return r
 	}
-	return p.StageRunner(in.Stage)
+	return p.StageRunner(routeStage(in.Stage))
+}
+
+// routeStage is the pipeline stage whose routing (runner, panel, policy) a
+// stage follows: a review-only item's branch_review follows review.
+func routeStage(stage string) string {
+	if stage == StageBranchReview {
+		return StageReview
+	}
+	return stage
 }
 
 // phaseForStage is the item status a run's stage corresponds to: a plan
@@ -224,7 +241,7 @@ func phaseForStage(stage string) string {
 	switch stage {
 	case StagePlan, StageCompare, StageSynthesize:
 		return "planning"
-	case StageImplement, StageReview, StageQA:
+	case StageImplement, StageReview, StageQA, StageBranchReview:
 		return "implementing"
 	}
 	return ""
@@ -322,7 +339,7 @@ func (s *Service) Heartbeat(ctx context.Context, id, workerID, leaseToken, phase
 	if id == "" || strings.TrimSpace(workerID) == "" {
 		return fmt.Errorf("%w: id and worker_id are required", ErrInvalidInput)
 	}
-	if phase != "" && phase != PhaseChecks && phase != PhaseFixing {
+	if phase != "" && phase != PhaseChecks && phase != PhaseFixing && phase != PhaseReviewing {
 		return fmt.Errorf("%w: unknown phase %q", ErrInvalidInput, phase)
 	}
 	if err := s.checkScope(ctx, id); err != nil {
@@ -470,7 +487,19 @@ func (s *Service) chain(ctx context.Context, run *Run, in ReportInput) {
 			}
 		case StageImplement, StageReview, StageQA:
 			s.advance(ctx, run, "worker:"+run.WorkerID)
+		case StageBranchReview:
+			// The verdict is the deliverable: pass or fail, Martin decides.
+			s.toReview(ctx, run.ItemID, "worker:"+run.WorkerID)
 		}
+	}
+}
+
+// toReview hands a review-only item to Martin (implementing → in_review;
+// the claim normally made the first move already).
+func (s *Service) toReview(ctx context.Context, itemID, agent string) {
+	_ = s.itemTransition(ctx, itemID, "implementing", "", agent)
+	if err := s.itemTransition(ctx, itemID, "in_review", "", agent); err != nil {
+		slog.Warn("moving a reviewed branch to in_review", "item", itemID, "err", err)
 	}
 }
 

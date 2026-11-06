@@ -76,6 +76,17 @@ func (h *Handler) Queue(w http.ResponseWriter, r *http.Request) {
 	h.respondTransition(w, item, err)
 }
 
+// ReviewBranch handles POST /api/inbox/{id}/review: queue a review-only
+// item (the agent checks and reviews its existing branch).
+func (h *Handler) ReviewBranch(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	item, err := h.service.ReviewBranch(r.Context(), r.PathValue("id"), viaFrom(r, ""))
+	h.respondTransition(w, item, err)
+}
+
 func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 	if !h.authorized(r) {
 		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")

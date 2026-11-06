@@ -1,9 +1,20 @@
 Review the changes on the current branch against {{.Base}}: run `git diff origin/{{.Base}}...HEAD`
 and read the surrounding code where needed.
+{{if .BranchReview}}
+Someone else wrote this branch; Martin asked for a review of it as it stands. Nobody planned it
+here, so what it is for is the item below. Review every commit on it.
 
+# What the branch is for
+
+{{.Brief}}
+{{else}}
 The changes implement this plan:
 
 {{range $i, $s := .Steps}}{{inc $i}}. {{$s.Title}}
+{{end}}{{end}}{{if .HandoverBase}}
+This branch was handed over: the commits up to `{{.HandoverBase}}` were already on it when the
+implementer took it over, the later ones are the implementer's. They merge together, so review
+all of them; say in a finding whose commits it concerns when that matters.
 {{end}}
 {{if .Instructions}}
 # Repository instructions (AGENTS.md at the approved base commit)
@@ -58,8 +69,8 @@ Instruction and agent-config files in this checkout (AGENTS.md, CLAUDE.md, .skop
 .opencode/, ...) are restored to the base version; the branch's changes to them are in the diff
 and are reviewed like any other change.
 
-Report only concrete problems: bugs, missed plan steps, broken behaviour, security issues, and
-changes outside the plan. No praise.
+Report only concrete problems: bugs, {{if .BranchReview}}anything the item asks for that the branch doesn't do{{else}}missed plan steps{{end}}, broken behaviour, security issues, and
+changes outside {{if .BranchReview}}what the item asks for{{else}}the plan{{end}}. No praise.
 
 Each finding has a severity:
 - `blocking`: must be fixed before this can merge (a bug, a missed step, a security problem,

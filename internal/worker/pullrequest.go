@@ -34,7 +34,10 @@ type PullRequest struct {
 	// Merged: GitHub reports merged_at, Gitea a merged flag.
 	MergedAt *string `json:"merged_at"`
 	Merged   bool    `json:"merged"`
-	Head     struct {
+	// Body tells skopos's pull requests from someone else's on a branch
+	// taken over (prMarker).
+	Body string `json:"body"`
+	Head struct {
 		Ref string `json:"ref"`
 	} `json:"head"`
 	Base struct {
@@ -83,7 +86,11 @@ func newPRClient(kind, remoteURL, token string) (*prClient, error) {
 // same branch, so they land on the PR the first round opened. Gitea has no
 // draft flag in its API; a draft there is a "WIP: " title, which Gitea
 // treats as work in progress.
-func (c *prClient) Ensure(ctx context.Context, head, base, title, body string, draft bool) (*PullRequest, string, error) {
+//
+// A closed pull request is reopened only when owns says skopos opened it: on
+// a branch taken over from someone, their closed pull request stays closed
+// and a new one is opened.
+func (c *prClient) Ensure(ctx context.Context, head, base, title, body string, draft bool, owns func(*PullRequest) bool) (*PullRequest, string, error) {
 	pr, err := c.find(ctx, head, base)
 	if err != nil {
 		return nil, "", err
@@ -91,7 +98,7 @@ func (c *prClient) Ensure(ctx context.Context, head, base, title, body string, d
 	if pr != nil && pr.State == "open" {
 		return pr, "reused", nil
 	}
-	if pr != nil && !pr.Merged && pr.MergedAt == nil {
+	if pr != nil && !pr.Merged && pr.MergedAt == nil && owns(pr) {
 		var out PullRequest
 		if err := c.call(ctx, http.MethodPatch, fmt.Sprintf("%s/pulls/%d", c.repoPath(), pr.Number), map[string]any{"state": "open"}, &out); err == nil {
 			if out.Number == 0 {
@@ -226,6 +233,18 @@ func (w *Worker) ensurePullRequest(ctx context.Context, repo *Repo, token, branc
 		}
 		b.WriteString("\n")
 	}
-	fmt.Fprintf(&b, "---\nOpened by the skopos worker `%s` for inbox item `%s`. Sign off in skopos (Mark done), then merge here: skopos never merges.\n", w.cfg.ID, item.ID)
-	return c.Ensure(ctx, branch, repo.DefaultBranch, item.Title, b.String(), draft)
+	fmt.Fprintf(&b, "---\nOpened by the skopos worker `%s` for %s. Sign off in skopos (Mark done), then merge here: skopos never merges.\n", w.cfg.ID, prMarker(item.ID))
+	return c.Ensure(ctx, branch, repo.DefaultBranch, item.Title, b.String(), draft, func(pr *PullRequest) bool {
+		return ownsPullRequest(pr, item.ID)
+	})
+}
+
+// prMarker is in the body of every pull request skopos opens for an item.
+func prMarker(itemID string) string { return "inbox item `" + itemID + "`" }
+
+// ownsPullRequest: skopos opened this pull request for the item (any of its
+// workers). Someone else's — on a branch taken over — is reused while open,
+// but never reopened or closed.
+func ownsPullRequest(pr *PullRequest, itemID string) bool {
+	return pr != nil && strings.Contains(pr.Body, prMarker(itemID))
 }

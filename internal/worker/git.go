@@ -17,7 +17,9 @@ import (
 // the ONLY code that pushes: explicit refspec, validated destination, token
 // through env-only git config (never argv), never force.
 
-var reBranch = regexp.MustCompile(`^[a-z0-9][a-z0-9._/-]*$`)
+// reBranch is the character set of a branch name; validBranch adds git's
+// structural rules.
+var reBranch = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
 
 func git(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
@@ -58,7 +60,7 @@ func isProtected(branch string, patterns []string) bool {
 // createWorktreeAt cuts a worktree on a new branch from an explicit ref
 // (the approved base_sha — review H3), no upstream.
 func createWorktreeAt(ctx context.Context, clone, worktree, branch, ref string) error {
-	if !reBranch.MatchString(branch) {
+	if !validBranch(branch) {
 		return fmt.Errorf("refusing branch name %q", branch)
 	}
 	if _, err := git(ctx, clone, "cat-file", "-e", ref); err != nil {
@@ -77,34 +79,71 @@ func createWorktreeAt(ctx context.Context, clone, worktree, branch, ref string) 
 // implementStart says where an implementation's branch starts. An earlier
 // round's branch wins over the base, so a re-implementation continues the
 // branch its pull request shows and pushes fast-forward (never force): a
-// restored item whose worktree the cleanup removed, a wiped state dir, or
-// another worker's round. First the local branch (local), then the one
-// pushed to origin (ref = its commit), else ref = the approved base,
-// fetched when the clone doesn't have it (planned on another worker).
+// restored item whose worktree the cleanup removed, a wiped state dir,
+// another worker's round, or a branch someone else started (a handover).
+// First the local branch (local) — fast-forwarded to origin's when origin
+// has moved on from it (another worker pushed a later round) — then the one
+// pushed to origin (ref = its commit), else ref = the approved base, fetched
+// when the clone doesn't have it (planned on another worker).
+//
+// The approved base must be in the start's history: a branch rewritten
+// since the plan was approved (force-pushed, rebased) is refused rather
+// than continued from something nobody approved.
 func implementStart(ctx context.Context, clone, branch, base string) (local bool, ref string, err error) {
-	if !reBranch.MatchString(branch) {
+	if !validBranch(branch) {
 		return false, "", fmt.Errorf("refusing branch name %q", branch)
 	}
 	// A worktree directory removed by hand stays registered and would
 	// block checking its branch out again.
 	_, _ = git(ctx, clone, "worktree", "prune")
-	if _, err := git(ctx, clone, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
-		return true, branch, nil
-	}
+	localSHA, lerr := git(ctx, clone, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
 	// Into its own ref, not FETCH_HEAD: a fetch by another worker process
 	// sharing the clone would overwrite that between the two commands.
-	remote := "refs/remotes/origin/" + branch
-	if _, err := git(ctx, clone, "fetch", "--quiet", "origin", "+refs/heads/"+branch+":"+remote); err == nil {
-		if sha, err := git(ctx, clone, "rev-parse", "--verify", remote+"^{commit}"); err == nil {
-			return false, sha, nil
-		}
-	}
-	if _, err := git(ctx, clone, "cat-file", "-e", base); err != nil {
+	originSHA, _ := fetchBranch(ctx, clone, branch)
+	if _, err := git(ctx, clone, "cat-file", "-e", base+"^{commit}"); err != nil {
 		if _, ferr := git(ctx, clone, "fetch", "--quiet", "origin"); ferr != nil {
 			return false, "", fmt.Errorf("base ref %q not found: %w", base, err)
 		}
 	}
-	return false, base, nil
+	start := base
+	switch {
+	case lerr == nil:
+		local, start = true, localSHA
+		if originSHA != "" && originSHA != localSHA && isAncestor(ctx, clone, localSHA, originSHA) {
+			// The branch isn't checked out anywhere here (a fresh worktree,
+			// or a clone parked on its default branch).
+			if _, err := git(ctx, clone, "update-ref", "refs/heads/"+branch, originSHA, localSHA); err != nil {
+				return false, "", fmt.Errorf("fast-forwarding %s to origin: %w", branch, err)
+			}
+			start = originSHA
+		}
+		ref = branch
+	case originSHA != "":
+		start, ref = originSHA, originSHA
+	default:
+		ref = base
+	}
+	// Only a pinned base (a commit id) binds: a run without one starts
+	// from origin/<default>, which moves on.
+	if start != base && reSHA.MatchString(base) && !isAncestor(ctx, clone, base, start) {
+		return false, "", fmt.Errorf("branch %s no longer contains the approved base %s: it was rewritten since the plan was approved; plan the item again", branch, shortSHA(base))
+	}
+	return local, ref, nil
+}
+
+var reSHA = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+
+// isAncestor reports whether a is in b's history.
+func isAncestor(ctx context.Context, clone, a, b string) bool {
+	_, err := git(ctx, clone, "merge-base", "--is-ancestor", a, b)
+	return err == nil
+}
+
+func shortSHA(sha string) string {
+	if len(sha) > 7 {
+		return sha[:7]
+	}
+	return sha
 }
 
 // prepareImplementWorktree cuts the implementation worktree where
@@ -148,7 +187,7 @@ func headSHA(ctx context.Context, dir string) string {
 // pushBranch: validated destination, explicit refspec, token via env-only
 // git config, never force. remoteAuthKind selects the header flavor.
 func pushBranch(ctx context.Context, worktree, remoteURL, token, authKind, branch, prefix string, protected []string) error {
-	if !reBranch.MatchString(branch) {
+	if !validBranch(branch) {
 		return fmt.Errorf("push refused: %q is not a safe branch name", branch)
 	}
 	if prefix != "" && !strings.HasPrefix(branch, prefix) {

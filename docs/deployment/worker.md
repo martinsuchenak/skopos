@@ -329,15 +329,85 @@ worker looks up the items it implemented:
   last round pushed it. An unpushed branch is the only copy of the work, so
   it stays. The pull request stays for you to merge.
 - **Rejected:** after a day, because Reject can be undone, it closes the pull
-  request without merging and cleans up as for done.
+  request without merging and cleans up as for done. A pull request someone
+  else opened, on a branch the item took over, is never closed.
 - **Not found:** skopos answers 404 both for a deleted item and for one
   outside the worker key's scope, so the worker never closes that item's pull
   request or deletes its branch. After a week, it removes the worktree.
 
 A new round for an item whose worktree is gone, such as a rejected item that
 was restored, continues the item's branch. It uses the local branch, or the
-one on the remote, so the push stays fast-forward. A pull request closed
-without merging is reopened rather than duplicated.
+one on the remote, so the push stays fast-forward. A local branch behind
+the remote's (another worker pushed a later round) is fast-forwarded first.
+A pull request skopos opened and someone closed without merging is reopened
+rather than duplicated.
+
+## Branch names and existing branches
+
+An item works on the branch named in its **Branch** field, or else on the
+name the repo's template gives it:
+
+```toml
+[worker.repos."github.com/you/repo"]
+branch_prefix   = "WR"              # the worker only pushes branches starting with this
+branch_template = "{ref}-{slug}"    # default "{prefix}{tail}-{slug}"
+```
+
+- **Placeholders:** `{prefix}` (`branch_prefix`), `{tail}` (the item id's
+  tail), `{slug}` (the title, lowercase with dashes, at most 30 characters)
+  and `{ref}` (the item's **Reference** field, e.g. `WR203345`). A template
+  needs `{tail}` or `{ref}`, so two items never share a branch.
+- **A template with `{ref}`** stops an item without a reference at planning
+  with "set the item's reference".
+- **The name must start with `branch_prefix`** and match no protected
+  pattern, whether it comes from the template or the Branch field: the plan
+  stage checks this before any work.
+
+**Existing branches.** When the planner starts, the worker looks on origin:
+
+- **The branch exists** (the template's name, or the one in the Branch
+  field): the item takes it over, as a *handover*. The plan is made against
+  the branch head, which becomes the approved base, and the planner gets the
+  branch's commits and diff since it left the default branch. The implementer
+  continues on the branch. If the branch is rewritten after the approval
+  (force-pushed), the implement run stops instead of continuing from
+  something nobody approved. The review covers the whole branch and is told
+  which commits were already there.
+- **Other branches start with the template's text before `{slug}`**
+  (`WR203345-api`, `WR203345-ui`) and none matches exactly: the item stops
+  with a question listing them. Set its Branch field to the one to continue,
+  or to a new name, and retry.
+- **Nothing matches:** a new branch, as before.
+
+Instructions, skills and focus briefs are always read from the default
+branch's history (the commit the branch grew from), never from a branch
+being taken over.
+
+**Review only.** The dashboard's **Review branch** (on an open item with a
+Branch or Reference) queues one `branch_review` run instead of a plan:
+
+1. It finds the branch as above. A branch missing from origin blocks the
+   item.
+2. It runs setup and the repo's checks at the branch head, read-only. With
+   `checkout = "branch"` the clone is detached at the head, and setup is
+   skipped when the clone is already set up for that branch at that head.
+   Afterwards, whatever the checks changed is thrown away and the clone goes
+   back to its default branch. There are no fix rounds, and nothing is
+   committed or pushed.
+3. The branch is reviewed the way the workspace reviews an implementation
+   (its review stage under Workspaces → Pipeline): one runner, one focused
+   reviewer, or the review panel, each member with its focus brief and the
+   panel decided by its policy into one summary. An item set to *one agent*
+   gets the panel's first member without its focus. Reviewers review against
+   the item's text, with failed checks as blocking findings. Panel members
+   share the checks: a member that finds results already reported for the
+   head reuses them instead of running setup again.
+
+The item then comes to you whatever the verdict (a panel blocks the item
+only when no member managed to review). **Mark done** accepts it.
+**Request changes** turns it into a handover: it is planned from the review
+and your requests, then implemented on the same branch. **Retry** on a
+blocked review runs the review again.
 
 Records for this live in `<state_dir>/branches/`. Worktrees left from before
 this release have no record, so remove them by hand (`git worktree list` in

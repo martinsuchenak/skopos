@@ -1209,6 +1209,8 @@ paths:
                 priority: { type: integer, description: "1+ prioritizes (smaller first; unprioritized sort last); omit or 0 for none" }
                 author_agent_id: { type: string }
                 agents: { type: string, enum: [panel, solo], description: "Multi-agent stages for this item: the repository's agent panel or one agent; omit for the repository default (--agents-default)" }
+                branch: { type: string, description: "The branch to work on: an existing one is taken over (handover, review), a new one is created under this name. Omit to let the worker name it" }
+                ref: { type: string, description: "External reference (e.g. a work request number) for the repository's branch template ({ref})" }
       responses:
         "201":
           description: Item captured
@@ -1311,6 +1313,8 @@ paths:
                 priority: { type: integer, description: "1+ sets, 0 clears (unordered); omit to keep" }
                 workspace_id: { type: string, description: "Files (or re-files) the item into this workspace; open/in_progress items only" }
                 agents: { type: string, enum: [panel, solo, default, ""], description: "Multi-agent switch: panel, solo, or default/\"\" to follow the repository default; omit to keep. Approver-only once the item is in the agent workflow" }
+                branch: { type: string, description: "The branch to work on; \"\" clears it. Approver-only once the item is in the agent workflow" }
+                ref: { type: string, description: "External reference for the branch template; \"\" clears it. Approver-only once the item is in the agent workflow" }
       responses:
         "204": { description: Updated }
         "403": { description: "Filing target workspace out of scope for this credential" }
@@ -1435,6 +1439,24 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/InboxItem" }
         "400": { description: Illegal transition }
+        "401": { description: Unauthorized }
+        "403": { description: Approver permission required }
+        "404": { description: Not found }
+
+  /api/inbox/{id}/review:
+    post:
+      summary: Queue a review-only item (approver permission required)
+      description: The agent runs the repository's checks on the item's existing branch and reviews it; nothing is planned or implemented. Needs the item's branch, or the reference the repository's branch template names it by. open → queued (flow review); the item reaches in_review whatever the verdict. Changes requested there turn it into a handover (planned first).
+      operationId: reviewInboxBranch
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      responses:
+        "200":
+          description: Queued item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InboxItem" }
+        "400": { description: Illegal transition, or no branch or reference }
         "401": { description: Unauthorized }
         "403": { description: Approver permission required }
         "404": { description: Not found }
@@ -2653,6 +2675,9 @@ components:
         claimed_by_agent_id: { type: string }
         author_agent_id: { type: string }
         agents: { type: string, enum: [panel, solo], description: "Per-item multi-agent switch; absent = the repository default" }
+        branch: { type: string, description: "The branch the item works on (empty = the worker names it)" }
+        ref: { type: string, description: "External reference, the branch template's {ref}" }
+        flow: { type: string, enum: [review], description: "review = a review-only item" }
         plan_id: { type: string }
         plan:
           type: object

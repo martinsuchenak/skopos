@@ -145,7 +145,7 @@ func TestEnsurePullRequest(t *testing.T) {
 			}
 			ensure := func(want string) *PullRequest {
 				t.Helper()
-				pr, action, err := c.Ensure(ctx, "agent/x", "main", "Fix textutil", "body", true)
+				pr, action, err := c.Ensure(ctx, "agent/x", "main", "Fix textutil", "body", true, func(*PullRequest) bool { return true })
 				if err != nil || action != want {
 					t.Fatalf("want %s, got %s (%+v, %v)", want, action, pr, err)
 				}

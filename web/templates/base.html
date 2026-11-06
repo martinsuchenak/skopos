@@ -531,6 +531,7 @@
                                                 <span x-show="isWorkflowStatus(item.status)" class="badge" :class="toneOf('status', item.status)" x-text="statusText(item.status)"></span>
                                                 {{template "ws-badge" (dict "V" "item" "Missing" "unfiled")}}
                                                 <span x-show="item.agents" class="badge tone-accent" x-text="agentsLabel(item.agents)" :title="agentsTitle(item.agents)"></span>
+                                                <span x-show="branchLabel(item)" class="badge max-w-40 truncate tone-neutral font-mono" x-text="branchLabel(item)" :title="branchTitle(item)"></span>
                                                 <span x-show="item.claimed_by_agent_id" class="truncate max-w-28" x-text="item.claimed_by_agent_id"></span>
                                                 <span x-show="item.plan_id" class="badge max-w-32 truncate tone-accent" x-text="item.plan && item.plan.name ? '→ ' + item.plan.name : '→ plan'"></span>
                                                 <span class="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap">
@@ -583,6 +584,7 @@
                                         <span x-show="item.claimed_by_agent_id" class="badge tone-neutral" x-text="'claimed: ' + item.claimed_by_agent_id"></span>
                                         {{template "ws-badge" (dict "V" "item" "Missing" "unfiled")}}
                                         <span x-show="item.agents" class="badge tone-accent" x-text="agentsLabel(item.agents)" :title="agentsTitle(item.agents)"></span>
+                                        <span x-show="branchLabel(item)" class="badge max-w-48 truncate tone-neutral font-mono" x-text="branchLabel(item)" :title="branchTitle(item)"></span>
                                     </div>
                                     <div class="mt-1.5 flex flex-wrap items-center gap-2">
                                         <template x-for="tag in item.tags || []" :key="item.id + tag">
@@ -1000,6 +1002,7 @@
                                 <span x-show="previewItem.workspace_id" class="badge max-w-48 truncate tone-info" :title="previewItem.workspace_id" x-text="workspaceLabel(previewItem.workspace_id)"></span>
                                 <span x-show="!previewItem.workspace_id" class="badge tone-warn">unfiled</span>
                                 <span x-show="previewItem.agents" class="badge tone-accent" x-text="agentsLabel(previewItem.agents)" :title="agentsTitle(previewItem.agents)"></span>
+                                <span x-show="branchLabel(previewItem)" class="badge max-w-56 truncate tone-neutral font-mono" x-text="branchLabel(previewItem)" :title="branchTitle(previewItem)"></span>
                                 <span x-show="previewItem.claimed_by_agent_id" x-text="previewItem.claimed_by_agent_id"></span>
                                 <span x-show="previewItem.plan_id" class="badge max-w-40 truncate tone-accent" x-text="'→ ' + (previewItem.plan && previewItem.plan.name ? previewItem.plan.name : 'plan')"></span>
                                 <span x-text="timeAgo(previewItem.created_at)"></span>
@@ -1047,6 +1050,7 @@
                             <textarea id="workflow-note" x-model="workflowNote" rows="3" class="fld w-full resize-y text-sm" :placeholder="workflowNotePlaceholder()" :aria-label="workflowNoteLabel()"></textarea>
                         </div>
                         <button type="button" x-show="workflowShowQueue()" @click.stop="queueInboxItem(previewItem.id)" :disabled="!workflowActionReady('queue')" class="btn btn-sm btn-primary" :aria-label="'Queue item ' + previewItem.title">Queue</button>
+                        <button type="button" x-show="workflowShowReviewBranch()" @click.stop="reviewInboxBranch(previewItem.id)" :disabled="!workflowActionReady('review')" class="btn btn-sm" :aria-label="'Review the branch of ' + previewItem.title" title="Run the checks on the existing branch and review it; nothing is planned or implemented">Review branch</button>
                         <!-- What Approve binds: the plan revision, or one card per
                              candidate of a multi-agent plan round (numbered as in
                              Slack and the CLI). A keyed x-for: it re-renders when
@@ -1401,6 +1405,18 @@
                                 <option value="solo">One agent</option>
                             </select>
                             <p id="ib-agents-help" class="mt-1 text-xs text-zinc-500">Plan, review and QA — from the next stage.</p>
+                        </div>
+                    </div>
+                    <div class="grid gap-3 sm:grid-cols-[1fr_14rem]">
+                        <div>
+                            <label class="lbl" for="ib-branch">Branch</label>
+                            <input id="ib-branch" type="text" x-model="inboxForm.branch" class="fld font-mono" placeholder="WR203345-some-feature" autocomplete="off" spellcheck="false" aria-describedby="ib-branch-help" />
+                            <p id="ib-branch-help" class="mt-1 text-xs text-zinc-500">An existing branch is continued or reviewed; a new name is created. Empty: the worker names it.</p>
+                        </div>
+                        <div>
+                            <label class="lbl" for="ib-ref">Reference</label>
+                            <input id="ib-ref" type="text" x-model="inboxForm.ref" class="fld font-mono" placeholder="WR203345" autocomplete="off" spellcheck="false" aria-describedby="ib-ref-help" />
+                            <p id="ib-ref-help" class="mt-1 text-xs text-zinc-500">For repositories whose branch names use it.</p>
                         </div>
                     </div>
                     <div>

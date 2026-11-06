@@ -98,7 +98,7 @@ func (s *Service) latestHead(ctx context.Context, itemID string) string {
 		return ""
 	}
 	for _, r := range runs {
-		if r.Stage == StageImplement && r.Status == StatusSucceeded && r.HeadSHA != "" {
+		if (r.Stage == StageImplement || r.Stage == StageBranchReview) && r.Status == StatusSucceeded && r.HeadSHA != "" {
 			return r.HeadSHA
 		}
 	}

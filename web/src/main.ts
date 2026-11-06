@@ -27,7 +27,7 @@ type EntryForm = { scope: 'project' | 'branch' | 'session'; entry_type: 'finding
 type PlanForm = { name: string; description: string; branch_name: string };
 type ItemForm = { title: string; description: string; phase: string; depends_on: string };
 type InboxPlanSummary = { id: string; name: string; status: string };
-type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; agents?: string; created_at: string; updated_at: string; excerpt?: string };
+type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; agents?: string; branch?: string; ref?: string; flow?: string; created_at: string; updated_at: string; excerpt?: string };
 type InboxDetail = InboxItem & { content: string; content_html: string };
 type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string; state: string; version: string; lastSeen: string };
 type WorkerSeen = { id: string; runners: string[]; workspaces: string[]; last_seen: string; version?: string; state?: string };
@@ -53,7 +53,7 @@ type TextRow = { key: string; ic: string; text: string; more?: MoreRow[] };
 type AuditEntry = { id: string; action: string; actor: string; via?: string; notes?: string; created_at: string };
 // wsLocked: a workflow item cannot move workspace (its runs, plan and
 // branch live there) — the server refuses it; the modal hides the picker.
-type InboxForm = { id: string; title: string; tags: string; workspace: string; agents: string; wsLocked: boolean };
+type InboxForm = { id: string; title: string; tags: string; workspace: string; agents: string; branch: string; ref: string; wsLocked: boolean };
 
 const UI_AUTHOR = 'ui';
 type View = 'sessions' | 'blackboard' | 'plans' | 'inbox' | 'index' | 'keys' | 'workspaces' | 'workers';
@@ -1268,8 +1268,8 @@ const appState = () => ({
   // stopped every live refresh at in_review (a non-empty note means "the
   // user is typing").
   reviewHead(): string {
-    const impl = this.previewRuns.find((r: RunRow) => r.stage === 'implement' && r.status === 'succeeded' && !!r.head_sha);
-    return impl ? impl.head_sha : '';
+    const impl = this.trackImpl();
+    return impl ? impl.head_sha || '' : '';
   },
   // Keyed x-for row (the CSP build's reliable re-render): [] while there is
   // no head yet.
@@ -1292,13 +1292,18 @@ const appState = () => ({
   stageOf(stage: string): number {
     if (stage === 'plan' || stage === 'compare' || stage === 'synthesize') return 1;
     if (stage === 'implement') return 3;
-    if (stage === 'review' || stage === 'qa') return 5;
+    if (stage === 'review' || stage === 'qa' || stage === 'branch_review') return 5;
     return -1;
   },
   runActive(r: RunRow): boolean { return r.status === 'queued' || r.status === 'claimed' || r.status === 'running' || r.status === 'paused'; },
   // The tracker step a run is on: an implement run past its first turn
   // (its heartbeats say checks / fixing) is on the Checks step.
-  runStep(r: RunRow): number { return r.stage === 'implement' && !!r.phase && this.runActive(r) ? 4 : this.stageOf(r.stage); },
+  // A review-only item's branch_review run is on Checks until its
+  // heartbeats say it is reviewing.
+  runStep(r: RunRow): number {
+    if (r.stage === 'branch_review' && this.runActive(r)) return r.phase === 'reviewing' ? 5 : 4;
+    return r.stage === 'implement' && !!r.phase && this.runActive(r) ? 4 : this.stageOf(r.stage);
+  },
   runTime(r: RunRow): number { return new Date(r.created_at).getTime(); },
   // A configured review/QA stage: a runner or a group. null = unknown (the
   // pipeline could not be read).
@@ -1310,12 +1315,21 @@ const appState = () => ({
   },
   // The newest successful implementation (its head is what sign-off
   // approves) and the review/QA results on it.
+  // On a review-only item the reviewed head (a branch_review run) is both.
   trackImpl(): RunRow | undefined {
-    return this.previewRuns.find((r: RunRow) => r.stage === 'implement' && r.status === 'succeeded' && !!r.head_sha);
+    return this.previewRuns.find((r: RunRow) => (r.stage === 'implement' || r.stage === 'branch_review') && r.status === 'succeeded' && !!r.head_sha);
   },
   trackReviews(): RunRow[] {
     const impl = this.trackImpl();
     if (!impl) return [];
+    if (impl.stage === 'branch_review') {
+      // A review panel: every member's result on this head, blocking first.
+      const done = impl.group_id
+        ? this.previewRuns.filter((r: RunRow) => r.stage === 'branch_review' && r.group_id === impl.group_id && (r.status === 'succeeded' || r.status === 'failed'))
+        : [impl];
+      const bad = (r: RunRow) => r.status === 'failed' || this.findingCount(r, 'blocking') > 0;
+      return done.filter(bad).concat(done.filter((r: RunRow) => !bad(r)));
+    }
     const since = this.runTime(impl);
     const done = this.previewRuns.filter((r: RunRow) => (r.stage === 'review' || r.stage === 'qa') && (r.status === 'succeeded' || r.status === 'failed') && this.runTime(r) >= since);
     // Blocking results first: a blocked step draws its first line red.
@@ -1324,7 +1338,13 @@ const appState = () => ({
   findingCount(r: RunRow, severity: string): number { return (r.findings || []).filter(f => f.severity === severity).length; },
   plural(n: number, word: string): string { return n + ' ' + word + (n === 1 ? '' : 's'); },
   reviewLine(r: RunRow): string {
-    const who = (r.focus || r.stage) + (r.runner ? ' (' + r.runner + ')' : '');
+    const who = (r.focus || (r.stage === 'branch_review' ? 'review' : r.stage)) + (r.runner ? ' (' + r.runner + ')' : '');
+    // A branch review succeeds whatever its verdict: blocking findings are
+    // the verdict.
+    if (r.stage === 'branch_review' && r.status === 'succeeded') {
+      const blocking = (r.findings || []).find(f => f.severity === 'blocking');
+      if (blocking) return who + ' blocking: ' + blocking.text;
+    }
     if (r.status === 'failed') {
       const blocking = (r.findings || []).find(f => f.severity === 'blocking');
       return who + ' blocking: ' + (blocking ? blocking.text : (r.fail_reason || 'failed'));
@@ -1335,7 +1355,7 @@ const appState = () => ({
   activeLines(step: number): string[] {
     return this.previewRuns.filter((r: RunRow) => this.runStep(r) === step && this.runActive(r)).map((r: RunRow) => {
       const detail = [r.runner, r.focus].filter(Boolean).join(', ');
-      const what = r.phase === 'checks' ? 'the checks' : r.phase === 'fixing' ? 'a fix round for the failed checks' + (r.runner ? ' (' + r.runner + ')' : '') : r.stage + (detail ? ' (' + detail + ')' : '');
+      const what = r.stage === 'branch_review' ? (r.phase === 'reviewing' ? 'the review' + (r.runner ? ' (' + r.runner + ')' : '') : 'setup and the checks on ' + (r.branch || 'the branch')) : r.phase === 'checks' ? 'the checks' : r.phase === 'fixing' ? 'a fix round for the failed checks' + (r.runner ? ' (' + r.runner + ')' : '') : r.stage + (detail ? ' (' + detail + ')' : '');
       if (r.status === 'queued') return 'Waiting for a worker: ' + what;
       if (r.status === 'paused') return 'Paused: ' + what + (r.fail_reason ? ', ' + r.fail_reason : '');
       return 'Running ' + what + (r.worker_id ? ' on ' + r.worker_id : '');
@@ -1459,17 +1479,20 @@ const appState = () => ({
     // done) and the Checks step is where it stopped.
     const checksBlocked = (st === 'blocked' || st === 'failed') && !!last && last.stage === 'implement' && last.status === 'failed'
       && (last.checks || []).some(c => !c.passed);
+    // A review-only item skips Plan, Plan approval and Implement: its one
+    // run checks and reviews someone's branch.
+    const reviewOnly = item.flow === 'review';
     // The current step and how it is drawn.
     let cur = -1;
     let curState = 'run';
     switch (st) {
       case 'open': cur = 0; curState = 'you'; break;
-      case 'queued': case 'planning': cur = 1; break;
+      case 'queued': case 'planning': cur = reviewOnly ? 4 : 1; break;
       case 'awaiting_approval': cur = 2; curState = 'you'; break;
       case 'approved': cur = 3; break;
       case 'implementing': cur = last && this.runStep(last) >= 4 ? this.runStep(last) : 3; break;
       case 'in_review': cur = 6; curState = 'you'; break;
-      case 'blocked': case 'failed': cur = checksBlocked ? 4 : last ? Math.max(1, this.stageOf(last.stage)) : 1; curState = 'bad'; break;
+      case 'blocked': case 'failed': cur = checksBlocked || (reviewOnly && !!last && last.stage === 'branch_review') ? 4 : last ? Math.max(1, this.stageOf(last.stage)) : 1; curState = 'bad'; break;
       case 'done': cur = 7; break;
       case 'discarded': cur = 7; break;
     }
@@ -1540,7 +1563,7 @@ const appState = () => ({
         return { lines, when: this.timeAgo(implRun.updated_at), more: checks.more };
       }
       if (i === 5 && reviews.length) {
-        const ok = reviews.filter((r: RunRow) => r.status === 'succeeded').length;
+        const ok = reviews.filter((r: RunRow) => r.status === 'succeeded' && !(r.stage === 'branch_review' && this.findingCount(r, 'blocking') > 0)).length;
         const lines = reviews.map((r: RunRow) => this.reviewLine(r));
         if (impl && impl.head_sha) lines.push(ok + ' of ' + reviews.length + ' passed, on ' + this.shortSha(impl.head_sha));
         return { lines, when: this.timeAgo(reviews[0].updated_at), more: reviews.flatMap((r: RunRow) => this.runMore(r, this.reviewerName(r))) };
@@ -1587,6 +1610,12 @@ const appState = () => ({
           ? 'No review stage is configured for this workspace, so no agent reviews the commit. Set one under Workspaces → Pipeline.'
           : 'No agent reviewed this commit'];
       }
+      // Review only: nobody plans or implements the branch.
+      if (reviewOnly && i >= 1 && i <= 3) {
+        state = 'skip';
+        lines = i === 1 ? ['Review only: the agent checks and reviews ' + (item.branch ? item.branch : 'the existing branch') + '; nothing is planned or implemented. Request changes at sign-off to have it continued.'] : [];
+        when = ''; links = []; more = []; warn = '';
+      }
       // A discarded item: the steps it never finished are greyed out.
       if (st === 'discarded' && state === 'done' && !lines.length && i > 0) state = 'skip';
       const round = i >= 3 && i <= 6 && rounds > 1 && state !== 'up' ? 'round ' + rounds : '';
@@ -1604,7 +1633,7 @@ const appState = () => ({
   // it) and the worker's own appends (the tracker shows their results).
   historyRows(): { key: string; text: string; notes: string; when: string }[] {
     const names: Record<string, string> = {
-      'inbox.queue': 'Queued', 'inbox.approve': 'Plan approved', 'inbox.request_changes': 'Changes requested',
+      'inbox.queue': 'Queued', 'inbox.review': 'Queued for a branch review', 'inbox.approve': 'Plan approved', 'inbox.request_changes': 'Changes requested',
       'inbox.mark_done': 'Signed off', 'inbox.retry': 'Retried', 'inbox.reject': 'Rejected',
       'inbox.second_opinion': 'Second opinion requested', 'inbox.link_plan': 'Plan linked', 'inbox.edit': 'Edited',
       'inbox.transition': 'Pipeline', 'inbox.migrate': 'Migrated',
@@ -1771,6 +1800,13 @@ const appState = () => ({
     return !!this.whoami && (this.whoami.root || !!(this.whoami.key && this.whoami.key.approver));
   },
   workflowShowQueue(): boolean { return !!this.previewItem && this.previewItem.status === 'open'; },
+  // Review only: an open item that names a branch (or the reference its
+  // repository's branch names use).
+  workflowShowReviewBranch(): boolean {
+    const it = this.previewItem;
+    return !!it && it.status === 'open' && (!!it.branch || !!it.ref);
+  },
+  isReviewOnly(): boolean { return !!this.previewItem && this.previewItem.flow === 'review'; },
   workflowShowApprove(): boolean { return !!this.previewItem && this.previewItem.status === 'awaiting_approval'; },
   workflowShowRetry(): boolean { return !!this.previewItem && (this.previewItem.status === 'blocked' || this.previewItem.status === 'failed'); },
   workflowShowMarkDone(): boolean { return !!this.previewItem && this.previewItem.status === 'in_review'; },
@@ -1781,7 +1817,7 @@ const appState = () => ({
   workflowShowInput(): boolean { return this.workflowShowApprove() || this.workflowShowRetry() || this.workflowShowMarkDone(); },
   workflowNoteLabel(): string {
     if (this.workflowShowRetry()) return 'Answer to the blocker (sent to the agent)';
-    if (this.workflowShowMarkDone()) return 'Notes for Request changes (sent to the implementer)';
+    if (this.workflowShowMarkDone()) return this.isReviewOnly() ? 'Notes for Request changes (an agent plans and continues the branch)' : 'Notes for Request changes (sent to the implementer)';
     if (this.workflowShowApprove()) return 'Notes (required for Request changes)';
     return '';
   },
@@ -1797,7 +1833,7 @@ const appState = () => ({
   workflowActionReady(action: string): boolean {
     if (this.workflowBusy) return false;
     if (action === 'approve') return true;
-    if (action === 'queue' || action === 'reject') return true;
+    if (action === 'queue' || action === 'review' || action === 'reject') return true;
     if (action === 'mark_done') return this.reviewHead() !== '';
     return !!this.workflowNote && this.workflowNote.trim().length > 0;
   },
@@ -1820,6 +1856,7 @@ const appState = () => ({
     await this.reloadPreview();
   },
   queueInboxItem(id: string) { this.postWorkflowAction(id, 'queue', null, 'Queued for the agent pipeline'); },
+  reviewInboxBranch(id: string) { this.postWorkflowAction(id, 'review', null, 'Queued for a review of its branch'); },
   // Reject leaves the pipeline for good (the item is discarded): confirm.
   rejectInboxItem(id: string) {
     const title = this.previewItem ? this.previewItem.title : 'this item';
@@ -2312,7 +2349,7 @@ const appState = () => ({
     // explicitly (an inline field error, not a silent toast).
     this.inboxForm.workspace = this.activeWorkspace;
     this.inboxErrors = {};
-    this.inboxBaseline = { title: '', tags: '', content: '', workspace: this.activeWorkspace, agents: '' };
+    this.inboxBaseline = { title: '', tags: '', content: '', workspace: this.activeWorkspace, agents: '', branch: '', ref: '' };
     this.showInboxItemModal = true;
     this.syncInboxWsField();
     this.mountInboxEditor('');
@@ -2324,9 +2361,9 @@ const appState = () => ({
     const detail = (await res.json()) as InboxDetail;
     this.inboxForm = {
       id: detail.id, title: detail.title, tags: (detail.tags || []).join(', '), workspace: detail.workspace_id || '',
-      agents: detail.agents || '', wsLocked: this.isWorkflowStatus(detail.status),
+      agents: detail.agents || '', branch: detail.branch || '', ref: detail.ref || '', wsLocked: this.isWorkflowStatus(detail.status),
     };
-    this.inboxBaseline = { title: detail.title, tags: this.inboxForm.tags, content: detail.content, workspace: detail.workspace_id || '', agents: detail.agents || '' };
+    this.inboxBaseline = { title: detail.title, tags: this.inboxForm.tags, content: detail.content, workspace: detail.workspace_id || '', agents: detail.agents || '', branch: detail.branch || '', ref: detail.ref || '' };
     this.inboxErrors = {};
     this.showInboxItemModal = true;
     this.syncInboxWsField();
@@ -2356,7 +2393,9 @@ const appState = () => ({
       || this.inboxForm.title !== this.inboxBaseline.title
       || this.inboxForm.tags !== this.inboxBaseline.tags
       || this.inboxForm.workspace !== this.inboxBaseline.workspace
-      || this.inboxForm.agents !== this.inboxBaseline.agents;
+      || this.inboxForm.agents !== this.inboxBaseline.agents
+      || this.inboxForm.branch !== this.inboxBaseline.branch
+      || this.inboxForm.ref !== this.inboxBaseline.ref;
   },
   // Per-item multi-agent switch: badge text and its explanation.
   agentsLabel(agents?: string): string {
@@ -2365,6 +2404,19 @@ const appState = () => ({
   agentsTitle(agents?: string): string {
     return agents === 'panel' ? "Plan, review and QA use the repository's agent panel"
       : agents === 'solo' ? 'Plan, review and QA use one agent' : '';
+  },
+  // The item's branch (or reference) badge; review-only items say so.
+  branchLabel(it?: InboxItem | null): string {
+    if (!it) return '';
+    const b = it.branch || it.ref || '';
+    if (it.flow === 'review') return 'review only' + (b ? ' · ' + b : '');
+    return b;
+  },
+  branchTitle(it?: InboxItem | null): string {
+    if (!it) return '';
+    if (it.flow === 'review') return 'The agent checks and reviews this existing branch; nothing is planned or implemented';
+    if (it.branch) return 'Works on the branch ' + it.branch + ': an existing one is continued, a new one is created under this name';
+    return it.ref ? 'Reference ' + it.ref + ': the repository\'s branch template names the branch after it' : '';
   },
   attemptCloseInboxItemModal() {
     if (!this.showInboxItemModal || this.confirm.open) return;
@@ -2390,6 +2442,8 @@ const appState = () => ({
       if (!editing) {
         const body: Record<string, unknown> = { title: f.title.trim(), content, tags, author_agent_id: UI_AUTHOR };
         if (f.agents) body.agents = f.agents;
+        if (f.branch.trim()) body.branch = f.branch.trim();
+        if (f.ref.trim()) body.ref = f.ref.trim();
         // 'unfiled' (root-only option) captures without a workspace; the
         // server rejects it for scoped keys with an actionable error.
         if (f.workspace !== 'unfiled') body.workspace_id = f.workspace;
@@ -2402,6 +2456,8 @@ const appState = () => ({
         if (!f.wsLocked && f.workspace && f.workspace !== this.inboxBaseline.workspace) body.workspace_id = f.workspace;
         // Only a changed switch is sent ("" = back to the repository default).
         if (f.agents !== this.inboxBaseline.agents) body.agents = f.agents;
+        if (f.branch.trim() !== this.inboxBaseline.branch) body.branch = f.branch.trim();
+        if (f.ref.trim() !== this.inboxBaseline.ref) body.ref = f.ref.trim();
         const res = await this.authFetch('/api/inbox/' + encodeURIComponent(f.id), { method: 'PATCH', body: JSON.stringify(body) });
         if (!await this.handleBad(res, 'Item not updated')) return;
         this.notify('Item updated', 'success');
@@ -3053,8 +3109,8 @@ function bundleParams(ws: string, branch: string) {
 function emptyEntryForm(branch = ''): EntryForm { return { scope: 'branch', entry_type: 'finding', title: '', content: '', code_ref: '', branch_name: branch, session_id: '' }; }
 function emptyPlanForm(branch = ''): PlanForm { return { name: '', description: '', branch_name: branch }; }
 function emptyItemForm(): ItemForm { return { title: '', description: '', phase: '', depends_on: '' }; }
-function emptyInboxForm(): InboxForm { return { id: '', title: '', tags: '', workspace: '', agents: '', wsLocked: false }; }
-function emptyInboxBaseline() { return { title: '', tags: '', content: '', workspace: '', agents: '' }; }
+function emptyInboxForm(): InboxForm { return { id: '', title: '', tags: '', workspace: '', agents: '', branch: '', ref: '', wsLocked: false }; }
+function emptyInboxBaseline() { return { title: '', tags: '', content: '', workspace: '', agents: '', branch: '', ref: '' }; }
 
 Alpine.plugin(focus);
 // Register as a named component: the CSP Alpine build cannot resolve globals

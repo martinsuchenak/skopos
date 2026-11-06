@@ -24,7 +24,9 @@ const (
 	// server's runs.PhaseChecks / PhaseFixing): the dashboard's Checks step
 	// shows them running.
 	phaseChecks = "checks"
-	phaseFixing = "fixing"
+	// phaseReviewing: a branch_review run past its checks.
+	phaseReviewing = "reviewing"
+	phaseFixing    = "fixing"
 )
 
 // SetupDeadline is the repo's setup_timeout, defaulted: how long all its

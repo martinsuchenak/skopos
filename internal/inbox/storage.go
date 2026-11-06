@@ -18,6 +18,10 @@ type Store interface {
 	SetSlackThread(ctx context.Context, id, ts string) error
 	// SetAgents records the item's multi-agent switch ("" = repo default).
 	SetAgents(ctx context.Context, id, agents string, updatedAt time.Time) error
+	// SetBranchRef records the item's branch and external reference.
+	SetBranchRef(ctx context.Context, id, branch, ref string, updatedAt time.Time) error
+	// SetFlow marks a review-only item ('review') or clears the mark.
+	SetFlow(ctx context.Context, id, flow string, updatedAt time.Time) error
 	// ItemForSlackThread resolves an item by its Slack thread root.
 	ItemForSlackThread(ctx context.Context, ts string) (*Item, error)
 	ListItems(ctx context.Context, workspaceID, status, tag, query string) ([]Item, error)
@@ -99,7 +103,7 @@ func (s *Storage) RunInTx(ctx context.Context, fn func(Store) error) error {
 // they became, and a deleted plan leaves the summary NULL (dangling plan_id).
 const itemColumns = `
 	i.id, i.workspace_id, i.title, i.content, i.tags, i.status, i.priority,
-	i.claimed_by_agent_id, i.author_agent_id, i.plan_id, i.slack_thread_ts, i.agents, i.created_at, i.updated_at,
+	i.claimed_by_agent_id, i.author_agent_id, i.plan_id, i.slack_thread_ts, i.agents, i.branch, i.ref, i.flow, i.created_at, i.updated_at,
 	p.name, p.status
 `
 
@@ -114,10 +118,10 @@ const itemOrder = ` ORDER BY (i.priority IS NULL) ASC, i.priority ASC, i.id DESC
 func (s *Storage) CreateItem(ctx context.Context, item Item) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO inbox_items
-		    (id, workspace_id, title, content, tags, status, priority, claimed_by_agent_id, author_agent_id, plan_id, agents, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?)
+		    (id, workspace_id, title, content, tags, status, priority, claimed_by_agent_id, author_agent_id, plan_id, agents, branch, ref, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?)
 	`, item.ID, item.WorkspaceID, item.Title, item.Content, tagsJSON(item.Tags), string(item.Status),
-		nullableInt(item.Priority), nullableString(item.AuthorAgentID), nullableString(item.Agents), formatTime(item.CreatedAt), formatTime(item.UpdatedAt))
+		nullableInt(item.Priority), nullableString(item.AuthorAgentID), nullableString(item.Agents), item.Branch, item.Ref, formatTime(item.CreatedAt), formatTime(item.UpdatedAt))
 	if err != nil {
 		return fmt.Errorf("inserting inbox item: %w", err)
 	}
@@ -137,6 +141,29 @@ func (s *Storage) ItemForSlackThread(ctx context.Context, ts string) (*Item, err
 		return nil, fmt.Errorf("%w: no item for thread %s", ErrNotFound, ts)
 	}
 	return &item, err
+}
+
+// SetBranchRef records the item's branch and external reference ("" =
+// none).
+func (s *Storage) SetBranchRef(ctx context.Context, id, branch, ref string, updatedAt time.Time) error {
+	return s.setColumns(ctx, id, `branch = ?, ref = ?`, updatedAt, branch, ref)
+}
+
+// SetFlow marks a review-only item ("review") or clears the mark ("").
+func (s *Storage) SetFlow(ctx context.Context, id, flow string, updatedAt time.Time) error {
+	return s.setColumns(ctx, id, `flow = ?`, updatedAt, flow)
+}
+
+func (s *Storage) setColumns(ctx context.Context, id, set string, updatedAt time.Time, args ...any) error {
+	args = append(args, formatTime(updatedAt), id)
+	result, err := s.db.ExecContext(ctx, `UPDATE inbox_items SET `+set+`, updated_at = ? WHERE id = ?`, args...)
+	if err != nil {
+		return fmt.Errorf("updating inbox item: %w", err)
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: item %s", ErrNotFound, id)
+	}
+	return nil
 }
 
 // SetAgents records the item's multi-agent switch; "" stores NULL (the
@@ -410,7 +437,7 @@ func (s *Storage) ItemsByPlan(ctx context.Context, planID string) ([]Item, error
 // RestoreItem moves a discarded item back to open, clearing any stale claim.
 func (s *Storage) RestoreItem(ctx context.Context, id string, updatedAt time.Time) error {
 	result, err := s.db.ExecContext(ctx, `
-		UPDATE inbox_items SET status = ?, claimed_by_agent_id = NULL, updated_at = ? WHERE id = ?
+		UPDATE inbox_items SET status = ?, claimed_by_agent_id = NULL, flow = '', updated_at = ? WHERE id = ?
 	`, string(StatusOpen), formatTime(updatedAt), id)
 	if err != nil {
 		return fmt.Errorf("restoring inbox item: %w", err)
@@ -427,7 +454,7 @@ func (s *Storage) RestoreItem(ctx context.Context, id string, updatedAt time.Tim
 // item mid-board, and the completed plan link would block re-converting.
 func (s *Storage) ReopenItem(ctx context.Context, id string, updatedAt time.Time) error {
 	result, err := s.db.ExecContext(ctx, `
-		UPDATE inbox_items SET status = ?, claimed_by_agent_id = NULL, plan_id = NULL, priority = NULL, updated_at = ?
+		UPDATE inbox_items SET status = ?, claimed_by_agent_id = NULL, flow = '', plan_id = NULL, priority = NULL, updated_at = ?
 		WHERE id = ? AND status = ?
 	`, string(StatusOpen), formatTime(updatedAt), id, string(StatusDone))
 	if err != nil {
@@ -513,7 +540,7 @@ func scanItem(row rowScanner) (Item, error) {
 	var tags string
 	var createdAt, updatedAt string
 	if err := row.Scan(&item.ID, &workspace, &item.Title, &item.Content, &tags, &item.Status, &priority,
-		&claimedBy, &item.AuthorAgentID, &planID, &item.SlackThreadTS, &agents, &createdAt, &updatedAt, &planName, &planStatus); err != nil {
+		&claimedBy, &item.AuthorAgentID, &planID, &item.SlackThreadTS, &agents, &item.Branch, &item.Ref, &item.Flow, &createdAt, &updatedAt, &planName, &planStatus); err != nil {
 		return item, fmt.Errorf("scanning inbox item: %w", err)
 	}
 	if workspace.Valid {

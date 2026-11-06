@@ -205,6 +205,17 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "inbox_items", "agents", "TEXT CHECK (agents IS NULL OR agents IN ('solo', 'panel'))"); err != nil {
 		return err
 	}
+	// Branch handover and review-only (tmp/branch-handover — design.md):
+	// the branch the item works on, its external reference for branch
+	// templates, and 'review' for a review-only item.
+	for _, col := range []string{"branch", "ref", "flow"} {
+		if err := ensureColumn(db, "inbox_items", col, "TEXT NOT NULL DEFAULT ''"); err != nil {
+			return err
+		}
+	}
+	if err := widenRunGroupStages(db); err != nil {
+		return err
+	}
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_revisions_one_approved ON plan_revisions(group_id) WHERE candidate_state = 'approved'`); err != nil {
 		return fmt.Errorf("indexing plan candidates: %w", err)
 	}
@@ -218,6 +229,46 @@ func RunMigrations(db *sql.DB) error {
 		return fmt.Errorf("indexing runs.group_id: %w", err)
 	}
 	return nil
+}
+
+// widenRunGroupStages lets run_groups hold review-only panels
+// (stage 'branch_review'): SQLite can't alter a CHECK, so a database created
+// before it gets the table rebuilt once, from its own stored definition with
+// the wider CHECK. Nothing references run_groups, so drop-and-rename is safe;
+// the copy, swap and indexes commit together.
+func widenRunGroupStages(db *sql.DB) error {
+	const narrow = "CHECK (stage IN ('plan', 'review', 'qa'))"
+	var ddl string
+	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'run_groups'`).Scan(&ddl); err != nil {
+		return fmt.Errorf("reading run_groups: %w", err)
+	}
+	if !strings.Contains(ddl, narrow) {
+		return nil
+	}
+	wide := strings.Replace(ddl, narrow, "CHECK (stage IN ('plan', 'review', 'qa', 'branch_review'))", 1)
+	i := strings.Index(wide, "run_groups")
+	if i < 0 {
+		return fmt.Errorf("unexpected run_groups definition: %s", ddl)
+	}
+	wide = wide[:i] + "run_groups_wide" + wide[i+len("run_groups"):]
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, stmt := range []string{
+		wide,
+		`INSERT INTO run_groups_wide SELECT * FROM run_groups`,
+		`DROP TABLE run_groups`,
+		`ALTER TABLE run_groups_wide RENAME TO run_groups`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_run_groups_open ON run_groups(item_id, stage) WHERE state = 'open'`,
+		`CREATE INDEX IF NOT EXISTS idx_run_groups_deadline ON run_groups(state, deadline_ms)`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("widening run_groups stages: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 func ensureColumn(db *sql.DB, table, column, decl string) error {

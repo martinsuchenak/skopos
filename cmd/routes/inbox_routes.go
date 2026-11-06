@@ -26,6 +26,7 @@ func registerInboxRoutes(mux *http.ServeMux, h *inbox.Handler) {
 	// actions are approver-gated in the service; transition is the
 	// executor's system path.
 	mux.HandleFunc("POST /api/inbox/{id}/queue", h.Queue)
+	mux.HandleFunc("POST /api/inbox/{id}/review", h.ReviewBranch)
 	mux.HandleFunc("POST /api/inbox/{id}/approve", h.Approve)
 	mux.HandleFunc("POST /api/inbox/{id}/request-changes", h.RequestChanges)
 	mux.HandleFunc("POST /api/inbox/{id}/retry", h.Retry)

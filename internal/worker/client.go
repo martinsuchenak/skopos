@@ -215,6 +215,27 @@ func (c *Client) HeadChecks(ctx context.Context, itemID, head string) []Check {
 	return nil
 }
 
+// GroupChecks are the checks another member of a review-only panel already
+// ran on head (nil when none has): members of the same round share them,
+// and a new round runs its own.
+func (c *Client) GroupChecks(ctx context.Context, itemID, groupID, head string) []Check {
+	var runs []struct {
+		Stage   string  `json:"stage"`
+		GroupID string  `json:"group_id"`
+		HeadSHA string  `json:"head_sha"`
+		Checks  []Check `json:"checks"`
+	}
+	if groupID == "" || head == "" || c.do(ctx, http.MethodGet, "/api/runs?item_id="+url.QueryEscape(itemID), nil, &runs) != nil {
+		return nil
+	}
+	for _, r := range runs {
+		if r.Stage == "branch_review" && r.GroupID == groupID && r.HeadSHA == head && len(r.Checks) > 0 {
+			return r.Checks
+		}
+	}
+	return nil
+}
+
 // AppendSection appends a markdown section to the item (enrichment, review
 // verdicts ride on the content).
 func (c *Client) AppendSection(ctx context.Context, id, heading, body string) error {
@@ -398,6 +419,10 @@ type Item struct {
 	Tags        []string `json:"tags"`
 	Status      string   `json:"status"`
 	PlanID      string   `json:"plan_id"`
+	// Branch, Ref and Flow: tmp/branch-handover — design.md.
+	Branch string `json:"branch"`
+	Ref    string `json:"ref"`
+	Flow   string `json:"flow"`
 }
 
 type Plan struct {

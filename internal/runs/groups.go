@@ -20,14 +20,14 @@ import (
 // and qa (decided by policy) and plan (every success is a candidate).
 // Implement never fans out (design §5).
 func groupStage(stage string) bool {
-	return stage == StageReview || stage == StageQA || stage == StagePlan
+	return stage == StageReview || stage == StageQA || stage == StagePlan || stage == StageBranchReview
 }
 
 // queueGroup opens a group for the stage and queues one run per member, in
 // one transaction. The caller already refused a duplicate active run.
 func (s *Service) queueGroup(ctx context.Context, in QueueInput, members []Member) (*Run, error) {
 	prefs := s.prefsOf(ctx, in.WorkspaceID)
-	policy := prefs.PolicyFor(in.Stage)
+	policy := prefs.PolicyFor(routeStage(in.Stage))
 	if in.Stage == StagePlan {
 		policy.Policy, policy.EarlyExit = PolicyCandidates, false
 		// A new plan round closes the previous one.
@@ -166,7 +166,7 @@ func (s *Service) groupMemberDone(ctx context.Context, run *Run) {
 		s.chainNote(ctx, run, "reading group members failed: "+err.Error())
 		return
 	}
-	d := evaluateGroup(g, members, false)
+	d := evaluateGroup(g, verdicts(g, members), false)
 	if !d.decide {
 		return
 	}
@@ -188,7 +188,7 @@ func (s *Service) SweepGroups(ctx context.Context) {
 		if err != nil {
 			continue
 		}
-		d := evaluateGroup(g, members, true)
+		d := evaluateGroup(g, verdicts(g, members), true)
 		s.applyGroupDecision(ctx, g, members, d, "group deadline passed")
 	}
 }
@@ -205,6 +205,33 @@ func (s *Service) RunSweepLoop(ctx context.Context, every time.Duration) {
 			s.SweepGroups(ctx)
 		}
 	}
+}
+
+// verdicts is how the policy sees the members: a branch_review run
+// succeeds whatever it found (its findings are the deliverable), so one
+// with blocking findings counts as a failing review. Other stages pass
+// through unchanged.
+func verdicts(g *Group, members []Run) []Run {
+	if g.Stage != StageBranchReview {
+		return members
+	}
+	out := make([]Run, len(members))
+	for i, r := range members {
+		if r.Status == StatusSucceeded && hasBlocking(r) {
+			r.Status = StatusFailed
+		}
+		out[i] = r
+	}
+	return out
+}
+
+func hasBlocking(r Run) bool {
+	for _, f := range r.Findings {
+		if f.Severity != SeverityNit {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) applyGroupDecision(ctx context.Context, g *Group, members []Run, d groupDecision, cancelReason string) {
@@ -225,6 +252,24 @@ func (s *Service) applyGroupDecision(ctx context.Context, g *Group, members []Ru
 		return
 	}
 	agent := "skopos:group"
+	if g.Stage == StageBranchReview {
+		// The summary is the verdict, pass or fail: Martin decides. Only a
+		// panel where no member managed to review blocks the item.
+		for _, m := range members {
+			if m.Status == StatusSucceeded {
+				s.toReview(ctx, g.ItemID, agent)
+				return
+			}
+		}
+		reason := "branch review: no reviewer finished"
+		if d.reason != "" {
+			reason = d.reason
+		}
+		if err := s.itemTransition(ctx, g.ItemID, "blocked", reason, agent); err != nil {
+			slog.Warn("blocking item after group decision", "group", g.ID, "err", err)
+		}
+		return
+	}
 	switch d.outcome {
 	case OutcomePass:
 		rep := representative(members)
@@ -291,6 +336,9 @@ func groupSummary(g *Group, members []Run) string {
 		switch r.Status {
 		case StatusSucceeded:
 			status = "pass"
+			if g.Stage == StageBranchReview && hasBlocking(r) {
+				status = "fail"
+			}
 			if g.Stage == StagePlan {
 				status = "candidate ready"
 			}

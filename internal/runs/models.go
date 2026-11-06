@@ -24,6 +24,9 @@ var (
 const (
 	PhaseChecks = "checks"
 	PhaseFixing = "fixing"
+	// PhaseReviewing: a review-only item's branch_review run, past its
+	// checks, is reviewing.
+	PhaseReviewing = "reviewing"
 )
 
 // Status is a run's lifecycle state.
@@ -69,6 +72,11 @@ const (
 	// to the item; it never moves or blocks it (tmp/second-opinion-review
 	// — design.md).
 	StageSecondOpinion = "second_opinion"
+	// StageBranchReview reviews a review-only item's existing branch: the
+	// repository's checks at its head, then a review (tmp/branch-handover
+	// — design.md §4). One run on the workspace's review runner; whatever
+	// the verdict, the item goes to Martin at in_review.
+	StageBranchReview = "branch_review"
 )
 
 // ResumeKind: how a takeover may continue (affinity's escape hatch).

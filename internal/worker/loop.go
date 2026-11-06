@@ -161,6 +161,8 @@ func PhaseAdmissible(itemStatus, stage string) bool {
 	case "second_opinion":
 		// Advisory, on a finished branch: never moves the item.
 		return itemStatus == "in_review" || itemStatus == "blocked"
+	case "branch_review":
+		return itemStatus == "queued" || itemStatus == "implementing"
 	}
 	return false
 }
@@ -243,6 +245,8 @@ func (w *Worker) runStage(ctx context.Context, run *Run, log *slog.Logger) error
 		return w.stageImplement(ctx, run, log)
 	case "review", "qa", "second_opinion":
 		return w.stageReview(ctx, run, log)
+	case "branch_review":
+		return w.stageBranchReview(ctx, run, log)
 	case "compare":
 		return w.stageCompare(ctx, run, log)
 	case "synthesize":

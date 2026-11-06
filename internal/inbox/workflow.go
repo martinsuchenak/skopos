@@ -140,6 +140,9 @@ func (s *Service) transitionWith(ctx context.Context, itemID string, to Status, 
 		if actor != class {
 			return fmt.Errorf("%w: transition %s → %s belongs to the %s (this call is %s)", ErrInvalidInput, item.Status, to, actor, class)
 		}
+		if err := reviewOnlyEdge(item, to); err != nil {
+			return err
+		}
 		if mutate != nil {
 			if err := mutate(tx, item); err != nil {
 				return err
@@ -187,12 +190,89 @@ func (s *Service) Queue(ctx context.Context, itemID, via string) (*Item, error) 
 		}
 		queuedRun = id
 	}
-	item, err := s.transition(ctx, itemID, StatusQueued, ActorHuman, "inbox.queue", via, "", "")
+	// A restored or reopened review-only item starts over as an ordinary
+	// one.
+	clearFlow := func(tx Store, cur *Item) error {
+		if cur.Flow == "" {
+			return nil
+		}
+		return tx.SetFlow(ctx, cur.ID, "", s.now().UTC())
+	}
+	item, err := s.transitionWith(ctx, itemID, StatusQueued, ActorHuman, "inbox.queue", via, "", "", clearFlow)
 	if err != nil && s.runQueuer != nil && queuedRun != "" {
 		// Targeted compensation (N1): cancel only the run this call made.
 		_ = s.runQueuer.CancelRun(ctx, queuedRun, "queue transition failed")
 	}
 	return item, err
+}
+
+// ReviewBranch queues a review-only item (tmp/branch-handover — design.md
+// §4): the agent runs the repository's checks on an existing branch and
+// reviews it; nothing is planned or implemented. The item needs its
+// branch, or the reference the repository's branch template names it by
+// (the worker resolves and finds it). Changes requested afterwards turn it
+// into a handover.
+func (s *Service) ReviewBranch(ctx context.Context, itemID, via string) (*Item, error) {
+	if err := auth.RequireApprover(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.requireItemScopeQuiet(ctx, itemID); err != nil {
+		return nil, err
+	}
+	cur, err := s.store.GetItem(ctx, strings.TrimSpace(itemID))
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := WorkflowTransition(cur.Status, StatusQueued); !ok {
+		return nil, fmt.Errorf("%w: %s cannot be queued for a review (item is %s)", ErrInvalidInput, statusLabel(cur.Status), statusLabel(cur.Status))
+	}
+	if cur.WorkspaceID == "" {
+		return nil, fmt.Errorf("%w: file the item in a workspace first", ErrInvalidInput)
+	}
+	if cur.Branch == "" && cur.Ref == "" {
+		return nil, fmt.Errorf("%w: set the branch to review (or the reference the repository's branch names use)", ErrInvalidInput)
+	}
+	var queuedRun string
+	if s.runQueuer != nil {
+		id, qErr := s.runQueuer.QueueStage(ctx, cur.ID, cur.WorkspaceID, StageBranchReview, "", "", cur.Branch)
+		if qErr != nil {
+			return nil, qErr
+		}
+		queuedRun = id
+	}
+	setFlow := func(tx Store, cur *Item) error {
+		return tx.SetFlow(ctx, cur.ID, FlowReview, s.now().UTC())
+	}
+	item, err := s.transitionWith(ctx, itemID, StatusQueued, ActorHuman, "inbox.review", via, "", "", setFlow)
+	if err != nil && s.runQueuer != nil && queuedRun != "" {
+		_ = s.runQueuer.CancelRun(ctx, queuedRun, "review transition failed")
+	}
+	return item, err
+}
+
+// reviewOnlyEdge refuses the two edges that exist only for review-only
+// items on any other item: queued → implementing would let an executor
+// skip the plan gate, and in_review → planning would re-plan an
+// implemented item past its approval.
+func reviewOnlyEdge(item *Item, to Status) error {
+	if item.Flow == FlowReview {
+		return nil
+	}
+	if (item.Status == StatusQueued && to == StatusImplementing) || (item.Status == StatusInReview && to == StatusPlanning) {
+		return fmt.Errorf("%w: %s → %s is only for review-only items", ErrInvalidInput, item.Status, to)
+	}
+	return nil
+}
+
+// StageBranchReview is the run stage of a review-only item
+// (internal/runs.StageBranchReview).
+const StageBranchReview = "branch_review"
+
+// noLockedPlan reports a review-only item that has not been planned: its
+// changes go to a handover plan, its retries re-run the review.
+func (s *Service) noLockedPlan(ctx context.Context, item *Item) bool {
+	rev, _ := s.approvedRevision(ctx, item)
+	return item.Flow == FlowReview && rev == ""
 }
 
 // ApproveInput binds an approval to exactly what Martin saw (review fix 3):
@@ -384,6 +464,11 @@ func (s *Service) RequestChangesOn(ctx context.Context, itemID, notes, via, revi
 		target, stage = StatusPlanning, "plan"
 	case StatusInReview:
 		target, stage = StatusImplementing, "implement"
+		if s.noLockedPlan(ctx, item) {
+			// A reviewed branch nobody planned: the handover is planned
+			// first, from the review and these change requests.
+			target, stage = StatusPlanning, "plan"
+		}
 	default:
 		return nil, fmt.Errorf("%w: request-changes applies to awaiting_approval or in_review items (item is %s)", ErrInvalidInput, statusLabel(item.Status))
 	}
@@ -422,15 +507,27 @@ func (s *Service) RequestChangesOn(ctx context.Context, itemID, notes, via, revi
 	// The notes are why the work goes back: appended where the next run's
 	// prompt reads them — "## Review notes" for a re-plan, "## Change
 	// requests" for a re-implementation — atomically with the move.
-	heading := "## Review notes"
-	if target == StatusImplementing {
-		heading = "## Change requests"
+	heading := "## Change requests"
+	if item.Status == StatusAwaitingApproval {
+		heading = "## Review notes"
 	}
 	appendRequest, nerr := s.appendNotes(ctx, heading, notes)
 	if nerr != nil {
 		return nil, nerr
 	}
-	out, err := s.transitionWith(ctx, item.ID, target, ActorHuman, "inbox.request_changes", via, notes, "", appendRequest)
+	mutate := appendRequest
+	if item.Flow == FlowReview && target == StatusPlanning {
+		// From here it is a handover: planned, implemented, reviewed.
+		mutate = func(tx Store, cur *Item) error {
+			if appendRequest != nil {
+				if err := appendRequest(tx, cur); err != nil {
+					return err
+				}
+			}
+			return tx.SetFlow(ctx, cur.ID, "", s.now().UTC())
+		}
+	}
+	out, err := s.transitionWith(ctx, item.ID, target, ActorHuman, "inbox.request_changes", via, notes, "", mutate)
 	if err != nil && s.runQueuer != nil && queuedRun != "" {
 		_ = s.runQueuer.CancelRun(ctx, queuedRun, "request-changes transition failed")
 	}
@@ -482,8 +579,11 @@ func (s *Service) Retry(ctx context.Context, itemID, answer, via string) (*Item,
 	}
 	target := StatusPlanning
 	stage := "plan"
-	revID, baseSHA := "", ""
-	if item.PlanID != "" && s.plans != nil {
+	revID, baseSHA, branch := "", "", ""
+	if s.noLockedPlan(ctx, item) {
+		// A review-only item blocked by its review run: run it again.
+		target, stage, branch = StatusImplementing, StageBranchReview, item.Branch
+	} else if item.PlanID != "" && s.plans != nil {
 		if rev, revErr := s.plans.LatestRevision(ctx, item.PlanID); revErr == nil && rev != nil && rev.LockedAt != nil {
 			target, stage = StatusImplementing, "implement"
 			revID, baseSHA = rev.ID, rev.BaseSHA
@@ -503,7 +603,7 @@ func (s *Service) Retry(ctx context.Context, itemID, answer, via string) (*Item,
 	}
 	var queuedRun string
 	if s.runQueuer != nil {
-		id, qErr := s.runQueuer.QueueStage(ctx, item.ID, item.WorkspaceID, stage, revID, baseSHA, "")
+		id, qErr := s.runQueuer.QueueStage(ctx, item.ID, item.WorkspaceID, stage, revID, baseSHA, branch)
 		if qErr != nil {
 			return nil, qErr
 		}

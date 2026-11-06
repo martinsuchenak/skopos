@@ -133,6 +133,14 @@ func (s *Service) CreateItem(ctx context.Context, input CreateInput) (*Item, err
 	if err != nil {
 		return nil, err
 	}
+	branch, err := NormalizeBranch(input.Branch)
+	if err != nil {
+		return nil, err
+	}
+	ref, err := NormalizeRef(input.Ref)
+	if err != nil {
+		return nil, err
+	}
 	now := s.now().UTC()
 	item := Item{
 		ID:            ids.New(),
@@ -144,6 +152,8 @@ func (s *Service) CreateItem(ctx context.Context, input CreateInput) (*Item, err
 		Priority:      priority,
 		AuthorAgentID: input.AuthorAgentID,
 		Agents:        agents,
+		Branch:        branch,
+		Ref:           ref,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
@@ -292,6 +302,20 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 		}
 		input.Agents = &agents
 	}
+	if input.Branch != nil {
+		branch, err := NormalizeBranch(*input.Branch)
+		if err != nil {
+			return err
+		}
+		input.Branch = &branch
+	}
+	if input.Ref != nil {
+		ref, err := NormalizeRef(*input.Ref)
+		if err != nil {
+			return err
+		}
+		input.Ref = &ref
+	}
 	// Filing names an explicit target workspace: an out-of-scope target is
 	// the actionable 403 flavor (the item itself was already scope-checked).
 	if input.WorkspaceID != "" {
@@ -338,6 +362,20 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 		if agentsChanged {
 			changed = append(changed, "agents")
 		}
+		branch, ref := item.Branch, item.Ref
+		if input.Branch != nil {
+			branch = *input.Branch
+		}
+		if input.Ref != nil {
+			ref = *input.Ref
+		}
+		branchChanged := branch != item.Branch || ref != item.Ref
+		if branch != item.Branch {
+			changed = append(changed, "branch")
+		}
+		if ref != item.Ref {
+			changed = append(changed, "ref")
+		}
 		if IsWorkflowStatus(item.Status) {
 			if workspace != item.WorkspaceID {
 				return fmt.Errorf("%w: item is in the agent workflow (%s) — its runs, plan and branch live in %s; it cannot move workspace", ErrInvalidInput, statusLabel(item.Status), item.WorkspaceID)
@@ -350,6 +388,16 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 			// work — a human call, never an agent key's.
 			if agentsChanged && approverErr != nil {
 				return fmt.Errorf("%w: switching an agent-workflow item between one agent and a panel", approverErr)
+			}
+			// Which branch the agents work on (and push to) is a human
+			// call too.
+			if branchChanged && approverErr != nil {
+				return fmt.Errorf("%w: changing an agent-workflow item's branch or reference", approverErr)
+			}
+		}
+		if branchChanged {
+			if err := tx.SetBranchRef(ctx, itemID, branch, ref, s.now().UTC()); err != nil {
+				return err
 			}
 		}
 		if agentsChanged {

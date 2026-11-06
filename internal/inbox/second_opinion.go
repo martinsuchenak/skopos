@@ -82,10 +82,11 @@ func (s *Service) RequestSecondOpinion(ctx context.Context, itemID string, in Se
 	if !reRunnerName.MatchString(runner) {
 		return nil, fmt.Errorf("%w: runner %q: letters, digits, '.', '_' or '-'", ErrInvalidInput, runner)
 	}
-	// The head mark-done would approve: the newest successful implement run.
+	// The head mark-done would approve: the newest successful implement run
+	// (or, on a review-only item, the reviewed head).
 	var head, branch string
 	for _, r := range itemRuns {
-		if r.Stage == "implement" && r.Status == "succeeded" && r.HeadSHA != "" {
+		if (r.Stage == "implement" || r.Stage == StageBranchReview) && r.Status == "succeeded" && r.HeadSHA != "" {
 			head, branch = r.HeadSHA, r.Branch
 			break
 		}

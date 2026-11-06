@@ -3,6 +3,7 @@ package inbox
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -63,7 +64,10 @@ const (
 var workflowEdges = map[Status]map[Status]TransitionActor{
 	StatusOpen:       {StatusQueued: ActorHuman},
 	StatusInProgress: {StatusQueued: ActorHuman}, // queue implies release (review fix 11)
-	StatusQueued:     {StatusPlanning: ActorSystem, StatusDiscarded: ActorHuman},
+	// queued → implementing: a review-only item's branch_review run is
+	// claimed (tmp/branch-handover — design.md §4). Review-only items only
+	// (reviewOnlyEdge), like in_review → planning below.
+	StatusQueued: {StatusPlanning: ActorSystem, StatusImplementing: ActorSystem, StatusDiscarded: ActorHuman},
 	// Planning runs block too (review fix 5): a planner needing clarification
 	// pauses exactly like an implementer.
 	StatusPlanning:         {StatusAwaitingApproval: ActorSystem, StatusBlocked: ActorSystem, StatusFailed: ActorSystem, StatusDiscarded: ActorHuman},
@@ -73,9 +77,11 @@ var workflowEdges = map[Status]map[Status]TransitionActor{
 	// Retry (with an answer) is Martin's action — the answer feeds the next
 	// run's prompt. The target is the phase the item was blocked from:
 	// implementing when a revision is locked, planning otherwise (Retry).
-	StatusBlocked:  {StatusImplementing: ActorHuman, StatusPlanning: ActorHuman, StatusDiscarded: ActorHuman},
-	StatusFailed:   {StatusImplementing: ActorHuman, StatusPlanning: ActorHuman, StatusDiscarded: ActorHuman},
-	StatusInReview: {StatusImplementing: ActorHuman, StatusDone: ActorHuman, StatusDiscarded: ActorHuman},
+	StatusBlocked: {StatusImplementing: ActorHuman, StatusPlanning: ActorHuman, StatusDiscarded: ActorHuman},
+	StatusFailed:  {StatusImplementing: ActorHuman, StatusPlanning: ActorHuman, StatusDiscarded: ActorHuman},
+	// in_review → planning: changes requested on a review-only item, which
+	// has no plan yet — the handover is planned first.
+	StatusInReview: {StatusImplementing: ActorHuman, StatusPlanning: ActorHuman, StatusDone: ActorHuman, StatusDiscarded: ActorHuman},
 }
 
 // WorkflowTransition reports who may move an item from one workflow status
@@ -120,7 +126,17 @@ type Item struct {
 	// Agents is the item's multi-agent switch for stage groups: "panel"
 	// (the repository's configured agents), "solo" (one agent), or empty
 	// (the repository default, --agents-default).
-	Agents    string    `json:"agents,omitempty"`
+	Agents string `json:"agents,omitempty"`
+	// Branch is the branch the item works on, named by Martin: an existing
+	// one is taken over (handover, review), a new one is created under this
+	// name. Empty = the worker names it (branch_template).
+	Branch string `json:"branch,omitempty"`
+	// Ref is the item's external reference (a work request number), the
+	// {ref} of a repository's branch template.
+	Ref string `json:"ref,omitempty"`
+	// Flow is "review" for a review-only item (the agent reviews an
+	// existing branch; nothing is planned or implemented), "" otherwise.
+	Flow      string    `json:"flow,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 
@@ -145,6 +161,49 @@ const (
 	AgentsPanel = "panel"
 	AgentsSolo  = "solo"
 )
+
+// FlowReview marks a review-only item (Item.Flow).
+const FlowReview = "review"
+
+var (
+	reBranchName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+	reRef        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+)
+
+// NormalizeBranch validates a branch name the way git and the worker's
+// push guard will: letters, digits, '.', '_', '/', '-'; no "..", "//",
+// "@{", trailing '/' or '.', and no ".lock" component. Empty = none.
+func NormalizeBranch(v string) (string, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "", nil
+	}
+	bad := len(v) > 120 || !reBranchName.MatchString(v) ||
+		strings.Contains(v, "..") || strings.Contains(v, "//") ||
+		strings.HasSuffix(v, "/") || strings.HasSuffix(v, ".")
+	for _, part := range strings.Split(v, "/") {
+		if strings.HasSuffix(part, ".lock") || strings.HasPrefix(part, ".") {
+			bad = true
+		}
+	}
+	if bad {
+		return "", fmt.Errorf("%w: %q is not a usable branch name", ErrInvalidInput, v)
+	}
+	return v, nil
+}
+
+// NormalizeRef validates an external reference (WR203345): letters,
+// digits, '.', '_', '-', at most 40 characters. Empty = none.
+func NormalizeRef(v string) (string, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "", nil
+	}
+	if len(v) > 40 || !reRef.MatchString(v) || strings.Contains(v, "..") || strings.HasSuffix(v, ".") {
+		return "", fmt.Errorf("%w: %q is not a usable reference (letters, digits, '.', '_', '-')", ErrInvalidInput, v)
+	}
+	return v, nil
+}
 
 // NormalizeAgents validates an agents value: "panel", "solo", or empty
 // (repository default). "default" is accepted as an alias for empty.
@@ -184,6 +243,9 @@ type CreateInput struct {
 	AuthorAgentID string   `json:"author_agent_id"`
 	// Agents: "panel", "solo", or empty for the repository default.
 	Agents string `json:"agents,omitempty"`
+	// Branch and Ref: see Item.
+	Branch string `json:"branch,omitempty"`
+	Ref    string `json:"ref,omitempty"`
 }
 
 // UpdateInput is the enrichment patch. Tags is a pointer so an explicit empty
@@ -200,6 +262,9 @@ type UpdateInput struct {
 	// Agents: nil = unchanged, "" = back to the repository default,
 	// "panel" / "solo" = set.
 	Agents *string `json:"agents,omitempty"`
+	// Branch and Ref: nil = unchanged, "" = clear.
+	Branch *string `json:"branch,omitempty"`
+	Ref    *string `json:"ref,omitempty"`
 	// Via labels the surface for the audit log of workflow-item edits
 	// (dashboard, slack, cli, mcp); the REST handler defaults it.
 	Via string `json:"via,omitempty"`

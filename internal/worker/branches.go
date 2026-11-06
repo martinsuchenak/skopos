@@ -26,6 +26,10 @@ type branchRecord struct {
 	Pushed   bool   `json:"pushed"`
 	PRNumber int    `json:"pr_number,omitempty"`
 	PRURL    string `json:"pr_url,omitempty"`
+	// PROwned: skopos opened the pull request. One on a branch taken over
+	// from someone is theirs: the sweep never closes it. Records from
+	// before this field have it unset and are treated as owned.
+	PROwned *bool `json:"pr_owned,omitempty"`
 	// ImplementedRun: the run whose implement turn finished (committed),
 	// with its summary and the check-fix rounds it has used. A pause during
 	// a fix round resumes that run straight at the checks.
@@ -174,7 +178,7 @@ func (w *Worker) sweepBranches(ctx context.Context, now time.Time) {
 			w.dropBranch(rec.ItemID)
 			continue
 		}
-		if status == "discarded" && rec.PRNumber > 0 {
+		if status == "discarded" && rec.PRNumber > 0 && (rec.PROwned == nil || *rec.PROwned) {
 			if err := w.closePullRequest(ctx, repo, rec.PRNumber); err != nil {
 				// Retry an outage (network, 5xx); a 4xx or a push config
 				// that no longer allows pull requests is final.

@@ -87,6 +87,14 @@ func (w *Worker) holdClone(ctx context.Context, repo *Repo, log *slog.Logger) (f
 // branch, or on no branch, are someone else's: the run stops instead of
 // hiding them.
 func (w *Worker) readyClone(ctx context.Context, repo *Repo, log *slog.Logger) error {
+	if checkMarked(ctx, repo.Path) {
+		// A branch review's checks were cut off (the worker died): what
+		// they left is nobody's work.
+		log.Warn("the clone was left detached by a branch review's checks; discarding what they changed", "clone", repo.Path)
+		if err := discardCheckRun(ctx, repo); err != nil {
+			return fmt.Errorf("cleaning up after a branch review's checks: %w", err)
+		}
+	}
 	current, _ := git(ctx, repo.Path, "symbolic-ref", "--quiet", "--short", "HEAD")
 	dirty, err := git(ctx, repo.Path, "status", "--porcelain")
 	if err != nil {
@@ -226,4 +234,52 @@ func dropStashes(ctx context.Context, clone, label string) {
 	for i := len(refs) - 1; i >= 0; i-- {
 		_, _ = git(ctx, clone, "stash", "drop", "--quiet", refs[i])
 	}
+}
+
+// checkMarkerPath marks a branch-checkout clone detached by a review-only
+// item's checks (checkHead), beside the lock in the clone's git dir.
+func checkMarkerPath(ctx context.Context, clone string) string {
+	dir, err := git(ctx, clone, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "skopos-checking")
+}
+
+func setCheckMarker(ctx context.Context, clone string, on bool) {
+	p := checkMarkerPath(ctx, clone)
+	if p == "" {
+		return
+	}
+	if on {
+		_ = os.WriteFile(p, nil, 0o600)
+	} else {
+		_ = os.Remove(p)
+	}
+}
+
+func checkMarked(ctx context.Context, clone string) bool {
+	p := checkMarkerPath(ctx, clone)
+	if p == "" {
+		return false
+	}
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// discardCheckRun throws away what a branch review's checks changed in the
+// clone (tracked edits and new files; ignored files such as dependencies
+// stay) and puts it back on its default branch.
+func discardCheckRun(ctx context.Context, repo *Repo) error {
+	if _, err := git(ctx, repo.Path, "reset", "--hard", "--quiet"); err != nil {
+		return err
+	}
+	if _, err := git(ctx, repo.Path, "clean", "-fd", "--quiet"); err != nil {
+		return err
+	}
+	if _, err := git(ctx, repo.Path, "checkout", "--quiet", repo.DefaultBranch); err != nil {
+		return err
+	}
+	setCheckMarker(ctx, repo.Path, false)
+	return nil
 }

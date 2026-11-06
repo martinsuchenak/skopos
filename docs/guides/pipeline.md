@@ -204,6 +204,17 @@ skopos worker install             # launchd (macOS) or systemd (Linux); starts o
 - **Slack** (step 7): DM the bot `new repo: …`. Slack captures are queued
   immediately.
 
+**Starting from an existing branch.** Fill in the item's **Branch** (or
+its **Reference**, when the repository's branch names use it, e.g.
+`WR203345`):
+- **Queue** it, and the agents continue the branch: the planner sees what is
+  already on it and plans the rest (a *handover*).
+- **Review branch** instead, and nothing is planned or implemented: a worker
+  runs the checks on the branch and an agent reviews it. You then mark it
+  done, or request changes, which turns it into a handover.
+
+See [Branch names and existing branches](../deployment/worker.md#branch-names-and-existing-branches).
+
 **Panel or solo?** If you gave plan, review or QA a list of agents (step 4),
 choose per item whether it gets that panel or a single agent:
 - **Dashboard:** the *Agents* field when capturing or editing (Repository

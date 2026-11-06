@@ -361,7 +361,7 @@ CREATE TABLE IF NOT EXISTS run_groups (
     id            TEXT    PRIMARY KEY,
     workspace_id  TEXT    NOT NULL,
     item_id       TEXT    NOT NULL REFERENCES inbox_items(id) ON DELETE CASCADE,
-    stage         TEXT    NOT NULL CHECK (stage IN ('plan', 'review', 'qa')),
+    stage         TEXT    NOT NULL CHECK (stage IN ('plan', 'review', 'qa', 'branch_review')),
     round         INTEGER NOT NULL CHECK (round >= 1),
     size          INTEGER NOT NULL CHECK (size >= 2),
     policy        TEXT    NOT NULL CHECK (policy IN ('any-blocks', 'majority', 'all-pass', 'candidates')),
