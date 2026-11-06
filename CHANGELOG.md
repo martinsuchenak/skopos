@@ -15,6 +15,12 @@ versions follow [Semantic Versioning](https://semver.org/).
   `paularlott/logger` 0.4.0, `gotreesitter` 0.56.0; the dashboard builds
   with TypeScript 7 and Bun 1.4.4.
 
+### Fixed
+
+- **The Docker images include `git`**, which the code index's server-side
+  refresher needs to clone and pull workspaces; without it, refreshes failed
+  in the official image.
+
 ## [0.21.0] — 2026-11-06
 
 ### Added

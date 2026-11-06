@@ -24,7 +24,7 @@ docker build --build-arg VERSION=$(git describe --tags --always) --build-arg COM
 The Dockerfile is a multi-stage build:
 1. **Frontend stage** — Bun installs + builds the dashboard (`web/dist/`).
 2. **Go stage** — compiles the binary with the frontend embedded (via `go:embed`).
-3. **Runtime stage** — Alpine, runs as the non-root `skopos` user (UID 1000), includes `ca-certificates` + `wget` (for healthcheck).
+3. **Runtime stage** — Alpine, runs as the non-root `skopos` user (UID 1000), includes `ca-certificates`, `wget` (for the healthcheck) and `git` (for the code index refresher).
 
 The binary is at `/usr/local/bin/skopos`, outside `/app`, so the volume
 mounted there never shadows it with an older copy (images before 0.21.0 kept

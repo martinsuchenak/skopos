@@ -32,7 +32,9 @@ RUN CGO_ENABLED=0 go build \
 FROM alpine:3.24
 
 # UID 1000: skopos.nomad runs Litestream as 1000:1000 on the same files.
-RUN apk add --no-cache ca-certificates tzdata wget \
+# git: the code index's server-side refresher clones and pulls the
+# registered workspaces (internal/codeindex/refresh.go).
+RUN apk add --no-cache ca-certificates tzdata wget git \
     && adduser -D -u 1000 -h /app skopos
 
 # On the PATH and outside /app, so a volume mounted at /app never shadows
