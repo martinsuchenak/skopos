@@ -14,7 +14,7 @@ COPY web/ .
 RUN bun run build
 
 # Go build stage
-FROM golang:1.26.10-alpine AS builder
+FROM golang:1.27.2-alpine AS builder
 
 ARG VERSION=dev
 ARG COMMIT=unknown
