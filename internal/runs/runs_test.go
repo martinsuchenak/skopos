@@ -30,10 +30,23 @@ func testStorage(t *testing.T) *Storage {
 	return NewStorage(sqlDB)
 }
 
+// testService leases runs for an hour: a test that reports or heartbeats
+// must not lose its lease to a slow machine (the race detector once made a
+// 50ms lease expire mid-test). Expiry tests use shortLeaseService, or set
+// lease_expires_at directly.
 func testService(t *testing.T) *Service {
 	t.Helper()
 	s := NewService(testStorage(t))
-	s.SetLease(50 * time.Millisecond) // lease expiry tests run fast
+	s.SetLease(time.Hour)
+	return s
+}
+
+// shortLeaseService leases runs for 50ms, for the tests that let a lease run
+// out by sleeping.
+func shortLeaseService(t *testing.T) *Service {
+	t.Helper()
+	s := testService(t)
+	s.SetLease(50 * time.Millisecond)
 	return s
 }
 
@@ -84,7 +97,7 @@ func TestClaimMatching(t *testing.T) {
 // Affinity: an interrupted run re-claims to its owner; another worker takes
 // it over only when branch-resumable.
 func TestAffinity(t *testing.T) {
-	s := testService(t)
+	s := shortLeaseService(t)
 	ctx := rootCtx()
 	r := mustQueue(t, s, ctx, "ws-a", "item-1", StageImplement)
 	run, err := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Runners: []string{}, Workspaces: []string{"ws-a"}})
@@ -134,7 +147,6 @@ func TestAffinity(t *testing.T) {
 // the same worker id gets nothing.
 func TestClaimReturnsOrphanedRun(t *testing.T) {
 	s := testService(t)
-	s.SetLease(time.Hour) // nowhere near expiry: only the new rule can free it
 	k1 := scopedCtx("ws-a")
 	r := mustQueue(t, s, rootCtx(), "ws-a", "item-1", StageImplement)
 	lost, err := s.ClaimNext(k1, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
@@ -315,7 +327,7 @@ func TestPausedNotReclaimed(t *testing.T) {
 
 // M2: CancelItem retires interrupted runs too.
 func TestCancelInterrupted(t *testing.T) {
-	s := testService(t)
+	s := shortLeaseService(t)
 	ctx := rootCtx()
 	mustQueue(t, s, ctx, "ws-a", "item-1", StagePlan)
 	run, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
@@ -393,7 +405,7 @@ func TestGraceFlipOnSweep(t *testing.T) {
 // A2: a quota pause with resume_after is reclaimable by its owner once the
 // time passes (restart-safe); an amendment pause (no resume_after) is not.
 func TestQuotaPauseReclaim(t *testing.T) {
-	s := testService(t)
+	s := shortLeaseService(t)
 	ctx := rootCtx()
 	mustQueue(t, s, ctx, "ws-a", "item-1", StageImplement)
 	run, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
