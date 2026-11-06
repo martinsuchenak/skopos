@@ -4,6 +4,42 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.19.0] — 2026-11-06
+
+### Added
+
+- **Start from an existing branch.** Items get **Branch** and **Reference**
+  fields. A branch that already exists on origin is taken over:
+  - **Handover** (Queue): the plan is made against the branch head, with its
+    commits and diff in the planner's prompt; the implementer continues on
+    the branch; the review covers the whole branch and knows which commits
+    were already there.
+  - **Review only** (Review branch): a worker runs setup and the checks at
+    the branch head, read-only, and the branch is reviewed against the item
+    the way the workspace's review stage is configured: one runner, one
+    focused reviewer, or the review panel with its focus briefs and policy.
+    The item comes to you whatever the verdict; Request changes turns it
+    into a handover.
+- **Branch templates** per repo: `branch_template = "{ref}-{slug}"` names
+  branches after the item's reference (`WR203345-some-feature`). When other
+  branches of the same reference exist and none matches, the item asks
+  which one to continue. Branch names may now contain capitals.
+
+### Upgrade note
+
+- **Upgrade the workers before using Review branch.** An older worker that
+  claims a branch review fails it as an unknown stage, which blocks the item.
+
+### Changed
+
+- The implement start fast-forwards a local branch that is behind origin's
+  (another worker pushed a later round) and refuses a branch rewritten since
+  its plan was approved.
+- A pull request skopos didn't open (on a branch taken over) is never
+  closed or reopened by the cleanup.
+- Agents read instructions, skills and focus briefs from the commit where
+  the branch left the default branch.
+
 ## [0.18.12] — 2026-11-06
 
 ### Changed
