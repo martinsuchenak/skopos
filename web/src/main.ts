@@ -670,10 +670,20 @@ const appState = () => ({
   // (github.com/, gitlab.example.com/…). The host is shared noise — right-side
   // truncation eats the org/repo tail, which is the part that actually
   // distinguishes workspaces. Registry names (when set) bypass this entirely.
+  // Unless another known workspace has the same tail: then the host is what
+  // tells them apart (github.com/fortix/freedom3 and a gitea mirror's
+  // gitea.example.com:2223/fortix/freedom3 both read fortix/freedom3, and a
+  // key got scoped to the wrong one), so both keep their full id.
   compactWorkspace(id: string): string {
-    const slash = id.indexOf('/');
-    if (slash > 0 && id.slice(0, slash).includes('.')) return id.slice(slash + 1);
-    return id;
+    const tail = workspaceTail(id);
+    if (tail === id) return id;
+    const known = new Set<string>([
+      ...this.registeredWorkspaces.map((w: { id: string }) => w.id),
+      ...(this.whoami?.workspaces ?? []).map((w: { id: string }) => w.id),
+      ...this.workspaces,
+    ]);
+    for (const other of known) if (other !== id && workspaceTail(other) === tail) return id;
+    return tail;
   },
   workspaceLabel(id?: string): string {
     if (!id) return '';
@@ -3027,6 +3037,12 @@ const appState = () => ({
   },
 });
 
+// workspaceTail drops a leading host-like segment (one with a dot:
+// github.com/, gitea.example.com:2223/) from a workspace id.
+function workspaceTail(id: string): string {
+  const slash = id.indexOf('/');
+  return slash > 0 && id.slice(0, slash).includes('.') ? id.slice(slash + 1) : id;
+}
 function wsParam(ws: string) { const p = new URLSearchParams(); if (ws) p.set('workspace', ws); return p.size ? '?' + p.toString() : ''; }
 function bundleParams(ws: string, branch: string) {
   const p = new URLSearchParams();
