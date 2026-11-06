@@ -4,6 +4,22 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.18.10] — 2026-11-06
+
+### Fixed
+
+- **The inbox editor accepted no text (0.18.9).** The dependency update left
+  two copies of `@codemirror/state` in the dashboard bundle. CodeMirror
+  rejected the editor's own extensions ("Unrecognized extension value in
+  extension set"), so nothing could be typed into an item's content. The
+  lockfile is regenerated with one copy of each CodeMirror core package. The
+  build now deduplicates them, and a test fails on a lockfile that nests a
+  second copy.
+- **Clicking below the first line of the editor didn't focus it.** The box
+  was tall but its editable area was one line, so a click in the middle
+  focused the scroll container and typing went nowhere. The editable area
+  now fills the box.
+
 ## [0.18.9] — 2026-11-05
 
 ### Added
