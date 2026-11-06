@@ -6,6 +6,15 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.1] — 2026-11-06
+
+### Changed
+
+- **Go 1.27.3** (was 1.26.10) for builds, CI, the Docker image and releases.
+- **Dependencies:** `paularlott/mcp` 0.33.1, `paularlott/cli` 0.10.2,
+  `paularlott/logger` 0.4.0, `gotreesitter` 0.56.0; the dashboard builds
+  with TypeScript 7 and Bun 1.4.4.
+
 ## [0.21.0] — 2026-11-06
 
 ### Added

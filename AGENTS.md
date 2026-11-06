@@ -4,7 +4,7 @@
 
 - Name: `skopos`
 - Module: `github.com/martinsuchenak/skopos`
-- Go 1.26.10 (keep the latest patch: release builds use go.mod's go line), SQLite (modernc.org/sqlite — no CGO), Bun for frontend
+- Go 1.27.3 (keep the latest patch: release builds use go.mod's go line), SQLite (modernc.org/sqlite — no CGO), Bun for frontend
 
 ## Commands
 

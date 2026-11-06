@@ -6,7 +6,7 @@
 #   docker build --build-arg VERSION=$(git describe --tags --always) --build-arg COMMIT=$(git rev-parse --short HEAD) -t skopos .
 
 # Frontend build stage
-FROM oven/bun:1.3.14-alpine AS frontend
+FROM oven/bun:1.4.4-alpine AS frontend
 WORKDIR /app/web
 COPY web/package.json web/bun.lock ./
 RUN bun install --frozen-lockfile
@@ -14,7 +14,7 @@ COPY web/ .
 RUN bun run build
 
 # Go build stage
-FROM golang:1.26.10-alpine AS builder
+FROM golang:1.27.3-alpine AS builder
 
 ARG VERSION=dev
 ARG COMMIT=unknown
