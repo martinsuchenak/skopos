@@ -506,10 +506,6 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		summary += fmt.Sprintf("\n\nThe checks failed at first and were fixed in %s.", plural(rounds, "fix round"))
 	}
 	stopSteps() // the final push is the one that counts
-	// Review and qa query this branch's code: index it now (only where the
-	// workspace's code_index switch is on; bounded, else at the next idle
-	// moment).
-	w.indexBranchNow(ctx, repo, run.WorkspaceID, branch)
 	if repo.Push.Kind != "none" {
 		token := os.Getenv(repo.Push.TokenEnv)
 		if token == "" {
@@ -557,6 +553,11 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		fields["reason"] = reason
 		return w.report(ctx, run, false, fields)
 	}
+	// Review and qa query this branch's code: index it before reporting,
+	// after the push so the commits are safe on origin first (only where the
+	// workspace's code_index switch is on; bounded, else at the next idle
+	// moment). A branch blocked by its checks is never reviewed: no index.
+	w.indexBranchNow(ctx, repo, run.WorkspaceID, branch)
 	log.Info("implementation finished", "head", head, "commits", commitCount(ctx, worktree, baseRef), "fix_rounds", rounds, "cost_usd", w.costs[run.ID])
 	return w.report(ctx, run, true, fields)
 }

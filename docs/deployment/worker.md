@@ -340,7 +340,8 @@ What a run gets:
     under review, otherwise the default branch, and to use the diff for
     what changed.
 - **Server instructions:** a capped key's MCP `initialize` answer describes
-  only the tools it may call, not the full skopos instructions.
+  only the tools it may call, not the full skopos instructions. A capped key
+  sends one request at a time (no JSON-RPC batches).
 - **Codex** runs get no skopos tools (their network is off).
 - The agent key never reaches the agent's environment: the scrub drops
   every `*_KEY` variable.
@@ -359,23 +360,34 @@ reviewers query the code as it is:
   repo is configured and present, its preflight passes, and its last index
   fetch did not fail in the past 15 minutes. The switch can be turned on
   only while some worker can.
-- **Who does:** the server gives each workspace's default branch to one able
-  worker, the one with the smallest id, so three workers on one repo don't
-  all parse it. The duty moves when that worker stops being able. Each
-  worker also indexes the item branches it implemented there.
+- **Who does:** the server gives each workspace's default branch to one able,
+  idle worker, the one with the smallest id, so three workers on one repo
+  don't all parse it. A worker busy with a run can't index, so for the length
+  of the run the duty moves to an idle one. Each worker also indexes the item
+  branches it implemented there.
 - **When:** only while idle. A claimed run stops indexing at once, and what
   was parsed so far stays in the parse cache (`<state_dir>/index-cache`), so
   the next idle moment carries on from there. The worker checks an assigned
   default branch every 5 minutes and pushes only when origin moved. It drops
   an item branch's index when the sweep retires the branch.
-- **Item branches** are indexed at the end of their implement run, before it
-  reports, so the review that follows queries the code it reviews. This is
+- **Item branches** are indexed at the end of their implement run, after the
+  push and before it reports, so the review that follows queries the code it
+  reviews. A branch blocked by its checks is never reviewed, so it isn't
+  indexed. This is
   the one index build that doesn't wait for an idle moment. It's bounded at
   5 minutes (a cold parse cache on a large repo), and a failure or timeout
   leaves the branch for the next idle moment; it never fails the run.
 - **Where:** in a detached worktree of its own per repo
-  (`<state_dir>/index/<repo>`), never in the clone a run uses. Fetch and
-  checkout take the clone's lock only when it is free.
+  (`<state_dir>/index/<repo>-<hash>`), never in the clone a run uses. Fetch
+  and checkout take the clone's lock only when it is free; a clone another
+  process holds just waits for the next check.
+- **Stale branches:** every 6 hours the default-branch worker compares the
+  server's indexed branches with origin's (`git ls-remote`). It drops the
+  index of each branch that is gone from origin and was last built more than
+  7 days ago, whoever pushed it: a worker, or someone running `skopos index
+  push`. The 7 days protect a branch someone indexed before pushing it. The
+  default branch is never dropped, and an unreachable origin drops nothing.
+  The server's daily GC then frees what no branch references.
 - **Cost:** after the first build only changed files are parsed. A failed
   fetch or build backs off for 15 minutes.
 

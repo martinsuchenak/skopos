@@ -64,3 +64,29 @@ func TestKeyCapabilities(t *testing.T) {
 		}
 	}
 }
+
+// Sending a key's current capabilities back is not a change: its streams
+// stay open.
+func TestKeyCapabilitiesNoOpUpdate(t *testing.T) {
+	st := testStorage(t)
+	svc := NewService(st)
+	ctx := context.Background()
+	seedWorkspace(t, st, "ws-a")
+	var dropped int
+	svc.SetScopeNotifier(func([]string) { dropped++ })
+	k, err := svc.Create(ctx, CreateInput{Name: "agent", Workspaces: []string{"ws-a"}, Preset: "agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Update(ctx, k.Key.ID, UpdateInput{Preset: "agent"}); err != nil || dropped != 0 {
+		t.Fatalf("same preset again: dropped %d, %v", dropped, err)
+	}
+	full, _ := svc.Create(ctx, CreateInput{Name: "full", Workspaces: []string{"ws-a"}})
+	none := []string{}
+	if _, err := svc.Update(ctx, full.Key.ID, UpdateInput{Capabilities: &none}); err != nil || dropped != 0 {
+		t.Fatalf("full stays full: dropped %d, %v", dropped, err)
+	}
+	if _, err := svc.Update(ctx, full.Key.ID, UpdateInput{Preset: "agent"}); err != nil || dropped != 1 {
+		t.Fatalf("a real change drops the streams once: dropped %d, %v", dropped, err)
+	}
+}

@@ -2,6 +2,8 @@ package worker
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,9 +34,17 @@ const (
 	// indexRetryAfter: after a failed fetch or build the workspace waits
 	// this long (and does not report itself indexable meanwhile).
 	indexRetryAfter = 15 * time.Minute
-	// indexStopWait bounds how long a claimed run waits for indexing to stop.
-	indexStopWait = 30 * time.Second
+	// indexReconcileEvery: how often the default-branch worker drops the
+	// indexes of branches gone from origin.
+	indexReconcileEvery = 6 * time.Hour
+	// indexStaleAfter: a branch gone from origin keeps its index this long
+	// after it was last built (someone may index a branch before pushing it).
+	indexStaleAfter = 7 * 24 * time.Hour
 )
+
+// indexStopWait bounds how long a claimed run waits for indexing to stop (a
+// var: tests shorten it).
+var indexStopWait = 30 * time.Second
 
 // indexState is what the worker has indexed, kept in the state dir across
 // restarts.
@@ -63,6 +73,7 @@ type indexer struct {
 	done    chan struct{}
 	checked map[string]time.Time // workspace → last default-branch check
 	failed  map[string]time.Time // workspace → last failure
+	pruned  map[string]time.Time // workspace → last stale-branch cleanup
 	cache   *codeindex.Store
 }
 
@@ -76,7 +87,7 @@ func (w *Worker) loadIndexState() {
 	}
 	ix.loaded = true
 	ix.state = indexState{Default: map[string]string{}, Branches: map[string]string{}}
-	ix.checked, ix.failed = map[string]time.Time{}, map[string]time.Time{}
+	ix.checked, ix.failed, ix.pruned = map[string]time.Time{}, map[string]time.Time{}, map[string]time.Time{}
 	if raw, err := os.ReadFile(w.indexStatePath()); err == nil {
 		_ = json.Unmarshal(raw, &ix.state)
 	}
@@ -161,6 +172,11 @@ func (w *Worker) indexBranchNow(ctx context.Context, repo *Repo, ws, branch stri
 	if !w.indexEnabled(ws) {
 		return
 	}
+	if w.indexRunning() {
+		// A pass that outlived stopIndexing owns the indexing worktree.
+		w.queueBranchIndex(ws, branch)
+		return
+	}
 	sha, err := git(ctx, repo.Path, "rev-parse", "--verify", "refs/heads/"+branch+"^{commit}")
 	if err != nil {
 		return
@@ -219,6 +235,9 @@ func (w *Worker) maybeIndex(ctx context.Context) {
 		if time.Since(w.index.checked[ws]) >= indexCheckEvery && time.Since(w.index.failed[ws]) >= indexRetryAfter {
 			due = true
 		}
+		if time.Since(w.index.pruned[ws]) >= indexReconcileEvery {
+			due = true
+		}
 	}
 	for _, j := range w.index.state.Queue {
 		if slices.Contains(enabled, j.Workspace) && time.Since(w.index.failed[j.Workspace]) >= indexRetryAfter {
@@ -242,16 +261,41 @@ func (w *Worker) maybeIndex(ctx context.Context) {
 func (w *Worker) stopIndexing() {
 	w.index.mu.Lock()
 	cancel, done := w.index.cancel, w.index.done
-	w.index.cancel, w.index.done = nil, nil
+	w.index.cancel = nil
 	w.index.mu.Unlock()
-	if cancel == nil {
+	if done == nil {
 		return
 	}
-	cancel()
+	if cancel != nil {
+		cancel()
+	}
 	select {
 	case <-done:
+		w.index.mu.Lock()
+		if w.index.done == done {
+			w.index.done = nil
+		}
+		w.index.mu.Unlock()
 	case <-time.After(indexStopWait):
+		// done stays set: no second pass starts (maybeIndex,
+		// indexBranchNow) until this one has really exited.
 		w.log.Warn("indexing did not stop in time; the run goes ahead")
+	}
+}
+
+// indexRunning reports whether a pass is still running (one that outlived
+// stopIndexing included).
+func (w *Worker) indexRunning() bool {
+	w.index.mu.Lock()
+	defer w.index.mu.Unlock()
+	if w.index.done == nil {
+		return false
+	}
+	select {
+	case <-w.index.done:
+		return false
+	default:
+		return true
 	}
 }
 
@@ -292,6 +336,16 @@ func (w *Worker) indexPass(ctx context.Context, enabled, def []string) {
 		w.index.state.Default[ws] = sha
 		w.saveIndexState()
 		w.index.mu.Unlock()
+	}
+	// The default-branch worker also clears out indexes of branches gone
+	// from origin: whoever pushed them (a worker, `skopos index push`).
+	for _, ws := range def {
+		if ctx.Err() != nil {
+			return
+		}
+		if repo := w.cfg.Repos[ws]; repo != nil {
+			w.pruneStaleIndexes(ctx, repo, ws)
+		}
 	}
 
 	w.index.mu.Lock()
@@ -335,9 +389,64 @@ func (w *Worker) indexPass(ctx context.Context, enabled, def []string) {
 	}
 }
 
+// pruneStaleIndexes drops the server's index of every branch that is gone
+// from origin and was last built more than indexStaleAfter ago (a branch
+// may be indexed before it is pushed). The default branch is never
+// dropped. At most every indexReconcileEvery per workspace.
+func (w *Worker) pruneStaleIndexes(ctx context.Context, repo *Repo, ws string) {
+	w.index.mu.Lock()
+	due := time.Since(w.index.pruned[ws]) >= indexReconcileEvery
+	if due {
+		w.index.pruned[ws] = time.Now()
+	}
+	w.index.mu.Unlock()
+	if !due {
+		return
+	}
+	indexed, err := w.client.IndexedBranches(ctx, ws)
+	if err != nil || len(indexed) == 0 {
+		return
+	}
+	out, err := git(ctx, repo.Path, "ls-remote", "--heads", "origin")
+	if err != nil {
+		// Origin unreachable: never read that as "every branch is gone".
+		w.log.Warn("listing origin's branches failed; stale indexes stay", "workspace", ws, "err", err)
+		return
+	}
+	onOrigin := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		if _, ref, ok := strings.Cut(strings.TrimSpace(line), "\t"); ok {
+			onOrigin[strings.TrimPrefix(ref, "refs/heads/")] = true
+		}
+	}
+	if len(onOrigin) == 0 {
+		return // an empty listing is not proof every branch is gone
+	}
+	for branch, b := range indexed {
+		if branch == repo.DefaultBranch || onOrigin[branch] || b.BuiltAt.IsZero() || time.Since(b.BuiltAt) < indexStaleAfter {
+			continue
+		}
+		if err := w.client.DropIndexBranch(ctx, ws, branch); err != nil {
+			w.log.Warn("dropping a stale branch index failed", "workspace", ws, "branch", branch, "err", err)
+			continue
+		}
+		w.index.mu.Lock()
+		delete(w.index.state.Branches, branchKey(ws, branch))
+		w.saveIndexState()
+		w.index.mu.Unlock()
+		w.log.Info("dropped the index of a branch gone from origin", "workspace", ws, "branch", branch, "built", b.BuiltAt.Format(time.RFC3339))
+	}
+}
+
 func (w *Worker) indexFailed(ctx context.Context, ws, branch string, err error) {
 	if ctx.Err() != nil {
 		return // stopped for a run: not a failure
+	}
+	if errors.Is(err, errCloneBusy) {
+		// Another process holds the clone: try at the next check, without
+		// the back-off or leaving the indexable list.
+		w.log.Debug("clone busy; indexing waits for the next check", "workspace", ws, "branch", branch)
+		return
 	}
 	w.index.mu.Lock()
 	w.index.failed[ws] = time.Now()
@@ -361,9 +470,12 @@ func (w *Worker) withCloneLock(ctx context.Context, repo *Repo, fn func() (strin
 	return fn()
 }
 
-// indexCheckout is the repo's own indexing worktree.
+// indexCheckout is the repo's own indexing worktree: named after the clone
+// and a hash of its path, so two clones with the same directory name never
+// share one.
 func (w *Worker) indexCheckout(repo *Repo) string {
-	return filepath.Join(w.cfg.StateDir, "index", filepath.Base(repo.Path))
+	sum := sha256.Sum256([]byte(repo.Path))
+	return filepath.Join(w.cfg.StateDir, "index", filepath.Base(repo.Path)+"-"+hex.EncodeToString(sum[:4]))
 }
 
 // indexCommit checks sha out in the indexing worktree and pushes the

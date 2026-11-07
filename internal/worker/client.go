@@ -163,19 +163,29 @@ func (c *Client) IndexDuty() (enabled, defaults []string) {
 	return slices.Clone(c.indexEnabled), slices.Clone(c.indexDefault)
 }
 
-// IndexedBranches is the server's code index of a workspace: branch → the
-// commit its index was built from.
-func (c *Client) IndexedBranches(ctx context.Context, workspace string) (map[string]string, error) {
+// IndexedBranch is one branch of the server's code index.
+type IndexedBranch struct {
+	Head    string    // the commit the index was built from
+	BuiltAt time.Time // zero when the server did not say
+}
+
+// IndexedBranches is the server's code index of a workspace, by branch.
+func (c *Client) IndexedBranches(ctx context.Context, workspace string) (map[string]IndexedBranch, error) {
 	var status []struct {
 		Branch  string `json:"branch"`
 		HeadSHA string `json:"head_sha"`
+		BuiltAt string `json:"built_at"`
 	}
 	if err := c.do(ctx, http.MethodGet, "/api/codeindex/"+url.PathEscape(workspace)+"/status", nil, &status); err != nil {
 		return nil, err
 	}
-	out := make(map[string]string, len(status))
+	out := make(map[string]IndexedBranch, len(status))
 	for _, s := range status {
-		out[s.Branch] = s.HeadSHA
+		b := IndexedBranch{Head: s.HeadSHA}
+		if t, err := time.Parse(time.RFC3339Nano, s.BuiltAt); err == nil {
+			b.BuiltAt = t
+		}
+		out[s.Branch] = b
 	}
 	return out, nil
 }

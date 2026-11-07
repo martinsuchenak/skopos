@@ -33,7 +33,10 @@ versions follow [Semantic Versioning](https://semver.org/).
   default branch for plan and implement; the item branch for review when
   indexed at the reviewed commit, else the default branch and the diff).
 - A capped key's MCP `initialize` answer describes only the tools it may
-  call.
+  call, and a capped key sends one request at a time (no batches).
+- **Stale branch indexes are dropped.** Every 6 hours the default-branch
+  worker drops the index of each branch gone from origin and not rebuilt
+  for 7 days, whoever indexed it (a worker or `skopos index push`).
 
 ### Fixed
 

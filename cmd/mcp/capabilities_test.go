@@ -142,3 +142,17 @@ func TestCappedKeyInstructions(t *testing.T) {
 		}
 	}
 }
+
+// A capped key may not batch: a batch would slip past the per-request
+// checks.
+func TestCappedKeyBatchRefused(t *testing.T) {
+	h := toolsE2E(t)
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`[{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}]`))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(auth.WithPrincipal(req.Context(), agentPrincipal()))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if !strings.Contains(w.Body.String(), "batch requests are not accepted") {
+		t.Fatalf("batch: %s", w.Body.String())
+	}
+}

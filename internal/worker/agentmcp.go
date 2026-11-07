@@ -187,7 +187,7 @@ func (w *Worker) indexState(ctx context.Context, ws, base, branch, phase, head s
 	if err != nil {
 		return "", ""
 	}
-	if head != "" && branch != "" && indexed[branch] != "" && indexed[branch] == head {
+	if b, ok := indexed[branch]; head != "" && branch != "" && ok && b.Head == head {
 		return branch, "It is indexed at exactly the commit you are reviewing."
 	}
 	if _, ok := indexed[base]; !ok {

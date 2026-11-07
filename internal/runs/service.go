@@ -870,8 +870,9 @@ const indexDutyWindow = 15 * time.Minute
 
 // IndexDuty answers a claiming worker what to index while idle (design §3):
 // of its offered workspaces, those with the code_index switch on, and of
-// those the ones whose default branch it keeps fresh — the able worker with
-// the smallest id, so the duty stays put while that worker stays able.
+// those the ones whose default branch it keeps fresh — the idle able worker
+// with the smallest id. A busy worker cannot index (it indexes only while
+// idle), so the duty moves off it for the length of its run.
 func (s *Service) IndexDuty(ctx context.Context, in ClaimInput) IndexDuty {
 	var duty IndexDuty
 	for _, ws := range in.Workspaces {
@@ -883,8 +884,19 @@ func (s *Service) IndexDuty(ctx context.Context, in ClaimInput) IndexDuty {
 			continue
 		}
 		able, err := s.storage.IndexableWorkers(ctx, ws, s.now().Add(-indexDutyWindow))
-		if err == nil && len(able) > 0 && able[0] == strings.TrimSpace(in.WorkerID) {
-			duty.Default = append(duty.Default, ws)
+		if err != nil {
+			continue
+		}
+		// The claiming worker is idle right now (it is polling) whatever its
+		// last run's row says; the others count only when not busy.
+		me := strings.TrimSpace(in.WorkerID)
+		for _, a := range able {
+			if a.ID == me || !a.Busy {
+				if a.ID == me {
+					duty.Default = append(duty.Default, ws)
+				}
+				break
+			}
 		}
 	}
 	return duty

@@ -8,7 +8,7 @@ import (
 	"path"
 	"time"
 
-	"github.com/martinsuchenak/skopos/internal/dbtime"
+	"github.com/martinsuchenak/skopos/internal/runs"
 )
 
 // Storage owns pipeline_stages and pipeline_defaults. It also reads the
@@ -355,25 +355,16 @@ func (s *Storage) RunnersServing(ctx context.Context, ws string) (map[string]boo
 	return out, rows.Err()
 }
 
-// Indexable lists the workers that can index a workspace: their last claim
-// named it indexable, they were seen since cutoff (unix ms) and have not
-// said goodbye — the same rule as runs.Storage.IndexableWorkers.
+// Indexable lists the workers that can index a workspace now — the run
+// queue's rule (runs.IndexableWorkers), busy or not.
 func (s *Storage) Indexable(ctx context.Context, ws string, cutoffMS int64) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT w.id FROM workers w, json_each(w.indexable) j
-		WHERE j.value = ? AND w.last_seen >= ? AND w.offline_at IS NULL
-		ORDER BY w.id`, ws, dbtime.Format(time.UnixMilli(cutoffMS)))
+	able, err := runs.IndexableWorkers(ctx, s.db, ws, time.UnixMilli(cutoffMS))
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-	out := []string{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
+	out := make([]string, 0, len(able))
+	for _, a := range able {
+		out = append(out, a.ID)
 	}
-	return out, rows.Err()
+	return out, nil
 }

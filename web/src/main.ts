@@ -210,7 +210,7 @@ const appState = () => ({
   showApiKeyModal: false, keyModalMode: 'create' as 'create' | 'edit', keySaving: false,
   // access: 'full' (no capability limits), 'agent' (the agent preset: MCP
   // only) or 'keep' (edit: leave a custom set as it is).
-  keyForm: { id: '', name: '', all: false, workspaces: [] as string[], groups: [] as string[], access: 'full', custom: '' },
+  keyForm: { id: '', name: '', all: false, workspaces: [] as string[], groups: [] as string[], access: 'full', accessWas: 'full', custom: '' },
   keyErrors: {} as Record<string, string>,
   showSecretModal: false, newSecret: '', newSecretName: '', secretCopied: false,
 
@@ -2812,7 +2812,7 @@ const appState = () => ({
   },
   openNewKeyModal() {
     this.keyModalMode = 'create';
-    this.keyForm = { id: '', name: '', all: false, workspaces: [], groups: [], access: 'full', custom: '' };
+    this.keyForm = { id: '', name: '', all: false, workspaces: [], groups: [], access: 'full', accessWas: 'full', custom: '' };
     this.keyErrors = {};
     this.formNonce++;
     this.showApiKeyModal = true;
@@ -2821,7 +2821,7 @@ const appState = () => ({
     this.keyModalMode = 'edit';
     const caps = k.capabilities;
     const access = !caps ? 'full' : (keyIsAgentPreset(caps) ? 'agent' : 'keep');
-    this.keyForm = { id: k.id, name: k.name, all: k.all_workspaces, workspaces: [...(k.workspaces || [])], groups: [...(k.groups || [])], access, custom: access === 'keep' ? (caps || []).join(', ') : '' };
+    this.keyForm = { id: k.id, name: k.name, all: k.all_workspaces, workspaces: [...(k.workspaces || [])], groups: [...(k.groups || [])], access, accessWas: access, custom: access === 'keep' ? (caps || []).join(', ') : '' };
     this.keyErrors = {};
     this.formNonce++;
     this.showApiKeyModal = true;
@@ -2842,8 +2842,13 @@ const appState = () => ({
       if (!f.all && (!creating || f.groups.length)) body.groups = f.groups;
       // Capabilities: the agent preset, or (edit) back to full access; a
       // custom set is left alone ('keep').
-      if (f.access === 'agent') { body.preset = 'agent'; if (!creating) body.capabilities = []; }
-      else if (f.access === 'full' && !creating) body.capabilities = [];
+      // Capabilities: sent only when the access choice changed (an edit that
+      // sends them re-shapes the key and drops its live streams).
+      if (creating) { if (f.access === 'agent') body.preset = 'agent'; }
+      else if (f.access !== f.accessWas) {
+        if (f.access === 'agent') { body.preset = 'agent'; body.capabilities = []; }
+        else if (f.access === 'full') body.capabilities = [];
+      }
       const res = creating
         ? await this.authFetch('/api/keys', { method: 'POST', body: JSON.stringify(body) })
         : await this.authFetch('/api/keys/' + encodeURIComponent(f.id), { method: 'PATCH', body: JSON.stringify(body) });

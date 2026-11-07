@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -358,14 +359,20 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (*Ke
 		approver = *input.Approver
 	}
 	capabilities := existing.Capabilities
-	capsChanged := input.Capabilities != nil || strings.TrimSpace(input.Preset) != ""
-	if capsChanged {
+	capsChanged := false
+	if input.Capabilities != nil || strings.TrimSpace(input.Preset) != "" {
 		var explicit []string
 		if input.Capabilities != nil {
 			explicit = *input.Capabilities
 		}
-		if capabilities, err = resolveCapabilities(input.Preset, explicit); err != nil {
+		next, err := resolveCapabilities(input.Preset, explicit)
+		if err != nil {
 			return nil, err
+		}
+		// Only a real change re-shapes the key (and drops its streams):
+		// sending the current set back is a no-op.
+		if (next == nil) != (existing.Capabilities == nil) || !slices.Equal(next, existing.Capabilities) {
+			capabilities, capsChanged = next, true
 		}
 	}
 	if err := s.storage.Update(ctx, id, name, all, approver, capabilities, workspaces, groupIDs); err != nil {

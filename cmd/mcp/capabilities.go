@@ -120,6 +120,12 @@ func filterToolsList(next http.Handler) http.Handler {
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
+		// A batch would slip past the checks below (they read one request):
+		// capped keys send one request at a time.
+		if t := bytes.TrimSpace(body); len(t) > 0 && t[0] == '[' {
+			writeRPCError(w, nil, -32600, "batch requests are not accepted for a key with capabilities; send one request at a time")
+			return
+		}
 		var envelope struct {
 			ID     any    `json:"id"`
 			Method string `json:"method"`
@@ -134,11 +140,7 @@ func filterToolsList(next http.Handler) http.Handler {
 		if envelope.Method == "tools/call" {
 			name := envelope.Params.Name
 			if name != mcplib.ToolSearchName && name != mcplib.ExecuteToolName && !toolAllowed(r.Context(), name) {
-				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"jsonrpc": "2.0", "id": envelope.ID,
-					"error": map[string]any{"code": -32602, "message": "this key's capabilities do not allow " + name},
-				})
+				writeRPCError(w, envelope.ID, -32602, "this key's capabilities do not allow "+name)
 				return
 			}
 		}
@@ -149,14 +151,22 @@ func filterToolsList(next http.Handler) http.Handler {
 		rec := httptest.NewRecorder()
 		next.ServeHTTP(rec, r)
 		out := rec.Body.Bytes()
-		if strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
+		if rec.Code == http.StatusOK {
+			// Fail closed: an answer this can't rewrite (not JSON, another
+			// shape) would hand a capped key the full tool list.
 			rewrite := filterToolsJSON
 			if envelope.Method == "initialize" {
 				rewrite = cappedInitializeJSON
 			}
-			if filtered, ok := rewrite(r.Context(), out); ok {
-				out = filtered
+			filtered, ok := []byte(nil), false
+			if strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
+				filtered, ok = rewrite(r.Context(), out)
 			}
+			if !ok {
+				writeRPCError(w, envelope.ID, -32603, "could not limit the "+envelope.Method+" answer to this key's capabilities")
+				return
+			}
+			out = filtered
 		}
 		for k, v := range rec.Header() {
 			if k == "Content-Length" {
@@ -249,4 +259,13 @@ func cappedInstructions(ctx context.Context) string {
 		b.WriteString("\n- `report_status`: checkpoint what you are doing (never `stuck` or `orphaned`).")
 	}
 	return b.String()
+}
+
+// writeRPCError answers with a JSON-RPC error.
+func writeRPCError(w http.ResponseWriter, id any, code int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"jsonrpc": "2.0", "id": id,
+		"error": map[string]any{"code": code, "message": message},
+	})
 }

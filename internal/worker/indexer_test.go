@@ -214,3 +214,112 @@ func TestStopIndexing(t *testing.T) {
 		t.Fatal("stopIndexing must stop the pass")
 	}
 }
+
+// Two clones with the same directory name get separate indexing worktrees.
+func TestIndexCheckoutIsPerClone(t *testing.T) {
+	w := New(&Config{StateDir: "/state"}, nil, slog.New(slog.DiscardHandler))
+	a, b := w.indexCheckout(&Repo{Path: "/src/fortix/app"}), w.indexCheckout(&Repo{Path: "/src/rylex/app"})
+	if a == b || !strings.HasPrefix(filepath.Base(a), "app-") {
+		t.Fatalf("index checkouts %q and %q", a, b)
+	}
+}
+
+// A clone another process holds is not a failure: no back-off, still
+// indexable, and the next check tries again.
+func TestBusyCloneIsNotAFailure(t *testing.T) {
+	o := newOriginClone(t)
+	repo := &Repo{Path: o.clone, DefaultBranch: "main"}
+	w := New(&Config{ID: "w1", StateDir: t.TempDir(), Workspaces: []string{"ws"}, Repos: map[string]*Repo{"ws": repo}}, NewClient("http://127.0.0.1:1", "k"), slog.New(slog.DiscardHandler))
+	release, ok, err := tryLockClone(t.Context(), repo.Path)
+	if err != nil || !ok {
+		t.Fatalf("lock: %v %v", ok, err)
+	}
+	defer release()
+	w.indexPass(t.Context(), []string{"ws"}, []string{"ws"})
+	if !w.index.failed["ws"].IsZero() || !slices.Equal(w.indexable(), []string{"ws"}) {
+		t.Fatalf("busy clone recorded as a failure: failed %v indexable %v", w.index.failed, w.indexable())
+	}
+}
+
+// A pass that does not stop in time keeps its slot: no second pass starts
+// and implement-time indexing queues the branch instead.
+func TestStuckPassBlocksASecondOne(t *testing.T) {
+	old := indexStopWait
+	indexStopWait = 50 * time.Millisecond
+	defer func() { indexStopWait = old }()
+	w := New(&Config{ID: "w1", StateDir: t.TempDir(), Workspaces: []string{"ws"}, Repos: map[string]*Repo{"ws": {Path: t.TempDir(), DefaultBranch: "main"}}}, NewClient("http://127.0.0.1:1", "k"), slog.New(slog.DiscardHandler))
+	stuck := make(chan struct{})
+	w.index.mu.Lock()
+	w.loadIndexState()
+	w.index.done, w.index.cancel = stuck, func() {}
+	w.index.mu.Unlock()
+	w.stopIndexing()
+	if !w.indexRunning() {
+		t.Fatal("a pass that did not stop must still count as running")
+	}
+	w.client.indexEnabled, w.client.indexDefault = []string{"ws"}, []string{"ws"}
+	w.maybeIndex(t.Context())
+	if w.index.done != stuck {
+		t.Fatal("no second pass while the first runs")
+	}
+	w.indexBranchNow(t.Context(), w.cfg.Repos["ws"], "ws", "agent/x")
+	if len(w.index.state.Queue) != 1 {
+		t.Fatalf("implement-time indexing must queue while a pass runs: %v", w.index.state.Queue)
+	}
+	close(stuck)
+	if w.indexRunning() {
+		t.Fatal("once it exits it no longer counts")
+	}
+}
+
+// The default-branch worker drops indexes of branches gone from origin and
+// built long ago; branches on origin, the default branch and recent builds
+// stay; an unreachable origin drops nothing.
+func TestPruneStaleIndexes(t *testing.T) {
+	o := newOriginClone(t)
+	o.devBranch("feature-live")
+	old := time.Now().Add(-10 * 24 * time.Hour).UTC().Format(time.RFC3339Nano)
+	recent := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)
+	var mu sync.Mutex
+	var drops []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/status"):
+			_ = json.NewEncoder(w).Encode([]map[string]string{
+				{"branch": "main", "head_sha": "a", "built_at": old},
+				{"branch": "feature-live", "head_sha": "b", "built_at": old},
+				{"branch": "feature/gone", "head_sha": "c", "built_at": old},
+				{"branch": "feature/new-local", "head_sha": "d", "built_at": recent},
+			})
+		case r.Method == http.MethodDelete:
+			mu.Lock()
+			drops = append(drops, r.URL.Path)
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "unexpected", http.StatusTeapot)
+		}
+	}))
+	defer srv.Close()
+	repo := &Repo{Path: o.clone, DefaultBranch: "main"}
+	w := New(&Config{ID: "w1", StateDir: t.TempDir()}, NewClient(srv.URL, "k"), slog.New(slog.DiscardHandler))
+	w.index.mu.Lock()
+	w.loadIndexState()
+	w.index.mu.Unlock()
+	w.pruneStaleIndexes(t.Context(), repo, "ws")
+	if len(drops) != 1 || !strings.Contains(drops[0], "feature%2Fgone") && !strings.HasSuffix(drops[0], "feature/gone") {
+		t.Fatalf("drops %v", drops)
+	}
+	// Not again until indexReconcileEvery.
+	w.pruneStaleIndexes(t.Context(), repo, "ws")
+	if len(drops) != 1 {
+		t.Fatalf("pruned twice: %v", drops)
+	}
+	// Origin unreachable: nothing is dropped.
+	o.run(o.clone, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "gone.git"))
+	w.index.pruned["ws"] = time.Time{}
+	w.pruneStaleIndexes(t.Context(), repo, "ws")
+	if len(drops) != 1 {
+		t.Fatalf("an unreachable origin must drop nothing: %v", drops)
+	}
+}

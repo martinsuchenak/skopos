@@ -799,24 +799,41 @@ func (s *Storage) Note(ctx context.Context, id, note string) error {
 	return err
 }
 
-// IndexableWorkers lists the workers (ids, sorted) whose registry row names
-// ws indexable and who were seen since cutoff and have not said goodbye.
-func (s *Storage) IndexableWorkers(ctx context.Context, ws string, cutoff time.Time) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT w.id FROM workers w, json_each(w.indexable) j
+// AbleWorker is a worker that can index a workspace now; Busy: it holds a
+// claimed or running run (it indexes only while idle).
+type AbleWorker struct {
+	ID   string
+	Busy bool
+}
+
+// IndexableWorkers is the one rule for who can index a workspace (the run
+// queue's index duty and the pipeline view both use it): the worker's
+// registry row names ws indexable, it was seen since cutoff and has not
+// said goodbye. Sorted by id.
+func IndexableWorkers(ctx context.Context, db *sql.DB, ws string, cutoff time.Time) ([]AbleWorker, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT w.id, EXISTS (SELECT 1 FROM runs r WHERE r.worker_id = w.id AND r.status IN ('claimed', 'running'))
+		FROM workers w, json_each(w.indexable) j
 		WHERE j.value = ? AND w.last_seen >= ? AND w.offline_at IS NULL
 		ORDER BY w.id`, ws, formatTime(cutoff))
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	var out []string
+	var out []AbleWorker
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var a AbleWorker
+		var busy int
+		if err := rows.Scan(&a.ID, &busy); err != nil {
 			return nil, err
 		}
-		out = append(out, id)
+		a.Busy = busy == 1
+		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// IndexableWorkers: see the package function.
+func (s *Storage) IndexableWorkers(ctx context.Context, ws string, cutoff time.Time) ([]AbleWorker, error) {
+	return IndexableWorkers(ctx, s.db, ws, cutoff)
 }
