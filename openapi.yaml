@@ -2028,6 +2028,7 @@ paths:
         "401": { description: Unauthorized }
         "404": { description: Unknown run }
         "409": { description: Lease held by another worker }
+        "410": { description: "The run was cancelled (item rejected or done): the worker stops it. The error names the reason." }
 
   /api/runs/{id}/report:
     post:

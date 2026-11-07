@@ -29,6 +29,9 @@ func (h *Handler) respondRunError(w http.ResponseWriter, err error, what string)
 		rest.RespondError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrLeaseHeld):
 		rest.RespondError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, ErrRunCancelled):
+		// Gone: the worker stops the run (internal/worker: execute).
+		rest.RespondError(w, http.StatusGone, err.Error())
 	default:
 		rest.InternalError(w, err)
 	}

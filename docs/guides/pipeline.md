@@ -360,7 +360,11 @@ question. Click **Retry** with your answer; it's appended to the item and the
 next run reads it.
 
 **Reject** (the preview's button, with a confirmation; `skopos inbox reject`;
-or `reject` in Slack) takes an item out of the pipeline.
+or `reject` in Slack) takes an item out of the pipeline. A run in progress
+(planning, implementing, reviewing) stops within about 30 seconds: the
+worker learns at its next heartbeat, stops the agent and everything it
+started, and pushes or reports nothing more. Its live log ends with
+"stopped: item rejected". Mark done stops a run the same way.
 
 Every transition, approval and edit is in the item's timeline
 (`GET /api/inbox/{id}/timeline`), labelled with who acted and from where.

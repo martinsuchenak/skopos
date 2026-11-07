@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Reject (and Mark done) stop a run in progress.** The runs were cancelled
+  on the server, but the worker kept going: the agent ran to its end, an
+  implementation kept pushing commits and could open its pull request, and
+  the worker stayed busy. Now a heartbeat for a cancelled run answers 410
+  with the reason, and the worker stops the run within about 30 seconds: the
+  agent and everything it started are killed, nothing more is pushed or
+  reported, and the live log ends with "stopped: item rejected".
+
 ## [0.23.1] — 2026-11-07
 
 ### Changed

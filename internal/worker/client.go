@@ -2,6 +2,7 @@ package worker
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -109,6 +110,14 @@ func (c *Client) execHeaders(req *http.Request, out any, hdr *http.Header) error
 	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusNoContent {
 		return nil
+	}
+	if resp.StatusCode == http.StatusGone {
+		// Only a heartbeat answers it: the run was cancelled.
+		var e struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(data, &e)
+		return &RunCancelledError{Reason: strings.TrimPrefix(cmp.Or(e.Error, "cancelled"), "run cancelled: ")}
 	}
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("skopos %s %s: %d %s", req.Method, req.URL.Path, resp.StatusCode, bytes.TrimSpace(data))
@@ -576,3 +585,9 @@ type RevStep struct {
 	Description string `json:"description"`
 	Phase       string `json:"phase"`
 }
+
+// RunCancelledError: skopos cancelled the run this worker holds (the item
+// was rejected or marked done). execute stops it.
+type RunCancelledError struct{ Reason string }
+
+func (e *RunCancelledError) Error() string { return "run cancelled: " + e.Reason }

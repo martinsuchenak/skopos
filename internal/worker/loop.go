@@ -210,6 +210,10 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 	}
 }
 
+// heartbeatEvery: how often a running run renews its lease (and learns
+// whether skopos cancelled it). A variable for tests.
+var heartbeatEvery = 30 * time.Second
+
 // execute runs one claimed stage to a terminal report or pause.
 func (w *Worker) execute(ctx context.Context, run *Run) {
 	log := w.log.With("run", run.ID, "item", run.ItemID, "stage", run.Stage)
@@ -224,11 +228,15 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 			log.Warn("agent mcp config not refreshed; runs keep the last one", "err", err)
 		}
 	}
-	// Heartbeat while executing.
+	// Heartbeat while executing. A run skopos cancelled (the item was
+	// rejected or marked done) is stopped: its context ends, which kills the
+	// agent and everything it started; nothing more is pushed or reported.
+	ctx, stopRun := context.WithCancelCause(ctx)
+	defer stopRun(nil)
 	hbCtx, hbStop := context.WithCancel(ctx)
 	defer w.phases.Delete(run.ID)
 	go func() {
-		t := time.NewTicker(30 * time.Second)
+		t := time.NewTicker(heartbeatEvery)
 		defer t.Stop()
 		for {
 			select {
@@ -237,7 +245,14 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 			case <-t.C:
 				phase, _ := w.phases.Load(run.ID)
 				p, _ := phase.(string)
-				if err := w.client.Heartbeat(hbCtx, run.ID, w.cfg.ID, p); err != nil {
+				err := w.client.Heartbeat(hbCtx, run.ID, w.cfg.ID, p)
+				if c, ok := errors.AsType[*RunCancelledError](err); ok {
+					log.Info("skopos cancelled the run; stopping it", "reason", c.Reason)
+					rl.notef("stopping: skopos cancelled the run (%s)", c.Reason)
+					stopRun(c)
+					return
+				}
+				if err != nil {
 					log.Warn("heartbeat failed", "err", err)
 				}
 			}
@@ -250,6 +265,13 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 	const maxTransient = 3
 	for attempt := 0; ; attempt++ {
 		err := w.runStage(ctx, run, log)
+		if c, ok := errors.AsType[*RunCancelledError](context.Cause(ctx)); ok {
+			// Whatever the stage returned, it was cut off: skopos already
+			// has the run's outcome, so nothing is reported.
+			log.Info("run stopped", "reason", c.Reason)
+			rl.notef("stopped: %s", c.Reason)
+			return
+		}
 		if err == nil {
 			return // the stage reported its own outcome
 		}

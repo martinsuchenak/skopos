@@ -1,6 +1,7 @@
 package runs
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -585,6 +586,14 @@ func (s *Storage) Heartbeat(ctx context.Context, id, workerID, keyID, tokenHash,
 		return fmt.Errorf("heartbeat: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
+		// Still this worker's claim, but cancelled since: it should stop.
+		var reason string
+		err := s.db.QueryRowContext(ctx, `SELECT fail_reason FROM runs
+			WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status = ?`,
+			id, workerID, keyID, tokenHash, string(StatusCancelled)).Scan(&reason)
+		if err == nil {
+			return fmt.Errorf("%w: %s", ErrRunCancelled, cmp.Or(reason, "cancelled"))
+		}
 		return ErrLeaseHeld
 	}
 	return nil

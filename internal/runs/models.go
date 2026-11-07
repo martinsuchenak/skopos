@@ -11,6 +11,9 @@ var (
 	// ErrLeaseHeld is returned when a report or transition arrives for a run
 	// whose lease another worker now holds (the previous owner timed out).
 	ErrLeaseHeld = errors.New("run lease held by another worker")
+	// ErrRunCancelled answers the owning worker's heartbeat once its run was
+	// cancelled (the item was rejected or marked done): the worker stops it.
+	ErrRunCancelled = errors.New("run cancelled")
 	// ErrDuplicateActive is returned when queueing a stage an item already
 	// has an active (queued/claimed/running/paused) run for — the inbox
 	// hooks treat it as a no-op (idempotent re-queue).

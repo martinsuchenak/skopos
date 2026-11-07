@@ -464,7 +464,11 @@ worker looks up the items it implemented:
 - **Done:** it removes the item's worktree, and the local branch too if the
   last round pushed it. An unpushed branch is the only copy of the work, so
   it stays. The pull request stays for you to merge.
-- **Rejected:** after a day, because Reject can be undone, it closes the pull
+- **Rejected:** a run still in progress stops at its next heartbeat (every
+  30s): skopos answers 410, and the worker ends the run's context, which
+  kills the agent's process group. Nothing more is pushed or reported, and a
+  branch-checkout clone goes back to its default branch (uncommitted work
+  stashed under the branch). After a day, because Reject can be undone, it closes the pull
   request without merging and cleans up as for done. A pull request someone
   else opened, on a branch the item took over, is never closed.
 - **Not found:** skopos answers 404 both for a deleted item and for one

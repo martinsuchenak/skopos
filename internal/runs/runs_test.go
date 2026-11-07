@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -932,5 +934,39 @@ func TestPrefsSourceLive(t *testing.T) {
 	s.SetPrefs(map[string]*WorkspacePrefs{"ws-a": {Stages: map[string]string{"plan": "qwen"}}})
 	if r := mustQueue(t, s, rootCtx(), "ws-a", "item-3", StagePlan); r.Runner != "qwen" {
 		t.Fatalf("SetPrefs wins over the source: %+v", r)
+	}
+}
+
+// A heartbeat for a run skopos cancelled (item rejected) tells its owning
+// worker so, with the reason; anyone else still gets the lease answer.
+func TestHeartbeatAfterCancel(t *testing.T) {
+	s := testService(t)
+	ctx := rootCtx()
+	_ = mustQueue(t, s, ctx, "ws-a", "item-1", StageImplement)
+	run, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	if err := s.Heartbeat(ctx, run.ID, "w1", run.LeaseToken, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CancelItem(ctx, "item-1", "item rejected"); err != nil {
+		t.Fatal(err)
+	}
+	err := s.Heartbeat(ctx, run.ID, "w1", run.LeaseToken, "")
+	if !errors.Is(err, ErrRunCancelled) || !strings.Contains(err.Error(), "item rejected") {
+		t.Fatalf("owner: %v", err)
+	}
+	if err := s.Heartbeat(ctx, run.ID, "w2", run.LeaseToken, ""); !errors.Is(err, ErrLeaseHeld) {
+		t.Fatalf("another worker learns nothing: %v", err)
+	}
+	if err := s.Heartbeat(ctx, run.ID, "w1", "not-the-token", ""); !errors.Is(err, ErrLeaseHeld) {
+		t.Fatalf("wrong token: %v", err)
+	}
+}
+
+// The heartbeat answer for a cancelled run is 410 Gone with the reason.
+func TestCancelledHeartbeatIsGone(t *testing.T) {
+	rec := httptest.NewRecorder()
+	(&Handler{}).respondRunError(rec, fmt.Errorf("%w: item rejected", ErrRunCancelled), "heartbeat")
+	if rec.Code != http.StatusGone || !strings.Contains(rec.Body.String(), "run cancelled: item rejected") {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
 }
