@@ -1,11 +1,15 @@
 package install
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/martinsuchenak/skopos/internal/srvurl"
 )
 
 func TestSetTOMLSectionAppends(t *testing.T) {
@@ -474,4 +478,36 @@ func TestInstallZCodeLayout(t *testing.T) {
 		t.Fatalf("re-run added duplicates: %d", len(pre2))
 	}
 	_ = results
+}
+
+// A srv+ server URL: agent configs get it resolved (agents can't look SRV
+// up); the skopos client config keeps srv+ (the CLI resolves it itself).
+func TestInstallSRVURL(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := t.TempDir()
+	wd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+	defer srvurl.SetLookup(func(_ context.Context, name string) ([]*net.SRV, error) {
+		return []*net.SRV{{Target: "127.0.0.1.", Port: 24680}}, nil
+	})()
+
+	if _, err := Install(Options{Agent: "zcode", URL: "srv+http://skopos.service.consul/mcp", APIKey: "k", Workflow: "remote"}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	data, _, err := readJSONMap(filepath.Join(home, ".zcode", "cli", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := data["mcp"].(map[string]any)["servers"].(map[string]any)["skopos"].(map[string]any)
+	if entry["url"] != "http://127.0.0.1:24680/mcp" {
+		t.Errorf("agent entry url: %v", entry["url"])
+	}
+	client, _ := os.ReadFile(filepath.Join(home, ".config", "skopos", "skopos-config.toml"))
+	if !strings.Contains(string(client), `server_url = "srv+http://skopos.service.consul"`) {
+		t.Errorf("client config: %s", client)
+	}
 }

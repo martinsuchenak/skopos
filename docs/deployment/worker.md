@@ -778,6 +778,10 @@ No secrets live in the service definition or the TOML. The daemon loads
 - **What goes there:** `SKOPOS_API_KEY`, `SKOPOS_AGENT_KEY`, each repo's
   `push.token_env` value, any `${VAR}` your accounts reference, and the log
   output settings (`LOG_OUTPUT_URL`, `LOG_OUTPUT_HEADER`).
+- **SRV records:** `SKOPOS_SERVER_URL`, `LOG_OUTPUT_URL` and
+  `push.remote_url` may be `srv+http(s)://name/…`; add
+  `SKOPOS_DNS_SERVER=127.0.0.1:8600` when the host's resolver doesn't know
+  Consul ([SRV URLs](../configuration.md#srv-urls)).
 - **What agents see:** env-file values never reach an agent directly. Only an
   account's `env = { NAME = "${VAR}" }` passes a credential to the agent run.
 

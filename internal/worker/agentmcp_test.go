@@ -3,14 +3,19 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/martinsuchenak/skopos/internal/srvurl"
 )
 
 func whoamiServer(t *testing.T, body string) string {
@@ -96,7 +101,7 @@ func TestAgentRunGetsSkoposTools(t *testing.T) {
 	if plain.MCPConfig != "/op.json" || slices.ContainsFunc(plain.AllowedTools, func(s string) bool { return strings.HasPrefix(s, "mcp__skopos__") }) {
 		t.Fatalf("without an agent key: %+v", plain)
 	}
-	w.EnableAgentMCP("/state/agent-mcp.json")
+	w.EnableAgentMCP("/state/agent-mcp.json", nil)
 	plan := w.agentRun("/wt", "p", "{}", planTools, 0, &Account{Runner: "claude"}, run, "plan")
 	if plan.MCPConfig != "/state/agent-mcp.json" || !slices.Contains(plan.AllowedTools, "mcp__skopos__code_search") || slices.Contains(plan.AllowedTools, "mcp__skopos__plan_update_item") {
 		t.Fatalf("plan: %v %v", plan.MCPConfig, plan.AllowedTools)
@@ -107,6 +112,12 @@ func TestAgentRunGetsSkoposTools(t *testing.T) {
 	impl := w.agentRun("/wt", "p", "{}", implTools, 0, &Account{Runner: "opencode"}, run, "implement")
 	if !slices.Contains(impl.AllowedTools, "mcp__skopos__plan_update_item") {
 		t.Fatalf("implement: %v", impl.AllowedTools)
+	}
+	// A renamed runner counts by its kind (a second claude subscription).
+	w.cfg.RunnerSpecs = map[string]*RunnerSpec{"claude-max": {Kind: "claude"}}
+	renamed := w.agentRun("/wt", "p", "{}", planTools, 0, &Account{Runner: "claude-max"}, run, "plan")
+	if renamed.MCPConfig != "/state/agent-mcp.json" || !slices.Contains(renamed.AllowedTools, "mcp__skopos__code_search") {
+		t.Fatalf("renamed claude runner: %v %v", renamed.MCPConfig, renamed.AllowedTools)
 	}
 	codex := w.agentRun("/wt", "p", "{}", reviewTools, 0, &Account{Runner: "codex"}, run, "review")
 	if codex.MCPConfig != "/op.json" || slices.ContainsFunc(codex.AllowedTools, func(s string) bool { return strings.HasPrefix(s, "mcp__skopos__") }) {
@@ -144,7 +155,7 @@ func TestSkoposPromptSection(t *testing.T) {
 	steps := []Step{{Title: "Add the flag", ID: "item-1"}, {Title: "Agent-proposed", ID: ""}, {Title: "Document it", ID: "item-3"}}
 	worker := func(branches map[string]string, enabled bool) *Worker {
 		w := New(&Config{StateDir: t.TempDir()}, NewClient(indexStatusServer(t, branches), "k"), slog.New(slog.DiscardHandler))
-		w.EnableAgentMCP("/state/agent-mcp.json")
+		w.EnableAgentMCP("/state/agent-mcp.json", nil)
 		if enabled {
 			w.client.indexEnabled = []string{run.WorkspaceID}
 		}
@@ -202,4 +213,31 @@ func TestSkoposPromptSection(t *testing.T) {
 		[]string{"Query branch `agent/x`", "exactly the commit you are reviewing"}, []string{"plan_update_item"})
 	expect("review ahead of the index", render(worker(indexed, true), "review", "ccc"),
 		[]string{"Query branch `main`", "use the diff for what changed"}, nil)
+}
+
+// With a srv+ server URL, the worker reaches skopos through the SRV record
+// (the agent key check) and agents get a resolved URL in their MCP config.
+func TestAgentMCPWithSRVServer(t *testing.T) {
+	srvurl.Install()
+	base := whoamiServer(t, `{"root":false,"key":{"approver":false,"capabilities":["code:read","mcp"]}}`)
+	hostPort := strings.TrimPrefix(base, "http://")
+	h, p, _ := net.SplitHostPort(hostPort)
+	port, _ := strconv.Atoi(p)
+	defer srvurl.SetLookup(func(_ context.Context, name string) ([]*net.SRV, error) {
+		if name != "skopos.service.consul" {
+			return nil, errors.New("no such host")
+		}
+		return []*net.SRV{{Target: h + ".", Port: uint16(port)}}, nil
+	})()
+	if err := CheckAgentKey(context.Background(), "srv+http://skopos.service.consul", "sk_agent"); err != nil {
+		t.Fatalf("agent key check over srv+: %v", err)
+	}
+	path, err := WriteAgentMCPConfig(t.TempDir(), "srv+http://skopos.service.consul/", "sk_agent", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(path)
+	if !strings.Contains(string(raw), `"url": "http://`+hostPort+`/mcp"`) {
+		t.Fatalf("config: %s", raw)
+	}
 }

@@ -17,6 +17,7 @@ Optional — if absent, skopos runs on defaults. The file is gitignored (may con
 | `--config` | `CONFIG_FILE` | — | `skopos-config.toml` | Path to config file |
 | `--log-level` | `LOG_LEVEL` | `log.level` | `info` | `trace`, `debug`, `info`, `warn`, `error` |
 | `--log-format` | `LOG_FORMAT` | `log.format` | `text` | `text` or `json` |
+| `--dns-server` | `SKOPOS_DNS_SERVER` | `dns.server` | — | DNS server for `srv+` URLs, `host:port` (Consul: `127.0.0.1:8600`); default: the system resolver ([SRV URLs](#srv-urls)) |
 | `--log-output-url` | `LOG_OUTPUT_URL` | `log.output.url` | — | Also send logs to this HTTP log intake ([Log output](#log-output)) |
 | `--log-output-format` | `LOG_OUTPUT_FORMAT` | `log.output.format` | `ndjson` | `ndjson`, `loki` or `elasticsearch` |
 | `--log-output-stream` | `LOG_OUTPUT_STREAM` | `log.output.stream` | `skopos` | Stream name: VictoriaLogs stream, Loki job, Elasticsearch index |
@@ -378,6 +379,43 @@ skopos serve --log-output-url http://victorialogs:9428/insert/jsonline --log-out
 - **Credentials:** a sink behind a proxy takes `LOG_OUTPUT_HEADER`, e.g.
   `Authorization: Basic …`. On a worker, put it in `skopos-worker.env`; agent
   runs never see `LOG_OUTPUT_URL` or `LOG_OUTPUT_HEADER`.
+
+## SRV URLs
+
+Any URL skopos works with can name a DNS SRV record instead of a host and
+port: write `srv+http://name/path` or `srv+https://name/path` (knot's
+convention). `name` is looked up as an SRV record, such as Consul's
+`skopos.service.consul` or `_http._tcp.example.com`, and the records give
+the address and port.
+
+```bash
+skopos worker --server-url srv+http://skopos.service.consul
+LOG_OUTPUT_URL=srv+http://victorialogs.service.consul/insert/jsonline
+```
+
+- **Where it works:** the server URL (`--server-url`, `SKOPOS_SERVER_URL`,
+  `[client].server_url`) for the worker, the CLI and the hooks; the log
+  output; the embeddings and Qdrant URLs; and a repo's `push.remote_url`
+  (pushes and pull requests).
+- **Followed live:** each new connection looks the record up again, so a
+  service rescheduled onto another port is found without a restart.
+  Targets are tried in RFC 2782 order (priority, then weight), so a dead
+  one is skipped.
+- **TLS:** with `srv+https`, the request keeps `name` as its host, so the
+  certificate must be for `name`.
+- **DNS server:** where `.consul` isn't in the system resolver, point
+  skopos at Consul's DNS with `--dns-server 127.0.0.1:8600` (or
+  `SKOPOS_DNS_SERVER`, in a worker's `skopos-worker.env` too).
+- **Programs that can't look SRV up get a resolved URL:**
+  - the agents' MCP config: the worker writes it with the resolved
+    address and rewrites it before each run;
+  - `git push`: resolved for each push;
+  - `skopos install`: agent configs get the URL resolved at install time,
+    so re-run it if the service moves; skopos's own client config keeps
+    `srv+`.
+
+  A resolved `http` URL uses the target's address; a resolved `https` URL
+  keeps `name` with the record's port, for TLS.
 
 ## Authentication
 

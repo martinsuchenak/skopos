@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/martinsuchenak/skopos/internal/srvurl"
 )
 
 type sink struct {
@@ -193,5 +197,25 @@ func TestConfigValidation(t *testing.T) {
 	}
 	if _, err := ParseHeaders("nocolon"); err == nil {
 		t.Fatal("bad header accepted")
+	}
+}
+
+// A srv+ log output URL goes through the SRV record.
+func TestSRVLogOutput(t *testing.T) {
+	srvurl.Install()
+	var s sink
+	srv := s.server(t)
+	h, p, _ := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	port, _ := strconv.Atoi(p)
+	defer srvurl.SetLookup(func(_ context.Context, name string) ([]*net.SRV, error) {
+		return []*net.SRV{{Target: h + ".", Port: uint16(port)}}, nil
+	})()
+	w, err := New(Config{URL: "srv+http://victorialogs.service.consul/insert/jsonline", Format: Raw, FlushEvery: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = w.Write([]byte("hello\n"))
+	if err := w.Close(context.Background()); err != nil || s.all() != "hello\n" {
+		t.Fatalf("close %v body %q", err, s.all())
 	}
 }

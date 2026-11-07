@@ -1,6 +1,7 @@
 package install
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/martinsuchenak/skopos/internal/srvurl"
 )
 
 //go:embed assets/agent-block.md
@@ -105,6 +108,10 @@ type Options struct {
 	// behavior (MCP config only).
 	Workflow string
 	DryRun   bool
+	// agentURL is the MCP URL written into agent configs: URL itself, or
+	// for a srv+ URL its resolution now — agents can't look SRV up (the
+	// skopos client config keeps srv+: the CLI resolves it per connection).
+	agentURL string
 	// Hooks installs the Claude Code hook suite (session briefing, prompt
 	// pre-fetch, search nudges, edit reminders). Default on for claude-code.
 	Hooks *bool
@@ -124,6 +131,14 @@ func Install(o Options) ([]Result, error) {
 	}
 	if o.URL == "" {
 		o.URL = DefaultURL
+	}
+	o.agentURL = o.URL
+	if srvurl.IsSRV(o.URL) {
+		resolved, err := srvurl.Resolve(context.Background(), o.URL)
+		if err != nil {
+			return nil, fmt.Errorf("resolving %s for the agent configs: %w", o.URL, err)
+		}
+		o.agentURL = resolved
 	}
 	if o.Scope == "" {
 		o.Scope = "global"
@@ -250,7 +265,7 @@ func resolveAgents(agent string) ([]string, error) {
 
 func installAgent(name string, o Options) (Result, error) {
 	r := Result{Agent: name}
-	entry := mcpEntry(name, o.URL, o.APIKey)
+	entry := mcpEntry(name, o.agentURL, o.APIKey)
 
 	switch name {
 	case "claude-code":
@@ -555,7 +570,7 @@ func mergeCodexTOML(path string, o Options, actions *[]string) error {
 	// %q escaping keeps quotes/backslashes in the key from breaking the TOML.
 	// Codex spells static headers "http_headers" — a plain "headers" table is
 	// silently ignored, which would drop the API key.
-	block := fmt.Sprintf("[mcp_servers.skopos]\nenabled = true\nurl = %q\n", o.URL)
+	block := fmt.Sprintf("[mcp_servers.skopos]\nenabled = true\nurl = %q\n", o.agentURL)
 	if o.APIKey != "" {
 		block += fmt.Sprintf("\n[mcp_servers.skopos.http_headers]\nAuthorization = %q\n", "Bearer "+o.APIKey)
 	}

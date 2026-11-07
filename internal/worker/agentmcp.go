@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/martinsuchenak/skopos/internal/srvurl"
 )
 
 // Pipeline agents reach skopos over MCP with the worker's agent key
@@ -44,11 +46,13 @@ func skoposTools(phase string) []string {
 	return out
 }
 
-// runnerHasSkopos reports whether a runner gets the skopos MCP server:
-// claude and opencode load the run's MCP config; codex runs with the network
-// off and no MCP (read-only stages, design §2).
-func runnerHasSkopos(runner string) bool {
-	return runner == "" || runner == "claude" || runner == "opencode"
+// runnerHasSkopos reports whether a runner gets the skopos MCP server, by
+// its kind (a runner named "claude-max" with kind = "claude" does): claude
+// and opencode load the run's MCP config; codex runs with the network off
+// and no MCP (read-only stages, design §2).
+func (c *Config) runnerHasSkopos(runner string) bool {
+	_, kind := c.runnerSpec(runner)
+	return kind == "claude" || kind == "opencode"
 }
 
 // CheckAgentKey asks the server what the agent key may do and refuses one
@@ -122,9 +126,15 @@ func WriteAgentMCPConfig(stateDir, base, key, operatorConfig string) (string, er
 			servers[name] = s
 		}
 	}
+	// Agents can't look SRV up: a srv+ server URL is resolved now (and the
+	// worker rewrites the file before each run, RefreshAgentMCP).
+	mcpURL, err := srvurl.Resolve(context.Background(), strings.TrimRight(base, "/")+"/mcp")
+	if err != nil {
+		return "", fmt.Errorf("agent mcp config: %w", err)
+	}
 	servers[agentMCPServer] = map[string]any{
 		"type":    "http",
-		"url":     strings.TrimRight(base, "/") + "/mcp",
+		"url":     mcpURL,
 		"headers": map[string]string{"Authorization": "Bearer " + key},
 	}
 	b, err := json.MarshalIndent(map[string]any{"mcpServers": servers}, "", "  ")
@@ -144,7 +154,11 @@ func WriteAgentMCPConfig(stateDir, base, key, operatorConfig string) (string, er
 
 // EnableAgentMCP gives every run of a claude or opencode agent the MCP
 // config at path (WriteAgentMCPConfig) and the skopos tools of its stage.
-func (w *Worker) EnableAgentMCP(path string) { w.agentMCP = path }
+// refresh, when set, rewrites the file before each run (a srv+ server URL:
+// the service may have moved since).
+func (w *Worker) EnableAgentMCP(path string, refresh func() error) {
+	w.agentMCP, w.agentMCPRefresh = path, refresh
+}
 
 // skoposPrompt is what a stage prompt says about skopos: nil when the run
 // has no skopos tools (no agent key, or a codex run). branch is the item
@@ -156,7 +170,7 @@ func (w *Worker) EnableAgentMCP(path string) { w.agentMCP = path }
 // branch that is (indexState): the item branch when its index is at the
 // reviewed commit, else the default branch — with what it does not show.
 func (w *Worker) skoposPrompt(ctx context.Context, run *Run, account *Account, base, branch, phase, planID string, steps []Step, head string) map[string]any {
-	if w.agentMCP == "" || !runnerHasSkopos(account.Runner) {
+	if w.agentMCP == "" || !w.cfg.runnerHasSkopos(account.Runner) {
 		return nil
 	}
 	runner := account.Runner

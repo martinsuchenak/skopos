@@ -4,6 +4,28 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **SRV URLs.** Any URL skopos works with can name a DNS SRV record:
+  `srv+http://name/path` or `srv+https://name/path` (knot's convention),
+  e.g. `srv+http://skopos.service.consul`. That covers the server URL
+  (worker, CLI, hooks), the log output, the embeddings and Qdrant URLs, and
+  `push.remote_url`. Each new connection looks the record up again (a
+  rescheduled service is followed) and tries the targets in RFC 2782
+  order. `--dns-server` (`SKOPOS_DNS_SERVER`, `dns.server`) sends the
+  lookups to a DNS server such as Consul's `127.0.0.1:8600`. Programs that
+  can't look SRV up get a resolved URL: the agents' MCP config (rewritten
+  before each run), `git push`, and the agent configs `skopos install`
+  writes.
+
+### Fixed
+
+- A claude or opencode runner under a name of its own (`[worker.runner_config.claude-max]`
+  with `kind = "claude"`) now gets the skopos tools; only runners named
+  `claude` or `opencode` did.
+
 ## [0.22.0] — 2026-11-07
 
 ### Added

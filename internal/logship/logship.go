@@ -33,6 +33,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/martinsuchenak/skopos/internal/srvurl"
 )
 
 // Format names the wire format.
@@ -97,8 +99,8 @@ func New(cfg Config) (*Writer, error) {
 	if err != nil {
 		return nil, errors.New("log output url: not a URL; want http(s)://host/path")
 	}
-	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return nil, fmt.Errorf("log output url %q: want http(s)://host/path", u.Redacted())
+	if !srvurl.HTTPScheme(u.Scheme) || u.Host == "" {
+		return nil, fmt.Errorf("log output url %q: want http(s)://host/path (or srv+http(s)://name/path)", u.Redacted())
 	}
 	if cfg.Format == "" {
 		cfg.Format = NDJSON

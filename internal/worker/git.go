@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/martinsuchenak/skopos/internal/srvurl"
 )
 
 // Git helpers, extracted from agent-trial's proven git.go. The push path is
@@ -277,6 +279,10 @@ func pushBranch(ctx context.Context, worktree, remoteURL, token, authKind, branc
 	}
 	if cur != branch {
 		return fmt.Errorf("push refused: HEAD is %q, refusing to push %q", cur, branch)
+	}
+	// git can't look SRV up: a srv+ remote is resolved for this push.
+	if remoteURL, err = srvurl.Resolve(ctx, remoteURL); err != nil {
+		return fmt.Errorf("push: %w", err)
 	}
 	_, err = gitEnv(ctx, worktree, []string{
 		"GIT_CONFIG_COUNT=2",

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/martinsuchenak/skopos/internal/srvurl"
 	"github.com/martinsuchenak/skopos/internal/worker"
 	"github.com/paularlott/cli"
 )
@@ -57,6 +58,10 @@ func workerCmd() *cli.Command {
 			// picked up explicitly below, flag → environment → config.
 			fileKeys, warnings, err := loadWorkerEnvFile(workerEnvFileFlag(cmd))
 			if err != nil {
+				return err
+			}
+			// The env file may name the DNS server for srv+ URLs.
+			if err := srvurl.SetDNSServer(resolveWorkerSetting(cmd.GetString("dns-server"), "SKOPOS_DNS_SERVER", "")); err != nil {
 				return err
 			}
 			clientCfg, err := readClientSection(cmd.GetString("config"))
@@ -134,7 +139,14 @@ func workerCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
-				w.EnableAgentMCP(path)
+				var refresh func() error
+				if srvurl.IsSRV(base) {
+					refresh = func() error {
+						_, err := worker.WriteAgentMCPConfig(cfg.StateDir, base, agentKey, cfg.MCPConfig)
+						return err
+					}
+				}
+				w.EnableAgentMCP(path, refresh)
 				log.Info("agent runs get the skopos MCP tools", "mcp_config", path)
 			} else {
 				log.Warn("no agent key: agent runs get no skopos tools (code index, blackboard, plan steps) — set SKOPOS_AGENT_KEY to a key from: skopos key create --preset agent")

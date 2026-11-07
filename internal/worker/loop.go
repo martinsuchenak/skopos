@@ -121,7 +121,9 @@ type Worker struct {
 	upgradeHTTP  *http.Client
 	// agentMCP: the MCP config file runs get when the worker has an agent
 	// key (agentmcp.go); "" = runs get only the operator's mcp_config.
-	agentMCP string
+	// agentMCPRefresh rewrites it before each run (srv+ server URL).
+	agentMCP        string
+	agentMCPRefresh func() error
 	// index: idle-time code indexing (indexer.go).
 	index indexer
 	// logOutput: the log output (--log-output-url) run logs also go to;
@@ -217,6 +219,11 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 	defer rl.close()
 	ctx = withRunLog(ctx, rl)
 	rl.notef("%s run, attempt %d, on %s", run.Stage, run.Attempt, w.cfg.ID)
+	if w.agentMCPRefresh != nil {
+		if err := w.agentMCPRefresh(); err != nil {
+			log.Warn("agent mcp config not refreshed; runs keep the last one", "err", err)
+		}
+	}
 	// Heartbeat while executing.
 	hbCtx, hbStop := context.WithCancel(ctx)
 	defer w.phases.Delete(run.ID)
@@ -469,7 +476,7 @@ func (w *Worker) agentRun(dir, prompt, schema string, tools []string, timeout ti
 		runner = "claude"
 	}
 	mcpConfig := w.cfg.MCPConfig
-	if w.agentMCP != "" && runnerHasSkopos(runner) {
+	if w.agentMCP != "" && w.cfg.runnerHasSkopos(runner) {
 		mcpConfig = w.agentMCP
 		tools = append(slices.Clone(tools), skoposTools(phase)...)
 	}

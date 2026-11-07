@@ -13,6 +13,7 @@ import (
 
 	"github.com/martinsuchenak/skopos/build"
 	"github.com/martinsuchenak/skopos/cmd"
+	"github.com/martinsuchenak/skopos/internal/srvurl"
 )
 
 var configFile = "skopos-config.toml"
@@ -34,6 +35,8 @@ func configSearchPaths() []string {
 
 func main() {
 	_ = env.Load()
+	// Every URL may name an SRV record: srv+http(s)://name/path.
+	srvurl.Install()
 
 	app := &cli.Command{
 		Name:       "skopos",
@@ -64,6 +67,13 @@ func main() {
 				EnvVars:      []string{"LOG_FORMAT"},
 				ConfigPath:   []string{"log.format"},
 				Global:       true,
+			},
+			&cli.StringFlag{
+				Name:       "dns-server",
+				Usage:      "DNS server for srv+http(s):// URLs, host:port (e.g. Consul's 127.0.0.1:8600); default: the system resolver",
+				EnvVars:    []string{"SKOPOS_DNS_SERVER"},
+				ConfigPath: []string{"dns.server"},
+				Global:     true,
 			},
 			&cli.StringFlag{
 				Name:       "log-output-url",
@@ -97,6 +107,9 @@ func main() {
 			},
 		},
 		Commands: cmd.Commands(),
+		PreRun: func(ctx context.Context, c *cli.Command) (context.Context, error) {
+			return ctx, srvurl.SetDNSServer(c.GetString("dns-server"))
+		},
 	}
 
 	if err := app.Execute(context.Background()); err != nil {

@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/martinsuchenak/skopos/internal/srvurl"
 )
 
 // prClient opens, finds and closes pull requests on the forge the worker
@@ -51,7 +53,7 @@ type PullRequest struct {
 // last two path segments are owner and repository.
 func newPRClient(kind, remoteURL, token string) (*prClient, error) {
 	u, err := url.Parse(remoteURL)
-	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+	if err != nil || u.Host == "" || !srvurl.HTTPScheme(u.Scheme) {
 		return nil, fmt.Errorf("push.remote_url %q is not an http(s) URL", remoteURL)
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
