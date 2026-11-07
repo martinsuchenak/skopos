@@ -26,7 +26,14 @@ versions follow [Semantic Versioning](https://semver.org/).
   the default branch whenever origin moves, and each implemented item
   branch. One worker per workspace does the default branch; indexing stops
   the moment a run is claimed, and works in a worktree of its own. The
-  dashboard shows which workers can index a repo.
+  dashboard shows which workers can index a repo. An implemented branch is
+  indexed before its run reports (bounded at 5 minutes), so its review
+  queries the code it reviews. Agent prompts mention the code tools only
+  when there is a usable index, and name which branch it is per stage (the
+  default branch for plan and implement; the item branch for review when
+  indexed at the reviewed commit, else the default branch and the diff).
+- A capped key's MCP `initialize` answer describes only the tools it may
+  call.
 
 ### Fixed
 

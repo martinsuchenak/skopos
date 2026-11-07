@@ -328,9 +328,19 @@ What a run gets:
   call `plan_update_item`.
 - **Prompt:** plan, implement and review prompts get a Skopos section. It
   tells the agent to read the blackboard for the workspace and branch first,
-  to query the index before grepping (the item branch, falling back to the
-  default branch), and to record decisions and bugs as `<runner>@<run id>`.
-  Implement also gets its steps' plan item ids, to mark each one done.
+  and to record decisions and bugs as `<runner>@<run id>`. Implement also
+  gets its steps' plan item ids, to mark each one done.
+- **Code index guidance**, only when the workspace's code index switch is on
+  and the server holds a usable index. The worker asks the server which
+  branches are indexed, at which commit, and names one branch:
+  - plan: the default branch, which may lag its newest commits;
+  - implement: the default branch, noting that the agent's own changes are
+    not in it;
+  - review and QA: the item branch when its index is at the exact commit
+    under review, otherwise the default branch, and to use the diff for
+    what changed.
+- **Server instructions:** a capped key's MCP `initialize` answer describes
+  only the tools it may call, not the full skopos instructions.
 - **Codex** runs get no skopos tools (their network is off).
 - The agent key never reaches the agent's environment: the scrub drops
   every `*_KEY` variable.
@@ -356,9 +366,13 @@ reviewers query the code as it is:
 - **When:** only while idle. A claimed run stops indexing at once, and what
   was parsed so far stays in the parse cache (`<state_dir>/index-cache`), so
   the next idle moment carries on from there. The worker checks an assigned
-  default branch every 5 minutes and pushes only when origin moved. It
-  indexes an item branch after its implement run, and drops that branch's
-  index when the sweep retires the branch.
+  default branch every 5 minutes and pushes only when origin moved. It drops
+  an item branch's index when the sweep retires the branch.
+- **Item branches** are indexed at the end of their implement run, before it
+  reports, so the review that follows queries the code it reviews. This is
+  the one index build that doesn't wait for an idle moment. It's bounded at
+  5 minutes (a cold parse cache on a large repo), and a failure or timeout
+  leaves the branch for the next idle moment; it never fails the run.
 - **Where:** in a detached worktree of its own per repo
   (`<state_dir>/index/<repo>`), never in the clone a run uses. Fetch and
   checkout take the clone's lock only when it is free.

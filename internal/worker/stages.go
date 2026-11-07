@@ -146,7 +146,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 		"SkillIndex":   skillIndex(skills), "Requested": tagHints(skills, item.Tags),
 		"ImplCommands": w.stageCommands(run.WorkspaceID, "implement", implTools), "Checks": repo.Checks,
 		"Focus": focus, "Seed": seedSteps,
-		"Skopos": w.skoposPrompt(run, account, repo.DefaultBranch, branch, "plan", "", nil),
+		"Skopos": w.skoposPrompt(ctx, run, account, repo.DefaultBranch, branch, "plan", "", nil, ""),
 	})
 	if err != nil {
 		return err
@@ -417,7 +417,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			"ApprovalNotes": newestBody(secs, "Approval notes"),
 			"Instructions":  instructions, "Skills": skillBodies,
 			"Commands": w.stageCommands(run.WorkspaceID, "implement", implTools), "Checks": repo.Checks,
-			"Skopos": w.skoposPrompt(run, account, repo.DefaultBranch, branch, "implement", item.PlanID, steps),
+			"Skopos": w.skoposPrompt(ctx, run, account, repo.DefaultBranch, branch, "implement", item.PlanID, steps, ""),
 		})
 		if err != nil {
 			return err
@@ -506,9 +506,10 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		summary += fmt.Sprintf("\n\nThe checks failed at first and were fixed in %s.", plural(rounds, "fix round"))
 	}
 	stopSteps() // the final push is the one that counts
-	// Review and qa query this branch's code: index it at the next idle
-	// moment (only where the workspace's code_index switch is on).
-	w.queueBranchIndex(run.WorkspaceID, branch)
+	// Review and qa query this branch's code: index it now (only where the
+	// workspace's code_index switch is on; bounded, else at the next idle
+	// moment).
+	w.indexBranchNow(ctx, repo, run.WorkspaceID, branch)
 	if repo.Push.Kind != "none" {
 		token := os.Getenv(repo.Push.TokenEnv)
 		if token == "" {
@@ -789,7 +790,7 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 		"Instructions": instructions, "Skills": skillBodies, "Focus": focus,
 		"Decisions": decisions, "SecondOpinion": second, "HandoverBase": handoverBase,
 		"Checks": checks, "ChecksFailed": len(failedChecks(checks)) > 0, "ChecksConfigured": len(repo.Checks) > 0,
-		"Skopos": w.skoposPrompt(run, account, repo.DefaultBranch, run.Branch, phase, "", nil),
+		"Skopos": w.skoposPrompt(ctx, run, account, repo.DefaultBranch, run.Branch, phase, "", nil, headSHA(ctx, wt)),
 	})
 	if err != nil {
 		return err

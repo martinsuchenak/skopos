@@ -163,6 +163,23 @@ func (c *Client) IndexDuty() (enabled, defaults []string) {
 	return slices.Clone(c.indexEnabled), slices.Clone(c.indexDefault)
 }
 
+// IndexedBranches is the server's code index of a workspace: branch → the
+// commit its index was built from.
+func (c *Client) IndexedBranches(ctx context.Context, workspace string) (map[string]string, error) {
+	var status []struct {
+		Branch  string `json:"branch"`
+		HeadSHA string `json:"head_sha"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/codeindex/"+url.PathEscape(workspace)+"/status", nil, &status); err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(status))
+	for _, s := range status {
+		out[s.Branch] = s.HeadSHA
+	}
+	return out, nil
+}
+
 // DropIndexBranch removes a branch's index from the server (404 = already
 // gone).
 func (c *Client) DropIndexBranch(ctx context.Context, workspace, branch string) error {

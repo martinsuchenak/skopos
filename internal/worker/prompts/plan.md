@@ -79,8 +79,8 @@ Martin tagged the item with these skills; they are always included: {{range $i, 
 {{end}}{{end}}
 {{with .Skopos}}{{template "skopos" .}}{{end}}# What to do
 
-1. Research the codebase before planning: read the relevant files{{if .Skopos}}, and use the skopos
-   code tools for symbols, callers and impact{{end}}. For work-request (WR) items, use the llmrouter
+1. Research the codebase before planning: read the relevant files{{with .Skopos}}{{if .IndexBranch}}, and use the skopos
+   code tools for symbols, callers and impact{{end}}{{end}}. For work-request (WR) items, use the llmrouter
    Fortix tools for the WR facts. Only state what you verified.
 2. Write a plan of 1–8 concrete steps. Each step: a short imperative title, a description with the
    exact files/classes to change and how to verify the step. Steps must be small enough to commit

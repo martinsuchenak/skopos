@@ -141,6 +141,45 @@ func (w *Worker) queueBranchIndex(ws, branch string) {
 	}
 }
 
+// indexBranchTimeout bounds indexing an item branch at the end of its
+// implement run (a cold parse cache on a large repo); past it the branch
+// waits for an idle moment instead.
+const indexBranchTimeout = 5 * time.Minute
+
+// indexEnabled reports whether the last claim answer had the code_index
+// switch on for ws.
+func (w *Worker) indexEnabled(ws string) bool {
+	enabled, _ := w.client.IndexDuty()
+	return slices.Contains(enabled, ws)
+}
+
+// indexBranchNow indexes an item branch at the end of its implement run, so
+// the review that follows queries the code it reviews. Only where the
+// workspace's code_index switch is on; a failure (or the time bound) leaves
+// the branch queued for the next idle moment and never fails the run.
+func (w *Worker) indexBranchNow(ctx context.Context, repo *Repo, ws, branch string) {
+	if !w.indexEnabled(ws) {
+		return
+	}
+	sha, err := git(ctx, repo.Path, "rev-parse", "--verify", "refs/heads/"+branch+"^{commit}")
+	if err != nil {
+		return
+	}
+	ictx, cancel := context.WithTimeout(ctx, indexBranchTimeout)
+	defer cancel()
+	if err := w.indexCommit(ictx, repo, ws, branch, sha, repo.Checkout == checkoutBranch); err != nil {
+		w.log.Warn("indexing the branch failed; it waits for an idle moment", "workspace", ws, "branch", branch, "err", err)
+		w.queueBranchIndex(ws, branch)
+		return
+	}
+	w.index.mu.Lock()
+	w.loadIndexState()
+	w.index.state.Branches[branchKey(ws, branch)] = sha
+	w.index.state.Queue = slices.DeleteFunc(w.index.state.Queue, func(j indexJob) bool { return j.Workspace == ws && j.Branch == branch })
+	w.saveIndexState()
+	w.index.mu.Unlock()
+}
+
 // dropBranchIndex removes a retired item branch's index from the server
 // (only when indexing is on for its workspace) and forgets it here.
 func (w *Worker) dropBranchIndex(ctx context.Context, ws, branch string) {
@@ -245,7 +284,7 @@ func (w *Worker) indexPass(ctx context.Context, enabled, def []string) {
 		if sha == last {
 			continue
 		}
-		if err := w.indexCommit(ctx, repo, ws, repo.DefaultBranch, sha); err != nil {
+		if err := w.indexCommit(ctx, repo, ws, repo.DefaultBranch, sha, false); err != nil {
 			w.indexFailed(ctx, ws, repo.DefaultBranch, err)
 			continue
 		}
@@ -285,7 +324,7 @@ func (w *Worker) indexPass(ctx context.Context, enabled, def []string) {
 			forget() // the branch is gone, or this commit is indexed
 			continue
 		}
-		if err := w.indexCommit(ctx, repo, job.Workspace, job.Branch, sha); err != nil {
+		if err := w.indexCommit(ctx, repo, job.Workspace, job.Branch, sha, false); err != nil {
 			w.indexFailed(ctx, job.Workspace, job.Branch, err)
 			continue
 		}
@@ -328,10 +367,18 @@ func (w *Worker) indexCheckout(repo *Repo) string {
 }
 
 // indexCommit checks sha out in the indexing worktree and pushes the
-// branch's index.
-func (w *Worker) indexCommit(ctx context.Context, repo *Repo, ws, branch, sha string) error {
+// branch's index. haveLock: the caller already holds the clone's lock (a
+// branch-checkout run).
+func (w *Worker) indexCommit(ctx context.Context, repo *Repo, ws, branch, sha string, haveLock bool) error {
 	dir := w.indexCheckout(repo)
-	if _, err := w.withCloneLock(ctx, repo, func() (string, error) { return "", checkoutIndexTree(ctx, repo.Path, dir, sha) }); err != nil {
+	checkout := func() (string, error) { return "", checkoutIndexTree(ctx, repo.Path, dir, sha) }
+	var err error
+	if haveLock {
+		_, err = checkout()
+	} else {
+		_, err = w.withCloneLock(ctx, repo, checkout)
+	}
+	if err != nil {
 		return err
 	}
 	cache, err := w.indexCache()

@@ -143,6 +143,23 @@ func TestIndexPass(t *testing.T) {
 		t.Fatalf("item branch: commits %v queue %v", got, w.index.state.Queue)
 	}
 
+	// At the end of an implement run the branch is indexed at once (switch
+	// on), not left for an idle moment.
+	head3 := o.commit("third.go", "package main\n\nfunc Third() {}\n", "third")
+	o.run(o.w, "push", "-q", "origin", "main")
+	o.run(o.clone, "fetch", "-q", "origin")
+	o.run(o.clone, "branch", "agent/item-2", "origin/main")
+	w.client.indexEnabled = []string{"ws"}
+	w.indexBranchNow(ctx, repo, "ws", "agent/item-2")
+	if got := fake.seen(); len(got) != 4 || got[3] != "agent/item-2@"+head3 || len(w.index.state.Queue) != 0 {
+		t.Fatalf("implement-time index: commits %v queue %v", got, w.index.state.Queue)
+	}
+	w.client.indexEnabled = nil
+	w.indexBranchNow(ctx, repo, "ws", "agent/item-2") // switch off: nothing
+	if got := fake.seen(); len(got) != 4 {
+		t.Fatalf("switch off must not index: %v", got)
+	}
+
 	// The state survives a restart.
 	w2 := New(&Config{ID: "w1", StateDir: w.cfg.StateDir, Workspaces: []string{"ws"}, Repos: map[string]*Repo{"ws": repo}}, NewClient(srv.URL, "k"), slog.New(slog.DiscardHandler))
 	w2.index.mu.Lock()

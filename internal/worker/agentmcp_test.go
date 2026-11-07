@@ -112,51 +112,94 @@ func TestAgentRunGetsSkoposTools(t *testing.T) {
 	if codex.MCPConfig != "/op.json" || slices.ContainsFunc(codex.AllowedTools, func(s string) bool { return strings.HasPrefix(s, "mcp__skopos__") }) {
 		t.Fatalf("codex: %+v", codex)
 	}
-	if w.skoposPrompt(run, &Account{Runner: "codex"}, "main", "b", "review", "", nil) != nil {
+	if w.skoposPrompt(t.Context(), run, &Account{Runner: "codex"}, "main", "b", "review", "", nil, "") != nil {
 		t.Fatal("codex prompts get no skopos section")
 	}
 }
 
-// The skopos section appears only when the run has the tools, names the
-// workspace, branch and author, and gives implement its step ids.
+// indexStatusServer answers GET /api/codeindex/<ws>/status with branches.
+func indexStatusServer(t *testing.T, branches map[string]string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/status") {
+			http.Error(w, "unexpected", http.StatusTeapot)
+			return
+		}
+		var out []map[string]string
+		for b, h := range branches {
+			out = append(out, map[string]string{"branch": b, "head_sha": h})
+		}
+		_ = json.NewEncoder(w).Encode(out)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// The skopos section appears only when the run has the tools; its code
+// part only when the switch is on and the server holds a usable index, and
+// it names exactly which branch that is per stage; implement gets its step
+// ids.
 func TestSkoposPromptSection(t *testing.T) {
-	w := New(&Config{StateDir: t.TempDir()}, nil, slog.New(slog.DiscardHandler))
 	run := &Run{ID: "r1", WorkspaceID: "github.com/acme/app"}
 	steps := []Step{{Title: "Add the flag", ID: "item-1"}, {Title: "Agent-proposed", ID: ""}, {Title: "Document it", ID: "item-3"}}
-
-	base := map[string]any{"Title": "T", "Content": "c", "Steps": steps, "Branch": "agent/x", "Base": "main"}
-	without, err := renderPrompt("implement.md", base)
-	if err != nil {
-		t.Fatal(err)
+	worker := func(branches map[string]string, enabled bool) *Worker {
+		w := New(&Config{StateDir: t.TempDir()}, NewClient(indexStatusServer(t, branches), "k"), slog.New(slog.DiscardHandler))
+		w.EnableAgentMCP("/state/agent-mcp.json")
+		if enabled {
+			w.client.indexEnabled = []string{run.WorkspaceID}
+		}
+		return w
 	}
-	if strings.Contains(without, "# Skopos") {
-		t.Fatal("no agent key: no skopos section")
+	render := func(w *Worker, phase, head string) string {
+		t.Helper()
+		name := "review.md"
+		data := map[string]any{"Base": "main"}
+		if phase == "implement" {
+			name = "implement.md"
+			data = map[string]any{"Title": "T", "Content": "c", "Steps": steps, "Branch": "agent/x", "Base": "main"}
+		}
+		planID := ""
+		if phase == "implement" {
+			planID = "plan-9"
+		}
+		data["Skopos"] = w.skoposPrompt(t.Context(), run, &Account{Runner: "claude"}, "main", "agent/x", phase, planID, steps, head)
+		out, err := renderPrompt(name, data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
 	}
-	w.EnableAgentMCP("/state/agent-mcp.json")
-	base["Skopos"] = w.skoposPrompt(run, &Account{Runner: "claude"}, "main", "agent/x", "implement", "plan-9", steps)
-	with, err := renderPrompt("implement.md", base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
-		"# Skopos", `workspace_id: "github.com/acme/app"`, "branch `agent/x`", "query `main`",
-		`author_agent_id: "claude@r1"`, `plan_id: "plan-9"`, "step 1 (Add the flag): `item-1`", "step 3 (Document it): `item-3`",
-	} {
-		if !strings.Contains(with, want) {
-			t.Errorf("implement prompt missing %q:\n%s", want, with)
+	expect := func(name, got string, want, not []string) {
+		t.Helper()
+		for _, w := range want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s: missing %q:\n%s", name, w, got)
+			}
+		}
+		for _, n := range not {
+			if strings.Contains(got, n) {
+				t.Errorf("%s: must not contain %q:\n%s", name, n, got)
+			}
 		}
 	}
-	if strings.Contains(with, "Agent-proposed") && strings.Contains(with, "step 2 (Agent-proposed)") {
-		t.Error("a step without an item id gets no mark line")
+
+	noKey := New(&Config{StateDir: t.TempDir()}, nil, slog.New(slog.DiscardHandler))
+	if out, _ := renderPrompt("implement.md", map[string]any{"Title": "T", "Steps": steps, "Skopos": noKey.skoposPrompt(t.Context(), run, &Account{}, "main", "agent/x", "implement", "p", steps, "")}); strings.Contains(out, "# Skopos") {
+		t.Fatal("no agent key: no skopos section")
 	}
 
-	review, err := renderPrompt("review.md", map[string]any{
-		"Base": "main", "Skopos": w.skoposPrompt(run, &Account{Runner: "claude"}, "main", "agent/x", "review", "", nil),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(review, "# Skopos") || strings.Contains(review, "plan_update_item") {
-		t.Fatalf("review prompt: skopos section without step marking:\n%s", review)
-	}
+	indexed := map[string]string{"main": "aaa", "agent/x": "bbb"}
+	expect("switch off", render(worker(indexed, false), "implement", ""),
+		[]string{"# Skopos (shared memory)", "blackboard_read", `plan_id: "plan-9"`},
+		[]string{"code_search", "code index"})
+	expect("no index yet", render(worker(map[string]string{}, true), "implement", ""),
+		[]string{"# Skopos"}, []string{"code_search"})
+	expect("implement", render(worker(indexed, true), "implement", ""),
+		[]string{"# Skopos (shared memory and the code index)", `workspace_id: "github.com/acme/app"`, "Query branch `main`", "Your own changes are not in it",
+			`author_agent_id: "claude@r1"`, "step 1 (Add the flag): `item-1`", "step 3 (Document it): `item-3`"},
+		[]string{"step 2 (Agent-proposed)"})
+	expect("review at the indexed head", render(worker(indexed, true), "review", "bbb"),
+		[]string{"Query branch `agent/x`", "exactly the commit you are reviewing"}, []string{"plan_update_item"})
+	expect("review ahead of the index", render(worker(indexed, true), "review", "ccc"),
+		[]string{"Query branch `main`", "use the diff for what changed"}, nil)
 }

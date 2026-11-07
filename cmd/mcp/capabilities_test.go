@@ -112,3 +112,33 @@ func TestCappedKeyExecuteTool(t *testing.T) {
 		t.Fatalf("execute_tool inbox_claim must be refused by the guard: %s", raw)
 	}
 }
+
+// A capped key's initialize answer carries instructions about its own
+// tools only; an uncapped one gets the full text.
+func TestCappedKeyInstructions(t *testing.T) {
+	h := toolsE2E(t)
+	init := map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{
+		"protocolVersion": "2025-06-18", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "t", "version": "1"},
+	}}
+	instructions := func(p *auth.Principal) string {
+		out := mcpPost(t, h, p, init)
+		result, _ := out["result"].(map[string]any)
+		s, _ := result["instructions"].(string)
+		return s
+	}
+	full := instructions(nil)
+	agent := instructions(agentPrincipal())
+	if !strings.Contains(full, "report_status") || !strings.Contains(full, "inbox_convert") {
+		t.Fatalf("uncapped keys keep the full instructions: %s", full)
+	}
+	for _, want := range []string{"code_search", "blackboard_write", "plan_update_item", "skopos_context"} {
+		if !strings.Contains(agent, want) {
+			t.Errorf("agent instructions miss %s: %s", want, agent)
+		}
+	}
+	for _, not := range []string{"report_status", "inbox_convert", "plan_create", "inbox_claim"} {
+		if strings.Contains(agent, not) {
+			t.Errorf("agent instructions mention %s: %s", not, agent)
+		}
+	}
+}

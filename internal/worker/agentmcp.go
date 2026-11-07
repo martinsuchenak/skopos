@@ -147,10 +147,15 @@ func WriteAgentMCPConfig(stateDir, base, key, operatorConfig string) (string, er
 func (w *Worker) EnableAgentMCP(path string) { w.agentMCP = path }
 
 // skoposPrompt is what a stage prompt says about skopos: nil when the run
-// has no skopos tools (no agent key, or a codex run). branch is the branch
-// whose index fits the stage (the item branch for review, the base
-// otherwise); planID and steps let implement mark its steps.
-func (w *Worker) skoposPrompt(run *Run, account *Account, base, branch, phase, planID string, steps []Step) map[string]any {
+// has no skopos tools (no agent key, or a codex run). branch is the item
+// branch; head is the commit a review stage reviews ("" for plan and
+// implement); planID and steps let implement mark its steps.
+//
+// The code tools appear only when the workspace's code_index switch is on
+// and the server holds a usable index, and the prompt names exactly which
+// branch that is (indexState): the item branch when its index is at the
+// reviewed commit, else the default branch — with what it does not show.
+func (w *Worker) skoposPrompt(ctx context.Context, run *Run, account *Account, base, branch, phase, planID string, steps []Step, head string) map[string]any {
 	if w.agentMCP == "" || !runnerHasSkopos(account.Runner) {
 		return nil
 	}
@@ -158,9 +163,42 @@ func (w *Worker) skoposPrompt(run *Run, account *Account, base, branch, phase, p
 	if runner == "" {
 		runner = "claude"
 	}
-	return map[string]any{
+	out := map[string]any{
 		"Workspace": run.WorkspaceID, "Base": base, "Branch": branch,
 		"Author":    runner + "@" + run.ID,
 		"Implement": phase == "implement", "PlanID": planID, "Steps": steps,
+	}
+	if ib, note := w.indexState(ctx, run.WorkspaceID, base, branch, phase, head); ib != "" {
+		out["IndexBranch"], out["IndexNote"] = ib, note
+	}
+	return out
+}
+
+// indexState picks the branch whose index fits the stage, and the sentence
+// that says what it does and does not show. "" = no usable index (the
+// switch is off, the server has none yet, or it could not be asked).
+func (w *Worker) indexState(ctx context.Context, ws, base, branch, phase, head string) (string, string) {
+	if !w.indexEnabled(ws) {
+		return "", ""
+	}
+	qctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	indexed, err := w.client.IndexedBranches(qctx, ws)
+	if err != nil {
+		return "", ""
+	}
+	if head != "" && branch != "" && indexed[branch] != "" && indexed[branch] == head {
+		return branch, "It is indexed at exactly the commit you are reviewing."
+	}
+	if _, ok := indexed[base]; !ok {
+		return "", ""
+	}
+	switch phase {
+	case "plan":
+		return base, "It may lag the newest commits on " + base + "."
+	case "implement":
+		return base, "Your own changes are not in it: for code you changed or added, read the files."
+	default:
+		return base, "The branch under review is not indexed at this commit, so the index shows " + base + ": use the diff for what changed."
 	}
 }

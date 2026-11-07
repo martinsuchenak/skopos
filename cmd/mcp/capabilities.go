@@ -142,7 +142,7 @@ func filterToolsList(next http.Handler) http.Handler {
 				return
 			}
 		}
-		if envelope.Method != "tools/list" {
+		if envelope.Method != "tools/list" && envelope.Method != "initialize" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -150,7 +150,11 @@ func filterToolsList(next http.Handler) http.Handler {
 		next.ServeHTTP(rec, r)
 		out := rec.Body.Bytes()
 		if strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
-			if filtered, ok := filterToolsJSON(r.Context(), out); ok {
+			rewrite := filterToolsJSON
+			if envelope.Method == "initialize" {
+				rewrite = cappedInitializeJSON
+			}
+			if filtered, ok := rewrite(r.Context(), out); ok {
 				out = filtered
 			}
 		}
@@ -193,4 +197,56 @@ func filterToolsJSON(ctx context.Context, raw []byte) ([]byte, bool) {
 		return nil, false
 	}
 	return out, true
+}
+
+// cappedInitializeJSON replaces the server instructions in a capped key's
+// initialize answer: the full text tells agents to report status, create
+// plans and work the inbox, which such a key may not do.
+func cappedInitializeJSON(ctx context.Context, raw []byte) ([]byte, bool) {
+	var resp map[string]any
+	if json.Unmarshal(raw, &resp) != nil {
+		return nil, false
+	}
+	result, _ := resp["result"].(map[string]any)
+	if result == nil {
+		return nil, false
+	}
+	result["instructions"] = cappedInstructions(ctx)
+	out, err := json.Marshal(resp)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+// cappedInstructions describes only what the caller's key may use.
+func cappedInstructions(ctx context.Context) string {
+	can := func(tool string) bool { return toolAllowed(ctx, tool) }
+	var b strings.Builder
+	b.WriteString("You are connected to **skopos**, shared memory and a code index for AI agents, with a key limited to the tools listed in tools/list. Pass `workspace_id` to every call.\n")
+	if can("skopos_context") {
+		b.WriteString("\n- Start with `skopos_context` (`workspace_id`, `branch`): recorded knowledge, active plans and sessions in one call.")
+	}
+	if can("blackboard_read") {
+		b.WriteString("\n- `blackboard_read` (`workspace_id`, `branch`): decisions, findings, bugs and debt other agents and people recorded.")
+	}
+	if can("blackboard_write") {
+		b.WriteString("\n- `blackboard_write`: record a decision and why, a bug you found, a non-obvious constraint — scope `branch` (with `branch_name`) or `project`; type decision, finding, warning, bug or debt; always set `author_agent_id`. Be selective.")
+	}
+	if can("code_search") {
+		b.WriteString("\n- Code index (pass `branch`): `code_search` for names, signatures and text (`semantic: true` for meaning), `code_symbol` for exact definitions, `code_callers` / `code_callees` / `code_impact` for the call graph, `code_outline` for a file's definitions, `code_index_status` for which branches are indexed. The index can lag the newest commits; confirm in the files.")
+	}
+	if can("plan_read") {
+		b.WriteString("\n- `plan_read`: a plan and its items (pass `item_id` for one item).")
+	}
+	if can("plan_update_item") {
+		b.WriteString("\n- `plan_update_item`: mark an item `in_progress` or `done` as you work on it.")
+	}
+	if can("inbox_read") {
+		b.WriteString("\n- `inbox_list` / `inbox_read`: captured work items, read only.")
+	}
+	if can("report_status") {
+		b.WriteString("\n- `report_status`: checkpoint what you are doing (never `stuck` or `orphaned`).")
+	}
+	return b.String()
 }
