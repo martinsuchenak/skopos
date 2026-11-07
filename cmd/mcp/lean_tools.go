@@ -42,5 +42,5 @@ func registerTool(server *mcplib.Server, tool *mcplib.ToolBuilder, handler mcpli
 	if leanToolset && !coreTools[tool.Name()] {
 		tool = tool.Discoverable(tool.Name())
 	}
-	server.RegisterTool(tool, handler)
+	server.RegisterTool(tool, guardTool(tool.Name(), handler))
 }

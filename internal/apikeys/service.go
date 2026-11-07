@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -65,6 +66,34 @@ type CreateInput struct {
 	Groups        []string // group names or ids (docs/design/agent-pipeline.md §3)
 	AllWorkspaces bool
 	Approver      bool // may perform human-only workflow actions (agent-pipeline §2); root-only to grant
+	// Capabilities limit the key (internal/auth capabilities.go); Preset
+	// names a set in auth.Presets, joined with Capabilities. Neither = full
+	// access.
+	Capabilities []string
+	Preset       string
+}
+
+// resolveCapabilities expands a preset, joins it with explicit
+// capabilities, and validates the result (nil = full access).
+func resolveCapabilities(preset string, caps []string) ([]string, error) {
+	all := append([]string{}, caps...)
+	if preset = strings.TrimSpace(preset); preset != "" {
+		set, ok := auth.Presets[preset]
+		if !ok {
+			names := make([]string, 0, len(auth.Presets))
+			for n := range auth.Presets {
+				names = append(names, n)
+			}
+			sort.Strings(names)
+			return nil, fmt.Errorf("%w: unknown preset %q (known: %s)", ErrInvalidInput, preset, strings.Join(names, ", "))
+		}
+		all = append(all, set...)
+	}
+	out, err := auth.ParseCapabilities(all)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	}
+	return out, nil
 }
 
 // resolveGroups turns group refs (id first, then unique name) into rows,
@@ -163,6 +192,10 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (*CreateResult,
 		}
 	}
 
+	capabilities, err := resolveCapabilities(input.Preset, input.Capabilities)
+	if err != nil {
+		return nil, err
+	}
 	secret, err := GenerateSecret()
 	if err != nil {
 		return nil, err
@@ -174,6 +207,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (*CreateResult,
 		Prefix:        secret[:14],
 		AllWorkspaces: input.AllWorkspaces,
 		Approver:      input.Approver,
+		Capabilities:  capabilities,
 		Workspaces:    workspaces,
 		Groups:        groupNames,
 		CreatedAt:     now,
@@ -221,6 +255,10 @@ type UpdateInput struct {
 	Workspaces []string // nil = unchanged; ["*"] or explicit ids otherwise
 	Groups     []string // nil = unchanged; names or ids, [] clears
 	Approver   *bool    // nil = unchanged
+	// Capabilities: nil = unchanged; [] = full access; otherwise the new
+	// list. Preset (if set) is joined with it.
+	Capabilities *[]string
+	Preset       string
 }
 
 // Update edits a key's name and/or workspace scope. Revoked keys are frozen —
@@ -319,11 +357,23 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (*Ke
 	if input.Approver != nil {
 		approver = *input.Approver
 	}
-	if err := s.storage.Update(ctx, id, name, all, approver, workspaces, groupIDs); err != nil {
+	capabilities := existing.Capabilities
+	capsChanged := input.Capabilities != nil || strings.TrimSpace(input.Preset) != ""
+	if capsChanged {
+		var explicit []string
+		if input.Capabilities != nil {
+			explicit = *input.Capabilities
+		}
+		if capabilities, err = resolveCapabilities(input.Preset, explicit); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.storage.Update(ctx, id, name, all, approver, capabilities, workspaces, groupIDs); err != nil {
 		return nil, err
 	}
-	// A scope change re-shapes what the key's open SSE streams may see.
-	if input.Workspaces != nil || groupIDs != nil {
+	// A scope or capability change re-shapes what the key's open SSE
+	// streams may see (or whether it may hold one at all).
+	if input.Workspaces != nil || groupIDs != nil || capsChanged {
 		s.dropKeys([]string{id})
 	}
 	updated, err := s.storage.Get(ctx, id)

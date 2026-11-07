@@ -113,5 +113,5 @@ func NewMCPHandler(statusService *status.Service, blackboardService *blackboard.
 		registerPipelineTool(server, pipelineReader)
 	}
 
-	return http.HandlerFunc(server.HandleRequest)
+	return filterToolsList(http.HandlerFunc(server.HandleRequest))
 }

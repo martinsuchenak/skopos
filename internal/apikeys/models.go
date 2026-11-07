@@ -5,16 +5,19 @@ import "time"
 // Key is the API view of a stored key. The plaintext secret exists only in
 // the CreateResult returned once at creation; storage keeps a hash.
 type Key struct {
-	ID            string     `json:"id"`
-	Name          string     `json:"name"`
-	Prefix        string     `json:"key_prefix"`
-	AllWorkspaces bool       `json:"all_workspaces"`
-	Approver      bool       `json:"approver"` // may perform human-only workflow actions (agent-pipeline §2)
-	Workspaces    []string   `json:"workspaces"`
-	Groups        []string   `json:"groups"` // group names (unique) the key holds
-	CreatedAt     time.Time  `json:"created_at"`
-	LastUsedAt    *time.Time `json:"last_used_at,omitempty"`
-	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Prefix        string `json:"key_prefix"`
+	AllWorkspaces bool   `json:"all_workspaces"`
+	Approver      bool   `json:"approver"` // may perform human-only workflow actions (agent-pipeline §2)
+	// Capabilities limit the key's surfaces and areas (internal/auth
+	// capabilities.go); null = full access.
+	Capabilities []string   `json:"capabilities"`
+	Workspaces   []string   `json:"workspaces"`
+	Groups       []string   `json:"groups"` // group names (unique) the key holds
+	CreatedAt    time.Time  `json:"created_at"`
+	LastUsedAt   *time.Time `json:"last_used_at,omitempty"`
+	RevokedAt    *time.Time `json:"revoked_at,omitempty"`
 }
 
 // CreateResult carries the generated secret exactly once.

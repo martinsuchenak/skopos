@@ -50,6 +50,8 @@ func keyCreateCmd() *cli.Command {
 			&cli.StringSliceFlag{Name: "group", Usage: "Workspace group name or id the key holds (repeat or comma-separate)"},
 			&cli.BoolFlag{Name: "all-workspaces", Usage: "Grant access to every workspace"},
 			&cli.BoolFlag{Name: "approver", Usage: "Grant the approver permission (human-only workflow actions; never for agent or worker keys)"},
+			&cli.StringFlag{Name: "preset", Usage: "Limit the key to a capability preset (agent: MCP only — code read, blackboard and plans write)"},
+			&cli.StringSliceFlag{Name: "capability", Usage: "Limit the key to these capabilities (rest, mcp, <area>:read|write; repeat or comma-separate); none = full access"},
 		),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			name := strings.TrimSpace(cmd.GetString("name"))
@@ -69,6 +71,12 @@ func keyCreateCmd() *cli.Command {
 			if len(groups) > 0 {
 				body["groups"] = groups
 			}
+			if preset := strings.TrimSpace(cmd.GetString("preset")); preset != "" {
+				body["preset"] = preset
+			}
+			if caps := cmd.GetStringSlice("capability"); len(caps) > 0 {
+				body["capabilities"] = caps
+			}
 			var result apikeys.CreateResult
 			if err := keysCall(ctx, cmd, http.MethodPost, "/api/keys", body, &result); err != nil {
 				return err
@@ -83,6 +91,7 @@ func keyCreateCmd() *cli.Command {
 			if len(result.Key.Groups) > 0 {
 				fmt.Printf("  groups: %s\n", strings.Join(result.Key.Groups, ", "))
 			}
+			fmt.Printf("  capabilities: %s\n", capabilitiesLabel(result.Key.Capabilities))
 			return nil
 		},
 	}
@@ -107,7 +116,11 @@ func keyListCmd() *cli.Command {
 				if k.RevokedAt != nil {
 					status = "  [revoked]"
 				}
-				fmt.Printf("%s  %-20s %-17s %s%s\n", k.ID, k.Name, k.Prefix, scopeLabel(k), status)
+				caps := ""
+				if k.Capabilities != nil {
+					caps = "  [" + capabilitiesLabel(k.Capabilities) + "]"
+				}
+				fmt.Printf("%s  %-20s %-17s %s%s%s\n", k.ID, k.Name, k.Prefix, scopeLabel(k), caps, status)
 			}
 			return nil
 		},
@@ -148,6 +161,7 @@ func whoamiCmd() *cli.Command {
 					AllWorkspaces bool     `json:"all_workspaces"`
 					Approver      bool     `json:"approver"`
 					Workspaces    []string `json:"workspaces"`
+					Capabilities  []string `json:"capabilities"`
 				} `json:"key"`
 				Groups []struct {
 					ID       string   `json:"id"`
@@ -172,6 +186,7 @@ func whoamiCmd() *cli.Command {
 					label += "  [approver]"
 				}
 				fmt.Printf("key %s (%s) — scope: %s\n", who.Key.ID, who.Key.Name, label)
+				fmt.Printf("  capabilities: %s\n", capabilitiesLabel(who.Key.Capabilities))
 			}
 			for _, g := range who.Groups {
 				fmt.Printf("  group: %s", g.Name)
@@ -212,6 +227,9 @@ func keyEditCmd() *cli.Command {
 			&cli.BoolFlag{Name: "all-workspaces", Usage: "Grant access to every workspace (replaces the list)"},
 			&cli.BoolFlag{Name: "approver", Usage: "Grant the approver permission"},
 			&cli.BoolFlag{Name: "no-approver", Usage: "Remove the approver permission"},
+			&cli.StringFlag{Name: "preset", Usage: "Set the key's capabilities to a preset (joined with --capability)"},
+			&cli.StringSliceFlag{Name: "capability", Usage: "Set the key's capabilities (replaces the current list)"},
+			&cli.BoolFlag{Name: "full-access", Usage: "Remove every capability limit"},
 		),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			args := cmd.GetArgs()
@@ -239,8 +257,19 @@ func keyEditCmd() *cli.Command {
 			case cmd.GetBool("approver"):
 				body["approver"] = true
 			}
+			switch {
+			case cmd.GetBool("full-access"):
+				body["capabilities"] = []string{}
+			default:
+				if caps := cmd.GetStringSlice("capability"); len(caps) > 0 {
+					body["capabilities"] = caps
+				}
+				if preset := strings.TrimSpace(cmd.GetString("preset")); preset != "" {
+					body["preset"] = preset
+				}
+			}
 			if len(body) == 0 {
-				return fmt.Errorf("nothing to edit: pass --name, --workspace, --group, --approver, or --all-workspaces")
+				return fmt.Errorf("nothing to edit: pass --name, --workspace, --group, --approver, --all-workspaces, --preset, --capability or --full-access")
 			}
 			var key apikeys.Key
 			if err := keysCall(ctx, cmd, http.MethodPatch, "/api/keys/"+strings.TrimSpace(args[0]), body, &key); err != nil {
@@ -254,6 +283,7 @@ func keyEditCmd() *cli.Command {
 			if len(key.Groups) > 0 {
 				fmt.Printf("  groups: %s\n", strings.Join(key.Groups, ", "))
 			}
+			fmt.Printf("  capabilities: %s\n", capabilitiesLabel(key.Capabilities))
 			return nil
 		},
 	}
@@ -377,4 +407,16 @@ func keysDo(ctx context.Context, serverURL, apiKey, method, path string, body an
 		}
 	}
 	return nil
+}
+
+// capabilitiesLabel renders a key's capabilities ("full access" when it has
+// none).
+func capabilitiesLabel(caps []string) string {
+	if caps == nil {
+		return "full access"
+	}
+	if len(caps) == 0 {
+		return "none"
+	}
+	return strings.Join(caps, ", ")
 }

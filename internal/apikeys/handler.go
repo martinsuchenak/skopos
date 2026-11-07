@@ -46,6 +46,9 @@ type createRequest struct {
 	Workspaces []string `json:"workspaces"` // exact ids, or ["*"] for all
 	Groups     []string `json:"groups"`     // group names or ids
 	Approver   bool     `json:"approver"`
+	// Capabilities and/or a preset limit the key; neither = full access.
+	Capabilities []string `json:"capabilities"`
+	Preset       string   `json:"preset"`
 }
 
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
@@ -58,10 +61,12 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := h.service.Create(r.Context(), CreateInput{
-		Name:       req.Name,
-		Workspaces: req.Workspaces,
-		Groups:     req.Groups,
-		Approver:   req.Approver,
+		Name:         req.Name,
+		Workspaces:   req.Workspaces,
+		Groups:       req.Groups,
+		Approver:     req.Approver,
+		Capabilities: req.Capabilities,
+		Preset:       req.Preset,
 	})
 	if err != nil {
 		if errors.Is(err, ErrInvalidInput) {
@@ -97,6 +102,9 @@ type updateRequest struct {
 	Workspaces *[]string `json:"workspaces"`
 	Groups     *[]string `json:"groups"`
 	Approver   *bool     `json:"approver"`
+	// Capabilities: absent = unchanged, [] = full access. Preset joins it.
+	Capabilities *[]string `json:"capabilities"`
+	Preset       string    `json:"preset"`
 }
 
 // Update handles PATCH /api/keys/{id}: partial edit of name and/or scope.
@@ -109,7 +117,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	input := UpdateInput{Name: req.Name, Approver: req.Approver}
+	input := UpdateInput{Name: req.Name, Approver: req.Approver, Capabilities: req.Capabilities, Preset: req.Preset}
 	if req.Workspaces != nil {
 		input.Workspaces = *req.Workspaces
 	}
@@ -229,6 +237,7 @@ func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 			"all_workspaces": p.AllWorkspaces,
 			"approver":       p.Approver,
 			"workspaces":     p.WorkspaceList(),
+			"capabilities":   p.CapabilityList(), // null = full access
 		}
 		if resolution != nil {
 			resp["groups"] = resolution.Groups

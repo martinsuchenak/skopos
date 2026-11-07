@@ -3,6 +3,7 @@ package apikeys
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/martinsuchenak/skopos/internal/dbtime"
@@ -31,10 +32,11 @@ func (s *Storage) LookupKey(ctx context.Context, keyHash string) (*auth.KeyInfo,
 		all      int
 		approver int
 		revoked  sql.NullString
+		caps     sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, all_workspaces, approver, revoked_at FROM api_keys WHERE key_hash = ?`, keyHash,
-	).Scan(&id, &name, &all, &approver, &revoked)
+		`SELECT id, name, all_workspaces, approver, revoked_at, capabilities FROM api_keys WHERE key_hash = ?`, keyHash,
+	).Scan(&id, &name, &all, &approver, &revoked, &caps)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -71,12 +73,17 @@ func (s *Storage) LookupKey(ctx context.Context, keyHash string) (*auth.KeyInfo,
 			sort.Strings(workspaces)
 		}
 	}
+	capabilities, err := parseCapabilities(caps)
+	if err != nil {
+		return nil, err
+	}
 	return &auth.KeyInfo{
 		ID:            id,
 		Name:          name,
 		AllWorkspaces: all != 0,
 		Approver:      approver != 0,
 		Workspaces:    workspaces,
+		Capabilities:  capabilities,
 	}, nil
 }
 
@@ -208,9 +215,9 @@ func (s *Storage) WorkspaceExists(ctx context.Context, id string) (bool, error) 
 // Write inserts a key with its hash, explicit workspace scope and groups.
 func (s *Storage) Write(ctx context.Context, key Key, keyHash string, groupIDs []string) error {
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO api_keys (id, name, key_hash, key_prefix, all_workspaces, approver, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		key.ID, key.Name, keyHash, key.Prefix, boolToInt(key.AllWorkspaces), boolToInt(key.Approver), formatTime(key.CreatedAt)); err != nil {
+		INSERT INTO api_keys (id, name, key_hash, key_prefix, all_workspaces, approver, capabilities, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		key.ID, key.Name, keyHash, key.Prefix, boolToInt(key.AllWorkspaces), boolToInt(key.Approver), capabilitiesArg(key.Capabilities), formatTime(key.CreatedAt)); err != nil {
 		return fmt.Errorf("inserting api key: %w", err)
 	}
 	for _, ws := range key.Workspaces {
@@ -228,7 +235,7 @@ func (s *Storage) Write(ctx context.Context, key Key, keyHash string, groupIDs [
 // List returns all keys (including revoked), newest first, without hashes.
 func (s *Storage) List(ctx context.Context) ([]Key, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, key_prefix, all_workspaces, approver, created_at, last_used_at, revoked_at
+		SELECT id, name, key_prefix, all_workspaces, approver, created_at, last_used_at, revoked_at, capabilities
 		FROM api_keys ORDER BY created_at DESC, id`)
 	if err != nil {
 		return nil, fmt.Errorf("listing api keys: %w", err)
@@ -239,8 +246,11 @@ func (s *Storage) List(ctx context.Context) ([]Key, error) {
 		var k Key
 		var all, approver int
 		var createdAt string
-		var lastUsed, revoked sql.NullString
-		if err := rows.Scan(&k.ID, &k.Name, &k.Prefix, &all, &approver, &createdAt, &lastUsed, &revoked); err != nil {
+		var lastUsed, revoked, caps sql.NullString
+		if err := rows.Scan(&k.ID, &k.Name, &k.Prefix, &all, &approver, &createdAt, &lastUsed, &revoked, &caps); err != nil {
+			return nil, err
+		}
+		if k.Capabilities, err = parseCapabilities(caps); err != nil {
 			return nil, err
 		}
 		k.AllWorkspaces = all != 0
@@ -297,6 +307,31 @@ func (s *Storage) Revoke(ctx context.Context, id string) (bool, error) {
 	return true, nil
 }
 
+// capabilitiesArg stores a capability list as JSON; nil (full access) is
+// NULL.
+func capabilitiesArg(caps []string) any {
+	if caps == nil {
+		return nil
+	}
+	b, _ := json.Marshal(caps)
+	return string(b)
+}
+
+// parseCapabilities reads the stored list back (NULL = nil = full access).
+func parseCapabilities(v sql.NullString) ([]string, error) {
+	if !v.Valid {
+		return nil, nil
+	}
+	var caps []string
+	if err := json.Unmarshal([]byte(v.String), &caps); err != nil {
+		return nil, fmt.Errorf("api key capabilities: %w", err)
+	}
+	if caps == nil {
+		caps = []string{}
+	}
+	return caps, nil
+}
+
 func boolToInt(b bool) int {
 	if b {
 		return 1
@@ -329,11 +364,12 @@ func (s *Storage) Get(ctx context.Context, id string) (Key, error) {
 		createdAt string
 		lastUsed  sql.NullString
 		revoked   sql.NullString
+		caps      sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, name, key_prefix, all_workspaces, approver, created_at, last_used_at, revoked_at
+		SELECT id, name, key_prefix, all_workspaces, approver, created_at, last_used_at, revoked_at, capabilities
 		FROM api_keys WHERE id = ?`, id,
-	).Scan(&k.ID, &k.Name, &k.Prefix, &all, &approver, &createdAt, &lastUsed, &revoked)
+	).Scan(&k.ID, &k.Name, &k.Prefix, &all, &approver, &createdAt, &lastUsed, &revoked, &caps)
 	if errors.Is(err, sql.ErrNoRows) {
 		return k, ErrNotFound
 	}
@@ -350,6 +386,9 @@ func (s *Storage) Get(ctx context.Context, id string) (Key, error) {
 	if revoked.Valid {
 		t := parseTime(revoked.String)
 		k.RevokedAt = &t
+	}
+	if k.Capabilities, err = parseCapabilities(caps); err != nil {
+		return k, err
 	}
 	if k.Workspaces, err = s.listWorkspaces(ctx, id); err != nil {
 		return k, err
@@ -370,15 +409,15 @@ func (s *Storage) Get(ctx context.Context, id string) (Key, error) {
 // workspace scope replaced, and the group membership replaced (nil groupIDs
 // leaves groups unchanged) in one transaction. approver is the effective
 // flag; the service resolves "unchanged" before calling.
-func (s *Storage) Update(ctx context.Context, id, name string, all, approver bool, workspaces []string, groupIDs *[]string) error {
+func (s *Storage) Update(ctx context.Context, id, name string, all, approver bool, capabilities, workspaces []string, groupIDs *[]string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	res, err := tx.ExecContext(ctx,
-		`UPDATE api_keys SET name = ?, all_workspaces = ?, approver = ? WHERE id = ?`,
-		name, boolToInt(all), boolToInt(approver), id)
+		`UPDATE api_keys SET name = ?, all_workspaces = ?, approver = ?, capabilities = ? WHERE id = ?`,
+		name, boolToInt(all), boolToInt(approver), capabilitiesArg(capabilities), id)
 	if err != nil {
 		return fmt.Errorf("updating api key: %w", err)
 	}

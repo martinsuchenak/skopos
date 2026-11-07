@@ -229,6 +229,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
     key_prefix     TEXT NOT NULL,
     all_workspaces INTEGER NOT NULL DEFAULT 0,
     approver       INTEGER NOT NULL DEFAULT 0,
+    -- key capabilities: JSON array of surfaces/areas, NULL = full access
+    capabilities   TEXT CHECK (capabilities IS NULL OR json_valid(capabilities)),
     created_at     TEXT NOT NULL,
     last_used_at   TEXT,
     revoked_at     TEXT

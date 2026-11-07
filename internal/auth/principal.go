@@ -26,6 +26,9 @@ type Principal struct {
 	AllWorkspaces bool                // "*" scope
 	Workspaces    map[string]struct{} // explicit scope
 	Approver      bool                // may perform human-only workflow actions (agent-pipeline §2)
+	// Capabilities limit the key's surfaces and areas (capabilities.go);
+	// nil = not capped (full access).
+	Capabilities map[string]struct{}
 }
 
 // CanAccess reports whether the principal may read/write workspace ws.
@@ -59,6 +62,7 @@ type KeyInfo struct {
 	AllWorkspaces bool
 	Approver      bool
 	Workspaces    []string
+	Capabilities  []string // nil = full access
 }
 
 // KeyLookup resolves a key hash to its scope; implemented by the apikeys
@@ -134,6 +138,12 @@ func (a *Authenticator) Authenticate(r *http.Request) *Principal {
 	for _, w := range info.Workspaces {
 		p.Workspaces[w] = struct{}{}
 	}
+	if info.Capabilities != nil {
+		p.Capabilities = make(map[string]struct{}, len(info.Capabilities))
+		for _, c := range info.Capabilities {
+			p.Capabilities[c] = struct{}{}
+		}
+	}
 	return p
 }
 
@@ -153,7 +163,8 @@ func HashKey(key string) string {
 }
 
 // Middleware authenticates every request, injects the Principal into the
-// request context, and rejects unauthenticated requests with 401. CORS
+// request context, rejects unauthenticated requests with 401, and a capped
+// key's requests outside its capabilities (surface or area) with 403. CORS
 // preflight (OPTIONS) requests always pass, matching APIKeyMiddleware.
 func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -163,6 +174,12 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+				return
+			}
+			if ok, why := p.AllowsRequest(r.Method, r.URL.Path); !ok {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": why})
 				return
 			}
 			r = r.WithContext(WithPrincipal(r.Context(), p))
