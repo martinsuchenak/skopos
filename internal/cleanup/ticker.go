@@ -114,6 +114,11 @@ func (c *Cleaner) clean(ctx context.Context) error {
 	}
 	inboxDeleted, _ := inboxResult.RowsAffected()
 
+	// Run logs (gzipped batches, Unix ms) past the retention.
+	if _, err := c.db.ExecContext(ctx, `DELETE FROM run_logs WHERE created_ms < ?`, cutoff.UnixMilli()); err != nil {
+		return fmt.Errorf("deleting old run logs: %w", err)
+	}
+
 	agentsResult, err := c.db.ExecContext(ctx, `DELETE FROM agents WHERE last_seen_at < ?`, cutoffStr)
 	if err != nil {
 		return fmt.Errorf("deleting stale agents: %w", err)

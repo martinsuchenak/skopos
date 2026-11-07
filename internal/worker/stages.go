@@ -895,7 +895,11 @@ func (w *Worker) proposeAmendment(ctx context.Context, run *Run, item *Item, ir 
 	if err := w.client.Transition(ctx, run.ItemID, "awaiting_approval", "amendment: "+firstLine(ir.Reason)); err != nil {
 		return err
 	}
-	return w.client.Pause(ctx, run.ID, w.cfg.ID, "amendment proposed: "+firstLine(ir.Reason), time.Time{})
+	reason := "amendment proposed: " + firstLine(ir.Reason)
+	rl := runLogFrom(ctx)
+	rl.line("worker", "paused for your decision: "+reason, false)
+	rl.flush()
+	return w.client.Pause(ctx, run.ID, w.cfg.ID, reason, time.Time{})
 }
 
 // runKnowledge is what an implement/review/qa prompt carries: the repo

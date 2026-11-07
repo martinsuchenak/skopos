@@ -1907,6 +1907,72 @@ paths:
         "401": { description: Unauthorized }
         "404": { description: Unknown run }
 
+  /api/runs/{id}/log:
+    post:
+      summary: Append lines to a run's log (the worker holding the claim)
+      description: |
+        The worker streams what the run's agent, setup and checks print, in batches of
+        newline-delimited records. Authorised like a heartbeat: the claim's worker, key and
+        lease token (X-Skopos-Worker, X-Skopos-Lease) must match — in any status, so the last
+        lines may follow the report. Records that do not parse are skipped; text is cut to
+        4000 bytes; a run's log stops at 8 MB with one marker line. Wakes readers waiting
+        on the run (GET with `wait`).
+      operationId: appendRunLog
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - { name: X-Skopos-Worker, in: header, required: true, schema: { type: string } }
+        - { name: X-Skopos-Lease, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/x-ndjson:
+            schema:
+              type: string
+              description: 'One JSON record per line: {"t": <unix ms>, "src": "worker|setup|check|agent", "msg": "...", "err": true?}'
+      responses:
+        "200":
+          description: How many records were stored
+          content:
+            application/json:
+              schema: { type: object, properties: { stored: { type: integer } } }
+        "400": { description: Missing worker or lease, or an unreadable body }
+        "401": { description: Unauthorized }
+        "404": { description: Unknown run }
+        "409": { description: The worker, key or lease does not hold the claim }
+    get:
+      summary: Read a run's log
+      description: Records after the cursor (a page of batches at a time; read again with `after=cursor` while `more`), or the last `tail` records on a first read. With `wait`, a read that finds nothing new waits up to that many seconds (at most 25) for the run's next batch. Needs runs:read on a capped key.
+      operationId: readRunLog
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - { name: after, in: query, schema: { type: integer, default: 0 }, description: The cursor of the previous read }
+        - { name: tail, in: query, schema: { type: integer }, description: "On a first read (after=0): only the last N records" }
+        - { name: wait, in: query, schema: { type: integer, maximum: 25 }, description: "Long-poll: seconds to wait for the next batch when nothing is new" }
+      responses:
+        "200":
+          description: Log records
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  records:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        t: { type: integer, description: Unix ms (the worker's clock) }
+                        src: { type: string, enum: [worker, setup, check, agent] }
+                        msg: { type: string }
+                        err: { type: boolean }
+                  cursor: { type: integer }
+                  more: { type: boolean }
+                  truncated: { type: boolean, description: The log reached its size cap }
+        "401": { description: Unauthorized }
+        "404": { description: Unknown run, or out of scope }
+
   /api/runs/claim:
     post:
       summary: A worker polls for its next run (affinity first, then the queue by scope and stage preference)

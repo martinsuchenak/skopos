@@ -737,6 +737,35 @@ one). Several workers can serve the same repo, each with its own clone. The
 approved base is a commit, so it doesn't matter which worker planned the
 item. Branch checkout needs a unix host.
 
+## Run logs
+
+While a run executes, the worker streams what its agent, setup and checks
+print:
+
+- **To skopos,** always. The dashboard's item view shows it: **Watch live**
+  on the running step, **Log** on finished steps and in Run history. Lines
+  appear within a second (the panel long-polls); skopos keeps each run's log (8 MB at most)
+  for the cleanup retention (`cleanup.retention_days`, 30 days by default).
+- **To the log output,** when one is configured (`LOG_OUTPUT_URL` in
+  `skopos-worker.env`; see [Log output](../configuration.md#log-output)).
+  Each line carries `run_id`, `item_id`, `workspace`, `stage` and `src`.
+
+What a run log holds:
+
+- **Readable lines, not raw JSON:** the agent's text, each tool call (`▸ Bash
+  go test ./...`) and the first lines of each tool result. Claude runs use
+  `--output-format stream-json` for this; opencode and codex already print
+  events.
+- **Setup and checks:** each command (`$ …`), its output and whether it
+  passed.
+- **The worker's own notes:** the run starting, each agent turn and what it
+  cost, pauses, the result.
+- **No secrets:** the worker replaces its keys, push tokens, account
+  credentials and env-file values with `[redacted]` before a line leaves it.
+
+The raw agent output still lands in `<state_dir>/runs/<run>/<stage>.log`.
+Reading a log takes `runs:read`, so agent keys can't.
+
 ## Secrets
 
 No secrets live in the service definition or the TOML. The daemon loads
@@ -746,8 +775,9 @@ No secrets live in the service definition or the TOML. The daemon loads
   `export KEY=` forms.
 - **Precedence everywhere:** flags > real environment > env file > `[client]`
   in the TOML.
-- **What goes there:** `SKOPOS_API_KEY`, each repo's `push.token_env` value,
-  and any `${VAR}` your accounts reference.
+- **What goes there:** `SKOPOS_API_KEY`, `SKOPOS_AGENT_KEY`, each repo's
+  `push.token_env` value, any `${VAR}` your accounts reference, and the log
+  output settings (`LOG_OUTPUT_URL`, `LOG_OUTPUT_HEADER`).
 - **What agents see:** env-file values never reach an agent directly. Only an
   account's `env = { NAME = "${VAR}" }` passes a credential to the agent run.
 

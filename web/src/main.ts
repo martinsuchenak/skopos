@@ -53,8 +53,12 @@ type RunRow = { id: string; stage: string; status: string; worker_id?: string; r
 // One row of the preview's stage tracker. state: done | run | you | bad |
 // up (not reached) | skip (not configured, or never reached on a discarded item).
 type LinkRow = { key: string; href: string; text: string };
+// One line of a run's log (GET /api/runs/{id}/log), and a tracker button
+// that opens a run's log.
+type LogRecord = { t: number; src: string; msg: string; err?: boolean; k?: number };
+type LogButton = { key: string; id: string; text: string };
 type MoreRow = { key: string; label: string; text: string; mono?: boolean };
-type StageRow = { key: string; name: string; who: string; state: string; when: string; round: string; lines: string[]; links: LinkRow[]; more: MoreRow[]; moreLabel: string; warn: string };
+type StageRow = { key: string; name: string; who: string; state: string; when: string; round: string; lines: string[]; links: LinkRow[]; more: MoreRow[]; moreLabel: string; warn: string; logs: LogButton[] };
 type TextRow = { key: string; ic: string; text: string; more?: MoreRow[] };
 type AuditEntry = { id: string; action: string; actor: string; via?: string; notes?: string; created_at: string };
 // wsLocked: a workflow item cannot move workspace (its runs, plan and
@@ -84,6 +88,13 @@ let stageCache: { inputs: unknown[]; model: unknown } | null = null;
 // The open preview's slow poll: run state that changes without an inbox
 // event (a review run starting, a worker going offline, a lease running out).
 let previewPoll: ReturnType<typeof setInterval> | null = null;
+
+// The run log panel's long-poll (aborted when the panel closes), and the
+// running key its lines get (stable while old lines are trimmed).
+let runLogAbort: AbortController | null = null;
+let runLogKey = 0;
+// Lines the panel keeps (the server keeps the whole log).
+const RUN_LOG_KEEP = 5000;
 
 declare global { interface Window { Alpine: typeof Alpine; app: () => object } }
 
@@ -157,6 +168,15 @@ const appState = () => ({
   previewWorkers: [] as WorkerSeen[],
   previewTimeline: [] as AuditEntry[],
   previewStatusSeen: '',
+  // The run log panel: the run it shows, its lines, the read cursor, and
+  // whether it scrolls with new lines (follow) — live while the run runs.
+  logRunId: '',
+  logRecords: [] as LogRecord[],
+  logCursor: 0,
+  logTruncated: false,
+  logLoading: false,
+  logFollow: true,
+  logError: '',
   workflowNote: '',
   workflowBusy: false,
   expandedInbox: null as InboxDetail | null,
@@ -1188,7 +1208,7 @@ const appState = () => ({
       await this.fetchPreviewRuns(item.id);
     } finally { this.secondOpinion.busy = false; }
   },
-  closeInboxPreview() { if (previewPoll) { clearInterval(previewPoll); previewPoll = null; } this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.previewCandidates = []; this.previewApprovedRev = null; this.previewPipe = null; this.previewStatusSeen = ''; this.previewWorkers = []; this.previewTimeline = []; this.workflowNote = ''; this.workflowBusy = false; },
+  closeInboxPreview() { this.closeRunLog(); if (previewPoll) { clearInterval(previewPoll); previewPoll = null; } this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.previewCandidates = []; this.previewApprovedRev = null; this.previewPipe = null; this.previewStatusSeen = ''; this.previewWorkers = []; this.previewTimeline = []; this.workflowNote = ''; this.workflowBusy = false; },
   // The newest revision of the previewed item's plan, while it waits at the
   // gate (revisions list newest first).
   async fetchPreviewRevision() {
@@ -1269,6 +1289,113 @@ const appState = () => ({
     this.previewRuns = (await res.json()) as RunRow[];
   },
   refreshPreviewRuns() { if (this.previewItem) this.fetchPreviewRuns(this.previewItem.id); },
+
+  // ---- run log panel ----
+  // A run's log: the last lines first, then each runlog event (or, with
+  // the stream down, a 5s poll) reads what came after the cursor.
+  logRun(): RunRow | undefined { return this.previewRuns.find((r: RunRow) => r.id === this.logRunId); },
+  logLive(): boolean { const r = this.logRun(); return !!r && (r.status === 'claimed' || r.status === 'running'); },
+  logTitle(): string {
+    const r = this.logRun();
+    if (!r) return 'Run log';
+    return [this.statusText(r.stage), r.runner, r.focus, r.worker_id, 'try ' + r.attempt].filter(Boolean).join(' · ');
+  },
+  async openRunLog(id: string) {
+    if (this.logRunId === id) return;
+    this.closeRunLog();
+    this.logRunId = id;
+    this.logLoading = true;
+    const abort = new AbortController();
+    runLogAbort = abort;
+    let res: Response;
+    try {
+      res = await this.authFetch('/api/runs/' + encodeURIComponent(id) + '/log?tail=2000', { signal: abort.signal });
+    } catch { return; }
+    if (abort.signal.aborted || this.logRunId !== id) return;
+    this.logLoading = false;
+    if (!res.ok) { this.logError = res.status === 403 ? 'This key may not read run logs.' : 'Could not load the log (HTTP ' + res.status + ').'; return; }
+    const page = await res.json() as { records: LogRecord[]; cursor: number; truncated: boolean };
+    this.logRecords = this.keyed(page.records || []);
+    this.logCursor = page.cursor || 0;
+    this.logTruncated = !!page.truncated;
+    this.logFollow = true;
+    this.scrollRunLog(true);
+    this.pollRunLog(id, abort);
+  },
+  keyed(recs: LogRecord[]): LogRecord[] { for (const r of recs) r.k = ++runLogKey; return recs; },
+  // Long-poll: while the run is live each read waits (up to 25s) for its
+  // next batch, so lines show within a second and nothing is missed between
+  // reads; a finished run's log is read to its end once.
+  async pollRunLog(id: string, abort: AbortController) {
+    while (this.logRunId === id && !abort.signal.aborted) {
+      const live = this.logLive();
+      let res: Response;
+      try {
+        res = await this.authFetch('/api/runs/' + encodeURIComponent(id) + '/log?after=' + this.logCursor + (live ? '&wait=25' : ''), { signal: abort.signal });
+      } catch {
+        if (abort.signal.aborted) return;
+        await new Promise(r => setTimeout(r, 5000)); // the network went: retry
+        continue;
+      }
+      if (abort.signal.aborted || this.logRunId !== id) return;
+      if (!res.ok) { await new Promise(r => setTimeout(r, 5000)); continue; } // authFetch answers 503 when the network went
+      const page = await res.json() as { records: LogRecord[]; cursor: number; more: boolean; truncated: boolean };
+      if (this.logRunId !== id) return;
+      if (page.records && page.records.length) {
+        const all = this.logRecords.concat(this.keyed(page.records));
+        this.logRecords = all.length > RUN_LOG_KEEP ? all.slice(all.length - RUN_LOG_KEEP) : all;
+        this.scrollRunLog();
+      }
+      this.logCursor = page.cursor || this.logCursor;
+      this.logTruncated = !!page.truncated;
+      if (!live && !page.more) return;
+    }
+  },
+  closeRunLog() {
+    if (runLogAbort) { runLogAbort.abort(); runLogAbort = null; }
+    this.logRunId = ''; this.logRecords = []; this.logCursor = 0; this.logTruncated = false; this.logLoading = false; this.logError = '';
+  },
+  // Follow: stay at the bottom while new lines arrive, unless the reader
+  // scrolled up (then the panel stays put until they scroll back down).
+  scrollRunLog(reveal = false) {
+    // After the lines render (x-for runs after this tick).
+    this.$nextTick(() => setTimeout(() => {
+      const el = document.getElementById('run-log-lines');
+      if (!el) return;
+      if (this.logFollow) el.scrollTop = el.scrollHeight;
+      if (reveal) el.closest('section')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }, 0));
+  },
+  // What the panel says without lines ('' = it has lines, or is loading).
+  logEmptyText(): string {
+    if (this.logLoading || this.logError || this.logRecords.length > 0) return '';
+    return this.logLive() ? 'Nothing yet: lines appear as the worker sends them.' : 'No log for this run (it ran before run logs, or on a worker that could not send them).';
+  },
+  followRunLog() { this.logFollow = true; this.scrollRunLog(); },
+  onRunLogScroll(e: globalThis.Event) {
+    const el = e.target as HTMLElement;
+    this.logFollow = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  },
+  logTime(t: number): string { return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }); },
+  logSrc(src: string): string { return src === 'worker' ? 'wkr' : src; },
+  // The tracker's log buttons for a step: running runs (live), the failed
+  // run, or the newest finished run of the step.
+  stepLogs(step: number, state: string): LogButton[] {
+    const onStep = (r: RunRow) => (this.runActive(r) ? this.runStep(r) === step : (step === 4 ? r.stage === 'implement' : this.stageOf(r.stage) === step)) && r.status !== 'queued';
+    const live = (r: RunRow) => r.status === 'claimed' || r.status === 'running';
+    let runs: RunRow[];
+    if (state === 'up' || state === 'skip') runs = [];
+    else if (state === 'run') runs = this.previewRuns.filter((r: RunRow) => onStep(r) && this.runActive(r));
+    else if (state === 'bad') runs = this.previewRuns.filter((r: RunRow) => onStep(r) && r.status === 'failed').slice(0, 3);
+    else if (state === 'done') runs = this.previewRuns.filter((r: RunRow) => onStep(r) && r.status === 'succeeded').slice(0, step === 5 ? 3 : 1);
+    else runs = this.previewRuns.filter(onStep).slice(0, 1); // waiting on you: the run that stopped here
+    const many = runs.length > 1;
+    return runs.map((r: RunRow) => ({
+      key: r.id, id: r.id,
+      text: (live(r) ? 'Watch live' : 'Log') + (many ? ' (' + ([r.focus, r.runner].filter(Boolean).join(', ') || 'try ' + r.attempt) + ')' : ''),
+    }));
+  },
+
   // The commit Mark done approves: the head the latest successful
   // implementation pushed (runs are newest first). Shown read-only and
   // computed from the run list, so it follows a new push live. It used to
@@ -1633,7 +1760,8 @@ const appState = () => ({
       // and a re-keyed row is re-created, closing an open fold-out. A kept
       // row still updates its time through the bindings.
       const moreLabel = i === 3 ? 'Setup output' : i === 4 ? 'Check output' : 'Findings and summaries';
-      return { key: i + '|' + state + '|' + round + '|' + lines.join('/') + '|' + warn + '|' + more.map((m: MoreRow) => m.key).join(','), name: d.name, who: d.who, state, when, round, lines, links, more, moreLabel, warn };
+      const logs = this.stepLogs(i, state);
+      return { key: i + '|' + state + '|' + round + '|' + lines.join('/') + '|' + warn + '|' + more.map((m: MoreRow) => m.key).join(',') + '|' + logs.map((l: LogButton) => l.id).join(','), name: d.name, who: d.who, state, when, round, lines, links, more, moreLabel, warn, logs };
     });
     return { rows, current: cur };
   },

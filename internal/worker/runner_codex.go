@@ -210,8 +210,10 @@ func (c codexRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	cmd.Stdin = strings.NewReader(r.Prompt)
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	var flush func()
+	cmd.Stdout, cmd.Stderr, flush = teeOutput(ctx, &stdout, &stderr, codexEventLines)
 	runErr := settled(cmd, cmd.Run())
+	flush()
 	writeRunLog(r.LogFile, stdout.Bytes(), stderr.Bytes())
 
 	res := parseCodexEvents(stdout.Bytes(), time.Now())

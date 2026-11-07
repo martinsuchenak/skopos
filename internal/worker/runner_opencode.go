@@ -141,8 +141,10 @@ func (o opencodeRunner) invoke(ctx context.Context, r AgentRun, prompt, session 
 	cmd.Dir = r.Dir
 	cmd.Env = env
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	var flush func()
+	cmd.Stdout, cmd.Stderr, flush = teeOutput(ctx, &stdout, &stderr, opencodeEventLines)
 	runErr := settled(cmd, cmd.Run())
+	flush()
 	writeRunLog(r.LogFile, stdout.Bytes(), stderr.Bytes())
 
 	res := parseOpencodeEvents(stdout.Bytes())

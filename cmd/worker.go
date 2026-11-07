@@ -87,7 +87,17 @@ func workerCmd() *cli.Command {
 				return err
 			}
 
-			log := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("worker", cfg.ID)
+			// The log output (--log-output-url): the worker's own lines and
+			// every run's log go there too. Read through the env file, like
+			// the keys.
+			logOut := logOutputFrom(cmd, resolveWorkerSetting)
+			ship, err := openLogOutput(logOut)
+			if err != nil {
+				return err
+			}
+			defer closeLogOutput(ship)
+			out, _ := logWriter(ship, "json")
+			log := slog.New(slog.NewJSONHandler(out, nil)).With("worker", cfg.ID)
 			for _, warn := range warnings {
 				log.Warn(warn)
 			}
@@ -98,6 +108,13 @@ func workerCmd() *cli.Command {
 			// Env-file values never reach agent runs (review low): the
 			// scrubber drops every key the file provided.
 			w.SetEnvFileKeys(fileKeys)
+			// Run logs never carry the worker's own credentials.
+			w.AddSecrets(key, resolveWorkerSetting(cmd.GetString("agent-key"), "SKOPOS_AGENT_KEY", ""))
+			w.AddSecrets(logOut.secrets()...)
+			if ship != nil {
+				w.SetLogOutput(ship)
+				log.Info("logs also go to the log output", "format", logOut.Format, "stream", logOut.Stream)
+			}
 
 			// Fail closed: every runner the accounts feed must be usable with
 			// its lockdown (e.g. claude's flags) — a CLI that can't would fail
@@ -140,6 +157,7 @@ func workerCmd() *cli.Command {
 				// Restart=on-failure, launchd KeepAlive, a supervisor loop)
 				// starts the new one.
 				log.Info("restarting on the upgraded binary", "exit_code", worker.ExitUpgrade)
+				closeLogOutput(ship) // os.Exit skips the deferred close
 				os.Exit(worker.ExitUpgrade)
 			}
 			if loopErr != nil && !errors.Is(loopErr, context.Canceled) {

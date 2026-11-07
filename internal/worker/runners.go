@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -212,7 +213,29 @@ func (w *Worker) runAgent(ctx context.Context, ar AgentRun) AgentResult {
 				"stage grants tools/env but is not contained for runner %q (sandbox settings only contain the claude runner — use a wrapper)", ar.Runner)}
 		}
 	}
-	return r.Run(ctx, ar)
+	rl := runLogFrom(ctx)
+	if rl != nil {
+		what := ar.Runner
+		if ar.Model != "" {
+			what += " (" + ar.Model + ")"
+		}
+		if ar.Resume {
+			what += ", resuming its session"
+		}
+		rl.notef("agent %s started: %s", what, strings.TrimSuffix(filepath.Base(ar.LogFile), ".log"))
+	}
+	res := r.Run(ctx, ar)
+	if rl != nil {
+		msg := "agent finished: " + string(res.Outcome)
+		if res.CostUSD > 0 {
+			msg += fmt.Sprintf(", $%.2f", res.CostUSD)
+		}
+		if res.Detail != "" {
+			msg += " — " + res.Detail
+		}
+		rl.line("worker", msg, res.Outcome != OutcomeOK)
+	}
+	return res
 }
 
 // --- structured output for runners without a native schema option ---
@@ -396,8 +419,10 @@ func (c commandRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 		cmd.Stdin = strings.NewReader(prompt)
 	}
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	var flush func()
+	cmd.Stdout, cmd.Stderr, flush = teeOutput(ctx, &stdout, &stderr, nil)
 	err := settled(cmd, cmd.Run())
+	flush()
 	writeRunLog(r.LogFile, stdout.Bytes(), stderr.Bytes())
 	res := AgentResult{Text: stdout.String()}
 	if errors.Is(cctx.Err(), context.DeadlineExceeded) {

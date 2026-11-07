@@ -34,9 +34,29 @@ versions follow [Semantic Versioning](https://semver.org/).
   indexed at the reviewed commit, else the default branch and the diff).
 - A capped key's MCP `initialize` answer describes only the tools it may
   call, and a capped key sends one request at a time (no batches).
+- **Live run logs.** Workers stream what a run's agent, setup and checks
+  print to skopos as it happens. The dashboard's item view shows it: Watch
+  live on the running step, Log on finished steps and in Run history.
+  Lines are readable (the agent's text, tool calls, the head of each tool
+  result, each setup/check command and its result), secrets are redacted
+  on the worker, and skopos keeps each run's log (8 MB cap) for the cleanup
+  retention. `GET /api/runs/{id}/log`.
+- **Log output.** `serve` and `worker` can also send their logs to an HTTP
+  log intake: `--log-output-url`, `--log-output-format`
+  (`ndjson` | `loki` | `elasticsearch`), `--log-output-stream`,
+  `--log-output-header` (env `LOG_OUTPUT_*`, config `log.output.*`). That
+  covers VictoriaLogs, Loki, Elasticsearch/OpenSearch, Vector and a knot
+  space's agent. Workers send their run logs there too, tagged with
+  `run_id`, `item_id`, `workspace` and `stage`.
 - **Stale branch indexes are dropped.** Every 6 hours the default-branch
   worker drops the index of each branch gone from origin and not rebuilt
   for 7 days, whoever indexed it (a worker or `skopos index push`).
+
+### Changed
+
+- Claude runs use `--output-format stream-json --verbose` (for the live
+  log). The result is read from the stream's `result` event; the lockdown
+  test (`SKOPOS_LIVE_CLAUDE=1`) passes with it.
 
 ### Fixed
 
@@ -50,6 +70,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 - To give agents the skopos tools, mint an agent key per worker and add
   `SKOPOS_AGENT_KEY` to `skopos-worker.env`; then switch indexing on for the
   workspaces you want (dashboard → workspace → pipeline settings).
+- Run logs need both sides on this release; a worker on an older server
+  gets 404s for its log batches and drops them (runs are unaffected).
 
 ## [0.21.2] — 2026-11-06
 

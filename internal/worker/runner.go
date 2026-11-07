@@ -9,11 +9,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -168,6 +170,8 @@ func scrubEnv(extra map[string]string, tokenEnvs, fileEnvKeys []string) []string
 		"SSH_AUTH_SOCK": true, "SSH_AGENT_PID": true, "GH_TOKEN": true, "GITHUB_TOKEN": true,
 		"GITEA_TOKEN": true, "SLACK_BOT_TOKEN": true, "SKOPOS_API_KEY": true,
 		"SKOPOS_APPROVER_KEY": true, "GIT_ASKPASS": true, "SSH_ASKPASS": true,
+		// The log output's URL and header may carry credentials.
+		"LOG_OUTPUT_URL": true, "LOG_OUTPUT_HEADER": true,
 	}
 	for _, tok := range tokenEnvs {
 		drop[tok] = true
@@ -217,7 +221,9 @@ type claudeJSON struct {
 // runClaude executes the claude CLI headless with the guards applied. Proven
 // in agent-trial through weeks of live runs; carried over nearly verbatim.
 func runClaude(ctx context.Context, r AgentRun) AgentResult {
-	args := []string{"-p", r.Prompt, "--output-format", "json", "--permission-mode", "dontAsk"}
+	// stream-json: events as they happen (the run log shows them live); the
+	// result event carries what --output-format json printed alone.
+	args := []string{"-p", r.Prompt, "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk"}
 	if r.Resume {
 		args = append(args, "--resume", r.SessionID)
 	} else if r.SessionID != "" {
@@ -244,22 +250,26 @@ func runClaude(ctx context.Context, r AgentRun) AgentResult {
 	containProcess(cmd) // a timeout stops the agent and every tool process it started
 	cmd.Dir = r.Dir
 	cmd.Env = withPWD(scrubEnv(r.Env, r.TokenEnvs, r.FileEnvKeys), r.Dir)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	// The event stream is not kept whole (tool results make it large): the
+	// raw copy streams to the log file, the result event and a tail are
+	// kept for the outcome.
+	var stderr bytes.Buffer
+	result := &claudeResultCatcher{}
+	raw, closeRaw := openRawLog(r.LogFile)
+	stdoutW, stderrW, flush := teeOutput(ctx, io.MultiWriter(raw, result), &stderr, claudeEventLines)
+	cmd.Stdout, cmd.Stderr = stdoutW, stderrW
 	err := settled(cmd, cmd.Run())
+	flush()
+	closeRaw(stderr.Bytes())
 
-	if r.LogFile != "" {
-		_ = os.MkdirAll(logsDirOf(r.LogFile), 0o700)
-		_ = os.WriteFile(r.LogFile, append(stdout.Bytes(), append([]byte("\n--- stderr\n"), stderr.Bytes()...)...), 0o600)
-	}
 	res := AgentResult{SessionID: r.SessionID}
 	if errors.Is(cctx.Err(), context.DeadlineExceeded) {
 		res.Outcome, res.Detail = OutcomeTimeout, fmt.Sprintf("no result after %s", r.Timeout)
 		return res
 	}
 	var out claudeJSON
-	if jerr := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &out); jerr != nil {
-		text := stdout.String() + "\n" + stderr.String()
+	if jerr := json.Unmarshal(result.result(), &out); jerr != nil {
+		text := result.plainText() + "\n" + stderr.String()
 		res.Outcome, res.Detail = classifyText(text, nil, err)
 		res.ResetAt = parseReset(text, time.Now())
 		return res
@@ -276,6 +286,99 @@ func runClaude(ctx context.Context, r AgentRun) AgentResult {
 	res.Outcome, res.Detail = classifyText(text, out.APIErrorStatus, err)
 	res.ResetAt = parseReset(text, time.Now())
 	return res
+}
+
+// claudeResultCatcher keeps the stream's result event (the last one, if
+// several) and the stdout lines that are not events (an old CLI, an error
+// printed before the first event) — never the events themselves: their tool
+// output must not decide the outcome (a file saying "rate limit" is not a
+// quota).
+type claudeResultCatcher struct {
+	mu       sync.Mutex
+	pending  []byte
+	skipping bool // inside a line past maxEventLine: dropped up to its newline
+	last     []byte
+	plain    []byte
+}
+
+// maxEventLine bounds one stream line the catcher holds.
+const maxEventLine = 64 << 20
+
+func (c *claudeResultCatcher) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.pending = append(c.pending, p...)
+	for {
+		i := bytes.IndexByte(c.pending, '\n')
+		if i < 0 {
+			break
+		}
+		if !c.skipping {
+			c.consider(c.pending[:i])
+		}
+		c.skipping = false
+		c.pending = c.pending[i+1:]
+	}
+	if len(c.pending) > maxEventLine { // not an event we need; drop it whole
+		c.pending, c.skipping = nil, true
+	}
+	return len(p), nil
+}
+
+func (c *claudeResultCatcher) consider(line []byte) {
+	line = bytes.TrimSpace(line)
+	if len(line) == 0 {
+		return
+	}
+	var probe struct {
+		Type string `json:"type"`
+	}
+	if line[0] != '{' || json.Unmarshal(line, &probe) != nil || probe.Type == "" {
+		c.plain = append(append(c.plain, line...), '\n')
+		if over := len(c.plain) - 64<<10; over > 0 {
+			c.plain = c.plain[over:]
+		}
+		return
+	}
+	if probe.Type == "result" {
+		c.last = bytes.Clone(line)
+	}
+}
+
+// result is the result event ("" when the stream had none); a trailing
+// line without a newline counts.
+func (c *claudeResultCatcher) result() []byte {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.pending) > 0 && !c.skipping {
+		c.consider(c.pending)
+	}
+	c.pending = nil
+	return c.last
+}
+
+// plainText is what stdout printed outside the event stream.
+func (c *claudeResultCatcher) plainText() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return string(c.plain)
+}
+
+// openRawLog streams an agent's raw stdout into its log file (state dir,
+// 0600); the returned close appends stderr. path "" = no file.
+func openRawLog(path string) (io.Writer, func(stderr []byte)) {
+	if path == "" {
+		return io.Discard, func([]byte) {}
+	}
+	_ = os.MkdirAll(logsDirOf(path), 0o700)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return io.Discard, func([]byte) {}
+	}
+	return f, func(stderr []byte) {
+		_, _ = f.Write(append([]byte("\n--- stderr\n"), stderr...))
+		_ = f.Close()
+	}
 }
 
 func logsDirOf(p string) string {

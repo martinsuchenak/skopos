@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/martinsuchenak/skopos/build"
+	"github.com/martinsuchenak/skopos/internal/logship"
 )
 
 // Client is the worker's REST client against skopos (claim/heartbeat/report,
@@ -152,6 +153,28 @@ func (c *Client) leaseHeader(runID string) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.leases[runID]
+}
+
+// RunLogWriter streams a run's log lines to skopos (POST
+// /api/runs/{id}/log, newline-delimited RunLogRecords), authorised by the
+// claim's lease like a heartbeat. Lines a full or failing server can't take
+// stay buffered (bounded); a refused batch (the lease is gone) is dropped.
+func (c *Client) RunLogWriter(runID, workerID string) (*logship.Writer, error) {
+	lease := c.leaseHeader(runID)
+	if lease == "" {
+		return nil, fmt.Errorf("run %s has no lease", runID)
+	}
+	return logship.New(logship.Config{
+		URL:    c.base + "/api/runs/" + url.PathEscape(runID) + "/log",
+		Format: logship.Raw,
+		Headers: map[string]string{
+			"Authorization": "Bearer " + c.key, "X-Skopos-Lease": lease,
+			"X-Skopos-Worker": workerID, "X-Skopos-Via": "worker",
+		},
+		FlushEvery:  time.Second,
+		BatchSize:   200,
+		MaxBuffered: 5000,
+	})
 }
 
 // IndexDuty is what the last claim answer said to index: the workspaces with

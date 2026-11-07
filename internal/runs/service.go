@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/auth"
@@ -23,6 +24,9 @@ type Service struct {
 	storage *Storage
 	now     func() time.Time
 	lease   time.Duration
+	// logWake: readers long-polling a run's log (logs.go).
+	logMu   sync.Mutex
+	logWake map[string]chan struct{}
 
 	// prefs backs SetPrefs (tests, partial wiring); prefsFor is the lookup
 	// every queue and claim reads — the pipeline settings resolver in

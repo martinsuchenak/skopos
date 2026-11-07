@@ -200,8 +200,11 @@ func (a antigravityRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 	cmd.Dir = r.Dir
 	cmd.Env = withPWD(scrubEnv(r.Env, r.TokenEnvs, r.FileEnvKeys), r.Dir) // HOME = the login directory
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	var flush func()
+	// agy prints one JSON object at the end: only its stderr is live.
+	cmd.Stdout, cmd.Stderr, flush = teeOutput(ctx, &stdout, &stderr, func([]byte) []string { return nil })
 	runErr := settled(cmd, cmd.Run())
+	flush()
 	writeRunLog(r.LogFile, stdout.Bytes(), stderr.Bytes())
 	return parseAntigravity(stdout.Bytes(), stderr.String(), runErr, cctx.Err(), r, time.Now())
 }

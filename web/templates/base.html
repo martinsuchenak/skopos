@@ -1131,6 +1131,27 @@
                     <ol class="stage-track stage-track-tail" aria-label="Pipeline stages not reached yet">
                         <template x-for="s in stageTrackTail()" :key="s.key">{{template "stage-row"}}</template>
                     </ol>
+                    <!-- Run log: what the run's agent, setup and checks
+                         print, streamed by the worker; live while the run
+                         runs (long-polled reads), the saved copy after. -->
+                    <section x-show="logRunId" x-cloak id="run-log-panel" class="run-log-panel mt-3" aria-labelledby="run-log-title">
+                        <div class="flex flex-wrap items-center gap-2 border-b border-zinc-800 px-3 py-1.5">
+                            <h3 id="run-log-title" class="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Run log</h3>
+                            <span class="min-w-0 truncate text-[11px] text-zinc-400" x-text="logTitle()"></span>
+                            <span x-show="logLive()" class="chip tone-info" title="New lines appear as the worker sends them">live</span>
+                            <button type="button" x-show="!logFollow" @click="followRunLog()" class="btn btn-ghost btn-xs ml-auto">Follow</button>
+                            <button type="button" @click="closeRunLog()" class="btn btn-ghost btn-xs" :class="logFollow ? 'ml-auto' : ''" aria-label="Close the run log">&times;</button>
+                        </div>
+                        <div class="run-log" id="run-log-lines" @scroll="onRunLogScroll($event)" role="log" aria-live="off" tabindex="0" aria-label="Run log lines">
+                            <p x-show="logLoading" class="run-log-note">Loading&hellip;</p>
+                            <p x-show="logError" class="run-log-note run-log-err" x-text="logError"></p>
+                            <template x-if="logEmptyText()"><p class="run-log-note" x-text="logEmptyText()"></p></template>
+                            <template x-for="l in logRecords" :key="l.k">
+                                <div class="run-log-line" :class="(l.err ? 'run-log-err ' : '') + 'run-log-' + l.src"><span class="run-log-t" x-text="logTime(l.t)"></span><span class="run-log-src" x-text="logSrc(l.src)"></span><span class="run-log-msg" x-text="l.msg"></span></div>
+                            </template>
+                            <p x-show="logTruncated" class="run-log-note run-log-err">The log reached its size cap; later lines were dropped. The worker keeps the full output in its state directory.</p>
+                        </div>
+                    </section>
                     <details class="mt-3 rounded-lg border border-zinc-800" :open="previewDescOpen" @toggle="onPreviewDescToggle($event)">
                         <summary class="fold-summary cursor-pointer px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-500"><span class="fold-caret" aria-hidden="true">&#9656;</span> Item description</summary>
                         <div class="md-body border-t border-zinc-800 bg-zinc-950/50 p-4" data-md-preview aria-live="polite"></div>
@@ -1160,6 +1181,7 @@
                                     <span x-show="run.branch" class="badge max-w-40 truncate tone-muted" :title="run.branch" x-text="run.branch"></span>
                                     <span x-show="run.head_sha" class="font-mono text-zinc-500" :title="run.head_sha" x-text="shortSha(run.head_sha)"></span>
                                     <span class="ml-auto shrink-0 text-zinc-600" x-text="timeAgo(run.updated_at)"></span>
+                                    <button type="button" x-show="run.status !== 'queued'" @click.stop="openRunLog(run.id)" class="btn btn-ghost btn-xs" :aria-label="'Log of the ' + run.stage + ' run, try ' + run.attempt">Log</button>
                                     <p x-show="runHasFailed(run)" class="w-full text-rose-300" x-text="run.fail_reason"></p>
                                 </div>
                             </template>

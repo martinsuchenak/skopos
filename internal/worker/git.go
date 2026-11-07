@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path"
@@ -333,12 +334,15 @@ func runSetup(ctx context.Context, worktree string, setup []string, clone string
 	defer cancel()
 	env := scrubEnv(setupEnv, tokenEnvs, fileEnvKeys)
 	var results []Check
+	rl := runLogFrom(ctx)
 	for _, c := range setup {
 		c = strings.ReplaceAll(c, "{clone}", clone)
-		out, err := runShell(sctx, worktree, env, c, lim.quiet)
+		rl.line("setup", "$ "+c, false)
+		out, err := runShell(withLogSrc(sctx, "setup"), worktree, env, c, lim.quiet)
 		if errors.Is(sctx.Err(), context.DeadlineExceeded) {
 			err = fmt.Errorf("setup_timeout (%s) reached; the command was stopped", lim.total)
 		}
+		logCommandResult(rl, "setup", err)
 		results = append(results, Check{Name: c, Passed: err == nil, Output: tail(string(out), 2000)})
 		if err != nil {
 			return results, fmt.Errorf("setup %q failed: %v: %s", c, err, tail(string(out), 300))
@@ -360,7 +364,10 @@ func runChecks(ctx context.Context, worktree string, checks []string, tokenEnvs,
 			out = append(out, Check{Name: c, Stopped: true, Output: fmt.Sprintf("not run: check_timeout (%s) reached", lim.total)})
 			continue
 		}
-		outBytes, err := runShell(cctx, worktree, scrubEnv(nil, tokenEnvs, fileEnvKeys), c, lim.quiet)
+		rl := runLogFrom(ctx)
+		rl.line("check", "$ "+c, false)
+		outBytes, err := runShell(withLogSrc(cctx, "check"), worktree, scrubEnv(nil, tokenEnvs, fileEnvKeys), c, lim.quiet)
+		logCommandResult(rl, "check", err)
 		text := tail(string(outBytes), 2000)
 		stopped := false
 		var qe *quietError
@@ -424,6 +431,13 @@ func runShell(ctx context.Context, dir string, env []string, line string, quiet 
 	containProcess(cmd)
 	out := &quietWriter{last: time.Now()}
 	cmd.Stdout, cmd.Stderr = out, out
+	if rl := runLogFrom(ctx); rl != nil {
+		// Live in the run log too (setup and checks; preflight has none).
+		live := rl.writer(logSrcFrom(ctx), false, nil)
+		cmd.Stdout = io.MultiWriter(out, live)
+		cmd.Stderr = cmd.Stdout
+		defer live.Flush()
+	}
 	done := make(chan struct{})
 	if quiet > 0 {
 		// A command that prints nothing for quiet is presumed hung (waiting
@@ -501,4 +515,27 @@ func restoreInstructionFiles(ctx context.Context, wt, base string) error {
 		}
 	}
 	return nil
+}
+
+type logSrcKey struct{}
+
+// withLogSrc names the run-log source a command's output goes under.
+func withLogSrc(ctx context.Context, src string) context.Context {
+	return context.WithValue(ctx, logSrcKey{}, src)
+}
+
+func logSrcFrom(ctx context.Context) string {
+	if s, ok := ctx.Value(logSrcKey{}).(string); ok {
+		return s
+	}
+	return "worker"
+}
+
+// logCommandResult ends a setup or check command's lines in the run log.
+func logCommandResult(rl *runLog, src string, err error) {
+	if err != nil {
+		rl.line(src, "✗ "+err.Error(), true)
+		return
+	}
+	rl.line(src, "✓ passed", false)
 }

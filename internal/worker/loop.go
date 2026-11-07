@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -123,7 +124,15 @@ type Worker struct {
 	agentMCP string
 	// index: idle-time code indexing (indexer.go).
 	index indexer
+	// logOutput: the log output (--log-output-url) run logs also go to;
+	// nil = none. extraSecrets: values run logs redact besides the ones
+	// the config names (runlog.go).
+	logOutput    io.Writer
+	extraSecrets []string
 }
+
+// SetLogOutput sends every run's log lines to the log output too.
+func (w *Worker) SetLogOutput(out io.Writer) { w.logOutput = out }
 
 func New(cfg *Config, client *Client, log *slog.Logger) *Worker {
 	w := &Worker{cfg: cfg, client: client, log: log, sessions: map[string]string{}, accounts: map[string]string{}, executors: map[string]string{}, costs: map[string]float64{}, health: map[string]preflightResult{}}
@@ -202,6 +211,12 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 // execute runs one claimed stage to a terminal report or pause.
 func (w *Worker) execute(ctx context.Context, run *Run) {
 	log := w.log.With("run", run.ID, "item", run.ItemID, "stage", run.Stage)
+	// The run log streams from here to the end (runlog.go); its last lines
+	// go after the report — skopos takes them under the claim's lease.
+	rl := w.openRunLog(run)
+	defer rl.close()
+	ctx = withRunLog(ctx, rl)
+	rl.notef("%s run, attempt %d, on %s", run.Stage, run.Attempt, w.cfg.ID)
 	// Heartbeat while executing.
 	hbCtx, hbStop := context.WithCancel(ctx)
 	defer w.phases.Delete(run.ID)
@@ -241,6 +256,7 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 				return
 			}
 			log.Warn("transient failure, retrying", "attempt", attempt+1, "detail", tr.detail)
+			rl.line("worker", fmt.Sprintf("transient failure (%s), retrying in %s", tr.detail, time.Duration(attempt+1)*30*time.Second), true)
 			sleepCtx(ctx, time.Duration(attempt+1)*30*time.Second)
 			continue
 		}
@@ -302,6 +318,9 @@ func (w *Worker) finish(ctx context.Context, run *Run, log *slog.Logger, err err
 			// uses, but SERVER-side, so the pause survives a restart.
 			resumeAt = time.Now().Add(30 * time.Minute)
 		}
+		rl := runLogFrom(ctx)
+		rl.line("worker", "paused until "+resumeAt.Format(time.RFC3339)+": "+reason, true)
+		rl.flush()
 		_ = w.client.Pause(ctx, run.ID, w.cfg.ID, reason, resumeAt)
 		// Another account (or runner) can still work: keep claiming — the
 		// claim no longer offers exhausted runners. Only when nothing at all
@@ -514,6 +533,15 @@ func (w *Worker) report(ctx context.Context, run *Run, succeeded bool, fields ma
 		}
 		fields["cost_usd"] = c
 		delete(w.costs, run.ID)
+	}
+	if rl := runLogFrom(ctx); rl != nil {
+		if succeeded {
+			rl.notef("%s succeeded", run.Stage)
+		} else {
+			rl.line("worker", fmt.Sprintf("%s failed: %v", run.Stage, fields["reason"]), true)
+		}
+		// Out before the report: a retried run's lease is gone after it.
+		rl.flush()
 	}
 	return w.client.ReportResult(ctx, run.ID, w.cfg.ID, succeeded, fields)
 }

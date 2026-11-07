@@ -383,6 +383,23 @@ CREATE TABLE IF NOT EXISTS run_groups (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_run_groups_open ON run_groups(item_id, stage) WHERE state = 'open';
 CREATE INDEX IF NOT EXISTS idx_run_groups_deadline ON run_groups(state, deadline_ms);
 
+-- Run logs: what a run's agent, setup and checks printed, streamed by the
+-- worker while it runs (POST /api/runs/{id}/log). One row per batch: the
+-- batch's newline-delimited records, gzipped; seq is the readers' cursor.
+-- bytes counts the uncompressed records (the per-run cap); rows past the
+-- cleanup retention go (created_ms).
+CREATE TABLE IF NOT EXISTS run_logs (
+    seq           INTEGER PRIMARY KEY,
+    run_id        TEXT    NOT NULL,
+    workspace_id  TEXT    NOT NULL,
+    created_ms    INTEGER NOT NULL,
+    lines         INTEGER NOT NULL CHECK (lines >= 0),
+    bytes         INTEGER NOT NULL CHECK (bytes >= 0),
+    body          BLOB    NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_run_logs_run ON run_logs(run_id, seq);
+CREATE INDEX IF NOT EXISTS idx_run_logs_created ON run_logs(created_ms);
+
 -- Pipeline settings (tmp/workspace-pipeline-settings — design.md): which
 -- agents run each stage, per workspace or per workspace group. Resolution
 -- per stage: the workspace's own row, else its group's, else not set.

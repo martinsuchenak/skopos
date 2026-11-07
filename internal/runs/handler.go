@@ -3,6 +3,7 @@ package runs
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -141,6 +142,36 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// maxLogBody bounds one run-log batch (the worker sends far less).
+const maxLogBody = 4 << 20
+
+// AppendLog handles POST /api/runs/{id}/log: newline-delimited log records
+// from the worker holding the claim (X-Skopos-Worker, X-Skopos-Lease).
+func (h *Handler) AppendLog(w http.ResponseWriter, r *http.Request) {
+	body := http.MaxBytesReader(w, r.Body, maxLogBody)
+	n, err := h.service.AppendLog(r.Context(), r.PathValue("id"), r.Header.Get("X-Skopos-Worker"), r.Header.Get("X-Skopos-Lease"), body)
+	if err != nil {
+		h.respondRunError(w, err, "append log")
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, map[string]int{"stored": n})
+}
+
+// Log handles GET /api/runs/{id}/log?after=&tail=&wait=: the run's log
+// records after the cursor, or the last tail of them; wait (seconds, at
+// most 25) long-polls for the next batch when nothing is new.
+func (h *Handler) Log(w http.ResponseWriter, r *http.Request) {
+	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	tail, _ := strconv.Atoi(r.URL.Query().Get("tail"))
+	wait, _ := strconv.Atoi(r.URL.Query().Get("wait"))
+	page, err := h.service.ReadLog(r.Context(), r.PathValue("id"), max(after, 0), max(tail, 0), time.Duration(max(wait, 0))*time.Second)
+	if err != nil {
+		h.respondRunError(w, err, "read log")
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, page)
 }
 
 // Get handles GET /api/runs/{id}.

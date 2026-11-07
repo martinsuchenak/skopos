@@ -17,6 +17,10 @@ Optional — if absent, skopos runs on defaults. The file is gitignored (may con
 | `--config` | `CONFIG_FILE` | — | `skopos-config.toml` | Path to config file |
 | `--log-level` | `LOG_LEVEL` | `log.level` | `info` | `trace`, `debug`, `info`, `warn`, `error` |
 | `--log-format` | `LOG_FORMAT` | `log.format` | `text` | `text` or `json` |
+| `--log-output-url` | `LOG_OUTPUT_URL` | `log.output.url` | — | Also send logs to this HTTP log intake ([Log output](#log-output)) |
+| `--log-output-format` | `LOG_OUTPUT_FORMAT` | `log.output.format` | `ndjson` | `ndjson`, `loki` or `elasticsearch` |
+| `--log-output-stream` | `LOG_OUTPUT_STREAM` | `log.output.stream` | `skopos` | Stream name: VictoriaLogs stream, Loki job, Elasticsearch index |
+| `--log-output-header` | `LOG_OUTPUT_HEADER` | `log.output.header` | — | Header(s) for the intake, `Name: value` (several separated by `;`) |
 | `--server-host` | `SERVER_HOST` | `server.host` | `127.0.0.1` | HTTP listen host (set `0.0.0.0` to listen on all interfaces) |
 | `--server-port` | `SERVER_PORT` | `server.port` | `8080` | HTTP listen port (REST, MCP at `/mcp`, dashboard, SSE) |
 | `--database-path` | `DATABASE_PATH` | `database.path` | `skopos.db` | SQLite database file path. Keep it on local disk, not NFS or SMB (skopos warns at startup); on a cluster, replicate it with Litestream ([Nomad guide](deployment/nomad.md)) |
@@ -345,6 +349,35 @@ At any level, a request that takes over a second is logged as a `slow http reque
 - `db_pool_waits` / `db_pool_wait`: how often, and for how long, requests waited for a free connection while this one ran (pool-wide, so concurrent requests count).
 
 A slow request with pool waits means the pool was exhausted. A slow request without them points at SQLite's write lock (each write waits up to 5s for it) or at work outside the database. A `slow cleanup` warning at the same time names the retention cleanup as what held the lock. Streams (SSE, MCP streaming) are never logged as slow.
+
+## Log output
+
+Besides stdout, `serve` and `worker` can send their logs to an HTTP log
+intake, in batches (every 2 seconds, or 100 lines). It works the way knot
+ships its logs: the same flags, the same formats.
+
+| Format | Takes it |
+|---|---|
+| `ndjson` (default) | VictoriaLogs (`http://host:9428/insert/jsonline`; skopos adds the field-mapping parameters), Vector's `http_server` source, OpenObserve |
+| `loki` | Loki and Grafana Alloy (`/loki/api/v1/push`), VictoriaLogs (`/insert/loki/api/v1/push`), a knot space's agent (`http://localhost:12201/loki/api/v1/push`) |
+| `elasticsearch` | Elasticsearch, OpenSearch, Quickwit (`/_bulk`) |
+
+```bash
+skopos serve --log-output-url http://victorialogs:9428/insert/jsonline --log-output-stream skopos-server
+```
+
+- **With an output set, stdout is JSON too.** The records are slog's
+  (`time`, `level`, `msg` and attributes).
+- **Workers send their run logs too.** Every line a run's agent, setup and
+  checks print goes out with `run_id`, `item_id`, `workspace`, `stage` and
+  `src`; filter on `run_id` to follow one run
+  ([Run logs](deployment/worker.md#run-logs)).
+- **A sink that is down never blocks.** Lines stay buffered (at most
+  10,000; the oldest go first) and are retried. A `4xx` other than `429`
+  drops the batch. Failures are reported on stderr at most once a minute.
+- **Credentials:** a sink behind a proxy takes `LOG_OUTPUT_HEADER`, e.g.
+  `Authorization: Basic …`. On a worker, put it in `skopos-worker.env`; agent
+  runs never see `LOG_OUTPUT_URL` or `LOG_OUTPUT_HEADER`.
 
 ## Authentication
 
