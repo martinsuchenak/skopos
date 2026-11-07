@@ -798,7 +798,12 @@ What a run log holds:
 - **Setup and checks:** each command (`$ …`), its output and whether it
   passed.
 - **The worker's own notes:** the run starting, each agent turn and what it
-  cost, pauses, the result.
+  cost, pauses, the result. Also every step before the agent that can take
+  a while: waiting for a branch-checkout clone (another worker process or
+  the code indexing holds it), putting back a branch a killed run left,
+  fetching and checking out the item's branch, and "setup skipped" when the
+  clone is still set up for it. A step that takes 5 seconds or more gets a
+  second line with how long it took.
 - **No secrets:** the worker replaces its keys, push tokens, account
   credentials and env-file values with `[redacted]` before a line leaves it.
 

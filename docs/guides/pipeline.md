@@ -318,7 +318,8 @@ sign-off.
   sending heartbeats, instead of spinning forever.
 - **Run logs:** **Watch live** on a running step opens what its agent, setup
   and checks print as it happens (the agent's text, each tool call and the
-  start of its result, each command and whether it passed). Finished steps
+  start of its result, each command and whether it passed), and the worker's
+  steps before that (waiting for the clone, fetching, checking out). Finished steps
   and every Run history row have a **Log** button for the saved copy. See
   [Run logs](../deployment/worker.md#run-logs).
 - **Below the steps:** the item description, the run history and a short

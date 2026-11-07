@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **The live view names every step before the agent.** A run log now notes
+  waiting for a branch-checkout clone (and whether this worker's code
+  indexing or another worker process holds it), putting back a branch a
+  killed run left, fetching and checking out the item's branch, and "setup
+  skipped" when the clone is still set up for it. Plan and review note their
+  fetch. A step that takes 5s or more gets a second line with how long it
+  took. Until now an implement run on a large repo could show only "implement
+  run, attempt 1" for minutes.
+
 ## [0.23.0] — 2026-11-07
 
 ### Added

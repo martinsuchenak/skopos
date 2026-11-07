@@ -142,6 +142,26 @@ func (l *runLog) notef(format string, args ...any) {
 	l.line("worker", fmt.Sprintf(format, args...), false)
 }
 
+// slowStep is how long a step may take before its end gets a line too.
+const slowStep = 5 * time.Second
+
+// stepf notes a step that may take a while (a fetch, a checkout) and
+// returns its end: a slow one gets a second line with how long it took, so
+// a quiet stretch in the live view always has a name.
+func (l *runLog) stepf(format string, args ...any) (done func()) {
+	if l == nil {
+		return func() {}
+	}
+	what := fmt.Sprintf(format, args...)
+	l.notef("%s …", what)
+	start := l.now()
+	return func() {
+		if d := l.now().Sub(start); d >= slowStep {
+			l.notef("%s: done in %s", what, d.Round(time.Second))
+		}
+	}
+}
+
 // splitBytes cuts s into pieces of at most n bytes on rune boundaries; an
 // empty s is one empty line (blank lines keep the output's shape).
 func splitBytes(s string, n int) []string {

@@ -58,22 +58,29 @@ func tryLockClone(ctx context.Context, clone string) (release func(), ok bool, e
 // holds it, and makes sure the clone is on its default branch with nothing
 // uncommitted (readyClone). The caller releases it.
 func (w *Worker) holdClone(ctx context.Context, repo *Repo, log *slog.Logger) (func(), error) {
-	waiting := false
+	var waited func()
 	for {
 		release, ok, err := tryLockClone(ctx, repo.Path)
 		if err != nil {
 			return nil, fmt.Errorf("locking the clone: %w", err)
 		}
 		if ok {
+			if waited != nil {
+				waited()
+			}
 			if err := w.readyClone(ctx, repo, log); err != nil {
 				release()
 				return nil, err
 			}
 			return release, nil
 		}
-		if !waiting {
-			log.Info("waiting for the clone: another worker process is using it", "clone", repo.Path)
-			waiting = true
+		if waited == nil {
+			who := "another worker process"
+			if w.indexRunning() {
+				who = "this worker's code indexing (stopping)"
+			}
+			log.Info("waiting for the clone: "+who+" is using it", "clone", repo.Path)
+			waited = runLogFrom(ctx).stepf("waiting for the clone %s: %s is using it", repo.Path, who)
 		}
 		if !sleepCtx(ctx, 2*time.Second) {
 			return nil, ctx.Err()
@@ -108,6 +115,7 @@ func (w *Worker) readyClone(ctx context.Context, repo *Repo, log *slog.Logger) e
 		return nil
 	}
 	log.Warn("the clone was left on another branch; putting it back", "clone", repo.Path, "branch", current, "stashed", dirty != "")
+	runLogFrom(ctx).notef("the clone was left on %s by a run that never finished; putting it back on %s", current, repo.DefaultBranch)
 	return parkClone(ctx, repo.Path, repo.DefaultBranch, stashLabel(current))
 }
 

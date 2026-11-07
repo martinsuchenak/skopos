@@ -30,9 +30,11 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 
 	// The planner reads the clone's working tree at the base branch; the
 	// recorded base binds Martin's approval to exactly what was read.
+	done := runLogFrom(ctx).stepf("fetching origin/%s", repo.DefaultBranch)
 	if _, err := git(ctx, repo.Path, "fetch", "--quiet", "origin", repo.DefaultBranch); err != nil {
 		return retryable(err)
 	}
+	done()
 	if _, err := git(ctx, repo.Path, "merge", "--ff-only", "--quiet", "origin/"+repo.DefaultBranch); err != nil {
 		return fmt.Errorf("clone not fast-forwardable to origin/%s: %w", repo.DefaultBranch, err)
 	}
@@ -266,6 +268,7 @@ func (w *Worker) submitCandidate(ctx context.Context, run *Run, item *Item, pr p
 // stageImplement: worktree from the approved base, implement per the locked
 // plan, run checks, push the branch, report the head.
 func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger) error {
+	rl := runLogFrom(ctx)
 	repo := w.cfg.Repos[run.WorkspaceID]
 	if repo == nil {
 		return w.failNoRepo(run.WorkspaceID)
@@ -342,24 +345,37 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			}
 			rec.Worktree = ""
 		}
+		done := rl.stepf("fetching and checking out %s in the clone", branch)
 		if err := checkoutImplementBranch(ctx, repo.Path, branch, baseRef); err != nil {
 			w.park(repo, branch, log) // a failed merge happens on the branch
 			return retryable(fmt.Errorf("checkout: %w", err))
 		}
+		done()
 		defer w.park(repo, branch, log)
 		if err := applyStash(ctx, repo.Path, stashLabel(branch)); err != nil {
 			log.Warn("continuing from the branch's last commit", "err", err)
+			rl.notef("continuing from the branch's last commit: %v", err)
 		}
 		cs := readCloneSetup(ctx, repo.Path)
-		fresh = cs.Branch != branch || cs.Head != headSHA(ctx, repo.Path)
+		head := headSHA(ctx, repo.Path)
+		fresh = cs.Branch != branch || cs.Head != head
+		if !fresh && !rec.SetupPending && len(repo.Setup) > 0 {
+			rl.notef("setup skipped: the clone is still set up for %s at %s", branch, shortSHA(head))
+		}
 	} else if fresh {
+		done := rl.stepf("fetching and creating the worktree for %s", branch)
 		if err := prepareImplementWorktree(ctx, repo.Path, worktree, branch, baseRef); err != nil {
 			return retryable(fmt.Errorf("worktree: %w", err))
 		}
-	} else if err := pullWorktree(ctx, repo.Path, worktree, branch); err != nil {
+		done()
+	} else {
 		// The item's worktree from an earlier attempt: origin may have moved
 		// on since (the push that failed it was rejected).
-		return retryable(fmt.Errorf("worktree: %w", err))
+		done := rl.stepf("fetching and updating the worktree for %s", branch)
+		if err := pullWorktree(ctx, repo.Path, worktree, branch); err != nil {
+			return retryable(fmt.Errorf("worktree: %w", err))
+		}
+		done()
 	}
 	// Setup runs in a fresh worktree, and again in one whose setup never
 	// finished (the worker died or lost the run mid-setup). Its results ride
@@ -691,9 +707,11 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 	// must never share a worktree.
 	wt := filepath.Join(w.cfg.StateDir, "worktrees", filepath.Base(repo.Path), strings.ReplaceAll(run.Branch, "/", "-")+"-"+run.Stage+"-"+shortID(run.ID))
 	removeWorktree(ctx, repo.Path, wt)
+	done := runLogFrom(ctx).stepf("fetching origin/%s", run.Branch)
 	if _, err := git(ctx, repo.Path, "fetch", "--quiet", "origin", run.Branch); err != nil {
 		return fmt.Errorf("review: branch %s "+notPushedMarker+": %w", run.Branch, err)
 	}
+	done()
 	ref := "origin/" + run.Branch
 	switch {
 	case second:

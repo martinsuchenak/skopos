@@ -109,8 +109,14 @@ func TestBranchCheckoutImplement(t *testing.T) {
 			if other {
 				writeCloneSetup(t.Context(), repo.Path, cloneSetup{Branch: "agent/other", Head: "x"})
 			}
-			if err := g.w.stageImplement(t.Context(), g.run, g.w.log); err != nil {
+			rl, lines := captureRunLog(g.run)
+			if err := g.w.stageImplement(withRunLog(t.Context(), rl), g.run, g.w.log); err != nil {
 				t.Fatalf("resume: %v (calls %s)", err, g.callLog(t))
+			}
+			// The live view names every step before the agent starts.
+			if got := lines(); !strings.Contains(got, "fetching and checking out "+rec.Branch+" in the clone …") ||
+				strings.Contains(got, "setup skipped") == other {
+				t.Fatalf("run log (other branch's setup %v):\n%s", other, got)
 			}
 			rep := g.lastReport(t)
 			if rep["status"] != "succeeded" {
