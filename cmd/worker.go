@@ -38,6 +38,7 @@ func workerCmd() *cli.Command {
 			// flag -> environment (incl. the env file) -> [client] itself.
 			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL (also read from [client] as the last fallback)", EnvVars: []string{"SKOPOS_SERVER_URL"}},
 			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key, worker scope (also read from [client] as the last fallback)", EnvVars: []string{"SKOPOS_API_KEY"}},
+			&cli.StringFlag{Name: "agent-key", Usage: "MCP-only key agent runs reach skopos with (skopos key create --preset agent); unset = runs get no skopos tools", EnvVars: []string{"SKOPOS_AGENT_KEY"}},
 			&cli.StringFlag{Name: "worker-id", Usage: "Worker identity (defaults to worker-<hostname>)", EnvVars: []string{"SKOPOS_WORKER_ID"}},
 			&cli.StringFlag{Name: "state-dir", Usage: "Worktrees, logs and session state", EnvVars: []string{"SKOPOS_WORKER_STATE"}, DefaultValue: defaultStateDir},
 			&cli.StringSliceFlag{Name: "workspace", Usage: "Workspace ID this worker serves (repeatable; must have a local clone configured)"},
@@ -103,6 +104,23 @@ func workerCmd() *cli.Command {
 			// every run, so refuse to start instead.
 			if problems := cfg.CheckRunners(ctx, ""); len(problems) > 0 {
 				return fmt.Errorf("agent runners not ready: %s", strings.Join(problems, "; "))
+			}
+			// Agent runs reach skopos (the code index, the blackboard, their
+			// plan) with the agent key — refused unless it is MCP-only, so an
+			// agent never holds the REST API the worker key can use.
+			if agentKey := resolveWorkerSetting(cmd.GetString("agent-key"), "SKOPOS_AGENT_KEY", ""); agentKey != "" {
+				base := expandTilde(serverURL, home)
+				if err := worker.CheckAgentKey(ctx, base, agentKey); err != nil {
+					return err
+				}
+				path, err := worker.WriteAgentMCPConfig(cfg.StateDir, base, agentKey, cfg.MCPConfig)
+				if err != nil {
+					return err
+				}
+				w.EnableAgentMCP(path)
+				log.Info("agent runs get the skopos MCP tools", "mcp_config", path)
+			} else {
+				log.Warn("no agent key: agent runs get no skopos tools (code index, blackboard, plan steps) — set SKOPOS_AGENT_KEY to a key from: skopos key create --preset agent")
 			}
 			runCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()

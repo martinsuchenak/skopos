@@ -47,7 +47,7 @@ thin — but a blocking problem you happen to see outside your focus still count
 
 {{.Focus.Body}}
 {{end}}
-# Verification
+{{with .Skopos}}{{template "skopos" .}}{{end}}# Verification
 
 You cannot run builds, tests or other tools; the worker runs the repository checks outside your
 session. Don't report that you couldn't run them.

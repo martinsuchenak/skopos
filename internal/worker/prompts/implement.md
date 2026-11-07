@@ -35,7 +35,7 @@ branch {{.Branch}}, created from {{.Base}}. Martin approved exactly the plan bel
 
 {{.Body}}
 {{end}}
-# Rules
+{{with .Skopos}}{{template "skopos" .}}{{end}}# Rules
 
 - Work only inside the current directory. Implement the steps in order.
 {{if .Commands}}- The shell commands you can run are exactly: {{range $i, $c := .Commands}}{{if $i}}, {{end}}`{{$c}}`{{end}}.

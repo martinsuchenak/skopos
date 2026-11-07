@@ -146,6 +146,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 		"SkillIndex":   skillIndex(skills), "Requested": tagHints(skills, item.Tags),
 		"ImplCommands": w.stageCommands(run.WorkspaceID, "implement", implTools), "Checks": repo.Checks,
 		"Focus": focus, "Seed": seedSteps,
+		"Skopos": w.skoposPrompt(run, account, repo.DefaultBranch, branch, "plan", "", nil),
 	})
 	if err != nil {
 		return err
@@ -306,7 +307,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			if pi.Title == "Review and push (Martin)" {
 				continue
 			}
-			steps = append(steps, Step{Title: pi.Title, Description: pi.Description})
+			steps = append(steps, Step{Title: pi.Title, Description: pi.Description, ID: pi.ID})
 		}
 	}
 	worktree := filepath.Join(w.cfg.StateDir, "worktrees", filepath.Base(repo.Path), strings.ReplaceAll(branch, "/", "-"))
@@ -416,6 +417,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			"ApprovalNotes": newestBody(secs, "Approval notes"),
 			"Instructions":  instructions, "Skills": skillBodies,
 			"Commands": w.stageCommands(run.WorkspaceID, "implement", implTools), "Checks": repo.Checks,
+			"Skopos": w.skoposPrompt(run, account, repo.DefaultBranch, branch, "implement", item.PlanID, steps),
 		})
 		if err != nil {
 			return err
@@ -784,6 +786,7 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 		"Instructions": instructions, "Skills": skillBodies, "Focus": focus,
 		"Decisions": decisions, "SecondOpinion": second, "HandoverBase": handoverBase,
 		"Checks": checks, "ChecksFailed": len(failedChecks(checks)) > 0, "ChecksConfigured": len(repo.Checks) > 0,
+		"Skopos": w.skoposPrompt(run, account, repo.DefaultBranch, run.Branch, phase, "", nil),
 	})
 	if err != nil {
 		return err
@@ -915,6 +918,9 @@ func (w *Worker) failNoRepo(workspaceID string) error {
 type Step struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
+	// ID is the plan item's id (implement marks it done over MCP); empty
+	// for steps an agent proposes.
+	ID string `json:"-"`
 }
 
 type planResult struct {

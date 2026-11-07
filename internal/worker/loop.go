@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"text/template"
@@ -117,6 +118,9 @@ type Worker struct {
 	upgradeTried time.Time
 	exePath      func() (string, error)
 	upgradeHTTP  *http.Client
+	// agentMCP: the MCP config file runs get when the worker has an agent
+	// key (agentmcp.go); "" = runs get only the operator's mcp_config.
+	agentMCP string
 }
 
 func New(cfg *Config, client *Client, log *slog.Logger) *Worker {
@@ -438,6 +442,11 @@ func (w *Worker) agentRun(dir, prompt, schema string, tools []string, timeout ti
 	if runner == "" {
 		runner = "claude"
 	}
+	mcpConfig := w.cfg.MCPConfig
+	if w.agentMCP != "" && runnerHasSkopos(runner) {
+		mcpConfig = w.agentMCP
+		tools = append(slices.Clone(tools), skoposTools(phase)...)
+	}
 	ar := AgentRun{
 		Bin: w.cfg.RunnerBin(runner), Dir: dir, Prompt: prompt, Runner: runner, Model: account.Model,
 		SessionID: sess, Resume: sess != "",
@@ -447,7 +456,7 @@ func (w *Worker) agentRun(dir, prompt, schema string, tools []string, timeout ti
 		LogFile:   filepath.Join(w.cfg.StateDir, "runs", run.ID, phase+".log"),
 		Env:       account.Env,
 		TokenEnvs: w.cfg.TokenEnvs(),
-		MCPConfig: w.cfg.MCPConfig,
+		MCPConfig: mcpConfig,
 
 		FileEnvKeys: w.envFileKeys,
 	}
