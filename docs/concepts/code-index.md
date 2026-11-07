@@ -67,6 +67,14 @@ skopos index status --workspace github.com/me/myproject
 # main   1995 files   6971 symbols  2026-09-09T07:11:59Z  (server-build)
 ```
 
+### 4b. Idle workers (pipeline repos)
+
+For a repo the agent pipeline works on, turn on **Keep the code index
+fresh** in the workspace's pipeline settings. Idle workers then index the
+default branch whenever origin moves, and each implemented item branch, with
+their own clones and credentials. See
+[the worker reference](../deployment/worker.md#code-indexing-while-idle).
+
 ### 5. Semantic search (optional)
 
 Enable an OpenAI-compatible embeddings endpoint (local Ollama keeps

@@ -1930,9 +1930,10 @@ paths:
                   type: object
                   additionalProperties: { type: string }
                   description: "Offered workspaces whose preflight fails on the worker (workspace → reason). None of their runs is handed out — not even the worker's own interrupted ones, which age into takeovers for other workers. Changes are posted to Slack."
+                indexable: { type: array, items: { type: string }, description: "Offered workspaces whose repo the worker can fetch and index" }
       responses:
         "200":
-          description: The claimed run (lease started). Every response carries a Skopos-Version header (the server's release; idle workers upgrade to it).
+          description: "The claimed run (lease started). Every response carries a Skopos-Version header (the server's release; idle workers upgrade to it), and — when set — Skopos-Index-Enabled (offered workspaces with the code_index switch on) and Skopos-Index-Default (those whose default branch this worker indexes), comma-separated."
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Run" }
@@ -2167,6 +2168,7 @@ components:
           additionalProperties: { $ref: "#/components/schemas/PipelineStage" }
         agents_default: { type: string, enum: [panel, solo, default, ""], description: What items without their own switch get }
         second_opinion_runner: { type: string, description: "Default runner for second opinions; none or empty clears it" }
+        code_index: { type: boolean, description: "Workspaces only (groups refuse it): idle workers keep the workspace's code index fresh. The document is replaced whole — send it on every save." }
         via: { type: string, description: Surface label for the audit log }
     PipelineView:
       type: object
@@ -2179,6 +2181,8 @@ components:
             stages: { type: object, additionalProperties: { $ref: "#/components/schemas/PipelineStage" } }
             agents_default: { type: string }
             second_opinion_runner: { type: string }
+            code_index: { type: boolean }
+        indexable_by: { type: array, items: { type: string }, description: "Workspace only: workers whose recent claims say they can fetch and index this repo" }
         effective:
           type: object
           description: "Workspace only: the resolved stages, each with source (workspace or group:<name>)"
@@ -2218,7 +2222,9 @@ components:
             id: { type: string }
             name: { type: string }
             all_workspaces: { type: boolean }
+            approver: { type: boolean }
             workspaces: { type: array, items: { type: string } }
+            capabilities: { type: array, nullable: true, items: { type: string }, description: "null = full access. whoami answers every authenticated key, whatever its capabilities." }
         workspaces:
           type: array
           items:
@@ -2235,6 +2241,11 @@ components:
         key_prefix: { type: string }
         all_workspaces: { type: boolean }
         approver: { type: boolean, description: May perform human-only workflow actions; root implies it }
+        capabilities:
+          type: array
+          nullable: true
+          items: { type: string }
+          description: "Key capabilities: surfaces (rest, mcp) and areas (code, blackboard, plans, inbox, status, runs, workspaces, events) as <area>:read|write. null = full access. A capped key gets 403 outside them (REST) and sees/calls only the MCP tools they cover."
         workspaces: { type: array, items: { type: string } }
         groups: { type: array, items: { type: string }, description: Names of workspace groups the key holds }
         created_at: { type: string, format: date-time }
@@ -2282,6 +2293,8 @@ components:
           type: array
           items: { type: string }
         approver: { type: boolean, description: Grant the approver permission (human-only workflow actions) }
+        capabilities: { type: array, items: { type: string }, description: "Limit the key (see ApiKey.capabilities); none = full access" }
+        preset: { type: string, enum: [agent], description: "A named capability set joined with capabilities. agent = mcp, code:read, blackboard:write, plans:write, status:read, inbox:read" }
 
     ApiKeyCreateResult:
       type: object

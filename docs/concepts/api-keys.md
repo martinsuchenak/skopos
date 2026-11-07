@@ -36,6 +36,48 @@ skopos supports two kinds of credential:
 - **SSE** change notifications are filtered per subscriber by scope (events
   carry the mutation's workspace when derivable; they never carry data).
 
+## Capabilities
+
+A scoped key can also be limited to **capabilities**: what it may use, on
+top of which workspaces. A key without capabilities (every key minted
+before them, and the root key) keeps full access.
+
+- **Surfaces:** `rest` (every `/api` route, the dashboard's event stream,
+  metrics) and `mcp` (`/mcp`).
+- **Areas**, each `<area>:read` or `<area>:write` (write implies read):
+  `code`, `blackboard`, `plans`, `inbox`, `status`, `runs`, `workspaces`,
+  `events`.
+
+How they apply:
+
+- **REST:** the route names the area (`/api/codeindex` is `code`,
+  `/api/runs` and `/api/workers` are `runs`, `/api/sessions` and
+  `/api/reports` are `status`, and so on). GET needs read, anything else
+  write. A capped key gets `403` outside its capabilities. Key and group
+  management, metrics and any route not mapped to an area are refused to
+  capped keys; `/api/whoami` always answers.
+- **MCP:** every tool needs an area. `tools/list` shows a capped key only
+  the tools it may call, and a call to any other tool is refused, through
+  `tools/call` and lean mode's `execute_tool` alike.
+- Workspace scope and the approver permission still apply to a capped key.
+
+**Presets** name common sets. `agent` is what workers hand their agent runs
+(`SKOPOS_AGENT_KEY`, see [the worker reference](../deployment/worker.md#skopos-tools-for-agent-runs)):
+`mcp`, `code:read`, `blackboard:write`, `plans:write`, `status:read` and
+`inbox:read`. It has no REST at all, so an agent can't move items, touch
+runs or manage keys.
+
+```sh
+skopos key create --name knot-1-agent --workspace github.com/me/app --preset agent
+skopos key create --name ci --workspace github.com/me/app --capability rest,code:write
+skopos key edit <id> --capability rest,runs:write   # replace the set
+skopos key edit <id> --full-access                  # remove every limit
+skopos key whoami                                   # shows the key's capabilities
+```
+
+The dashboard's key list shows a capped key's capabilities, and its key
+dialog offers full access or the agent preset.
+
 ## Managing keys
 
 ```sh

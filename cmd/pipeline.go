@@ -49,6 +49,7 @@ func pipelineCmd(kind string) *cli.Command {
 					&cli.StringFlag{Name: "timeout", Usage: "plan/review/qa with several agents: decide at this deadline (e.g. 45m)"},
 					&cli.StringFlag{Name: "agents-default", Usage: "What items without their own switch get: panel, solo or default"},
 					&cli.StringFlag{Name: "second-opinion", Usage: "Default runner for second opinions (none to clear)"},
+					&cli.StringFlag{Name: "code-index", Usage: "Workspaces: on = idle workers keep the code index fresh, off = they don't"},
 				),
 				Run: func(ctx context.Context, cmd *cli.Command) error {
 					v, err := pipelineGet(ctx, cmd, kind)
@@ -85,8 +86,17 @@ func pipelineCmd(kind string) *cli.Command {
 						own.SecondOpinionRunner = so
 						changed = true
 					}
+					switch ci := strings.ToLower(strings.TrimSpace(cmd.GetString("code-index"))); ci {
+					case "":
+					case "on", "off":
+						on := ci == "on"
+						own.CodeIndex = &on
+						changed = true
+					default:
+						return fmt.Errorf("--code-index is on or off, not %q", ci)
+					}
 					if !changed {
-						return fmt.Errorf("nothing to set: pass --stage with --runners, --agents-default and/or --second-opinion")
+						return fmt.Errorf("nothing to set: pass --stage with --runners, --agents-default, --second-opinion and/or --code-index")
 					}
 					return pipelinePut(ctx, cmd, kind, v.OwnerID, own)
 				},
@@ -106,7 +116,8 @@ func pipelineCmd(kind string) *cli.Command {
 					own := v.Own
 					switch stage := strings.ToLower(strings.TrimSpace(cmd.GetString("stage"))); {
 					case cmd.GetBool("all"):
-						own = pipeline.Settings{Stages: map[string]pipeline.StageSetting{}}
+						// Routing only: the code index switch is not routing.
+						own = pipeline.Settings{Stages: map[string]pipeline.StageSetting{}, CodeIndex: own.CodeIndex}
 					case stage != "":
 						if _, ok := own.Stages[stage]; !ok {
 							return fmt.Errorf("%s is not set at this level", stage)
@@ -229,6 +240,17 @@ func printPipeline(v *pipeline.View) {
 		line += "  ← " + strings.Replace(secondSource, "group:", "group ", 1)
 	}
 	fmt.Println(line)
+	if v.OwnerKind == pipeline.KindWorkspace {
+		state := "off"
+		if v.Own.CodeIndex != nil && *v.Own.CodeIndex {
+			state = "on"
+		}
+		able := "no worker can fetch this repo now"
+		if len(v.IndexableBy) > 0 {
+			able = "can index: " + strings.Join(v.IndexableBy, ", ")
+		}
+		fmt.Printf("code index: %s  (%s)\n", state, able)
+	}
 	for _, c := range v.Conflicts {
 		fmt.Println("conflict: " + c)
 	}

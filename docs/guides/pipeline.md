@@ -144,6 +144,7 @@ skopos worker init --server-url https://skopos.example.com --workspace github.co
 
 ```bash
 SKOPOS_API_KEY=sk_...            # the worker key from step 2
+SKOPOS_AGENT_KEY=sk_...          # optional: MCP-only key for agent runs (skopos key create --preset agent)
 GITEA_PUSH_TOKEN=...             # the push token from step 3
 ```
 

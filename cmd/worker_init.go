@@ -107,6 +107,7 @@ func writeWorkerEnvFile(out io.Writer, configPath string) error {
 # The push token for repos.*.push.token_env lives HERE, never in the TOML.
 
 # SKOPOS_API_KEY=sk_...
+# SKOPOS_AGENT_KEY=sk_...       # MCP-only key agent runs reach skopos with: skopos key create --preset agent
 # CLAUDE_1_API_KEY=sk-ant-...   # for [[worker.accounts]] env = { ANTHROPIC_API_KEY = "${CLAUDE_1_API_KEY}" }
 # GITEA_PUSH_TOKEN=...
 `

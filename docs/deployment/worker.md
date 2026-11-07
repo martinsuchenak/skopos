@@ -272,10 +272,11 @@ These hold for every runner, regardless of configuration.
   the exact shell commands the stage allows and the checks the worker runs
   afterwards, and tell the agent not to chain commands. A profile can grant
   more tools (see [Containing agent runs](#containing-agent-runs)).
-- **MCP servers only from `mcp_config`.** Put the servers runs may use in a
-  JSON file (`{"mcpServers": {...}}`, Claude Code's shape; opencode gets it
-  translated), point `worker.mcp_config` at it, and allowlist their tool
-  prefixes in `mcp_servers`.
+- **MCP servers only from `mcp_config`** (plus skopos itself, with an agent
+  key: see [Skopos tools for agent runs](#skopos-tools-for-agent-runs)). Put
+  the servers runs may use in a JSON file (`{"mcpServers": {...}}`, Claude
+  Code's shape; opencode gets it translated), point `worker.mcp_config` at
+  it, and allowlist their tool prefixes in `mcp_servers`.
 - **Scrubbed environment.** Agent runs, checks and `setup` commands get no
   push tokens, no skopos key, no SSH agent and nothing from the env file:
   - an account's `env` (with `${VAR}` references) passes credentials to the
@@ -295,6 +296,76 @@ These hold for every runner, regardless of configuration.
 The daemon refuses to start, and `worker check` reports it, when a runner's
 CLI can't do its lockdown (for example, an older Claude Code without
 `--restricted`).
+
+## Skopos tools for agent runs
+
+With an **agent key**, claude and opencode runs reach skopos over MCP: the
+code index, the blackboard, and their plan's steps.
+
+1. Mint an MCP-only key for the worker's workspaces (root key):
+
+   ```sh
+   skopos key create --name knot-1-agent --workspace github.com/you/repo --preset agent
+   ```
+
+2. Put it in `skopos-worker.env` next to the worker key:
+
+   ```bash
+   SKOPOS_AGENT_KEY=sk_...
+   ```
+
+At startup the worker checks the key with `whoami` and refuses to start
+when it could give an agent more than MCP: full access, the `rest`
+surface, the approver permission, or no `code` read. It writes the run MCP
+config to `<state_dir>/agent-mcp.json` (mode 0600): your `mcp_config`
+servers plus a `skopos` server with the agent key. Don't define a server
+named `skopos` in `mcp_config` yourself; the worker refuses that too.
+
+What a run gets:
+
+- **Tools:** every stage may call `skopos_context`, `blackboard_read`,
+  `blackboard_write`, `plan_read` and the `code_*` tools. Implement may also
+  call `plan_update_item`.
+- **Prompt:** plan, implement and review prompts get a Skopos section. It
+  tells the agent to read the blackboard for the workspace and branch first,
+  to query the index before grepping (the item branch, falling back to the
+  default branch), and to record decisions and bugs as `<runner>@<run id>`.
+  Implement also gets its steps' plan item ids, to mark each one done.
+- **Codex** runs get no skopos tools (their network is off).
+- The agent key never reaches the agent's environment: the scrub drops
+  every `*_KEY` variable.
+
+Without an agent key the worker logs a warning at startup, and runs get only
+your `mcp_config` servers.
+
+## Code indexing while idle
+
+A workspace's pipeline settings have a switch, **Keep the code index
+fresh** (`code_index`; dashboard or `PUT /api/workspaces/{id}/pipeline`).
+With it on, idle workers keep that workspace's index current, so agents and
+reviewers query the code as it is:
+
+- **Who can:** every claim reports the workspaces this worker can index: the
+  repo is configured and present, its preflight passes, and its last index
+  fetch did not fail in the past 15 minutes. The switch can be turned on
+  only while some worker can.
+- **Who does:** the server gives each workspace's default branch to one able
+  worker, the one with the smallest id, so three workers on one repo don't
+  all parse it. The duty moves when that worker stops being able. Each
+  worker also indexes the item branches it implemented there.
+- **When:** only while idle. A claimed run stops indexing at once, and what
+  was parsed so far stays in the parse cache (`<state_dir>/index-cache`), so
+  the next idle moment carries on from there. The worker checks an assigned
+  default branch every 5 minutes and pushes only when origin moved. It
+  indexes an item branch after its implement run, and drops that branch's
+  index when the sweep retires the branch.
+- **Where:** in a detached worktree of its own per repo
+  (`<state_dir>/index/<repo>`), never in the clone a run uses. Fetch and
+  checkout take the clone's lock only when it is free.
+- **Cost:** after the first build only changed files are parsed. A failed
+  fetch or build backs off for 15 minutes.
+
+The worker pushes with its own key, which needs `code:write`.
 
 ## Pushing and pull requests
 

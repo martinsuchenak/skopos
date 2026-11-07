@@ -6,6 +6,41 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Key capabilities.** A scoped key can be limited to surfaces (`rest`,
+  `mcp`) and areas (`code`, `blackboard`, `plans`, `inbox`, `status`,
+  `runs`, `workspaces`, `events`, each `:read` or `:write`). A capped key
+  gets `403` outside them, and over MCP sees and calls only the tools they
+  cover; keys without capabilities keep full access. `skopos key create
+  --preset agent | --capability …`, `skopos key edit --capability … |
+  --full-access`; `whoami`, `key list` and the dashboard show them.
+- **Pipeline agents use skopos.** With `SKOPOS_AGENT_KEY` (an MCP-only key:
+  `skopos key create --preset agent`), claude and opencode runs get the
+  skopos MCP tools: the code index, the blackboard, and (implement) their
+  plan's steps. Their prompts say how to use them. The worker refuses an
+  agent key that could do more than MCP.
+- **Idle workers keep the code index fresh.** A per-workspace switch,
+  "Keep the code index fresh" (`code_index` in the pipeline settings,
+  `skopos workspace pipeline set --code-index on`), has idle workers index
+  the default branch whenever origin moves, and each implemented item
+  branch. One worker per workspace does the default branch; indexing stops
+  the moment a run is claimed, and works in a worktree of its own. The
+  dashboard shows which workers can index a repo.
+
+### Fixed
+
+- The plan prompt no longer tells agents to use a `graphmind` CLI that
+  pipeline runs cannot execute.
+
+### Upgrade
+
+- Upgrade the server first: older servers ignore `indexable` and send no
+  index duty, so workers simply don't index.
+- To give agents the skopos tools, mint an agent key per worker and add
+  `SKOPOS_AGENT_KEY` to `skopos-worker.env`; then switch indexing on for the
+  workspaces you want (dashboard → workspace → pipeline settings).
+
 ## [0.21.2] — 2026-11-06
 
 ### Fixed

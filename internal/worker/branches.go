@@ -106,6 +106,9 @@ func (w *Worker) maybeSweep(ctx context.Context) {
 		return
 	}
 	w.lastSweep = time.Now()
+	// The sweep runs git in the clones; an indexing pass (background) would
+	// race it. It stops here and resumes at the next idle poll.
+	w.stopIndexing()
 	ctx, cancel := context.WithTimeout(ctx, sweepBudget)
 	defer cancel()
 	w.sweepBranches(ctx, time.Now())
