@@ -17,7 +17,7 @@ type Bundle = { entries: Entry[]; markdown_bundle: string };
 type PlanItem = { id: string; plan_id: string; title: string; description?: string; phase?: string; status: string; position: number; claimed_by_agent_id?: string; depends_on?: string[] };
 type Plan = { id: string; name: string; branch_name?: string; workspace_id?: string; description?: string; status: string; author_agent_id: string; items?: PlanItem[]; depends_on?: string[]; created_at: string };
 type Toast = { id: number; message: string; type: 'success' | 'error' | 'info' };
-type ApiKey = { id: string; name: string; key_prefix: string; all_workspaces: boolean; approver?: boolean; workspaces: string[]; groups?: string[]; created_at: string; last_used_at?: string; revoked_at?: string };
+type ApiKey = { id: string; name: string; key_prefix: string; all_workspaces: boolean; approver?: boolean; capabilities?: string[] | null; workspaces: string[]; groups?: string[]; created_at: string; last_used_at?: string; revoked_at?: string };
 type KeyGroup = { id: string; name: string; description?: string; members: string[]; patterns: string[]; created_at: string };
 type KeyReach = { key: ApiKey; via: string };
 type WorkspaceRow = { id: string; name?: string; git_url?: string; created_at: string };
@@ -29,12 +29,18 @@ type ItemForm = { title: string; description: string; phase: string; depends_on:
 type InboxPlanSummary = { id: string; name: string; status: string };
 type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; agents?: string; branch?: string; ref?: string; flow?: string; created_at: string; updated_at: string; excerpt?: string };
 type InboxDetail = InboxItem & { content: string; content_html: string };
-type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string; state: string; version: string; lastSeen: string; unhealthy: string[] };
-type WorkerSeen = { id: string; runners: string[]; workspaces: string[]; last_seen: string; version?: string; state?: string; unhealthy?: Record<string, string> };
+// The agent preset (internal/auth Presets["agent"], normalised).
+const agentPreset = ['blackboard:write', 'code:read', 'inbox:read', 'mcp', 'plans:write', 'status:read'];
+function keyIsAgentPreset(caps: string[]): boolean {
+  return caps.length === agentPreset.length && [...caps].sort().every((c, i) => c === agentPreset[i]);
+}
+
+type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string; state: string; version: string; lastSeen: string; unhealthy: string[]; indexable: string[] };
+type WorkerSeen = { id: string; runners: string[]; workspaces: string[]; last_seen: string; version?: string; state?: string; unhealthy?: Record<string, string>; indexable?: string[] };
 // Pipeline settings (which agents run each stage, per workspace or group).
 type PipeMember = { runner: string; focus?: string };
 type PipeStage = { members: PipeMember[]; policy?: string; early_exit?: boolean; timeout_ms?: number };
-type PipeView = { owner_kind: string; owner_id: string; own: { stages: Record<string, PipeStage> | null; agents_default?: string; second_opinion_runner?: string }; effective?: Record<string, PipeStage & { source: string }>; effective_agents_default?: string; agents_default_source?: string; effective_second_opinion_runner?: string; second_opinion_source?: string; groups?: { id: string; name: string }[]; conflicts?: string[]; unknown_runners?: string[] };
+type PipeView = { owner_kind: string; owner_id: string; indexable_by?: string[]; own: { stages: Record<string, PipeStage> | null; agents_default?: string; second_opinion_runner?: string; code_index?: boolean }; effective?: Record<string, PipeStage & { source: string }>; effective_agents_default?: string; agents_default_source?: string; effective_second_opinion_runner?: string; second_opinion_source?: string; groups?: { id: string; name: string }[]; conflicts?: string[]; unknown_runners?: string[] };
 // One dialog row per stage. mode: own (set at this level, editable),
 // inherited (from a group; Override copies it here), unset.
 type PipeRow = { stage: string; label: string; multi: boolean; rule: boolean; mode: string; members: PipeMember[]; policy: string; earlyExit: boolean; timeoutMin: string; inherited: PipeStage | null; inheritedFrom: string; addRunner: string; addFocus: string };
@@ -195,14 +201,16 @@ const appState = () => ({
   // re-evaluates when a dialog reopens for different data (CSP build)
   formNonce: 0,
   showGroupModal: false,
-  pipe: { open: false, kind: 'workspace', id: '', label: '', saving: false, readOnly: false, rev: 0, rows: [] as PipeRow[], agentsDefault: '', agentsInherited: '', agentsInheritedFrom: '', secondOpinion: '', secondInherited: '', notes: [] as { key: string; tone: string; text: string }[], runnerOptions: [] as string[] },
+  pipe: { open: false, kind: 'workspace', id: '', label: '', saving: false, readOnly: false, rev: 0, rows: [] as PipeRow[], agentsDefault: '', agentsInherited: '', agentsInheritedFrom: '', secondOpinion: '', secondInherited: '', codeIndex: false, codeIndexWas: false, indexableBy: [] as string[], notes: [] as { key: string; tone: string; text: string }[], runnerOptions: [] as string[] },
   groupModalMode: 'create' as 'create' | 'edit',
   groupSaving: false,
   groupErrors: {} as Record<string, string>,
   groupForm: { id: '', name: '', description: '', patterns: '', members: [] as string[] },
   // scoped API key create/edit: one dialog, two modes
   showApiKeyModal: false, keyModalMode: 'create' as 'create' | 'edit', keySaving: false,
-  keyForm: { id: '', name: '', all: false, workspaces: [] as string[], groups: [] as string[] },
+  // access: 'full' (no capability limits), 'agent' (the agent preset: MCP
+  // only) or 'keep' (edit: leave a custom set as it is).
+  keyForm: { id: '', name: '', all: false, workspaces: [] as string[], groups: [] as string[], access: 'full', custom: '' },
   keyErrors: {} as Record<string, string>,
   showSecretModal: false, newSecret: '', newSecretName: '', secretCopied: false,
 
@@ -1905,6 +1913,8 @@ const appState = () => ({
     this.pipe.secondOpinion = v.own.second_opinion_runner || '';
     const secondFromGroup = kind === 'workspace' && v.second_opinion_source && v.second_opinion_source !== 'workspace';
     this.pipe.secondInherited = secondFromGroup ? (v.effective_second_opinion_runner || '') + ' (group ' + (v.second_opinion_source || '').replace('group:', '') + ')' : '';
+    this.pipe.codeIndex = this.pipe.codeIndexWas = !!v.own.code_index;
+    this.pipe.indexableBy = v.indexable_by || [];
     const labels: Record<string, string> = { plan: 'Plan', compare: 'Compare (judge)', synthesize: 'Synthesize (merge)', implement: 'Implement', review: 'Review', qa: 'QA' };
     const own = v.own.stages || {};
     this.pipe.rows = ['plan', 'compare', 'synthesize', 'implement', 'review', 'qa'].map((stage: string) => {
@@ -2017,11 +2027,30 @@ const appState = () => ({
     this.pipe.saving = true;
     try {
       const base = this.pipe.kind === 'group' ? '/api/groups/' : '/api/workspaces/';
-      const res = await this.authFetch(base + encodeURIComponent(this.pipe.id) + '/pipeline', { method: 'PUT', body: JSON.stringify({ stages, agents_default: this.pipe.agentsDefault, second_opinion_runner: this.pipe.secondOpinion.trim(), via: 'dashboard' }) });
+      const doc: Record<string, unknown> = { stages, agents_default: this.pipe.agentsDefault, second_opinion_runner: this.pipe.secondOpinion.trim(), via: 'dashboard' };
+      // The settings document is replaced whole: carry the code index switch
+      // (workspaces only; groups refuse it).
+      if (this.pipe.kind === 'workspace') doc.code_index = this.pipe.codeIndex;
+      const res = await this.authFetch(base + encodeURIComponent(this.pipe.id) + '/pipeline', { method: 'PUT', body: JSON.stringify(doc) });
       if (!await this.handleBad(res, 'Pipeline not saved')) return;
       this.notify('Pipeline saved — applies from the next stage', 'success');
       this.pipe.open = false;
     } finally { this.pipe.saving = false; }
+  },
+
+  // The code index switch can be turned on only while a worker can fetch the
+  // repo; turning it off is always possible.
+  pipeIndexLocked(): boolean { return this.pipe.readOnly || (!this.pipe.codeIndex && this.pipe.indexableBy.length === 0); },
+  pipeIndexWarn(): boolean { return this.pipe.codeIndex && this.pipe.indexableBy.length === 0; },
+  pipeIndexHint(): string {
+    const able = this.pipe.indexableBy;
+    if (able.length === 0) {
+      return this.pipe.codeIndex
+        ? 'On, but no worker can fetch this repo right now — the index waits until one can.'
+        : 'No worker can fetch this repo right now (a worker needs it configured and its preflight passing).';
+    }
+    const who = able.length === 1 ? 'worker ' + able[0] : able.length + ' workers (' + able.join(', ') + ')';
+    return 'Idle workers index the default branch and each implemented branch, so agents and reviewers query current code. Can index: ' + who + '.';
   },
 
   // ---- workers (derived from run history) ----
@@ -2047,12 +2076,12 @@ const appState = () => ({
     const byWorker = new Map<string, WorkerRow>();
     for (const entry of registered) {
       const reg = entry[1];
-      byWorker.set(entry[0], { id: entry[0], workspaces: [...(reg.workspaces || [])], stages: [], runners: [...(reg.runners || [])], active: 0, succeeded: 0, failed: 0, lastActive: '', currentLabel: '', state: reg.state || '', version: reg.version || '', lastSeen: reg.last_seen || '', unhealthy: Object.entries(reg.unhealthy || {}).map(([ws, why]) => ws + ': ' + why) });
+      byWorker.set(entry[0], { id: entry[0], workspaces: [...(reg.workspaces || [])], stages: [], runners: [...(reg.runners || [])], active: 0, succeeded: 0, failed: 0, lastActive: '', currentLabel: '', state: reg.state || '', version: reg.version || '', lastSeen: reg.last_seen || '', unhealthy: Object.entries(reg.unhealthy || {}).map(([ws, why]) => ws + ': ' + why), indexable: [...(reg.indexable || [])] });
     }
     for (const run of runs) {
       if (!run.worker_id) continue; // queued, never claimed
       let w = byWorker.get(run.worker_id);
-      if (!w) { w = { id: run.worker_id, workspaces: [], stages: [], runners: [], active: 0, succeeded: 0, failed: 0, lastActive: run.updated_at, currentLabel: '', state: '', version: '', lastSeen: '', unhealthy: [] }; byWorker.set(run.worker_id, w); }
+      if (!w) { w = { id: run.worker_id, workspaces: [], stages: [], runners: [], active: 0, succeeded: 0, failed: 0, lastActive: run.updated_at, currentLabel: '', state: '', version: '', lastSeen: '', unhealthy: [], indexable: [] }; byWorker.set(run.worker_id, w); }
       const reg = registered.get(run.worker_id);
       if (reg) { for (const ws of reg.workspaces || []) if (!w.workspaces.includes(ws)) w.workspaces.push(ws); }
       if (run.workspace_id && !w.workspaces.includes(run.workspace_id)) w.workspaces.push(run.workspace_id);
@@ -2774,16 +2803,25 @@ const appState = () => ({
     return parts.join(', ') || 'no scope';
   },
   keyIsApprover(k: ApiKey): boolean { return !!k.approver; },
+  // keyCapsLabel names a capped key's limits ("" = full access, no chip).
+  keyCapsLabel(k: ApiKey): string {
+    const caps = k.capabilities;
+    if (!caps) return '';
+    if (keyIsAgentPreset(caps)) return 'agent · MCP only';
+    return caps.length ? caps.join(', ') : 'no access';
+  },
   openNewKeyModal() {
     this.keyModalMode = 'create';
-    this.keyForm = { id: '', name: '', all: false, workspaces: [], groups: [] };
+    this.keyForm = { id: '', name: '', all: false, workspaces: [], groups: [], access: 'full', custom: '' };
     this.keyErrors = {};
     this.formNonce++;
     this.showApiKeyModal = true;
   },
   openEditKeyModal(k: ApiKey) {
     this.keyModalMode = 'edit';
-    this.keyForm = { id: k.id, name: k.name, all: k.all_workspaces, workspaces: [...(k.workspaces || [])], groups: [...(k.groups || [])] };
+    const caps = k.capabilities;
+    const access = !caps ? 'full' : (keyIsAgentPreset(caps) ? 'agent' : 'keep');
+    this.keyForm = { id: k.id, name: k.name, all: k.all_workspaces, workspaces: [...(k.workspaces || [])], groups: [...(k.groups || [])], access, custom: access === 'keep' ? (caps || []).join(', ') : '' };
     this.keyErrors = {};
     this.formNonce++;
     this.showApiKeyModal = true;
@@ -2802,6 +2840,10 @@ const appState = () => ({
       const body: Record<string, unknown> = { name: f.name.trim(), workspaces: f.all ? ['*'] : f.workspaces };
       // create: groups only when picked; edit: [] clears, absent = unchanged
       if (!f.all && (!creating || f.groups.length)) body.groups = f.groups;
+      // Capabilities: the agent preset, or (edit) back to full access; a
+      // custom set is left alone ('keep').
+      if (f.access === 'agent') { body.preset = 'agent'; if (!creating) body.capabilities = []; }
+      else if (f.access === 'full' && !creating) body.capabilities = [];
       const res = creating
         ? await this.authFetch('/api/keys', { method: 'POST', body: JSON.stringify(body) })
         : await this.authFetch('/api/keys/' + encodeURIComponent(f.id), { method: 'PATCH', body: JSON.stringify(body) });

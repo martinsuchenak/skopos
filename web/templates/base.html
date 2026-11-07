@@ -704,6 +704,7 @@
                                 <div x-show="w.lastSeen"><dt class="inline text-zinc-300">last seen:</dt> <dd class="inline" x-text="timeAgo(w.lastSeen)"></dd></div>
                                 <div x-show="w.lastActive"><dt class="inline text-zinc-300">last run:</dt> <dd class="inline" x-text="timeAgo(w.lastActive)"></dd></div>
                                 <div x-show="w.version"><dt class="inline text-zinc-300">version:</dt> <dd class="inline font-mono" x-text="w.version"></dd></div>
+                                <div x-show="w.indexable.length"><dt class="inline text-zinc-300">can index:</dt> <dd class="inline break-all" x-text="w.indexable.join(', ')"></dd></div>
                             </dl>
                             <div x-show="w.unhealthy.length" class="mt-3 text-xs">
                                 <p class="font-medium text-rose-300">Not taking work (preflight failing):</p>
@@ -736,6 +737,7 @@
                                     <span class="font-mono text-xs text-zinc-400" x-text="k.key_prefix + '…'"></span>
                                     <span class="chip tone-neutral" x-text="keyScope(k)"></span>
                                     <span x-show="keyIsApprover(k)" class="chip tone-warn">approver</span>
+                                    <span x-show="keyCapsLabel(k)" class="chip tone-info" x-text="keyCapsLabel(k)"></span>
                                     <span x-show="k.revoked_at" class="chip tone-danger">revoked</span>
                                 </div>
                                 <div class="mt-0.5 text-xs text-zinc-400">
@@ -915,6 +917,12 @@
                     <label class="lbl" for="pipe-second">Second opinions use</label>
                     <input id="pipe-second" type="text" list="pipe-runners" x-model="pipe.secondOpinion" class="fld max-w-xs" placeholder="e.g. codex" autocomplete="off" aria-describedby="pipe-second-hint" />
                     <p id="pipe-second-hint" class="mt-1 text-xs text-zinc-500" x-text="pipeSecondHint()"></p>
+                </div>
+                <!-- Code index switch (workspaces only): idle workers keep the
+                     index fresh; it needs a worker that can fetch the repo. -->
+                <div class="mt-4" x-show="pipe.kind === 'workspace'">
+                    <label class="flex items-center gap-2 text-sm"><input id="pipe-index" type="checkbox" x-model="pipe.codeIndex" :disabled="pipeIndexLocked()" aria-describedby="pipe-index-hint" /> Keep the code index fresh</label>
+                    <p id="pipe-index-hint" class="mt-1 text-xs" :class="pipeIndexWarn() ? 'text-amber-400' : 'text-zinc-500'" x-text="pipeIndexHint()"></p>
                 </div>
                 <div class="modal-actions">
                     <button type="button" @click="closePipeline()" class="btn">Cancel</button>
@@ -1216,6 +1224,15 @@
                     <span class="lbl" id="apikey-groups-lbl">Groups</span>
                     {{template "checklist" (dict "LabelID" "apikey-groups-lbl" "For" "g in groups" "Key" "g.id" "Value" "g.name" "Text" "g.name" "Path" "keyForm.groups" "Empty" "groups.length === 0" "EmptyText" "No groups yet — manage them under Workspaces." "Max" "max-h-32")}}
                     <p class="mt-1 text-xs text-zinc-400">Group members and pattern matches widen the key's scope.</p>
+                </div>
+                <div>
+                    <label class="lbl" for="apikey-access">Access</label>
+                    <select id="apikey-access" x-model="keyForm.access" class="fld max-w-sm" aria-describedby="apikey-access-hint">
+                        <option value="full">Full access (REST and MCP)</option>
+                        <option value="agent">Agent — MCP only: code index, blackboard, plan steps</option>
+                        <option value="keep" x-show="keyModalMode === 'edit' && keyForm.custom" x-text="'Keep: ' + keyForm.custom"></option>
+                    </select>
+                    <p id="apikey-access-hint" class="mt-1 text-xs text-zinc-400">An agent key is what workers hand their agent runs (SKOPOS_AGENT_KEY): it cannot use the REST API, move items or touch runs.</p>
                 </div>
                 <div class="modal-actions">
                     <button type="button" @click="closeApiKeyModal()" class="btn">Cancel</button>
