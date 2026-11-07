@@ -542,6 +542,11 @@ func BuildWithCache(ctx context.Context, ex *parse.Extractor, root, branch strin
 	}
 	out := make([]*parse.FileResult, 0, len(files))
 	for _, f := range files {
+		// A worker indexing while idle stops as soon as a run arrives; the
+		// files parsed so far stay in the cache.
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
+		}
 		var res *parse.FileResult
 		if cacher != nil {
 			if info, serr := os.Stat(f); serr == nil {

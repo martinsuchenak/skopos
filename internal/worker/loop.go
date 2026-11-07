@@ -121,6 +121,8 @@ type Worker struct {
 	// agentMCP: the MCP config file runs get when the worker has an agent
 	// key (agentmcp.go); "" = runs get only the operator's mcp_config.
 	agentMCP string
+	// index: idle-time code indexing (indexer.go).
+	index indexer
 }
 
 func New(cfg *Config, client *Client, log *slog.Logger) *Worker {
@@ -137,7 +139,7 @@ func (w *Worker) Loop(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		run, err := w.client.Claim(ctx, w.cfg.ID, w.cfg.AvailableRunners(time.Now()), w.cfg.Workspaces, w.checkHealth(ctx))
+		run, err := w.client.Claim(ctx, w.cfg.ID, w.cfg.AvailableRunners(time.Now()), w.cfg.Workspaces, w.checkHealth(ctx), w.indexable())
 		if err != nil {
 			w.log.Error("claim failed", "err", err)
 			if !sleepCtx(ctx, w.cfg.PollEvery) {
@@ -147,14 +149,19 @@ func (w *Worker) Loop(ctx context.Context) error {
 		}
 		if run == nil {
 			if w.maybeUpgrade(ctx) {
+				w.stopIndexing()
 				return ErrRestartForUpgrade
 			}
 			w.maybeSweep(ctx)
+			w.maybeIndex(ctx)
 			if !sleepCtx(ctx, w.cfg.PollEvery) {
+				w.stopIndexing()
 				return ctx.Err()
 			}
 			continue
 		}
+		// A run comes first: indexing (idle work) stops before it starts.
+		w.stopIndexing()
 		// N5: the run's stage must match the item's phase. A queued-then-
 		// rejected item, a bypassed authorization, a stale resume — the
 		// claim-time move is best-effort, so the worker verifies.

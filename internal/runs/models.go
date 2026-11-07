@@ -249,6 +249,18 @@ type ClaimInput struct {
 	// even its own interrupted ones, which age into takeovers for other
 	// workers (tmp/self-healing-workers — design.md §2).
 	Unhealthy map[string]string `json:"unhealthy,omitempty"`
+	// Indexable: offered workspaces whose repo the worker can fetch and
+	// index (tmp/agent-mcp-and-indexing — design.md §3).
+	Indexable []string `json:"indexable,omitempty"`
+}
+
+// IndexDuty is what a worker should index while idle: Enabled are its
+// workspaces with the code_index switch on (it indexes the item branches
+// it implemented there); Default are those whose default branch it keeps
+// fresh — one able worker per workspace.
+type IndexDuty struct {
+	Enabled []string
+	Default []string
 }
 
 // WorkerHealth is one change in a worker's health for one workspace, for
@@ -313,7 +325,13 @@ type WorkspacePrefs struct {
 	// AgentsDefault is what an item without its own switch gets for a group
 	// stage: AgentsPanel (the default when empty) or AgentsSolo.
 	AgentsDefault string `json:"agents_default,omitempty"`
+	// CodeIndex: idle workers keep the workspace's code index fresh.
+	CodeIndex bool `json:"code_index,omitempty"`
 }
+
+// CodeIndexOn reports whether idle workers index the workspace (nil prefs =
+// off).
+func (p *WorkspacePrefs) CodeIndexOn() bool { return p != nil && p.CodeIndex }
 
 // Per-item multi-agent switch values (inbox item "agents").
 const (

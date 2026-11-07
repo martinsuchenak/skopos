@@ -78,6 +78,7 @@ func (s *Service) Prefs(ctx context.Context, ws string) *runs.WorkspacePrefs {
 		stages[stage] = e.StageSetting
 	}
 	p := ToPrefs(stages, r.agents)
+	p.CodeIndex = r.own.CodeIndex != nil && *r.own.CodeIndex
 	s.mu.Lock()
 	s.cache[ws] = cached{prefs: p, at: s.now()}
 	s.mu.Unlock()
@@ -185,6 +186,9 @@ func (s *Service) Get(ctx context.Context, kind, id string) (*View, error) {
 	v := &View{OwnerKind: kind, OwnerID: id, Own: r.own, Effective: r.effective,
 		EffectiveAgentsDefault: r.agents, AgentsDefaultSource: r.agentsSource, Groups: r.groups, Conflicts: r.conflicts,
 		EffectiveSecondOpinionRunner: r.second, SecondOpinionSource: r.secondSource}
+	if able, err := s.storage.Indexable(ctx, id, s.now().Add(-indexableWindow).UnixMilli()); err == nil {
+		v.IndexableBy = able
+	}
 	if offered, err := s.storage.RunnersServing(ctx, id); err == nil {
 		unknown := map[string]bool{}
 		for _, e := range r.effective {
@@ -257,6 +261,9 @@ func (s *Service) Put(ctx context.Context, kind, id string, in Settings, via str
 		return nil, err
 	}
 	if kind == KindGroup {
+		if next.CodeIndex != nil {
+			return nil, fmt.Errorf("%w: code_index is set per workspace, not per group", ErrInvalidInput)
+		}
 		if err := s.checkGroupConflicts(ctx, id, next); err != nil {
 			return nil, err
 		}
@@ -387,6 +394,9 @@ func diff(before, after Settings) string {
 	if before.SecondOpinionRunner != after.SecondOpinionRunner {
 		parts = append(parts, fmt.Sprintf("second-opinion runner: %s → %s", orDefault(before.SecondOpinionRunner), orDefault(after.SecondOpinionRunner)))
 	}
+	if onOff(before.CodeIndex) != onOff(after.CodeIndex) {
+		parts = append(parts, fmt.Sprintf("code index: %s → %s", onOff(before.CodeIndex), onOff(after.CodeIndex)))
+	}
 	if before.AgentsDefault != after.AgentsDefault {
 		parts = append(parts, fmt.Sprintf("agents default: %s → %s", orDefault(before.AgentsDefault), orDefault(after.AgentsDefault)))
 	}
@@ -488,4 +498,15 @@ func (s *Service) DropOrphans(ctx context.Context) error {
 	err := s.storage.DropOrphans(ctx)
 	s.invalidate()
 	return err
+}
+
+// indexableWindow: a worker counts as able to index a workspace while its
+// last claim (which reports it) is this recent.
+const indexableWindow = 15 * time.Minute
+
+func onOff(b *bool) string {
+	if b != nil && *b {
+		return "on"
+	}
+	return "off"
 }

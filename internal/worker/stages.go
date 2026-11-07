@@ -506,6 +506,9 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		summary += fmt.Sprintf("\n\nThe checks failed at first and were fixed in %s.", plural(rounds, "fix round"))
 	}
 	stopSteps() // the final push is the one that counts
+	// Review and qa query this branch's code: index it at the next idle
+	// moment (only where the workspace's code_index switch is on).
+	w.queueBranchIndex(run.WorkspaceID, branch)
 	if repo.Push.Kind != "none" {
 		token := os.Getenv(repo.Push.TokenEnv)
 		if token == "" {

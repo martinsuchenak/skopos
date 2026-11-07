@@ -204,11 +204,16 @@ func RunMigrations(db *sql.DB) error {
 	// Worker presence: what a worker reports on every poll (its version and
 	// poll interval) and its clean-shutdown goodbye.
 	// unhealthy: the workspaces whose preflight fails on the worker (JSON
-	// object workspace → reason; NULL = all healthy).
-	for _, col := range [][2]string{{"version", "TEXT"}, {"poll_ms", "INTEGER"}, {"offline_at", "TEXT"}, {"unhealthy", "TEXT"}} {
+	// object workspace → reason; NULL = all healthy). indexable: the
+	// workspaces whose repo the worker can fetch and index (JSON array).
+	for _, col := range [][2]string{{"version", "TEXT"}, {"poll_ms", "INTEGER"}, {"offline_at", "TEXT"}, {"unhealthy", "TEXT"}, {"indexable", "TEXT NOT NULL DEFAULT '[]'"}} {
 		if err := ensureColumn(db, "workers", col[0], col[1]); err != nil {
 			return err
 		}
+	}
+	// Idle-worker code indexing per workspace (NULL = off).
+	if err := ensureColumn(db, "pipeline_defaults", "code_index", "INTEGER CHECK (code_index IS NULL OR code_index IN (0, 1))"); err != nil {
+		return err
 	}
 	// Default second-opinion runner per workspace/group (NULL = none).
 	if err := ensureColumn(db, "pipeline_defaults", "second_opinion_runner", "TEXT"); err != nil {

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"path"
 	"time"
+
+	"github.com/martinsuchenak/skopos/internal/dbtime"
 )
 
 // Storage owns pipeline_stages and pipeline_defaults. It also reads the
@@ -43,12 +45,17 @@ func (s *Storage) Get(ctx context.Context, kind, id string) (Settings, error) {
 		return out, err
 	}
 	var agents, second sql.NullString
-	err = s.db.QueryRowContext(ctx, `SELECT agents_default, second_opinion_runner FROM pipeline_defaults WHERE owner_kind = ? AND owner_id = ?`, kind, id).Scan(&agents, &second)
+	var codeIndex sql.NullInt64
+	err = s.db.QueryRowContext(ctx, `SELECT agents_default, second_opinion_runner, code_index FROM pipeline_defaults WHERE owner_kind = ? AND owner_id = ?`, kind, id).Scan(&agents, &second, &codeIndex)
 	if err != nil && err != sql.ErrNoRows {
 		return out, fmt.Errorf("reading pipeline defaults: %w", err)
 	}
 	out.AgentsDefault = agents.String
 	out.SecondOpinionRunner = second.String
+	if codeIndex.Valid {
+		on := codeIndex.Int64 == 1
+		out.CodeIndex = &on
+	}
 	return out, nil
 }
 
@@ -68,7 +75,7 @@ func (s *Storage) Replace(ctx context.Context, kind, id string, st Settings, by 
 			return err
 		}
 	}
-	if err := writeDefaults(ctx, tx, kind, id, st.AgentsDefault, st.SecondOpinionRunner, by, ms); err != nil {
+	if err := writeDefaults(ctx, tx, kind, id, st.AgentsDefault, st.SecondOpinionRunner, st.CodeIndex, by, ms); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -137,17 +144,28 @@ func insertStage(ctx context.Context, tx *sql.Tx, kind, id, stage string, set St
 	return nil
 }
 
-func writeDefaults(ctx context.Context, tx *sql.Tx, kind, id, agents, second, by string, ms int64) error {
-	if agents == "" && second == "" {
+func writeDefaults(ctx context.Context, tx *sql.Tx, kind, id, agents, second string, codeIndex *bool, by string, ms int64) error {
+	if agents == "" && second == "" && codeIndex == nil {
 		_, err := tx.ExecContext(ctx, `DELETE FROM pipeline_defaults WHERE owner_kind = ? AND owner_id = ?`, kind, id)
 		return err
 	}
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO pipeline_defaults (owner_kind, owner_id, agents_default, second_opinion_runner, updated_ms, updated_by) VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO pipeline_defaults (owner_kind, owner_id, agents_default, second_opinion_runner, code_index, updated_ms, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (owner_kind, owner_id) DO UPDATE SET agents_default = excluded.agents_default,
-			second_opinion_runner = excluded.second_opinion_runner,
-			updated_ms = excluded.updated_ms, updated_by = excluded.updated_by`, kind, id, nullable(agents), nullable(second), ms, by)
+			second_opinion_runner = excluded.second_opinion_runner, code_index = excluded.code_index,
+			updated_ms = excluded.updated_ms, updated_by = excluded.updated_by`, kind, id, nullable(agents), nullable(second), boolArg(codeIndex), ms, by)
 	return err
+}
+
+// boolArg stores a tri-state flag (nil = NULL).
+func boolArg(b *bool) any {
+	if b == nil {
+		return nil
+	}
+	if *b {
+		return 1
+	}
+	return 0
 }
 
 func nullable(s string) any {
@@ -333,6 +351,29 @@ func (s *Storage) RunnersServing(ctx context.Context, ws string) (map[string]boo
 				break
 			}
 		}
+	}
+	return out, rows.Err()
+}
+
+// Indexable lists the workers that can index a workspace: their last claim
+// named it indexable, they were seen since cutoff (unix ms) and have not
+// said goodbye — the same rule as runs.Storage.IndexableWorkers.
+func (s *Storage) Indexable(ctx context.Context, ws string, cutoffMS int64) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT w.id FROM workers w, json_each(w.indexable) j
+		WHERE j.value = ? AND w.last_seen >= ? AND w.offline_at IS NULL
+		ORDER BY w.id`, ws, dbtime.Format(time.UnixMilli(cutoffMS)))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
 	}
 	return out, rows.Err()
 }

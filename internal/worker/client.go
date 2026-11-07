@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +29,9 @@ type Client struct {
 	pollMS    int64 // idle poll interval, reported for presence
 	// serverVersion: the release the server named on its last response.
 	serverVersion string
+	// indexEnabled / indexDefault: the index duty of the last claim answer
+	// (indexer.go).
+	indexEnabled, indexDefault []string
 }
 
 func NewClient(base, key string) *Client {
@@ -48,11 +53,16 @@ func (c *Client) doHeader(ctx context.Context, method, path string, body, out an
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
+	return c.doHeaders(ctx, method, path, body, out, nil)
+}
+
+// doHeaders is do that also hands back the response headers (hdr non-nil).
+func (c *Client) doHeaders(ctx context.Context, method, path string, body, out any, hdr *http.Header) error {
 	req, err := c.build(ctx, method, path, body)
 	if err != nil {
 		return err
 	}
-	return c.exec(req, out)
+	return c.execHeaders(req, out, hdr)
 }
 
 func (c *Client) build(ctx context.Context, method, path string, body any) (*http.Request, error) {
@@ -79,12 +89,17 @@ func (c *Client) build(ctx context.Context, method, path string, body any) (*htt
 	return req, nil
 }
 
-func (c *Client) exec(req *http.Request, out any) error {
+func (c *Client) exec(req *http.Request, out any) error { return c.execHeaders(req, out, nil) }
+
+func (c *Client) execHeaders(req *http.Request, out any, hdr *http.Header) error {
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if hdr != nil {
+		*hdr = resp.Header
+	}
 	if v := resp.Header.Get("Skopos-Version"); v != "" {
 		c.mu.Lock()
 		c.serverVersion = v
@@ -104,17 +119,24 @@ func (c *Client) exec(req *http.Request, out any) error {
 }
 
 // Claim polls the queue. (nil, nil) = nothing to do.
-func (c *Client) Claim(ctx context.Context, workerID string, runners, workspaces []string, unhealthy map[string]string) (*Run, error) {
+func (c *Client) Claim(ctx context.Context, workerID string, runners, workspaces []string, unhealthy map[string]string, indexable []string) (*Run, error) {
 	var run Run
 	req := map[string]any{"worker_id": workerID, "runners": runners, "workspaces": workspaces,
 		"version": build.Version, "poll_ms": c.pollMS}
 	if len(unhealthy) > 0 {
 		req["unhealthy"] = unhealthy
 	}
+	if len(indexable) > 0 {
+		req["indexable"] = indexable
+	}
 	// 204 handling: do() returns nil without touching out.
-	if err := c.do(ctx, http.MethodPost, "/api/runs/claim", req, &run); err != nil {
+	var hdr http.Header
+	if err := c.doHeaders(ctx, http.MethodPost, "/api/runs/claim", req, &run, &hdr); err != nil {
 		return nil, err
 	}
+	c.mu.Lock()
+	c.indexEnabled, c.indexDefault = splitList(hdr.Get("Skopos-Index-Enabled")), splitList(hdr.Get("Skopos-Index-Default"))
+	c.mu.Unlock()
 	if run.ID == "" {
 		return nil, nil
 	}
@@ -130,6 +152,35 @@ func (c *Client) leaseHeader(runID string) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.leases[runID]
+}
+
+// IndexDuty is what the last claim answer said to index: the workspaces with
+// the code_index switch on, and those whose default branch this worker
+// keeps fresh.
+func (c *Client) IndexDuty() (enabled, defaults []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.indexEnabled), slices.Clone(c.indexDefault)
+}
+
+// DropIndexBranch removes a branch's index from the server (404 = already
+// gone).
+func (c *Client) DropIndexBranch(ctx context.Context, workspace, branch string) error {
+	err := c.do(ctx, http.MethodDelete, "/api/codeindex/"+url.PathEscape(workspace)+"/branch/"+url.PathEscape(branch), nil, nil)
+	if err != nil && strings.Contains(err.Error(), ": 404 ") {
+		return nil
+	}
+	return err
+}
+
+func splitList(v string) []string {
+	var out []string
+	for _, s := range strings.Split(v, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // ServerVersion is the release the server last named ("" before any poll,

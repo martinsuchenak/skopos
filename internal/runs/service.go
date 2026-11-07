@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -293,6 +295,15 @@ func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 		}
 		in.Unhealthy[ws] = reason
 	}
+	// Indexable is a client claim about the offered workspaces too.
+	indexable := in.Indexable[:0:0]
+	for _, ws := range in.Indexable {
+		if offered[ws] && !slices.Contains(indexable, ws) {
+			indexable = append(indexable, ws)
+		}
+	}
+	sort.Strings(indexable)
+	in.Indexable = indexable
 	if s.healthNotify != nil {
 		// What the registry held before and after this poll: a row this
 		// key may not write (another key's worker id) never changes, so it
@@ -715,6 +726,7 @@ func (s *Service) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
 				delete(w.Unhealthy, ws)
 			}
 		}
+		w.Indexable = slices.DeleteFunc(w.Indexable, func(ws string) bool { return !p.CanAccess(ws) })
 		out = append(out, w)
 	}
 	return out, nil
@@ -850,4 +862,30 @@ func firstLine(xs ...string) string {
 		}
 	}
 	return "no reason given"
+}
+
+// indexDutyWindow: a worker counts as able to index a workspace while its
+// registry row (refreshed by its polls) is this recent.
+const indexDutyWindow = 15 * time.Minute
+
+// IndexDuty answers a claiming worker what to index while idle (design §3):
+// of its offered workspaces, those with the code_index switch on, and of
+// those the ones whose default branch it keeps fresh — the able worker with
+// the smallest id, so the duty stays put while that worker stays able.
+func (s *Service) IndexDuty(ctx context.Context, in ClaimInput) IndexDuty {
+	var duty IndexDuty
+	for _, ws := range in.Workspaces {
+		if auth.RequireWorkspaceQuiet(ctx, ws) != nil || !s.prefsOf(ctx, ws).CodeIndexOn() {
+			continue
+		}
+		duty.Enabled = append(duty.Enabled, ws)
+		if !slices.Contains(in.Indexable, ws) {
+			continue
+		}
+		able, err := s.storage.IndexableWorkers(ctx, ws, s.now().Add(-indexDutyWindow))
+		if err == nil && len(able) > 0 && able[0] == strings.TrimSpace(in.WorkerID) {
+			duty.Default = append(duty.Default, ws)
+		}
+	}
+	return duty
 }

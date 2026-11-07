@@ -44,6 +44,10 @@ type Settings struct {
 	// SecondOpinionRunner is the runner a plain "second opinion" request
 	// uses (dashboard preselect, Slack `second`); "" = none at this level.
 	SecondOpinionRunner string `json:"second_opinion_runner,omitempty"`
+	// CodeIndex: idle workers keep this workspace's code index fresh
+	// (tmp/agent-mcp-and-indexing — design.md §3). Workspace owners only;
+	// nil = off.
+	CodeIndex *bool `json:"code_index,omitempty"`
 }
 
 // EffectiveStage is a resolved stage with where it came from:
@@ -77,4 +81,7 @@ type View struct {
 	// UnknownRunners: effective runners no worker serving this workspace
 	// offers yet — their runs wait until one does.
 	UnknownRunners []string `json:"unknown_runners,omitempty"`
+	// IndexableBy: the workers that can fetch this workspace's repo now
+	// (their last claim said so) — the code_index switch needs one.
+	IndexableBy []string `json:"indexable_by"`
 }

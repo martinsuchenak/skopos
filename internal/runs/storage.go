@@ -155,6 +155,8 @@ type WorkerSeen struct {
 	State      string   `json:"state"`
 	// Unhealthy: workspaces whose preflight fails there (→ reason).
 	Unhealthy map[string]string `json:"unhealthy,omitempty"`
+	// Indexable: workspaces whose repo it can fetch and index.
+	Indexable []string `json:"indexable,omitempty"`
 }
 
 // unhealthyJSON stores a health map (nil when all healthy).
@@ -205,20 +207,22 @@ func recordWorker(ctx context.Context, tx *sql.Tx, in ClaimInput, now time.Time,
 		forced = 1
 	}
 	res, err := tx.ExecContext(ctx, `
-		INSERT INTO workers (id, runners, workspaces, last_seen, updated_at, key_id, version, poll_ms, offline_at, unhealthy)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+		INSERT INTO workers (id, runners, workspaces, last_seen, updated_at, key_id, version, poll_ms, offline_at, unhealthy, indexable)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			runners = excluded.runners, workspaces = excluded.workspaces,
 			last_seen = excluded.last_seen, updated_at = excluded.updated_at, key_id = excluded.key_id,
-			version = excluded.version, poll_ms = excluded.poll_ms, offline_at = NULL, unhealthy = excluded.unhealthy
+			version = excluded.version, poll_ms = excluded.poll_ms, offline_at = NULL, unhealthy = excluded.unhealthy,
+			indexable = excluded.indexable
 		WHERE (workers.key_id IS NULL OR workers.key_id = excluded.key_id)
 			AND (? = 1 OR workers.runners != excluded.runners OR workers.workspaces != excluded.workspaces
 				OR COALESCE(workers.version, '') != COALESCE(excluded.version, '')
 				OR COALESCE(workers.poll_ms, 0) != COALESCE(excluded.poll_ms, 0)
 				OR COALESCE(workers.unhealthy, '') != COALESCE(excluded.unhealthy, '')
+				OR workers.indexable != excluded.indexable
 				OR workers.offline_at IS NOT NULL OR workers.last_seen < ?)`,
 		in.WorkerID, jsonList(in.Runners), jsonList(in.Workspaces), formatTime(now), formatTime(now), in.KeyID,
-		version, poll, unhealthyJSON(in.Unhealthy), forced, formatTime(now.Add(-presenceRefresh)))
+		version, poll, unhealthyJSON(in.Unhealthy), jsonList(in.Indexable), forced, formatTime(now.Add(-presenceRefresh)))
 	if err != nil {
 		return fmt.Errorf("recording worker: %w", err)
 	}
@@ -268,7 +272,7 @@ func (s *Storage) BusyWorkers(ctx context.Context) (map[string]bool, error) {
 
 // ListWorkers returns every worker that has ever claimed, newest first.
 func (st *Storage) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
-	rows, err := st.db.QueryContext(ctx, `SELECT id, runners, workspaces, last_seen, COALESCE(version, ''), COALESCE(poll_ms, 0), COALESCE(offline_at, ''), COALESCE(unhealthy, '') FROM workers ORDER BY last_seen DESC`)
+	rows, err := st.db.QueryContext(ctx, `SELECT id, runners, workspaces, last_seen, COALESCE(version, ''), COALESCE(poll_ms, 0), COALESCE(offline_at, ''), COALESCE(unhealthy, ''), indexable FROM workers ORDER BY last_seen DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("listing workers: %w", err)
 	}
@@ -276,13 +280,14 @@ func (st *Storage) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
 	var out []WorkerSeen
 	for rows.Next() {
 		var w WorkerSeen
-		var runners, workspaces, unhealthy string
-		if err := rows.Scan(&w.ID, &runners, &workspaces, &w.LastSeen, &w.Version, &w.PollMS, &w.OfflineAt, &unhealthy); err != nil {
+		var runners, workspaces, unhealthy, indexable string
+		if err := rows.Scan(&w.ID, &runners, &workspaces, &w.LastSeen, &w.Version, &w.PollMS, &w.OfflineAt, &unhealthy, &indexable); err != nil {
 			return nil, err
 		}
 		if unhealthy != "" {
 			_ = json.Unmarshal([]byte(unhealthy), &w.Unhealthy)
 		}
+		_ = json.Unmarshal([]byte(indexable), &w.Indexable)
 		_ = json.Unmarshal([]byte(runners), &w.Runners)
 		_ = json.Unmarshal([]byte(workspaces), &w.Workspaces)
 		if w.Runners == nil {
@@ -792,4 +797,26 @@ func (s *Storage) Note(ctx context.Context, id, note string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE runs SET fail_reason = CASE WHEN fail_reason = '' THEN ? ELSE fail_reason END WHERE id = ?`, note, id)
 	return err
+}
+
+// IndexableWorkers lists the workers (ids, sorted) whose registry row names
+// ws indexable and who were seen since cutoff and have not said goodbye.
+func (s *Storage) IndexableWorkers(ctx context.Context, ws string, cutoff time.Time) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT w.id FROM workers w, json_each(w.indexable) j
+		WHERE j.value = ? AND w.last_seen >= ? AND w.offline_at IS NULL
+		ORDER BY w.id`, ws, formatTime(cutoff))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }

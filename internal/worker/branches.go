@@ -200,6 +200,7 @@ func (w *Worker) sweepBranches(ctx context.Context, now time.Time) {
 			continue
 		}
 		w.dropBranch(rec.ItemID)
+		w.dropBranchIndex(ctx, rec.WorkspaceID, rec.Branch)
 		log.Info("cleaned up the finished item's worktree", "worktree", rec.Worktree, "local_branch_deleted", deleteBranch)
 	}
 }

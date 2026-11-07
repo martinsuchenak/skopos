@@ -1,9 +1,7 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -208,86 +206,21 @@ func PushToServer(ctx context.Context, serverURL, apiKey, workspace, branch, roo
 	pushReport, _ := progressPrinter(200)
 	// Local parse cache (per machine) so unchanged files skip parsing on
 	// repeated pushes; the server dedupes uploads independently.
-	cacheStore, err := codeindex.NewStore(".skopos")
-	if err == nil {
+	opts := codeindex.PushOptions{ServerURL: serverURL, APIKey: apiKey, Workspace: workspace, Branch: branch, Root: root, Report: pushReport}
+	if cacheStore, err := codeindex.NewStore(".skopos"); err == nil {
 		defer cacheStore.Close()
+		opts.Cache = cacheStore.AsBuildCache("cache")
 	}
-	var cacher codeindex.BuildCacher
-	if err == nil {
-		cacher = cacheStore.AsBuildCache("cache")
-	}
-	results, head, err := codeindex.BuildWithCache(ctx, parse.NewExtractor(), root, branch, pushReport, cacher)
-	if err != nil {
-		return 0, 0, err
-	}
-	entries := make([]codeindex.FileEntry, 0, len(results))
-	byHash := map[string]*parse.FileResult{}
-	for _, r := range results {
-		entries = append(entries, codeindex.FileEntry{Path: r.Path, Hash: r.Hash})
-		byHash[r.Hash] = r
-	}
-
-	// 1. manifest: which blobs does the server need?
-	manifest, err := postJSON[struct {
-		Missing []string `json:"missing"`
-	}](ctx, serverURL, apiKey, "POST", fmt.Sprintf("/api/codeindex/%s/manifest", url.PathEscape(workspace)),
-		map[string]any{"files": entries}, "application/json")
+	host, _ := os.Hostname()
+	opts.Source = "push:" + host
+	res, err := codeindex.Push(ctx, opts)
 	if err != nil {
 		if isUnreachable(err) {
-			return 0, 0, fmt.Errorf("manifest: %w\n  is skopos running at %s? (for a server-less local index use: skopos index build)", err, strings.TrimRight(serverURL, "/"))
+			return 0, 0, fmt.Errorf("%w\n  is skopos running at %s? (for a server-less local index use: skopos index build)", err, strings.TrimRight(serverURL, "/"))
 		}
-		return 0, 0, fmt.Errorf("manifest: %w", err)
-	}
-
-	// 2. upload only the missing blobs as ndjson, in bounded chunks: large
-	// repos must not build one giant request (server caps each at 256 MiB
-	// anyway) — chunking also keeps client memory flat regardless of size.
-	uploaded := 0
-	chunkCount := 0
-	const chunkBlobs = 512
-	var buf bytes.Buffer
-	flush := func() error {
-		if buf.Len() == 0 {
-			return nil
-		}
-		if _, err := postJSON[map[string]any](ctx, serverURL, apiKey, "POST",
-			fmt.Sprintf("/api/codeindex/%s/blobs", url.PathEscape(workspace)), append([]byte(nil), buf.Bytes()...), "application/x-ndjson"); err != nil {
-			return fmt.Errorf("blobs: %w", err)
-		}
-		uploaded += chunkCount
-		chunkCount = 0
-		buf.Reset()
-		return nil
-	}
-	enc := json.NewEncoder(&buf)
-	for _, h := range manifest.Missing {
-		if r, ok := byHash[h]; ok {
-			if err := enc.Encode(r); err != nil {
-				return 0, 0, err
-			}
-			chunkCount++
-			if chunkCount >= chunkBlobs || buf.Len() >= 32<<20 {
-				if err := flush(); err != nil {
-					return 0, 0, err
-				}
-			}
-		}
-	}
-	if err := flush(); err != nil {
 		return 0, 0, err
 	}
-
-	// 3. commit the branch.
-	host, _ := os.Hostname()
-	if _, err := postJSON[map[string]any](ctx, serverURL, apiKey, "POST",
-		fmt.Sprintf("/api/codeindex/%s/commit", url.PathEscape(workspace)),
-		map[string]any{
-			"branch": branch, "head_sha": head,
-			"source": "push:" + host, "files": entries,
-		}, "application/json"); err != nil {
-		return 0, 0, fmt.Errorf("commit: %w", err)
-	}
-	return uploaded, len(entries), nil
+	return res.Uploaded, res.Files, nil
 }
 
 func indexStatusCmd() *cli.Command {

@@ -132,7 +132,7 @@ func ValidateStage(stage string, st StageSetting) error {
 
 // Normalize trims and validates a whole settings document.
 func Normalize(in Settings) (Settings, error) {
-	out := Settings{Stages: map[string]StageSetting{}}
+	out := Settings{Stages: map[string]StageSetting{}, CodeIndex: in.CodeIndex}
 	switch a := strings.ToLower(strings.TrimSpace(in.AgentsDefault)); a {
 	case "", "default":
 	case runs.AgentsPanel, runs.AgentsSolo:

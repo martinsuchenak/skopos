@@ -369,3 +369,45 @@ func TestSecondOpinionDefault(t *testing.T) {
 		t.Fatalf("an unknown default runner is flagged: %v", v.UnknownRunners)
 	}
 }
+
+// code_index: a workspace switch (groups refuse it), stored, audited, handed
+// to the run queue, and shown with the workers that can index the
+// workspace now.
+func TestCodeIndexSwitch(t *testing.T) {
+	s, sqlDB, sink := fixture(t)
+	on := true
+	if _, err := s.Put(root(), KindGroup, "fortix", Settings{CodeIndex: &on}, ""); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("groups refuse code_index: %v", err)
+	}
+	now := time.Now().UTC()
+	exec(t, sqlDB, `INSERT INTO workers (id, runners, workspaces, last_seen, updated_at, indexable) VALUES
+		('w-new', '[]', '["fx/api"]', ?, ?, '["fx/api"]'),
+		('w-stale', '[]', '["fx/api"]', ?, ?, '["fx/api"]'),
+		('w-other', '[]', '["fx/web"]', ?, ?, '["fx/web"]')`,
+		now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano),
+		now.Add(-time.Hour).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano),
+		now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+	v, err := s.Put(root(), KindWorkspace, "fx/api", Settings{AgentsDefault: "solo", CodeIndex: &on}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Own.CodeIndex == nil || !*v.Own.CodeIndex || v.Own.AgentsDefault != "solo" {
+		t.Fatalf("stored: %+v", v.Own)
+	}
+	if strings.Join(v.IndexableBy, ",") != "w-new" {
+		t.Fatalf("indexable by the recently seen worker only: %v", v.IndexableBy)
+	}
+	if !strings.Contains(sink.entries[len(sink.entries)-1].Notes, "code index: off → on") {
+		t.Fatalf("audited: %+v", sink.entries[len(sink.entries)-1])
+	}
+	if !s.Prefs(root(), "fx/api").CodeIndexOn() || s.Prefs(root(), "fx/web").CodeIndexOn() {
+		t.Fatal("the run queue sees the switch per workspace")
+	}
+	off := false
+	if v, err = s.Put(root(), KindWorkspace, "fx/api", Settings{CodeIndex: &off}, ""); err != nil || v.Own.CodeIndex == nil || *v.Own.CodeIndex {
+		t.Fatalf("switched off: %+v %v", v, err)
+	}
+	if s.Prefs(root(), "fx/api").CodeIndexOn() {
+		t.Fatal("off reaches the run queue")
+	}
+}

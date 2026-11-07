@@ -50,6 +50,15 @@ func (h *Handler) Claim(w http.ResponseWriter, r *http.Request) {
 		h.respondRunError(w, err, "claim")
 		return
 	}
+	// What to index while idle (tmp/agent-mcp-and-indexing — design.md
+	// §3), in headers so the body stays the run (or nothing).
+	duty := h.service.IndexDuty(r.Context(), in)
+	if len(duty.Enabled) > 0 {
+		w.Header().Set("Skopos-Index-Enabled", strings.Join(duty.Enabled, ","))
+	}
+	if len(duty.Default) > 0 {
+		w.Header().Set("Skopos-Index-Default", strings.Join(duty.Default, ","))
+	}
 	if run == nil {
 		w.WriteHeader(http.StatusNoContent)
 		return
