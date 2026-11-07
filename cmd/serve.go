@@ -167,10 +167,16 @@ func serveCmd() *cli.Command {
 		},
 		// go-scaffolder:serve-flags
 		Run: func(ctx context.Context, cmd *cli.Command) error {
+			ship, err := openLogOutput(logOutputFrom(cmd, nil))
+			if err != nil {
+				return err
+			}
+			defer closeLogOutput(ship)
+			out, format := logWriter(ship, cmd.GetString("log-format"))
 			log := logslog.New(logslog.Config{
 				Level:  cmd.GetString("log-level"),
-				Format: cmd.GetString("log-format"),
-				Writer: os.Stdout,
+				Format: format,
+				Writer: out,
 			})
 			log.Info("starting skopos service")
 

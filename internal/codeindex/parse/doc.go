@@ -2,22 +2,13 @@ package parse
 
 import (
 	"strings"
-	"unicode/utf8"
 
+	"github.com/martinsuchenak/skopos/internal/textcut"
 	gts "github.com/odvcencio/gotreesitter"
 )
 
 // Truncate cuts s to at most maxBytes without splitting a UTF-8 rune.
-func Truncate(s string, maxBytes int) string {
-	if len(s) <= maxBytes {
-		return s
-	}
-	cut := maxBytes
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut]
-}
+func Truncate(s string, maxBytes int) string { return textcut.Truncate(s, maxBytes) }
 
 // maxDocBytes caps the stored documentation per symbol. Docs are paid for
 // three times (blob size, FTS index, embedding text); beyond this there is
