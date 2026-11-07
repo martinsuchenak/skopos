@@ -316,6 +316,11 @@ sign-off.
   you're approving. At plan approval the plan's steps are listed.
 - **A running step** warns when its worker has gone offline or stopped
   sending heartbeats, instead of spinning forever.
+- **Run logs:** **Watch live** on a running step opens what its agent, setup
+  and checks print as it happens (the agent's text, each tool call and the
+  start of its result, each command and whether it passed). Finished steps
+  and every Run history row have a **Log** button for the saved copy. See
+  [Run logs](../deployment/worker.md#run-logs).
 - **Below the steps:** the item description, the run history and a short
   history of who queued, approved, asked for changes or signed off. The
   header shows what the agent runs cost, when the runners report it. On a
@@ -415,6 +420,7 @@ Start an item with `new: …`, or `new <workspace>: …` for another repo; add
 | `runner test` fails with `env X resolved empty` | The account's `${VAR}` isn't set in `skopos-worker.env` |
 | Item `blocked` with a question | Answer it with **Retry** (dashboard) or `retry: …` (Slack) |
 | `approve` refused as stale | The plan changed after you looked — re-open the item and approve the current revision |
+| Watch live / Log shows "No log for this run" | The run ran on a worker older than the server, or before run logs existed. Its raw output is in the worker's `<state_dir>/runs/<run>/` |
 
 Next: the [worker reference](../deployment/worker.md) for every option, and
 [configuration](../configuration.md) for all keys and flags.

@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.22.0] — 2026-11-07
 
 ### Added
 
@@ -72,6 +72,10 @@ versions follow [Semantic Versioning](https://semver.org/).
   workspaces you want (dashboard → workspace → pipeline settings).
 - Run logs need both sides on this release; a worker on an older server
   gets 404s for its log batches and drops them (runs are unaffected).
+- To send logs to VictoriaLogs (or Loki, Elasticsearch…), set
+  `LOG_OUTPUT_URL` (and `LOG_OUTPUT_FORMAT`, `LOG_OUTPUT_STREAM`,
+  `LOG_OUTPUT_HEADER` as needed) on the server and in each worker's
+  `skopos-worker.env`; unset, nothing changes.
 
 ## [0.21.2] — 2026-11-06
 
