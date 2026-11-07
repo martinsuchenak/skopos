@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -61,11 +63,63 @@ type RunnerSpec struct {
 	// worker user's ~/.config/opencode is never read.
 	Config string `toml:"config"`
 	// Command (command): the argv template. {prompt} {dir} {model}
-	// expand; without {prompt} the prompt goes to stdin.
+	// {effort} expand; without {prompt} the prompt goes to stdin.
 	Command []string `toml:"command"`
 }
 
 var runnerKinds = map[string]bool{"claude": true, "opencode": true, "codex": true, "antigravity": true, "command": true}
+
+// effortLevels are the values each CLI's effort setting takes (from its
+// --help / config reference). opencode's --variant is provider-specific and
+// command's {effort} is the operator's own: any plain word.
+var effortLevels = map[string][]string{
+	"claude":      {"low", "medium", "high", "xhigh", "max"},
+	"antigravity": {"low", "medium", "high", "xhigh", "max"},
+	"codex":       {"minimal", "low", "medium", "high", "xhigh"},
+}
+
+var reEffortWord = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$`)
+
+// EffortLevels lists the effort values a runner kind takes; nil = any plain
+// word (opencode variants, command templates).
+func EffortLevels(kind string) []string { return effortLevels[kind] }
+
+// ValidateEffort refuses an effort a runner kind can't take ("" is always
+// fine), so a setting is never silently dropped. command = the template of
+// a command runner.
+func ValidateEffort(kind string, command []string, effort string) error {
+	if effort == "" {
+		return nil
+	}
+	if levels, ok := effortLevels[kind]; ok {
+		if !slices.Contains(levels, effort) {
+			return fmt.Errorf("effort %q: the %s runner takes %s", effort, kind, strings.Join(levels, ", "))
+		}
+		return nil
+	}
+	if !reEffortWord.MatchString(effort) {
+		return fmt.Errorf("effort %q: use a plain word (letters, digits, - _ ., at most 32)", effort)
+	}
+	if kind == "command" && !TemplateHasEffort(command) {
+		return fmt.Errorf("effort %q: the command has no {effort} placeholder", effort)
+	}
+	return nil
+}
+
+// TemplateHasEffort: a command template uses {effort}.
+func TemplateHasEffort(command []string) bool {
+	return slices.ContainsFunc(command, func(s string) bool { return strings.Contains(s, "{effort}") })
+}
+
+// checkEffort validates an account's effort for its runner. A command
+// template with {effort} needs it on every account: it would expand empty.
+func (c *Config) checkEffort(a *Account) error {
+	spec, kind := c.runnerSpec(accountRunner(a))
+	if kind == "command" && a.Effort == "" && TemplateHasEffort(spec.Command) {
+		return fmt.Errorf("runner %s's command has {effort}: set effort on the account", accountRunner(a))
+	}
+	return ValidateEffort(kind, spec.Command, a.Effort)
+}
 
 func (c *Config) runnerSpec(name string) (*RunnerSpec, string) {
 	if name == "" {
@@ -187,11 +241,65 @@ func (c *Config) CheckRunners(ctx context.Context, pathEnv string) []string {
 			problems = append(problems, err.Error())
 			continue
 		}
-		if err := r.Check(ctx, pathEnv); err != nil {
+		if err := c.CheckRunner(ctx, name, r, pathEnv); err != nil {
 			problems = append(problems, fmt.Sprintf("runner %s: %v", name, err))
 		}
 	}
 	return problems
+}
+
+// CheckRunner checks one runner's CLI on pathEnv: its lockdown flags, and
+// its effort flag when an account on it sets effort.
+func (c *Config) CheckRunner(ctx context.Context, name string, r Runner, pathEnv string) error {
+	if err := r.Check(ctx, pathEnv); err != nil {
+		return err
+	}
+	es, ok := r.(interface {
+		EffortSupported(ctx context.Context, pathEnv string) error
+	})
+	if !ok {
+		return nil // codex: -c takes any config key; command: the template
+	}
+	for _, a := range c.Accounts {
+		if accountRunner(a) == name && a.Effort != "" {
+			return es.EffortSupported(ctx, pathEnv)
+		}
+	}
+	return nil
+}
+
+// AccountWarnings: accounts of one runner that differ in model or effort.
+// Stages pin runners and the pool rotates accounts within one, so a quota
+// switch would quietly change how the stage runs. Not refused — a cheaper
+// fallback can be deliberate.
+func (c *Config) AccountWarnings() []string {
+	type setting struct{ account, model, effort string }
+	first := map[string]setting{}
+	var out []string
+	for _, name := range c.UsedRunners() {
+		for _, a := range c.Accounts {
+			if accountRunner(a) != name {
+				continue
+			}
+			f, ok := first[name]
+			if !ok {
+				first[name] = setting{a.Name, a.Model, a.Effort}
+				continue
+			}
+			if f.model != a.Model || f.effort != a.Effort {
+				out = append(out, fmt.Sprintf("runner %s: accounts %s (%s) and %s (%s) differ — a quota switch changes how its stages run; give each its own runner name",
+					name, f.account, orDefault(runDetail(f.model, f.effort)), a.Name, orDefault(runDetail(a.Model, a.Effort))))
+			}
+		}
+	}
+	return out
+}
+
+func orDefault(s string) string {
+	if s == "" {
+		return "CLI defaults"
+	}
+	return s
 }
 
 // runAgent executes one agent run on its runner — fail closed: a runner
@@ -216,8 +324,8 @@ func (w *Worker) runAgent(ctx context.Context, ar AgentRun) AgentResult {
 	rl := runLogFrom(ctx)
 	if rl != nil {
 		what := ar.Runner
-		if ar.Model != "" {
-			what += " (" + ar.Model + ")"
+		if d := runDetail(ar.Model, ar.Effort); d != "" {
+			what += " (" + d + ")"
 		}
 		if ar.Resume {
 			what += ", resuming its session"
@@ -404,7 +512,7 @@ func (c commandRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 		if strings.Contains(a, "{prompt}") {
 			usesPrompt = true
 		}
-		args = append(args, strings.NewReplacer("{prompt}", prompt, "{dir}", r.Dir, "{model}", r.Model).Replace(a))
+		args = append(args, strings.NewReplacer("{prompt}", prompt, "{dir}", r.Dir, "{model}", r.Model, "{effort}", r.Effort).Replace(a))
 	}
 	cctx, cancel := context.WithTimeout(ctx, orTimeout(r.Timeout))
 	defer cancel()
@@ -459,4 +567,15 @@ func writeRunLog(path string, stdout, stderr []byte) {
 	}
 	_ = os.MkdirAll(logsDirOf(path), 0o700)
 	_ = os.WriteFile(path, append(stdout, append([]byte("\n--- stderr\n"), stderr...)...), 0o600)
+}
+
+// runDetail names the model and effort for notes ("opus, effort high").
+func runDetail(model, effort string) string {
+	switch {
+	case effort == "":
+		return model
+	case model == "":
+		return "effort " + effort
+	}
+	return model + ", effort " + effort
 }

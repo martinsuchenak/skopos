@@ -129,7 +129,7 @@ printf '{"conversation_id":"c-9","status":"SUCCESS","response":"ok","structured_
 	home := t.TempDir()
 	wt := t.TempDir()
 	r := antigravityRunner{bin: script}
-	res := r.Run(context.Background(), AgentRun{Dir: wt, Prompt: "-review this", Schema: reviewSchema, Model: "gemini-3.8-flash-high",
+	res := r.Run(context.Background(), AgentRun{Dir: wt, Prompt: "-review this", Schema: reviewSchema, Model: "gemini-3.8-flash-high", Effort: "max",
 		AllowedTools: reviewTools, Env: map[string]string{"HOME": home}, Timeout: 20 * time.Minute})
 	if res.Outcome != OutcomeOK || res.SessionID != "c-9" {
 		t.Fatalf("run: %+v", res)
@@ -137,7 +137,7 @@ printf '{"conversation_id":"c-9","status":"SUCCESS","response":"ok","structured_
 	args, _ := os.ReadFile(filepath.Join(logDir, "args"))
 	a := string(args)
 	for _, want := range []string{"--output-format\njson\n", "--sandbox\n", "--disable-slash-commands\n", "--print-timeout\n20m0s\n",
-		"--model\ngemini-3.8-flash-high\n", "--json-schema\n", "--print=-review this\n"} {
+		"--model\ngemini-3.8-flash-high\n", "--effort\nmax\n", "--json-schema\n", "--print=-review this\n"} {
 		if !strings.Contains(a, want) {
 			t.Errorf("args lack %q:\n%s", want, a)
 		}

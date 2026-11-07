@@ -392,7 +392,7 @@ func runWorkerChecks(configPath, envFile, pathEnv, home string) ([]string, error
 		}
 		if r, err := ws.RunnerFor(name); err != nil {
 			problems = append(problems, err.Error())
-		} else if err := r.Check(context.Background(), pathEnv); err != nil {
+		} else if err := ws.CheckRunner(context.Background(), name, r, pathEnv); err != nil {
 			problems = append(problems, fmt.Sprintf("runner %s: %v", name, err))
 		} else if !r.Verified() {
 			// Unverified (kind command or antigravity): skopos refuses to run

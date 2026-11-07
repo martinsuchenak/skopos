@@ -180,6 +180,9 @@ func (c codexRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 	if r.Model != "" {
 		args = append(args, "-m", r.Model)
 	}
+	if r.Effort != "" {
+		args = append(args, "-c", `model_reasoning_effort="`+r.Effort+`"`)
+	}
 	if r.Schema != "" {
 		strict, err := codexStrictSchema(r.Schema)
 		if err != nil {

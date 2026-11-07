@@ -103,7 +103,7 @@ func workerCmd() *cli.Command {
 			defer closeLogOutput(ship)
 			out, _ := logWriter(ship, "json")
 			log := slog.New(slog.NewJSONHandler(out, nil)).With("worker", cfg.ID)
-			for _, warn := range warnings {
+			for _, warn := range append(warnings, cfg.AccountWarnings()...) {
 				log.Warn(warn)
 			}
 			serverURL := resolveClientSetting(cmd.GetString("server-url"), "SKOPOS_SERVER_URL", "http://localhost:8080", clientCfg.ServerURL)

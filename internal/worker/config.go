@@ -254,11 +254,15 @@ func (r *Repo) PushSteps() bool {
 
 // Account is one credential in the placement pool.
 type Account struct {
-	Name     string            `toml:"name"`     // "claude-1", "gemini"
-	Runner   string            `toml:"runner"`   // which runner it feeds
-	Priority int               `toml:"priority"` // lower = preferred
-	Model    string            `toml:"model"`
-	Env      map[string]string `toml:"env"` // ANTHROPIC_API_KEY / CLAUDE_CONFIG_DIR / ...
+	Name     string `toml:"name"`     // "claude-1", "gemini"
+	Runner   string `toml:"runner"`   // which runner it feeds
+	Priority int    `toml:"priority"` // lower = preferred
+	Model    string `toml:"model"`
+	// Effort is the reasoning effort the runner's CLI takes ("" = its
+	// default): claude/antigravity --effort, codex model_reasoning_effort,
+	// opencode --variant, command {effort}. Checked per kind at load.
+	Effort string            `toml:"effort"`
+	Env    map[string]string `toml:"env"` // ANTHROPIC_API_KEY / CLAUDE_CONFIG_DIR / ...
 
 	// Quota state is worker-local (learned from usage-limit errors, exactly
 	// as agent-trial does); not part of the config file.
@@ -498,6 +502,9 @@ func (c *Config) Default(home string) error {
 	}
 	for _, a := range c.Accounts {
 		if _, err := c.RunnerFor(a.Runner); err != nil {
+			return fmt.Errorf("account %s: %v", a.Name, err)
+		}
+		if err := c.checkEffort(a); err != nil {
 			return fmt.Errorf("account %s: %v", a.Name, err)
 		}
 	}

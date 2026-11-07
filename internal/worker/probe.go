@@ -54,7 +54,7 @@ func (c *Config) ProbeAccount(ctx context.Context, a *Account, timeout time.Dura
 	_ = os.WriteFile(filepath.Join(dir, "README.md"), []byte("probe\n"), 0o644)
 
 	ar := AgentRun{
-		Bin: c.RunnerBin(runner), Dir: dir, Runner: runner, Model: a.Model,
+		Bin: c.RunnerBin(runner), Dir: dir, Runner: runner, Model: a.Model, Effort: a.Effort,
 		Prompt:       "This is a connectivity check. Do not use any tools. Reply with exactly: " + probeWord,
 		AllowedTools: basePlanTools,
 		Settings:     settingsJSON(c.MCPDeny, ""),

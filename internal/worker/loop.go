@@ -481,7 +481,7 @@ func (w *Worker) agentRun(dir, prompt, schema string, tools []string, timeout ti
 		tools = append(slices.Clone(tools), skoposTools(phase)...)
 	}
 	ar := AgentRun{
-		Bin: w.cfg.RunnerBin(runner), Dir: dir, Prompt: prompt, Runner: runner, Model: account.Model,
+		Bin: w.cfg.RunnerBin(runner), Dir: dir, Prompt: prompt, Runner: runner, Model: account.Model, Effort: account.Effort,
 		SessionID: sess, Resume: sess != "",
 		Schema: schema, AllowedTools: tools,
 		Settings:  settingsJSON(w.cfg.MCPDeny, ""),

@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -198,6 +199,7 @@ esac`)
 	answers := strings.Join([]string{
 		"2",    // kind: opencode
 		"2",    // model #2: llmrouter/qwen/qwen3.8-27b
+		"",     // effort: none
 		"",     // runner name: suggested opencode-qwen3-8-27b
 		"",     // write the provider config: yes
 		"",     // copy the key: yes
@@ -301,6 +303,7 @@ func TestRunnerWizardCodex(t *testing.T) {
 	answers := strings.Join([]string{
 		"3", // kind: codex
 		"",  // model: codex's default
+		"",  // effort: codex's default
 		"",  // runner name: codex
 		"",  // credentials: a login directory of its own
 		"",  // login dir: suggested
@@ -350,6 +353,7 @@ func TestRunnerWizardAntigravity(t *testing.T) {
 	answers := strings.Join([]string{
 		"4", // kind: antigravity
 		"",  // model: agy's default
+		"",  // effort: agy's default
 		"",  // runner name: agy
 		"",  // login dir: suggested
 		"",  // account name: agy
@@ -380,5 +384,68 @@ func TestRunnerWizardAntigravity(t *testing.T) {
 	}
 	if acct == nil || acct.Runner != "agy" || acct.Env["HOME"] != "~/.agy-agy" {
 		t.Fatalf("account: %+v\n%s", acct, raw)
+	}
+}
+
+// --effort lands on the account; one the runner's CLI can't take never
+// reaches the file.
+func TestAddRunnerEffort(t *testing.T) {
+	got, err := addRunnerToConfig(baseWorkerTOML, runnerInput{Kind: "claude", Name: "claude-opus-high", Model: "opus", Effort: "high"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateWorkerTOML(got); err != nil {
+		t.Fatalf("must validate: %v\n%s", err, got)
+	}
+	w := decodeW(t, got)
+	if a := w.Accounts[len(w.Accounts)-1]; a.Effort != "high" || a.Model != "opus" {
+		t.Fatalf("account: %+v", a)
+	}
+	bad, err := addRunnerToConfig(baseWorkerTOML, runnerInput{Kind: "codex", Name: "codex-max", Effort: "max"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateWorkerTOML(bad); err == nil || !strings.Contains(err.Error(), "takes minimal") {
+		t.Fatalf("codex has no max: %v", err)
+	}
+}
+
+// The wizard's effort question: the kind's levels, re-asked until valid;
+// a command runner is asked only when its template has {effort}.
+func TestAskEffort(t *testing.T) {
+	answers := []string{"huge", "xhigh"}
+	ask := func(string, string) string { a := answers[0]; answers = answers[1:]; return a }
+	var said strings.Builder
+	say := func(f string, a ...any) { fmt.Fprintf(&said, f, a...) }
+	if e := askEffort(ask, say, "claude", nil); e != "xhigh" || !strings.Contains(said.String(), "takes low, medium") {
+		t.Fatalf("got %q\n%s", e, said.String())
+	}
+	if e := askEffort(func(string, string) string { t.Fatal("asked"); return "" }, say, "command", []string{"aider", "{prompt}"}); e != "" {
+		t.Fatalf("command without {effort}: %q", e)
+	}
+	// The same rules as the config: opencode's "high!" is refused here, not
+	// after every other question; a template with {effort} needs a value.
+	answers = []string{"high!", "high"}
+	if e := askEffort(ask, say, "opencode", nil); e != "high" || !strings.Contains(said.String(), "plain word") {
+		t.Fatalf("opencode: %q\n%s", e, said.String())
+	}
+	answers = []string{"", "deep"}
+	if e := askEffort(ask, say, "command", []string{"tool", "--think={effort}"}); e != "deep" || !strings.Contains(said.String(), "enter a value") {
+		t.Fatalf("command: %q\n%s", e, said.String())
+	}
+}
+
+// The suggested runner name stays a valid one with any effort.
+func TestWithEffortSuffix(t *testing.T) {
+	for _, c := range []struct{ name, effort, want string }{
+		{"claude-opus", "", "claude-opus"},
+		{"claude-opus", "high", "claude-opus-high"},
+		{"tool", "0.5", "tool-0-5"},
+		{"opencode-" + strings.Repeat("m", 30), strings.Repeat("v", 30), "opencode-" + strings.Repeat("m", 30)}, // past 64: bare name
+	} {
+		got := withEffortSuffix(c.name, c.effort)
+		if got != c.want || !reRunnerName.MatchString(got) {
+			t.Errorf("%s + %s: %q, want %q", c.name, c.effort, got, c.want)
+		}
 	}
 }

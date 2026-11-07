@@ -40,6 +40,7 @@ type AgentRun struct {
 	SessionID    string // new session id, or the one to resume
 	Resume       bool
 	Model        string
+	Effort       string // reasoning effort, validated for the runner's kind at load
 	Schema       string // JSON schema for structured output
 	AllowedTools []string
 	Settings     string // settings JSON (deny rules); deny beats allow
@@ -94,6 +95,9 @@ func (claudeRunner) Verified() bool       { return true }
 func (claudeRunner) HonorsSettings() bool { return true }
 func (c claudeRunner) Check(ctx context.Context, pathEnv string) error {
 	return LockdownSupported(ctx, c.bin, pathEnv)
+}
+func (c claudeRunner) EffortSupported(ctx context.Context, pathEnv string) error {
+	return effortSupported(ctx, c.bin, pathEnv, []string{"--help"}, "--effort", "Claude Code")
 }
 func (c claudeRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 	r.Bin = c.bin
@@ -231,6 +235,9 @@ func runClaude(ctx context.Context, r AgentRun) AgentResult {
 	}
 	if r.Model != "" {
 		args = append(args, "--model", r.Model)
+	}
+	if r.Effort != "" {
+		args = append(args, "--effort", r.Effort)
 	}
 	if r.Schema != "" {
 		args = append(args, "--json-schema", r.Schema)
@@ -478,9 +485,22 @@ func firstLine(s string) string {
 // option, so the daemon refuses to start and `worker check` reports it.
 // pathEnv, when set, is the PATH to resolve bin on (the service's).
 func LockdownSupported(ctx context.Context, bin, pathEnv string) error {
+	missing, err := missingFlags(ctx, bin, pathEnv, []string{"--help"}, "--setting-sources", "--restricted", "--strict-mcp-config", "--mcp-config", "--tools")
+	if err != nil {
+		return err
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("%s does not support %s — upgrade the agent CLI (pipeline runs need them to load no user/project settings and keep file tools inside the worktree)", bin, strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// missingFlags runs `bin <helpArgs>` on pathEnv (bounded) and returns the
+// flags its help text does not mention.
+func missingFlags(ctx context.Context, bin, pathEnv string, helpArgs []string, flags ...string) ([]string, error) {
 	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, bin, "--help")
+	cmd := exec.CommandContext(cctx, bin, helpArgs...)
 	if pathEnv != "" {
 		cmd.Env = append(os.Environ(), "PATH="+pathEnv)
 		if p, err := lookPathIn(bin, pathEnv); err == nil {
@@ -489,17 +509,26 @@ func LockdownSupported(ctx context.Context, bin, pathEnv string) error {
 	}
 	out, err := cmd.CombinedOutput()
 	if err != nil && len(out) == 0 {
-		return fmt.Errorf("running %s --help: %v", bin, err)
+		return nil, fmt.Errorf("running %s %s: %v", bin, strings.Join(helpArgs, " "), err)
 	}
-	help := string(out)
 	var missing []string
-	for _, f := range []string{"--setting-sources", "--restricted", "--strict-mcp-config", "--mcp-config", "--tools"} {
-		if !strings.Contains(help, f) {
+	for _, f := range flags {
+		if !strings.Contains(string(out), f) {
 			missing = append(missing, f)
 		}
 	}
+	return missing, nil
+}
+
+// effortSupported: the CLI's help names its effort flag (an older build
+// would refuse it on every run, or ignore it).
+func effortSupported(ctx context.Context, bin, pathEnv string, helpArgs []string, flag, upgrade string) error {
+	missing, err := missingFlags(ctx, bin, pathEnv, helpArgs, flag)
+	if err != nil {
+		return err
+	}
 	if len(missing) > 0 {
-		return fmt.Errorf("%s does not support %s — upgrade the agent CLI (pipeline runs need them to load no user/project settings and keep file tools inside the worktree)", bin, strings.Join(missing, ", "))
+		return fmt.Errorf("%s does not support %s, which an account's effort needs — upgrade %s", bin, flag, upgrade)
 	}
 	return nil
 }

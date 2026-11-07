@@ -40,25 +40,14 @@ type antigravityRunner struct{ bin string }
 func (antigravityRunner) Verified() bool       { return false }
 func (antigravityRunner) HonorsSettings() bool { return false }
 
+func (a antigravityRunner) EffortSupported(ctx context.Context, pathEnv string) error {
+	return effortSupported(ctx, a.bin, pathEnv, []string{"--help"}, "--effort", "the Antigravity CLI")
+}
+
 func (a antigravityRunner) Check(ctx context.Context, pathEnv string) error {
-	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(cctx, a.bin, "--help")
-	if pathEnv != "" {
-		cmd.Env = append(os.Environ(), "PATH="+pathEnv)
-		if p, err := lookPathIn(a.bin, pathEnv); err == nil {
-			cmd.Path = p
-		}
-	}
-	out, err := cmd.CombinedOutput()
-	if err != nil && len(out) == 0 {
-		return fmt.Errorf("running %s --help: %v", a.bin, err)
-	}
-	var missing []string
-	for _, f := range []string{"--print", "--output-format", "--json-schema", "--conversation", "--print-timeout", "--sandbox", "--disable-slash-commands"} {
-		if !strings.Contains(string(out), f) {
-			missing = append(missing, f)
-		}
+	missing, err := missingFlags(ctx, a.bin, pathEnv, []string{"--help"}, "--print", "--output-format", "--json-schema", "--conversation", "--print-timeout", "--sandbox", "--disable-slash-commands")
+	if err != nil {
+		return err
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("%s does not support %s — upgrade the Antigravity CLI", a.bin, strings.Join(missing, ", "))
@@ -168,6 +157,9 @@ func (a antigravityRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 		"--print-timeout", timeout.String()}
 	if r.Model != "" {
 		args = append(args, "--model", r.Model)
+	}
+	if r.Effort != "" {
+		args = append(args, "--effort", r.Effort)
 	}
 	if r.Schema != "" {
 		tmp, err := os.MkdirTemp("", "skopos-agy-")

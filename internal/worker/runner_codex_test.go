@@ -156,7 +156,7 @@ echo '{"type":"turn.completed","usage":{}}'`)
 	wt := t.TempDir()
 	home := t.TempDir()
 	r := codexRunner{bin: script}
-	res := r.Run(context.Background(), AgentRun{Dir: wt, Prompt: "review this, secret-in-prompt", Schema: reviewSchema, Model: "gpt-x",
+	res := r.Run(context.Background(), AgentRun{Dir: wt, Prompt: "review this, secret-in-prompt", Schema: reviewSchema, Model: "gpt-x", Effort: "xhigh",
 		AllowedTools: reviewTools, Env: map[string]string{"CODEX_HOME": home}, Timeout: time.Minute})
 	if res.Outcome != OutcomeOK || res.SessionID != "th-9" || !strings.Contains(string(res.Structured), `"pass"`) {
 		t.Fatalf("run: %+v", res)
@@ -166,7 +166,7 @@ echo '{"type":"turn.completed","usage":{}}'`)
 	for _, want := range []string{"exec\n", "--ignore-user-config\n", "--ignore-rules\n", "--strict-config\n", "--json\n",
 		"project_doc_max_bytes=0\n", "skills.include_instructions=false\n", `approval_policy="never"` + "\n",
 		`default_permissions="skopos"` + "\n", "permissions.skopos.network.enabled=false\n", "--disable\nhooks\n",
-		"--cd\n" + wt + "\n", "-m\ngpt-x\n", "--output-schema\n"} {
+		"--cd\n" + wt + "\n", "-m\ngpt-x\n", "-c\nmodel_reasoning_effort=\"xhigh\"\n", "--output-schema\n"} {
 		if !strings.Contains(a, want) {
 			t.Errorf("args lack %q:\n%s", want, a)
 		}

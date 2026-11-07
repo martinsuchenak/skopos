@@ -52,6 +52,7 @@ func workerRunnerCmd() *cli.Command {
 					&cli.StringFlag{Name: "kind", Usage: "claude | opencode | codex | antigravity | command (omit for the wizard)"},
 					&cli.StringFlag{Name: "name", Usage: "Runner name (accounts and pipeline settings use it), e.g. opencode-glm"},
 					&cli.StringFlag{Name: "model", Usage: "Model for the account (claude alias, opencode provider/model, or codex model)"},
+					&cli.StringFlag{Name: "effort", Usage: "Reasoning effort for the account (claude/agy: low…max; codex: minimal…xhigh; opencode: a model variant)"},
 					&cli.StringFlag{Name: "account", Usage: "Account name (default: the runner name)"},
 					&cli.IntFlag{Name: "priority", Usage: "Account priority (lower is preferred)"},
 					&cli.StringSliceFlag{Name: "env", Usage: "Account env KEY=VALUE (repeatable; use ${VAR} to reference the env file)"},
@@ -72,7 +73,7 @@ func workerRunnerCmd() *cli.Command {
 						return runRunnerWizard(ctx, bufio.NewReader(os.Stdin), os.Stdout, cfgPath, envPath, wizardEnv{})
 					}
 					in := runnerInput{
-						Kind: cmd.GetString("kind"), Name: cmd.GetString("name"), Model: cmd.GetString("model"),
+						Kind: cmd.GetString("kind"), Name: cmd.GetString("name"), Model: cmd.GetString("model"), Effort: cmd.GetString("effort"),
 						Account: cmd.GetString("account"), Priority: cmd.GetInt("priority"),
 						OpencodeConfig: cmd.GetString("opencode-config"), Env: map[string]string{},
 					}
@@ -220,11 +221,14 @@ func printRunnerList(ctx context.Context, out io.Writer, cfg *worker.Config) {
 			if model == "" {
 				model = "(CLI default)"
 			}
-			pf("  account:  %s  model=%s  priority=%d%s\n", a.Name, model, a.Priority, envSummary(a.Env))
+			pf("  account:  %s  model=%s%s  priority=%d%s\n", a.Name, model, effortSuffix("  effort=", a.Effort), a.Priority, envSummary(a.Env))
 		}
 		if !any {
 			pf("  account:  none — nothing can run on this runner\n")
 		}
+	}
+	for _, w := range cfg.AccountWarnings() {
+		pf("\nwarning: %s\n", w)
 	}
 	pf("\nPin a stage to a runner on the server: skopos workspace pipeline set --workspace <ws> --stage <stage> --runners <runner>\n(or the dashboard: Workspaces → Pipeline)\n")
 }
@@ -269,7 +273,7 @@ func testAccounts(ctx context.Context, out io.Writer, cfg *worker.Config, runner
 			continue
 		}
 		ran++
-		pf("%s (runner %s, model %s) … ", a.Name, ar, orDash(a.Model))
+		pf("%s (runner %s, model %s%s) … ", a.Name, ar, orDash(a.Model), effortSuffix(", effort ", a.Effort))
 		// An env value that resolved empty means the account is not set
 		// up as intended — the CLI would quietly fall back to its own
 		// login and the probe would test the wrong credentials.
@@ -337,6 +341,7 @@ type runnerInput struct {
 	Kind           string
 	Name           string
 	Model          string
+	Effort         string
 	Account        string
 	Priority       int
 	Env            map[string]string
@@ -452,6 +457,9 @@ func addRunnerToConfig(content string, in runnerInput) (string, error) {
 	fmt.Fprintf(&b, "\n[[worker.accounts]]\nname = %s\nrunner = %s\n", tomlStr(acct), tomlStr(in.Name))
 	if in.Model != "" {
 		fmt.Fprintf(&b, "model = %s\n", tomlStr(in.Model))
+	}
+	if in.Effort != "" {
+		fmt.Fprintf(&b, "effort = %s\n", tomlStr(in.Effort))
 	}
 	if in.Priority != 0 {
 		fmt.Fprintf(&b, "priority = %d\n", in.Priority)
@@ -678,16 +686,18 @@ func runRunnerWizard(ctx context.Context, in *bufio.Reader, out io.Writer, cfgPa
 		say("\nModel — an agy model id from `agy models` (e.g. gemini-3.8-flash-high); empty = agy's default.\n")
 		ri.Model = ask("Model", "")
 	case "command":
-		say("\nCommand template — the agent CLI and its args. Placeholders: {prompt} {dir} {model};\nwithout {prompt} the prompt goes to stdin. Example: aider --yes --message {prompt}\n")
+		say("\nCommand template — the agent CLI and its args. Placeholders: {prompt} {dir} {model} {effort};\nwithout {prompt} the prompt goes to stdin. Example: aider --yes --message {prompt}\n")
 		for len(ri.Command) == 0 {
 			ri.Command = strings.Fields(ask("Command", ""))
 		}
 		ri.Model = ask("Model (passed as {model}; optional)", "")
 	}
+	ri.Effort = askEffort(ask, say, kind, ri.Command)
 
-	ri.Name = ask("\nRunner name (accounts and pipeline settings use it)", suggestRunnerName(kind, ri.Model, ri.Command))
+	suggested := withEffortSuffix(suggestRunnerName(kind, ri.Model, ri.Command), ri.Effort)
+	ri.Name = ask("\nRunner name (accounts and pipeline settings use it)", suggested)
 	for !reRunnerName.MatchString(ri.Name) {
-		ri.Name = ask("Runner name (letters, digits, - and _)", suggestRunnerName(kind, ri.Model, ri.Command))
+		ri.Name = ask("Runner name (letters, digits, - and _)", suggested)
 	}
 
 	// Credentials.
@@ -990,4 +1000,55 @@ func mergeOpencodeProvider(path, provider string, block map[string]any, model, k
 		return err
 	}
 	return os.WriteFile(path, append(b, '\n'), 0o600)
+}
+
+// askEffort asks for the account's reasoning effort ("" = the CLI's
+// default), re-asking until worker.ValidateEffort accepts it. A command
+// runner is asked only when its template has {effort}, and then needs one.
+func askEffort(ask func(label, def string) string, say func(format string, a ...any), kind string, command []string) string {
+	needed := kind == "command"
+	if needed && !worker.TemplateHasEffort(command) {
+		return ""
+	}
+	switch levels := worker.EffortLevels(kind); {
+	case levels != nil:
+		say("\nEffort — %s; empty = the CLI's default.\n", strings.Join(levels, ", "))
+	case kind == "opencode":
+		say("\nEffort — the model's variant (provider-specific, e.g. high, max, minimal); empty = none.\n")
+	default:
+		say("\nEffort — passed as {effort} (the template has it, so it's needed).\n")
+	}
+	for {
+		e := strings.TrimSpace(ask("Effort", ""))
+		err := worker.ValidateEffort(kind, command, e)
+		if err == nil && e == "" && needed {
+			err = fmt.Errorf("the command has {effort}: enter a value")
+		}
+		if err == nil {
+			return e
+		}
+		say("  %v\n", err)
+	}
+}
+
+// effortSuffix renders an effort after a label ("" when none).
+func effortSuffix(label, effort string) string {
+	if effort == "" {
+		return ""
+	}
+	return label + effort
+}
+
+// withEffortSuffix appends the effort to a suggested runner name (one runner
+// per model+effort, so stages can pin either), kept a valid runner name;
+// the bare name when the suffix can't be.
+func withEffortSuffix(name, effort string) string {
+	if effort == "" {
+		return name
+	}
+	s := name + "-" + strings.Trim(reSlug.ReplaceAllString(strings.ToLower(effort), "-"), "-")
+	if !reRunnerName.MatchString(s) {
+		return name
+	}
+	return s
 }

@@ -43,7 +43,7 @@ skopos worker install
 ## Agent runners
 
 An account's `runner` picks the agent CLI; the account also carries the
-model and the credentials.
+model, the effort and the credentials.
 
 | Runner kind | Lockdown | How it runs |
 |---|---|---|
@@ -117,7 +117,7 @@ env    = { LLMROUTER_API_KEY = "${LLMROUTER_API_KEY}" }  # the providers file sa
 
 [worker.runner_config.aider]                          # any other CLI: wrapper-only
 kind    = "command"
-command = ["aider", "--yes", "--message", "{prompt}"] # {prompt} {dir} {model}; no {prompt} = stdin
+command = ["aider", "--yes", "--message", "{prompt}"] # {prompt} {dir} {model} {effort}; no {prompt} = stdin
 ```
 
 `worker.runners` (what claims offer) defaults to every runner your accounts
@@ -216,12 +216,51 @@ env    = { HOME = "~/skopos-workers/accounts/agy-1" }
   go test ./internal/worker -run TestLiveAntigravityLockdown -v` checks what
   holds and logs the instruction-file gap.
 
+### Effort
+
+An account's `effort` is the reasoning effort its CLI runs at (empty = the
+CLI's default). Each runner kind passes it its own way, and the worker
+refuses a value the CLI doesn't take when it loads the config:
+
+| Runner kind | Passed as | Values |
+|---|---|---|
+| `claude` | `--effort` | `low`, `medium`, `high`, `xhigh`, `max` |
+| `antigravity` | `--effort` | `low`, `medium`, `high`, `xhigh`, `max` |
+| `codex` | `-c model_reasoning_effort=…` | `minimal`, `low`, `medium`, `high`, `xhigh` |
+| `opencode` | `--variant` | the model's variants (provider-specific, e.g. `high`, `max`, `minimal`) |
+| `command` | `{effort}` in the template | any word; refused when the template has no `{effort}`, and a template with `{effort}` needs it on every account |
+
+```toml
+[worker.runner_config.claude-opus-high]
+kind = "claude"
+
+[[worker.accounts]]
+name   = "opus-high"
+runner = "claude-opus-high"
+model  = "opus"
+effort = "high"
+```
+
+`skopos worker runner add --kind claude --name claude-opus-high --model opus --effort high`
+writes the same; the wizard asks for the effort after the model. `runner
+list`, `runner test` and the run log show it next to the model.
+
+- **The CLI must know the flag.** When an account sets effort, `worker
+  check` and worker startup also check the CLI's help for `--effort`
+  (claude, agy) or `--variant` (opencode). An older CLI is refused there
+  rather than failing every run.
+- **Keep one setting per runner.** Stages pin runners, and the pool rotates
+  between a runner's accounts on quota. Accounts of one runner that differ
+  in model or effort get a warning (`runner list`, the worker's log at
+  startup), since a quota switch would change how the stage runs.
+
 ### One model per stage
 
-The model belongs to the account, and a runner name is any label. To run one
-CLI with different models, give each model its own runner name. The wizard
-does this when you pick a model. Then pin stages to runners in the
-workspace's pipeline settings (dashboard: Workspaces → Pipeline):
+The model and the effort belong to the account, and a runner name is any
+label. To run one CLI with different models or efforts, give each its own
+runner name. The wizard does this when you pick a model or an effort. Then
+pin stages to runners in the workspace's pipeline settings (dashboard:
+Workspaces → Pipeline):
 
 ```sh
 skopos workspace pipeline set --workspace github.com/you/repo --stage plan --runners opencode-glm-5-3

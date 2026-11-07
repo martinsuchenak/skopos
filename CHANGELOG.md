@@ -19,6 +19,14 @@ versions follow [Semantic Versioning](https://semver.org/).
   can't look SRV up get a resolved URL: the agents' MCP config (rewritten
   before each run), `git push`, and the agent configs `skopos install`
   writes.
+- **Effort per account.** `effort` on a worker account sets the reasoning
+  effort its CLI runs at: claude and agy `--effort` (`low`…`max`), codex
+  `model_reasoning_effort` (`minimal`…`xhigh`), opencode `--variant`,
+  command `{effort}`. A value the runner's CLI doesn't take is refused when
+  the config loads, and `worker check` / startup refuse a CLI too old for
+  the flag. Accounts of one runner that differ in model or effort get a
+  warning. `skopos worker runner add --effort`, the wizard, `runner
+  list|test` and the run log carry it.
 
 ### Fixed
 

@@ -86,7 +86,7 @@ approved base commit.
 
 ## 4. Decide which agent does what
 
-Each stage can run on a different runner, meaning a different CLI or model.
+Each stage can run on a different runner, meaning a different CLI, model or effort.
 Set it per workspace in the dashboard (Workspaces → **Pipeline**) or with the
 CLI, no restart needed:
 
@@ -161,11 +161,11 @@ remote_url = "https://git.example.com/you/repo.git"
 token_env = "GITEA_PUSH_TOKEN"
 ```
 
-**Runners and accounts.** The wizard detects the CLIs, lists the models, and
-writes the config:
+**Runners and accounts.** The wizard detects the CLIs, lists the models, asks
+for the effort (empty = the CLI's default), and writes the config:
 
 ```bash
-skopos worker runner add          # once per runner/model; names should match step 4
+skopos worker runner add          # once per runner/model/effort; names should match step 4
 skopos worker runner test         # one real prompt per account, through the locked-down runner
 skopos worker runner list         # the overview
 ```
@@ -402,8 +402,10 @@ Start an item with `new: …`, or `new <workspace>: …` for another repo; add
 - **More accounts.** Add accounts to a runner (`runner add` again, same name).
   The worker rotates to the next account when one hits its quota, and a
   quota pause no longer stalls other work.
-- **More models.** Give each model its own runner name and pin stages to it
-  (step 4).
+- **More models or efforts.** Give each model or effort its own runner name
+  and pin stages to it (step 4), e.g. `claude-opus-high` for implement and
+  `claude-sonnet-low` for plan. The effort values per CLI are in the
+  [worker reference](../deployment/worker.md#effort).
 - **Other CLIs.** Use `runner add`, kind `command`. These only run inside a
   wrapper, because skopos can't verify their lockdown.
 

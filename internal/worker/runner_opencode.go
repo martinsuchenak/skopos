@@ -38,22 +38,17 @@ type opencodeRunner struct {
 func (opencodeRunner) Verified() bool       { return true }
 func (opencodeRunner) HonorsSettings() bool { return false }
 
+func (o opencodeRunner) EffortSupported(ctx context.Context, pathEnv string) error {
+	return effortSupported(ctx, o.bin, pathEnv, []string{"run", "--help"}, "--variant", "opencode")
+}
+
 func (o opencodeRunner) Check(ctx context.Context, pathEnv string) error {
-	cmd := exec.CommandContext(ctx, o.bin, "run", "--help")
-	if pathEnv != "" {
-		cmd.Env = append(os.Environ(), "PATH="+pathEnv)
-		if p, err := lookPathIn(o.bin, pathEnv); err == nil {
-			cmd.Path = p
-		}
+	missing, err := missingFlags(ctx, o.bin, pathEnv, []string{"run", "--help"}, "--format", "--session", "--model")
+	if err != nil {
+		return err
 	}
-	out, err := cmd.CombinedOutput()
-	if err != nil && len(out) == 0 {
-		return fmt.Errorf("running %s run --help: %v", o.bin, err)
-	}
-	for _, f := range []string{"--format", "--session", "--model"} {
-		if !strings.Contains(string(out), f) {
-			return fmt.Errorf("%s run does not support %s — upgrade opencode", o.bin, f)
-		}
+	if len(missing) > 0 {
+		return fmt.Errorf("%s run does not support %s — upgrade opencode", o.bin, strings.Join(missing, ", "))
 	}
 	if o.config != "" {
 		if _, err := os.Stat(o.config); err != nil {
@@ -104,6 +99,9 @@ func (o opencodeRunner) invoke(ctx context.Context, r AgentRun, prompt, session 
 	args := []string{"run", "--format", "json", "--dir", r.Dir}
 	if r.Model != "" {
 		args = append(args, "-m", r.Model)
+	}
+	if r.Effort != "" {
+		args = append(args, "--variant", r.Effort)
 	}
 	if resume && session != "" {
 		args = append(args, "-s", session)

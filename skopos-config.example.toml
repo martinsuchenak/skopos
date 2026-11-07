@@ -91,6 +91,8 @@ poll_every = "30s"
 # name = "claude-1"
 # runner = "claude"
 # priority = 1
+# model = "opus"      # empty = the CLI's default
+# effort = "high"     # claude: low|medium|high|xhigh|max; empty = the CLI's default
 # env = { ANTHROPIC_API_KEY = "${CLAUDE_1_API_KEY}" }   # the value lives in skopos-worker.env
 
 # Easiest: `skopos worker runner add` (wizard) writes runners + accounts for you.
