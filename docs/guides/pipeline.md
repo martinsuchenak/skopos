@@ -133,12 +133,16 @@ On each worker machine (a Linux VM is the most robust), with skopos and the
 agent CLIs installed (`claude`, `opencode` and/or `codex` — codex for read-only stages):
 
 ```bash
-# Clone each repository the worker serves
-git clone https://git.example.com/you/repo ~/clones/repo
-
-# Scaffold config + env file; in a terminal it offers the runner wizard
-skopos worker init --server-url https://skopos.example.com --workspace github.com/you/repo
+# Install skopos and set up the worker in one go: it asks for the worker key,
+# the clone (and clones it), the push token, then the agent runners, checks
+# the config and starts the service
+curl -fsSL https://github.com/martinsuchenak/skopos/releases/latest/download/install.sh | sh -s -- \
+  --worker --server-url https://skopos.example.com --workspace github.com/you/repo
 ```
+
+Or by hand: clone each repository, then `skopos worker init --server-url
+https://skopos.example.com --workspace github.com/you/repo`. Either way,
+you can check or adjust the two files it writes:
 
 **`skopos-worker.env`** holds the secrets (mode 0600):
 

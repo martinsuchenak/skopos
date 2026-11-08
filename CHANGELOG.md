@@ -4,6 +4,51 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **An install script:**
+  `curl -fsSL https://github.com/martinsuchenak/skopos/releases/latest/download/install.sh | sh`.
+  It downloads the release binary for the machine, checks it against the
+  release's `checksums.txt` (and the Sigstore signature when `cosign` is
+  installed), and installs it as `~/.local/bin/skopos`; `--version` and
+  `--dir` choose another release or directory, and running it again
+  upgrades. A worker running that binary upgrades itself to the server's
+  release with no Homebrew involved. The script is a release asset and is
+  covered by the signed `checksums.txt`.
+- **A worker in one command:** `install.sh --worker --server-url … --workspace
+  …` installs the binary, runs `skopos worker init` with the terminal as
+  input, then `worker check` and, when that passes, `worker install`.
+  Unattended, the secrets come from the environment.
+- **`skopos worker init` fills in what it can.** At a terminal it asks for
+  the server, the workspace, the worker key (typed hidden), the clone
+  (offering to clone it) and, for a GitHub repo, whether to push with draft
+  pull requests and the token. `--repo`, `--clone`, `--push` and
+  `--push-token-env` answer up front. It reads the clone's default branch,
+  takes `SKOPOS_API_KEY`, `GH_TOKEN` and a Claude credential
+  (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`) from the environment
+  into `skopos-worker.env`, and lists only the steps left.
+
+### Changed
+
+- **The `worker init` template's claude account** no longer points at an
+  unset `${CLAUDE_1_API_KEY}`, which made `worker check` fail until edited.
+  It uses the Claude credential from the environment, else the machine's
+  own Claude login.
+
+### Fixed
+
+- **Workers installed with Homebrew upgrade themselves through Homebrew.**
+  Self-upgrade replaced the binary inside the versioned `Caskroom`
+  directory behind Homebrew's back (or failed where it couldn't write
+  there), so Homebrew kept recording the old version and skipped its
+  install steps. Now a worker whose binary is in a `Caskroom` or `Cellar`
+  runs that prefix's `brew upgrade --cask skopos` (or `brew upgrade skopos`),
+  checks that the linked `<prefix>/bin/skopos` runs as the server's
+  version, and restarts on it. While the tap hasn't got the release yet, it
+  tries again an hour later.
+
 ## [0.23.2] — 2026-11-07
 
 ### Fixed

@@ -166,10 +166,31 @@ func TestRunWorkerChecks(t *testing.T) {
 		t.Fatal("placeholder config must fail checks")
 	}
 	joined := strings.Join(problems, "\n")
-	for _, want := range []string{"no API key", "path is not filled in", "server URL looks like a placeholder", "account claude-1: env ANTHROPIC_API_KEY resolved empty"} {
+	for _, want := range []string{"no API key", "path is not filled in", "server URL looks like a placeholder"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("expected problem %q, got:\n%s", want, joined)
 		}
+	}
+	// The template's account uses the machine's own login: nothing to
+	// resolve. An account whose ${VAR} resolves empty is caught.
+	if strings.Contains(joined, "account claude-1") {
+		t.Errorf("the template's account must pass:\n%s", joined)
+	}
+	raw, _ := os.ReadFile(cfgPath)
+	unset := strings.Replace(string(raw), `priority = 1
+`, `priority = 1
+env = { ANTHROPIC_API_KEY = "${SKOPOS_TEST_UNSET_KEY}" }
+`, 1)
+	if err := os.WriteFile(cfgPath, []byte(unset), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SKOPOS_TEST_UNSET_KEY", "")
+	problems, err = runWorkerChecks(cfgPath, "", pathEnv, "/home/tester")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(problems, "\n"), "account claude-1: env ANTHROPIC_API_KEY resolved empty") {
+		t.Errorf("an empty ${VAR} must be caught:\n%s", strings.Join(problems, "\n"))
 	}
 
 	// Filled in: a real clone, an account, a key in the env file.

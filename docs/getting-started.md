@@ -1,12 +1,47 @@
 # Getting Started
 
-## Prerequisites
+## Install
+
+On Linux or macOS:
+
+```bash
+curl -fsSL https://github.com/martinsuchenak/skopos/releases/latest/download/install.sh | sh
+```
+
+- **What it does:** downloads the release binary for your OS and CPU,
+  checks it against the release's `checksums.txt`, and installs it as
+  `~/.local/bin/skopos`. When `cosign` is installed, it also verifies
+  `checksums.txt` against the release's Sigstore signature, and stops if it
+  doesn't match.
+- **Options:** `--version 0.23.2` (or `SKOPOS_VERSION`) for a given
+  release; `--dir DIR` (or `SKOPOS_INSTALL_DIR`) for another directory.
+  Pass them after `sh -s --`: `curl -fsSL …/install.sh | sh -s -- --version 0.23.2`.
+- **Upgrade:** run it again. A worker running this binary upgrades itself to
+  the server's release, since the binary sits in a directory the worker can
+  write to ([Self-upgrade](deployment/worker.md#self-healing)).
+- **After it:** it says if `~/.local/bin` isn't on your PATH, if another
+  `skopos` (say, the Homebrew cask) comes first, and if a worker service runs
+  another binary (re-run `skopos worker install` to point it at this one).
+- **A worker too:** add `--worker --server-url … --workspace …` and it goes
+  on to set the worker up and start its service
+  ([Deploying a worker](deployment/worker.md#quick-start)).
+
+Other ways:
+
+- **Homebrew:** `brew install --cask martinsuchenak/tap/skopos`. A worker
+  installed this way upgrades itself through `brew`.
+- **A release download:** `skopos_<os>_<arch>` (Windows: `.exe`) or an
+  archive from the [releases](https://github.com/martinsuchenak/skopos/releases).
+- **Docker:** `ghcr.io/martinsuchenak/skopos` (below).
+
+## Build from source
+
+Needs:
 
 - **Go** 1.26+
 - **Bun** (for the frontend build)
 - **Task** (task runner — [install](https://taskfile.dev))
 
-## Build from source
 
 ```bash
 git clone https://github.com/martinsuchenak/skopos

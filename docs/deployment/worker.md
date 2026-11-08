@@ -16,9 +16,42 @@ repos, workers, first item — follow the
 
 ## Quick start
 
+One command, after minting the worker key (step 2 below):
+
 ```bash
+curl -fsSL https://github.com/martinsuchenak/skopos/releases/latest/download/install.sh | sh -s -- \
+  --worker --server-url https://skopos.example.com --workspace github.com/you/repo
+```
+
+It installs the binary into `~/.local/bin`, then runs `skopos worker init`
+with your terminal as input: it asks for the worker key (typed hidden), the
+clone (offering to clone it), whether to push to GitHub with draft pull
+requests (and the token), then the runner wizard. Then `worker check`, and
+when that passes, `worker install` starts the service. Add `--no-service` to
+stop before the service, `--repo PATH`, `--clone`, `--push
+github|gitea|none` to answer up front.
+
+**Unattended** (cloud-init, Ansible, no terminal): the same command takes
+the secrets from the environment, never from arguments: `SKOPOS_API_KEY`
+(the worker key), `GH_TOKEN` (the push token; `--push-token-env` on `worker
+init` names another), and `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`
+for the claude account (without either, it uses the machine's own Claude
+login). They go into `skopos-worker.env` (0600); the config is
+`~/.config/skopos/skopos-config.toml`. Run it again later and it keeps an
+existing `[worker]` section: it upgrades the binary and re-checks.
+
+Step by step instead:
+
+```bash
+# 0. Install the binary into ~/.local/bin (run again to upgrade; the worker
+#    also upgrades itself to the server's release from there)
+curl -fsSL https://github.com/martinsuchenak/skopos/releases/latest/download/install.sh | sh
+
 # 1. Scaffold the config (annotated [worker] section + skopos-worker.env).
-#    In a terminal it offers the runner wizard right away.
+#    In a terminal it asks for the key, the clone and the push, then offers
+#    the runner wizard. --repo PATH, --clone and --push github|gitea|none
+#    answer up front; SKOPOS_API_KEY, GH_TOKEN and a Claude credential are
+#    taken from the environment.
 skopos worker init --server-url https://skopos.example.com \
                    --workspace github.com/you/repo
 
@@ -730,6 +763,26 @@ the worker's own problems from blocking items:
   pre-release, and a failed upgrade waits an hour before the next try. The
   binary's directory must be writable by the worker; `auto_upgrade = false`
   turns it off.
+
+  **Installed with Homebrew** (the binary is in a `Caskroom` or `Cellar`):
+  the worker runs that prefix's `brew update`, then `brew upgrade --cask
+  skopos`, instead of replacing the file (brew refreshes its taps itself
+  only once a day), so Homebrew keeps track of the version and runs its
+  install steps (on macOS, lifting the quarantine). It then checks that
+  `<prefix>/bin/skopos` runs as the server's version before it exits to
+  restart. Until the tap has the release (it usually lags by a few
+  minutes), that check fails and it tries again an hour later. For this to
+  work:
+
+  - the service runs the linked path, `<prefix>/bin/skopos`
+    (`/opt/homebrew/bin/skopos`, `/home/linuxbrew/.linuxbrew/bin/skopos`),
+    not the versioned one, which `brew upgrade` removes. `skopos worker
+    install` records the linked path; an older service file may name the
+    versioned one, so check it once;
+  - the worker runs as the user that owns the Homebrew prefix (brew refuses
+    to run as anyone else).
+
+  brew gets the worker's environment without its tokens and env-file values.
 
 ### Branch checkout
 

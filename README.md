@@ -25,8 +25,21 @@ A coordination dashboard for AI coding agents — shared memory (blackboard), pl
 ## Quick start
 
 ```bash
-task build-local          # build the binary
-./bin/skopos serve        # start on :8080 (HTTP + MCP + dashboard)
+curl -fsSL https://github.com/martinsuchenak/skopos/releases/latest/download/install.sh | sh
+skopos serve              # start on :8080 (HTTP + MCP + dashboard)
+```
+
+The script puts the release binary for your machine in `~/.local/bin`,
+checked against the release's checksums (and its signature, when `cosign` is
+installed); run it again to upgrade. Or `brew install --cask
+martinsuchenak/tap/skopos`, or build it: `task build-local`.
+
+A worker machine in one command (installs, configures, checks, starts the
+service; see [Deploying a worker](docs/deployment/worker.md#quick-start)):
+
+```bash
+curl -fsSL https://github.com/martinsuchenak/skopos/releases/latest/download/install.sh | sh -s -- \
+  --worker --server-url https://skopos.example.com --workspace github.com/you/repo
 ```
 
 Open `http://localhost:8080`.
