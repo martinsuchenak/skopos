@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.24.3] — 2026-11-08
+
+### Changed
+
+- **MCP library upgraded to paularlott/mcp v0.34.0.** A key with
+  capabilities calling `execute_tool` for a tool outside them is refused
+  before the arguments are checked, so the answer never describes that
+  tool's parameters.
+
 ## [0.24.2] — 2026-11-08
 
 ### Fixed
