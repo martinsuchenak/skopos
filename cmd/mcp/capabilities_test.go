@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/martinsuchenak/skopos/internal/auth"
+	mcplib "github.com/paularlott/mcp"
 )
 
 func mcpPost(t *testing.T, h http.Handler, p *auth.Principal, body map[string]any) map[string]any {
@@ -98,18 +100,37 @@ func TestCappedKeyTools(t *testing.T) {
 	}
 }
 
-// In lean mode a tool is reached through execute_tool; the guard on the
-// tool's handler refuses it there too.
+// In lean mode a tool is reached through execute_tool; it is refused there
+// too, before the library validates its arguments (wrong ones must not
+// describe the forbidden tool's schema).
 func TestCappedKeyExecuteTool(t *testing.T) {
 	SetLeanToolset(true)
 	defer SetLeanToolset(false)
 	h := toolsE2E(t)
-	out := mcpPost(t, h, agentPrincipal(), map[string]any{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": map[string]any{
-		"name":      "execute_tool",
-		"arguments": map[string]any{"name": "inbox_claim", "arguments": map[string]any{"id": "x", "workspace_id": "ws-a"}},
-	}})
-	if raw, _ := json.Marshal(out); !strings.Contains(string(raw), "capabilities do not allow inbox_claim") {
-		t.Fatalf("execute_tool inbox_claim must be refused by the guard: %s", raw)
+	for _, args := range []map[string]any{
+		{"item_id": "x", "workspace_id": "ws-a"},
+		{"id": "x"},
+	} {
+		out := mcpPost(t, h, agentPrincipal(), map[string]any{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": map[string]any{
+			"name":      "execute_tool",
+			"arguments": map[string]any{"name": "inbox_claim", "parameters": args},
+		}})
+		if raw, _ := json.Marshal(out); !strings.Contains(string(raw), "capabilities do not allow inbox_claim") {
+			t.Fatalf("execute_tool inbox_claim %v must be refused: %s", args, raw)
+		}
+	}
+}
+
+// The guard on the handler still refuses when the request reaches it.
+func TestGuardToolRefusesCappedKey(t *testing.T) {
+	called := false
+	h := guardTool("inbox_claim", func(context.Context, *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
+		called = true
+		return nil, nil
+	})
+	ctx := auth.WithPrincipal(context.Background(), agentPrincipal())
+	if _, err := h(ctx, nil); err == nil || called {
+		t.Fatalf("guardTool must refuse inbox_claim for a capped key: err=%v called=%v", err, called)
 	}
 }
 

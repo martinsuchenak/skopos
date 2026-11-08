@@ -130,7 +130,10 @@ func filterToolsList(next http.Handler) http.Handler {
 			ID     any    `json:"id"`
 			Method string `json:"method"`
 			Params struct {
-				Name string `json:"name"`
+				Name      string `json:"name"`
+				Arguments struct {
+					Name string `json:"name"`
+				} `json:"arguments"`
 			} `json:"params"`
 		}
 		if json.Unmarshal(body, &envelope) != nil {
@@ -139,6 +142,12 @@ func filterToolsList(next http.Handler) http.Handler {
 		}
 		if envelope.Method == "tools/call" {
 			name := envelope.Params.Name
+			// execute_tool's target too: the library validates its
+			// arguments before guardTool runs, and those errors would
+			// describe a tool the key may not use.
+			if name == mcplib.ExecuteToolName {
+				name = envelope.Params.Arguments.Name
+			}
 			if name != mcplib.ToolSearchName && name != mcplib.ExecuteToolName && !toolAllowed(r.Context(), name) {
 				writeRPCError(w, envelope.ID, -32602, "this key's capabilities do not allow "+name)
 				return
