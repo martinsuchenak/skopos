@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **A worker's first commit of a round could wait to be pushed.** The step
+  pusher read where the round started only once its goroutine ran, so a
+  commit made before that counted as already pushed and went up with the
+  next one (or the final push). It now reads the start before returning.
+
 ## [0.24.1] — 2026-11-08
 
 ### Added

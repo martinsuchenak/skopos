@@ -27,9 +27,12 @@ func (w *Worker) pushSteps(ctx context.Context, repo *Repo, worktree, branch str
 	}
 	pctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
+	// Where the round starts, read before returning: read in the goroutine,
+	// a commit made before it ran would count as pushed and wait for the
+	// next one (it made TestPushSteps flaky under -race).
+	pushed := headSHA(pctx, worktree)
 	go func() {
 		defer close(done)
-		pushed := headSHA(pctx, worktree) // already where the round starts
 		failedAt := ""
 		t := time.NewTicker(stepPushEvery)
 		defer t.Stop()
