@@ -4,6 +4,38 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.25.0] — 2026-11-08
+
+### Added
+
+- **The item preview shows the item's ID,** with a button that copies it.
+- **The planner's questions are answered one by one.** The planner returns
+  each question as its own entry with its options; the worker writes them
+  after the plan as a numbered **Questions — planner** section with lettered
+  options. The preview lists them above the notes field: pick an option,
+  write an answer, or both. The answers go with Approve, Request changes or
+  Retry as their own **Answers** section, which later plans and the
+  implementer read with the questions. `POST /api/inbox/{id}/approve` and
+  `/request-changes` take `answers`.
+- **The item description is grouped by round.** Your own text stays on top;
+  each plan, with its questions and your notes on it, and each review, with
+  your change requests, is a round. The newest is open, older ones are
+  folded and numbered ("Plan · round 2 of 3").
+
+### Changed
+
+- **Slack and `skopos inbox plan` list the current round's questions,** one
+  per line with lettered options, and only those still open; earlier rounds'
+  questions are not repeated. A planner that needs answers before it can plan
+  posts its questions in Slack instead of a Blocked notice.
+
+### Fixed
+
+- **A plan's questions and risks were lost.** When the planner returned a
+  plan, the worker dropped its questions (steps said "depends on question 2"
+  with no question 2 anywhere) and, for a single planner, its risks. Both are
+  now written with the plan.
+
 ## [0.24.3] — 2026-11-08
 
 ### Changed
