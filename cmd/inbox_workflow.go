@@ -385,8 +385,8 @@ func (c *apiClient) showPlanFull(ctx context.Context, out io.Writer, id string) 
 		if cmp := lastSectionOf(item.Content, "## Comparison"); cmp != "" {
 			pf("\n%s\n", cmp)
 		}
-		if q := lastSectionOf(item.Content, "## Questions"); q != "" {
-			pf("\n%s\n", q)
+		if q := questionsText(item.Content, ""); q != "" {
+			pf("\nQuestions for you:\n%s", q)
 		}
 		pf("\n")
 		return nil, &item, cands, nil
@@ -404,8 +404,8 @@ func (c *apiClient) showPlanFull(ctx context.Context, out io.Writer, id string) 
 	}
 	pf("Plan revision #%d (%s) · base %s\n\n", rev.RevisionNo, rev.ID, short(rev.BaseSHA))
 	printSteps(*rev, "")
-	if q := lastSectionOf(item.Content, "## Questions"); q != "" {
-		pf("\n%s\n", q)
+	if q := questionsText(item.Content, ""); q != "" {
+		pf("\nQuestions for you:\n%s", q)
 	}
 	pf("\n")
 	return rev, &item, cands, nil

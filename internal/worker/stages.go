@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/martinsuchenak/skopos/internal/itemtext"
 )
 
 // stagePlan: run the planner in the clone (read-only), write the plan +
@@ -166,13 +168,10 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	}
 	label := candidateLabel(run, account)
 	if pr.NeedsClarification {
-		heading := "Questions — planner"
-		if run.GroupID != "" {
-			heading = "Questions — planner " + label
-		}
-		_ = w.client.AppendSection(ctx, run.ItemID, heading, bullets(pr.Questions))
+		questions := itemtext.FormatQuestions(pr.Questions)
+		w.appendQuestions(ctx, run, label, questions)
 		return w.report(ctx, run, false, map[string]any{
-			"reason": "needs clarification: " + bullets(pr.Questions), "summary": res.Text[:min(len(res.Text), 500)],
+			"reason": "needs clarification: " + questions, "summary": res.Text[:min(len(res.Text), 500)],
 		})
 	}
 
@@ -205,15 +204,36 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	if len(selected) > 0 {
 		enrich += "\n**Skills:** " + strings.Join(selected, ", ") + "\n"
 	}
+	if len(pr.Risks) > 0 {
+		enrich += "\n**Risks:**\n" + bullets(pr.Risks) + "\n"
+	}
 	if choice.Exists {
 		enrich += fmt.Sprintf("\n**Handover:** continues the existing branch `%s` from `%s`.\n", branch, shortSHA(baseSHA))
 	}
 	_ = w.client.AppendSection(ctx, run.ItemID, "Enrichment — skopos worker", enrich)
+	// The plan's open questions follow it as their own section: steps that
+	// depend on an answer name the question by its number.
+	w.appendQuestions(ctx, run, label, itemtext.FormatQuestions(pr.Questions))
 
 	log.Info("plan ready", "plan", planID, "revision", rev.ID, "steps", len(pr.Steps), "cost_usd", res.CostUSD)
 	return w.report(ctx, run, true, map[string]any{
 		"summary": "plan ready: " + pr.Summary, "branch": branch, "base_sha": baseSHA,
 	})
+}
+
+// appendQuestions writes the planner's questions (itemtext.FormatQuestions)
+// as their own section, which the dashboard lists for answering and later
+// prompts read with the answers. A plan group member's heading carries its
+// candidate label. Nothing is written when there are none.
+func (w *Worker) appendQuestions(ctx context.Context, run *Run, label, questions string) {
+	if strings.TrimSpace(questions) == "" {
+		return
+	}
+	heading := "Questions — planner"
+	if run.GroupID != "" {
+		heading = "Questions — planner " + label
+	}
+	_ = w.client.AppendSection(ctx, run.ItemID, heading, questions)
 }
 
 // candidateLabel names a plan group member's candidate: "focus@runner" or
@@ -259,6 +279,7 @@ func (w *Worker) submitCandidate(ctx context.Context, run *Run, item *Item, pr p
 		enrich += "\n**Risks:**\n" + bullets(pr.Risks) + "\n"
 	}
 	_ = w.client.AppendSection(ctx, run.ItemID, "Candidate — "+label, enrich)
+	w.appendQuestions(ctx, run, label, itemtext.FormatQuestions(pr.Questions))
 	log.Info("candidate ready", "plan", planID, "revision", rev.ID, "label", label, "steps", len(pr.Steps), "cost_usd", res.CostUSD)
 	return w.report(ctx, run, true, map[string]any{
 		"summary": "candidate ready: " + pr.Summary, "branch": branch, "base_sha": baseSHA,
@@ -951,14 +972,14 @@ type Step struct {
 }
 
 type planResult struct {
-	Skills             []string `json:"skills"`
-	Title              string   `json:"title"`
-	Summary            string   `json:"summary"`
-	Size               string   `json:"size"`
-	NeedsClarification bool     `json:"needs_clarification"`
-	Steps              []Step   `json:"steps"`
-	Risks              []string `json:"risks"`
-	Questions          []string `json:"questions"`
+	Skills             []string            `json:"skills"`
+	Title              string              `json:"title"`
+	Summary            string              `json:"summary"`
+	Size               string              `json:"size"`
+	NeedsClarification bool                `json:"needs_clarification"`
+	Steps              []Step              `json:"steps"`
+	Risks              []string            `json:"risks"`
+	Questions          []itemtext.Question `json:"questions"`
 }
 
 type implResult struct {

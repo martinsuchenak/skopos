@@ -28,7 +28,17 @@ type PlanForm = { name: string; description: string; branch_name: string };
 type ItemForm = { title: string; description: string; phase: string; depends_on: string };
 type InboxPlanSummary = { id: string; name: string; status: string };
 type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; agents?: string; branch?: string; ref?: string; flow?: string; created_at: string; updated_at: string; excerpt?: string };
-type InboxDetail = InboxItem & { content: string; content_html: string };
+// The detail view's content, cut server-side (internal/inbox/parts.go):
+// Martin's text, then the pipeline's sections in rounds.
+type ItemQuestion = { text: string; options?: string[] };
+type ContentSection = { heading: string; html: string; questions?: ItemQuestion[]; label?: string };
+type ContentRound = { kind: string; title: string; n: number; closed: boolean; sections: ContentSection[] };
+type ContentParts = { brief_html: string; rounds: ContentRound[] };
+type InboxDetail = InboxItem & { content: string; content_html: string; content_parts?: ContentParts };
+type RoundView = { key: string; title: string; meta: string; open: boolean; sections: { key: string; heading: string }[] };
+type QuestionView = { key: string; n: number; text: string; options: { key: string; letter: string; text: string }[] };
+type QuestionGroup = { key: string; title: string; label: string; questions: QuestionView[] };
+function optionLetter(i: number): string { return i < 26 ? String.fromCharCode(97 + i) : String(i + 1); }
 // The agent preset (internal/auth Presets["agent"], normalised).
 const agentPreset = ['blackboard:write', 'code:read', 'inbox:read', 'mcp', 'plans:write', 'status:read'];
 function keyIsAgentPreset(caps: string[]): boolean {
@@ -163,6 +173,12 @@ const appState = () => ({
   // live refresh never undoes the user's toggle.
   previewDescOpen: true,
   previewRunsOpen: false,
+  // Rounds of the description the user opened or closed, by key; the
+  // others follow the default (only the newest round open).
+  previewRoundOpen: {} as Record<string, boolean>,
+  // Answers to the planner's questions at the gate, by question key: the
+  // picked option's letter and free text. Sent with the action as answers.
+  questionAnswers: {} as Record<string, { pick: string; text: string }>,
   // Workers in scope (an active run on an offline worker is flagged) and the
   // item's audit trail (the History section).
   previewWorkers: [] as WorkerSeen[],
@@ -1094,17 +1110,14 @@ const appState = () => ({
     this.showInboxPreview = true;
     this.previewLoading = true;
     this.previewItem = null;
-    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(item.id));
+    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(item.id) + '?parts=1');
     if (!this.showInboxPreview) return; // closed while fetching
     this.previewLoading = false;
     if (!res.ok) { this.notify('Could not load the item', 'error'); this.closeInboxPreview(); return; }
     this.previewItem = (await res.json()) as InboxDetail;
-    // CSP: same imperative injection pattern as the expansion rows — the
-    // sanitized content_html goes into the modal's data attribute node.
-    const html = this.previewItem.content_html;
-    this.$nextTick(() => {
-      document.querySelectorAll('[data-md-preview]').forEach((el) => { el.innerHTML = html; });
-    });
+    this.previewRoundOpen = {};
+    this.questionAnswers = {};
+    this.injectPreviewContent();
     this.workflowNote = '';
     this.previewStatusSeen = '';
     this.previewPipe = null;
@@ -1148,6 +1161,131 @@ const appState = () => ({
     this.previewStatusSeen = st;
     this.previewDescOpen = ['open', 'in_progress', 'queued', 'planning', 'awaiting_approval', 'converted'].includes(st);
     this.previewRunsOpen = false;
+  },
+  // CSP: the same imperative injection as the expansion rows — the
+  // sanitized HTML goes into data-attribute nodes: Martin's text into
+  // [data-md-preview], each section into its [data-sec-html] (rendered by
+  // the rounds x-for, hence the tick).
+  injectPreviewContent() {
+    const item = this.previewItem;
+    if (!item) return;
+    const parts = item.content_parts;
+    this.$nextTick(() => {
+      document.querySelectorAll('[data-md-preview]').forEach((el) => { el.innerHTML = parts ? parts.brief_html : item.content_html; });
+      if (!parts) return;
+      parts.rounds.forEach((r, ri) => r.sections.forEach((sec, si) => {
+        document.querySelectorAll('[data-sec-html="' + CSS.escape(this.sectionKey(item.id, ri, si)) + '"]').forEach((el) => { el.innerHTML = sec.html; });
+      }));
+    });
+  },
+  sectionKey(itemId: string, round: number, section: number): string { return itemId + '|' + round + '|' + section; },
+  // The description's rounds (a plan and its questions, a review, each with
+  // Martin's notes on it): the newest open, older ones folded unless the
+  // user opened them. A repeated kind is numbered ("Plan · round 2 of 3").
+  previewRounds(): RoundView[] {
+    const item = this.previewItem;
+    const rounds = item && item.content_parts ? item.content_parts.rounds : [];
+    if (!item || rounds.length === 0) return [];
+    const total: Record<string, number> = {};
+    rounds.forEach((r) => { total[r.kind] = (total[r.kind] || 0) + 1; });
+    return rounds.map((r, ri) => {
+      const key = item.id + '|r' + ri;
+      const set = this.previewRoundOpen[key];
+      return {
+        key,
+        open: set === undefined ? ri === rounds.length - 1 : set,
+        title: r.title + (total[r.kind] > 1 ? ' · round ' + r.n + ' of ' + total[r.kind] : ''),
+        meta: r.sections.map((sec) => sec.heading.replace(/ — (skopos )?worker$/, '')).join(' · '),
+        sections: r.sections.map((sec, si) => ({ key: this.sectionKey(item.id, ri, si), heading: sec.heading })),
+      };
+    });
+  },
+  // Remember a round the user toggled; a state equal to the default is
+  // forgotten, so an older round folds once a newer one arrives.
+  onRoundToggle(key: string, e: globalThis.Event) {
+    const open = (e.target as HTMLDetailsElement).open;
+    const rounds = this.previewRounds();
+    const newest = rounds.length > 0 && rounds[rounds.length - 1].key === key;
+    const next = { ...this.previewRoundOpen };
+    if (open === newest) delete next[key]; else next[key] = open;
+    this.previewRoundOpen = next;
+  },
+  // The questions waiting for Martin at the gate: the newest round's, while
+  // the item awaits approval or is blocked. A round his notes closed asked
+  // nothing new.
+  openQuestionGroups(): QuestionGroup[] {
+    const item = this.previewItem;
+    if (!item || !item.content_parts || !(this.workflowShowApprove() || this.workflowShowRetry())) return [];
+    const rounds = item.content_parts.rounds;
+    if (rounds.length === 0) return [];
+    const ri = rounds.length - 1;
+    if (rounds[ri].closed) return [];
+    const secs = rounds[ri].sections;
+    const groups: QuestionGroup[] = [];
+    secs.forEach((sec, si) => {
+      const qs = sec.questions || [];
+      if (qs.length === 0) return;
+      const gkey = this.sectionKey(item.id, ri, si);
+      groups.push({
+        key: gkey,
+        title: sec.label ? 'Questions from ' + sec.label : 'Questions from the planner',
+        label: sec.label || '',
+        questions: qs.map((q, qi) => ({
+          key: gkey + '|q' + qi, n: qi + 1, text: q.text,
+          options: (q.options || []).map((o, oi) => ({ key: gkey + '|q' + qi + '|o' + oi, letter: optionLetter(oi), text: o })),
+        })),
+      });
+    });
+    return groups;
+  },
+  answerPick(key: string): string { const a = this.questionAnswers[key]; return a ? a.pick : ''; },
+  answerText(key: string): string { const a = this.questionAnswers[key]; return a ? a.text : ''; },
+  // Picking the picked option again clears it.
+  pickAnswer(key: string, letter: string) {
+    const a = this.questionAnswers[key] || { pick: '', text: '' };
+    this.questionAnswers = { ...this.questionAnswers, [key]: { pick: a.pick === letter ? '' : letter, text: a.text } };
+  },
+  setAnswerText(key: string, text: string) {
+    const a = this.questionAnswers[key] || { pick: '', text: '' };
+    this.questionAnswers = { ...this.questionAnswers, [key]: { pick: a.pick, text } };
+  },
+  answerOptClass(key: string, letter: string): string { return this.answerPick(key) === letter ? 'q-opt q-opt-on' : 'q-opt'; },
+  answerOptPressed(key: string, letter: string): string { return this.answerPick(key) === letter ? 'true' : 'false'; },
+  answeredCount(): string {
+    const all = this.openQuestionGroups().flatMap((g) => g.questions);
+    const n = all.filter((q) => this.answerPick(q.key) !== '' || this.answerText(q.key).trim() !== '').length;
+    const actions = this.workflowShowRetry() ? 'Retry' : 'Approve or ' + this.requestChangesLabel();
+    return n + ' of ' + all.length + ' answered · sent with ' + actions;
+  },
+  // The answers as the "## Answers" section reads: each answered question
+  // with its text (later rounds number their questions afresh), the picked
+  // option and any words of Martin's.
+  composedAnswers(): string {
+    const out: string[] = [];
+    for (const g of this.openQuestionGroups()) {
+      const lines: string[] = [];
+      for (const q of g.questions) {
+        const parts: string[] = [];
+        const opt = q.options.find((o) => o.letter === this.answerPick(q.key));
+        if (opt) parts.push('(' + opt.letter + ') ' + opt.text);
+        const text = this.answerText(q.key).trim();
+        if (text) parts.push(text);
+        if (parts.length > 0) lines.push(q.n + '. ' + q.text + '\n   Answer: ' + parts.join(' — '));
+      }
+      if (lines.length > 0) out.push((g.label ? 'To ' + g.label + ':\n\n' : '') + lines.join('\n'));
+    }
+    return out.join('\n\n');
+  },
+  hasWorkflowInput(): boolean { return this.workflowNote.trim().length > 0 || this.composedAnswers() !== ''; },
+  async copyItemId() {
+    const item = this.previewItem;
+    if (!item) return;
+    try {
+      await navigator.clipboard.writeText(item.id);
+      this.notify('Item ID copied', 'success');
+    } catch {
+      this.notify('Could not copy the item ID', 'error');
+    }
   },
   onPreviewDescToggle(e: globalThis.Event) { this.previewDescOpen = (e.target as HTMLDetailsElement).open; },
   onPreviewRunsToggle(e: globalThis.Event) { this.previewRunsOpen = (e.target as HTMLDetailsElement).open; },
@@ -1208,7 +1346,7 @@ const appState = () => ({
       await this.fetchPreviewRuns(item.id);
     } finally { this.secondOpinion.busy = false; }
   },
-  closeInboxPreview() { this.closeRunLog(); if (previewPoll) { clearInterval(previewPoll); previewPoll = null; } this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.previewCandidates = []; this.previewApprovedRev = null; this.previewPipe = null; this.previewStatusSeen = ''; this.previewWorkers = []; this.previewTimeline = []; this.workflowNote = ''; this.workflowBusy = false; },
+  closeInboxPreview() { this.closeRunLog(); if (previewPoll) { clearInterval(previewPoll); previewPoll = null; } this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.previewCandidates = []; this.previewApprovedRev = null; this.previewPipe = null; this.previewStatusSeen = ''; this.previewWorkers = []; this.previewTimeline = []; this.workflowNote = ''; this.questionAnswers = {}; this.previewRoundOpen = {}; this.workflowBusy = false; },
   // The newest revision of the previewed item's plan, while it waits at the
   // gate (revisions list newest first).
   async fetchPreviewRevision() {
@@ -1256,6 +1394,8 @@ const appState = () => ({
     if (!item || !t) return;
     const body: Record<string, string> = { revision_id: t.id, content_hash: t.hash };
     if (this.workflowNote.trim()) body.notes = this.workflowNote;
+    const answers = this.composedAnswers();
+    if (answers) body.answers = answers;
     this.postWorkflowAction(item.id, 'approve', body, t.toast);
   },
   // Revise one candidate: a single planner re-plans from it with the notes.
@@ -1263,8 +1403,8 @@ const appState = () => ({
     const item = this.previewItem;
     const t = this.approveTargets().find((x: ApproveTarget) => x.id === revisionId);
     if (!item || !t) return;
-    if (!this.workflowNote.trim()) { this.notify('Write what to change in the notes first', 'error'); return; }
-    this.postWorkflowAction(item.id, 'request-changes', { notes: this.workflowNote, revision_id: t.id }, 'Revising ' + t.title);
+    if (!this.hasWorkflowInput()) { this.notify('Write what to change in the notes first', 'error'); return; }
+    this.postWorkflowAction(item.id, 'request-changes', { notes: this.workflowNote, answers: this.composedAnswers(), revision_id: t.id }, 'Revising ' + t.title);
   },
   requestChangesLabel(): string { return this.previewCandidates.length > 0 ? 'Re-plan all' : 'Request changes'; },
   // Edit from the preview: capture the item BEFORE closing (close nulls
@@ -1910,14 +2050,11 @@ const appState = () => ({
   async reloadPreview() {
     if (!this.showInboxPreview || !this.previewItem) return;
     const id = this.previewItem.id;
-    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(id));
+    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(id) + '?parts=1');
     if (!this.showInboxPreview) return;
     if (!res.ok) { this.closeInboxPreview(); return; }
     this.previewItem = (await res.json()) as InboxDetail;
-    const html = this.previewItem.content_html;
-    this.$nextTick(() => {
-      document.querySelectorAll('[data-md-preview]').forEach((el) => { el.innerHTML = html; });
-    });
+    this.injectPreviewContent();
     this.syncPreviewSections();
     this.fetchPreviewRuns(id);
     this.fetchPreviewRevision();
@@ -1956,11 +2093,13 @@ const appState = () => ({
   workflowNoteLabel(): string {
     if (this.workflowShowRetry()) return 'Answer to the blocker (sent to the agent)';
     if (this.workflowShowMarkDone()) return this.isReviewOnly() ? 'Notes for Request changes (an agent plans and continues the branch)' : 'Notes for Request changes (sent to the implementer)';
-    if (this.workflowShowApprove()) return 'Notes (required for Request changes)';
+    if (this.workflowShowApprove()) return this.openQuestionGroups().length > 0 ? 'Notes (Request changes needs notes or answers)' : 'Notes (required for Request changes)';
     return '';
   },
   workflowNotePlaceholder(): string {
-    if (this.workflowShowRetry()) return 'answer to the blocker (required)';
+    const asked = this.openQuestionGroups().length > 0;
+    if (this.workflowShowRetry()) return asked ? 'anything else for the agent (optional once you answered)' : 'answer to the blocker (required)';
+    if (this.workflowShowApprove() && asked) return 'notes (Request changes needs notes or answers)';
     if (this.workflowShowMarkDone()) return 'what to change (required for Request changes)';
     if (this.workflowShowApprove()) return 'notes (required for Request changes)';
     return '';
@@ -1973,7 +2112,7 @@ const appState = () => ({
     if (action === 'approve') return true;
     if (action === 'queue' || action === 'review' || action === 'reject') return true;
     if (action === 'mark_done') return this.reviewHead() !== '';
-    return !!this.workflowNote && this.workflowNote.trim().length > 0;
+    return this.hasWorkflowInput();
   },
   async postWorkflowAction(id: string, action: string, body: Record<string, string> | null, okMessage: string) {
     if (this.workflowBusy) return;
@@ -1990,6 +2129,7 @@ const appState = () => ({
     }
     this.notify(okMessage, 'success');
     this.workflowNote = '';
+    this.questionAnswers = {};
     await this.fetchInbox();
     await this.reloadPreview();
   },
@@ -2004,8 +2144,13 @@ const appState = () => ({
       pending: { kind: 'inboxreject', id },
     };
   },
-  requestChangesInboxItem(id: string) { if (this.workflowNote.trim()) this.postWorkflowAction(id, 'request-changes', { notes: this.workflowNote }, 'Change requested'); },
-  retryInboxItem(id: string) { if (this.workflowNote.trim()) this.postWorkflowAction(id, 'retry', { answer: this.workflowNote }, 'Requeued'); },
+  requestChangesInboxItem(id: string) { if (this.hasWorkflowInput()) this.postWorkflowAction(id, 'request-changes', { notes: this.workflowNote, answers: this.composedAnswers() }, 'Change requested'); },
+  // Retry has one answer: the answers to the questions, then the note.
+  retryInboxItem(id: string) {
+    if (!this.hasWorkflowInput()) return;
+    const answer = [this.composedAnswers(), this.workflowNote.trim()].filter((x) => x !== '').join('\n\n');
+    this.postWorkflowAction(id, 'retry', { answer }, 'Requeued');
+  },
   markDoneInboxItem(id: string) { const head = this.reviewHead(); if (head) this.postWorkflowAction(id, 'mark-done', { head_sha: head }, 'Marked done'); },
   // The quick action for a card/row is the one that needs no input; Retry
   // and Mark done live in the modal (answer / head sha required).

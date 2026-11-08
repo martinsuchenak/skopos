@@ -1,6 +1,10 @@
 package worker
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/martinsuchenak/skopos/internal/itemtext"
+)
 
 // An item's content is Martin's own text followed by the sections the
 // pipeline appends: plans, questions and answers, review notes, approval
@@ -11,82 +15,17 @@ import "strings"
 // was current, and an implementer read rejected plans ahead of the
 // approved one.
 
-// pipelineHeadings are the headings the pipeline writes, as line prefixes:
-// worker sections (AppendSection), the server's notes (appendNotes) and
-// run-group and second-opinion summaries. The text before the first of
-// them is Martin's. TestPipelineHeadingsCoverWriters keeps the list in step
-// with the code that appends sections.
-var pipelineHeadings = []string{
-	"## Enrichment — skopos worker",
-	"## Candidate — ",
-	"## Comparison — ",
-	"## Questions — planner",
-	"## Amendment proposed — worker",
-	"## Review notes",
-	"## Change requests",
-	"## Approval notes",
-	"## Answers",
-	"## review — ",
-	"## qa — ",
-	"## Plan candidates — round",
-	"## Review summary — round",
-	"## QA summary — round",
-	"## Second opinion — ",
-}
-
-type itemSection struct {
-	Heading string // without the leading "## "
-	Body    string
-}
-
-// Text is the section as it appears in the item.
-func (s itemSection) Text() string { return "## " + s.Heading + "\n\n" + s.Body }
+type itemSection = itemtext.Section
 
 // splitItem returns Martin's text and the pipeline's sections, in order.
-// Headings of his own ("## Context") stay in his text.
-func splitItem(content string) (string, []itemSection) {
-	var brief []string
-	var secs []itemSection
-	var body []string
-	flush := func() {
-		if len(secs) > 0 {
-			secs[len(secs)-1].Body = strings.TrimSpace(strings.Join(body, "\n"))
-		}
-		body = nil
-	}
-	for _, line := range strings.Split(content, "\n") {
-		if isPipelineHeading(line) {
-			flush()
-			secs = append(secs, itemSection{Heading: strings.TrimSpace(strings.TrimPrefix(line, "## "))})
-			continue
-		}
-		if len(secs) == 0 {
-			brief = append(brief, line)
-		} else {
-			body = append(body, line)
-		}
-	}
-	flush()
-	return strings.TrimSpace(strings.Join(brief, "\n")), secs
-}
+func splitItem(content string) (string, []itemSection) { return itemtext.Split(content) }
 
-func isPipelineHeading(line string) bool {
-	for _, h := range pipelineHeadings {
-		if strings.HasPrefix(line, h) {
-			return true
-		}
-	}
-	return false
-}
+// isPipelineHeading reports whether line starts a section the pipeline
+// writes (itemtext.Headings; TestPipelineHeadingsCoverWriters keeps that
+// list in step with the code that appends sections).
+func isPipelineHeading(line string) bool { return itemtext.IsHeading(line) }
 
-func headingIs(s itemSection, prefixes ...string) bool {
-	for _, p := range prefixes {
-		if strings.HasPrefix(s.Heading, p) {
-			return true
-		}
-	}
-	return false
-}
+func headingIs(s itemSection, prefixes ...string) bool { return itemtext.HeadingIs(s, prefixes...) }
 
 // newestBody is the body of the newest section whose heading starts with
 // prefix ("" when there is none).
@@ -100,12 +39,31 @@ func newestBody(secs []itemSection, prefix string) string {
 }
 
 // questionsAndAnswers is the planner's questions and Martin's answers, in
-// order: decisions that hold for every later round.
+// order: decisions that hold for every later round. A round's questions
+// count when he answered them: the round has an Answers section, his
+// approval closed it (approval notes answer at the gate), or it is the
+// round his newest notes closed (a re-plan reads those notes). Questions
+// of rounds he moved past without answering were superseded.
 func questionsAndAnswers(secs []itemSection) string {
+	rounds := itemtext.Rounds(secs)
+	newestClosed := -1
+	for i, r := range rounds {
+		if r.Closed {
+			newestClosed = i
+		}
+	}
 	var out []string
-	for _, s := range secs {
-		if headingIs(s, "Questions — planner", "Answers") {
-			out = append(out, s.Text())
+	for i, r := range rounds {
+		answered := i == newestClosed
+		for _, s := range r.Sections {
+			if headingIs(s, "Answers", "Approval notes") {
+				answered = true
+			}
+		}
+		for _, s := range r.Sections {
+			if headingIs(s, "Answers") || (answered && itemtext.IsQuestions(s)) {
+				out = append(out, s.Text())
+			}
 		}
 	}
 	return strings.Join(out, "\n\n")

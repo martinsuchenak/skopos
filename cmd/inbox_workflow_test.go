@@ -32,7 +32,7 @@ func fakeSkopos(t *testing.T) (*httptest.Server, *[]recordedReq) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == "GET" && r.URL.Path == "/api/inbox/it-1":
-			_, _ = w.Write([]byte(`{"id":"it-1","title":"Add Reverse","status":"awaiting_approval","plan_id":"pl-1","content":"x\n\n## Questions\n\n- runes or bytes?"}`))
+			_, _ = w.Write([]byte(`{"id":"it-1","title":"Add Reverse","status":"awaiting_approval","plan_id":"pl-1","content":"x\n\n## Questions — planner\n\n1. runes or bytes?"}`))
 		case r.Method == "GET" && r.URL.Path == "/api/plans/pl-1/revisions":
 			_, _ = w.Write([]byte(`[{"id":"rev-2","revision_no":2,"base_sha":"abcdef1234567","skills":["go-tests"],"steps":[{"title":"Create reverse.go","description":"by runes","phase":"implement"},{"title":"Review and push (Martin)","phase":"review"}]},{"id":"rev-1","revision_no":1}]`))
 		case r.Method == "GET" && r.URL.Path == "/api/inbox/it-2":

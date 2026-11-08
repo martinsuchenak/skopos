@@ -17,6 +17,7 @@ import (
 type actionRequest struct {
 	Notes       string `json:"notes"`
 	Answer      string `json:"answer"`
+	Answers     string `json:"answers"` // approve, request-changes: answers to the planner's questions
 	Reason      string `json:"reason"`
 	HeadSHA     string `json:"head_sha"`     // review gate subject on mark-done (required)
 	PlanID      string `json:"plan_id"`      // link-plan
@@ -103,7 +104,7 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item, err := h.service.Approve(r.Context(), r.PathValue("id"), ApproveInput{
-		Notes: req.Notes, Via: viaFrom(r, ""),
+		Notes: req.Notes, Answers: req.Answers, Via: viaFrom(r, ""),
 		RevisionID: req.RevisionID, ContentHash: req.ContentHash,
 	})
 	if errors.Is(err, ErrStaleRevision) {
@@ -123,7 +124,9 @@ func (h *Handler) RequestChanges(w http.ResponseWriter, r *http.Request) {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	item, err := h.service.RequestChangesOn(r.Context(), r.PathValue("id"), req.Notes, viaFrom(r, ""), req.RevisionID)
+	item, err := h.service.RequestChangesWith(r.Context(), r.PathValue("id"), ChangesInput{
+		Notes: req.Notes, Answers: req.Answers, Via: viaFrom(r, ""), RevisionID: req.RevisionID,
+	})
 	h.respondTransition(w, item, err)
 }
 

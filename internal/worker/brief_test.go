@@ -196,12 +196,32 @@ func TestPipelineHeadingsCoverWriters(t *testing.T) {
 				}
 				found++
 				if !isPipelineHeading("## " + h) {
-					t.Errorf("%s appends %q, which pipelineHeadings (brief.go) doesn't know", f, h)
+					t.Errorf("%s appends %q, which itemtext.Headings doesn't know", f, h)
 				}
 			}
 		}
 	}
 	if found < 10 {
 		t.Fatalf("found only %d headings in the source: the patterns no longer match the code", found)
+	}
+}
+
+// Questions of a round Martin moved past without answering stay out of the
+// prompts; answered ones, approved ones and the round his newest notes are
+// about stay in.
+func TestQuestionsAndAnswersDropsSuperseded(t *testing.T) {
+	content := "Item.\n\n## Enrichment — skopos worker\n\nP1\n\n## Questions — planner\n\n1. STALE?\n\n## Review notes\n\nredo\n\n" +
+		"## Enrichment — skopos worker\n\nP2\n\n## Questions — planner\n\n1. ANSWERED?\n\n## Answers\n\n1. ANSWERED?\n   Answer: yes\n\n" +
+		"## Enrichment — skopos worker\n\nP3\n\n## Questions — planner\n\n1. NOTED?\n\n## Review notes\n\n1) a\n"
+	_, secs := splitItem(content)
+	qa := questionsAndAnswers(secs)
+	if strings.Contains(qa, "STALE?") || !strings.Contains(qa, "ANSWERED?\n\n## Answers") || !strings.Contains(qa, "NOTED?") {
+		t.Fatalf("qa: %q", qa)
+	}
+	approved := "Item.\n\n## Enrichment — skopos worker\n\nP1\n\n## Questions — planner\n\n1. APPROVED?\n\n## Approval notes\n\n1) b\n\n" +
+		"## review — claude\n\nfail\n\n## Change requests\n\nfix it\n"
+	_, secs = splitItem(approved)
+	if qa := questionsAndAnswers(secs); !strings.Contains(qa, "APPROVED?") {
+		t.Fatalf("the approved round's questions go to the implementer: %q", qa)
 	}
 }

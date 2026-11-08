@@ -99,9 +99,12 @@ Keep the plan within what the item asks. Do not add refactors, cleanups or extra
 - step titles: imperative, at most 70 characters. Put the detail (files, classes, how to verify)
   in the step description, not the title.
 - risks: only the ones that matter for approving the plan, at most 3, one sentence each.
-- questions: only decisions Martin must make, one sentence each. If there is a choice, give the
-  options inline as (a)/(b) so he can answer "1) a". Martin answers these when approving; mark any
-  step that depends on an answer in its description.
+- questions: only decisions Martin must make, one entry each: `question` is one sentence, and
+  when there is a choice `options` lists the choices, one short phrase each, without letters (the
+  dashboard letters them a, b, c…; leave `options` empty for an open question). They are numbered
+  in the order you return them; a step that depends on an answer says so in its description
+  ("depends on question 2"). Martin answers them when he approves the plan or asks for changes.
+  Do not ask again what the answers above already decided.
 The implementation agent cannot push, change remotes, or run anything against production.
 {{if .ImplCommands}}The only shell commands it can run are: {{range $i, $c := .ImplCommands}}{{if $i}}, {{end}}`{{$c}}`{{end}}.
 {{end}}{{if .Checks}}After implementation the worker itself runs the repository checks: {{range $i, $c := .Checks}}{{if $i}}, {{end}}`{{$c}}`{{end}}.

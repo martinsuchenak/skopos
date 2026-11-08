@@ -243,13 +243,34 @@ In a terminal, `approve` and `mark-done` show the revision or head and ask you
 to confirm. Scripts must name it with `--revision` or `--head`.
 
 **Approve the plan.** The item reaches `awaiting_approval` with an
-**Enrichment** section: the steps, the size, the branch, the base commit and
-the selected skills. On a card, **Review plan** opens it; plans are never
-approved from a card. The preview shows which revision you're approving.
+**Enrichment** section: the steps, the size, the branch, the base commit, the
+selected skills and the risks. On a card, **Review plan** opens it; plans are
+never approved from a card. The preview shows which revision you're approving.
+
+**Answer the planner's questions.** The planner's open questions follow the
+plan in a **Questions — planner** section, numbered, each choice lettered:
+
+```markdown
+## Questions — planner
+
+1. Keep the old endpoint?
+   - (a) yes, deprecated
+   - (b) no, remove it
+2. Which cache backend?
+```
+
+A step that depends on an answer names the question by its number. The
+preview lists the questions above the notes field: pick an option, write an
+answer, or both, for each one you answer. The answers go with **Approve**,
+**Request changes** or **Retry** as their own **Answers** section, ahead of
+your notes. Every later plan, and the implementer, reads them with the
+questions. When the planner can't plan without answers, the item is blocked
+with the same list, and **Retry** sends your answers.
+
 Then either:
 - click **Approve**, with optional notes; they're appended for the
   implementer and override the plan where they conflict;
-- or click **Request changes**, with notes, to get a re-plan.
+- or click **Request changes**, with notes or answers, to get a re-plan.
 
 The approval binds to that revision. If the planner wrote a newer one
 meanwhile, the server refuses and the preview reloads with the current plan.
@@ -328,8 +349,12 @@ sign-off.
   [Run logs](../deployment/worker.md#run-logs).
 - **Below the steps:** the item description, the run history and a short
   history of who queued, approved, asked for changes or signed off. The
-  header shows what the agent runs cost, when the runners report it. On a
-  phone the preview fills the screen.
+  description shows your own text, then what the pipeline added, in rounds:
+  a plan with its questions and your notes on it, a review with your change
+  requests. The newest round is open; older ones are folded, numbered when a
+  kind repeats ("Plan · round 2 of 3"). The header shows the item's ID (the
+  copy button copies it) and what the agent runs cost, when the runners
+  report it. On a phone the preview fills the screen.
 
 **What's waiting for you.** Beside the Inbox entry in the sidebar, a count
 shows how many items in the selected workspace (all of them under "All
@@ -383,7 +408,11 @@ SKOPOS_SLACK_USER_ID=U...         SKOPOS_SLACK_DEFAULT_WORKSPACE=github.com/you/
 ```
 
 The bot DMs you a thread per item at every gate. A plan-ready message lists
-the revision's steps, and `approve` approves exactly that revision. If the
+the revision's steps and the planner's questions, one per line with their
+lettered options, and `approve` approves exactly that revision. Answer the
+questions in the notes (`approve: 1) a, 2) Redis`). A planner that needs
+answers before it can plan posts its questions instead of a Blocked notice;
+reply `retry: 1) a, 2) …`. If the
 plan changed, or the relay restarted and can't know what you read, it posts
 the current plan and asks again. You reply with:
 - `approve` or `approve: notes` (with several candidates: `approve 2`,

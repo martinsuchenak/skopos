@@ -14,6 +14,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/inbox"
+	"github.com/martinsuchenak/skopos/internal/itemtext"
 	"github.com/martinsuchenak/skopos/internal/notify"
 	"github.com/martinsuchenak/skopos/internal/runs"
 )
@@ -564,8 +565,8 @@ func (r *slackRelay) planReadyMessage(itemID string) (string, []shownRev) {
 	} else if enrich == "" {
 		b.WriteString("_Plan details in skopos._\n")
 	}
-	if q := lastSectionOf(item.Content, "## Questions"); q != "" {
-		b.WriteString("\n*Questions for you:*\n" + q + "\n")
+	if q := questionsText(item.Content, "*"); q != "" {
+		b.WriteString("\n*Questions for you* (answer in the notes: `approve: 1) a, 2) …`):\n" + q)
 	}
 	b.WriteString("\n`approve` · `approve: <notes>` · `revise: <notes>` · `reject`")
 	var shown []shownRev
@@ -616,8 +617,8 @@ func candidatesMessage(item *inbox.Item, cands []plans.Revision) (string, []show
 			}
 		}
 	}
-	if q := lastSectionOf(item.Content, "## Questions"); q != "" {
-		b.WriteString("\n*Questions for you:*\n" + q + "\n")
+	if q := questionsText(item.Content, "*"); q != "" {
+		b.WriteString("\n*Questions for you* (answer in the notes: `approve <n>: 1) a, 2) …`):\n" + q)
 	}
 	b.WriteString("\n`approve <n>` · `approve <n>: <notes>` · `revise <n>: <notes>` (one planner reworks it) · `revise: <notes>` (re-plan all) · `reject`")
 	return b.String(), shown
@@ -654,6 +655,14 @@ func (r *slackRelay) formatGate(itemID string, from, to inbox.Status) string {
 					}
 					break
 				}
+			}
+		}
+		// The planner needs answers: its questions, one per line, instead
+		// of the run's one-line reason.
+		if strings.HasPrefix(reason, "needs clarification") {
+			if q := questionsText(item.Content, "*"); q != "" {
+				return "❓ *Questions for you* · " + title + "\n\n" + q +
+					"\n`retry: 1) a, 2) …` · `reject`"
 			}
 		}
 		if reason == "" {
@@ -837,6 +846,27 @@ func groupSummarySection(content, stage string) string {
 	}
 	first, rest, _ := strings.Cut(sec, "\n")
 	return "*" + strings.TrimSpace(strings.TrimPrefix(first, "## ")) + "*\n" + strings.TrimSpace(rest)
+}
+
+// questionsText lists the questions the newest round asked
+// (itemtext.CurrentQuestions): one numbered question per line, its options
+// lettered on their own lines, a plan group member's under its label. bold
+// wraps the numbers and labels ("*" for Slack, "" for the CLI). "" when the
+// round asked none.
+func questionsText(content, bold string) string {
+	var b strings.Builder
+	for _, a := range itemtext.CurrentQuestions(content) {
+		if a.Label != "" {
+			fmt.Fprintf(&b, "%s%s asks:%s\n", bold, a.Label, bold)
+		}
+		for i, q := range a.Questions {
+			fmt.Fprintf(&b, "%s%d.%s %s\n", bold, i+1, bold, q.Text)
+			for j, o := range q.Options {
+				fmt.Fprintf(&b, "      %s) %s\n", itemtext.OptionLetter(j), o)
+			}
+		}
+	}
+	return b.String()
 }
 
 // lastSectionOf is sectionOf for the LAST occurrence of heading — after a

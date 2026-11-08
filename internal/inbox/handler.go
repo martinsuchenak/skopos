@@ -92,6 +92,11 @@ func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// The dashboard's detail view asks for the content in rounds; other
+	// readers (the worker, scripts) skip the rendering.
+	if r.URL.Query().Get("parts") != "" {
+		item.ContentParts = ContentPartsOf(item.Content)
+	}
 	rest.RespondJSON(w, http.StatusOK, item)
 }
 

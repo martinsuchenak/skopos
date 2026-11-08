@@ -146,6 +146,10 @@ type Item struct {
 	ContentHTML string       `json:"content_html,omitempty"`
 	Excerpt     string       `json:"excerpt,omitempty"`
 	Plan        *PlanSummary `json:"plan,omitempty"`
+	// ContentParts is the content cut for the dashboard's detail view:
+	// Martin's text, then the pipeline's sections in rounds. Filled by
+	// GET /api/inbox/{id}?parts=1 only.
+	ContentParts *ContentParts `json:"content_parts,omitempty"`
 }
 
 // PlanSummary is the linked plan shown on converted items (LEFT JOIN on read;

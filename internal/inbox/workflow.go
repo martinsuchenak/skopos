@@ -108,7 +108,11 @@ func (s *Service) appendNotes(ctx context.Context, heading, notes string) (func(
 	}
 	return func(tx Store, cur *Item) error {
 		content := cur.Content + "\n\n" + heading + "\n\n" + notes + "\n"
-		return tx.UpdateItem(ctx, cur.ID, cur.WorkspaceID, cur.Title, content, tagsJSON(cur.Tags), cur.Priority, s.now().UTC())
+		if err := tx.UpdateItem(ctx, cur.ID, cur.WorkspaceID, cur.Title, content, tagsJSON(cur.Tags), cur.Priority, s.now().UTC()); err != nil {
+			return err
+		}
+		cur.Content = content // a chained append (chainMutations) builds on this one
+		return nil
 	}, nil
 }
 
@@ -278,7 +282,11 @@ func (s *Service) noLockedPlan(ctx context.Context, item *Item) bool {
 // ApproveInput binds an approval to exactly what Martin saw (review fix 3):
 // the revision id his client rendered, and optionally its content hash.
 type ApproveInput struct {
-	Notes       string
+	Notes string
+	// Answers are Martin's answers to the planner's questions, appended as
+	// their own "## Answers" section ahead of the notes: every later prompt
+	// reads them with the questions.
+	Answers     string
 	Via         string
 	RevisionID  string
 	ContentHash string
@@ -353,7 +361,7 @@ func (s *Service) Approve(ctx context.Context, itemID string, input ApproveInput
 			Subject:     rev.ID + "+" + rev.BaseSHA,
 			Decision:    approvals.DecisionApproved,
 			Via:         input.Via,
-			Notes:       input.Notes,
+			Notes:       input.auditNotes(),
 		}); err != nil {
 			return nil, fmt.Errorf("recording approval: %w", err)
 		}
@@ -385,7 +393,7 @@ func (s *Service) approveCandidate(ctx context.Context, item *Item, cand *plans.
 			Subject:     rev.ID + "+" + rev.BaseSHA,
 			Decision:    approvals.DecisionApproved,
 			Via:         input.Via,
-			Notes:       input.Notes,
+			Notes:       input.auditNotes(),
 		}); err != nil {
 			return nil, fmt.Errorf("recording approval: %w", err)
 		}
@@ -417,11 +425,15 @@ func (s *Service) finishApprove(ctx context.Context, item *Item, rev *plans.Revi
 	// Approval notes (answers to the planner's questions, overrides) are
 	// for the implementer: appended to the item, which its prompt reads,
 	// with the status change — every surface, not just the Slack relay.
+	appendAnswers, nerr := s.appendNotes(ctx, "## Answers", input.Answers)
+	if nerr != nil {
+		return nil, nerr
+	}
 	appendApproval, nerr := s.appendNotes(ctx, "## Approval notes", input.Notes)
 	if nerr != nil {
 		return nil, nerr
 	}
-	item, terr := s.transitionWith(ctx, item.ID, StatusApproved, ActorHuman, "inbox.approve", input.Via, input.Notes, "", appendApproval)
+	item, terr := s.transitionWith(ctx, item.ID, StatusApproved, ActorHuman, "inbox.approve", input.Via, input.auditNotes(), "", chainMutations(appendAnswers, appendApproval))
 	if terr != nil && s.runQueuer != nil && queuedRun != "" {
 		_ = s.runQueuer.CancelRun(ctx, queuedRun, "approve transition failed")
 	}
@@ -429,6 +441,42 @@ func (s *Service) finishApprove(ctx context.Context, item *Item, rev *plans.Revi
 		return nil, terr
 	}
 	return item, nil
+}
+
+// auditNotes is what the audit trail and the approval record keep: the
+// answers, then the notes.
+func (in ApproveInput) auditNotes() string { return joinNotes(in.Answers, in.Notes) }
+
+func joinNotes(answers, notes string) string {
+	answers, notes = strings.TrimSpace(answers), strings.TrimSpace(notes)
+	switch {
+	case answers == "":
+		return notes
+	case notes == "":
+		return answers
+	}
+	return answers + "\n\n" + notes
+}
+
+// chainMutations runs the non-nil mutations in order (nil when none).
+func chainMutations(ms ...func(tx Store, cur *Item) error) func(tx Store, cur *Item) error {
+	var live []func(tx Store, cur *Item) error
+	for _, m := range ms {
+		if m != nil {
+			live = append(live, m)
+		}
+	}
+	if len(live) == 0 {
+		return nil
+	}
+	return func(tx Store, cur *Item) error {
+		for _, m := range live {
+			if err := m(tx, cur); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 }
 
 // RequestChanges sends the item back one phase with Martin's notes. The
@@ -445,6 +493,22 @@ func (s *Service) RequestChanges(ctx context.Context, itemID, notes, via string)
 // with the notes. Empty re-runs every planner (a new round). Either way the
 // open candidates of the current round are superseded first.
 func (s *Service) RequestChangesOn(ctx context.Context, itemID, notes, via, reviseRevisionID string) (*Item, error) {
+	return s.RequestChangesWith(ctx, itemID, ChangesInput{Notes: notes, Via: via, RevisionID: reviseRevisionID})
+}
+
+// ChangesInput is a change request: the notes, Martin's answers to the
+// planner's questions (their own "## Answers" section, ahead of the notes),
+// and optionally the plan candidate to revise.
+type ChangesInput struct {
+	Notes      string
+	Answers    string
+	Via        string
+	RevisionID string
+}
+
+// RequestChangesWith is RequestChangesOn with answers.
+func (s *Service) RequestChangesWith(ctx context.Context, itemID string, in ChangesInput) (*Item, error) {
+	notes, via, reviseRevisionID := in.Notes, in.Via, in.RevisionID
 	if err := s.requireItemScopeQuiet(ctx, itemID); err != nil {
 		return nil, err
 	}
@@ -511,10 +575,15 @@ func (s *Service) RequestChangesOn(ctx context.Context, itemID, notes, via, revi
 	if item.Status == StatusAwaitingApproval {
 		heading = "## Review notes"
 	}
-	appendRequest, nerr := s.appendNotes(ctx, heading, notes)
+	appendAnswers, nerr := s.appendNotes(ctx, "## Answers", in.Answers)
 	if nerr != nil {
 		return nil, nerr
 	}
+	appendChanges, nerr := s.appendNotes(ctx, heading, notes)
+	if nerr != nil {
+		return nil, nerr
+	}
+	appendRequest := chainMutations(appendAnswers, appendChanges)
 	mutate := appendRequest
 	if item.Flow == FlowReview && target == StatusPlanning {
 		// From here it is a handover: planned, implemented, reviewed.
@@ -527,7 +596,7 @@ func (s *Service) RequestChangesOn(ctx context.Context, itemID, notes, via, revi
 			return tx.SetFlow(ctx, cur.ID, "", s.now().UTC())
 		}
 	}
-	out, err := s.transitionWith(ctx, item.ID, target, ActorHuman, "inbox.request_changes", via, notes, "", mutate)
+	out, err := s.transitionWith(ctx, item.ID, target, ActorHuman, "inbox.request_changes", via, joinNotes(in.Answers, notes), "", mutate)
 	if err != nil && s.runQueuer != nil && queuedRun != "" {
 		_ = s.runQueuer.CancelRun(ctx, queuedRun, "request-changes transition failed")
 	}
