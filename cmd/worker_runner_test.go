@@ -449,3 +449,47 @@ func TestWithEffortSuffix(t *testing.T) {
 		}
 	}
 }
+
+// Claude with a subscription token: the account names it in env, the env
+// file gets the variable to paste the token into, never the TOML.
+func TestRunnerWizardClaudeSubscriptionToken(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skopos-config.toml")
+	if err := runWorkerInit(&strings.Builder{}, cfgPath, "https://s.example.internal", nil); err != nil {
+		t.Fatal(err)
+	}
+	envPath := filepath.Join(dir, "skopos-worker.env")
+	answers := strings.Join([]string{
+		"1",    // kind: claude
+		"opus", // model
+		"high", // effort
+		"",     // runner name: suggested claude-opus-high
+		"4",    // credentials: a subscription token
+		"",     // env variable: CLAUDE_CODE_OAUTH_TOKEN
+		"",     // account name: the runner name
+		"",     // priority default
+		"",     // write it: yes
+		"n",    // smoke test: no
+	}, "\n") + "\n"
+	var out strings.Builder
+	if err := runRunnerWizard(context.Background(), bufio.NewReader(strings.NewReader(answers)), &out, cfgPath, envPath, wizardEnv{}); err != nil {
+		t.Fatalf("wizard: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "claude setup-token") {
+		t.Errorf("the note must say how to get the token:\n%s", out.String())
+	}
+	raw, _ := os.ReadFile(cfgPath)
+	w := decodeW(t, string(raw))
+	var acct *worker.Account
+	for _, a := range w.Accounts {
+		if a.Runner == "claude-opus-high" {
+			acct = a
+		}
+	}
+	if acct == nil || acct.Env["CLAUDE_CODE_OAUTH_TOKEN"] != "${CLAUDE_CODE_OAUTH_TOKEN}" || acct.Model != "opus" || acct.Effort != "high" {
+		t.Fatalf("account: %+v\n%s", acct, raw)
+	}
+	if env, _ := os.ReadFile(envPath); !strings.Contains(string(env), "\nCLAUDE_CODE_OAUTH_TOKEN=") {
+		t.Fatalf("env file must have the variable to fill in:\n%s", env)
+	}
+}

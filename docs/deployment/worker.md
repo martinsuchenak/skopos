@@ -112,8 +112,10 @@ The wizard handles the whole setup:
   codex, gemini, agy, aider) and shows the models opencode knows.
 - **Names the runner.** It suggests a name, for example `opencode-glm-5-3-flash`.
 - **Sets up credentials.**
-  - **Claude:** this machine's login, an API key kept in the env file, or a
-    separate login directory for a second subscription account.
+  - **Claude:** this machine's login, an API key kept in the env file, a
+    separate login directory for a second subscription account, or a
+    subscription token kept in the env file (`CLAUDE_CODE_OAUTH_TOKEN`,
+    created once with `claude setup-token`; no login directory needed).
   - **Codex:** a login directory of its own (the default; see
     [Codex](#codex)), an API key kept in the env file, or this machine's
     `~/.codex`.

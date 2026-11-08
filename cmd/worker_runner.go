@@ -703,8 +703,13 @@ func runRunnerWizard(ctx context.Context, in *bufio.Reader, out io.Writer, cfgPa
 	// Credentials.
 	switch kind {
 	case "claude":
-		say("\nCredentials:\n  1) this machine's Claude login (subscription or key the CLI already uses)\n  2) an API key kept in the env file\n  3) a separate login directory (a second subscription account)\n")
-		switch ask("Choose [1-3]", "1") {
+		say("\nCredentials:\n  1) this machine's Claude login (subscription or key the CLI already uses)\n  2) an API key kept in the env file\n  3) a separate login directory (a second subscription account)\n  4) a subscription token (claude setup-token) kept in the env file\n")
+		switch ask("Choose [1-4]", "1") {
+		case "4":
+			v := ask("Env variable for the token", "CLAUDE_CODE_OAUTH_TOKEN")
+			ri.Env["CLAUDE_CODE_OAUTH_TOKEN"] = "${" + v + "}"
+			envWrites = append(envWrites, [2]string{v, ""})
+			notes = append(notes, fmt.Sprintf("create the token once (claude setup-token) and put it in %s: %s=sk-ant-oat…", envPath, v))
 		case "2":
 			v := ask("Env variable for the key", "ANTHROPIC_KEY_"+strings.ToUpper(strings.ReplaceAll(ri.Name, "-", "_")))
 			ri.Env["ANTHROPIC_API_KEY"] = "${" + v + "}"

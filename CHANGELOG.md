@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **The runner wizard offers a Claude subscription token:** choice 4 keeps
+  the token from `claude setup-token` in `skopos-worker.env` and gives the
+  account `env = { CLAUDE_CODE_OAUTH_TOKEN = "${…}" }`.
+
 ## [0.24.0] — 2026-11-08
 
 ### Added
