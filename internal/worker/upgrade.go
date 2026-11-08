@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -79,6 +80,11 @@ func (w *Worker) upgradeTo(ctx context.Context, version string) error {
 	}
 	if exe, err = filepath.EvalSymlinks(exe); err != nil {
 		return fmt.Errorf("locating the running binary: %w", err)
+	}
+	if hb, ok := homebrewOf(exe); ok {
+		// Homebrew owns the file: swapping it behind brew's back leaves brew
+		// recording the old version and skips its install steps.
+		return w.brewUpgrade(ctx, hb, exe, version)
 	}
 	asset := fmt.Sprintf("skopos_%s_%s", runtime.GOOS, runtime.GOARCH)
 	if runtime.GOOS == "windows" {
@@ -202,4 +208,84 @@ func parseRelease(v string) ([3]int, bool) {
 		out[i] = n
 	}
 	return out, true
+}
+
+// homebrewInstall is a binary Homebrew installed: a cask
+// (<prefix>/Caskroom/skopos/<version>/skopos) or a formula
+// (<prefix>/Cellar/skopos/<version>/bin/skopos).
+type homebrewInstall struct {
+	prefix string
+	cask   bool
+}
+
+func homebrewOf(exe string) (homebrewInstall, bool) {
+	exe = filepath.ToSlash(exe)
+	for _, m := range []struct {
+		marker string
+		cask   bool
+	}{{"/Caskroom/skopos/", true}, {"/Cellar/skopos/", false}} {
+		if i := strings.Index(exe, m.marker); i > 0 {
+			return homebrewInstall{prefix: filepath.FromSlash(exe[:i]), cask: m.cask}, true
+		}
+	}
+	return homebrewInstall{}, false
+}
+
+// brewTimeout bounds a brew upgrade (it updates its taps first).
+var brewTimeout = 10 * time.Minute
+
+// brewUpgrade upgrades a Homebrew-installed worker with that prefix's brew,
+// then checks the linked binary (<prefix>/bin/skopos, which the service
+// runs) names the server's version. The tap may lag a release by a few
+// minutes: then the check fails and the upgrade is tried again later.
+func (w *Worker) brewUpgrade(ctx context.Context, hb homebrewInstall, exe, version string) error {
+	brew := filepath.Join(hb.prefix, "bin", "brew")
+	if fi, err := os.Stat(brew); err != nil || fi.Mode()&0o111 == 0 {
+		return fmt.Errorf("%s is a Homebrew install, but there is no brew at %s to upgrade it", exe, brew)
+	}
+	linked := filepath.Join(hb.prefix, "bin", "skopos")
+	if target, err := filepath.EvalSymlinks(linked); err != nil || target != exe {
+		// Not the linked install: brew would upgrade another copy, and the
+		// service would restart on this one.
+		return fmt.Errorf("%s is not the binary Homebrew links as %s; upgrade it by hand", exe, linked)
+	}
+	args := []string{"upgrade", "skopos"}
+	if hb.cask {
+		args = []string{"upgrade", "--cask", "skopos"}
+	}
+	bctx, cancel := context.WithTimeout(ctx, brewTimeout)
+	defer cancel()
+	// Never the worker's tokens or env-file values: brew gets the plain
+	// environment, its own bin first on PATH.
+	env := append(withoutPath(scrubEnv(nil, w.cfg.TokenEnvs(), w.envFileKeys)),
+		"PATH="+filepath.Join(hb.prefix, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"HOMEBREW_NO_ENV_HINTS=1")
+	// brew refreshes its taps itself at most once a day, so it would not see
+	// a release from this morning: update first, then upgrade without a
+	// second update.
+	for _, step := range [][]string{{"update", "--quiet"}, args} {
+		cmd := exec.CommandContext(bctx, brew, step...)
+		containProcess(cmd)
+		cmd.Env = append(slices.Clone(env), "HOMEBREW_NO_AUTO_UPDATE=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("brew %s: %v: %s", strings.Join(step, " "), err, tail(string(out), 500))
+		}
+	}
+	vctx, vcancel := context.WithTimeout(ctx, 30*time.Second)
+	defer vcancel()
+	got, err := exec.CommandContext(vctx, linked, "--version").CombinedOutput()
+	if err != nil || !bytes.Contains(got, []byte(version)) {
+		return fmt.Errorf("after brew %s, %s is not v%s (%s); the tap may not have it yet", strings.Join(args, " "), linked, version, bytes.TrimSpace(got))
+	}
+	return nil
+}
+
+func withoutPath(env []string) []string {
+	out := env[:0:0]
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "PATH=") {
+			out = append(out, kv)
+		}
+	}
+	return out
 }

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/martinsuchenak/skopos/build"
@@ -120,5 +121,100 @@ func TestSelfUpgrade(t *testing.T) {
 	}
 	if left, _ := filepath.Glob(filepath.Join(dir, ".skopos-upgrade-*")); len(left) != 0 {
 		t.Fatalf("no temporary file may be left: %v", left)
+	}
+}
+
+// A Homebrew install is upgraded by its brew, never by swapping the file in
+// the Caskroom behind brew's back; the service's link must then name the
+// server's version.
+func TestSelfUpgradeHomebrew(t *testing.T) {
+	oldVersion := build.Version
+	build.Version = "0.19.1"
+	defer func() { build.Version = oldVersion }()
+
+	prefix, err := filepath.EvalSymlinks(t.TempDir()) // macOS: /var is a link to /private/var
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(prefix, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cask := func(v string) string { return filepath.Join(prefix, "Caskroom", "skopos", v, "skopos") }
+	writeExe := func(path, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeExe(cask("0.19.1"), "#!/bin/sh\necho skopos version 0.19.1\n")
+	link := filepath.Join(prefix, "bin", "skopos")
+	if err := os.Symlink(cask("0.19.1"), link); err != nil {
+		t.Fatal(err)
+	}
+	// brew upgrade --cask skopos: installs the new version, relinks, drops the old.
+	// $1 = the version the tap has (TAP_VERSION), so a lagging tap can be shown.
+	argsLog := filepath.Join(t.TempDir(), "brew-args")
+	writeExe(filepath.Join(prefix, "bin", "brew"), `#!/bin/sh
+echo "$@" >> `+argsLog+`
+[ "$1" = update ] && exit 0
+[ "$TAP_VERSION" = 0.19.1 ] && { echo "skopos 0.19.1 already installed"; exit 0; }
+mkdir -p `+filepath.Join(prefix, "Caskroom", "skopos", "0.20.0")+`
+printf '#!/bin/sh\necho skopos version 0.20.0\n' > `+cask("0.20.0")+`
+chmod 755 `+cask("0.20.0")+`
+ln -sf `+cask("0.20.0")+` `+link+`
+rm -rf `+filepath.Join(prefix, "Caskroom", "skopos", "0.19.1")+`
+`)
+
+	newWorker := func() *Worker {
+		client := NewClient("http://unused", "k")
+		client.serverVersion = "0.20.0"
+		// No upgrade_url server: a download would fail the test.
+		w := New(&Config{UpgradeURL: "http://127.0.0.1:1"}, client, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		w.exePath = func() (string, error) { return link, nil }
+		return w
+	}
+
+	// The tap hasn't got the release yet: brew changes nothing, the check
+	// fails, and it's tried again later.
+	t.Setenv("TAP_VERSION", "0.19.1")
+	w := newWorker()
+	if w.maybeUpgrade(t.Context()) || w.upgradeTried.IsZero() {
+		t.Fatal("a tap without the release must fail and wait")
+	}
+
+	t.Setenv("TAP_VERSION", "0.20.0")
+	w = newWorker()
+	if !w.maybeUpgrade(t.Context()) {
+		t.Fatal("brew must upgrade the cask")
+	}
+	if target, _ := filepath.EvalSymlinks(link); target != cask("0.20.0") {
+		t.Fatalf("the link must name the new version: %s", target)
+	}
+	if b, _ := os.ReadFile(argsLog); !strings.Contains(string(b), "update --quiet\nupgrade --cask skopos\n") {
+		t.Fatalf("brew must update its taps, then upgrade: %s", b)
+	}
+	if left, _ := filepath.Glob(filepath.Join(prefix, "Caskroom", "skopos", "*", ".skopos-upgrade-*")); len(left) != 0 {
+		t.Fatalf("nothing may be written into the Caskroom: %v", left)
+	}
+}
+
+func TestHomebrewOf(t *testing.T) {
+	for _, c := range []struct {
+		exe, prefix string
+		cask, ok    bool
+	}{
+		{"/opt/homebrew/Caskroom/skopos/0.23.2/skopos", "/opt/homebrew", true, true},
+		{"/home/linuxbrew/.linuxbrew/Caskroom/skopos/0.23.2/skopos", "/home/linuxbrew/.linuxbrew", true, true},
+		{"/usr/local/Cellar/skopos/0.23.2/bin/skopos", "/usr/local", false, true},
+		{"/usr/local/bin/skopos", "", false, false},
+		{"/home/me/.local/bin/skopos", "", false, false},
+	} {
+		hb, ok := homebrewOf(c.exe)
+		if ok != c.ok || hb.prefix != c.prefix || hb.cask != c.cask {
+			t.Errorf("%s: %+v %v", c.exe, hb, ok)
+		}
 	}
 }
