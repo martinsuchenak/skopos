@@ -4,6 +4,24 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.26.1] — 2026-11-09
+
+### Fixed
+
+- **The implementer's questions were lost.** With a proposed amendment or a
+  block, the implementer's question was dropped, so steps could depend on
+  answers nobody was asked for. The implementer now returns its questions as
+  separate entries with options; the worker writes them as a **Questions —
+  implementer** section, which the preview lists for answering at the gate
+  or with Retry, Slack quotes, and later prompts read with the answers.
+- **The API reference was missing the questions and answers.** `openapi.yaml`
+  now documents `answers` on approve and request-changes (request-changes
+  takes notes or answers), `?parts=1` and `content_parts` on the item, and
+  every workflow status.
+- **Answers sent with an approval or change request showed as a separate
+  round** in the item description. Notes written together now stay in the
+  round they answer.
+
 ## [0.26.0] — 2026-11-09
 
 ### Changed
