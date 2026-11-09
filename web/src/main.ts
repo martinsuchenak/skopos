@@ -1616,7 +1616,7 @@ const appState = () => ({
       const done = impl.group_id
         ? this.previewRuns.filter((r: RunRow) => r.stage === 'branch_review' && r.group_id === impl.group_id && (r.status === 'succeeded' || r.status === 'failed'))
         : [impl];
-      const bad = (r: RunRow) => r.status === 'failed' || this.findingCount(r, 'blocking') > 0;
+      const bad = (r: RunRow) => !this.reviewPassed(r);
       return done.filter(bad).concat(done.filter((r: RunRow) => !bad(r)));
     }
     const since = this.runTime(impl);
@@ -1625,12 +1625,16 @@ const appState = () => ({
     return done.filter((r: RunRow) => r.status === 'failed').concat(done.filter((r: RunRow) => r.status !== 'failed'));
   },
   findingCount(r: RunRow, severity: string): number { return (r.findings || []).filter(f => f.severity === severity).length; },
+  // A review passed: it finished and found nothing blocking. A branch review
+  // succeeds whatever its verdict, so its blocking findings decide (the
+  // server's panel policy reads it the same way).
+  reviewPassed(r: RunRow): boolean { return r.status === 'succeeded' && this.findingCount(r, 'blocking') === 0; },
   plural(n: number, word: string): string { return n + ' ' + word + (n === 1 ? '' : 's'); },
   reviewLine(r: RunRow): string {
     const who = (r.focus || (r.stage === 'branch_review' ? 'review' : r.stage)) + (r.runner ? ' (' + r.runner + ')' : '');
     // A branch review succeeds whatever its verdict: blocking findings are
     // the verdict.
-    if (r.stage === 'branch_review' && r.status === 'succeeded') {
+    if (r.status === 'succeeded' && !this.reviewPassed(r)) {
       const blocking = (r.findings || []).find(f => f.severity === 'blocking');
       if (blocking) return who + ' blocking: ' + blocking.text;
     }
@@ -1863,7 +1867,7 @@ const appState = () => ({
         return { lines, when: this.timeAgo(implRun.updated_at), more: checks.more };
       }
       if (i === 5 && reviews.length) {
-        const ok = reviews.filter((r: RunRow) => r.status === 'succeeded' && !(r.stage === 'branch_review' && this.findingCount(r, 'blocking') > 0)).length;
+        const ok = reviews.filter((r: RunRow) => this.reviewPassed(r)).length;
         const lines = reviews.map((r: RunRow) => this.reviewLine(r));
         if (impl && impl.head_sha) lines.push(ok + ' of ' + reviews.length + ' passed, on ' + this.shortSha(impl.head_sha));
         return { lines, when: this.timeAgo(reviews[0].updated_at), more: reviews.flatMap((r: RunRow) => this.runMore(r, this.reviewerName(r))) };
@@ -2004,10 +2008,12 @@ const appState = () => ({
     const reviews = this.trackReviews();
     if (!head) return out;
     if (reviews.length) {
-      const ok = reviews.filter((r: RunRow) => r.status === 'succeeded').length;
+      const ok = reviews.filter((r: RunRow) => this.reviewPassed(r)).length;
       const nits = reviews.reduce((n: number, r: RunRow) => n + this.findingCount(r, 'nit'), 0);
+      const blocking = reviews.reduce((n: number, r: RunRow) => n + this.findingCount(r, 'blocking'), 0);
+      const found = [blocking ? this.plural(blocking, 'blocking finding') : '', nits ? this.plural(nits, 'nit') : ''].filter(Boolean).join(', ');
       out.push({ key: 'g-head|' + head, ic: 'y', text: 'Commit ' + this.shortSha(head) + ' is the branch head, and the reviewers checked it' });
-      out.push({ key: 'g-rev|' + ok + '|' + reviews.length, ic: ok === reviews.length ? 'y' : 'w', text: 'Agent review: ' + ok + ' of ' + reviews.length + ' passed' + (nits ? ', ' + this.plural(nits, 'nit') : '') + (ok === reviews.length ? ', no blocking findings' : '') });
+      out.push({ key: 'g-rev|' + ok + '|' + reviews.length + '|' + blocking, ic: ok === reviews.length ? 'y' : 'w', text: 'Agent review: ' + ok + ' of ' + reviews.length + ' passed' + (found ? ', ' + found : '') + (ok === reviews.length && !blocking ? ', no blocking findings' : '') });
     } else {
       out.push({ key: 'g-head|' + head, ic: 'w', text: 'Commit ' + this.shortSha(head) + ' is the branch head. No agent reviewed it, so check it yourself' + (this.unpushed(head) ? ' on the worker.' : ' or ask for a second opinion.') });
     }
