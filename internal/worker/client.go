@@ -199,21 +199,25 @@ func (c *Client) IndexDuty() (enabled, defaults []string) {
 type IndexedBranch struct {
 	Head    string    // the commit the index was built from
 	BuiltAt time.Time // zero when the server did not say
+	// Semantic: its symbols are embedded, so meaning-based search
+	// (code_find) answers.
+	Semantic bool
 }
 
 // IndexedBranches is the server's code index of a workspace, by branch.
 func (c *Client) IndexedBranches(ctx context.Context, workspace string) (map[string]IndexedBranch, error) {
 	var status []struct {
-		Branch  string `json:"branch"`
-		HeadSHA string `json:"head_sha"`
-		BuiltAt string `json:"built_at"`
+		Branch   string `json:"branch"`
+		HeadSHA  string `json:"head_sha"`
+		BuiltAt  string `json:"built_at"`
+		Embedded int    `json:"embedded"`
 	}
 	if err := c.do(ctx, http.MethodGet, "/api/codeindex/"+url.PathEscape(workspace)+"/status", nil, &status); err != nil {
 		return nil, err
 	}
 	out := make(map[string]IndexedBranch, len(status))
 	for _, s := range status {
-		b := IndexedBranch{Head: s.HeadSHA}
+		b := IndexedBranch{Head: s.HeadSHA, Semantic: s.Embedded > 0}
 		if t, err := time.Parse(time.RFC3339Nano, s.BuiltAt); err == nil {
 			b.BuiltAt = t
 		}

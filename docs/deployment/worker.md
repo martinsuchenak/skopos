@@ -413,6 +413,10 @@ What a run gets:
   - review and QA: the item branch when its index is at the exact commit
     under review, otherwise the default branch, and to use the diff for
     what changed.
+
+  The guidance lists `code_search`, `code_symbol` and `code_callers` /
+  `code_impact`; when that branch's symbols are embedded, it also tells the
+  agent to start with `code_find` to locate code by what it does.
 - **Server instructions:** a capped key's MCP `initialize` answer describes
   only the tools it may call, not the full skopos instructions. A capped key
   sends one request at a time (no JSON-RPC batches).
@@ -765,6 +769,12 @@ the worker's own problems from blocking items:
   the agent to finish or undo, and an `index.lock` a killed git command left
   is removed. This covers a run that hit `impl_timeout`, a crash or a
   restart, and Retry after any of them.
+- **Questions and decisions.** The planner's and the implementer's questions
+  are posted to their run (`POST /api/runs/{id}/questions`) and recorded by
+  skopos, which writes the item's section; a server without the endpoint
+  gets the section appended as before. Each stage's prompt reads the
+  decisions from the record (`POST /api/runs/{id}/questions/read`), falling
+  back to the item's sections on an older server.
 - **Back to the same worker.** An implement or branch-review run queued
   again for an item (**Retry**, **Request changes**) waits up to 15 minutes
   for the worker that ran that stage before, with the same runner: its

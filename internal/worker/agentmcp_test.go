@@ -136,9 +136,15 @@ func indexStatusServer(t *testing.T, branches map[string]string) string {
 			http.Error(w, "unexpected", http.StatusTeapot)
 			return
 		}
-		var out []map[string]string
+		var out []map[string]any
 		for b, h := range branches {
-			out = append(out, map[string]string{"branch": b, "head_sha": h})
+			// "<head>+embedded": the branch's symbols are embedded.
+			head, embedded := strings.CutSuffix(h, "+embedded")
+			n := 0
+			if embedded {
+				n = 10
+			}
+			out = append(out, map[string]any{"branch": b, "head_sha": head, "embedded": n})
 		}
 		_ = json.NewEncoder(w).Encode(out)
 	}))
@@ -213,6 +219,13 @@ func TestSkoposPromptSection(t *testing.T) {
 		[]string{"Query branch `agent/x`", "exactly the commit you are reviewing"}, []string{"plan_update_item"})
 	expect("review ahead of the index", render(worker(indexed, true), "review", "ccc"),
 		[]string{"Query branch `main`", "use the diff for what changed"}, nil)
+	// Semantic search is offered only for an embedded index.
+	if got := render(worker(indexed, true), "implement", ""); strings.Contains(got, "code_find") {
+		t.Errorf("no embeddings, no code_find:\n%s", got)
+	}
+	embedded := map[string]string{"main": "aaa+embedded", "agent/x": "bbb"}
+	expect("implement, embedded", render(worker(embedded, true), "implement", ""),
+		[]string{"`code_find`: describe what you are looking for in words", "Query branch `main`"}, nil)
 }
 
 // With a srv+ server URL, the worker reaches skopos through the SRV record

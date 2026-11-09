@@ -182,37 +182,39 @@ func (w *Worker) skoposPrompt(ctx context.Context, run *Run, account *Account, b
 		"Author":    runner + "@" + run.ID,
 		"Implement": phase == "implement", "PlanID": planID, "Steps": steps,
 	}
-	if ib, note := w.indexState(ctx, run.WorkspaceID, base, branch, phase, head); ib != "" {
-		out["IndexBranch"], out["IndexNote"] = ib, note
+	if ib, note, semantic := w.indexState(ctx, run.WorkspaceID, base, branch, phase, head); ib != "" {
+		out["IndexBranch"], out["IndexNote"], out["Semantic"] = ib, note, semantic
 	}
 	return out
 }
 
-// indexState picks the branch whose index fits the stage, and the sentence
-// that says what it does and does not show. "" = no usable index (the
-// switch is off, the server has none yet, or it could not be asked).
-func (w *Worker) indexState(ctx context.Context, ws, base, branch, phase, head string) (string, string) {
+// indexState picks the branch whose index fits the stage, the sentence
+// that says what it does and does not show, and whether its symbols are
+// embedded (code_find answers). "" = no usable index (the switch is off,
+// the server has none yet, or it could not be asked).
+func (w *Worker) indexState(ctx context.Context, ws, base, branch, phase, head string) (string, string, bool) {
 	if !w.indexEnabled(ws) {
-		return "", ""
+		return "", "", false
 	}
 	qctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	indexed, err := w.client.IndexedBranches(qctx, ws)
 	if err != nil {
-		return "", ""
+		return "", "", false
 	}
 	if b, ok := indexed[branch]; head != "" && branch != "" && ok && b.Head == head {
-		return branch, "It is indexed at exactly the commit you are reviewing."
+		return branch, "It is indexed at exactly the commit you are reviewing.", b.Semantic
 	}
-	if _, ok := indexed[base]; !ok {
-		return "", ""
+	baseIndex, ok := indexed[base]
+	if !ok {
+		return "", "", false
 	}
 	switch phase {
 	case "plan":
-		return base, "It may lag the newest commits on " + base + "."
+		return base, "It may lag the newest commits on " + base + ".", baseIndex.Semantic
 	case "implement":
-		return base, "Your own changes are not in it: for code you changed or added, read the files."
+		return base, "Your own changes are not in it: for code you changed or added, read the files.", baseIndex.Semantic
 	default:
-		return base, "The branch under review is not indexed at this commit, so the index shows " + base + ": use the diff for what changed."
+		return base, "The branch under review is not indexed at this commit, so the index shows " + base + ": use the diff for what changed.", baseIndex.Semantic
 	}
 }

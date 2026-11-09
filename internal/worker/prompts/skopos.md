@@ -6,9 +6,15 @@ to every call.
 - First read what earlier agents and Martin recorded: `blackboard_read`{{if .Branch}} with
   `branch: "{{.Branch}}"`{{end}}. Decisions there hold unless the item says otherwise.
 {{- if .IndexBranch}}
-- Use the code index before grepping: `code_search` (names, signatures, text), `code_symbol`
-  (exact definitions), `code_callers` / `code_impact` (who breaks if this changes), `code_outline`
-  (a file's definitions). Query branch `{{.IndexBranch}}` (`branch: "{{.IndexBranch}}"`). {{.IndexNote}}
+- Use the code index before grepping or opening files to look around.
+  Query branch `{{.IndexBranch}}` (`branch: "{{.IndexBranch}}"`). {{.IndexNote}}
+{{- if .Semantic}}
+  - `code_find`: describe what you are looking for in words when you don't know its name ("where
+    are retries scheduled?", "which handler saves the user's settings?"). Start here to find where
+    something lives.
+{{- end}}
+  - `code_search`: names, signatures and text; `code_symbol`: a definition by its exact name.
+  - `code_callers` / `code_impact`: who calls it, and what breaks if it changes.
   Confirm what you rely on in the files themselves.
 {{- end}}
 - Record what a later agent or Martin should know: a decision and why, a bug you found but did not
