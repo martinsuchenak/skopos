@@ -2817,6 +2817,7 @@ const appState = () => ({
       const content = editorText(inboxEditor);
       const tags = f.tags.split(',').map((t: string) => t.trim()).filter(Boolean);
       const editing = !!f.id;
+      let opened: InboxItem | null = null;
       if (!editing) {
         const body: Record<string, unknown> = { title: f.title.trim(), content, tags, author_agent_id: UI_AUTHOR };
         if (f.agents) body.agents = f.agents;
@@ -2828,6 +2829,10 @@ const appState = () => ({
         const res = await this.authFetch('/api/inbox', { method: 'POST', body: JSON.stringify(body) });
         if (!await this.handleBad(res, 'Item not captured')) return;
         this.notify(f.workspace === 'unfiled' ? 'Item captured (unfiled)' : 'Item captured', 'success');
+        // An item with a branch or reference is headed for the pipeline:
+        // open its detail, where Queue and Review branch are. Rough
+        // captures stay on the board.
+        if (body.branch || body.ref) opened = (await res.json().catch(() => null)) as InboxItem | null;
       } else {
         const body: Record<string, unknown> = { title: f.title.trim(), content, tags, via: 'dashboard' };
         // Filing: a changed, non-empty workspace re-files the item.
@@ -2844,6 +2849,7 @@ const appState = () => ({
       inboxEditor = destroyEditor(inboxEditor);
       await this.fetchInbox();
       if (editing && this.expandedInboxId === f.id) await this.reloadInboxItem(f.id);
+      if (opened && opened.id) await this.openInboxPreview(opened);
     } finally { this.inboxItemSaving = false; }
   },
   // Single-statement @change handler (the CSP evaluator is only proven on
