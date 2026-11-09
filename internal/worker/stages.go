@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -331,7 +332,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			if pi.Title == "Review and push (Martin)" {
 				continue
 			}
-			steps = append(steps, Step{Title: pi.Title, Description: pi.Description, ID: pi.ID})
+			steps = append(steps, Step{Title: pi.Title, Description: pi.Description, ID: pi.ID, Done: pi.Status == "done"})
 		}
 	}
 	worktree := filepath.Join(w.cfg.StateDir, "worktrees", filepath.Base(repo.Path), strings.ReplaceAll(branch, "/", "-"))
@@ -349,6 +350,12 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		rec.Worktree = worktree
 	}
 	fresh := !dirExists(worktree)
+	// A git command killed with an earlier run's agent leaves index.lock
+	// behind, and git refuses everything after it: clear it before the
+	// checkout touches the tree.
+	if !fresh && clearStaleIndexLock(ctx, worktree) {
+		rl.notef("removed the index.lock a killed git command left in %s", worktree)
+	}
 	if branchMode {
 		// The clone (held by execute) is switched to the item's branch;
 		// when the run ends it goes back to the default branch, and anything
@@ -439,6 +446,29 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		ir = implResult{Status: "done", Summary: rec.ImplementedSummary}
 		log.Info("resuming the check fixes", "fix_rounds_used", rec.FixRounds)
 	} else {
+		// An earlier run of this implementation that was cut off (its
+		// timeout, a crash, a retry) left its finished steps committed and,
+		// often, the step it was on half done: the implementer continues
+		// from there instead of starting over.
+		var resumed []string
+		for i, c := range committedSteps(ctx, worktree, baseRef, steps) {
+			if c && !steps[i].Done {
+				steps[i].Done = true
+				if steps[i].ID != "" {
+					_ = w.client.SetPlanItemStatus(ctx, item.PlanID, steps[i].ID, "done")
+				}
+			}
+			if steps[i].Done {
+				resumed = append(resumed, strconv.Itoa(i+1))
+			}
+		}
+		leftover := leftoverChanges(ctx, worktree)
+		if len(resumed) > 0 {
+			rl.notef("continuing the implementation: steps %s are already committed", strings.Join(resumed, ", "))
+		}
+		if len(leftover) > 0 {
+			rl.notef("an earlier run left %d uncommitted change(s); the implementer decides what to keep", len(leftover))
+		}
 		instructions, skillBodies := w.runKnowledge(ctx, repo, run, item.PlanID, baseRef)
 		// Martin's text and the current decisions, never the earlier plans:
 		// the approved steps come from the plan revision (brief.go).
@@ -452,7 +482,8 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			"Branch": branch, "Base": repo.DefaultBranch, "Title": item.Title,
 			"Content": brief, "QA": questionsAndAnswers(secs), "Steps": steps, "Notes": notes, "LastReview": review,
 			"ApprovalNotes": newestBody(secs, "Approval notes"),
-			"Instructions":  instructions, "Skills": skillBodies,
+			"Resumed":       len(resumed) > 0, "Leftover": leftover,
+			"Instructions": instructions, "Skills": skillBodies,
 			"Commands": w.stageCommands(run.WorkspaceID, "implement", implTools), "Checks": repo.Checks,
 			"Skopos": w.skoposPrompt(ctx, run, account, repo.DefaultBranch, branch, "implement", item.PlanID, steps, ""),
 		})
@@ -969,6 +1000,9 @@ type Step struct {
 	// ID is the plan item's id (implement marks it done over MCP); empty
 	// for steps an agent proposes.
 	ID string `json:"-"`
+	// Done: an earlier run of this implementation committed it (or marked
+	// it done); the implementer continues after it.
+	Done bool `json:"-"`
 }
 
 type planResult struct {

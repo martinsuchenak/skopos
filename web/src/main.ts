@@ -59,7 +59,7 @@ type PlanRevisionInfo = { id: string; revision_no: number; content_hash: string;
 // One thing the approver can approve at the gate: the plan revision, or one
 // candidate of a multi-agent plan round.
 type ApproveTarget = { id: string; title: string; meta: string; steps: string[]; candidate: boolean; hash: string; toast: string };
-type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { severity: string; text: string; file?: string }[]; lease_expires_at?: string; pushed?: boolean; pr_url?: string; checks?: { name: string; passed: boolean; output?: string }[]; setup?: { name: string; passed: boolean; output?: string }[]; fix_rounds?: number; phase?: string; retries?: number; retry_after?: string; created_at: string; updated_at: string };
+type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { severity: string; text: string; file?: string }[]; lease_expires_at?: string; pushed?: boolean; pr_url?: string; checks?: { name: string; passed: boolean; output?: string }[]; setup?: { name: string; passed: boolean; output?: string }[]; fix_rounds?: number; phase?: string; retries?: number; retry_after?: string; prefer_worker?: string; prefer_until?: string; created_at: string; updated_at: string };
 // One row of the preview's stage tracker. state: done | run | you | bad |
 // up (not reached) | skip (not configured, or never reached on a discarded item).
 type LinkRow = { key: string; href: string; text: string };
@@ -1627,12 +1627,21 @@ const appState = () => ({
     const nits = this.findingCount(r, 'nit');
     return who + ' passed' + (nits ? ', ' + this.plural(nits, 'nit') : '');
   },
+  // A run queued again waits for the worker that ran it before while that
+  // worker is around (the server also checks it can take the run).
+  waitsForPreferred(r: RunRow): boolean {
+    if (!r.prefer_worker || !r.prefer_until || new Date(r.prefer_until).getTime() <= Date.now()) return false;
+    const w = this.previewWorkers.find((x: WorkerSeen) => x.id === r.prefer_worker);
+    return !!w && w.state !== 'offline';
+  },
   activeLines(step: number): string[] {
     return this.previewRuns.filter((r: RunRow) => this.runStep(r) === step && this.runActive(r)).map((r: RunRow) => {
       const detail = [r.runner, r.focus].filter(Boolean).join(', ');
       const what = r.stage === 'branch_review' ? (r.phase === 'reviewing' ? 'the review' + (r.runner ? ' (' + r.runner + ')' : '') : 'setup and the checks on ' + (r.branch || 'the branch')) : r.phase === 'checks' ? 'the checks' : r.phase === 'fixing' ? 'a fix round for the failed checks' + (r.runner ? ' (' + r.runner + ')' : '') : r.stage + (detail ? ' (' + detail + ')' : '');
       // A worker-side failure sent it back to the queue (it retries on its own).
       if (r.status === 'queued' && r.retries) return 'Retrying ' + what + ' (attempt ' + (r.retries + 1) + ' of 3) after a worker problem: ' + (r.fail_reason || '').replace(/^attempt \d+ of \d+ failed on /, '');
+      // Queued again for the item: the worker that ran it before goes first.
+      if (r.status === 'queued' && this.waitsForPreferred(r)) return 'Waiting for ' + r.prefer_worker + ' (it ran this before) until ' + new Date(r.prefer_until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ', then any worker: ' + what;
       if (r.status === 'queued') return 'Waiting for a worker: ' + what;
       if (r.status === 'paused') return 'Paused: ' + what + (r.fail_reason ? ', ' + r.fail_reason : '');
       return 'Running ' + what + (r.worker_id ? ' on ' + r.worker_id : '');

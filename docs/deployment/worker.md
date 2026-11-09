@@ -755,6 +755,24 @@ the worker's own problems from blocking items:
   protected branches, never force). A round cut off by a restart or a kill
   leaves its work on origin, and the next round continues from there. Set
   `push.steps = false` to push only at the end.
+- **Continuing a cut-off implementation.** When an implement run starts on a
+  branch that already has the implementer's commits (`agent: step N -
+  <title>`, matched by title, so an amendment's renumbering doesn't matter),
+  those steps are marked done in the plan and the prompt marks them
+  ALREADY COMMITTED: the agent continues with the next one. Uncommitted
+  changes the earlier run left (a worktree as it was, or the
+  `skopos:<branch>` stash of a branch checkout) are listed in the prompt for
+  the agent to finish or undo, and an `index.lock` a killed git command left
+  is removed. This covers a run that hit `impl_timeout`, a crash or a
+  restart, and Retry after any of them.
+- **Back to the same worker.** An implement or branch-review run queued
+  again for an item (**Retry**, **Request changes**) waits up to 15 minutes
+  for the worker that ran that stage before, with the same runner: its
+  clone has the branch, the setup and anything the last run left
+  uncommitted. The tracker shows "Waiting for <worker> … then any worker".
+  Once that worker is offline, no longer offers the repo or runner, or
+  fails the repo's preflight, or after the 15 minutes, any worker takes the
+  run and continues from what was pushed.
 - **Self-upgrade.** The server names its release on every claim. An idle
   worker on an older release downloads `skopos_<os>_<arch>` from the
   release (`upgrade_url`, the GitHub releases by default), checks it

@@ -195,24 +195,52 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 		}
 	}
 	now := s.now().UTC()
+	runner := runnerFor(in, s.prefsOf(ctx, in.WorkspaceID))
+	preferWorker, preferUntil := "", time.Time{}
+	if w := lastWorkerFor(existing, in.Stage, runner); w != "" {
+		preferWorker, preferUntil = w, now.Add(preferGrace)
+	}
 	r := Run{
-		ID:          ids.New(),
-		WorkspaceID: in.WorkspaceID,
-		ItemID:      in.ItemID,
-		PlanRevID:   strings.TrimSpace(in.PlanRevID),
-		Stage:       in.Stage,
-		Runner:      runnerFor(in, s.prefsOf(ctx, in.WorkspaceID)),
-		Focus:       s.prefsOf(ctx, in.WorkspaceID).SingleFocus(route),
-		Branch:      strings.TrimSpace(in.Branch),
-		BaseSHA:     strings.TrimSpace(in.BaseSHA),
-		HeadSHA:     strings.TrimSpace(in.HeadSHA),
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:           ids.New(),
+		WorkspaceID:  in.WorkspaceID,
+		ItemID:       in.ItemID,
+		PlanRevID:    strings.TrimSpace(in.PlanRevID),
+		Stage:        in.Stage,
+		Runner:       runner,
+		Focus:        s.prefsOf(ctx, in.WorkspaceID).SingleFocus(route),
+		Branch:       strings.TrimSpace(in.Branch),
+		BaseSHA:      strings.TrimSpace(in.BaseSHA),
+		HeadSHA:      strings.TrimSpace(in.HeadSHA),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		PreferWorker: preferWorker,
+		PreferUntil:  preferUntil,
 	}
 	if err := s.storage.Create(ctx, r); err != nil {
 		return nil, err
 	}
 	return &r, nil
+}
+
+// lastWorkerFor is the worker that ran the item's newest run of this stage
+// (existing is newest first): a run queued again for the item (Retry, change
+// requests) prefers it. Only the stages that work in the clone gain from it
+// — implement (the branch, the setup, uncommitted work) and branch_review
+// (the setup) — and only when the newest run was a single run on the same
+// runner: a panel member's worker, or another runner, may be elsewhere.
+func lastWorkerFor(existing []Run, stage, runner string) string {
+	if stage != StageImplement && stage != StageBranchReview {
+		return ""
+	}
+	for _, r := range existing {
+		if r.Stage == stage && r.WorkerID != "" {
+			if r.GroupID != "" || r.Runner != runner {
+				return ""
+			}
+			return r.WorkerID
+		}
+	}
+	return ""
 }
 
 // agentsFor reads the item's multi-agent switch; "" (workspace default)

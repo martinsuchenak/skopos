@@ -92,6 +92,12 @@ const (
 // without its owner reclaiming it (review M1).
 const takeoverGrace = 30 * time.Minute
 
+// preferGrace: how long a run queued again for an item waits for the worker
+// that ran its stage before, while that worker is online (busy with another
+// run, say). Its clone holds the branch, the setup and anything the last
+// run left uncommitted; after this, any worker takes it.
+const preferGrace = 15 * time.Minute
+
 // Retryable failures (tmp/self-healing-workers — design.md §1): up to
 // maxRetries requeues after the first failure, each after its back-off;
 // from the second retry on the failing worker is kept off the run for
@@ -168,8 +174,13 @@ type Run struct {
 	Retries     int       `json:"retries,omitempty"`
 	RetryAfter  time.Time `json:"retry_after,omitzero"`
 	AvoidWorker string    `json:"avoid_worker,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	// PreferWorker: the worker that ran this item's stage before (a Retry,
+	// a change-requests round); until PreferUntil, while it is online, only
+	// it claims the run (preferGrace).
+	PreferWorker string    `json:"prefer_worker,omitempty"`
+	PreferUntil  time.Time `json:"prefer_until,omitzero"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // Finding is one review/QA observation. Blocking findings fail the member;

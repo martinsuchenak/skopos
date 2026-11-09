@@ -179,7 +179,11 @@ func RunMigrations(db *sql.DB) error {
 	// Retryable failures (tmp/self-healing-workers — design.md §1): a run
 	// whose failure was the worker's problem goes back to the queue — not
 	// claimable before retry_after, and not by avoid_worker for a while.
-	for _, col := range [][2]string{{"retries", "INTEGER NOT NULL DEFAULT 0"}, {"retry_after", "TEXT NOT NULL DEFAULT ''"}, {"avoid_worker", "TEXT NOT NULL DEFAULT ''"}} {
+	// A run queued again for an item (Retry, change requests) waits a while
+	// for prefer_worker, the worker that ran the stage before: its clone has
+	// the branch, the setup and any uncommitted work.
+	for _, col := range [][2]string{{"retries", "INTEGER NOT NULL DEFAULT 0"}, {"retry_after", "TEXT NOT NULL DEFAULT ''"}, {"avoid_worker", "TEXT NOT NULL DEFAULT ''"},
+		{"prefer_worker", "TEXT NOT NULL DEFAULT ''"}, {"prefer_until", "TEXT NOT NULL DEFAULT ''"}} {
 		if err := ensureColumn(db, "runs", col[0], col[1]); err != nil {
 			return err
 		}

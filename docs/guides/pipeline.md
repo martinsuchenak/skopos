@@ -459,6 +459,7 @@ Start an item with `new: …`, or `new <workspace>: …` for another repo; add
 | `mcp_servers is set but mcp_config is not` | Runs no longer read `~/.claude.json`; point `worker.mcp_config` at a JSON file with the servers |
 | `runner test` fails with `env X resolved empty` | The account's `${VAR}` isn't set in `skopos-worker.env` |
 | Item `blocked` with a question | Answer it with **Retry** (dashboard) or `retry: …` (Slack) |
+| `implement failed: no result after 1h30m0s` | The implementer hit `worker.impl_timeout` (default `90m`). Its finished steps are committed: raise the timeout for a large plan and **Retry**, and the next run continues from the first step not committed |
 | `approve` refused as stale | The plan changed after you looked — re-open the item and approve the current revision |
 | Watch live / Log shows "No log for this run" | The run ran on a worker older than the server, or before run logs existed. Its raw output is in the worker's `<state_dir>/runs/<run>/` |
 

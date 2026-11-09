@@ -181,6 +181,9 @@ func checkoutImplementBranch(ctx context.Context, clone, branch, base string) er
 // ignored files — configuration, dependencies) under label and switches the
 // clone to the default branch.
 func parkClone(ctx context.Context, clone, defaultBranch, label string) error {
+	// The run's agent is gone; a git command killed with it may have left
+	// index.lock, which would stop the stash and the checkout below.
+	clearStaleIndexLock(ctx, clone)
 	dirty, err := git(ctx, clone, "status", "--porcelain")
 	if err != nil {
 		return err

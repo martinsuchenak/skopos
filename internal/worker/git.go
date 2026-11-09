@@ -545,3 +545,74 @@ func logCommandResult(rl *runLog, src string, err error) {
 	}
 	rl.line(src, "✓ passed", false)
 }
+
+// stepCommit matches the implementer's commit subjects: "agent: step N -
+// <step title>" (implement.md), after any prefix a commit-msg hook adds.
+var stepCommit = regexp.MustCompile(`agent: step \d+ - (.+)$`)
+
+// committedSteps marks the steps whose commit is on the branch since base:
+// an earlier run committed them (one cut off by its timeout, a crash, a
+// retry). A commit names its step by title, since an amendment renumbers
+// the steps; a title only counts once.
+func committedSteps(ctx context.Context, dir, base string, steps []Step) []bool {
+	done := make([]bool, len(steps))
+	out, err := git(ctx, dir, "log", "--format=%s", base+"..HEAD")
+	if err != nil {
+		return done
+	}
+	titles := map[string]int{}
+	for line := range strings.Lines(out) {
+		if m := stepCommit.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+			titles[normTitle(m[1])]++
+		}
+	}
+	for i, st := range steps {
+		if k := normTitle(st.Title); titles[k] > 0 {
+			done[i] = true
+			titles[k]--
+		}
+	}
+	return done
+}
+
+func normTitle(s string) string {
+	return strings.ToLower(strings.TrimRight(strings.Join(strings.Fields(s), " "), "."))
+}
+
+// leftoverChanges lists what an earlier run left uncommitted in dir (git
+// status --short, at most 20 lines): a run killed mid-step keeps its edits
+// for the next one.
+func leftoverChanges(ctx context.Context, dir string) []string {
+	// --branch puts a "## branch" line first, so git()'s trimming can't eat
+	// the first file's status column (" M" vs "M ").
+	out, err := git(ctx, dir, "status", "--short", "--branch", "--untracked-files=all")
+	if err != nil {
+		return nil
+	}
+	var files []string
+	for line := range strings.Lines(out) {
+		if line = strings.TrimRight(line, "\n"); line != "" && !strings.HasPrefix(line, "## ") {
+			files = append(files, line)
+		}
+	}
+	if len(files) > 20 {
+		files = append(files[:20], fmt.Sprintf("… and %d more", len(files)-20))
+	}
+	return files
+}
+
+// clearStaleIndexLock removes the index.lock a git command killed with its
+// agent left behind; git refuses every later command while it exists. The
+// run holds the item's worktree (and a branch checkout's clone) alone, and
+// the killed run's process group is gone, so nothing else owns the lock.
+func clearStaleIndexLock(ctx context.Context, dir string) bool {
+	gitDir, err := git(ctx, dir, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return false
+	}
+	lock := filepath.Join(strings.TrimSpace(gitDir), "index.lock")
+	if _, err := os.Stat(lock); err != nil {
+		return false
+	}
+	return os.Remove(lock) == nil
+}

@@ -11,8 +11,23 @@ branch {{.Branch}}, created from {{.Base}}. Martin approved exactly the plan bel
 {{end}}
 # Approved plan
 
-{{range $i, $s := .Steps}}{{inc $i}}. {{$s.Title}}
+{{range $i, $s := .Steps}}{{inc $i}}. {{$s.Title}}{{if $s.Done}} — ALREADY COMMITTED{{end}}
    {{$s.Description}}
+{{end}}{{if and .Resumed (not .Notes)}}
+An earlier run of this implementation was cut off. The steps marked ALREADY COMMITTED are on the
+branch (`git log` shows them): do not redo them. Continue with the first step that is not marked.
+{{end}}{{if .Leftover}}
+The earlier run also left uncommitted changes in the working tree, probably the step it was on,
+half done:
+
+```
+{{range .Leftover}}{{.}}
+{{end}}```
+
+Read them (`git diff`, `git status`) before you start. Keep and finish what is right for the step.
+Undo changes to tracked files you do not keep with `git restore <file>`. You cannot delete files:
+if the earlier run added a file that does not belong, leave it out of your commits (stage files by
+name with `git add <file>` instead of `git add -A`) and say so in your summary.
 {{end}}
 {{if .ApprovalNotes}}
 # Martin's notes with the approval (answers to open questions; they take precedence over the plan where they differ)

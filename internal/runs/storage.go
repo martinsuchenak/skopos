@@ -36,11 +36,12 @@ func parseTime(s string) time.Time {
 const runColumns = `id, workspace_id, item_id, plan_rev_id, stage, runner, worker_id, status,
 	resume_kind, lease_expires_at, resume_after, attempt, branch, base_sha, head_sha,
 	result_summary, diffstat, checks, log_ref, fail_reason, lease_token_hash, claimed_key_id, created_at, updated_at, executor,
-	group_id, focus, cost_usd, findings, pushed, pr_url, setup, fix_rounds, phase, retries, retry_after, avoid_worker`
+	group_id, focus, cost_usd, findings, pushed, pr_url, setup, fix_rounds, phase, retries, retry_after, avoid_worker,
+	prefer_worker, prefer_until`
 
 func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	var r Run
-	var lease, resumeAfter, retryAfter, createdAt, updatedAt string
+	var lease, resumeAfter, retryAfter, preferUntil, createdAt, updatedAt string
 	var checks, setup string
 	var groupID, focus, findings sql.NullString
 	var cost sql.NullFloat64
@@ -48,7 +49,8 @@ func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	if err := row.Scan(&r.ID, &r.WorkspaceID, &r.ItemID, &r.PlanRevID, &r.Stage, &r.Runner, &r.WorkerID, &r.Status,
 		&r.ResumeKind, &lease, &resumeAfter, &r.Attempt, &r.Branch, &r.BaseSHA, &r.HeadSHA,
 		&r.ResultSummary, &r.Diffstat, &checks, &r.LogRef, &r.FailReason, &r.LeaseTokenHash, &r.ClaimedKeyID, &createdAt, &updatedAt, &r.Executor,
-		&groupID, &focus, &cost, &findings, &pushed, &r.PRURL, &setup, &r.FixRounds, &r.Phase, &r.Retries, &retryAfter, &r.AvoidWorker); err != nil {
+		&groupID, &focus, &cost, &findings, &pushed, &r.PRURL, &setup, &r.FixRounds, &r.Phase, &r.Retries, &retryAfter, &r.AvoidWorker,
+		&r.PreferWorker, &preferUntil); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -57,6 +59,7 @@ func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	r.LeaseExpires = parseTime(lease)
 	r.ResumeAfter = parseTime(resumeAfter)
 	r.RetryAfter = parseTime(retryAfter)
+	r.PreferUntil = parseTime(preferUntil)
 	r.CreatedAt = parseTime(createdAt)
 	r.UpdatedAt = parseTime(updatedAt)
 	if checks != "" && checks != "[]" {
@@ -123,11 +126,11 @@ func insertRun(ctx context.Context, db execer, r Run) error {
 	}
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO runs (id, workspace_id, item_id, plan_rev_id, stage, runner, status, attempt,
-			branch, base_sha, head_sha, checks, created_at, updated_at, group_id, focus)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			branch, base_sha, head_sha, checks, created_at, updated_at, group_id, focus, prefer_worker, prefer_until)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.ID, r.WorkspaceID, r.ItemID, r.PlanRevID, r.Stage, r.Runner, StatusQueued, 1,
 		r.Branch, r.BaseSHA, r.HeadSHA, string(checks), formatTime(r.CreatedAt), formatTime(r.UpdatedAt),
-		nullIfEmpty(r.GroupID), nullIfEmpty(r.Focus)); err != nil {
+		nullIfEmpty(r.GroupID), nullIfEmpty(r.Focus), r.PreferWorker, formatPreferUntil(r.PreferUntil)); err != nil {
 		return fmt.Errorf("inserting run: %w", err)
 	}
 	return nil
@@ -444,6 +447,13 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 			if !wsSet[r.WorkspaceID] || retryWaiting(r, in.WorkerID, now) {
 				continue
 			}
+			if r.PreferWorker != "" && r.PreferWorker != in.WorkerID && now.Before(r.PreferUntil) {
+				if able, err := workerCanTake(ctx, tx, r.PreferWorker, r, now); err != nil {
+					return nil, err
+				} else if able {
+					continue // waiting for the worker whose clone has the item's work
+				}
+			}
 			if claimable(r, prefs, runnerSet) {
 				cand = r
 				break
@@ -655,7 +665,8 @@ func (s *Storage) Requeue(ctx context.Context, id, workerID, keyID, tokenHash st
 		UPDATE runs SET status = ?, worker_id = '', resume_kind = '', lease_expires_at = '', resume_after = '',
 			lease_token_hash = '', claimed_key_id = '', phase = '', fail_reason = ?, checks = ?,
 			setup = CASE WHEN ? != '' THEN ? ELSE setup END, cost_usd = `+addCost+`,
-			retries = retries + 1, retry_after = ?, avoid_worker = ?, attempt = attempt + 1, updated_at = ?
+			retries = retries + 1, retry_after = ?, avoid_worker = ?, prefer_worker = '', prefer_until = '',
+			attempt = attempt + 1, updated_at = ?
 		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
 		string(StatusQueued), note, string(checks), setupJSON, setupJSON, costArg(in.CostUSD), costArg(in.CostUSD),
 		formatTime(retryAfter), avoid, formatTime(now),
@@ -668,6 +679,45 @@ func (s *Storage) Requeue(ctx context.Context, id, workerID, keyID, tokenHash st
 	}
 	row := s.db.QueryRowContext(ctx, `SELECT `+runColumns+` FROM runs WHERE id = ?`, id)
 	return scanRun(row)
+}
+
+// formatPreferUntil stores the zero time as ” (no preference).
+func formatPreferUntil(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return formatTime(t)
+}
+
+// workerCanTake: the preferred worker could claim r soon. It polled or sent
+// a heartbeat within workerState's idle window and has not said goodbye,
+// it still offers r's workspace (healthy) and runner. A run waiting for it
+// stops waiting the moment that no longer holds.
+func workerCanTake(ctx context.Context, tx *sql.Tx, id string, r *Run, now time.Time) (bool, error) {
+	var lastSeen, offlineAt string
+	var pollMS int64
+	var offers, healthy, runs int
+	err := tx.QueryRowContext(ctx, `
+		SELECT last_seen, COALESCE(poll_ms, 0), COALESCE(offline_at, ''),
+			EXISTS (SELECT 1 FROM json_each(w.workspaces) WHERE value = ?),
+			NOT EXISTS (SELECT 1 FROM json_each(COALESCE(w.unhealthy, '{}')) WHERE key = ?),
+			(? = '' OR EXISTS (SELECT 1 FROM json_each(w.runners) WHERE value = ?))
+		FROM workers w WHERE w.id = ?`, r.WorkspaceID, r.WorkspaceID, r.Runner, r.Runner, id).
+		Scan(&lastSeen, &pollMS, &offlineAt, &offers, &healthy, &runs)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("reading worker %s: %w", id, err)
+	}
+	if offlineAt != "" || offers == 0 || healthy == 0 || runs == 0 {
+		return false, nil
+	}
+	window := 3 * time.Duration(pollMS) * time.Millisecond
+	if window < idleWindowMin {
+		window = idleWindowMin
+	}
+	return now.Sub(parseTime(lastSeen)) <= window, nil
 }
 
 // retryWaiting: a requeued run not yet claimable by this worker — before
