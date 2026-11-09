@@ -7,6 +7,7 @@ import (
 
 	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
+	"github.com/martinsuchenak/skopos/internal/qa"
 	"github.com/martinsuchenak/skopos/internal/rest"
 )
 
@@ -15,15 +16,15 @@ import (
 // ErrApproverRequired → 403, ErrOutOfScope-shaped not-found → 404.
 
 type actionRequest struct {
-	Notes       string `json:"notes"`
-	Answer      string `json:"answer"`
-	Answers     string `json:"answers"` // approve, request-changes: answers to the planner's questions
-	Reason      string `json:"reason"`
-	HeadSHA     string `json:"head_sha"`     // review gate subject on mark-done (required)
-	PlanID      string `json:"plan_id"`      // link-plan
-	RevisionID  string `json:"revision_id"`  // approve: bind to the revision Martin saw; request-changes: the plan candidate to revise
-	ContentHash string `json:"content_hash"` // approve: optional stronger binding
-	BaseSHA     string `json:"base_sha"`     // amend-plan
+	Notes       string          `json:"notes"`
+	Answer      string          `json:"answer"`
+	Answers     qa.AnswersInput `json:"answers"` // approve, request-changes, retry: a list by question id, or free text
+	Reason      string          `json:"reason"`
+	HeadSHA     string          `json:"head_sha"`     // review gate subject on mark-done (required)
+	PlanID      string          `json:"plan_id"`      // link-plan
+	RevisionID  string          `json:"revision_id"`  // approve: bind to the revision Martin saw; request-changes: the plan candidate to revise
+	ContentHash string          `json:"content_hash"` // approve: optional stronger binding
+	BaseSHA     string          `json:"base_sha"`     // amend-plan
 }
 
 type transitionRequest struct {
@@ -34,7 +35,9 @@ type transitionRequest struct {
 	Via string `json:"via"`
 }
 
-// viaFrom picks the audit via label: explicit, else the default for REST.
+// viaFrom picks the audit via label: explicit, else the X-Skopos-Via
+// header (the dashboard, the CLI and the worker send theirs), else api — a
+// REST caller that names no surface, such as an integration.
 func viaFrom(r *http.Request, explicit string) string {
 	if explicit != "" {
 		return explicit
@@ -42,7 +45,7 @@ func viaFrom(r *http.Request, explicit string) string {
 	if r.Header.Get("X-Skopos-Via") != "" {
 		return r.Header.Get("X-Skopos-Via")
 	}
-	return audit.ViaCLI
+	return audit.ViaAPI
 }
 
 func (h *Handler) respondTransition(w http.ResponseWriter, item *Item, err error) {
@@ -165,7 +168,11 @@ func (h *Handler) Retry(w http.ResponseWriter, r *http.Request) {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	item, err := h.service.Retry(r.Context(), r.PathValue("id"), req.Answer, viaFrom(r, ""))
+	answers := req.Answers
+	if a := strings.TrimSpace(req.Answer); a != "" {
+		answers.Text = strings.TrimSpace(answers.Text + "\n" + a)
+	}
+	item, err := h.service.RetryWith(r.Context(), r.PathValue("id"), answers, viaFrom(r, ""))
 	h.respondTransition(w, item, err)
 }
 
@@ -263,6 +270,34 @@ func (h *Handler) AmendPlan(w http.ResponseWriter, r *http.Request) {
 
 // Timeline is the item's audit-log view: every transition with actor, via,
 // notes and time.
+// Questions handles GET /api/inbox/{id}/questions: the item's questions and
+// answers (internal/qa), each set in order with its questions' states.
+func (h *Handler) Questions(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	sets, err := h.service.Questions(r.Context(), r.PathValue("id"))
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
+			rest.RespondError(w, http.StatusNotFound, err.Error())
+		default:
+			rest.InternalError(w, err)
+		}
+		return
+	}
+	open := 0
+	for _, st := range sets {
+		for _, q := range st.Questions {
+			if q.State == qa.StateOpen {
+				open++
+			}
+		}
+	}
+	rest.RespondJSON(w, http.StatusOK, map[string]any{"sets": sets, "open": open})
+}
+
 func (h *Handler) Timeline(w http.ResponseWriter, r *http.Request) {
 	if !h.authorized(r) {
 		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")

@@ -76,7 +76,7 @@ func (s *Service) Record(ctx context.Context, input RecordInput) error {
 // reserved for internal callers and system for the server itself.
 func validVia(v string) bool {
 	switch v {
-	case ViaDashboard, ViaSlack, ViaCLI, ViaMCP, ViaWorker, ViaSystem, "":
+	case ViaDashboard, ViaSlack, ViaCLI, ViaMCP, ViaAPI, ViaWorker, ViaSystem, "":
 		return true
 	}
 	return false

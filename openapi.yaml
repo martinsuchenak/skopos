@@ -1483,7 +1483,7 @@ paths:
               required: [revision_id]
               properties:
                 notes: { type: string }
-                answers: { type: string, description: 'Answers to the open questions (planner or implementer), markdown; appended as "## Answers" ahead of the notes, read by every later prompt with the questions' }
+                answers: { $ref: "#/components/schemas/Answers" }
                 revision_id: { type: string, description: The revision the approving client rendered }
                 content_hash: { type: string, description: Optional stronger binding to the revision's content hash }
       responses:
@@ -1513,7 +1513,7 @@ paths:
               type: object
               properties:
                 notes: { type: string }
-                answers: { type: string, description: 'Answers to the open questions, markdown; appended as "## Answers" ahead of the notes' }
+                answers: { $ref: "#/components/schemas/Answers" }
                 revision_id:
                   type: string
                   description: >-
@@ -1576,7 +1576,7 @@ paths:
   /api/inbox/{id}/retry:
     post:
       summary: Answer a blocked or failed item and resume it (approver permission required)
-      description: blocked/failed → implementing; the answer feeds the next run's prompt.
+      description: blocked/failed → planning or implementing; the answer feeds the next run's prompt. answer is free text and answers a list by question id (or free text); both are read against the open questions and recorded (GET /api/inbox/{id}/questions). Open questions left unanswered are recorded as skipped.
       operationId: retryInboxItem
       security: [{ BearerAuth: [] }]
       parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
@@ -1586,9 +1586,9 @@ paths:
           application/json:
             schema:
               type: object
-              required: [answer]
               properties:
                 answer: { type: string }
+                answers: { $ref: "#/components/schemas/Answers" }
       responses:
         "200":
           description: Item back to implementing
@@ -1687,6 +1687,26 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/AuditEntry" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+
+  /api/inbox/{id}/questions:
+    get:
+      summary: The item's questions and answers
+      description: Every set of questions the planner, the implementer or the worker asked, in order, each question with its state (open, answered, answered_free_text, skipped, superseded) and its answers — who answered, through which surface, with which action and approval. open counts the questions still waiting.
+      operationId: inboxItemQuestions
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      responses:
+        "200":
+          description: The record
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sets: { type: array, items: { $ref: "#/components/schemas/QuestionSet" } }
+                  open: { type: integer }
         "401": { description: Unauthorized }
         "404": { description: Not found }
 
@@ -1913,6 +1933,46 @@ paths:
         "400": { description: base_sha missing }
         "401": { description: Unauthorized }
         "404": { description: Unknown run }
+
+  /api/runs/{id}/questions:
+    post:
+      summary: Record a run's questions for the approver (the worker holding the claim)
+      description: The planner's or the implementer's questions. Authorised like a heartbeat (worker_id, the claim's key, X-Skopos-Lease). The server records the set (who asked, about what, whether the item waits) and appends its "## Questions — …" section to the item.
+      operationId: askRunQuestions
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: X-Skopos-Lease, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [worker_id, asker, questions]
+              properties:
+                worker_id: { type: string }
+                asker: { type: string, enum: [planner, implementer, worker] }
+                blocking: { type: boolean, description: The item waits on the answers }
+                subject_kind: { type: string, enum: [plan_revision, base, head, none] }
+                subject: { type: string, description: "<revision>+<base_sha>, <base_sha> or <head_sha>" }
+                questions:
+                  type: array
+                  items:
+                    type: object
+                    required: [question]
+                    properties:
+                      question: { type: string }
+                      options: { type: array, items: { type: string } }
+      responses:
+        "201":
+          description: The recorded set
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuestionSet" }
+        "400": { description: Invalid input }
+        "401": { description: Unauthorized }
+        "404": { description: Not found or not the claim holder }
 
   /api/runs/{id}/log:
     post:
@@ -2216,6 +2276,70 @@ components:
         the accessible workspaces), by-id operations return 404, and writes
         require workspace_id for every principal including root.
   schemas:
+    Answers:
+      description: |
+        Answers to the item's open questions: a list by question id, or free text. Free text is read
+        line by line against the open questions: "1) a", "1. b — words" or "2) Redis" link to question
+        n of the open set (with several open sets, "<label> 1) a" or a "To <label>:" line picks the
+        set); a letter is an option when the question has one. The rest is a general answer to the
+        set. The action's response lists what was matched (answers_matched).
+      oneOf:
+        - type: string
+        - type: array
+          items:
+            type: object
+            required: [question_id]
+            properties:
+              question_id: { type: string }
+              option: { type: string, description: The option's letter (a, b, c…) }
+              text: { type: string }
+    QuestionSet:
+      type: object
+      properties:
+        id: { type: string }
+        workspace_id: { type: string }
+        item_id: { type: string }
+        asker: { type: string, enum: [planner, implementer, worker] }
+        stage: { type: string }
+        run_id: { type: string }
+        runner: { type: string }
+        label: { type: string, description: A plan candidate's label }
+        subject_kind: { type: string, enum: [plan_revision, base, head, none] }
+        subject: { type: string }
+        blocking: { type: boolean }
+        source: { type: string, enum: [worker, imported] }
+        open: { type: boolean, description: A question of the set is still open }
+        created_at: { type: string, format: date-time }
+        general: { type: array, items: { $ref: "#/components/schemas/Answer" }, description: Free-text answers to the set as a whole }
+        questions:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              set_id: { type: string }
+              n: { type: integer, description: The number steps cite }
+              text: { type: string }
+              options: { type: array, items: { type: string } }
+              state: { type: string, enum: [open, answered, answered_free_text, skipped, superseded] }
+              answers: { type: array, items: { $ref: "#/components/schemas/Answer" } }
+    Answer:
+      type: object
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [answer, general, skipped] }
+        question_id: { type: string }
+        set_id: { type: string }
+        option: { type: string }
+        text: { type: string }
+        replaces: { type: string }
+        action: { type: string, enum: [approve, request_changes, retry, answer, imported] }
+        approval_id: { type: string }
+        actor: { type: string }
+        actor_key_id: { type: string }
+        via: { type: string, enum: [dashboard, slack, cli, mcp, api, worker, migration] }
+        used_by_run: { type: string }
+        created_at: { type: string, format: date-time }
     PipelineStage:
       type: object
       required: [members]
@@ -2787,6 +2911,18 @@ components:
             id: { type: string }
             name: { type: string }
             status: { type: string }
+        answers_matched:
+          type: array
+          description: On an action's response, what its answers were read as.
+          items:
+            type: object
+            properties:
+              line: { type: string }
+              question_id: { type: string }
+              set_id: { type: string }
+              n: { type: integer }
+              option: { type: string }
+              general: { type: boolean }
         content_parts:
           type: object
           description: "With ?parts=1 on GET /api/inbox/{id}: the author's text, then the pipeline's sections in rounds (a plan with its questions and the author's notes on it; a review with change requests). A round closed by the author's notes asks nothing open."

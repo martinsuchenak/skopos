@@ -35,6 +35,10 @@ type ContentSection = { heading: string; html: string; questions?: ItemQuestion[
 type ContentRound = { kind: string; title: string; n: number; closed: boolean; sections: ContentSection[] };
 type ContentParts = { brief_html: string; rounds: ContentRound[] };
 type InboxDetail = InboxItem & { content: string; content_html: string; content_parts?: ContentParts };
+// The item's question-and-answer record (GET /api/inbox/{id}/questions).
+type QAQuestion = { id: string; n: number; text: string; options: string[]; state: string };
+type QASet = { id: string; asker: string; label?: string; open: boolean; questions: QAQuestion[] };
+type AnswerItem = { question_id: string; option?: string; text?: string };
 type RoundView = { key: string; title: string; meta: string; open: boolean; sections: { key: string; heading: string }[] };
 type QuestionView = { key: string; n: number; text: string; options: { key: string; letter: string; text: string }[] };
 type QuestionGroup = { key: string; title: string; label: string; questions: QuestionView[] };
@@ -179,6 +183,7 @@ const appState = () => ({
   // Answers to the planner's questions at the gate, by question key: the
   // picked option's letter and free text. Sent with the action as answers.
   questionAnswers: {} as Record<string, { pick: string; text: string }>,
+  previewQuestions: [] as QASet[],
   // Workers in scope (an active run on an offline worker is flagged) and the
   // item's audit trail (the History section).
   previewWorkers: [] as WorkerSeen[],
@@ -516,6 +521,8 @@ const appState = () => ({
     const headers = new Headers(opts.headers || {});
     if (opts.body) headers.set('Content-Type', 'application/json');
     if (this.apiKey) headers.set('Authorization', 'Bearer ' + this.apiKey);
+    // Every dashboard request names its surface for the audit trail.
+    if (!headers.has('X-Skopos-Via')) headers.set('X-Skopos-Via', 'dashboard');
     try {
       const res = await fetch(url, { ...opts, headers });
       if (res.status === 401) this.authFailed();
@@ -1144,13 +1151,15 @@ const appState = () => ({
   // Workers (stuck-run warning) and the audit trail (History): refetched with
   // the runs on every live refresh.
   async fetchPreviewExtras(id: string) {
-    const [wres, tres] = await Promise.all([
+    const [wres, tres, qres] = await Promise.all([
       this.authFetch('/api/workers'),
       this.authFetch('/api/inbox/' + encodeURIComponent(id) + '/timeline'),
+      this.authFetch('/api/inbox/' + encodeURIComponent(id) + '/questions'),
     ]);
     if (!this.showInboxPreview || !this.previewItem || this.previewItem.id !== id) return;
     if (wres.ok) this.previewWorkers = ((await wres.json()) as WorkerSeen[]) ?? [];
     if (tres.ok) this.previewTimeline = ((await tres.json()) as AuditEntry[]) ?? [];
+    if (qres.ok) this.previewQuestions = (((await qres.json()) as { sets: QASet[] }).sets) ?? [];
   },
   // Section defaults follow the status: the description is open until the
   // plan is approved, the run history is closed. Applied on open and on a
@@ -1210,33 +1219,24 @@ const appState = () => ({
     if (open === newest) delete next[key]; else next[key] = open;
     this.previewRoundOpen = next;
   },
-  // The questions waiting for Martin at the gate: the newest round's, while
-  // the item awaits approval or is blocked. A round his notes closed asked
-  // nothing new.
+  // The questions waiting for Martin, from the record: the open questions
+  // of the open sets, while the item awaits approval or is blocked. Keyed
+  // by question id; answers go back by id.
   openQuestionGroups(): QuestionGroup[] {
     const item = this.previewItem;
-    if (!item || !item.content_parts || !(this.workflowShowApprove() || this.workflowShowRetry())) return [];
-    const rounds = item.content_parts.rounds;
-    if (rounds.length === 0) return [];
-    const ri = rounds.length - 1;
-    if (rounds[ri].closed) return [];
-    const secs = rounds[ri].sections;
-    const groups: QuestionGroup[] = [];
-    secs.forEach((sec, si) => {
-      const qs = sec.questions || [];
-      if (qs.length === 0) return;
-      const gkey = this.sectionKey(item.id, ri, si);
-      groups.push({
-        key: gkey,
-        title: sec.label ? 'Questions from ' + sec.label : 'Questions from the planner',
-        label: sec.label || '',
-        questions: qs.map((q, qi) => ({
-          key: gkey + '|q' + qi, n: qi + 1, text: q.text,
-          options: (q.options || []).map((o, oi) => ({ key: gkey + '|q' + qi + '|o' + oi, letter: optionLetter(oi), text: o })),
+    if (!item || !(this.workflowShowApprove() || this.workflowShowRetry())) return [];
+    return this.previewQuestions.filter((s: QASet) => s.open).map((s: QASet) => {
+      const who = s.label || (s.asker === 'implementer' ? 'the implementer' : '');
+      return {
+        key: s.id,
+        title: who ? 'Questions from ' + who : (s.asker === 'worker' ? 'A question from the worker' : 'Questions from the planner'),
+        label: who,
+        questions: s.questions.filter((q: QAQuestion) => q.state === 'open').map((q: QAQuestion) => ({
+          key: q.id, n: q.n, text: q.text,
+          options: (q.options || []).map((o: string, oi: number) => ({ key: q.id + '|o' + oi, letter: optionLetter(oi), text: o })),
         })),
-      });
+      };
     });
-    return groups;
   },
   answerPick(key: string): string { const a = this.questionAnswers[key]; return a ? a.pick : ''; },
   answerText(key: string): string { const a = this.questionAnswers[key]; return a ? a.text : ''; },
@@ -1257,26 +1257,19 @@ const appState = () => ({
     const actions = this.workflowShowRetry() ? 'Retry' : 'Approve or ' + this.requestChangesLabel();
     return n + ' of ' + all.length + ' answered · sent with ' + actions;
   },
-  // The answers as the "## Answers" section reads: each answered question
-  // with its text (later rounds number their questions afresh), the picked
-  // option and any words of Martin's.
-  composedAnswers(): string {
-    const out: string[] = [];
+  // The answers by question id: the picked option and/or the words.
+  answerItems(): AnswerItem[] {
+    const out: AnswerItem[] = [];
     for (const g of this.openQuestionGroups()) {
-      const lines: string[] = [];
       for (const q of g.questions) {
-        const parts: string[] = [];
-        const opt = q.options.find((o) => o.letter === this.answerPick(q.key));
-        if (opt) parts.push('(' + opt.letter + ') ' + opt.text);
+        const option = this.answerPick(q.key);
         const text = this.answerText(q.key).trim();
-        if (text) parts.push(text);
-        if (parts.length > 0) lines.push(q.n + '. ' + q.text + '\n   Answer: ' + parts.join(' — '));
+        if (option || text) out.push({ question_id: q.key, option: option || undefined, text: text || undefined });
       }
-      if (lines.length > 0) out.push((g.label ? 'To ' + g.label + ':\n\n' : '') + lines.join('\n'));
     }
-    return out.join('\n\n');
+    return out;
   },
-  hasWorkflowInput(): boolean { return this.workflowNote.trim().length > 0 || this.composedAnswers() !== ''; },
+  hasWorkflowInput(): boolean { return this.workflowNote.trim().length > 0 || this.answerItems().length > 0; },
   async copyItemId() {
     const item = this.previewItem;
     if (!item) return;
@@ -1346,7 +1339,7 @@ const appState = () => ({
       await this.fetchPreviewRuns(item.id);
     } finally { this.secondOpinion.busy = false; }
   },
-  closeInboxPreview() { this.closeRunLog(); if (previewPoll) { clearInterval(previewPoll); previewPoll = null; } this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.previewCandidates = []; this.previewApprovedRev = null; this.previewPipe = null; this.previewStatusSeen = ''; this.previewWorkers = []; this.previewTimeline = []; this.workflowNote = ''; this.questionAnswers = {}; this.previewRoundOpen = {}; this.workflowBusy = false; },
+  closeInboxPreview() { this.closeRunLog(); if (previewPoll) { clearInterval(previewPoll); previewPoll = null; } this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.previewCandidates = []; this.previewApprovedRev = null; this.previewPipe = null; this.previewStatusSeen = ''; this.previewWorkers = []; this.previewTimeline = []; this.previewQuestions = []; this.workflowNote = ''; this.questionAnswers = {}; this.previewRoundOpen = {}; this.workflowBusy = false; },
   // The newest revision of the previewed item's plan, while it waits at the
   // gate (revisions list newest first).
   async fetchPreviewRevision() {
@@ -1392,10 +1385,10 @@ const appState = () => ({
     const item = this.previewItem;
     const t = this.approveTargets().find((x: ApproveTarget) => x.id === revisionId);
     if (!item || !t) return;
-    const body: Record<string, string> = { revision_id: t.id, content_hash: t.hash };
+    const body: Record<string, unknown> = { revision_id: t.id, content_hash: t.hash };
     if (this.workflowNote.trim()) body.notes = this.workflowNote;
-    const answers = this.composedAnswers();
-    if (answers) body.answers = answers;
+    const answers = this.answerItems();
+    if (answers.length > 0) body.answers = answers;
     this.postWorkflowAction(item.id, 'approve', body, t.toast);
   },
   // Revise one candidate: a single planner re-plans from it with the notes.
@@ -1404,7 +1397,7 @@ const appState = () => ({
     const t = this.approveTargets().find((x: ApproveTarget) => x.id === revisionId);
     if (!item || !t) return;
     if (!this.hasWorkflowInput()) { this.notify('Write what to change in the notes first', 'error'); return; }
-    this.postWorkflowAction(item.id, 'request-changes', { notes: this.workflowNote, answers: this.composedAnswers(), revision_id: t.id }, 'Revising ' + t.title);
+    this.postWorkflowAction(item.id, 'request-changes', { notes: this.workflowNote, answers: this.answerItems(), revision_id: t.id }, 'Revising ' + t.title);
   },
   requestChangesLabel(): string { return this.previewCandidates.length > 0 ? 'Re-plan all' : 'Request changes'; },
   // Edit from the preview: capture the item BEFORE closing (close nulls
@@ -2123,7 +2116,7 @@ const appState = () => ({
     if (action === 'mark_done') return this.reviewHead() !== '';
     return this.hasWorkflowInput();
   },
-  async postWorkflowAction(id: string, action: string, body: Record<string, string> | null, okMessage: string) {
+  async postWorkflowAction(id: string, action: string, body: Record<string, unknown> | null, okMessage: string) {
     if (this.workflowBusy) return;
     this.workflowBusy = true;
     const opts: RequestInit = { method: 'POST', headers: { 'X-Skopos-Via': 'dashboard' } };
@@ -2153,12 +2146,12 @@ const appState = () => ({
       pending: { kind: 'inboxreject', id },
     };
   },
-  requestChangesInboxItem(id: string) { if (this.hasWorkflowInput()) this.postWorkflowAction(id, 'request-changes', { notes: this.workflowNote, answers: this.composedAnswers() }, 'Change requested'); },
-  // Retry has one answer: the answers to the questions, then the note.
+  requestChangesInboxItem(id: string) { if (this.hasWorkflowInput()) this.postWorkflowAction(id, 'request-changes', { notes: this.workflowNote, answers: this.answerItems() }, 'Change requested'); },
+  // Retry: the answers by question id, and the note as free text (read
+  // against the open questions too).
   retryInboxItem(id: string) {
     if (!this.hasWorkflowInput()) return;
-    const answer = [this.composedAnswers(), this.workflowNote.trim()].filter((x) => x !== '').join('\n\n');
-    this.postWorkflowAction(id, 'retry', { answer }, 'Requeued');
+    this.postWorkflowAction(id, 'retry', { answers: this.answerItems(), answer: this.workflowNote.trim() }, 'Requeued');
   },
   markDoneInboxItem(id: string) { const head = this.reviewHead(); if (head) this.postWorkflowAction(id, 'mark-done', { head_sha: head }, 'Marked done'); },
   // The quick action for a card/row is the one that needs no input; Retry

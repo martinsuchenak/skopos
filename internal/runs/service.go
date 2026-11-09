@@ -40,6 +40,8 @@ type Service struct {
 	// itemAppend writes a section into the item (a stage group's summary) —
 	// wired to inbox.AppendSection. Nil skips the summary.
 	itemAppend func(ctx context.Context, itemID, heading, body string) error
+	// questionAsker records a run's questions (internal/qa, via serve.go).
+	questionAsker QuestionAsker
 	// secondOpinionNotify hears about every finished second opinion (the
 	// Slack relay posts it to the item's thread).
 	secondOpinionNotify func(ctx context.Context, r SecondOpinionResult)

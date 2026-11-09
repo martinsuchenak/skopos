@@ -375,6 +375,33 @@ func (c *Client) AppendSection(ctx context.Context, id, heading, body string) er
 	return c.do(ctx, http.MethodPatch, "/api/inbox/"+id, map[string]string{"content": content}, nil)
 }
 
+// QuestionsPost is a run's questions for Martin (POST
+// /api/runs/{id}/questions): who asks, about what, whether the item waits.
+type QuestionsPost struct {
+	WorkerID    string           `json:"worker_id"`
+	Asker       string           `json:"asker"`
+	Blocking    bool             `json:"blocking"`
+	SubjectKind string           `json:"subject_kind,omitempty"`
+	Subject     string           `json:"subject,omitempty"`
+	Questions   []QuestionPosted `json:"questions"`
+}
+
+type QuestionPosted struct {
+	Question string   `json:"question"`
+	Options  []string `json:"options,omitempty"`
+}
+
+// AskQuestions posts a run's questions; the server records them and renders
+// them into the item. false: the server predates the endpoint (404), and
+// the caller appends the section itself.
+func (c *Client) AskQuestions(ctx context.Context, runID string, in QuestionsPost) (bool, error) {
+	err := c.doHeader(ctx, http.MethodPost, "/api/runs/"+runID+"/questions", in, nil, "X-Skopos-Lease", c.leaseHeader(runID))
+	if err != nil && strings.Contains(err.Error(), ": 404 ") {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // CreatePlan, AddPlanItem, CreateRevision, LinkPlan, Transition: the writes
 // the stage executors need. Plan item text is immutable server-side.
 func (c *Client) GetPlan(ctx context.Context, id string) (*Plan, error) {

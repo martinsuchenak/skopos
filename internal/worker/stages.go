@@ -52,7 +52,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 		return w.report(ctx, run, false, map[string]any{"reason": "branch: " + err.Error()})
 	}
 	if choice.Question != "" {
-		_ = w.client.AppendSection(ctx, run.ItemID, "Questions — planner", "- "+choice.Question)
+		w.askQuestions(ctx, run, askerWorker, "", []itemtext.Question{{Text: choice.Question}}, true, "", "")
 		return w.report(ctx, run, false, map[string]any{"reason": "needs clarification: " + choice.Question})
 	}
 	branch := choice.Name
@@ -170,7 +170,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	label := candidateLabel(run, account)
 	if pr.NeedsClarification {
 		questions := itemtext.FormatQuestions(pr.Questions)
-		w.appendQuestions(ctx, run, label, questions)
+		w.askQuestions(ctx, run, askerPlanner, label, pr.Questions, true, subjectBase, baseSHA)
 		return w.report(ctx, run, false, map[string]any{
 			"reason": "needs clarification: " + questions, "summary": res.Text[:min(len(res.Text), 500)],
 		})
@@ -214,7 +214,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	_ = w.client.AppendSection(ctx, run.ItemID, "Enrichment — skopos worker", enrich)
 	// The plan's open questions follow it as their own section: steps that
 	// depend on an answer name the question by its number.
-	w.appendQuestions(ctx, run, label, itemtext.FormatQuestions(pr.Questions))
+	w.askQuestions(ctx, run, askerPlanner, label, pr.Questions, false, subjectPlanRevision, rev.ID+"+"+baseSHA)
 
 	log.Info("plan ready", "plan", planID, "revision", rev.ID, "steps", len(pr.Steps), "cost_usd", res.CostUSD)
 	return w.report(ctx, run, true, map[string]any{
@@ -222,19 +222,51 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	})
 }
 
-// appendQuestions writes the planner's questions (itemtext.FormatQuestions)
-// as their own section, which the dashboard lists for answering and later
-// prompts read with the answers. A plan group member's heading carries its
-// candidate label. Nothing is written when there are none.
-func (w *Worker) appendQuestions(ctx context.Context, run *Run, label, questions string) {
-	if strings.TrimSpace(questions) == "" {
+// Who asks, and what a set of questions is about (internal/qa).
+const (
+	askerPlanner        = "planner"
+	askerImplementer    = "implementer"
+	askerWorker         = "worker"
+	subjectPlanRevision = "plan_revision"
+	subjectBase         = "base"
+)
+
+// askQuestions posts a run's questions to the server, which records them
+// (who asked, about what, whether the item waits) and renders them into the
+// item. A server without the endpoint gets the section appended as before.
+// Nothing is sent when there are none.
+func (w *Worker) askQuestions(ctx context.Context, run *Run, asker, label string, qs []itemtext.Question, blocking bool, subjectKind, subject string) {
+	text := itemtext.FormatQuestions(qs)
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	post := QuestionsPost{WorkerID: w.cfg.ID, Asker: asker, Blocking: blocking, SubjectKind: subjectKind, Subject: subject}
+	for _, q := range qs {
+		post.Questions = append(post.Questions, QuestionPosted{Question: q.Text, Options: q.Options})
+	}
+	// The record is the server's: a failed post is tried once more, never
+	// appended by hand (the server may have recorded it already, and an
+	// appended section would be recorded a second time). Only a server
+	// without the endpoint gets the section appended.
+	ok, err := w.client.AskQuestions(ctx, run.ID, post)
+	if err != nil {
+		ok, err = w.client.AskQuestions(ctx, run.ID, post)
+	}
+	if err != nil {
+		w.log.Warn("posting the questions failed", "run", run.ID, "err", err)
+		return
+	}
+	if ok {
 		return
 	}
 	heading := "Questions — planner"
-	if run.GroupID != "" {
+	switch {
+	case asker == askerImplementer:
+		heading = "Questions — implementer"
+	case run.GroupID != "" && label != "":
 		heading = "Questions — planner " + label
 	}
-	_ = w.client.AppendSection(ctx, run.ItemID, heading, questions)
+	_ = w.client.AppendSection(ctx, run.ItemID, heading, text)
 }
 
 // candidateLabel names a plan group member's candidate: "focus@runner" or
@@ -280,7 +312,7 @@ func (w *Worker) submitCandidate(ctx context.Context, run *Run, item *Item, pr p
 		enrich += "\n**Risks:**\n" + bullets(pr.Risks) + "\n"
 	}
 	_ = w.client.AppendSection(ctx, run.ItemID, "Candidate — "+label, enrich)
-	w.appendQuestions(ctx, run, label, itemtext.FormatQuestions(pr.Questions))
+	w.askQuestions(ctx, run, askerPlanner, label, pr.Questions, false, subjectPlanRevision, rev.ID+"+"+baseSHA)
 	log.Info("candidate ready", "plan", planID, "revision", rev.ID, "label", label, "steps", len(pr.Steps), "cost_usd", res.CostUSD)
 	return w.report(ctx, run, true, map[string]any{
 		"summary": "candidate ready: " + pr.Summary, "branch": branch, "base_sha": baseSHA,
@@ -1044,9 +1076,11 @@ func (ir implResult) asked() []itemtext.Question {
 // at the gate or with Retry, Slack quotes them, and later prompts read them
 // with the answers. They used to be dropped.
 func (w *Worker) appendImplQuestions(ctx context.Context, run *Run, ir implResult) {
-	if q := itemtext.FormatQuestions(ir.asked()); q != "" {
-		_ = w.client.AppendSection(ctx, run.ItemID, "Questions — implementer", q)
+	kind, subject := subjectBase, run.BaseSHA
+	if run.PlanRevID != "" {
+		kind, subject = subjectPlanRevision, run.PlanRevID+"+"+run.BaseSHA
 	}
+	w.askQuestions(ctx, run, askerImplementer, "", ir.asked(), true, kind, subject)
 }
 
 // --- small helpers ---
@@ -1122,7 +1156,7 @@ func (w *Worker) stageBranchReview(ctx context.Context, run *Run, log *slog.Logg
 		return w.report(ctx, run, false, map[string]any{"reason": "branch: " + err.Error()})
 	}
 	if choice.Question != "" {
-		_ = w.client.AppendSection(ctx, run.ItemID, "Questions — planner", "- "+choice.Question)
+		w.askQuestions(ctx, run, askerWorker, "", []itemtext.Question{{Text: choice.Question}}, true, "", "")
 		return w.report(ctx, run, false, map[string]any{"reason": "needs clarification: " + choice.Question})
 	}
 	if !choice.Exists {

@@ -29,6 +29,7 @@ func registerRunsRoutes(mux *http.ServeMux, h *runs.Handler) {
 	mux.HandleFunc("POST /api/runs/{id}/cancel", h.Cancel)
 	mux.HandleFunc("POST /api/runs/{id}/pin-base", h.PinBase)
 	mux.HandleFunc("POST /api/runs/{id}/log", h.AppendLog)
+	mux.HandleFunc("POST /api/runs/{id}/questions", h.Questions)
 	mux.HandleFunc("GET /api/runs/{id}/log", h.Log)
 	mux.HandleFunc("GET /api/runs/groups", h.Groups)
 	mux.HandleFunc("GET /api/runs/{id}", h.Get)

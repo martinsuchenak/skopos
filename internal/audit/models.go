@@ -45,6 +45,9 @@ const (
 	ViaSlack     = "slack"
 	ViaCLI       = "cli"
 	ViaMCP       = "mcp"
+	// ViaAPI: a REST call that names no surface (an integration); the CLI
+	// and the dashboard send theirs.
+	ViaAPI       = "api"
 	ViaWorker    = "worker"
 	ViaMigration = "migration"
 	ViaSystem    = "system"

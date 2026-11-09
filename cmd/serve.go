@@ -29,9 +29,11 @@ import (
 	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/martinsuchenak/skopos/internal/health"
 	"github.com/martinsuchenak/skopos/internal/inbox"
+	"github.com/martinsuchenak/skopos/internal/itemtext"
 	"github.com/martinsuchenak/skopos/internal/notify"
 	"github.com/martinsuchenak/skopos/internal/pipeline"
 	"github.com/martinsuchenak/skopos/internal/plans"
+	"github.com/martinsuchenak/skopos/internal/qa"
 	"github.com/martinsuchenak/skopos/internal/rest"
 	"github.com/martinsuchenak/skopos/internal/runs"
 	"github.com/martinsuchenak/skopos/internal/status"
@@ -241,6 +243,17 @@ func serveCmd() *cli.Command {
 			inboxService := inbox.NewService(inbox.NewStorage(sqlDB))
 			inboxService.SetAuditRecorder(auditService)
 			inboxService.SetApprovalLog(approvalsService)
+			// Questions and answers (tmp/questions-and-answers — design.md):
+			// the record the workflow actions answer through; items written
+			// before it are imported once.
+			qaService := qa.NewService(qa.NewStorage(sqlDB))
+			qaService.SetAuditRecorder(auditService)
+			inboxService.SetQuestionLog(qaService)
+			if n, err := inboxService.ImportQuestions(ctx); err != nil {
+				log.Warn("questions import: " + err.Error())
+			} else if n > 0 {
+				log.Info("imported the questions and answers of existing items", "items", n)
+			}
 			inboxService.SetPlanRevisions(plansService) // Approve locks the approved revision
 			// Review fix 2: amendments unlock content only through the
 			// workflow's pause, and plans with in-flight items survive.
@@ -468,6 +481,28 @@ func serveCmd() *cli.Command {
 			// groups past their deadline are decided with what they have.
 			runsService.SetItemAppend(func(ctx context.Context, itemID, heading, body string) error {
 				return inboxService.AppendSection(ctx, itemID, heading, body, audit.ViaWorker)
+			})
+			// A run's questions: recorded, then rendered into its item.
+			runsService.SetQuestionAsker(func(ctx context.Context, r *runs.Run, in runs.QuestionsInput) (any, error) {
+				qs := make([]itemtext.Question, len(in.Questions))
+				for i, q := range in.Questions {
+					qs[i] = itemtext.Question{Text: q.Question, Options: q.Options}
+				}
+				set, err := qaService.Ask(ctx, qa.AskInput{
+					WorkspaceID: r.WorkspaceID, ItemID: r.ItemID, RunID: r.ID, Asker: in.Asker, Stage: r.Stage,
+					Runner: r.Runner, Label: r.Label(), SubjectKind: in.SubjectKind, Subject: in.Subject,
+					Blocking: in.Blocking, Questions: qs,
+				})
+				if errors.Is(err, qa.ErrInvalidInput) {
+					return nil, fmt.Errorf("%w: %v", runs.ErrInvalidInput, err)
+				}
+				if err != nil || set == nil {
+					return set, err
+				}
+				if err := inboxService.AppendSection(ctx, r.ItemID, set.Heading(), qa.Render(*set), audit.ViaWorker); err != nil {
+					return nil, err
+				}
+				return set, nil
 			})
 			// The item's own panel/solo switch, read at every queue.
 			runsService.SetItemAgents(func(ctx context.Context, itemID string) string {

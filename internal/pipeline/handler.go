@@ -67,7 +67,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request, kind string) {
 		via = r.Header.Get("X-Skopos-Via")
 	}
 	if via == "" {
-		via = audit.ViaCLI
+		via = audit.ViaAPI // a REST caller that names no surface
 	}
 	v, err := h.service.Put(r.Context(), kind, r.PathValue("id"), in.Settings, via)
 	if err != nil {

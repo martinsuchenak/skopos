@@ -3,6 +3,7 @@ package worker
 import (
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -81,8 +82,9 @@ func TestResumeAfterCutOffRun(t *testing.T) {
 	}
 }
 
-// The implementer's questions with an amendment or a block are written to
-// the item (they used to be dropped), in both result shapes.
+// The implementer's questions with an amendment or a block are posted to
+// the run (they used to be dropped), in both result shapes; a server
+// without the endpoint gets the section appended to the item.
 func TestImplementerQuestionsWritten(t *testing.T) {
 	var ir implResult
 	if err := json.Unmarshal([]byte(`{"status":"amendment","reason":"r","questions":[{"question":"New scope?","options":["sales","quotes"]}],"question":"Delete permission?"}`), &ir); err != nil {
@@ -90,14 +92,26 @@ func TestImplementerQuestionsWritten(t *testing.T) {
 	}
 	var mu sync.Mutex
 	content := "Item."
+	newServer := true
+	var posted QuestionsPost
+	var lease string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
-		switch r.Method {
-		case http.MethodGet:
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/runs/run-1/questions":
+			if !newServer {
+				http.NotFound(w, r)
+				return
+			}
+			lease = r.Header.Get("X-Skopos-Lease")
+			_ = json.NewDecoder(r.Body).Decode(&posted)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, `{}`)
+		case r.Method == http.MethodGet:
 			b, _ := json.Marshal(map[string]any{"id": "it", "content": content})
 			_, _ = w.Write(b)
-		case http.MethodPatch:
+		case r.Method == http.MethodPatch:
 			var body map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			content = body["content"]
@@ -105,15 +119,27 @@ func TestImplementerQuestionsWritten(t *testing.T) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	w := &Worker{client: NewClient(srv.URL, "k")}
-	w.appendImplQuestions(t.Context(), &Run{ItemID: "it"}, ir)
-	want := "## Questions — implementer\n\n1. New scope?\n   - (a) sales\n   - (b) quotes\n2. Delete permission?\n"
-	if !strings.HasSuffix(strings.TrimSpace(content), strings.TrimSpace(want)) {
-		t.Fatalf("content:\n%s", content)
+	client := NewClient(srv.URL, "k")
+	client.leases = map[string]string{"run-1": "tok"}
+	w := &Worker{client: client, cfg: &Config{ID: "w1"}, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	run := &Run{ID: "run-1", ItemID: "it", PlanRevID: "rev", BaseSHA: "base"}
+	w.appendImplQuestions(t.Context(), run, ir)
+	if posted.Asker != "implementer" || !posted.Blocking || posted.SubjectKind != "plan_revision" || posted.Subject != "rev+base" ||
+		len(posted.Questions) != 2 || posted.Questions[0].Options[1] != "quotes" || posted.Questions[1].Question != "Delete permission?" || lease != "tok" {
+		t.Fatalf("posted: %+v (lease %q)", posted, lease)
+	}
+	if content != "Item." {
+		t.Fatalf("the server renders the section, not the worker: %q", content)
+	}
+	newServer = false
+	w.appendImplQuestions(t.Context(), run, ir)
+	want := "## Questions — implementer\n\n1. New scope?\n   - (a) sales\n   - (b) quotes\n2. Delete permission?"
+	if !strings.HasSuffix(strings.TrimSpace(content), want) {
+		t.Fatalf("fallback content:\n%s", content)
 	}
 	before := content
-	w.appendImplQuestions(t.Context(), &Run{ItemID: "it"}, implResult{Status: "blocked"})
+	w.appendImplQuestions(t.Context(), run, implResult{Status: "blocked"})
 	if content != before {
-		t.Fatal("no questions, no section")
+		t.Fatal("no questions, nothing sent")
 	}
 }

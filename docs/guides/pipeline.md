@@ -269,6 +269,28 @@ with the same list, and **Retry** sends your answers. The implementer asks
 the same way: a proposed amendment or a block comes with a **Questions —
 implementer** section, listed for answering at the gate or with **Retry**.
 
+**The record.** Every question and answer is kept as a record, not only as
+text in the item: who asked (planner, implementer or worker, the run, the
+candidate) and about what (the plan revision and base, or the commit), and
+for each answer who gave it, when, through which surface (dashboard, Slack,
+CLI, MCP or the API) and with which action and approval.
+`GET /api/inbox/{id}/questions` returns it, each question with its state:
+open, answered, answered in free text, skipped (a gate passed it unanswered)
+or superseded (a later round asked again). Approving or sending the item back
+records the open questions you leave unanswered as skipped. The item's
+sections are written from the record, and the audit trail has a
+`question.asked`, `question.answered` or `question.skipped` event for each.
+
+**Answering in free text.** Answers can be a list by question id or free
+text. In free text, lines like `1) a`, `1. b — and drop the docs` or
+`2) Redis` answer question 1 or 2 of the open questions, by option letter
+and/or in words. With several planners asking at once, `<label> 1) a` or a
+`To <label>:` line picks whose question. The rest of the text is an answer
+to the round's questions as a whole. The action's response says which lines
+answered which question. Notes work the same for the lines that answer
+(`approve: 1) a, 2) Redis` in Slack, `--notes` in the CLI); the rest of the
+notes stays notes.
+
 Then either:
 - click **Approve**, with optional notes; they're appended for the
   implementer and override the plan where they conflict;

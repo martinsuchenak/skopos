@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/martinsuchenak/skopos/internal/qa"
 )
 
 // Status is an inbox item's lifecycle state. The manual path (docs/design/
@@ -150,6 +152,9 @@ type Item struct {
 	// Martin's text, then the pipeline's sections in rounds. Filled by
 	// GET /api/inbox/{id}?parts=1 only.
 	ContentParts *ContentParts `json:"content_parts,omitempty"`
+	// AnswersMatched: on an action's response, what its answers were read
+	// as (internal/qa Match): linked to a question, or a general answer.
+	AnswersMatched []qa.Match `json:"answers_matched,omitempty"`
 }
 
 // PlanSummary is the linked plan shown on converted items (LEFT JOIN on read;

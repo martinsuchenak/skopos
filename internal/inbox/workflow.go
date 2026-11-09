@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/martinsuchenak/skopos/internal/approvals"
 	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/plans"
+	"github.com/martinsuchenak/skopos/internal/qa"
 )
 
 // The agent-pipeline workflow on inbox items (docs/design/agent-pipeline.md
@@ -46,6 +48,17 @@ type SeededQueuer interface {
 }
 
 // ApprovalLog records human decisions; internal/approvals.Service satisfies it.
+// QuestionLog is the question-and-answer record (internal/qa.Service): the
+// workflow actions check and record answers through it, and an older
+// worker's appended questions sections are recorded from item edits.
+type QuestionLog interface {
+	Prepare(ctx context.Context, itemID, workspaceID, action string, in qa.AnswersInput, gate bool) (*qa.Prepared, error)
+	Commit(ctx context.Context, p *qa.Prepared, approvalID, via string) error
+	Item(ctx context.Context, itemID string) ([]qa.Set, error)
+	ImportAppended(ctx context.Context, itemID, workspaceID, appended string) error
+	ImportItem(ctx context.Context, itemID, workspaceID, content string, created time.Time) (bool, error)
+}
+
 type ApprovalLog interface {
 	Record(ctx context.Context, input approvals.RecordInput) (approvals.Entry, error)
 	List(ctx context.Context, itemID string) ([]approvals.Entry, error)
@@ -283,13 +296,16 @@ func (s *Service) noLockedPlan(ctx context.Context, item *Item) bool {
 // the revision id his client rendered, and optionally its content hash.
 type ApproveInput struct {
 	Notes string
-	// Answers are Martin's answers to the planner's questions, appended as
-	// their own "## Answers" section ahead of the notes: every later prompt
-	// reads them with the questions.
-	Answers     string
+	// Answers are Martin's answers to the open questions (by question id,
+	// or free text read against them — internal/qa), recorded and appended
+	// as their own "## Answers" section ahead of the notes.
+	Answers     qa.AnswersInput
 	Via         string
 	RevisionID  string
 	ContentHash string
+
+	prepared   *qa.Prepared // the answers, checked before any bookkeeping
+	approvalID string       // the approval record the answers go with
 }
 
 // Approve records Martin's plan approval (awaiting_approval → approved),
@@ -317,6 +333,13 @@ func (s *Service) Approve(ctx context.Context, itemID string, input ApproveInput
 	}
 	if item.Status != StatusAwaitingApproval {
 		return nil, fmt.Errorf("%w: only awaiting_approval items can be approved (item is %s)", ErrInvalidInput, statusLabel(item.Status))
+	}
+	// The answers are checked before anything is locked or recorded: a
+	// refused answer leaves the item as it was.
+	answers := input.Answers
+	answers.Notes = input.Notes
+	if input.prepared, err = s.prepareAnswers(ctx, item, qa.ActionApprove, answers); err != nil {
+		return nil, err
 	}
 	// A multi-agent plan round: approve names one candidate.
 	if input.RevisionID != "" {
@@ -354,7 +377,7 @@ func (s *Service) Approve(ctx context.Context, itemID string, input ApproveInput
 	}
 	s.auditItem(ctx, item.ID, "plan.lock_revision", input.Via, rev.ID, "")
 	if s.approvals != nil {
-		if _, err := s.approvals.Record(ctx, approvals.RecordInput{
+		e, err := s.approvals.Record(ctx, approvals.RecordInput{
 			WorkspaceID: item.WorkspaceID,
 			ItemID:      item.ID,
 			Gate:        approvals.GatePlan,
@@ -362,9 +385,11 @@ func (s *Service) Approve(ctx context.Context, itemID string, input ApproveInput
 			Decision:    approvals.DecisionApproved,
 			Via:         input.Via,
 			Notes:       input.auditNotes(),
-		}); err != nil {
+		})
+		if err != nil {
 			return nil, fmt.Errorf("recording approval: %w", err)
 		}
+		input.approvalID = e.ID
 	}
 	_ = verified
 	return s.finishApprove(ctx, item, rev, input)
@@ -386,7 +411,7 @@ func (s *Service) approveCandidate(ctx context.Context, item *Item, cand *plans.
 	}
 	s.auditItem(ctx, item.ID, "plan.lock_revision", input.Via, rev.ID+" (candidate "+rev.Label+")", "")
 	if s.approvals != nil {
-		if _, err := s.approvals.Record(ctx, approvals.RecordInput{
+		e, err := s.approvals.Record(ctx, approvals.RecordInput{
 			WorkspaceID: item.WorkspaceID,
 			ItemID:      item.ID,
 			Gate:        approvals.GatePlan,
@@ -394,9 +419,11 @@ func (s *Service) approveCandidate(ctx context.Context, item *Item, cand *plans.
 			Decision:    approvals.DecisionApproved,
 			Via:         input.Via,
 			Notes:       input.auditNotes(),
-		}); err != nil {
+		})
+		if err != nil {
 			return nil, fmt.Errorf("recording approval: %w", err)
 		}
+		input.approvalID = e.ID
 	}
 	return s.finishApprove(ctx, item, rev, input)
 }
@@ -425,7 +452,7 @@ func (s *Service) finishApprove(ctx context.Context, item *Item, rev *plans.Revi
 	// Approval notes (answers to the planner's questions, overrides) are
 	// for the implementer: appended to the item, which its prompt reads,
 	// with the status change — every surface, not just the Slack relay.
-	appendAnswers, nerr := s.appendNotes(ctx, "## Answers", input.Answers)
+	appendAnswers, nerr := s.appendNotes(ctx, "## Answers", input.prepared.Markdown)
 	if nerr != nil {
 		return nil, nerr
 	}
@@ -440,12 +467,52 @@ func (s *Service) finishApprove(ctx context.Context, item *Item, rev *plans.Revi
 	if terr != nil {
 		return nil, terr
 	}
+	s.commitAnswers(ctx, item, input.prepared, input.approvalID, input.Via)
 	return item, nil
 }
 
 // auditNotes is what the audit trail and the approval record keep: the
 // answers, then the notes.
-func (in ApproveInput) auditNotes() string { return joinNotes(in.Answers, in.Notes) }
+func (in ApproveInput) auditNotes() string {
+	answers := ""
+	if in.prepared != nil {
+		answers = in.prepared.Markdown
+	}
+	return joinNotes(answers, in.Notes)
+}
+
+// prepareAnswers checks an action's answers against the item's open
+// questions (internal/qa); every gate goes through it, answers or not, so
+// the open questions it passes are recorded as skipped. Without the
+// question record (tests, an unwired service) free text is kept as written.
+func (s *Service) prepareAnswers(ctx context.Context, item *Item, action string, in qa.AnswersInput) (*qa.Prepared, error) {
+	if s.questions == nil {
+		if len(in.Items) > 0 {
+			return nil, fmt.Errorf("%w: answers by question id need the question record", ErrInvalidInput)
+		}
+		return &qa.Prepared{Markdown: strings.TrimSpace(in.Text)}, nil
+	}
+	p, err := s.questions.Prepare(ctx, item.ID, item.WorkspaceID, action, in, true)
+	if errors.Is(err, qa.ErrInvalidInput) {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidInput, strings.TrimPrefix(err.Error(), qa.ErrInvalidInput.Error()+": "))
+	}
+	return p, err
+}
+
+// commitAnswers records the answers once the action succeeded, and puts
+// what the free text was matched to on the returned item. A failure to
+// record is logged in the audit trail's place (the action stands).
+func (s *Service) commitAnswers(ctx context.Context, item *Item, p *qa.Prepared, approvalID, via string) {
+	if s.questions == nil || p == nil {
+		return
+	}
+	if err := s.questions.Commit(ctx, p, approvalID, via); err != nil {
+		s.auditItem(ctx, item.ID, "question.record_failed", via, err.Error(), "")
+	}
+	if item != nil {
+		item.AnswersMatched = p.Matches
+	}
+}
 
 func joinNotes(answers, notes string) string {
 	answers, notes = strings.TrimSpace(answers), strings.TrimSpace(notes)
@@ -501,7 +568,7 @@ func (s *Service) RequestChangesOn(ctx context.Context, itemID, notes, via, revi
 // and optionally the plan candidate to revise.
 type ChangesInput struct {
 	Notes      string
-	Answers    string
+	Answers    qa.AnswersInput
 	Via        string
 	RevisionID string
 }
@@ -537,6 +604,12 @@ func (s *Service) RequestChangesWith(ctx context.Context, itemID string, in Chan
 		return nil, fmt.Errorf("%w: request-changes applies to awaiting_approval or in_review items (item is %s)", ErrInvalidInput, statusLabel(item.Status))
 	}
 	revID, baseSHA := s.approvedRevision(ctx, item)
+	answers := in.Answers
+	answers.Notes = notes
+	prepared, perr := s.prepareAnswers(ctx, item, qa.ActionRequestChanges, answers)
+	if perr != nil {
+		return nil, perr
+	}
 	// At a multi-agent plan gate: resolve the candidate to revise (if any),
 	// then close the round.
 	var seed *plans.Revision
@@ -575,7 +648,7 @@ func (s *Service) RequestChangesWith(ctx context.Context, itemID string, in Chan
 	if item.Status == StatusAwaitingApproval {
 		heading = "## Review notes"
 	}
-	appendAnswers, nerr := s.appendNotes(ctx, "## Answers", in.Answers)
+	appendAnswers, nerr := s.appendNotes(ctx, "## Answers", prepared.Markdown)
 	if nerr != nil {
 		return nil, nerr
 	}
@@ -596,9 +669,12 @@ func (s *Service) RequestChangesWith(ctx context.Context, itemID string, in Chan
 			return tx.SetFlow(ctx, cur.ID, "", s.now().UTC())
 		}
 	}
-	out, err := s.transitionWith(ctx, item.ID, target, ActorHuman, "inbox.request_changes", via, joinNotes(in.Answers, notes), "", mutate)
+	out, err := s.transitionWith(ctx, item.ID, target, ActorHuman, "inbox.request_changes", via, joinNotes(prepared.Markdown, notes), "", mutate)
 	if err != nil && s.runQueuer != nil && queuedRun != "" {
 		_ = s.runQueuer.CancelRun(ctx, queuedRun, "request-changes transition failed")
+	}
+	if err == nil {
+		s.commitAnswers(ctx, out, prepared, "", via)
 	}
 	return out, err
 }
@@ -630,6 +706,12 @@ func (s *Service) approvedRevision(ctx context.Context, item *Item) (string, str
 // exists), otherwise planning (review fix 5). The answer feeds the next
 // run's prompt, like request-changes.
 func (s *Service) Retry(ctx context.Context, itemID, answer, via string) (*Item, error) {
+	return s.RetryWith(ctx, itemID, qa.AnswersInput{Text: answer}, via)
+}
+
+// RetryWith is Retry with answers by question id as well as free text: the
+// answer is read against the open questions (internal/qa) and recorded.
+func (s *Service) RetryWith(ctx context.Context, itemID string, answers qa.AnswersInput, via string) (*Item, error) {
 	if err := s.requireItemScopeQuiet(ctx, itemID); err != nil {
 		return nil, err
 	}
@@ -665,7 +747,11 @@ func (s *Service) Retry(ctx context.Context, itemID, answer, via string) (*Item,
 	// item (review M6): a concurrent retry loses the matrix check instead of
 	// the answer, and a failed queue/transition leaves no orphaned text for
 	// the next retry to duplicate.
-	answer = strings.TrimSpace(answer)
+	prepared, err := s.prepareAnswers(ctx, item, qa.ActionRetry, answers)
+	if err != nil {
+		return nil, err
+	}
+	answer := prepared.Markdown
 	appendAnswer, err := s.appendNotes(ctx, "## Answers", answer)
 	if err != nil {
 		return nil, err
@@ -681,6 +767,9 @@ func (s *Service) Retry(ctx context.Context, itemID, answer, via string) (*Item,
 	out, err := s.transitionWith(ctx, item.ID, target, ActorHuman, "inbox.retry", via, answer, "", appendAnswer)
 	if err != nil && s.runQueuer != nil && queuedRun != "" {
 		_ = s.runQueuer.CancelRun(ctx, queuedRun, "retry transition failed")
+	}
+	if err == nil {
+		s.commitAnswers(ctx, out, prepared, "", via)
 	}
 	return out, err
 }

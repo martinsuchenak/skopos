@@ -445,6 +445,7 @@ func inboxDoPurge(ctx context.Context, serverURL, apiKey, workspaceID, status st
 	if err != nil {
 		return 0, fmt.Errorf("creating request: %w", err)
 	}
+	req.Header.Set("X-Skopos-Via", "cli")
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
@@ -540,6 +541,7 @@ func inboxPost(ctx context.Context, serverURL, apiKey string, input inbox.Create
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Skopos-Via", "cli")
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
@@ -577,6 +579,7 @@ func inboxGetList(ctx context.Context, serverURL, apiKey, status, tag, workspace
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
+	req.Header.Set("X-Skopos-Via", "cli")
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
@@ -601,6 +604,7 @@ func inboxGetOne(ctx context.Context, serverURL, apiKey, id string) (*inbox.Item
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
+	req.Header.Set("X-Skopos-Via", "cli")
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
@@ -630,6 +634,7 @@ func inboxPatch(ctx context.Context, serverURL, apiKey, id string, input inbox.U
 		return fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Skopos-Via", "cli")
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
@@ -652,6 +657,7 @@ func inboxAction(ctx context.Context, serverURL, apiKey, id, action string, payl
 		return fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Skopos-Via", "cli")
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
@@ -678,6 +684,7 @@ func inboxConvertItem(ctx context.Context, serverURL, apiKey, id, planID string)
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Skopos-Via", "cli")
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
@@ -702,6 +709,7 @@ func inboxDelete(ctx context.Context, serverURL, apiKey, id string) error {
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
 	}
+	req.Header.Set("X-Skopos-Via", "cli")
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}

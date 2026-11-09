@@ -431,3 +431,57 @@ CREATE TABLE IF NOT EXISTS pipeline_defaults (
     updated_by      TEXT    NOT NULL,
     PRIMARY KEY (owner_kind, owner_id)
 ) STRICT;
+
+-- Questions and answers (tmp/questions-and-answers — design.md): the record
+-- of what the planner and the implementer asked and what Martin answered.
+-- Append-only: rows are never updated or deleted (answers.used_by_run is
+-- set once, phase 2). No foreign key to inbox_items: the record outlives a
+-- deleted item. A set is one asking (every question one result returned);
+-- n is the number steps cite. State (open, answered, answered in free text,
+-- skipped, superseded) is derived from the rows (internal/qa).
+CREATE TABLE IF NOT EXISTS questions (
+    id            TEXT    PRIMARY KEY,
+    workspace_id  TEXT    NOT NULL,
+    item_id       TEXT    NOT NULL,
+    set_id        TEXT    NOT NULL,
+    n             INTEGER NOT NULL CHECK (n >= 1),
+    asker         TEXT    NOT NULL CHECK (asker IN ('planner', 'implementer', 'worker')),
+    stage         TEXT    NOT NULL DEFAULT '',
+    run_id        TEXT,
+    runner        TEXT    NOT NULL DEFAULT '',
+    label         TEXT    NOT NULL DEFAULT '',
+    subject_kind  TEXT    NOT NULL CHECK (subject_kind IN ('plan_revision', 'base', 'head', 'none')),
+    subject       TEXT    NOT NULL DEFAULT '',
+    blocking      INTEGER NOT NULL CHECK (blocking IN (0, 1)),
+    text          TEXT    NOT NULL CHECK (text != ''),
+    options       TEXT    NOT NULL DEFAULT '[]' CHECK (json_valid(options)),
+    source        TEXT    NOT NULL CHECK (source IN ('worker', 'imported')),
+    created_ms    INTEGER NOT NULL,
+    UNIQUE (set_id, n)
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_questions_item ON questions(item_id, created_ms);
+CREATE INDEX IF NOT EXISTS idx_questions_workspace ON questions(workspace_id, created_ms);
+
+CREATE TABLE IF NOT EXISTS answers (
+    id            TEXT    PRIMARY KEY,
+    workspace_id  TEXT    NOT NULL,
+    item_id       TEXT    NOT NULL,
+    kind          TEXT    NOT NULL CHECK (kind IN ('answer', 'general', 'skipped')),
+    question_id   TEXT    REFERENCES questions(id),
+    set_id        TEXT,
+    option        TEXT,
+    text          TEXT    NOT NULL DEFAULT '',
+    replaces      TEXT    REFERENCES answers(id),
+    action        TEXT    NOT NULL CHECK (action IN ('approve', 'request_changes', 'retry', 'answer', 'imported')),
+    approval_id   TEXT,
+    actor         TEXT    NOT NULL,
+    actor_key_id  TEXT,
+    via           TEXT    NOT NULL DEFAULT '',
+    used_by_run   TEXT,
+    created_ms    INTEGER NOT NULL,
+    CHECK (kind != 'answer'  OR (question_id IS NOT NULL AND (option IS NOT NULL OR text != ''))),
+    CHECK (kind != 'skipped' OR question_id IS NOT NULL),
+    CHECK (kind != 'general' OR (set_id IS NOT NULL AND question_id IS NULL AND text != ''))
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_answers_item ON answers(item_id, created_ms);
+CREATE INDEX IF NOT EXISTS idx_answers_question ON answers(question_id);

@@ -162,6 +162,22 @@ func (h *Handler) AppendLog(w http.ResponseWriter, r *http.Request) {
 	rest.RespondJSON(w, http.StatusOK, map[string]int{"stored": n})
 }
 
+// Questions handles POST /api/runs/{id}/questions: the run's questions for
+// Martin, from the worker holding it (X-Skopos-Lease). 201 with the set.
+func (h *Handler) Questions(w http.ResponseWriter, r *http.Request) {
+	var in QuestionsInput
+	if err := rest.DecodeJSON(w, r, &in); err != nil {
+		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	set, err := h.service.AskQuestions(r.Context(), r.PathValue("id"), r.Header.Get("X-Skopos-Lease"), in)
+	if err != nil {
+		h.respondRunError(w, err, "questions")
+		return
+	}
+	rest.RespondJSON(w, http.StatusCreated, set)
+}
+
 // Log handles GET /api/runs/{id}/log?after=&tail=&wait=: the run's log
 // records after the cursor, or the last tail of them; wait (seconds, at
 // most 25) long-polls for the next batch when nothing is new.

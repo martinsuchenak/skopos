@@ -11,6 +11,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/martinsuchenak/skopos/internal/ids"
+	"github.com/martinsuchenak/skopos/internal/qa"
 )
 
 type Service struct {
@@ -26,6 +27,7 @@ type Service struct {
 	secondOpinionDefault func(ctx context.Context, workspaceID string) string
 	runLister            RunLister
 	itemNotifier         ItemNotifier
+	questions            QuestionLog
 }
 
 func NewService(store Store) *Service {
@@ -45,6 +47,9 @@ func (s *Service) SetAuditRecorder(a AuditRecorder) { s.auditSink = a }
 // current revision (docs/design/agent-pipeline.md §4). Nil skips locking
 // (items without revisions approve without a gate subject).
 func (s *Service) SetPlanRevisions(p PlanRevisions) { s.plans = p }
+
+// SetQuestionLog installs the question-and-answer record (internal/qa).
+func (s *Service) SetQuestionLog(q QuestionLog) { s.questions = q }
 
 // SetApprovalLog installs the approvals sink (internal/approvals.Service).
 func (s *Service) SetApprovalLog(a ApprovalLog) { s.approvals = a }
@@ -329,6 +334,7 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 	everApproved := approverErr != nil && s.planApproved(ctx, itemID)
 	var item *Item
 	var changed []string
+	appended := "" // what an append-only content edit added
 	err := s.store.RunInTx(ctx, func(tx Store) error {
 		var err error
 		item, err = tx.GetItem(ctx, itemID)
@@ -395,6 +401,9 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 				return fmt.Errorf("%w: changing an agent-workflow item's branch or reference", approverErr)
 			}
 		}
+		if content != item.Content && appendsTo(content, item.Content) {
+			appended = content[len(strings.TrimSpace(item.Content)):]
+		}
 		if branchChanged {
 			if err := tx.SetBranchRef(ctx, itemID, branch, ref, s.now().UTC()); err != nil {
 				return err
@@ -414,7 +423,57 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 	if IsWorkflowStatus(item.Status) && len(changed) > 0 {
 		s.auditItem(ctx, itemID, "inbox.edit", input.Via, "edited "+strings.Join(changed, ", "), "")
 	}
+	// An older worker appends its questions by editing the item instead of
+	// posting them to its run: record them from the edit.
+	if s.questions != nil && strings.Contains(appended, "## Questions — ") {
+		if err := s.questions.ImportAppended(ctx, itemID, item.WorkspaceID, appended); err != nil {
+			s.auditItem(ctx, itemID, "question.record_failed", input.Via, err.Error(), "")
+		}
+	}
 	return nil
+}
+
+// ImportQuestions records the questions and answers of items written before
+// the record existed (tmp/questions-and-answers — design.md §3.6), once per
+// item: an item with rows is skipped. Internal caller (startup).
+func (s *Service) ImportQuestions(ctx context.Context) (int, error) {
+	if s.questions == nil {
+		return 0, nil
+	}
+	items, err := s.store.ListItems(ctx, "", "", "", "## Questions — ")
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, row := range items {
+		item, err := s.store.GetItem(ctx, row.ID)
+		if err != nil {
+			continue
+		}
+		ok, err := s.questions.ImportItem(ctx, item.ID, item.WorkspaceID, item.Content, item.CreatedAt)
+		if err != nil {
+			return n, fmt.Errorf("importing the questions of item %s: %w", item.ID, err)
+		}
+		if ok {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// Questions is the item's question-and-answer record (internal/qa): every
+// set in order, each question with its state and answers.
+func (s *Service) Questions(ctx context.Context, itemID string) ([]qa.Set, error) {
+	if err := s.requireItemScopeQuiet(ctx, itemID); err != nil {
+		return nil, err
+	}
+	if _, err := s.store.GetItem(ctx, strings.TrimSpace(itemID)); err != nil {
+		return nil, err
+	}
+	if s.questions == nil {
+		return []qa.Set{}, nil
+	}
+	return s.questions.Item(ctx, strings.TrimSpace(itemID))
 }
 
 // AppendSection appends "## heading" + body to an item's content inside one
