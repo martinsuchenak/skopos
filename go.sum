@@ -32,8 +32,8 @@ github.com/paularlott/jsonrpc v0.4.0 h1:ftR/oRvxKtpKgJ+CgEj/a9kjIjwxZ98DwxgXDS/p
 github.com/paularlott/jsonrpc v0.4.0/go.mod h1:mXoOPTPQf87HF3wR064n23dmsAQs3/EICA3Cbha3Sk4=
 github.com/paularlott/logger v0.4.0 h1:nETpi8oXNRBl0U9f2BgO5VMyprF1k2lvOom9EuTX5wE=
 github.com/paularlott/logger v0.4.0/go.mod h1:vjAOY1vUvYigmJxxQ0eMclryIjDS6VWNK6FprtTMce0=
-github.com/paularlott/mcp v0.34.0 h1:OyUs3JiRS034kmnMZMuN0kib8QqyBT5xOBBxTVpuxAE=
-github.com/paularlott/mcp v0.34.0/go.mod h1:xf5quKoG0/xFcrWMrTGzphKpBwzGDeCz1RqRf2x/MZw=
+github.com/paularlott/mcp v0.35.0 h1:T6uZjhkazSnhb44lmyYdxzheehDlc40FzzU/dCJEHs8=
+github.com/paularlott/mcp v0.35.0/go.mod h1:xf5quKoG0/xFcrWMrTGzphKpBwzGDeCz1RqRf2x/MZw=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
 github.com/yuin/goldmark v1.8.7 h1:XT/tNqCIbabh0ln675w4x3dv04kQBKi8NwYqi9IJaxI=

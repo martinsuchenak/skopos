@@ -20,6 +20,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/status"
 	"github.com/martinsuchenak/skopos/internal/workspaces"
+	mcplib "github.com/paularlott/mcp"
 	_ "modernc.org/sqlite"
 )
 
@@ -126,12 +127,32 @@ func callToolExpectError(t *testing.T, h http.Handler, sessionID string, id int,
 			Code    int    `json:"code"`
 			Message string `json:"message"`
 		} `json:"error"`
+		Result *struct {
+			IsError bool `json:"isError"`
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&res); err != nil {
 		t.Fatalf("%s: decode error response: %v — body %s", tool, err, w.Body.String())
 	}
+	// A client mistake (toolError → invalid params) is a tool execution
+	// error, an isError result the model reads (MCP spec; paularlott/mcp
+	// v0.35.0): reported here as -32602. A server fault stays a JSON-RPC
+	// error.
+	if res.Error == nil && res.Result != nil && res.Result.IsError {
+		msg := ""
+		for _, c := range res.Result.Content {
+			msg += c.Text
+		}
+		return struct {
+			Code    int
+			Message string
+		}{mcplib.ErrorCodeInvalidParams, msg}
+	}
 	if res.Error == nil {
-		t.Fatalf("%s: expected a JSON-RPC error, got success: %s", tool, w.Body.String())
+		t.Fatalf("%s: expected an error, got success: %s", tool, w.Body.String())
 	}
 	return struct {
 		Code    int

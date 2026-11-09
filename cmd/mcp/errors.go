@@ -15,7 +15,9 @@ import (
 
 // toolError classifies service errors uniformly across all tools: client
 // mistakes (invalid input, unknown id, cycle, conflicting state) map to
-// invalid-params, everything else (storage/internal failures) to internal.
+// invalid-params, which tools/call returns as an isError result the agent
+// reads (paularlott/mcp v0.35.0, as the MCP spec classes input errors);
+// everything else (storage/internal failures) to internal, a JSON-RPC error.
 // Before this helper the mutation tools reported internal failures as
 // invalid-params while the read tools did the opposite.
 func toolError(err error) error {
