@@ -4,6 +4,37 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.28.0] — 2026-11-09
+
+### Added
+
+- **Answers without approving.** While an item waits for you (awaiting
+  approval, blocked or failed), answers can be recorded on their own: **Save
+  answers** in the preview, `answer: 1) a, 2) …` in Slack, `skopos inbox
+  answer`, or `POST /api/inbox/{id}/answers`. The item stays where it is and
+  the next run reads them.
+- **Corrections.** Answering an answered question again names the answer it
+  replaces (`replaces`); the record keeps both, and a correction made after
+  a run used the earlier answer is flagged (`after_use`).
+- **`skopos inbox questions --id <item>`** prints the record: who asked,
+  each question's state, who answered, how, and with which ids.
+- **Slack confirms answers:** after an approve, revise, retry or answer,
+  the thread gets which questions were answered and whether the rest was
+  kept as an answer to the round.
+
+### Changed
+
+- **Prompts read the decisions from the record:** each answered question
+  with its current answer, the questions passed unanswered, and the
+  free-text answers. The record notes the first run that used each answer
+  (`used_by_run`). Workers read it through
+  `POST /api/runs/{id}/questions/read`.
+- **Answers given when no question was open are recorded** (a Retry answer
+  to a failed check, for example), listed as `free` by
+  `GET /api/inbox/{id}/questions`, and carried by the next prompt. Items
+  imported by v0.27.0 get theirs added once at startup.
+- **Dependabot proposes paularlott/mcp updates again.**
+
 ## [0.27.0] — 2026-11-09
 
 ### Added
