@@ -1286,7 +1286,13 @@ paths:
       summary: Get an inbox item (full markdown + rendered content_html + linked plan)
       operationId: getInboxItem
       security: [{ BearerAuth: [] }]
-      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      parameters:
+        - { $ref: "#/components/parameters/InboxItemId" }
+        - name: parts
+          in: query
+          required: false
+          schema: { type: string }
+          description: Any non-empty value adds content_parts — the content cut into the author's text and the pipeline's rounds, with each questions section's questions parsed.
       responses:
         "200":
           description: Item detail
@@ -1477,6 +1483,7 @@ paths:
               required: [revision_id]
               properties:
                 notes: { type: string }
+                answers: { type: string, description: 'Answers to the open questions (planner or implementer), markdown; appended as "## Answers" ahead of the notes, read by every later prompt with the questions' }
                 revision_id: { type: string, description: The revision the approving client rendered }
                 content_hash: { type: string, description: Optional stronger binding to the revision's content hash }
       responses:
@@ -1494,7 +1501,7 @@ paths:
   /api/inbox/{id}/request-changes:
     post:
       summary: Send the item back one phase with review notes (approver permission required)
-      description: awaiting_approval → planning; the notes feed the next run's prompt.
+      description: awaiting_approval → planning, in_review → implementing; the notes (and answers) feed the next run's prompt. notes or answers is required.
       operationId: requestInboxChanges
       security: [{ BearerAuth: [] }]
       parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
@@ -1504,9 +1511,9 @@ paths:
           application/json:
             schema:
               type: object
-              required: [notes]
               properties:
                 notes: { type: string }
+                answers: { type: string, description: 'Answers to the open questions, markdown; appended as "## Answers" ahead of the notes' }
                 revision_id:
                   type: string
                   description: >-
@@ -2760,7 +2767,7 @@ components:
           description: Dashboard-safe rendering (goldmark + bluemonday); detail reads only.
         excerpt: { type: string, description: Plain-text preview; list rows only. }
         tags: { type: array, items: { type: string } }
-        status: { type: string, enum: [open, in_progress, converted, done, discarded] }
+        status: { type: string, enum: [open, in_progress, queued, planning, awaiting_approval, approved, implementing, in_review, blocked, failed, converted, done, discarded] }
         priority:
           type: integer
           nullable: true
@@ -2780,5 +2787,34 @@ components:
             id: { type: string }
             name: { type: string }
             status: { type: string }
+        content_parts:
+          type: object
+          description: "With ?parts=1 on GET /api/inbox/{id}: the author's text, then the pipeline's sections in rounds (a plan with its questions and the author's notes on it; a review with change requests). A round closed by the author's notes asks nothing open."
+          properties:
+            brief_html: { type: string }
+            rounds:
+              type: array
+              items:
+                type: object
+                properties:
+                  kind: { type: string, enum: [plan, questions, amendment, review, qa, second_opinion, notes] }
+                  title: { type: string }
+                  n: { type: integer, description: 1-based count among rounds of the same kind }
+                  closed: { type: boolean }
+                  sections:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        heading: { type: string }
+                        html: { type: string }
+                        label: { type: string, description: "Who asked, on a questions section: a plan candidate's label, or \"the implementer\"" }
+                        questions:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              text: { type: string }
+                              options: { type: array, items: { type: string }, description: Answered by letter, a b c… in order }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
