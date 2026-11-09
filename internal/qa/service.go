@@ -8,6 +8,7 @@ import (
 
 	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
+	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/martinsuchenak/skopos/internal/ids"
 	"github.com/martinsuchenak/skopos/internal/itemtext"
 )
@@ -20,14 +21,19 @@ type AuditRecorder interface {
 // Service records and reads questions and answers. Callers check the item's
 // scope first (the inbox service and the run handlers do).
 type Service struct {
-	storage *Storage
-	audit   AuditRecorder
-	now     func() time.Time
+	storage   *Storage
+	audit     AuditRecorder
+	publisher events.Publisher
+	now       func() time.Time
 }
 
 func NewService(storage *Storage) *Service { return &Service{storage: storage, now: time.Now} }
 
 func (s *Service) SetAuditRecorder(a AuditRecorder) { s.audit = a }
+
+// SetPublisher installs the event bus: a run's questions publish
+// questions.waiting (nil = none).
+func (s *Service) SetPublisher(p events.Publisher) { s.publisher = p }
 
 // AskInput is one asking: who asked, about what, and the questions.
 type AskInput struct {
@@ -111,6 +117,10 @@ func (s *Service) Ask(ctx context.Context, in AskInput) (*Set, error) {
 	}
 	if in.Source != SourceImported {
 		s.recordedLive(ctx, set.ItemID)
+		if s.publisher != nil {
+			s.publisher.Publish(events.Event{Type: events.TypeQuestionsWaiting, Workspace: set.WorkspaceID, Item: set.ItemID,
+				Data: map[string]any{"set_id": set.ID, "count": len(set.Questions), "blocking": set.Blocking, "asker": set.Asker, "label": set.Label}})
+		}
 	}
 	set.Open = true
 	if s.audit != nil && in.Source != SourceImported {

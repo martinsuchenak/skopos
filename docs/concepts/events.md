@@ -20,12 +20,20 @@ Like every other endpoint, the stream requires the API key (as
 | `blackboard` | Blackboard write/promote/delete | Re-fetch bundle (if on blackboard view) |
 | `plans` | Plan/item create/update/delete/dependency | Re-fetch plans (if on plans view) |
 | `workspaces` | Workspace create/delete | Re-fetch workspaces list |
+| `inbox` | Inbox item changes | Re-fetch the inbox |
+| `questions.waiting` | A run asked questions | None (for integrations: `item` names the item, `data` the set: `set_id`, `count`, `blocking`, `asker`, `label`) |
 | `change` | Any other mutation | Full refresh |
 
 Each event is sent as:
 ```
 event: plans
-data: {"type":"plans"}
+data: {"type":"plans","workspace":"github.com/you/repo"}
+```
+
+`questions.waiting` carries the item and the set:
+```
+event: questions.waiting
+data: {"type":"questions.waiting","workspace":"github.com/you/repo","item":"01a1…","data":{"set_id":"01a1…","count":2,"blocking":true,"asker":"planner","label":""}}
 ```
 
 ## Publishing model

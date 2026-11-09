@@ -106,6 +106,9 @@ func PromptText(rec *Record) string {
 }
 
 func optionAt(q Question, letter string) string {
+	if letter == "" {
+		return "" // answered in words only
+	}
 	if i := int(letter[0] - 'a'); i >= 0 && i < len(q.Options) {
 		return q.Options[i]
 	}

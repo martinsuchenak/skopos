@@ -42,16 +42,17 @@ var toolNeeds = map[string][]need{
 	"code_branch_diff":  {{auth.AreaCode, false}},
 	"code_index_status": {{auth.AreaCode, false}},
 
-	"inbox_list":     {{auth.AreaInbox, false}},
-	"inbox_read":     {{auth.AreaInbox, false}},
-	"inbox_create":   {{auth.AreaInbox, true}},
-	"inbox_update":   {{auth.AreaInbox, true}},
-	"inbox_claim":    {{auth.AreaInbox, true}},
-	"inbox_complete": {{auth.AreaInbox, true}},
-	"inbox_convert":  {{auth.AreaInbox, true}, {auth.AreaPlans, false}},
-	"inbox_discard":  {{auth.AreaInbox, true}},
-	"inbox_reopen":   {{auth.AreaInbox, true}},
-	"inbox_restore":  {{auth.AreaInbox, true}},
+	"inbox_list":      {{auth.AreaInbox, false}},
+	"inbox_read":      {{auth.AreaInbox, false}},
+	"inbox_questions": {{auth.AreaInbox, false}},
+	"inbox_create":    {{auth.AreaInbox, true}},
+	"inbox_update":    {{auth.AreaInbox, true}},
+	"inbox_claim":     {{auth.AreaInbox, true}},
+	"inbox_complete":  {{auth.AreaInbox, true}},
+	"inbox_convert":   {{auth.AreaInbox, true}, {auth.AreaPlans, false}},
+	"inbox_discard":   {{auth.AreaInbox, true}},
+	"inbox_reopen":    {{auth.AreaInbox, true}},
+	"inbox_restore":   {{auth.AreaInbox, true}},
 
 	"plan_read":                   {{auth.AreaPlans, false}},
 	"plan_create":                 {{auth.AreaPlans, true}},
@@ -262,7 +263,7 @@ func cappedInstructions(ctx context.Context) string {
 		b.WriteString("\n- `plan_update_item`: mark an item `in_progress` or `done` as you work on it.")
 	}
 	if can("inbox_read") {
-		b.WriteString("\n- `inbox_list` / `inbox_read`: captured work items, read only.")
+		b.WriteString("\n- `inbox_list` / `inbox_read`: captured work items, read only; `inbox_questions`: the questions asked about an item and the answers given.")
 	}
 	if can("report_status") {
 		b.WriteString("\n- `report_status`: checkpoint what you are doing (never `stuck` or `orphaned`).")

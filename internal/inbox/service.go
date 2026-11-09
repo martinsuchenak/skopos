@@ -471,6 +471,42 @@ func (s *Service) ImportQuestions(ctx context.Context) (int, error) {
 	return n, nil
 }
 
+// SearchQuestions is the decision log across items (internal/qa Search),
+// scoped like every read: a scoped key sees exactly its workspaces' rows
+// (a foreign workspace or item reads as empty). Rows carry their item's
+// title.
+func (s *Service) SearchQuestions(ctx context.Context, f qa.Filter) ([]qa.Row, error) {
+	if s.questions == nil {
+		return []qa.Row{}, nil
+	}
+	p := auth.PrincipalFromContext(ctx)
+	scoped := auth.ScopedContext(ctx)
+	if scoped && f.WorkspaceID != "" && !p.CanAccess(f.WorkspaceID) {
+		return []qa.Row{}, nil
+	}
+	rows, err := s.questions.Search(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	titles := map[string]string{}
+	out := make([]qa.Row, 0, len(rows))
+	for _, r := range rows {
+		if scoped && !p.CanAccess(r.WorkspaceID) {
+			continue
+		}
+		t, ok := titles[r.ItemID]
+		if !ok {
+			if item, err := s.store.GetItem(ctx, r.ItemID); err == nil {
+				t = item.Title
+			}
+			titles[r.ItemID] = t // "" for a deleted item: the record outlives it
+		}
+		r.ItemTitle = t
+		out = append(out, r)
+	}
+	return out, nil
+}
+
 // Questions is the item's question-and-answer record (internal/qa): every
 // set in order, each question with its state and answers, and the free
 // answers given when no question was open.

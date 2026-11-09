@@ -10,6 +10,9 @@ const (
 	TypeWorkspaces = "workspaces"
 	TypeInbox      = "inbox"
 	TypeChange     = "change"
+	// TypeQuestionsWaiting: a run asked questions (Item names the item,
+	// Data the set: set_id, count, blocking, asker, label).
+	TypeQuestionsWaiting = "questions.waiting"
 )
 
 // Event is a change notification pushed to connected SSE clients. Workspace
@@ -18,8 +21,10 @@ const (
 // workspace they can access, and unattributed events reach unfiltered
 // (root/internal) subscribers only.
 type Event struct {
-	Type      string `json:"type"`
-	Workspace string `json:"workspace,omitempty"`
+	Type      string         `json:"type"`
+	Workspace string         `json:"workspace,omitempty"`
+	Item      string         `json:"item,omitempty"`
+	Data      map[string]any `json:"data,omitempty"`
 }
 
 // Publisher is the subset of *Hub that domains publish through; a nil

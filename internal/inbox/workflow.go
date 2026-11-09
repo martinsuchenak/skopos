@@ -57,6 +57,7 @@ type QuestionLog interface {
 	Record(ctx context.Context, itemID string) (*qa.Record, error)
 	ImportAppended(ctx context.Context, itemID, workspaceID, appended string) error
 	ImportItem(ctx context.Context, itemID, workspaceID, content string, created time.Time) (bool, error)
+	Search(ctx context.Context, f qa.Filter) ([]qa.Row, error)
 }
 
 type ApprovalLog interface {

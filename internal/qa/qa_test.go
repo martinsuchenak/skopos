@@ -12,6 +12,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/db"
+	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/martinsuchenak/skopos/internal/itemtext"
 	_ "modernc.org/sqlite"
 )
@@ -380,5 +381,138 @@ func TestImportVersions(t *testing.T) {
 	}
 	if rec, _ := s.Record(ctx, "live"); len(rec.Free) != 1 {
 		t.Fatalf("no duplicate: %+v", rec.Free)
+	}
+}
+
+type fakeHub struct{ events []events.Event }
+
+func (f *fakeHub) Publish(e events.Event) { f.events = append(f.events, e) }
+
+// The decision log across items: a row per question with its state and
+// current answer, free answers as rows, filters, the summary per workspace
+// and per person, the wait, and the CSV row shape. A live asking publishes
+// questions.waiting.
+func TestSearchAndSummary(t *testing.T) {
+	s, _ := testService(t)
+	hub := &fakeHub{}
+	s.SetPublisher(hub)
+	t0 := time.Date(2026, 11, 9, 9, 0, 0, 0, time.UTC)
+	now := t0
+	s.now = func() time.Time { return now }
+	askIn := func(ws, item, asker string, qs ...itemtext.Question) *Set {
+		t.Helper()
+		set, err := s.Ask(context.Background(), AskInput{WorkspaceID: ws, ItemID: item, Asker: asker, Blocking: true, Questions: qs})
+		if err != nil || set == nil {
+			t.Fatal(err)
+		}
+		return set
+	}
+	a := askIn("ws-a", "it-1", AskerPlanner, itemtext.Question{Text: "Backend?", Options: []string{"Redis", "SQLite"}}, itemtext.Question{Text: "Flag?"})
+	if len(hub.events) != 1 || hub.events[0].Type != events.TypeQuestionsWaiting || hub.events[0].Item != "it-1" || hub.events[0].Data["count"] != 2 {
+		t.Fatalf("event: %+v", hub.events)
+	}
+	now = t0.Add(10 * time.Minute)
+	p, _ := s.Prepare(martin(), "it-1", "ws-a", ActionApprove, AnswersInput{Items: []AnswerItem{{QuestionID: a.Questions[0].ID, Option: "a"}}}, true)
+
+	_ = s.Commit(martin(), p, "appr-1", "dashboard")
+	now = t0.Add(time.Hour)
+	askIn("ws-b", "it-2", AskerImplementer, itemtext.Question{Text: "Scope?"})
+	p, _ = s.Prepare(auth.WithPrincipal(context.Background(), &auth.Principal{Root: true}), "it-3", "ws-b", ActionRetry, AnswersInput{Text: "more memory"}, true)
+	_ = s.Commit(auth.WithPrincipal(context.Background(), &auth.Principal{Root: true}), p, "", "slack")
+
+	rows, err := s.Search(context.Background(), Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("rows: %+v", rows)
+	}
+	r0 := rows[0]
+	if r0.Question != "Backend?" || r0.State != StateAnswered || r0.Option != "a" || r0.OptionText != "Redis" || r0.AnsweredBy != "key martin" ||
+		r0.ApprovalID != "appr-1" || r0.WaitedSeconds != 600 {
+		t.Fatalf("answered row: %+v", r0)
+	}
+	if rows[1].State != StateSkipped || rows[1].AnsweredBy != "key martin" {
+		t.Fatalf("skipped row: %+v", rows[1])
+	}
+	if rows[3].Kind != "free" || rows[3].Answer != "more memory" || rows[3].AnsweredBy != "root" {
+		t.Fatalf("free row: %+v", rows[3])
+	}
+	for _, c := range []struct {
+		f    Filter
+		want int
+	}{
+		{Filter{WorkspaceID: "ws-b"}, 2},
+		{Filter{State: StateOpen}, 1},
+		{Filter{State: "free"}, 1},
+		{Filter{Asker: AskerImplementer}, 1},
+		{Filter{AnsweredBy: "key martin"}, 2},
+		{Filter{From: t0.Add(30 * time.Minute)}, 2},
+		{Filter{To: t0.Add(30 * time.Minute)}, 2},
+		{Filter{ItemID: "it-1"}, 2},
+	} {
+		got, _ := s.Search(context.Background(), c.f)
+		if len(got) != c.want {
+			t.Errorf("%+v: %d rows, want %d", c.f, len(got), c.want)
+		}
+	}
+	sum := Summarize(rows)
+	if sum.Total.Asked != 3 || sum.Total.Answered != 1 || sum.Total.Skipped != 1 || sum.Total.Open != 1 || sum.Total.FreeAnswers != 1 {
+		t.Fatalf("total: %+v", sum.Total)
+	}
+	if m := sum.ByPerson["key martin"]; m.Answered != 1 || m.Skipped != 1 || m.Asked != 0 || m.MedianWaitSeconds != 600 {
+		t.Fatalf("per person: %+v", m)
+	}
+	if b := sum.ByWorkspace["ws-b"]; b.Asked != 1 || b.Open != 1 || b.FreeAnswers != 1 {
+		t.Fatalf("per workspace: %+v", b)
+	}
+	if len(r0.CSV()) != len(CSVHeader) {
+		t.Fatalf("CSV row has %d fields, header %d", len(r0.CSV()), len(CSVHeader))
+	}
+}
+
+// A question answered in words only (an option list, none picked) reads in
+// the decision log and the prompt.
+func TestAnsweredInWordsOnly(t *testing.T) {
+	s, _ := testService(t)
+	set := ask(t, s, AskerPlanner, "", itemtext.Question{Text: "Why?", Options: []string{"x", "y"}})
+	p, err := s.Prepare(martin(), "it", "ws", ActionAnswer, AnswersInput{Items: []AnswerItem{{QuestionID: set.Questions[0].ID, Text: "because"}}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Commit(martin(), p, "", "cli")
+	rows, err := s.Search(context.Background(), Filter{})
+	if err != nil || len(rows) != 1 || rows[0].Answer != "because" || rows[0].Option != "" || rows[0].OptionText != "" {
+		t.Fatalf("rows: %+v %v", rows, err)
+	}
+	rec, _ := s.Record(context.Background(), "it")
+	if got := PromptText(rec); !strings.Contains(got, "1. Why?\n   Answer: because") {
+		t.Fatalf("prompt: %q", got)
+	}
+}
+
+// The CSV export never hands a spreadsheet a formula.
+func TestCSVCells(t *testing.T) {
+	r := Row{Kind: "question", Question: "=HYPERLINK(\"x\")", Answer: "@sum", OptionText: "-1", ItemTitle: "plain"}
+	got := r.CSV()
+	for i, h := range CSVHeader {
+		switch h {
+		case "question":
+			if got[i] != "'=HYPERLINK(\"x\")" {
+				t.Errorf("question: %q", got[i])
+			}
+		case "answer":
+			if got[i] != "'@sum" {
+				t.Errorf("answer: %q", got[i])
+			}
+		case "option_text":
+			if got[i] != "'-1" {
+				t.Errorf("option_text: %q", got[i])
+			}
+		case "item_title":
+			if got[i] != "plain" {
+				t.Errorf("item_title: %q", got[i])
+			}
+		}
 	}
 }

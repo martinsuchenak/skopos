@@ -421,6 +421,7 @@ func serveCmd() *cli.Command {
 			blackboardService.SetPublisher(hub)
 			plansService.SetPublisher(hub)
 			inboxService.SetPublisher(hub)
+			qaService.SetPublisher(hub)
 			workspacesService.SetPublisher(hub)
 			codeIndexHandler.SetPublisher(hub)
 			apiKeysHandler.SetPublisher(hub)

@@ -204,3 +204,37 @@ func (st *Storage) SetImportVersion(ctx context.Context, itemID string, v int) e
 		ON CONFLICT (item_id) DO UPDATE SET version = excluded.version`, itemID, v)
 	return err
 }
+
+// ItemsWithRecord lists the items with a question asked, or a free answer
+// given, in [from, to) (zero = open-ended), optionally in one workspace or
+// one item, oldest first: the items the decision log's rows can come from.
+func (st *Storage) ItemsWithRecord(ctx context.Context, workspaceID, itemID string, from, to time.Time) ([]string, error) {
+	lo, hi := int64(0), int64(1)<<62
+	if !from.IsZero() {
+		lo = ms(from)
+	}
+	if !to.IsZero() {
+		hi = ms(to)
+	}
+	q := `SELECT item_id FROM (
+		SELECT item_id, workspace_id, created_ms FROM questions WHERE created_ms >= ? AND created_ms < ?
+		UNION ALL
+		SELECT item_id, workspace_id, created_ms FROM answers
+			WHERE kind = 'general' AND set_id = '' AND created_ms >= ? AND created_ms < ?)
+		WHERE (? = '' OR workspace_id = ?) AND (? = '' OR item_id = ?)
+		GROUP BY item_id ORDER BY MIN(created_ms)`
+	rows, err := st.db.QueryContext(ctx, q, lo, hi, lo, hi, workspaceID, workspaceID, itemID, itemID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}

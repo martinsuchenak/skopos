@@ -220,3 +220,29 @@ func TestAnswerWithoutMoving(t *testing.T) {
 		t.Fatalf("an approved item doesn't wait for answers: %v", err)
 	}
 }
+
+// The decision log is scoped: a key sees its workspaces' rows only, and a
+// foreign workspace filter reads as empty; rows carry the item's title.
+func TestSearchQuestionsScoped(t *testing.T) {
+	svc, _, qaSvc := qaStack(t)
+	ctx := context.Background()
+	mine := mustCreate(t, svc, ctx, "mine")
+	other, err := svc.CreateItem(ctx, CreateInput{WorkspaceID: "ws-b", Title: "theirs", AuthorAgentID: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	askOn(t, qaSvc, mine, qa.AskerPlanner, itemtext.Question{Text: "Mine?"})
+	askOn(t, qaSvc, other, qa.AskerPlanner, itemtext.Question{Text: "Theirs?"})
+	all, err := svc.SearchQuestions(ctx, qa.Filter{})
+	if err != nil || len(all) != 2 {
+		t.Fatalf("internal: %+v %v", all, err)
+	}
+	scoped := auth.WithPrincipal(ctx, &auth.Principal{KeyID: "k1", Workspaces: map[string]struct{}{mine.WorkspaceID: {}}})
+	rows, _ := svc.SearchQuestions(scoped, qa.Filter{})
+	if len(rows) != 1 || rows[0].Question != "Mine?" || rows[0].ItemTitle != "mine" {
+		t.Fatalf("scoped: %+v", rows)
+	}
+	if rows, _ := svc.SearchQuestions(scoped, qa.Filter{WorkspaceID: "ws-b"}); len(rows) != 0 {
+		t.Fatalf("a foreign workspace reads as empty: %+v", rows)
+	}
+}

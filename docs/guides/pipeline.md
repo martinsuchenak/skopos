@@ -311,6 +311,19 @@ your free-text answers, including the answers you gave when no question was
 open (a Retry answer to a failed check, say). The record notes the first run
 that used each answer.
 
+**The decision log and reports.** `skopos questions` lists every question
+across items with its state and current answer (who, via what, with which
+action and approval, how long it waited), filtered by `--workspace`,
+`--item`, `--state`, `--asker`, `--answered-by`, `--from` and `--to` (local
+dates);
+`--format csv` exports it. `skopos questions summary` counts the same rows:
+answered, in free text, skipped, open, superseded, corrections (and those
+after a run used the answer) and the median wait, in total, per workspace
+and per person. The API is `GET /api/inbox/questions` (`format=csv`) and
+`GET /api/inbox/questions/summary`; agents read the same through the MCP
+tool `inbox_questions`. A run's questions publish a `questions.waiting`
+event on `/api/events/stream`.
+
 Then either:
 - click **Approve**, with optional notes; they're appended for the
   implementer and override the plan where they conflict;

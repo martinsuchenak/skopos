@@ -1690,6 +1690,68 @@ paths:
         "401": { description: Unauthorized }
         "404": { description: Not found }
 
+  /api/inbox/questions:
+    get:
+      summary: The decision log across items
+      description: Every question in scope with its state and current answer (who answered, via, action, approval, the wait), and the answers given when no question was open (kind free), oldest first. Scoped keys see their workspaces only. format=csv returns every matching row as CSV.
+      operationId: searchQuestions
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: workspace_id, in: query, schema: { type: string } }
+        - { name: item_id, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string, enum: [open, answered, answered_free_text, skipped, superseded, free] } }
+        - { name: asker, in: query, schema: { type: string, enum: [planner, implementer, worker] } }
+        - { name: answered_by, in: query, schema: { type: string }, description: 'The answering actor as recorded ("key martin", "root")' }
+        - { name: from, in: query, schema: { type: string }, description: "A UTC date (2026-11-01) or an RFC 3339 time with offset; asked at or after" }
+        - { name: to, in: query, schema: { type: string }, description: "A UTC date (the whole day) or an RFC 3339 time with offset; asked before" }
+        - { name: limit, in: query, schema: { type: integer, default: 200, maximum: 1000 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+        - { name: format, in: query, schema: { type: string, enum: [json, csv] } }
+      responses:
+        "200":
+          description: A page of rows (or the CSV)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rows: { type: array, items: { $ref: "#/components/schemas/QuestionRow" } }
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+            text/csv:
+              schema: { type: string }
+        "400": { description: An unknown state or a bad date }
+        "401": { description: Unauthorized }
+
+  /api/inbox/questions/summary:
+    get:
+      summary: Counts over the decision log
+      description: The same filters as /api/inbox/questions. Asked, answered, answered in free text, skipped, open, superseded, free answers, corrections (and those after a run used the answer) and the median wait from asked to the first answer or skip — in total, per workspace and per person (per person counts what they answered, skipped and corrected).
+      operationId: questionsSummary
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: workspace_id, in: query, schema: { type: string } }
+        - { name: item_id, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+        - { name: asker, in: query, schema: { type: string } }
+        - { name: answered_by, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string } }
+        - { name: to, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: The counts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { $ref: "#/components/schemas/QuestionCounts" }
+                  by_workspace: { type: object, additionalProperties: { $ref: "#/components/schemas/QuestionCounts" } }
+                  by_person: { type: object, additionalProperties: { $ref: "#/components/schemas/QuestionCounts" } }
+        "400": { description: An unknown state or a bad date }
+        "401": { description: Unauthorized }
+
   /api/inbox/{id}/questions:
     get:
       summary: The item's questions and answers
@@ -2354,6 +2416,52 @@ components:
               option: { type: string, description: The option's letter (a, b, c…) }
               text: { type: string }
               replaces: { type: string, description: "A correction: the id of the question's current answer it replaces" }
+    QuestionRow:
+      type: object
+      properties:
+        kind: { type: string, enum: [question, free] }
+        workspace_id: { type: string }
+        item_id: { type: string }
+        item_title: { type: string, description: Empty when the item was deleted }
+        set_id: { type: string }
+        asker: { type: string }
+        label: { type: string }
+        run_id: { type: string }
+        subject_kind: { type: string }
+        subject: { type: string }
+        blocking: { type: boolean }
+        question_id: { type: string }
+        n: { type: integer }
+        question: { type: string }
+        state: { type: string }
+        asked_at: { type: string, format: date-time }
+        answer_id: { type: string }
+        option: { type: string }
+        option_text: { type: string }
+        answer: { type: string, description: The current answer's words, or the free text }
+        answered_by: { type: string }
+        via: { type: string }
+        action: { type: string }
+        approval_id: { type: string }
+        answered_at: { type: string, format: date-time }
+        used_by_run: { type: string }
+        corrections: { type: integer }
+        after_use: { type: boolean }
+        waited_seconds: { type: integer, description: "From asked to the first answer or skip; only for questions asked and answered live" }
+    QuestionCounts:
+      type: object
+      properties:
+        asked: { type: integer }
+        answered: { type: integer }
+        answered_free_text: { type: integer }
+        skipped: { type: integer }
+        open: { type: integer }
+        superseded: { type: integer }
+        free_answers: { type: integer }
+        corrections: { type: integer }
+        corrections_after_use: { type: integer }
+        median_wait_seconds: { type: integer, description: "Over the questions asked and answered live (imports carry no wait)" }
+        measured: { type: integer, description: How many waits the median is over }
     QuestionSet:
       type: object
       properties:
