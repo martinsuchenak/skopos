@@ -16,6 +16,7 @@ var Headings = []string{
 	"## Candidate — ",
 	"## Comparison — ",
 	"## Questions — planner",
+	"## Questions — implementer",
 	"## Amendment proposed — worker",
 	"## Review notes",
 	"## Change requests",
@@ -87,13 +88,19 @@ func HeadingIs(s Section, prefixes ...string) bool {
 	return false
 }
 
-// IsQuestions reports whether the section holds the planner's questions.
-func IsQuestions(s Section) bool { return HeadingIs(s, "Questions — planner") }
+// IsQuestions reports whether the section holds questions for Martin: the
+// planner's, or the implementer's with an amendment or a block.
+func IsQuestions(s Section) bool {
+	return HeadingIs(s, "Questions — planner", "Questions — implementer")
+}
 
-// QuestionsLabel is the candidate label of a plan group member's questions
-// ("Questions — planner focus@runner" → "focus@runner"), "" for a single
-// planner.
+// QuestionsLabel names who asked when it isn't the (single) planner: a plan
+// group member's candidate label ("Questions — planner focus@runner" →
+// "focus@runner"), or "the implementer".
 func QuestionsLabel(s Section) string {
+	if HeadingIs(s, "Questions — implementer") {
+		return "the implementer"
+	}
 	return strings.TrimSpace(strings.TrimPrefix(s.Heading, "Questions — planner"))
 }
 
@@ -115,13 +122,19 @@ type Round struct {
 }
 
 // Rounds groups the sections into rounds: Martin's notes close the round
-// they answer, so the next agent output starts a new one. A round is named
-// after its first section.
+// they answer, so the next agent output starts a new one. Notes written
+// together (his answers, then his approval notes) stay in that round. A
+// round is named after its first section.
 func Rounds(secs []Section) []Round {
 	var out []Round
 	open := false
 	count := map[string]int{}
 	for _, s := range secs {
+		if !open && len(out) > 0 && IsHumanNotes(s) {
+			r := &out[len(out)-1]
+			r.Sections = append(r.Sections, s)
+			continue
+		}
 		if !open {
 			kind, title := roundKind(s)
 			count[kind]++

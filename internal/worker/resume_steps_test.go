@@ -1,11 +1,16 @@
 package worker
 
 import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -73,5 +78,42 @@ func TestResumeAfterCutOffRun(t *testing.T) {
 	// A change-requests round finds every step committed by design.
 	if out, _ := renderPrompt("implement.md", map[string]any{"Title": "T", "Steps": steps, "Resumed": true, "Notes": "add the header row"}); strings.Contains(out, "cut off") || !strings.Contains(out, "ALREADY COMMITTED") {
 		t.Error("change requests: steps marked, no cut-off text")
+	}
+}
+
+// The implementer's questions with an amendment or a block are written to
+// the item (they used to be dropped), in both result shapes.
+func TestImplementerQuestionsWritten(t *testing.T) {
+	var ir implResult
+	if err := json.Unmarshal([]byte(`{"status":"amendment","reason":"r","questions":[{"question":"New scope?","options":["sales","quotes"]}],"question":"Delete permission?"}`), &ir); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	content := "Item."
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.Method {
+		case http.MethodGet:
+			b, _ := json.Marshal(map[string]any{"id": "it", "content": content})
+			_, _ = w.Write(b)
+		case http.MethodPatch:
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			content = body["content"]
+			_, _ = io.WriteString(w, `{}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	w := &Worker{client: NewClient(srv.URL, "k")}
+	w.appendImplQuestions(t.Context(), &Run{ItemID: "it"}, ir)
+	want := "## Questions — implementer\n\n1. New scope?\n   - (a) sales\n   - (b) quotes\n2. Delete permission?\n"
+	if !strings.HasSuffix(strings.TrimSpace(content), strings.TrimSpace(want)) {
+		t.Fatalf("content:\n%s", content)
+	}
+	before := content
+	w.appendImplQuestions(t.Context(), &Run{ItemID: "it"}, implResult{Status: "blocked"})
+	if content != before {
+		t.Fatal("no questions, no section")
 	}
 }

@@ -153,3 +153,23 @@ func TestCurrentQuestions(t *testing.T) {
 		t.Fatalf("group: %+v", got)
 	}
 }
+
+// The implementer asks with an amendment or a block: its questions are
+// questions like the planner's, labelled by who asked.
+func TestImplementerQuestions(t *testing.T) {
+	content := "x\n\n## Enrichment — skopos worker\n\nP\n\n## Approval notes\n\nok\n\n" +
+		"## Amendment proposed — worker\n\n- the plan misses a step\n\n## Questions — implementer\n\n1. New scope?\n   - (a) sales\n   - (b) quotes\n"
+	got := CurrentQuestions(content)
+	if len(got) != 1 || got[0].Label != "the implementer" || got[0].Questions[0].Options[1] != "quotes" {
+		t.Fatalf("got %+v", got)
+	}
+	_, secs := Split(content)
+	if r := Rounds(secs); len(r) != 2 || r[1].Title != "Amendment" || len(r[1].Sections) != 2 {
+		t.Fatalf("rounds: %+v", r)
+	}
+	// Answered and approved together: one round, closed.
+	_, secs = Split(content + "\n## Answers\n\n1. New scope?\n   Answer: (a) sales\n\n## Approval notes\n\ngo\n")
+	if r := Rounds(secs); len(r) != 2 || len(r[1].Sections) != 4 || !r[1].Closed {
+		t.Fatalf("answers and approval notes stay in the round: %+v", r)
+	}
+}

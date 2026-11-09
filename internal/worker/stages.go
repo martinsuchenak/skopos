@@ -507,6 +507,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			if reason == "" {
 				reason = ir.Summary
 			}
+			w.appendImplQuestions(ctx, run, ir)
 			return w.report(ctx, run, false, map[string]any{"reason": reason, "setup": setup})
 		}
 		if commitCount(ctx, worktree, baseRef) == 0 {
@@ -548,6 +549,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			case "blocked":
 				// Like a failure that outlasts the rounds: pushed and
 				// recorded with its checks, so it can be looked at.
+				w.appendImplQuestions(ctx, run, *fix)
 				cantFix = fix.Reason
 				if cantFix == "" {
 					cantFix = fix.Summary
@@ -950,6 +952,7 @@ func (w *Worker) proposeAmendment(ctx context.Context, run *Run, item *Item, ir 
 		ir.Reason = ir.Summary
 	}
 	_ = w.client.AppendSection(ctx, run.ItemID, "Amendment proposed — worker", bullets([]string{ir.Reason}))
+	w.appendImplQuestions(ctx, run, ir)
 	base := run.BaseSHA
 	if base == "" {
 		base, _ = git(ctx, w.cfg.Repos[run.WorkspaceID].Path, "rev-parse", "origin/"+w.cfg.Repos[run.WorkspaceID].DefaultBranch)
@@ -1021,6 +1024,29 @@ type implResult struct {
 	Reason       string `json:"reason"`
 	Summary      string `json:"summary"`
 	AmendedSteps []Step `json:"amended_steps"`
+	// Questions for Martin with an amendment or a block; Question is the
+	// single-string shape the schema had before.
+	Questions []itemtext.Question `json:"questions"`
+	Question  string              `json:"question"`
+}
+
+// asked is the implementer's questions in both shapes.
+func (ir implResult) asked() []itemtext.Question {
+	qs := ir.Questions
+	if q := strings.TrimSpace(ir.Question); q != "" {
+		qs = append(qs, itemtext.Question{Text: q})
+	}
+	return qs
+}
+
+// appendImplQuestions writes the implementer's questions (with an amendment
+// or a block) as their own section: the dashboard lists them for answering
+// at the gate or with Retry, Slack quotes them, and later prompts read them
+// with the answers. They used to be dropped.
+func (w *Worker) appendImplQuestions(ctx context.Context, run *Run, ir implResult) {
+	if q := itemtext.FormatQuestions(ir.asked()); q != "" {
+		_ = w.client.AppendSection(ctx, run.ItemID, "Questions — implementer", q)
+	}
 }
 
 // --- small helpers ---

@@ -69,3 +69,33 @@ func TestRelayBlockedListsQuestions(t *testing.T) {
 		}
 	}
 }
+
+// Blocked by the implementer with questions: the reason, then its
+// questions to answer with the retry.
+func TestRelayBlockedByImplementerListsQuestions(t *testing.T) {
+	svc, runsSvc, _, _, relay := relayStack(t)
+	ctx := context.Background()
+	item, err := svc.CreateItem(ctx, inbox.CreateInput{WorkspaceID: "ws-a", Title: "stock api", AuthorAgentID: "martin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runsSvc.Queue(ctx, runs.QueueInput{WorkspaceID: "ws-a", ItemID: item.ID, Stage: runs.StageImplement}); err != nil {
+		t.Fatal(err)
+	}
+	r, err := runsSvc.ClaimNext(ctx, runs.ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	if err != nil || r == nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if err := svc.AppendSection(ctx, item.ID, "Questions — implementer", "1. Which scope?\n   - (a) sales\n   - (b) quotes\n", audit.ViaWorker); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runsSvc.Report(ctx, r.ID, runs.ReportInput{WorkerID: "w1", Status: runs.StatusFailed, Reason: "the API scope is undecided"}, r.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	msg := relay.formatGate(item.ID, inbox.StatusImplementing, inbox.StatusBlocked)
+	for _, want := range []string{"*Blocked* · stock api", "the API scope is undecided", "*the implementer asks:*", "*1.* Which scope?\n      a) sales\n      b) quotes"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("blocked message missing %q:\n%s", want, msg)
+		}
+	}
+}

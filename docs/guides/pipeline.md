@@ -265,7 +265,9 @@ answer, or both, for each one you answer. The answers go with **Approve**,
 **Request changes** or **Retry** as their own **Answers** section, ahead of
 your notes. Every later plan, and the implementer, reads them with the
 questions. When the planner can't plan without answers, the item is blocked
-with the same list, and **Retry** sends your answers.
+with the same list, and **Retry** sends your answers. The implementer asks
+the same way: a proposed amendment or a block comes with a **Questions —
+implementer** section, listed for answering at the gate or with **Retry**.
 
 Then either:
 - click **Approve**, with optional notes; they're appended for the

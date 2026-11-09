@@ -668,6 +668,12 @@ func (r *slackRelay) formatGate(itemID string, from, to inbox.Status) string {
 		if reason == "" {
 			reason = "_Reason in skopos._"
 		}
+		// Blocked with questions (the implementer's): the reason, then the
+		// questions to answer with the retry.
+		if q := questionsText(item.Content, "*"); q != "" {
+			return "⚠️ *Blocked* · " + title + "\n\n" + truncate(reason, 500) +
+				"\n\n*Questions for you:*\n" + q + "\n`retry: 1) a, 2) …` · `reject`"
+		}
 		return "⚠️ *Blocked* · " + title + "\n\n" + truncate(reason, 500) +
 			"\n\n`retry: <answer>` · `reject`"
 	case inbox.StatusInReview:

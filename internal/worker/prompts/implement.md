@@ -73,8 +73,11 @@ name with `git add <file>` instead of `git add -A`) and say so in your summary.
 - If you cannot continue for another reason (missing information, broken environment), commit
   what is done and return status "blocked" with the reason.
 
-- For "amendment" and "blocked": `reason` is at most 2 sentences. If Martin must decide something,
-  put exactly one direct question in `question`, with the options as (a)/(b) when there is a choice.
+- For "amendment" and "blocked": `reason` is at most 2 sentences. Put every decision Martin must
+  make in `questions`, one entry each: `question` is one sentence, and when there is a choice
+  `options` lists the choices, one short phrase each, without letters (leave it empty for an open
+  question). Martin sees them as a numbered list and answers each one. Put them there, not only
+  in a document you commit: a step that depends on an answer says "depends on question N".
 
 When all steps are committed, return status "done". Always list the numbers of the steps that
 are completed and committed in steps_done. Return only the structured result.
