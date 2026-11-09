@@ -10,6 +10,7 @@ import (
 	"github.com/paularlott/logger"
 
 	"github.com/martinsuchenak/skopos/internal/events"
+	"github.com/martinsuchenak/skopos/internal/idempotency"
 )
 
 type Cleaner struct {
@@ -117,6 +118,11 @@ func (c *Cleaner) clean(ctx context.Context) error {
 	// Run logs (gzipped batches, Unix ms) past the retention.
 	if _, err := c.db.ExecContext(ctx, `DELETE FROM run_logs WHERE created_ms < ?`, cutoff.UnixMilli()); err != nil {
 		return fmt.Errorf("deleting old run logs: %w", err)
+	}
+
+	// Idempotency keys past their 24 hours.
+	if _, err := idempotency.Prune(ctx, c.db, time.Now()); err != nil {
+		return fmt.Errorf("deleting old idempotency keys: %w", err)
 	}
 
 	agentsResult, err := c.db.ExecContext(ctx, `DELETE FROM agents WHERE last_seen_at < ?`, cutoffStr)

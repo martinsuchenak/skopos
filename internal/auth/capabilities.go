@@ -50,6 +50,12 @@ var Presets = map[string][]string{
 	// inbox reads skopos_context returns. No REST: the agent never reaches
 	// item transitions, runs or keys.
 	"agent": {SurfaceMCP, AreaCode + ":read", AreaBlackboard + ":write", AreaPlans + ":write", AreaStatus + ":read", AreaInbox + ":read"},
+	// integration: another system creating and following items over REST —
+	// the inbox (create, start, the state endpoint, decisions), and reads of
+	// the plans and runs behind them. Starting items and recording
+	// decisions also need the approver permission, and naming the person
+	// the delegate permission (both separate flags).
+	"integration": {SurfaceREST, AreaInbox + ":write", AreaPlans + ":read", AreaRuns + ":read"},
 }
 
 // ErrInvalidCapability rejects an unknown capability name.

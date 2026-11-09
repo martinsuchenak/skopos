@@ -67,6 +67,7 @@ type CreateInput struct {
 	Groups        []string // group names or ids (docs/design/agent-pipeline.md §3)
 	AllWorkspaces bool
 	Approver      bool // may perform human-only workflow actions (agent-pipeline §2); root-only to grant
+	Delegate      bool // may name the person it acts for (X-Skopos-On-Behalf-Of)
 	// Capabilities limit the key (internal/auth capabilities.go); Preset
 	// names a set in auth.Presets, joined with Capabilities. Neither = full
 	// access.
@@ -208,6 +209,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (*CreateResult,
 		Prefix:        secret[:14],
 		AllWorkspaces: input.AllWorkspaces,
 		Approver:      input.Approver,
+		Delegate:      input.Delegate,
 		Capabilities:  capabilities,
 		Workspaces:    workspaces,
 		Groups:        groupNames,
@@ -256,6 +258,7 @@ type UpdateInput struct {
 	Workspaces []string // nil = unchanged; ["*"] or explicit ids otherwise
 	Groups     []string // nil = unchanged; names or ids, [] clears
 	Approver   *bool    // nil = unchanged
+	Delegate   *bool    // nil = unchanged
 	// Capabilities: nil = unchanged; [] = full access; otherwise the new
 	// list. Preset (if set) is joined with it.
 	Capabilities *[]string
@@ -375,7 +378,11 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (*Ke
 			capabilities, capsChanged = next, true
 		}
 	}
-	if err := s.storage.Update(ctx, id, name, all, approver, capabilities, workspaces, groupIDs); err != nil {
+	delegate := existing.Delegate
+	if input.Delegate != nil {
+		delegate = *input.Delegate
+	}
+	if err := s.storage.Update(ctx, id, name, all, approver, delegate, capabilities, workspaces, groupIDs); err != nil {
 		return nil, err
 	}
 	// A scope or capability change re-shapes what the key's open SSE

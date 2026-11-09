@@ -17,7 +17,9 @@ import (
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/db"
+	"github.com/martinsuchenak/skopos/internal/idempotency"
 	"github.com/martinsuchenak/skopos/internal/inbox"
+	"github.com/martinsuchenak/skopos/internal/itemstate"
 	"github.com/martinsuchenak/skopos/internal/pipeline"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/rest"
@@ -280,6 +282,7 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	bb := blackboard.NewHandler(blackboard.NewService(blackboard.NewStorage(sqlDB)), authn)
 	pl := plans.NewHandler(plansService, authn)
 	ib := inbox.NewHandler(inboxService, authn)
+	ib.SetStateHandler(itemstate.NewHandler(&itemstate.Service{Items: inboxService, Plans: plansService, Runs: runsService}).Get)
 	ws := workspaces.NewHandler(workspaces.NewService(workspaces.NewStorage(sqlDB)), authn)
 	ak := apikeys.NewHandler(apikeys.NewService(apikeys.NewStorage(sqlDB)), workspaces.NewService(workspaces.NewStorage(sqlDB)))
 	rh := runs.NewHandler(runsService)
@@ -289,7 +292,7 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	RegisterRoutes(webMux, apiMux, st, bb, pl, ib, ws, nil, ak, rh)
 	RegisterPipelineRoutes(apiMux, pipeline.NewHandler(pipelineService, authn))
 	root := http.NewServeMux()
-	root.Handle("/api/", authn.Middleware(apiMux))
+	root.Handle("/api/", authn.Middleware(idempotency.New(sqlDB).Middleware("/api/inbox")(apiMux)))
 	root.Handle("/", webMux)
 	ts := httptest.NewServer(root)
 	t.Cleanup(ts.Close)

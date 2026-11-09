@@ -59,15 +59,14 @@ func (s *Service) Record(ctx context.Context, input RecordInput) error {
 		if p != nil && !p.Root {
 			e.ActorKeyID = p.KeyID
 		}
-	case p == nil:
-		e.Actor = "system"
-	case p.Root:
-		e.Actor = "root"
 	default:
-		e.Actor = "key " + p.Name
-		// Always kept (review fix 8): the raw key id is the attribution the
-		// threat model leans on, whatever the via label says.
-		e.ActorKeyID = p.KeyID
+		// root, key <name>, or "<person> (key <name>)" for a delegate key.
+		// The key id is always kept (review fix 8): the raw key id is the
+		// attribution the threat model leans on, whatever the via says.
+		e.Actor, e.ActorKeyID = auth.Actor(ctx)
+	}
+	if p != nil {
+		e.OnBehalfOf = p.OnBehalfOf
 	}
 	return s.storage.Write(ctx, e)
 }

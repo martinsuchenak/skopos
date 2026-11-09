@@ -47,7 +47,7 @@ func (s *Service) Record(ctx context.Context, input RecordInput) (Entry, error) 
 	}
 	p := auth.PrincipalFromContext(ctx)
 	via := strings.TrimSpace(input.Via)
-	if via != "" && via != "slack" && via != "dashboard" && via != "cli" {
+	if via != "" && via != "slack" && via != "dashboard" && via != "cli" && via != "api" {
 		via = "" // closed set (review fix 8); slack means an approver acted
 	}
 	if via == "slack" && p != nil && !p.Root && !p.Approver {
@@ -64,15 +64,7 @@ func (s *Service) Record(ctx context.Context, input RecordInput) (Entry, error) 
 		Notes:       input.Notes,
 		CreatedAt:   s.now().UTC(),
 	}
-	switch {
-	case p == nil:
-		e.Actor = "system"
-	case p.Root:
-		e.Actor = "root"
-	default:
-		e.Actor = "key " + p.Name
-		e.ActorKeyID = p.KeyID
-	}
+	e.Actor, e.ActorKeyID = auth.Actor(ctx)
 	if err := s.storage.Write(ctx, e); err != nil {
 		return Entry{}, err
 	}

@@ -12,16 +12,19 @@ var (
 // Entry is one append-only audit record: what happened, to what, who did it,
 // and through which surface (docs/design/agent-pipeline.md §1, plan 01a0bf7c).
 type Entry struct {
-	ID          string    `json:"id"`
-	WorkspaceID string    `json:"workspace_id,omitempty"` // empty for server-level events
-	EntityType  string    `json:"entity_type"`            // e.g. inbox_item, api_key, workspace_group
-	EntityID    string    `json:"entity_id"`
-	Action      string    `json:"action"` // dot-namespaced domain.verb, e.g. inbox.queue
-	Actor       string    `json:"actor"`  // rendered at write time: root, key <name>, agent <id>, system, migration
-	ActorKeyID  string    `json:"actor_key_id,omitempty"`
-	Via         string    `json:"via,omitempty"` // dashboard, slack, cli, mcp, worker, migration, system
-	Notes       string    `json:"notes,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id,omitempty"` // empty for server-level events
+	EntityType  string `json:"entity_type"`            // e.g. inbox_item, api_key, workspace_group
+	EntityID    string `json:"entity_id"`
+	Action      string `json:"action"` // dot-namespaced domain.verb, e.g. inbox.queue
+	Actor       string `json:"actor"`  // rendered at write time: root, key <name>, agent <id>, system, migration
+	ActorKeyID  string `json:"actor_key_id,omitempty"`
+	// OnBehalfOf: the person a delegate key named (X-Skopos-On-Behalf-Of);
+	// the actor reads "<person> (key <name>)".
+	OnBehalfOf string    `json:"on_behalf_of,omitempty"`
+	Via        string    `json:"via,omitempty"` // dashboard, slack, cli, mcp, worker, migration, system
+	Notes      string    `json:"notes,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // RecordInput is the caller-facing write shape. Actor fields are derived

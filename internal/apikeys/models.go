@@ -10,6 +10,9 @@ type Key struct {
 	Prefix        string `json:"key_prefix"`
 	AllWorkspaces bool   `json:"all_workspaces"`
 	Approver      bool   `json:"approver"` // may perform human-only workflow actions (agent-pipeline §2)
+	// Delegate: the key may name the person it acts for
+	// (X-Skopos-On-Behalf-Of) — an integration recording people's decisions.
+	Delegate bool `json:"delegate"`
 	// Capabilities limit the key's surfaces and areas (internal/auth
 	// capabilities.go); null = full access.
 	Capabilities []string   `json:"capabilities"`

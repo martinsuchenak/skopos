@@ -17,7 +17,7 @@ type Bundle = { entries: Entry[]; markdown_bundle: string };
 type PlanItem = { id: string; plan_id: string; title: string; description?: string; phase?: string; status: string; position: number; claimed_by_agent_id?: string; depends_on?: string[] };
 type Plan = { id: string; name: string; branch_name?: string; workspace_id?: string; description?: string; status: string; author_agent_id: string; items?: PlanItem[]; depends_on?: string[]; created_at: string };
 type Toast = { id: number; message: string; type: 'success' | 'error' | 'info' };
-type ApiKey = { id: string; name: string; key_prefix: string; all_workspaces: boolean; approver?: boolean; capabilities?: string[] | null; workspaces: string[]; groups?: string[]; created_at: string; last_used_at?: string; revoked_at?: string };
+type ApiKey = { id: string; name: string; key_prefix: string; all_workspaces: boolean; approver?: boolean; delegate?: boolean; capabilities?: string[] | null; workspaces: string[]; groups?: string[]; created_at: string; last_used_at?: string; revoked_at?: string };
 type KeyGroup = { id: string; name: string; description?: string; members: string[]; patterns: string[]; created_at: string };
 type KeyReach = { key: ApiKey; via: string };
 type WorkspaceRow = { id: string; name?: string; git_url?: string; created_at: string };
@@ -27,7 +27,7 @@ type EntryForm = { scope: 'project' | 'branch' | 'session'; entry_type: 'finding
 type PlanForm = { name: string; description: string; branch_name: string };
 type ItemForm = { title: string; description: string; phase: string; depends_on: string };
 type InboxPlanSummary = { id: string; name: string; status: string };
-type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; agents?: string; branch?: string; ref?: string; flow?: string; created_at: string; updated_at: string; excerpt?: string };
+type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; agents?: string; branch?: string; ref?: string; external_url?: string; flow?: string; created_at: string; updated_at: string; excerpt?: string };
 // The detail view's content, cut server-side (internal/inbox/parts.go):
 // Martin's text, then the pipeline's sections in rounds.
 type ItemQuestion = { text: string; options?: string[] };
@@ -3156,6 +3156,7 @@ const appState = () => ({
     return parts.join(', ') || 'no scope';
   },
   keyIsApprover(k: ApiKey): boolean { return !!k.approver; },
+  keyIsDelegate(k: ApiKey): boolean { return !!k.delegate; },
   // keyCapsLabel names a capped key's limits ("" = full access, no chip).
   keyCapsLabel(k: ApiKey): string {
     const caps = k.capabilities;

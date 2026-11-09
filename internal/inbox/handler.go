@@ -11,6 +11,21 @@ import (
 type Handler struct {
 	service *Service
 	authn   *auth.Authenticator
+	// state serves GET /api/inbox/{id}/state (internal/itemstate, which
+	// reads the inbox, plans, runs and questions; nil = not served).
+	state http.HandlerFunc
+}
+
+// SetStateHandler wires GET /api/inbox/{id}/state.
+func (h *Handler) SetStateHandler(fn http.HandlerFunc) { h.state = fn }
+
+// State handles GET /api/inbox/{id}/state through the wired handler.
+func (h *Handler) State(w http.ResponseWriter, r *http.Request) {
+	if h.state == nil {
+		rest.RespondError(w, http.StatusNotFound, "not found")
+		return
+	}
+	h.state(w, r)
 }
 
 func NewHandler(service *Service, authn *auth.Authenticator) *Handler {
@@ -31,12 +46,13 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	input.Via = viaFrom(r, "")
 	item, err := h.service.CreateItem(r.Context(), input)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidInput):
 			rest.RespondError(w, http.StatusBadRequest, err.Error())
-		case errors.Is(err, auth.ErrOutOfScope):
+		case errors.Is(err, auth.ErrOutOfScope), errors.Is(err, auth.ErrApproverRequired):
 			rest.RespondError(w, http.StatusForbidden, err.Error())
 		default:
 			rest.InternalError(w, err)
@@ -55,7 +71,7 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	tag := r.URL.Query().Get("tag")
 	query := r.URL.Query().Get("q")
-	items, err := h.service.ListItems(r.Context(), workspace, status, tag, query)
+	items, err := h.service.ListItemsFilter(r.Context(), ListFilter{WorkspaceID: workspace, Status: status, Tag: tag, Query: query, Ref: r.URL.Query().Get("ref")})
 	if err != nil {
 		if errors.Is(err, auth.ErrOutOfScope) {
 			rest.RespondError(w, http.StatusForbidden, err.Error())

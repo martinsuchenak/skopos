@@ -26,6 +26,12 @@ type Principal struct {
 	AllWorkspaces bool                // "*" scope
 	Workspaces    map[string]struct{} // explicit scope
 	Approver      bool                // may perform human-only workflow actions (agent-pipeline §2)
+	// Delegate: the key may name the person it acts for
+	// (X-Skopos-On-Behalf-Of).
+	Delegate bool
+	// OnBehalfOf is the person a delegate key (or root) named for this
+	// request; the audit log and approvals record it beside the key.
+	OnBehalfOf string
 	// Capabilities limit the key's surfaces and areas (capabilities.go);
 	// nil = not capped (full access).
 	Capabilities map[string]struct{}
@@ -61,6 +67,7 @@ type KeyInfo struct {
 	ID, Name      string
 	AllWorkspaces bool
 	Approver      bool
+	Delegate      bool
 	Workspaces    []string
 	Capabilities  []string // nil = full access
 }
@@ -133,6 +140,7 @@ func (a *Authenticator) Authenticate(r *http.Request) *Principal {
 		Name:          info.Name,
 		AllWorkspaces: info.AllWorkspaces,
 		Approver:      info.Approver,
+		Delegate:      info.Delegate,
 		Workspaces:    make(map[string]struct{}, len(info.Workspaces)),
 	}
 	for _, w := range info.Workspaces {
@@ -182,10 +190,62 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 				_ = json.NewEncoder(w).Encode(map[string]string{"error": why})
 				return
 			}
+			if v, present := r.Header[OnBehalfOfHeader]; present {
+				person, err := onBehalfOf(p, strings.Join(v, ","))
+				if err != nil {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusBadRequest)
+					_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+					return
+				}
+				p.OnBehalfOf = person
+			}
 			r = r.WithContext(WithPrincipal(r.Context(), p))
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// OnBehalfOfHeader names the person a delegate key acts for.
+const OnBehalfOfHeader = "X-Skopos-On-Behalf-Of"
+
+// maxOnBehalfOf bounds the named person (an email or a username).
+const maxOnBehalfOf = 200
+
+// onBehalfOf validates the header: only root or a delegate key may name a
+// person, and the name is 1-200 printable characters. A key without the
+// permission is refused rather than ignored, so a misconfigured
+// integration never records decisions as the key alone without knowing.
+func onBehalfOf(p *Principal, v string) (string, error) {
+	if !p.Root && !p.Delegate {
+		return "", fmt.Errorf("%s needs a key with the delegate permission", OnBehalfOfHeader)
+	}
+	v = strings.TrimSpace(v)
+	if v == "" || len(v) > maxOnBehalfOf || strings.ContainsFunc(v, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return "", fmt.Errorf("%s must be 1 to %d printable characters", OnBehalfOfHeader, maxOnBehalfOf)
+	}
+	return v, nil
+}
+
+// Actor renders the caller the way the audit log, approvals and answers
+// record it — system, root, key <name>, or "<person> (key <name>)" when a
+// delegate key named the person — with the key id ("" for root and
+// internal callers).
+func Actor(ctx context.Context) (actor, keyID string) {
+	p := PrincipalFromContext(ctx)
+	switch {
+	case p == nil:
+		return "system", ""
+	case p.Root:
+		if p.OnBehalfOf != "" {
+			return p.OnBehalfOf + " (root)", ""
+		}
+		return "root", ""
+	case p.OnBehalfOf != "":
+		return p.OnBehalfOf + " (key " + p.Name + ")", p.KeyID
+	default:
+		return "key " + p.Name, p.KeyID
+	}
 }
 
 // WithPrincipal attaches p to ctx (system privileges when p is nil).

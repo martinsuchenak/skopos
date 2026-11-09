@@ -146,6 +146,28 @@ func (s *Service) CreateItem(ctx context.Context, input CreateInput) (*Item, err
 	if err != nil {
 		return nil, err
 	}
+	externalURL, err := NormalizeExternalURL(input.ExternalURL)
+	if err != nil {
+		return nil, err
+	}
+	start := strings.ToLower(strings.TrimSpace(input.Start))
+	switch start {
+	case "":
+	case StartQueue, StartReview:
+		// Refused before the item exists: a key that may not start it
+		// would otherwise leave an item it didn't ask for.
+		if err := auth.RequireApprover(ctx); err != nil {
+			return nil, err
+		}
+		if input.WorkspaceID == "" {
+			return nil, fmt.Errorf("%w: start needs workspace_id", ErrInvalidInput)
+		}
+		if start == StartReview && branch == "" && ref == "" {
+			return nil, fmt.Errorf("%w: start review needs a branch or ref", ErrInvalidInput)
+		}
+	default:
+		return nil, fmt.Errorf("%w: start must be queue or review, not %q", ErrInvalidInput, input.Start)
+	}
 	now := s.now().UTC()
 	item := Item{
 		ID:            ids.New(),
@@ -159,6 +181,7 @@ func (s *Service) CreateItem(ctx context.Context, input CreateInput) (*Item, err
 		Agents:        agents,
 		Branch:        branch,
 		Ref:           ref,
+		ExternalURL:   externalURL,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
@@ -168,7 +191,21 @@ func (s *Service) CreateItem(ctx context.Context, input CreateInput) (*Item, err
 	if s.publisher != nil {
 		s.publisher.Publish(events.Event{Type: events.TypeInbox, Workspace: item.WorkspaceID})
 	}
-	return &item, nil
+	if start == "" {
+		return &item, nil
+	}
+	// Created, then started: a failed start leaves the item open and says
+	// why, so the caller knows it exists (POST /queue or /review retries).
+	startFn := s.Queue
+	if start == StartReview {
+		startFn = s.ReviewBranch
+	}
+	started, err := startFn(ctx, item.ID, input.Via)
+	if err != nil {
+		item.StartError = err.Error()
+		return &item, nil
+	}
+	return started, nil
 }
 
 // requireItemScopeQuiet authorizes a by-id operation: foreign items return the
@@ -197,6 +234,15 @@ func (s *Service) GetItem(ctx context.Context, id string) (*Item, error) {
 	}
 	item.ContentHTML = RenderMarkdown(item.Content)
 	return item, nil
+}
+
+// ReadItem is GetItem without the HTML rendering, for readers that use the
+// raw content (the state endpoint).
+func (s *Service) ReadItem(ctx context.Context, id string) (*Item, error) {
+	if err := s.requireItemScopeQuiet(ctx, id); err != nil {
+		return nil, err
+	}
+	return s.store.GetItem(ctx, strings.TrimSpace(id))
 }
 
 // ResolveByPriority turns a workspace + priority pair into the item it names —
@@ -232,18 +278,26 @@ func (s *Service) ResolveByPriority(ctx context.Context, workspaceID string, pri
 // ListItems returns rows for the dashboard and agents: an excerpt instead of
 // the full content (detail is a GetItem away), plus the linked plan summary.
 func (s *Service) ListItems(ctx context.Context, workspaceID, status, tag, query string) ([]Item, error) {
-	workspaceID = strings.TrimSpace(workspaceID)
-	status = strings.TrimSpace(status)
-	if status != "" && !ValidStatus(Status(status)) {
-		return nil, fmt.Errorf("%w: invalid status %q. Use: open, in_progress, converted, done, discarded, a workflow phase, workflow, or needs_you", ErrInvalidInput, status)
+	return s.ListItemsFilter(ctx, ListFilter{WorkspaceID: workspaceID, Status: status, Tag: tag, Query: query})
+}
+
+// ListItemsFilter is ListItems with every filter: Ref finds the items of
+// one external job (an integration's lookup), in any status.
+func (s *Service) ListItemsFilter(ctx context.Context, f ListFilter) ([]Item, error) {
+	f.WorkspaceID = strings.TrimSpace(f.WorkspaceID)
+	f.Status = strings.TrimSpace(f.Status)
+	if f.Status != "" && !ValidStatus(Status(f.Status)) {
+		return nil, fmt.Errorf("%w: invalid status %q. Use: open, in_progress, converted, done, discarded, a workflow phase, workflow, or needs_you", ErrInvalidInput, f.Status)
 	}
-	tag = strings.ToLower(strings.TrimSpace(tag))
-	if workspaceID != "" {
-		if err := auth.RequireWorkspace(ctx, workspaceID); err != nil {
+	f.Tag = strings.ToLower(strings.TrimSpace(f.Tag))
+	f.Query = strings.TrimSpace(f.Query)
+	f.Ref = strings.TrimSpace(f.Ref)
+	if f.WorkspaceID != "" {
+		if err := auth.RequireWorkspace(ctx, f.WorkspaceID); err != nil {
 			return nil, err
 		}
 	}
-	items, err := s.listAcrossScope(ctx, workspaceID, status, tag, strings.TrimSpace(query))
+	items, err := s.listAcrossScope(ctx, f)
 	if err != nil {
 		return nil, err
 	}
@@ -257,14 +311,15 @@ func (s *Service) ListItems(ctx context.Context, workspaceID, status, tag, query
 // listAcrossScope reads across the caller's scope: an explicit workspace uses
 // one query; a scoped key with no filter enumerates its workspaces so the
 // unscoped read returns exactly the key's slice, never other tenants' data.
-func (s *Service) listAcrossScope(ctx context.Context, workspaceID, status, tag, query string) ([]Item, error) {
-	if workspaceID != "" || !auth.ScopedContext(ctx) {
-		return s.store.ListItems(ctx, workspaceID, status, tag, query)
+func (s *Service) listAcrossScope(ctx context.Context, f ListFilter) ([]Item, error) {
+	if f.WorkspaceID != "" || !auth.ScopedContext(ctx) {
+		return s.store.ListFiltered(ctx, f)
 	}
 	var merged []Item
 	seen := map[string]bool{}
 	for _, ws := range auth.PrincipalFromContext(ctx).WorkspaceList() {
-		items, err := s.store.ListItems(ctx, ws, status, tag, query)
+		f.WorkspaceID = ws
+		items, err := s.store.ListFiltered(ctx, f)
 		if err != nil {
 			return nil, err
 		}
@@ -320,6 +375,13 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 			return err
 		}
 		input.Ref = &ref
+	}
+	if input.ExternalURL != nil {
+		externalURL, err := NormalizeExternalURL(*input.ExternalURL)
+		if err != nil {
+			return err
+		}
+		input.ExternalURL = &externalURL
 	}
 	// Filing names an explicit target workspace: an out-of-scope target is
 	// the actionable 403 flavor (the item itself was already scope-checked).
@@ -411,6 +473,12 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 		}
 		if agentsChanged {
 			if err := tx.SetAgents(ctx, itemID, *input.Agents, s.now().UTC()); err != nil {
+				return err
+			}
+		}
+		if input.ExternalURL != nil && *input.ExternalURL != item.ExternalURL {
+			changed = append(changed, "external_url")
+			if err := tx.SetExternalURL(ctx, itemID, *input.ExternalURL, s.now().UTC()); err != nil {
 				return err
 			}
 		}

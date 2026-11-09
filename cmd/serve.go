@@ -28,7 +28,9 @@ import (
 	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/martinsuchenak/skopos/internal/health"
+	"github.com/martinsuchenak/skopos/internal/idempotency"
 	"github.com/martinsuchenak/skopos/internal/inbox"
+	"github.com/martinsuchenak/skopos/internal/itemstate"
 	"github.com/martinsuchenak/skopos/internal/itemtext"
 	"github.com/martinsuchenak/skopos/internal/notify"
 	"github.com/martinsuchenak/skopos/internal/pipeline"
@@ -534,6 +536,11 @@ func serveCmd() *cli.Command {
 			})
 			inboxService.SetRunQueuer(runsService)
 			inboxService.SetRunLister(runsListerAdapter{runs: runsService})
+			// GET /api/inbox/{id}/state: the item's state for other
+			// systems (tmp/integrations — design.md §4).
+			inboxHandler.SetStateHandler(itemstate.NewHandler(&itemstate.Service{
+				Items: inboxService, Plans: plansService, Runs: runsService, Questions: qaService,
+			}).Get)
 			runsHandler := runs.NewHandler(runsService)
 
 			// Slack relay: Socket Mode when tokens are configured; absent =
@@ -602,7 +609,9 @@ func serveCmd() *cli.Command {
 			routes.RegisterPipelineRoutes(apiMux, pipeline.NewHandler(pipelineService, authn))
 			mux := http.NewServeMux()
 			// Longest-pattern wins: the exact SSE route below overrides /api/.
-			mux.Handle("/api/", authn.Middleware(apiMux))
+			// Idempotency-Key covers the inbox's POSTs (integrations retry
+			// safely); it runs after auth, since keys are per API key.
+			mux.Handle("/api/", authn.Middleware(idempotency.New(sqlDB).Middleware("/api/inbox")(apiMux)))
 			mux.Handle("/", webMux)
 			mux.Handle("GET /api/events/stream", authn.Middleware(events.StreamHandler(hub)))
 

@@ -4,6 +4,33 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Another system can create, start and follow items over REST**
+  ([guide](docs/guides/external-systems.md)):
+  - `POST /api/inbox` takes `start` (`queue` or `review`) to start the item
+    in the same call, and `external_url`, a link back to the job, shown on
+    the item in the dashboard.
+  - `GET /api/inbox?ref=WR110375` finds a job's items by its reference.
+  - `GET /api/inbox/{id}/state` returns, in one answer: whose turn it is and
+    the gate, the brief, the plan to approve, open questions, the newest
+    implementation with its checks and pull request, the latest reviews,
+    the run in progress, and the actions the key may take.
+  - POSTs under `/api/inbox` take an `Idempotency-Key` header: a retry
+    within 24 hours returns the first response instead of acting again.
+  - Keys get a delegate permission (`skopos key create --delegate`). A
+    delegate key names the person it acts for with
+    `X-Skopos-On-Behalf-Of`; the audit log, approvals and answers record
+    "<person> (key <name>)".
+  - A key preset, `integration`: REST only, inbox write, plans and runs
+    read.
+
+### Changed
+
+- Approvals made through the REST API record `api` as the surface.
+
 ## [0.30.2] — 2026-11-09
 
 ### Fixed

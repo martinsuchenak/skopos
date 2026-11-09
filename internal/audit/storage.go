@@ -34,9 +34,9 @@ func (s *Storage) Write(ctx context.Context, e Entry) error {
 		e.ID = ids.New()
 	}
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO audit_log (id, workspace_id, entity_type, entity_id, action, actor, actor_key_id, via, notes, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.WorkspaceID, e.EntityType, e.EntityID, e.Action, e.Actor, nullable(e.ActorKeyID), e.Via, e.Notes, formatTime(e.CreatedAt)); err != nil {
+		INSERT INTO audit_log (id, workspace_id, entity_type, entity_id, action, actor, actor_key_id, on_behalf_of, via, notes, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.WorkspaceID, e.EntityType, e.EntityID, e.Action, e.Actor, nullable(e.ActorKeyID), e.OnBehalfOf, e.Via, e.Notes, formatTime(e.CreatedAt)); err != nil {
 		return fmt.Errorf("inserting audit entry: %w", err)
 	}
 	return nil
@@ -89,7 +89,7 @@ func (s *Storage) List(ctx context.Context, f ListFilter) ([]Entry, error) {
 		limit = 200
 	}
 	query := fmt.Sprintf(`
-		SELECT id, workspace_id, entity_type, entity_id, action, actor, actor_key_id, via, notes, created_at
+		SELECT id, workspace_id, entity_type, entity_id, action, actor, actor_key_id, on_behalf_of, via, notes, created_at
 		FROM audit_log WHERE %s ORDER BY id DESC LIMIT %d`,
 		strings.Join(where, " AND "), limit)
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -102,7 +102,7 @@ func (s *Storage) List(ctx context.Context, f ListFilter) ([]Entry, error) {
 		var e Entry
 		var workspaceID, actorKeyID sql.NullString
 		var createdAt string
-		if err := rows.Scan(&e.ID, &workspaceID, &e.EntityType, &e.EntityID, &e.Action, &e.Actor, &actorKeyID, &e.Via, &e.Notes, &createdAt); err != nil {
+		if err := rows.Scan(&e.ID, &workspaceID, &e.EntityType, &e.EntityID, &e.Action, &e.Actor, &actorKeyID, &e.OnBehalfOf, &e.Via, &e.Notes, &createdAt); err != nil {
 			return nil, err
 		}
 		e.WorkspaceID = workspaceID.String

@@ -82,29 +82,13 @@ func (s *Service) RequestSecondOpinion(ctx context.Context, itemID string, in Se
 	if !reRunnerName.MatchString(runner) {
 		return nil, fmt.Errorf("%w: runner %q: letters, digits, '.', '_' or '-'", ErrInvalidInput, runner)
 	}
-	// The head mark-done would approve: the newest successful implement run
-	// (or, on a review-only item, the reviewed head).
-	var head, branch string
-	for _, r := range itemRuns {
-		if (r.Stage == "implement" || r.Stage == StageBranchReview) && r.Status == "succeeded" && r.HeadSHA != "" {
-			head, branch = r.HeadSHA, r.Branch
-			break
-		}
-	}
-	if head == "" {
-		return nil, fmt.Errorf("%w: the item has no implemented head to review", ErrInvalidInput)
+	head, branch, err := SecondOpinionHead(item, itemRuns)
+	if err != nil {
+		return nil, err
 	}
 	for _, r := range itemRuns {
-		if r.Stage != "second_opinion" {
-			continue
-		}
-		switch r.Status {
-		case "queued", "claimed", "running", "paused":
-			return nil, fmt.Errorf("%w: a second opinion (%s) is already running for this item", ErrSecondOpinionConflict, r.Runner)
-		case "succeeded":
-			if r.Runner == runner && r.HeadSHA == head && !in.Force {
-				return nil, fmt.Errorf("%w: %s already reviewed head %s — pass force to run it again", ErrSecondOpinionConflict, runner, shortSHA(head))
-			}
+		if r.Stage == "second_opinion" && r.Status == "succeeded" && r.Runner == runner && r.HeadSHA == head && !in.Force {
+			return nil, fmt.Errorf("%w: %s already reviewed head %s — pass force to run it again", ErrSecondOpinionConflict, runner, shortSHA(head))
 		}
 	}
 	_, baseSHA := s.approvedRevision(ctx, item)
@@ -121,6 +105,37 @@ func (s *Service) RequestSecondOpinion(ctx context.Context, itemID string, in Se
 	}
 	s.auditItem(ctx, item.ID, "inbox.second_opinion", in.Via, notes, "")
 	return &SecondOpinionRequest{RunID: runID, Runner: runner, HeadSHA: head}, nil
+}
+
+// SecondOpinionHead is the head a second opinion would review now, or why
+// none can be requested: the item must allow one (secondOpinionAllowed),
+// have a head mark-done would approve — the newest successful implement
+// run, or on a review-only item the reviewed head — and have no second
+// opinion running. itemRuns are newest first. The state endpoint offers
+// the action by the same rule.
+func SecondOpinionHead(item *Item, itemRuns []RunSummary) (head, branch string, err error) {
+	if err := secondOpinionAllowed(item, itemRuns); err != nil {
+		return "", "", err
+	}
+	for _, r := range itemRuns {
+		if (r.Stage == "implement" || r.Stage == StageBranchReview) && r.Status == "succeeded" && r.HeadSHA != "" {
+			head, branch = r.HeadSHA, r.Branch
+			break
+		}
+	}
+	if head == "" {
+		return "", "", fmt.Errorf("%w: the item has no implemented head to review", ErrInvalidInput)
+	}
+	for _, r := range itemRuns {
+		if r.Stage != "second_opinion" {
+			continue
+		}
+		switch r.Status {
+		case "queued", "claimed", "running", "paused", "interrupted":
+			return "", "", fmt.Errorf("%w: a second opinion (%s) is already running for this item", ErrSecondOpinionConflict, r.Runner)
+		}
+	}
+	return head, branch, nil
 }
 
 // secondOpinionAllowed: at in_review, or blocked by its review — a review

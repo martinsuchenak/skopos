@@ -762,6 +762,7 @@
                                     <span class="font-mono text-xs text-zinc-400" x-text="k.key_prefix + '…'"></span>
                                     <span class="chip tone-neutral" x-text="keyScope(k)"></span>
                                     <span x-show="keyIsApprover(k)" class="chip tone-warn">approver</span>
+                                    <span x-show="keyIsDelegate(k)" class="chip tone-neutral">delegate</span>
                                     <span x-show="keyCapsLabel(k)" class="chip tone-info" x-text="keyCapsLabel(k)"></span>
                                     <span x-show="k.revoked_at" class="chip tone-danger">revoked</span>
                                 </div>
@@ -1049,6 +1050,7 @@
                                 <span x-show="!previewItem.workspace_id" class="badge tone-warn">unfiled</span>
                                 <span x-show="previewItem.agents" class="badge tone-accent" x-text="agentsLabel(previewItem.agents)" :title="agentsTitle(previewItem.agents)"></span>
                                 <span x-show="branchLabel(previewItem)" class="badge max-w-56 truncate tone-neutral font-mono" x-text="branchLabel(previewItem)" :title="branchTitle(previewItem)"></span>
+                                <a x-show="previewItem.external_url" :href="previewItem.external_url" target="_blank" rel="noopener noreferrer" class="badge tone-neutral hover:underline" :title="previewItem.external_url">Job ↗</a>
                                 <span x-show="previewItem.claimed_by_agent_id" x-text="previewItem.claimed_by_agent_id"></span>
                                 <span x-show="previewItem.plan_id" class="badge max-w-40 truncate tone-accent" x-text="'→ ' + (previewItem.plan && previewItem.plan.name ? previewItem.plan.name : 'plan')"></span>
                                 <span x-text="timeAgo(previewItem.created_at)"></span>

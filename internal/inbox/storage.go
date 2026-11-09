@@ -20,11 +20,15 @@ type Store interface {
 	SetAgents(ctx context.Context, id, agents string, updatedAt time.Time) error
 	// SetBranchRef records the item's branch and external reference.
 	SetBranchRef(ctx context.Context, id, branch, ref string, updatedAt time.Time) error
+	// SetExternalURL records the item's link to its job elsewhere.
+	SetExternalURL(ctx context.Context, id, externalURL string, updatedAt time.Time) error
 	// SetFlow marks a review-only item ('review') or clears the mark.
 	SetFlow(ctx context.Context, id, flow string, updatedAt time.Time) error
 	// ItemForSlackThread resolves an item by its Slack thread root.
 	ItemForSlackThread(ctx context.Context, ts string) (*Item, error)
 	ListItems(ctx context.Context, workspaceID, status, tag, query string) ([]Item, error)
+	// ListFiltered is ListItems with every filter, the ref included.
+	ListFiltered(ctx context.Context, f ListFilter) ([]Item, error)
 	// ItemsByPriority returns the open/in_progress items holding an exact
 	// priority in one workspace — the by-number item reference for agents.
 	// Normally exactly one row; more means duplicate numbers (defensive).
@@ -103,7 +107,7 @@ func (s *Storage) RunInTx(ctx context.Context, fn func(Store) error) error {
 // they became, and a deleted plan leaves the summary NULL (dangling plan_id).
 const itemColumns = `
 	i.id, i.workspace_id, i.title, i.content, i.tags, i.status, i.priority,
-	i.claimed_by_agent_id, i.author_agent_id, i.plan_id, i.slack_thread_ts, i.agents, i.branch, i.ref, i.flow, i.created_at, i.updated_at,
+	i.claimed_by_agent_id, i.author_agent_id, i.plan_id, i.slack_thread_ts, i.agents, i.branch, i.ref, i.flow, i.external_url, i.created_at, i.updated_at,
 	p.name, p.status
 `
 
@@ -118,10 +122,10 @@ const itemOrder = ` ORDER BY (i.priority IS NULL) ASC, i.priority ASC, i.id DESC
 func (s *Storage) CreateItem(ctx context.Context, item Item) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO inbox_items
-		    (id, workspace_id, title, content, tags, status, priority, claimed_by_agent_id, author_agent_id, plan_id, agents, branch, ref, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?)
+		    (id, workspace_id, title, content, tags, status, priority, claimed_by_agent_id, author_agent_id, plan_id, agents, branch, ref, external_url, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?)
 	`, item.ID, item.WorkspaceID, item.Title, item.Content, tagsJSON(item.Tags), string(item.Status),
-		nullableInt(item.Priority), nullableString(item.AuthorAgentID), nullableString(item.Agents), item.Branch, item.Ref, formatTime(item.CreatedAt), formatTime(item.UpdatedAt))
+		nullableInt(item.Priority), nullableString(item.AuthorAgentID), nullableString(item.Agents), item.Branch, item.Ref, item.ExternalURL, formatTime(item.CreatedAt), formatTime(item.UpdatedAt))
 	if err != nil {
 		return fmt.Errorf("inserting inbox item: %w", err)
 	}
@@ -147,6 +151,11 @@ func (s *Storage) ItemForSlackThread(ctx context.Context, ts string) (*Item, err
 // none).
 func (s *Storage) SetBranchRef(ctx context.Context, id, branch, ref string, updatedAt time.Time) error {
 	return s.setColumns(ctx, id, `branch = ?, ref = ?`, updatedAt, branch, ref)
+}
+
+// SetExternalURL records the item's link to its job elsewhere ("" = none).
+func (s *Storage) SetExternalURL(ctx context.Context, id, externalURL string, updatedAt time.Time) error {
+	return s.setColumns(ctx, id, `external_url = ?`, updatedAt, externalURL)
 }
 
 // SetFlow marks a review-only item ("review") or clears the mark ("").
@@ -203,6 +212,12 @@ func (s *Storage) GetItem(ctx context.Context, id string) (*Item, error) {
 }
 
 func (s *Storage) ListItems(ctx context.Context, workspaceID, status, tag, query string) ([]Item, error) {
+	return s.ListFiltered(ctx, ListFilter{WorkspaceID: workspaceID, Status: status, Tag: tag, Query: query})
+}
+
+// ListFiltered implements Store.ListFiltered.
+func (s *Storage) ListFiltered(ctx context.Context, f ListFilter) ([]Item, error) {
+	workspaceID, status, tag, query := f.WorkspaceID, f.Status, f.Tag, f.Query
 	// The tag filter matches the normalized JSON array with quoted delimiters
 	// (`%"tag"%`): the tag charset excludes the quote, so a match can never
 	// straddle two tags. LIKE wildcards inside the tag are escaped explicitly.
@@ -237,6 +252,10 @@ func (s *Storage) ListItems(ctx context.Context, workspaceID, status, tag, query
 		conds = append(conds, "(i.title LIKE ? OR i.content LIKE ?)")
 		pattern := "%" + query + "%"
 		args = append(args, pattern, pattern)
+	}
+	if f.Ref != "" {
+		conds = append(conds, "i.ref = ?")
+		args = append(args, f.Ref)
 	}
 	q := `SELECT ` + itemColumns + `
 		FROM inbox_items i LEFT JOIN plans p ON p.id = i.plan_id`
@@ -540,7 +559,7 @@ func scanItem(row rowScanner) (Item, error) {
 	var tags string
 	var createdAt, updatedAt string
 	if err := row.Scan(&item.ID, &workspace, &item.Title, &item.Content, &tags, &item.Status, &priority,
-		&claimedBy, &item.AuthorAgentID, &planID, &item.SlackThreadTS, &agents, &item.Branch, &item.Ref, &item.Flow, &createdAt, &updatedAt, &planName, &planStatus); err != nil {
+		&claimedBy, &item.AuthorAgentID, &planID, &item.SlackThreadTS, &agents, &item.Branch, &item.Ref, &item.Flow, &item.ExternalURL, &createdAt, &updatedAt, &planName, &planStatus); err != nil {
 		return item, fmt.Errorf("scanning inbox item: %w", err)
 	}
 	if workspace.Valid {

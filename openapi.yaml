@@ -12,6 +12,20 @@ info:
     When an API key is configured, every endpoint (reads, writes, MCP, SSE)
     requires it, sent as `Authorization: Bearer <key>`.
     When no API key is configured, authentication is disabled.
+
+    A key with the delegate permission (or the root key) may send
+    `X-Skopos-On-Behalf-Of: <person>` (an email or username, at most 200
+    characters) to name the person it acts for; the audit log, approvals and
+    answers record "<person> (key <name>)". Other keys sending it get 400.
+
+    POSTs under `/api/inbox` accept an `Idempotency-Key` header (1-255
+    printable characters): the same key with the same request within 24
+    hours answers the stored response (`Idempotent-Replayed: true`) instead
+    of acting again; the same key with a different request answers 422, and
+    one still running 409. Keys are kept per API key, and only successful
+    responses are kept: a refused or failed request can be retried with the
+    same key. The person named by X-Skopos-On-Behalf-Of is part of the
+    request.
 servers:
   - url: http://localhost:8080
     description: Local development
@@ -1210,16 +1224,22 @@ paths:
                 author_agent_id: { type: string }
                 agents: { type: string, enum: [panel, solo], description: "Multi-agent stages for this item: the repository's agent panel or one agent; omit for the repository default (--agents-default)" }
                 branch: { type: string, description: "The branch to work on: an existing one is taken over (handover, review), a new one is created under this name. Omit to let the worker name it" }
-                ref: { type: string, description: "External reference (e.g. a work request number) for the repository's branch template ({ref})" }
+                ref: { type: string, description: "External reference (e.g. a work request number) for the repository's branch template ({ref}); GET /api/inbox?ref= finds the item by it" }
+                external_url: { type: string, description: "https link to the item's job in another system" }
+                start: { type: string, enum: [queue, review], description: "Start the item right after creating it: queue (the pipeline) or review (review-only; needs branch or ref). Needs the approver permission and workspace_id. A start that fails leaves the item open and sets start_error" }
+      parameters:
+        - { name: Idempotency-Key, in: header, schema: { type: string }, description: "Makes a retry safe (see the API description)" }
       responses:
         "201":
-          description: Item captured
+          description: Item captured (and started, with start)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/InboxItem" }
         "400": { description: Invalid input, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { description: Unauthorized }
-        "403": { description: "Workspace out of scope for this credential" }
+        "403": { description: "Workspace out of scope for this credential, or start without the approver permission" }
+        "409": { description: "A request with this Idempotency-Key is still running" }
+        "422": { description: "This Idempotency-Key was used for a different request" }
     get:
       summary: List inbox items (rows carry an excerpt; detail is a GET away)
       operationId: listInboxItems
@@ -1229,6 +1249,7 @@ paths:
         - { name: status, in: query, schema: { type: string, enum: [open, in_progress, converted, done, discarded] } }
         - { name: tag, in: query, schema: { type: string } }
         - { name: q, in: query, schema: { type: string, description: Substring match on title and content } }
+        - { name: ref, in: query, schema: { type: string }, description: "Exact external reference: the items of one job, in any status unless status is given" }
       responses:
         "200":
           description: Inbox items
@@ -1321,6 +1342,7 @@ paths:
                 agents: { type: string, enum: [panel, solo, default, ""], description: "Multi-agent switch: panel, solo, or default/\"\" to follow the repository default; omit to keep. Approver-only once the item is in the agent workflow" }
                 branch: { type: string, description: "The branch to work on; \"\" clears it. Approver-only once the item is in the agent workflow" }
                 ref: { type: string, description: "External reference for the branch template; \"\" clears it. Approver-only once the item is in the agent workflow" }
+                external_url: { type: string, description: "https link to the item's job elsewhere; \"\" clears it" }
       responses:
         "204": { description: Updated }
         "403": { description: "Filing target workspace out of scope for this credential" }
@@ -1673,6 +1695,30 @@ paths:
         "401": { description: Unauthorized }
         "404": { description: Not found }
 
+  /api/inbox/{id}/state:
+    get:
+      summary: Everything another system needs to show the item and act on it
+      description: >
+        Whose turn it is and which gate the item waits at, the brief, the plan
+        revisions at the gate (approve one with its revision_id and
+        content_hash), open questions, the newest implementation with its
+        checks and pull request, the reviews of the newest reviewed head, the
+        run in progress, and the actions the caller may take now. Each action
+        is the endpoint to POST: /api/inbox/{id}/<action>. Actions need the
+        approver permission; other keys get none. A key limited by
+        capabilities sees plan only with plans:read, and reason,
+        implementation, reviews and run only with runs:read.
+      operationId: inboxItemState
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      responses:
+        "200":
+          description: The item's state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ItemState" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
   /api/inbox/{id}/timeline:
     get:
       summary: The item's workflow history (audit log filtered to this item)
@@ -2649,6 +2695,7 @@ components:
             name: { type: string }
             all_workspaces: { type: boolean }
             approver: { type: boolean }
+            delegate: { type: boolean }
             workspaces: { type: array, items: { type: string } }
             capabilities: { type: array, nullable: true, items: { type: string }, description: "null = full access. whoami answers every authenticated key, whatever its capabilities." }
         workspaces:
@@ -2667,6 +2714,7 @@ components:
         key_prefix: { type: string }
         all_workspaces: { type: boolean }
         approver: { type: boolean, description: May perform human-only workflow actions; root implies it }
+        delegate: { type: boolean, description: "May name the person it acts for (X-Skopos-On-Behalf-Of)" }
         capabilities:
           type: array
           nullable: true
@@ -2719,8 +2767,9 @@ components:
           type: array
           items: { type: string }
         approver: { type: boolean, description: Grant the approver permission (human-only workflow actions) }
+        delegate: { type: boolean, description: "Grant the delegate permission (X-Skopos-On-Behalf-Of)" }
         capabilities: { type: array, items: { type: string }, description: "Limit the key (see ApiKey.capabilities); none = full access" }
-        preset: { type: string, enum: [agent], description: "A named capability set joined with capabilities. agent = mcp, code:read, blackboard:write, plans:write, status:read, inbox:read" }
+        preset: { type: string, enum: [agent, integration], description: "A named capability set joined with capabilities. agent = mcp, code:read, blackboard:write, plans:write, status:read, inbox:read. integration = rest, inbox:write, plans:read, runs:read" }
 
     ApiKeyCreateResult:
       type: object
@@ -3105,6 +3154,126 @@ components:
               item_id: { type: string }
               reason: { type: string }
 
+    RunCheck:
+      type: object
+      properties:
+        name: { type: string }
+        passed: { type: boolean }
+        output: { type: string }
+        stopped: { type: boolean, description: "The check never finished: check_timeout or quiet_timeout stopped it" }
+
+    ItemState:
+      type: object
+      properties:
+        item:
+          type: object
+          properties:
+            id: { type: string }
+            workspace_id: { type: string }
+            title: { type: string }
+            ref: { type: string }
+            external_url: { type: string }
+            branch: { type: string }
+            flow: { type: string }
+            agents: { type: string }
+            status: { type: string }
+            plan_id: { type: string }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+        turn: { type: string, enum: [person, agent, none] }
+        gate: { type: string, enum: [plan_approval, sign_off, blocked, failed] }
+        reason: { type: string, description: "Why a blocked or failed item stopped" }
+        brief: { type: string, description: "The item's own text, without the pipeline's sections" }
+        plan:
+          type: object
+          properties:
+            plan_id: { type: string }
+            revisions:
+              type: array
+              description: "The open candidates of the current round, else the newest revision"
+              items:
+                type: object
+                properties:
+                  revision_id: { type: string }
+                  revision_no: { type: integer }
+                  label: { type: string }
+                  content_hash: { type: string }
+                  base_sha: { type: string }
+                  locked: { type: boolean }
+                  skills: { type: array, items: { type: string } }
+                  steps:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        title: { type: string }
+                        description: { type: string }
+                        phase: { type: string }
+                        position: { type: integer }
+        questions:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              set_id: { type: string }
+              asker: { type: string }
+              label: { type: string }
+              text: { type: string }
+              options: { type: array, items: { type: string } }
+              blocking: { type: boolean }
+        implementation:
+          type: object
+          properties:
+            run_id: { type: string }
+            status: { type: string }
+            head_sha: { type: string }
+            pushed: { type: boolean }
+            pr_url: { type: string }
+            diffstat: { type: string }
+            summary: { type: string }
+            fail_reason: { type: string }
+            setup: { type: array, items: { $ref: "#/components/schemas/RunCheck" } }
+            checks: { type: array, items: { $ref: "#/components/schemas/RunCheck" } }
+            fix_rounds: { type: integer }
+        reviews:
+          type: array
+          items:
+            type: object
+            properties:
+              run_id: { type: string }
+              stage: { type: string }
+              runner: { type: string }
+              focus: { type: string }
+              head_sha: { type: string }
+              status: { type: string }
+              passed: { type: boolean, description: "Succeeded with no blocking finding" }
+              blocking: { type: integer }
+              nits: { type: integer }
+              summary: { type: string }
+              findings:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    severity: { type: string, enum: [blocking, nit] }
+                    text: { type: string }
+                    file: { type: string }
+        run:
+          type: object
+          properties:
+            id: { type: string }
+            stage: { type: string }
+            status: { type: string }
+            runner: { type: string }
+            phase: { type: string }
+            worker_id: { type: string }
+            created_at: { type: string, format: date-time }
+        actions:
+          type: array
+          items: { type: string, enum: [queue, review, approve, request-changes, answers, retry, reject, mark-done, second-opinion] }
+
     InboxItem:
       type: object
       properties:
@@ -3130,6 +3299,8 @@ components:
         branch: { type: string, description: "The branch the item works on (empty = the worker names it)" }
         ref: { type: string, description: "External reference, the branch template's {ref}" }
         flow: { type: string, enum: [review], description: "review = a review-only item" }
+        external_url: { type: string, description: "Link to the item's job in another system" }
+        start_error: { type: string, description: "On a create with start: why the item was created but not started" }
         plan_id: { type: string }
         plan:
           type: object

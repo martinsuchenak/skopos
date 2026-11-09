@@ -50,7 +50,8 @@ func keyCreateCmd() *cli.Command {
 			&cli.StringSliceFlag{Name: "group", Usage: "Workspace group name or id the key holds (repeat or comma-separate)"},
 			&cli.BoolFlag{Name: "all-workspaces", Usage: "Grant access to every workspace"},
 			&cli.BoolFlag{Name: "approver", Usage: "Grant the approver permission (human-only workflow actions; never for agent or worker keys)"},
-			&cli.StringFlag{Name: "preset", Usage: "Limit the key to a capability preset (agent: MCP only — code read, blackboard and plans write)"},
+			&cli.BoolFlag{Name: "delegate", Usage: "Let the key name the person it acts for (X-Skopos-On-Behalf-Of; an integration recording people's decisions)"},
+			&cli.StringFlag{Name: "preset", Usage: "Limit the key to a capability preset (agent: MCP only — code read, blackboard and plans write; integration: REST — inbox write, plans and runs read)"},
 			&cli.StringSliceFlag{Name: "capability", Usage: "Limit the key to these capabilities (rest, mcp, <area>:read|write; repeat or comma-separate); none = full access"},
 		),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
@@ -67,7 +68,7 @@ func keyCreateCmd() *cli.Command {
 			if all {
 				workspaces = []string{"*"}
 			}
-			body := map[string]any{"name": name, "workspaces": workspaces, "approver": cmd.GetBool("approver")}
+			body := map[string]any{"name": name, "workspaces": workspaces, "approver": cmd.GetBool("approver"), "delegate": cmd.GetBool("delegate")}
 			if len(groups) > 0 {
 				body["groups"] = groups
 			}
@@ -83,10 +84,7 @@ func keyCreateCmd() *cli.Command {
 			}
 			fmt.Println("API key created — store it now, it is shown only once:")
 			fmt.Printf("  %s\n", result.Secret)
-			label := scopeLabel(result.Key)
-			if result.Key.Approver {
-				label += "  [approver]"
-			}
+			label := scopeLabel(result.Key) + permissionsLabel(result.Key.Approver, result.Key.Delegate)
 			fmt.Printf("  id: %s  name: %s  scope: %s\n", result.Key.ID, result.Key.Name, label)
 			if len(result.Key.Groups) > 0 {
 				fmt.Printf("  groups: %s\n", strings.Join(result.Key.Groups, ", "))
@@ -160,6 +158,7 @@ func whoamiCmd() *cli.Command {
 					Name          string   `json:"name"`
 					AllWorkspaces bool     `json:"all_workspaces"`
 					Approver      bool     `json:"approver"`
+					Delegate      bool     `json:"delegate"`
 					Workspaces    []string `json:"workspaces"`
 					Capabilities  []string `json:"capabilities"`
 				} `json:"key"`
@@ -181,10 +180,7 @@ func whoamiCmd() *cli.Command {
 			if who.Root {
 				fmt.Println("root key — full access")
 			} else if who.Key != nil {
-				label := scopeLabelKey(who.Key.AllWorkspaces, who.Key.Workspaces)
-				if who.Key.Approver {
-					label += "  [approver]"
-				}
+				label := scopeLabelKey(who.Key.AllWorkspaces, who.Key.Workspaces) + permissionsLabel(who.Key.Approver, who.Key.Delegate)
 				fmt.Printf("key %s (%s) — scope: %s\n", who.Key.ID, who.Key.Name, label)
 				fmt.Printf("  capabilities: %s\n", capabilitiesLabel(who.Key.Capabilities))
 			}
@@ -227,6 +223,8 @@ func keyEditCmd() *cli.Command {
 			&cli.BoolFlag{Name: "all-workspaces", Usage: "Grant access to every workspace (replaces the list)"},
 			&cli.BoolFlag{Name: "approver", Usage: "Grant the approver permission"},
 			&cli.BoolFlag{Name: "no-approver", Usage: "Remove the approver permission"},
+			&cli.BoolFlag{Name: "delegate", Usage: "Grant the delegate permission (the key may name the person it acts for)"},
+			&cli.BoolFlag{Name: "no-delegate", Usage: "Remove the delegate permission"},
 			&cli.StringFlag{Name: "preset", Usage: "Set the key's capabilities to a preset (joined with --capability)"},
 			&cli.StringSliceFlag{Name: "capability", Usage: "Set the key's capabilities (replaces the current list)"},
 			&cli.BoolFlag{Name: "full-access", Usage: "Remove every capability limit"},
@@ -258,6 +256,12 @@ func keyEditCmd() *cli.Command {
 				body["approver"] = true
 			}
 			switch {
+			case cmd.GetBool("no-delegate"):
+				body["delegate"] = false
+			case cmd.GetBool("delegate"):
+				body["delegate"] = true
+			}
+			switch {
 			case cmd.GetBool("full-access"):
 				body["capabilities"] = []string{}
 			default:
@@ -269,16 +273,13 @@ func keyEditCmd() *cli.Command {
 				}
 			}
 			if len(body) == 0 {
-				return fmt.Errorf("nothing to edit: pass --name, --workspace, --group, --approver, --all-workspaces, --preset, --capability or --full-access")
+				return fmt.Errorf("nothing to edit: pass --name, --workspace, --group, --approver, --delegate, --all-workspaces, --preset, --capability or --full-access")
 			}
 			var key apikeys.Key
 			if err := keysCall(ctx, cmd, http.MethodPatch, "/api/keys/"+strings.TrimSpace(args[0]), body, &key); err != nil {
 				return err
 			}
-			label := scopeLabel(key)
-			if key.Approver {
-				label += "  [approver]"
-			}
+			label := scopeLabel(key) + permissionsLabel(key.Approver, key.Delegate)
 			fmt.Printf("updated %s  name: %s  scope: %s\n", key.ID, key.Name, label)
 			if len(key.Groups) > 0 {
 				fmt.Printf("  groups: %s\n", strings.Join(key.Groups, ", "))
@@ -419,4 +420,16 @@ func capabilitiesLabel(caps []string) string {
 		return "none"
 	}
 	return strings.Join(caps, ", ")
+}
+
+// permissionsLabel marks a key's workflow permissions in listings.
+func permissionsLabel(approver, delegate bool) string {
+	out := ""
+	if approver {
+		out += "  [approver]"
+	}
+	if delegate {
+		out += "  [delegate]"
+	}
+	return out
 }

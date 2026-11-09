@@ -171,15 +171,8 @@ func (s *Service) recordAudit(ctx context.Context, workerID, action, via, notes 
 
 // actorName names the caller the way the audit log does.
 func actorName(ctx context.Context) string {
-	p := auth.PrincipalFromContext(ctx)
-	switch {
-	case p == nil:
-		return "system"
-	case p.Root:
-		return "root"
-	default:
-		return "key " + p.Name
-	}
+	actor, _ := auth.Actor(ctx)
+	return actor
 }
 
 // workerOwner reads the key a worker's row belongs to and the workspaces

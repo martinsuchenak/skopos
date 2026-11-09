@@ -114,6 +114,15 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "api_keys", "approver", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+	// on_behalf_of: the person a delegate key named for the action.
+	if err := ensureColumn(db, "audit_log", "on_behalf_of", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	// delegate: the key may name the person it acts for
+	// (X-Skopos-On-Behalf-Of; integrations).
+	if err := ensureColumn(db, "api_keys", "delegate", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 	if err := ensureColumn(db, "runs", "lease_token_hash", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -233,10 +242,15 @@ func RunMigrations(db *sql.DB) error {
 	// Branch handover and review-only (tmp/branch-handover — design.md):
 	// the branch the item works on, its external reference for branch
 	// templates, and 'review' for a review-only item.
-	for _, col := range []string{"branch", "ref", "flow"} {
+	// external_url: the item's job in another system (integrations).
+	for _, col := range []string{"branch", "ref", "flow", "external_url"} {
 		if err := ensureColumn(db, "inbox_items", col, "TEXT NOT NULL DEFAULT ''"); err != nil {
 			return err
 		}
+	}
+	// GET /api/inbox?ref= (an integration finds its job's items).
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_inbox_ref ON inbox_items(ref) WHERE ref <> ''`); err != nil {
+		return fmt.Errorf("indexing inbox refs: %w", err)
 	}
 	if err := widenRunGroupStages(db); err != nil {
 		return err

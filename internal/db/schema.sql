@@ -493,3 +493,20 @@ CREATE TABLE IF NOT EXISTS qa_imports (
     item_id  TEXT    PRIMARY KEY,
     version  INTEGER NOT NULL CHECK (version >= 1)
 ) STRICT;
+
+-- Idempotency-Key (internal/idempotency): a POST's key, per API key, and
+-- the response a retry gets back; pruned after 24 hours. status 0 = the
+-- request is still running.
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+    owner        TEXT NOT NULL,
+    idem_key     TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    status       INTEGER NOT NULL DEFAULT 0,
+    content_type TEXT NOT NULL DEFAULT '',
+    response     BLOB,
+    created_ms   INTEGER NOT NULL,
+    done_ms      INTEGER,
+    PRIMARY KEY (owner, idem_key)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_created ON idempotency_keys(created_ms);

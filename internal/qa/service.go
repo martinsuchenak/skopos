@@ -453,17 +453,7 @@ func optionText(a Answer) string {
 }
 
 // actorOf renders the principal as the audit log does.
-func actorOf(ctx context.Context) (string, string) {
-	p := auth.PrincipalFromContext(ctx)
-	switch {
-	case p == nil:
-		return "system", ""
-	case p.Root:
-		return "root", ""
-	default:
-		return "key " + p.Name, p.KeyID
-	}
-}
+func actorOf(ctx context.Context) (string, string) { return auth.Actor(ctx) }
 
 // cleanVia keeps the closed set of surfaces (audit's), slack only for an
 // approver.

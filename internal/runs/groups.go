@@ -225,14 +225,23 @@ func verdicts(g *Group, members []Run) []Run {
 	return out
 }
 
-func hasBlocking(r Run) bool {
+func hasBlocking(r Run) bool { return BlockingFindings(r) > 0 }
+
+// BlockingFindings counts a run's findings that block (anything but a
+// nit).
+func BlockingFindings(r Run) int {
+	n := 0
 	for _, f := range r.Findings {
 		if f.Severity != SeverityNit {
-			return true
+			n++
 		}
 	}
-	return false
+	return n
 }
+
+// ReviewPassed is the one pass rule for a review-like run (review, branch
+// review, second opinion): it succeeded with no blocking finding.
+func ReviewPassed(r Run) bool { return r.Status == StatusSucceeded && !hasBlocking(r) }
 
 func (s *Service) applyGroupDecision(ctx context.Context, g *Group, members []Run, d groupDecision, cancelReason string) {
 	ok, err := s.storage.DecideGroup(ctx, g.ID, d.outcome, cancelReason, s.now().UTC())

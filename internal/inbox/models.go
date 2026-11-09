@@ -3,6 +3,7 @@ package inbox
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -136,6 +137,9 @@ type Item struct {
 	// Ref is the item's external reference (a work request number), the
 	// {ref} of a repository's branch template.
 	Ref string `json:"ref,omitempty"`
+	// ExternalURL links the item back to the job it came from in another
+	// system (https only).
+	ExternalURL string `json:"external_url,omitempty"`
 	// Flow is "review" for a review-only item (the agent reviews an
 	// existing branch; nothing is planned or implemented), "" otherwise.
 	Flow      string    `json:"flow,omitempty"`
@@ -155,6 +159,9 @@ type Item struct {
 	// AnswersMatched: on an action's response, what its answers were read
 	// as (internal/qa Match): linked to a question, or a general answer.
 	AnswersMatched []qa.Match `json:"answers_matched,omitempty"`
+	// StartError: on a create with start, why the item was created but
+	// not started (it stays open).
+	StartError string `json:"start_error,omitempty"`
 }
 
 // PlanSummary is the linked plan shown on converted items (LEFT JOIN on read;
@@ -214,6 +221,29 @@ func NormalizeRef(v string) (string, error) {
 	return v, nil
 }
 
+// maxExternalURL bounds Item.ExternalURL.
+const maxExternalURL = 2000
+
+// NormalizeExternalURL validates a link to the item's job elsewhere: an
+// absolute https URL with a host, at most 2000 characters. Empty = none.
+func NormalizeExternalURL(v string) (string, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "", nil
+	}
+	u, err := url.Parse(v)
+	if err != nil || len(v) > maxExternalURL || u.Scheme != "https" || u.Host == "" || u.User != nil {
+		return "", fmt.Errorf("%w: external_url must be an https URL of at most %d characters", ErrInvalidInput, maxExternalURL)
+	}
+	return v, nil
+}
+
+// Start values for CreateInput.Start.
+const (
+	StartQueue  = "queue"
+	StartReview = "review"
+)
+
 // NormalizeAgents validates an agents value: "panel", "solo", or empty
 // (repository default). "default" is accepted as an alias for empty.
 func NormalizeAgents(v string) (string, error) {
@@ -255,6 +285,25 @@ type CreateInput struct {
 	// Branch and Ref: see Item.
 	Branch string `json:"branch,omitempty"`
 	Ref    string `json:"ref,omitempty"`
+	// ExternalURL: see Item.
+	ExternalURL string `json:"external_url,omitempty"`
+	// Start: "queue" (the pipeline) or "review" (review-only) starts the
+	// item right after creating it, as POST /api/inbox/{id}/queue or
+	// /review would (approver permission). Empty = the item stays open.
+	Start string `json:"start,omitempty"`
+	// Via labels the surface for the start's audit entry (the REST
+	// handler fills it from X-Skopos-Via).
+	Via string `json:"-"`
+}
+
+// ListFilter selects items for ListItemsFilter. Empty fields match
+// anything; Ref is an exact match.
+type ListFilter struct {
+	WorkspaceID string
+	Status      string
+	Tag         string
+	Query       string
+	Ref         string
 }
 
 // UpdateInput is the enrichment patch. Tags is a pointer so an explicit empty
@@ -274,6 +323,8 @@ type UpdateInput struct {
 	// Branch and Ref: nil = unchanged, "" = clear.
 	Branch *string `json:"branch,omitempty"`
 	Ref    *string `json:"ref,omitempty"`
+	// ExternalURL: nil = unchanged, "" = clear.
+	ExternalURL *string `json:"external_url,omitempty"`
 	// Via labels the surface for the audit log of workflow-item edits
 	// (dashboard, slack, cli, mcp); the REST handler defaults it.
 	Via string `json:"via,omitempty"`
