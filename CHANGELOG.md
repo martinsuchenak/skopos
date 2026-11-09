@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.30.1] — 2026-11-09
+
+### Changed
+
+- **Capturing an item with a branch or reference opens its detail** in the
+  dashboard, where Queue and Review branch are. Items captured without one
+  stay on the board.
+
 ## [0.30.0] — 2026-11-09
 
 ### Added
