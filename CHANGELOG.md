@@ -4,6 +4,25 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.29.0] — 2026-11-09
+
+### Added
+
+- **The decision log.** `skopos questions` lists every question across items
+  with its state and current answer: who answered, through which surface,
+  with which action and approval, and how long it waited. It also lists the
+  answers given when no question was open. Filter by workspace, item, state,
+  asker, who answered and date; `--format csv` or `json` exports it.
+  `GET /api/inbox/questions` serves the same rows (paged, or `format=csv`).
+- **`skopos questions summary`** and `GET /api/inbox/questions/summary`
+  count the same rows: answered, in free text, skipped, open, superseded,
+  free answers, corrections (and those after a run used the answer) and
+  the median wait, in total, per workspace and per person.
+- **MCP tool `inbox_questions`** (read only): an item's questions and
+  answers, or the decision log across the key's workspaces.
+- **A `questions.waiting` event** on `/api/events/stream` when a run asks
+  questions, naming the item and the set (count, blocking, asker, label).
+
 ## [0.28.0] — 2026-11-09
 
 ### Added
