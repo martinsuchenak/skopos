@@ -402,6 +402,20 @@ func (c *Client) AskQuestions(ctx context.Context, runID string, in QuestionsPos
 	return err == nil, err
 }
 
+// ReadQuestions is the item's questions and answers as the run's prompt
+// reads them, rendered by the server from its record (the answers are
+// marked as used by the run). false: the server predates the record (404).
+func (c *Client) ReadQuestions(ctx context.Context, runID, workerID string) (string, bool, error) {
+	var out struct {
+		Prompt string `json:"prompt"`
+	}
+	err := c.doHeader(ctx, http.MethodPost, "/api/runs/"+runID+"/questions/read", map[string]string{"worker_id": workerID}, &out, "X-Skopos-Lease", c.leaseHeader(runID))
+	if err != nil && strings.Contains(err.Error(), ": 404 ") {
+		return "", false, nil
+	}
+	return out.Prompt, err == nil, err
+}
+
 // CreatePlan, AddPlanItem, CreateRevision, LinkPlan, Transition: the writes
 // the stage executors need. Plan item text is immutable server-side.
 func (c *Client) GetPlan(ctx context.Context, id string) (*Plan, error) {

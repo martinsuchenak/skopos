@@ -23,6 +23,9 @@ type AnswerItem struct {
 	QuestionID string `json:"question_id"`
 	Option     string `json:"option,omitempty"`
 	Text       string `json:"text,omitempty"`
+	// Replaces names the current answer a correction replaces (required to
+	// answer an answered question again).
+	Replaces string `json:"replaces,omitempty"`
 }
 
 func (in *AnswersInput) UnmarshalJSON(b []byte) error {
@@ -52,6 +55,7 @@ type Match struct {
 	SetID      string `json:"set_id,omitempty"`
 	N          int    `json:"n,omitempty"`
 	Option     string `json:"option,omitempty"`
+	Replaces   string `json:"replaces,omitempty"`
 	General    bool   `json:"general,omitempty"`
 }
 

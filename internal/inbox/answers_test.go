@@ -10,6 +10,7 @@ import (
 
 	"github.com/martinsuchenak/skopos/internal/approvals"
 	"github.com/martinsuchenak/skopos/internal/audit"
+	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/itemtext"
 	"github.com/martinsuchenak/skopos/internal/plans"
@@ -133,10 +134,11 @@ func TestApproveRecordsAnswers(t *testing.T) {
 	if !strings.Contains(after.Content, "## Answers\n\n1. Which backend?\n   Answer: (a) Redis\nkeep it simple\n\n\n## Approval notes\n\nship it") {
 		t.Fatalf("content:\n%s", after.Content)
 	}
-	sets, err := svc.Questions(ctx, item.ID)
+	rec, err := svc.Questions(ctx, item.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	sets := rec.Sets
 	q1 := sets[0].Questions[0]
 	if q1.State != qa.StateAnswered || q1.Answers[0].ApprovalID == "" || q1.Answers[0].Via != audit.ViaDashboard || sets[0].Questions[1].State != qa.StateAnsweredFreeText {
 		t.Fatalf("record: %+v", sets)
@@ -160,7 +162,8 @@ func TestRequestChangesStructuredAndSkipped(t *testing.T) {
 		Answers: qa.AnswersInput{Items: []qa.AnswerItem{{QuestionID: set.Questions[0].ID, Option: "b", Text: "quotes only"}}}}); err != nil {
 		t.Fatal(err)
 	}
-	sets, _ := svc.Questions(ctx, item.ID)
+	rec, _ := svc.Questions(ctx, item.ID)
+	sets := rec.Sets
 	if sets[0].Questions[0].State != qa.StateAnswered || sets[0].Questions[1].State != qa.StateSkipped {
 		t.Fatalf("states: %+v", sets[0].Questions)
 	}
@@ -180,8 +183,40 @@ func TestAppendedQuestionsRecorded(t *testing.T) {
 	if err := svc.UpdateItem(ctx, item.ID, UpdateInput{Content: cur.Content + "\n\n## Questions — implementer\n\n1. Which scope?\n   - (a) sales\n"}); err != nil {
 		t.Fatal(err)
 	}
-	sets, _ := svc.Questions(ctx, item.ID)
+	rec, _ := svc.Questions(ctx, item.ID)
+	sets := rec.Sets
 	if len(sets) != 1 || sets[0].Asker != qa.AskerImplementer || sets[0].Questions[0].Options[0] != "sales" {
 		t.Fatalf("recorded: %+v", sets)
+	}
+}
+
+// Answers on their own: recorded while the item waits, the item stays
+// where it is; refused when it doesn't wait or without approver rights.
+func TestAnswerWithoutMoving(t *testing.T) {
+	svc, plansSvc, qaSvc := qaStack(t)
+	ctx := context.Background()
+	item := mustReadyForApproval(t, svc, plansSvc, "answer only")
+	askOn(t, qaSvc, item, qa.AskerPlanner, itemtext.Question{Text: "Which backend?", Options: []string{"Redis", "in-process"}})
+	plainKey := auth.WithPrincipal(ctx, &auth.Principal{Name: "agent", KeyID: "k-agent"})
+	if _, err := svc.Answer(plainKey, item.ID, qa.AnswersInput{Text: "1) a"}, audit.ViaAPI); !errors.Is(err, auth.ErrApproverRequired) {
+		t.Fatalf("answering needs the approver permission: %v", err)
+	}
+	got, err := svc.Answer(approverCtx(), item.ID, qa.AnswersInput{Text: "1) b — for now"}, audit.ViaAPI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusAwaitingApproval || len(got.AnswersMatched) != 1 || !strings.Contains(got.Content, "## Answers\n\n1. Which backend?\n   Answer: (b) in-process — for now") {
+		t.Fatalf("answered, not moved: %s %+v\n%s", got.Status, got.AnswersMatched, got.Content)
+	}
+	rec, _ := svc.Questions(ctx, item.ID)
+	sets := rec.Sets
+	if a := sets[0].Questions[0].Answers[0]; a.Action != qa.ActionAnswer || a.Via != audit.ViaAPI {
+		t.Fatalf("record: %+v", a)
+	}
+	if _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Answer(approverCtx(), item.ID, qa.AnswersInput{Text: "1) a"}, audit.ViaAPI); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("an approved item doesn't wait for answers: %v", err)
 	}
 }

@@ -15,10 +15,16 @@ package qa
 // A set is Open when one of its questions is.
 func withState(sets []Set, answers []Answer) []Set {
 	replaced := map[string]bool{}
+	usedBy := map[string]string{}
 	for _, a := range answers {
 		if a.Replaces != "" {
 			replaced[a.Replaces] = true
 		}
+		usedBy[a.ID] = a.UsedByRun
+	}
+	for i := range answers {
+		answers[i].Replaced = replaced[answers[i].ID]
+		answers[i].AfterUse = answers[i].Replaces != "" && usedBy[answers[i].Replaces] != ""
 	}
 	byQuestion := map[string][]Answer{}
 	general := map[string][]Answer{}
@@ -71,6 +77,16 @@ func withState(sets []Set, answers []Answer) []Set {
 		}
 	}
 	return sets
+}
+
+// current is a question's answer no correction replaces ("" when none).
+func current(q Question) *Answer {
+	for i := len(q.Answers) - 1; i >= 0; i-- {
+		if a := &q.Answers[i]; a.Kind == KindAnswer && !a.Replaced {
+			return a
+		}
+	}
+	return nil
 }
 
 // openSets are the sets with a question still open, in order.

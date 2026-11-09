@@ -253,3 +253,132 @@ func TestNotesRestatedAndDuplicates(t *testing.T) {
 		t.Fatalf("restated / notes: %+v general %+v", qs[2], sets[0].General)
 	}
 }
+
+// A run's read marks the answers as used; a correction names the answer it
+// replaces, becomes the current one, and is flagged when the replaced one
+// was used. The prompt text carries the current answers, the skipped
+// questions and free text, not open or superseded ones.
+func TestCorrectionsAndPrompt(t *testing.T) {
+	s, a := testService(t)
+	set := ask(t, s, AskerPlanner, "", itemtext.Question{Text: "Which backend?", Options: []string{"Redis", "in-process"}}, itemtext.Question{Text: "Keep the flag?"})
+	q1 := set.Questions[0].ID
+	p, _ := s.Prepare(martin(), "it", "ws", ActionApprove, AnswersInput{Items: []AnswerItem{{QuestionID: q1, Option: "a"}}}, true)
+	_ = s.Commit(martin(), p, "", "dashboard")
+	rec, err := s.ForRun(context.Background(), "it", "run-7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sets := rec.Sets
+	first := sets[0].Questions[0].Answers[0]
+	if first.UsedByRun != "run-7" {
+		t.Fatalf("marked: %+v", first)
+	}
+	prompt := PromptText(rec)
+	if !strings.Contains(prompt, "1. Which backend?\n   Answer: (a) Redis") || !strings.Contains(prompt, "2. Keep the flag?\n   (not answered") {
+		t.Fatalf("prompt:\n%s", prompt)
+	}
+	if _, err := s.Prepare(martin(), "it", "ws", ActionAnswer, AnswersInput{Items: []AnswerItem{{QuestionID: q1, Option: "b"}}}, false); err == nil || !strings.Contains(err.Error(), "correction") {
+		t.Fatalf("answering an answered question needs replaces: %v", err)
+	}
+	if _, err := s.Prepare(martin(), "it", "ws", ActionAnswer, AnswersInput{Items: []AnswerItem{{QuestionID: q1, Option: "b", Replaces: "nope"}}}, false); err == nil {
+		t.Fatal("replaces must name the current answer")
+	}
+	p, err = s.Prepare(martin(), "it", "ws", ActionAnswer, AnswersInput{Items: []AnswerItem{{QuestionID: q1, Option: "b", Replaces: first.ID}}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(p.Markdown, "Corrected answer: (b) in-process") {
+		t.Fatalf("markdown: %s", p.Markdown)
+	}
+	_ = s.Commit(martin(), p, "", "cli")
+	sets, _ = s.Item(context.Background(), "it")
+	as := sets[0].Questions[0].Answers
+	if len(as) != 2 || !as[0].Replaced || as[1].Replaces != first.ID || !as[1].AfterUse || current(sets[0].Questions[0]).Option != "b" {
+		t.Fatalf("correction: %+v", as)
+	}
+	if countActions(a, "question.corrected") != 1 {
+		t.Fatalf("audited: %+v", a.events)
+	}
+	// A skipped question can still be answered later, without replaces.
+	p, err = s.Prepare(martin(), "it", "ws", ActionAnswer, AnswersInput{Text: "2) yes"}, false)
+	if err != nil || len(p.Matches) != 0 || p.Markdown != "2) yes" {
+		t.Fatalf("skipped questions aren't open: free text links nothing and is kept as written: %+v %v", p, err)
+	}
+	q2 := set.Questions[1].ID
+	p, err = s.Prepare(martin(), "it", "ws", ActionAnswer, AnswersInput{Items: []AnswerItem{{QuestionID: q2, Text: "yes"}}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Commit(martin(), p, "", "cli")
+	if got := stateOf(t, s); got["Keep the flag?"] != StateAnswered {
+		t.Fatalf("a late answer: %v", got)
+	}
+}
+
+// An answer given when no question is open is a free answer: recorded,
+// and carried by the prompt; a set passed entirely unanswered still tells
+// the agent so.
+func TestFreeAnswersAndSkippedSets(t *testing.T) {
+	s, _ := testService(t)
+	p, err := s.Prepare(martin(), "it", "ws", ActionRetry, AnswersInput{Text: "use the staging DB for the integration test"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Commit(martin(), p, "", "dashboard"); err != nil {
+		t.Fatal(err)
+	}
+	ask(t, s, AskerPlanner, "", itemtext.Question{Text: "Which backend?"})
+	p, _ = s.Prepare(martin(), "it", "ws", ActionApprove, AnswersInput{}, true)
+	_ = s.Commit(martin(), p, "a1", "dashboard")
+	rec, err := s.Record(context.Background(), "it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.Free) != 1 || rec.Free[0].Action != ActionRetry {
+		t.Fatalf("free: %+v", rec.Free)
+	}
+	prompt := PromptText(rec)
+	if !strings.Contains(prompt, "Martin's answer with retry (no question open): use the staging DB") || !strings.Contains(prompt, "1. Which backend?\n   (not answered") {
+		t.Fatalf("prompt:\n%s", prompt)
+	}
+}
+
+// The import runs once per item (version 2): an item only with Answers
+// sections gets its free answers; an item a version 1 import left without
+// them gets them added; an item recorded live is never replayed.
+func TestImportVersions(t *testing.T) {
+	s, _ := testService(t)
+	ctx := context.Background()
+	created := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	if ok, err := s.ImportItem(ctx, "only-answers", "ws", "Brief.\n\n## Answers\n\nuse the staging DB\n", created); err != nil || !ok {
+		t.Fatalf("import: %v %v", ok, err)
+	}
+	if rec, _ := s.Record(ctx, "only-answers"); len(rec.Free) != 1 || rec.Free[0].Text != "use the staging DB" {
+		t.Fatalf("free: %+v", rec.Free)
+	}
+	// A version 1 import: the questions recorded, the free answer not, no
+	// version mark.
+	content := "Brief.\n\n## Questions — planner\n\n1. Cache?\n\n## Answers\n\n1) Redis\n\n## Approval notes\n\ngo\n\n## Answers\n\nretry with more memory\n"
+	if _, err := s.Ask(ctx, AskInput{WorkspaceID: "ws", ItemID: "v1", Asker: AskerPlanner, Source: SourceImported, Questions: []itemtext.Question{{Text: "Cache?"}}, At: created}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.ImportItem(ctx, "v1", "ws", content, created); err != nil || !ok {
+		t.Fatalf("catch-up: %v %v", ok, err)
+	}
+	rec, _ := s.Record(ctx, "v1")
+	if len(rec.Free) != 1 || rec.Free[0].Text != "retry with more memory" {
+		t.Fatalf("catch-up free: %+v", rec.Free)
+	}
+	if ok, _ := s.ImportItem(ctx, "v1", "ws", content, created); ok {
+		t.Fatal("once")
+	}
+	// Recorded live, then a restart: never replayed.
+	p, _ := s.Prepare(martin(), "live", "ws", ActionRetry, AnswersInput{Text: "a live answer"}, true)
+	_ = s.Commit(martin(), p, "", "dashboard")
+	if ok, _ := s.ImportItem(ctx, "live", "ws", "Brief.\n\n## Answers\n\na live answer\n", created); ok {
+		t.Fatal("a live item is not replayed")
+	}
+	if rec, _ := s.Record(ctx, "live"); len(rec.Free) != 1 {
+		t.Fatalf("no duplicate: %+v", rec.Free)
+	}
+}

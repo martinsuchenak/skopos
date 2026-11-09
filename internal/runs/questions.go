@@ -69,3 +69,33 @@ func (r *Run) Label() string {
 	}
 	return r.Runner
 }
+
+// QuestionReader returns the item's questions and answers as the run's
+// prompt reads them, marking the answers as used by the run (internal/qa).
+type QuestionReader func(ctx context.Context, r *Run) (any, error)
+
+// SetQuestionReader wires the record's read for prompts.
+func (s *Service) SetQuestionReader(fn QuestionReader) { s.questionReader = fn }
+
+// ReadQuestions is the record for the run's prompt, for the worker holding
+// the run (its key and lease).
+func (s *Service) ReadQuestions(ctx context.Context, runID, workerID, leaseToken string) (any, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" || strings.TrimSpace(workerID) == "" || leaseToken == "" {
+		return nil, fmt.Errorf("%w: run id, worker and lease are required", ErrInvalidInput)
+	}
+	if s.questionReader == nil {
+		return nil, fmt.Errorf("%w: the question record is not configured", ErrInvalidInput)
+	}
+	if err := s.checkScope(ctx, runID); err != nil {
+		return nil, err
+	}
+	if _, err := s.storage.ClaimHolder(ctx, runID, workerID, callerKeyID(ctx), hashLeaseToken(leaseToken)); err != nil {
+		return nil, err
+	}
+	r, err := s.storage.Get(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	return s.questionReader(ctx, r)
+}

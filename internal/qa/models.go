@@ -112,6 +112,26 @@ type Answer struct {
 	Via         string    `json:"via,omitempty"`
 	UsedByRun   string    `json:"used_by_run,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
+	// AfterUse: a correction of an answer a run had already used.
+	AfterUse bool `json:"after_use,omitempty"`
+	// Replaced: a later correction replaces it.
+	Replaced bool `json:"replaced,omitempty"`
+}
+
+// OptionLetterOf is the letter of the nth option (0-based): a, b, c…
+func OptionLetterOf(i int) string {
+	if i < 26 {
+		return string(rune('a' + i))
+	}
+	return "?"
+}
+
+// Record is an item's questions and answers: the sets in order, and the
+// free answers — text given with an action when no question was open (an
+// answer to a blocker), recorded as general answers to no set.
+type Record struct {
+	Sets []Set    `json:"sets"`
+	Free []Answer `json:"free,omitempty"`
 }
 
 // Asked names who asked a set, as people read it: a plan candidate's label,

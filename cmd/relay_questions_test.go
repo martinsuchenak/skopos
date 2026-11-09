@@ -7,6 +7,8 @@ import (
 
 	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/inbox"
+	"github.com/martinsuchenak/skopos/internal/itemtext"
+	"github.com/martinsuchenak/skopos/internal/qa"
 	"github.com/martinsuchenak/skopos/internal/runs"
 )
 
@@ -97,5 +99,38 @@ func TestRelayBlockedByImplementerListsQuestions(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Errorf("blocked message missing %q:\n%s", want, msg)
 		}
+	}
+}
+
+// `answer:` records answers without moving the item and says what it
+// matched; an approve whose notes answer a question says so too.
+func TestRelayAnswerCommand(t *testing.T) {
+	svc, _, plansSvc, fake, relay := relayStack(t)
+	root := context.Background()
+	item := mustReachGate(t, svc, plansSvc, "answers")
+	qaSvc := relayQA(t, svc)
+	if _, err := qaSvc.Ask(root, qa.AskInput{WorkspaceID: item.WorkspaceID, ItemID: item.ID, Asker: qa.AskerPlanner,
+		Questions: []itemtext.Question{{Text: "Which backend?", Options: []string{"Redis", "in-process"}}, {Text: "Keep the flag?"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if !relay.Apply(root, item.ID, "answer: 1) b") {
+		t.Fatal("answer must be handled")
+	}
+	if got, _ := svc.GetItem(root, item.ID); got.Status != inbox.StatusAwaitingApproval {
+		t.Fatalf("answer doesn't move the item: %s", got.Status)
+	}
+	if msg := fake.last().text; !strings.Contains(msg, "Recorded answers to 1) b") {
+		t.Fatalf("reply: %q", msg)
+	}
+	if !relay.Apply(root, item.ID, "approve: 2) yes, keep it") {
+		t.Fatal("approve must be handled")
+	}
+	if msg := fake.last().text; !strings.Contains(msg, "Recorded answers to 2") {
+		t.Fatalf("approve reply: %q", msg)
+	}
+	rec, _ := svc.Questions(root, item.ID)
+	sets := rec.Sets
+	if sets[0].Questions[1].State != qa.StateAnswered || sets[0].Questions[1].Answers[0].Via != "slack" {
+		t.Fatalf("notes answer recorded via slack: %+v", sets[0].Questions[1])
 	}
 }

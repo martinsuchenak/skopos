@@ -16,6 +16,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/notify"
 	"github.com/martinsuchenak/skopos/internal/plans"
+	"github.com/martinsuchenak/skopos/internal/qa"
 	"github.com/martinsuchenak/skopos/internal/runs"
 	_ "modernc.org/sqlite"
 )
@@ -58,6 +59,18 @@ func (f *fakeProvider) last() fakeMessage {
 	return f.sent[len(f.sent)-1]
 }
 
+// relayQAs: each relayStack's question record, by its inbox service.
+var relayQAs = map[*inbox.Service]*qa.Service{}
+
+func relayQA(t *testing.T, svc *inbox.Service) *qa.Service {
+	t.Helper()
+	q := relayQAs[svc]
+	if q == nil {
+		t.Fatal("no question record for this stack")
+	}
+	return q
+}
+
 // relayStack wires inbox + plans + runs + the relay exactly like serve.go,
 // with the fake provider as the Slack transport.
 func relayStack(t *testing.T) (*inbox.Service, *runs.Service, *plans.Service, *fakeProvider, *slackRelay) {
@@ -77,6 +90,10 @@ func relayStack(t *testing.T) (*inbox.Service, *runs.Service, *plans.Service, *f
 	inboxSvc := inbox.NewService(inbox.NewStorage(sqlDB))
 	inboxSvc.SetAuditRecorder(auditSvc)
 	inboxSvc.SetApprovalLog(approvalsSvc)
+	qaSvc := qa.NewService(qa.NewStorage(sqlDB))
+	qaSvc.SetAuditRecorder(auditSvc)
+	inboxSvc.SetQuestionLog(qaSvc)
+	relayQAs[inboxSvc] = qaSvc
 	inboxSvc.SetPlanRevisions(plansSvc)
 	plansSvc.SetAmendmentGuard(inboxSvc.RequireAmendable)
 	plansSvc.SetPlannableGuard(inboxSvc.RequirePlannable)

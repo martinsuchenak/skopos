@@ -2,16 +2,19 @@ package qa
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/audit"
+	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/ids"
 	"github.com/martinsuchenak/skopos/internal/itemtext"
 )
 
 // ImportItem turns an item's markdown questions and answers into rows, once
-// (an item with rows is skipped). Sections are read in order:
+// per item (qa_imports version 2; an item already recorded only gets the
+// free answers a version 1 import left out). Sections are read in order:
 //
 //   - a questions section becomes a set (source imported; asker from the
 //     heading; no run or subject);
@@ -24,12 +27,72 @@ import (
 // Rows carry the action "imported" and the actor "migration"; their times
 // follow the item's creation in section order.
 func (s *Service) ImportItem(ctx context.Context, itemID, workspaceID, content string, created time.Time) (bool, error) {
-	if !strings.Contains(content, "## Questions — ") {
+	if !strings.Contains(content, "## Questions — ") && !strings.Contains(content, "## Answers") {
 		return false, nil
 	}
-	if has, err := s.storage.HasRecord(ctx, itemID); err != nil || has {
+	if v, err := s.storage.ImportVersion(ctx, itemID); err != nil || v >= importVersion {
 		return false, err
 	}
+	has, err := s.storage.HasRecord(ctx, itemID)
+	if err != nil {
+		return false, err
+	}
+	sets, answers, err := s.replay(ctx, itemID, workspaceID, content, created)
+	if err != nil {
+		return false, err
+	}
+	if has {
+		// Imported by v0.27.0 (version 1), or recorded live under it: add
+		// only the free answers version 1 left out.
+		var free []Answer
+		for _, a := range answers {
+			if a.Kind == KindGeneral && a.SetID == "" {
+				free = append(free, a)
+			}
+		}
+		if err := s.storage.InsertAnswers(ctx, free); err != nil {
+			return false, err
+		}
+		return len(free) > 0, s.storage.SetImportVersion(ctx, itemID, importVersion)
+	}
+	// A fresh import: everything, in one transaction.
+	if err := s.storage.InsertRecord(ctx, sets, answers); err != nil {
+		return false, err
+	}
+	return true, s.storage.SetImportVersion(ctx, itemID, importVersion)
+}
+
+// importVersion 2: free answers (given when no question was open) too.
+const importVersion = 2
+
+// replay runs an item's import in a scratch (in-memory) database and
+// returns the rows it made: the real record is written in one step from
+// them, or only the free answers a version 1 import left out are taken.
+func (s *Service) replay(ctx context.Context, itemID, workspaceID, content string, created time.Time) ([]Set, []Answer, error) {
+	scratch, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = scratch.Close() }()
+	scratch.SetMaxOpenConns(1)
+	if err := db.RunMigrations(scratch); err != nil {
+		return nil, nil, err
+	}
+	r := NewService(NewStorage(scratch))
+	if err := r.importAll(ctx, itemID, workspaceID, content, created); err != nil {
+		return nil, nil, err
+	}
+	sets, err := r.storage.ItemSets(ctx, itemID)
+	if err != nil {
+		return nil, nil, err
+	}
+	answers, err := r.storage.ItemAnswers(ctx, itemID)
+	return sets, answers, err
+}
+
+// importAll records an item's markdown questions and answers (see
+// ImportItem).
+func (s *Service) importAll(ctx context.Context, itemID, workspaceID, content string, created time.Time) error {
 	_, secs := itemtext.Split(content)
 	at := created.UTC()
 	tick := func() time.Time { at = at.Add(time.Millisecond); return at }
@@ -44,15 +107,19 @@ func (s *Service) ImportItem(ctx context.Context, itemID, workspaceID, content s
 				WorkspaceID: workspaceID, ItemID: itemID, Asker: asker, Label: label,
 				SubjectKind: SubjectNone, Source: SourceImported, Questions: itemtext.ParseQuestions(sec.Body), At: tick(),
 			}); err != nil {
-				return false, err
+				return err
 			}
 		case itemtext.IsHumanNotes(sec):
 			sets, err := s.Item(ctx, itemID)
 			if err != nil {
-				return false, err
+				return err
 			}
 			open := openSets(sets)
 			var rows []Answer
+			if len(open) == 0 && itemtext.HeadingIs(sec, "Answers") && strings.TrimSpace(sec.Body) != "" {
+				// An answer to a blocker, with no question open.
+				rows = append(rows, Answer{Kind: KindGeneral, Text: strings.TrimSpace(sec.Body)})
+			}
 			if len(open) > 0 {
 				m := matchText(open, sec.Body, !itemtext.HeadingIs(sec, "Answers"))
 				rows = append(rows, m.answers...)
@@ -84,11 +151,11 @@ func (s *Service) ImportItem(ctx context.Context, itemID, workspaceID, content s
 				rows[j].CreatedAt = tick()
 			}
 			if err := s.storage.InsertAnswers(ctx, rows); err != nil {
-				return false, err
+				return err
 			}
 		}
 	}
-	return true, nil
+	return nil
 }
 
 // ImportAppended records the questions sections an older worker appended by

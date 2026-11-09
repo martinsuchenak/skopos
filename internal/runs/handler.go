@@ -178,6 +178,26 @@ func (h *Handler) Questions(w http.ResponseWriter, r *http.Request) {
 	rest.RespondJSON(w, http.StatusCreated, set)
 }
 
+// ReadQuestions handles POST /api/runs/{id}/questions/read: the item's
+// questions and answers for the run's prompt (sets, and the prompt text),
+// from the worker holding it. The answers returned are marked as used by
+// the run.
+func (h *Handler) ReadQuestions(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		WorkerID string `json:"worker_id"`
+	}
+	if err := rest.DecodeJSON(w, r, &in); err != nil {
+		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	out, err := h.service.ReadQuestions(r.Context(), r.PathValue("id"), in.WorkerID, r.Header.Get("X-Skopos-Lease"))
+	if err != nil {
+		h.respondRunError(w, err, "read questions")
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, out)
+}
+
 // Log handles GET /api/runs/{id}/log?after=&tail=&wait=: the run's log
 // records after the cursor, or the last tail of them; wait (seconds, at
 // most 25) long-polls for the next batch when nothing is new.

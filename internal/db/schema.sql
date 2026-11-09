@@ -485,3 +485,11 @@ CREATE TABLE IF NOT EXISTS answers (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS idx_answers_item ON answers(item_id, created_ms);
 CREATE INDEX IF NOT EXISTS idx_answers_question ON answers(question_id);
+
+-- Which version of the questions-and-answers import an item went through
+-- (internal/qa ImportItem): 2 also records the answers given when no
+-- question was open, which version 1 (v0.27.0) left out.
+CREATE TABLE IF NOT EXISTS qa_imports (
+    item_id  TEXT    PRIMARY KEY,
+    version  INTEGER NOT NULL CHECK (version >= 1)
+) STRICT;

@@ -54,7 +54,7 @@ type SeededQueuer interface {
 type QuestionLog interface {
 	Prepare(ctx context.Context, itemID, workspaceID, action string, in qa.AnswersInput, gate bool) (*qa.Prepared, error)
 	Commit(ctx context.Context, p *qa.Prepared, approvalID, via string) error
-	Item(ctx context.Context, itemID string) ([]qa.Set, error)
+	Record(ctx context.Context, itemID string) (*qa.Record, error)
 	ImportAppended(ctx context.Context, itemID, workspaceID, appended string) error
 	ImportItem(ctx context.Context, itemID, workspaceID, content string, created time.Time) (bool, error)
 }
@@ -338,7 +338,7 @@ func (s *Service) Approve(ctx context.Context, itemID string, input ApproveInput
 	// refused answer leaves the item as it was.
 	answers := input.Answers
 	answers.Notes = input.Notes
-	if input.prepared, err = s.prepareAnswers(ctx, item, qa.ActionApprove, answers); err != nil {
+	if input.prepared, err = s.prepareAnswers(ctx, item, qa.ActionApprove, answers, true); err != nil {
 		return nil, err
 	}
 	// A multi-agent plan round: approve names one candidate.
@@ -485,18 +485,73 @@ func (in ApproveInput) auditNotes() string {
 // questions (internal/qa); every gate goes through it, answers or not, so
 // the open questions it passes are recorded as skipped. Without the
 // question record (tests, an unwired service) free text is kept as written.
-func (s *Service) prepareAnswers(ctx context.Context, item *Item, action string, in qa.AnswersInput) (*qa.Prepared, error) {
+func (s *Service) prepareAnswers(ctx context.Context, item *Item, action string, in qa.AnswersInput, gate bool) (*qa.Prepared, error) {
 	if s.questions == nil {
 		if len(in.Items) > 0 {
 			return nil, fmt.Errorf("%w: answers by question id need the question record", ErrInvalidInput)
 		}
 		return &qa.Prepared{Markdown: strings.TrimSpace(in.Text)}, nil
 	}
-	p, err := s.questions.Prepare(ctx, item.ID, item.WorkspaceID, action, in, true)
+	p, err := s.questions.Prepare(ctx, item.ID, item.WorkspaceID, action, in, gate)
 	if errors.Is(err, qa.ErrInvalidInput) {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidInput, strings.TrimPrefix(err.Error(), qa.ErrInvalidInput.Error()+": "))
 	}
 	return p, err
+}
+
+// Answer records answers without moving the item, while it waits for
+// Martin (awaiting approval, blocked or failed): they reach the next run's
+// prompt, and a correction (by question id, naming the answer it replaces)
+// fixes an answer already given. The "## Answers" section is appended.
+func (s *Service) Answer(ctx context.Context, itemID string, answers qa.AnswersInput, via string) (*Item, error) {
+	if err := auth.RequireApprover(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.requireItemScopeQuiet(ctx, itemID); err != nil {
+		return nil, err
+	}
+	item, err := s.store.GetItem(ctx, strings.TrimSpace(itemID))
+	if err != nil {
+		return nil, err
+	}
+	switch item.Status {
+	case StatusAwaitingApproval, StatusBlocked, StatusFailed:
+	default:
+		return nil, fmt.Errorf("%w: answers are given while the item waits for you (awaiting approval, blocked or failed); the item is %s", ErrInvalidInput, statusLabel(item.Status))
+	}
+	if s.questions == nil {
+		return nil, fmt.Errorf("%w: the question record is not configured", ErrInvalidInput)
+	}
+	if answers.Empty() {
+		return nil, fmt.Errorf("%w: no answers", ErrInvalidInput)
+	}
+	prepared, err := s.prepareAnswers(ctx, item, qa.ActionAnswer, answers, false)
+	if err != nil {
+		return nil, err
+	}
+	appendAnswers, err := s.appendNotes(ctx, "## Answers", prepared.Markdown)
+	if err != nil {
+		return nil, err
+	}
+	if appendAnswers != nil {
+		if err := s.store.RunInTx(ctx, func(tx Store) error {
+			cur, err := tx.GetItem(ctx, item.ID)
+			if err != nil {
+				return err
+			}
+			return appendAnswers(tx, cur)
+		}); err != nil {
+			return nil, err
+		}
+	}
+	s.publishItem(ctx, item.ID)
+	s.auditItem(ctx, item.ID, "inbox.answer", via, prepared.Markdown, "")
+	out, err := s.store.GetItem(ctx, item.ID)
+	if err != nil {
+		return nil, err
+	}
+	s.commitAnswers(ctx, out, prepared, "", via)
+	return out, nil
 }
 
 // commitAnswers records the answers once the action succeeded, and puts
@@ -606,7 +661,7 @@ func (s *Service) RequestChangesWith(ctx context.Context, itemID string, in Chan
 	revID, baseSHA := s.approvedRevision(ctx, item)
 	answers := in.Answers
 	answers.Notes = notes
-	prepared, perr := s.prepareAnswers(ctx, item, qa.ActionRequestChanges, answers)
+	prepared, perr := s.prepareAnswers(ctx, item, qa.ActionRequestChanges, answers, true)
 	if perr != nil {
 		return nil, perr
 	}
@@ -747,7 +802,7 @@ func (s *Service) RetryWith(ctx context.Context, itemID string, answers qa.Answe
 	// item (review M6): a concurrent retry loses the matrix check instead of
 	// the answer, and a failed queue/transition leaves no orphaned text for
 	// the next retry to duplicate.
-	prepared, err := s.prepareAnswers(ctx, item, qa.ActionRetry, answers)
+	prepared, err := s.prepareAnswers(ctx, item, qa.ActionRetry, answers, true)
 	if err != nil {
 		return nil, err
 	}

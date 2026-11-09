@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -21,11 +22,38 @@ func nullable(s string) sql.NullString { return sql.NullString{String: s, Valid:
 
 // InsertSet writes a set's questions in one transaction.
 func (st *Storage) InsertSet(ctx context.Context, s Set) error {
+	return st.InsertRecord(ctx, []Set{s}, nil)
+}
+
+// InsertAnswers writes answer rows in one transaction.
+func (st *Storage) InsertAnswers(ctx context.Context, as []Answer) error {
+	if len(as) == 0 {
+		return nil
+	}
+	return st.InsertRecord(ctx, nil, as)
+}
+
+// InsertRecord writes sets and answers in one transaction: all or nothing.
+func (st *Storage) InsertRecord(ctx context.Context, sets []Set, as []Answer) error {
 	tx, err := st.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	for _, s := range sets {
+		if err := insertSet(ctx, tx, s); err != nil {
+			return err
+		}
+	}
+	for _, a := range as {
+		if err := insertAnswer(ctx, tx, a); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func insertSet(ctx context.Context, tx *sql.Tx, s Set) error {
 	for _, q := range s.Questions {
 		opts, err := json.Marshal(q.Options)
 		if err != nil {
@@ -47,31 +75,24 @@ func (st *Storage) InsertSet(ctx context.Context, s Set) error {
 			return fmt.Errorf("inserting question: %w", err)
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
-// InsertAnswers writes answer rows in one transaction.
-func (st *Storage) InsertAnswers(ctx context.Context, as []Answer) error {
-	if len(as) == 0 {
-		return nil
+func insertAnswer(ctx context.Context, tx *sql.Tx, a Answer) error {
+	setID := nullable(a.SetID)
+	if a.Kind == KindGeneral {
+		setID.Valid = true // '' = a free answer, to no set
 	}
-	tx, err := st.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO answers (id, workspace_id, item_id, kind, question_id, set_id, option, text, replaces,
+			action, approval_id, actor, actor_key_id, via, used_by_run, created_ms)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ID, a.WorkspaceID, a.ItemID, a.Kind, nullable(a.QuestionID), setID, nullable(a.Option), a.Text,
+		nullable(a.Replaces), a.Action, nullable(a.ApprovalID), a.Actor, nullable(a.ActorKeyID), a.Via,
+		nullable(a.UsedByRun), ms(a.CreatedAt)); err != nil {
+		return fmt.Errorf("inserting answer: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
-	for _, a := range as {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO answers (id, workspace_id, item_id, kind, question_id, set_id, option, text, replaces,
-				action, approval_id, actor, actor_key_id, via, used_by_run, created_ms)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			a.ID, a.WorkspaceID, a.ItemID, a.Kind, nullable(a.QuestionID), nullable(a.SetID), nullable(a.Option), a.Text,
-			nullable(a.Replaces), a.Action, nullable(a.ApprovalID), a.Actor, nullable(a.ActorKeyID), a.Via,
-			nullable(a.UsedByRun), ms(a.CreatedAt)); err != nil {
-			return fmt.Errorf("inserting answer: %w", err)
-		}
-	}
-	return tx.Commit()
+	return nil
 }
 
 // ItemSets returns an item's sets in the order they were asked, with their
@@ -140,10 +161,46 @@ func (st *Storage) ItemAnswers(ctx context.Context, itemID string) ([]Answer, er
 	return out, rows.Err()
 }
 
-// HasRecord reports whether an item has any question rows (the import is
-// per item and runs once).
+// HasRecord reports whether an item has any question or answer rows (the
+// import is per item and runs once).
 func (st *Storage) HasRecord(ctx context.Context, itemID string) (bool, error) {
 	var n int
-	err := st.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM questions WHERE item_id = ?)`, itemID).Scan(&n)
+	err := st.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM questions WHERE item_id = ?) OR EXISTS (SELECT 1 FROM answers WHERE item_id = ?)`, itemID, itemID).Scan(&n)
 	return n == 1, err
+}
+
+// MarkUsed sets used_by_run on the answers that have none: the first run
+// whose prompt carried them. Set once; never changed after.
+func (st *Storage) MarkUsed(ctx context.Context, ids []string, runID string) error {
+	if len(ids) == 0 || runID == "" {
+		return nil
+	}
+	tx, err := st.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, id := range ids {
+		if _, err := tx.ExecContext(ctx, `UPDATE answers SET used_by_run = ? WHERE id = ? AND used_by_run IS NULL`, runID, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ImportVersion is the import version an item went through (0 = none).
+func (st *Storage) ImportVersion(ctx context.Context, itemID string) (int, error) {
+	var v int
+	err := st.db.QueryRowContext(ctx, `SELECT version FROM qa_imports WHERE item_id = ?`, itemID).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return v, err
+}
+
+// SetImportVersion records the import version an item went through.
+func (st *Storage) SetImportVersion(ctx context.Context, itemID string, v int) error {
+	_, err := st.db.ExecContext(ctx, `INSERT INTO qa_imports (item_id, version) VALUES (?, ?)
+		ON CONFLICT (item_id) DO UPDATE SET version = excluded.version`, itemID, v)
+	return err
 }

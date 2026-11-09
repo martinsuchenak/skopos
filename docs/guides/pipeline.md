@@ -291,6 +291,26 @@ answered which question. Notes work the same for the lines that answer
 (`approve: 1) a, 2) Redis` in Slack, `--notes` in the CLI); the rest of the
 notes stays notes.
 
+**Answering without approving.** While the item waits for you (awaiting
+approval, blocked or failed), **Save answers** in the preview records your
+answers and leaves the item where it is; so do `answer: 1) a, 2) …` in
+Slack, `skopos inbox answer --id <item> --answer 1=a --answer "2=Redis"`,
+and `POST /api/inbox/{id}/answers`. The next run reads them.
+
+**Correcting an answer.** Answering an answered question again is a
+correction: it names the answer it replaces (`replaces` in the API,
+`skopos inbox answer --question <id> --replaces <answer id> --option b`).
+The record keeps both, and a correction made after a run already used the
+earlier answer is flagged. `skopos inbox questions --id <item>` shows the
+record with the ids.
+
+**What the agents read.** Each run's prompt gets the decisions from the
+record: every answered question with its current answer, the questions you
+passed unanswered (marked as such, so the agent decides or asks again), and
+your free-text answers, including the answers you gave when no question was
+open (a Retry answer to a failed check, say). The record notes the first run
+that used each answer.
+
 Then either:
 - click **Approve**, with optional notes; they're appended for the
   implementer and override the plan where they conflict;
@@ -446,6 +466,7 @@ the current plan and asks again. You reply with:
 - `changes: notes`;
 - `done`;
 - `retry: answer`;
+- `answer: 1) a, 2) …` (answers the open questions; the item stays where it is);
 - `reject`;
 - `second` or `second <runner>` for an advisory second opinion on the
   finished branch;

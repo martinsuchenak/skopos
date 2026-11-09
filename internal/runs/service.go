@@ -42,6 +42,8 @@ type Service struct {
 	itemAppend func(ctx context.Context, itemID, heading, body string) error
 	// questionAsker records a run's questions (internal/qa, via serve.go).
 	questionAsker QuestionAsker
+	// questionReader reads the record for a run's prompt.
+	questionReader QuestionReader
 	// secondOpinionNotify hears about every finished second opinion (the
 	// Slack relay posts it to the item's thread).
 	secondOpinionNotify func(ctx context.Context, r SecondOpinionResult)

@@ -440,9 +440,19 @@ func (s *Service) ImportQuestions(ctx context.Context) (int, error) {
 	if s.questions == nil {
 		return 0, nil
 	}
-	items, err := s.store.ListItems(ctx, "", "", "", "## Questions — ")
-	if err != nil {
-		return 0, err
+	var items []Item
+	seen := map[string]bool{}
+	for _, q := range []string{"## Questions — ", "## Answers"} {
+		rows, err := s.store.ListItems(ctx, "", "", "", q)
+		if err != nil {
+			return 0, err
+		}
+		for _, r := range rows {
+			if !seen[r.ID] {
+				seen[r.ID] = true
+				items = append(items, r)
+			}
+		}
 	}
 	n := 0
 	for _, row := range items {
@@ -462,8 +472,9 @@ func (s *Service) ImportQuestions(ctx context.Context) (int, error) {
 }
 
 // Questions is the item's question-and-answer record (internal/qa): every
-// set in order, each question with its state and answers.
-func (s *Service) Questions(ctx context.Context, itemID string) ([]qa.Set, error) {
+// set in order, each question with its state and answers, and the free
+// answers given when no question was open.
+func (s *Service) Questions(ctx context.Context, itemID string) (*qa.Record, error) {
 	if err := s.requireItemScopeQuiet(ctx, itemID); err != nil {
 		return nil, err
 	}
@@ -471,9 +482,9 @@ func (s *Service) Questions(ctx context.Context, itemID string) ([]qa.Set, error
 		return nil, err
 	}
 	if s.questions == nil {
-		return []qa.Set{}, nil
+		return &qa.Record{Sets: []qa.Set{}}, nil
 	}
-	return s.questions.Item(ctx, strings.TrimSpace(itemID))
+	return s.questions.Record(ctx, strings.TrimSpace(itemID))
 }
 
 // AppendSection appends "## heading" + body to an item's content inside one

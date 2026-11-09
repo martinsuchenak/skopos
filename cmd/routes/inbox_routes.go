@@ -38,6 +38,7 @@ func registerInboxRoutes(mux *http.ServeMux, h *inbox.Handler) {
 	mux.HandleFunc("POST /api/inbox/{id}/link-plan", h.LinkPlan)
 	mux.HandleFunc("GET /api/inbox/{id}/timeline", h.Timeline)
 	mux.HandleFunc("GET /api/inbox/{id}/questions", h.Questions)
+	mux.HandleFunc("POST /api/inbox/{id}/answers", h.Answer)
 	mux.HandleFunc("GET /api/inbox/{id}/approvals", h.Approvals)
 	mux.HandleFunc("DELETE /api/inbox/{id}", h.DeleteItem)
 	// One-time agent-trial cutover (root-only): tag→status migration per the

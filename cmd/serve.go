@@ -504,6 +504,14 @@ func serveCmd() *cli.Command {
 				}
 				return set, nil
 			})
+			// The record as a run's prompt reads it (answers marked as used).
+			runsService.SetQuestionReader(func(ctx context.Context, r *runs.Run) (any, error) {
+				rec, err := qaService.ForRun(ctx, r.ItemID, r.ID)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"sets": rec.Sets, "free": rec.Free, "prompt": qa.PromptText(rec)}, nil
+			})
 			// The item's own panel/solo switch, read at every queue.
 			runsService.SetItemAgents(func(ctx context.Context, itemID string) string {
 				item, err := inboxService.GetItem(ctx, itemID)

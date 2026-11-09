@@ -37,7 +37,7 @@ type ContentParts = { brief_html: string; rounds: ContentRound[] };
 type InboxDetail = InboxItem & { content: string; content_html: string; content_parts?: ContentParts };
 // The item's question-and-answer record (GET /api/inbox/{id}/questions).
 type QAQuestion = { id: string; n: number; text: string; options: string[]; state: string };
-type QASet = { id: string; asker: string; label?: string; open: boolean; questions: QAQuestion[] };
+type QASet = { id: string; asker: string; label?: string; open: boolean; blocking: boolean; questions: QAQuestion[] };
 type AnswerItem = { question_id: string; option?: string; text?: string };
 type RoundView = { key: string; title: string; meta: string; open: boolean; sections: { key: string; heading: string }[] };
 type QuestionView = { key: string; n: number; text: string; options: { key: string; letter: string; text: string }[] };
@@ -184,6 +184,9 @@ const appState = () => ({
   // picked option's letter and free text. Sent with the action as answers.
   questionAnswers: {} as Record<string, { pick: string; text: string }>,
   previewQuestions: [] as QASet[],
+  // The item whose answers were saved on their own in this preview: its
+  // Retry then needs no more text.
+  answersSavedFor: '',
   // Workers in scope (an active run on an offline worker is flagged) and the
   // item's audit trail (the History section).
   previewWorkers: [] as WorkerSeen[],
@@ -1124,6 +1127,7 @@ const appState = () => ({
     this.previewItem = (await res.json()) as InboxDetail;
     this.previewRoundOpen = {};
     this.questionAnswers = {};
+    this.answersSavedFor = '';
     this.injectPreviewContent();
     this.workflowNote = '';
     this.previewStatusSeen = '';
@@ -1255,7 +1259,7 @@ const appState = () => ({
     const all = this.openQuestionGroups().flatMap((g) => g.questions);
     const n = all.filter((q) => this.answerPick(q.key) !== '' || this.answerText(q.key).trim() !== '').length;
     const actions = this.workflowShowRetry() ? 'Retry' : 'Approve or ' + this.requestChangesLabel();
-    return n + ' of ' + all.length + ' answered · sent with ' + actions;
+    return n + ' of ' + all.length + ' answered · sent with ' + actions + ', or saved on their own';
   },
   // The answers by question id: the picked option and/or the words.
   answerItems(): AnswerItem[] {
@@ -1268,6 +1272,16 @@ const appState = () => ({
       }
     }
     return out;
+  },
+  // Answers saved on their own in this preview, for this item: they are the
+  // answer to the blocker, so Retry needs no more text.
+  savedAnswers(): boolean { return !!this.previewItem && this.answersSavedFor === this.previewItem.id; },
+  answersReady(): boolean { return !this.workflowBusy && this.answerItems().length > 0; },
+  // Answers without moving the item: recorded now, read by the next run.
+  async saveAnswers() {
+    const item = this.previewItem;
+    if (!item || !this.answersReady()) return;
+    if (await this.postWorkflowAction(item.id, 'answers', { answers: this.answerItems() }, 'Answers saved')) this.answersSavedFor = item.id;
   },
   hasWorkflowInput(): boolean { return this.workflowNote.trim().length > 0 || this.answerItems().length > 0; },
   async copyItemId() {
@@ -2100,7 +2114,7 @@ const appState = () => ({
   },
   workflowNotePlaceholder(): string {
     const asked = this.openQuestionGroups().length > 0;
-    if (this.workflowShowRetry()) return asked ? 'anything else for the agent (optional once you answered)' : 'answer to the blocker (required)';
+    if (this.workflowShowRetry()) return asked || this.savedAnswers() ? 'anything else for the agent (optional once you answered)' : 'answer to the blocker (required)';
     if (this.workflowShowApprove() && asked) return 'notes (Request changes needs notes or answers)';
     if (this.workflowShowMarkDone()) return 'what to change (required for Request changes)';
     if (this.workflowShowApprove()) return 'notes (required for Request changes)';
@@ -2114,10 +2128,12 @@ const appState = () => ({
     if (action === 'approve') return true;
     if (action === 'queue' || action === 'review' || action === 'reject') return true;
     if (action === 'mark_done') return this.reviewHead() !== '';
+    // Retry after saving the answers: they are the answer to the blocker.
+    if (action === 'retry' && this.savedAnswers()) return true;
     return this.hasWorkflowInput();
   },
-  async postWorkflowAction(id: string, action: string, body: Record<string, unknown> | null, okMessage: string) {
-    if (this.workflowBusy) return;
+  async postWorkflowAction(id: string, action: string, body: Record<string, unknown> | null, okMessage: string): Promise<boolean> {
+    if (this.workflowBusy) return false;
     this.workflowBusy = true;
     const opts: RequestInit = { method: 'POST', headers: { 'X-Skopos-Via': 'dashboard' } };
     if (body) opts.body = JSON.stringify(body);
@@ -2127,13 +2143,14 @@ const appState = () => ({
       // A refusal often means the preview is stale (a newer revision, a
       // status that moved on): show the current state.
       await this.reloadPreview();
-      return;
+      return false;
     }
     this.notify(okMessage, 'success');
     this.workflowNote = '';
     this.questionAnswers = {};
     await this.fetchInbox();
     await this.reloadPreview();
+    return true;
   },
   queueInboxItem(id: string) { this.postWorkflowAction(id, 'queue', null, 'Queued for the agent pipeline'); },
   reviewInboxBranch(id: string) { this.postWorkflowAction(id, 'review', null, 'Queued for a review of its branch'); },
@@ -2150,7 +2167,7 @@ const appState = () => ({
   // Retry: the answers by question id, and the note as free text (read
   // against the open questions too).
   retryInboxItem(id: string) {
-    if (!this.hasWorkflowInput()) return;
+    if (!this.hasWorkflowInput() && !this.savedAnswers()) return;
     this.postWorkflowAction(id, 'retry', { answers: this.answerItems(), answer: this.workflowNote.trim() }, 'Requeued');
   },
   markDoneInboxItem(id: string) { const head = this.reviewHead(); if (head) this.postWorkflowAction(id, 'mark-done', { head_sha: head }, 'Marked done'); },

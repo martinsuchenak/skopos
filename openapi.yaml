@@ -1706,8 +1706,36 @@ paths:
                 type: object
                 properties:
                   sets: { type: array, items: { $ref: "#/components/schemas/QuestionSet" } }
+                  free: { type: array, items: { $ref: "#/components/schemas/Answer" }, description: Answers given with an action when no question was open (an answer to a blocker) }
                   open: { type: integer }
         "401": { description: Unauthorized }
+        "404": { description: Not found }
+
+  /api/inbox/{id}/answers:
+    post:
+      summary: Answer the open questions without moving the item (approver permission required)
+      description: While the item waits for the approver (awaiting_approval, blocked, failed). Answers by question id or free text (Answers); answering an answered question again is a correction and names the answer it replaces. Recorded with via and actor, appended as "## Answers"; the next run's prompt reads them.
+      operationId: answerInboxItem
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [answers]
+              properties:
+                answers: { $ref: "#/components/schemas/Answers" }
+      responses:
+        "200":
+          description: The item, with answers_matched
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InboxItem" }
+        "400": { description: Not waiting for the approver, no answers, or an answer refused (unknown question, superseded, a correction without replaces) }
+        "401": { description: Unauthorized }
+        "403": { description: Approver permission required }
         "404": { description: Not found }
 
   /api/inbox/{id}/amend-plan:
@@ -1971,6 +1999,38 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/QuestionSet" }
         "400": { description: Invalid input }
+        "401": { description: Unauthorized }
+        "404": { description: Not found or not the claim holder }
+
+  /api/runs/{id}/questions/read:
+    post:
+      summary: The item's questions and answers for the run's prompt (the worker holding the claim)
+      description: Authorised like a heartbeat (worker_id, the claim's key, X-Skopos-Lease). Returns the record and the prompt text rendered from it (answered questions with their current answers, questions passed unanswered, free-text answers); the answers returned are marked as used by the run (used_by_run, set once).
+      operationId: readRunQuestions
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: X-Skopos-Lease, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [worker_id]
+              properties:
+                worker_id: { type: string }
+      responses:
+        "200":
+          description: The record and the prompt text
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sets: { type: array, items: { $ref: "#/components/schemas/QuestionSet" } }
+                  free: { type: array, items: { $ref: "#/components/schemas/Answer" } }
+                  prompt: { type: string }
         "401": { description: Unauthorized }
         "404": { description: Not found or not the claim holder }
 
@@ -2293,6 +2353,7 @@ components:
               question_id: { type: string }
               option: { type: string, description: The option's letter (a, b, c…) }
               text: { type: string }
+              replaces: { type: string, description: "A correction: the id of the question's current answer it replaces" }
     QuestionSet:
       type: object
       properties:
@@ -2338,7 +2399,9 @@ components:
         actor: { type: string }
         actor_key_id: { type: string }
         via: { type: string, enum: [dashboard, slack, cli, mcp, api, worker, migration] }
-        used_by_run: { type: string }
+        used_by_run: { type: string, description: The first run whose prompt carried it }
+        replaced: { type: boolean, description: A later correction replaces it }
+        after_use: { type: boolean, description: "A correction of an answer a run had already used" }
         created_at: { type: string, format: date-time }
     PipelineStage:
       type: object

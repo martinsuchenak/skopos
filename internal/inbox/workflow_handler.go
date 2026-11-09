@@ -270,6 +270,22 @@ func (h *Handler) AmendPlan(w http.ResponseWriter, r *http.Request) {
 
 // Timeline is the item's audit-log view: every transition with actor, via,
 // notes and time.
+// Answer handles POST /api/inbox/{id}/answers: answers (or corrections)
+// without moving the item, while it waits for the approver.
+func (h *Handler) Answer(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req actionRequest
+	if err := rest.DecodeJSON(w, r, &req); err != nil {
+		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	item, err := h.service.Answer(r.Context(), r.PathValue("id"), req.Answers, viaFrom(r, ""))
+	h.respondTransition(w, item, err)
+}
+
 // Questions handles GET /api/inbox/{id}/questions: the item's questions and
 // answers (internal/qa), each set in order with its questions' states.
 func (h *Handler) Questions(w http.ResponseWriter, r *http.Request) {
@@ -277,7 +293,7 @@ func (h *Handler) Questions(w http.ResponseWriter, r *http.Request) {
 		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	sets, err := h.service.Questions(r.Context(), r.PathValue("id"))
+	rec, err := h.service.Questions(r.Context(), r.PathValue("id"))
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
@@ -288,14 +304,14 @@ func (h *Handler) Questions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	open := 0
-	for _, st := range sets {
+	for _, st := range rec.Sets {
 		for _, q := range st.Questions {
 			if q.State == qa.StateOpen {
 				open++
 			}
 		}
 	}
-	rest.RespondJSON(w, http.StatusOK, map[string]any{"sets": sets, "open": open})
+	rest.RespondJSON(w, http.StatusOK, map[string]any{"sets": rec.Sets, "free": rec.Free, "open": open})
 }
 
 func (h *Handler) Timeline(w http.ResponseWriter, r *http.Request) {

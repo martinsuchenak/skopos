@@ -109,6 +109,9 @@ func (s *Service) Ask(ctx context.Context, in AskInput) (*Set, error) {
 	if err := s.storage.InsertSet(ctx, set); err != nil {
 		return nil, err
 	}
+	if in.Source != SourceImported {
+		s.recordedLive(ctx, set.ItemID)
+	}
 	set.Open = true
 	if s.audit != nil && in.Source != SourceImported {
 		var lines []string
@@ -126,6 +129,12 @@ func (s *Service) Ask(ctx context.Context, in AskInput) (*Set, error) {
 		})
 	}
 	return &set, nil
+}
+
+// recordedLive marks an item as past the import: its markdown is now
+// written from the record, so a later start must not replay it.
+func (s *Service) recordedLive(ctx context.Context, itemID string) {
+	_ = s.storage.SetImportVersion(ctx, itemID, importVersion)
 }
 
 func askedBy(s Set) string {
@@ -160,6 +169,28 @@ func (s *Service) Item(ctx context.Context, itemID string) ([]Set, error) {
 		sets = []Set{}
 	}
 	return withState(sets, answers), nil
+}
+
+// Record is the item's sets (Item) and its free answers.
+func (s *Service) Record(ctx context.Context, itemID string) (*Record, error) {
+	sets, err := s.storage.ItemSets(ctx, strings.TrimSpace(itemID))
+	if err != nil {
+		return nil, err
+	}
+	answers, err := s.storage.ItemAnswers(ctx, strings.TrimSpace(itemID))
+	if err != nil {
+		return nil, err
+	}
+	if sets == nil {
+		sets = []Set{}
+	}
+	r := &Record{Sets: withState(sets, answers)}
+	for _, a := range answers {
+		if a.Kind == KindGeneral && a.SetID == "" {
+			r.Free = append(r.Free, a)
+		}
+	}
+	return r, nil
 }
 
 // Prepared is an action's answers, checked against the item's open
@@ -210,8 +241,16 @@ func (s *Service) Prepare(ctx context.Context, itemID, workspaceID, action strin
 			if !ok {
 				return nil, fmt.Errorf("%w: question %s is not one of this item's", ErrInvalidInput, it.QuestionID)
 			}
-			if e.q.State != StateOpen {
-				return nil, fmt.Errorf("%w: question %d (%s) is %s", ErrInvalidInput, e.q.N, e.q.ID, strings.ReplaceAll(e.q.State, "_", " "))
+			replaces := strings.TrimSpace(it.Replaces)
+			switch cur := current(e.q); {
+			case e.q.State == StateSuperseded:
+				return nil, fmt.Errorf("%w: question %d (%s) is superseded: a later round asked again", ErrInvalidInput, e.q.N, e.q.ID)
+			case cur != nil && replaces == "":
+				return nil, fmt.Errorf("%w: question %d is answered (%s); a correction names the answer it replaces", ErrInvalidInput, e.q.N, cur.ID)
+			case cur != nil && replaces != cur.ID:
+				return nil, fmt.Errorf("%w: question %d's current answer is %s, not %s", ErrInvalidInput, e.q.N, cur.ID, replaces)
+			case cur == nil && replaces != "":
+				return nil, fmt.Errorf("%w: question %d has no answer to replace", ErrInvalidInput, e.q.N)
 			}
 			if seen[e.q.ID] {
 				return nil, fmt.Errorf("%w: question %d is answered twice", ErrInvalidInput, e.q.N)
@@ -225,13 +264,16 @@ func (s *Service) Prepare(ctx context.Context, itemID, workspaceID, action strin
 			if opt == "" && text == "" {
 				continue // left blank: not an answer
 			}
-			linked = append(linked, Answer{Kind: KindAnswer, QuestionID: e.q.ID, SetID: e.set.ID, Option: opt, Text: text})
-			p.Matches = append(p.Matches, Match{QuestionID: e.q.ID, SetID: e.set.ID, N: e.q.N, Option: opt})
+			linked = append(linked, Answer{Kind: KindAnswer, QuestionID: e.q.ID, SetID: e.set.ID, Option: opt, Text: text, Replaces: replaces})
+			p.Matches = append(p.Matches, Match{QuestionID: e.q.ID, SetID: e.set.ID, N: e.q.N, Option: opt, Replaces: replaces})
 		}
 	}
 	if t := strings.TrimSpace(in.Text); t != "" {
 		if len(open) == 0 {
-			p.Markdown = t // nothing open: kept as written
+			// Nothing open: an answer to the blocker, kept as written and
+			// recorded as a free answer.
+			p.Markdown = t
+			p.rows = append(p.rows, Answer{Kind: KindGeneral, Text: t})
 		} else {
 			m := matchText(open, t, false)
 			linked = appendNew(linked, m.answers) // an answer by id wins
@@ -310,7 +352,11 @@ func renderAnswers(sets []Set, linked []Answer, general map[string]string) strin
 				if a.Text != "" {
 					parts = append(parts, a.Text)
 				}
-				lines = append(lines, fmt.Sprintf("%d. %s\n   Answer: %s", q.N, q.Text, strings.Join(parts, " — ")))
+				label := "Answer"
+				if a.Replaces != "" {
+					label = "Corrected answer"
+				}
+				lines = append(lines, fmt.Sprintf("%d. %s\n   %s: %s", q.N, q.Text, label, strings.Join(parts, " — ")))
 			}
 		}
 		if g := general[st.ID]; g != "" {
@@ -362,6 +408,7 @@ func (s *Service) Commit(ctx context.Context, p *Prepared, approvalID, via strin
 	if err := s.storage.InsertAnswers(ctx, rows); err != nil {
 		return err
 	}
+	s.recordedLive(ctx, p.ItemID)
 	if s.audit == nil {
 		return nil
 	}
@@ -370,8 +417,14 @@ func (s *Service) Commit(ctx context.Context, p *Prepared, approvalID, via strin
 		switch a.Kind {
 		case KindAnswer:
 			notes = fmt.Sprintf("question %s: %s", a.QuestionID, strings.TrimSpace(optionText(a)+" "+a.Text))
+			if a.Replaces != "" {
+				action, notes = "question.corrected", notes+" (replaces "+a.Replaces+")"
+			}
 		case KindGeneral:
 			notes = fmt.Sprintf("set %s (free text): %s", a.SetID, a.Text)
+			if a.SetID == "" {
+				notes = "free answer (no question open): " + a.Text
+			}
 		case KindSkipped:
 			action, notes = "question.skipped", fmt.Sprintf("question %s left unanswered (%s)", a.QuestionID, a.Action)
 		}

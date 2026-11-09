@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/martinsuchenak/skopos/internal/plans"
+	"github.com/martinsuchenak/skopos/internal/qa"
 	"regexp"
 	"strconv"
 	"strings"
@@ -138,6 +139,7 @@ const slackHelp = "*skopos commands* — reply in an item's thread:\n" +
 	"• `changes: <notes>` — request changes on a finished branch\n" +
 	"• `done` — approve the review, mark the item done\n" +
 	"• `retry: <answer>` — answer a blocker and requeue\n" +
+	"• `answer: 1) a, 2) …` — answer the open questions without approving (while the item waits for you)\n" +
 	"• `reject` — discard the item\n" +
 	"• `second` / `second <runner>` — an advisory second opinion on the finished branch (`force` re-runs a runner on the same head)\n" +
 	"• `panel` / `solo` / `default` — the item's plan, review and QA stages use the repository's agent panel, one agent, or the repository default (from the next stage)\n" +
@@ -239,7 +241,9 @@ func (r *slackRelay) Apply(ctx context.Context, itemID, text string) bool {
 		// the instant the gate is reached — approving a plan or a head
 		// commit Martin has not seen (review H2). They wait for the gate
 		// message instead; the non-advancing replies still buffer.
-		if isApproval(cmd) {
+		// Answers name the questions open now: buffered, they would land
+		// on whatever the next round asks.
+		if isApproval(cmd) || cmd == "answer" {
 			r.post(ctx, item.SlackThreadTS, "⚠️ `"+cmd+"` applies at the gate — the item is "+statusWord(item.Status)+
 				". Reply to the gate message once it arrives.")
 			return true
@@ -278,7 +282,8 @@ func (r *slackRelay) applyCommand(ctx context.Context, item *inbox.Item, cmd, se
 			r.post(ctx, thread, "⚠️ "+msg)
 			return true
 		}
-		if _, err := r.inbox.Approve(relayCtx, item.ID, inbox.ApproveInput{Notes: arg, Via: audit.ViaSlack, RevisionID: revID}); err != nil {
+		approved, err := r.inbox.Approve(relayCtx, item.ID, inbox.ApproveInput{Notes: arg, Via: audit.ViaSlack, RevisionID: revID})
+		if err != nil {
 			if errors.Is(err, inbox.ErrStaleRevision) || errors.Is(err, plans.ErrStaleRevision) {
 				r.post(ctx, thread, "⚠️ The plan changed since the message you replied to. The current plan follows — approve that one.")
 				r.postPlanReady(ctx, item.ID)
@@ -286,6 +291,7 @@ func (r *slackRelay) applyCommand(ctx context.Context, item *inbox.Item, cmd, se
 			}
 			return fail(err)
 		}
+		r.postMatched(ctx, thread, approved)
 		return true
 	case "revise":
 		if item.Status != inbox.StatusAwaitingApproval {
@@ -308,9 +314,11 @@ func (r *slackRelay) applyCommand(ctx context.Context, item *inbox.Item, cmd, se
 			}
 			reviseID = id
 		}
-		if _, err := r.inbox.RequestChangesOn(relayCtx, item.ID, arg, audit.ViaSlack, reviseID); err != nil {
+		revised, err := r.inbox.RequestChangesOn(relayCtx, item.ID, arg, audit.ViaSlack, reviseID)
+		if err != nil {
 			return fail(err)
 		}
+		r.postMatched(ctx, thread, revised)
 		return true
 	case "changes":
 		if item.Status != inbox.StatusInReview {
@@ -340,9 +348,23 @@ func (r *slackRelay) applyCommand(ctx context.Context, item *inbox.Item, cmd, se
 			r.post(ctx, thread, "⚠️ Nothing to retry — the item is "+statusWord(item.Status)+".")
 			return true
 		}
-		if _, err := r.inbox.Retry(relayCtx, item.ID, arg, audit.ViaSlack); err != nil {
+		retried, err := r.inbox.Retry(relayCtx, item.ID, arg, audit.ViaSlack)
+		if err != nil {
 			return fail(err)
 		}
+		r.postMatched(ctx, thread, retried)
+		return true
+	case "answer":
+		// Answers (or corrections) without moving the item, while it waits.
+		answered, err := r.inbox.Answer(relayCtx, item.ID, qa.AnswersInput{Text: arg}, audit.ViaSlack)
+		if err != nil {
+			return fail(err)
+		}
+		if len(answered.AnswersMatched) == 0 {
+			r.post(ctx, thread, "📝 Recorded as written: no open question matched.")
+			return true
+		}
+		r.postMatched(ctx, thread, answered)
 		return true
 	case "reject":
 		if _, err := r.inbox.Reject(relayCtx, item.ID, arg, audit.ViaSlack); err != nil {
@@ -778,10 +800,43 @@ func (r *slackRelay) drainAll(ctx context.Context) {
 // isCommand: the thread-reply vocabulary.
 func isCommand(w string) bool {
 	switch w {
-	case "approve", "approved", "lgtm", "revise", "changes", "done", "retry", "reject", "second":
+	case "approve", "approved", "lgtm", "revise", "changes", "done", "retry", "reject", "second", "answer":
 		return true
 	}
 	return isAgentsCommand(w)
+}
+
+// postMatched replies with what an action's answers were recorded as: the
+// questions answered (and the option), and whether the rest became an
+// answer to the round's questions.
+func (r *slackRelay) postMatched(ctx context.Context, thread string, item *inbox.Item) {
+	if item == nil || len(item.AnswersMatched) == 0 {
+		return
+	}
+	var linked []string
+	general := false
+	for _, m := range item.AnswersMatched {
+		switch {
+		case m.QuestionID != "":
+			s := strconv.Itoa(m.N)
+			if m.Option != "" {
+				s += ") " + m.Option
+			}
+			linked = append(linked, s)
+		case m.General:
+			general = true
+		}
+	}
+	var parts []string
+	if len(linked) > 0 {
+		parts = append(parts, "answers to "+strings.Join(linked, ", "))
+	}
+	if general {
+		parts = append(parts, "the rest as an answer to the round's questions")
+	}
+	if len(parts) > 0 {
+		r.post(ctx, thread, "📝 Recorded "+strings.Join(parts, "; ")+".")
+	}
 }
 
 // isAgentsCommand: the per-item agents switch replies.

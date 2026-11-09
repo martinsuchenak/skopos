@@ -144,7 +144,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	}
 	prompt, err := renderPrompt("plan.md", map[string]any{
 		"Workspace": run.WorkspaceID, "Base": repo.DefaultBranch,
-		"Title": item.Title, "Content": brief, "QA": questionsAndAnswers(secs),
+		"Title": item.Title, "Content": brief, "QA": w.decisions(ctx, run, secs),
 		"Previous": previous, "Notes": newestBody(secs, "Review notes"),
 		"Handover": ho, "Changes": changes, "LastReview": review,
 		"Instructions": repoInstructions(ctx, repo.Path, kbase),
@@ -220,6 +220,20 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	return w.report(ctx, run, true, map[string]any{
 		"summary": "plan ready: " + pr.Summary, "branch": branch, "base_sha": baseSHA,
 	})
+}
+
+// decisions is the questions and Martin's answers a prompt carries: from the
+// server's record (which marks those answers as used by this run), or,
+// from a server without it, read from the item's sections.
+func (w *Worker) decisions(ctx context.Context, run *Run, secs []itemSection) string {
+	text, ok, err := w.client.ReadQuestions(ctx, run.ID, w.cfg.ID)
+	if ok {
+		return text
+	}
+	if err != nil {
+		w.log.Warn("reading the questions and answers from the record failed; reading the item's sections", "run", run.ID, "err", err)
+	}
+	return questionsAndAnswers(secs)
 }
 
 // Who asks, and what a set of questions is about (internal/qa).
@@ -512,7 +526,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		}
 		prompt, err := renderPrompt("implement.md", map[string]any{
 			"Branch": branch, "Base": repo.DefaultBranch, "Title": item.Title,
-			"Content": brief, "QA": questionsAndAnswers(secs), "Steps": steps, "Notes": notes, "LastReview": review,
+			"Content": brief, "QA": w.decisions(ctx, run, secs), "Steps": steps, "Notes": notes, "LastReview": review,
 			"ApprovalNotes": newestBody(secs, "Approval notes"),
 			"Resumed":       len(resumed) > 0, "Leftover": leftover,
 			"Instructions": instructions, "Skills": skillBodies,
@@ -848,7 +862,7 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 		// Martin's answers.
 		b, secs := splitItem(br.Item.Content)
 		brief = b
-		if qa := questionsAndAnswers(secs); qa != "" {
+		if qa := w.decisions(ctx, run, secs); qa != "" {
 			brief += "\n\n" + qa
 		}
 		instructions = repoInstructions(ctx, repo.Path, base)

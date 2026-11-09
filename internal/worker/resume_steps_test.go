@@ -143,3 +143,33 @@ func TestImplementerQuestionsWritten(t *testing.T) {
 		t.Fatal("no questions, nothing sent")
 	}
 }
+
+// Prompts read the decisions from the server's record (with the run's
+// lease); a server without it leaves them to the item's sections.
+func TestDecisionsFromTheRecord(t *testing.T) {
+	record := true
+	var lease, worker string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/runs/run-1/questions/read" || !record {
+			http.NotFound(w, r)
+			return
+		}
+		lease = r.Header.Get("X-Skopos-Lease")
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		worker = body["worker_id"]
+		_, _ = io.WriteString(w, `{"prompt":"Asked by the planner:\n1. Which backend?\n   Answer: (a) Redis"}`)
+	}))
+	t.Cleanup(srv.Close)
+	client := NewClient(srv.URL, "k")
+	client.leases = map[string]string{"run-1": "tok"}
+	w := &Worker{client: client, cfg: &Config{ID: "w1"}, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	_, secs := splitItem("Item.\n\n## Questions — planner\n\n1. From the sections?\n\n## Answers\n\nyes\n")
+	if got := w.decisions(t.Context(), &Run{ID: "run-1"}, secs); !strings.Contains(got, "Answer: (a) Redis") || lease != "tok" || worker != "w1" {
+		t.Fatalf("from the record: %q (lease %q, worker %q)", got, lease, worker)
+	}
+	record = false
+	if got := w.decisions(t.Context(), &Run{ID: "run-1"}, secs); !strings.Contains(got, "From the sections?") {
+		t.Fatalf("an older server: from the sections: %q", got)
+	}
+}

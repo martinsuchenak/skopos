@@ -1086,7 +1086,10 @@
                                 </ol>
                             </div>
                         </template>
-                        <p x-show="openQuestionGroups().length > 0" class="w-full text-[11px] text-zinc-500" x-text="answeredCount()"></p>
+                        <div x-show="openQuestionGroups().length > 0" class="flex w-full flex-wrap items-center gap-2">
+                            <p class="text-[11px] text-zinc-500" x-text="answeredCount()"></p>
+                            <button type="button" @click.stop="saveAnswers()" :disabled="!answersReady()" class="btn btn-xs btn-ghost ml-auto" :aria-label="'Save the answers to ' + previewItem.title + ' without approving'" title="Records the answers now; the item stays where it is">Save answers</button>
+                        </div>
                         <div class="flex w-full flex-col gap-1" x-show="workflowShowInput()">
                             <label for="workflow-note" class="text-[11px] font-medium text-zinc-400" x-text="workflowNoteLabel()"></label>
                             <textarea id="workflow-note" x-model="workflowNote" rows="3" class="fld w-full resize-y text-sm" :placeholder="workflowNotePlaceholder()" :aria-label="workflowNoteLabel()"></textarea>
