@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.29.1] — 2026-11-09
+
+### Changed
+
+- **Agents are told to find code by what it does.** When the code index the
+  prompt names has embeddings, the plan, implement and review prompts tell
+  the agent to start with `code_find` (describe what you are looking for in
+  words) before `code_search`, `code_symbol` and the call graph.
+
+- **`skopos questions` and `skopos inbox questions` say which is which:**
+  the decision log (one row per question, its current answer) points to the
+  item's full record (every answer, with the ids a correction needs).
+
 ## [0.29.0] — 2026-11-09
 
 ### Added
