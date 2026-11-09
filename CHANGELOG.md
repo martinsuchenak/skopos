@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.30.2] — 2026-11-09
+
+### Fixed
+
+- **The sign-off counts a review with blocking findings as not passed**, as
+  the Agent review step does. A branch review that found something blocking
+  showed "1 of 1 passed, no blocking findings" at the sign-off; it now shows
+  "0 of 1 passed, 1 blocking finding" and the nits.
+
 ## [0.30.1] — 2026-11-09
 
 ### Changed
