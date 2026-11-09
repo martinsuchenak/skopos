@@ -4,6 +4,42 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.27.0] — 2026-11-09
+
+### Added
+
+- **Questions and answers are kept as a record.** Every question the
+  planner, the implementer or the worker asks records who asked (the run,
+  stage, runner and plan candidate), what it was about (the plan revision
+  and base, or the commit), and whether the item waits on it. Every answer
+  records who gave it, when, through which surface and with which action
+  and approval. Each question has a state: open, answered, answered in free
+  text, skipped or superseded. Approving or sending an item back with
+  questions left unanswered records them as skipped, with who did it. The
+  item's Questions and Answers sections are written from the record, and
+  the audit trail gets `question.asked`, `question.answered` and
+  `question.skipped` events. Existing items' questions and answers are
+  imported once at startup.
+- **`GET /api/inbox/{id}/questions`** returns an item's questions and
+  answers with their states.
+- **Answers by question id or in free text.** `answers` on approve, request
+  changes and retry takes a list of `{question_id, option, text}` or free
+  text. In free text, lines like `1) a` or `2. Redis — for now` answer that
+  question; `<label> 1) a` or a `To <label>:` line picks a plan candidate's
+  question; the rest is an answer to the round's questions as a whole. The
+  response's `answers_matched` says which line answered which question.
+  Lines in approval and review notes that answer a question (`approve: 1) a`
+  in Slack, `--notes` in the CLI) are recorded as answers too; the rest stays
+  notes. The preview sends its answers by question id.
+- **`POST /api/runs/{id}/questions`**: the worker posts a run's questions;
+  the server records them and adds the item's section.
+
+### Changed
+
+- **REST calls that don't name their surface are recorded as `api`** in
+  the audit trail (they were recorded as `cli`). The CLI and the dashboard
+  name theirs on every request.
+
 ## [0.26.1] — 2026-11-09
 
 ### Fixed
