@@ -4,6 +4,27 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Pausing a worker.** `skopos worker pause [--for 2h] [--reason …]` and
+  `skopos worker resume`, the Pause and Resume buttons in the dashboard's
+  Workers view, and `POST /api/workers/{id}/pause` / `…/resume`. A paused
+  worker takes no new work and does no idle indexing or cleanup; a run it
+  holds finishes. The Workers view shows it as paused, with who paused it,
+  until when and why; pauses and resumes are in the audit log. The key the
+  worker runs with, root, and approvers whose scope covers every workspace
+  the worker serves may pause it.
+
+### Changed
+
+- **A branch-checkout clone keeps work it didn't make.** Before a run, a
+  clone left on another branch with nothing uncommitted is switched back to
+  the default branch. Uncommitted changes are stashed only when a run of the
+  worker left them; on a branch someone checked out by hand they stop the
+  run, and the clone stays as it is.
+
 ## [0.29.1] — 2026-11-09
 
 ### Changed

@@ -444,6 +444,7 @@ func serveCmd() *cli.Command {
 			// item's lifecycle; chaining moves the item through the workflow
 			// via the system transitions.
 			runsService := runs.NewService(runs.NewStorage(sqlDB))
+			runsService.SetAuditRecorder(auditService)
 			// Pipeline settings (which agents run each stage) live in the
 			// database, per workspace or group, edited in the dashboard; the
 			// queue reads them at every queue. The old --run-stage /

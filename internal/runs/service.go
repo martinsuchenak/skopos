@@ -40,6 +40,8 @@ type Service struct {
 	// itemAppend writes a section into the item (a stage group's summary) —
 	// wired to inbox.AppendSection. Nil skips the summary.
 	itemAppend func(ctx context.Context, itemID, heading, body string) error
+	// audit records worker pauses and resumes (nil = none).
+	audit AuditRecorder
 	// questionAsker records a run's questions (internal/qa, via serve.go).
 	questionAsker QuestionAsker
 	// questionReader reads the record for a run's prompt.
@@ -479,7 +481,8 @@ const (
 )
 
 // workerState: offline after a goodbye or a long silence; busy while it
-// holds a claimed/running run; idle otherwise.
+// holds a claimed/running run; paused when an online worker holds none and
+// a pause is in force; idle otherwise.
 func workerState(w WorkerSeen, busy bool, now time.Time) string {
 	seen, err := time.Parse(time.RFC3339Nano, w.LastSeen)
 	if err != nil {
@@ -495,6 +498,8 @@ func workerState(w WorkerSeen, busy bool, now time.Time) string {
 	switch {
 	case busy && now.Sub(seen) <= busyWindow:
 		return "busy"
+	case now.Sub(seen) <= idle && w.Paused != nil:
+		return "paused"
 	case now.Sub(seen) <= idle:
 		return "idle"
 	}
@@ -739,6 +744,9 @@ func (s *Service) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
 	}
 	now := s.now().UTC()
 	for i := range all {
+		if !all[i].Paused.activeAt(now) {
+			all[i].Paused = nil
+		}
 		all[i].State = workerState(all[i], busy[all[i].ID], now)
 	}
 	p := auth.PrincipalFromContext(ctx)
@@ -919,7 +927,7 @@ func (s *Service) IndexDuty(ctx context.Context, in ClaimInput) IndexDuty {
 		if !slices.Contains(in.Indexable, ws) {
 			continue
 		}
-		able, err := s.storage.IndexableWorkers(ctx, ws, s.now().Add(-indexDutyWindow))
+		able, err := s.storage.IndexableWorkers(ctx, ws, s.now().Add(-indexDutyWindow), s.now())
 		if err != nil {
 			continue
 		}

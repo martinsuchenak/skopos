@@ -848,11 +848,19 @@ setup_timeout = "45m"
    applies the stash again, and the cleanup sweep drops it once the item is
    finished.
 
-A worker killed mid-run leaves the clone on the item's branch. The next run
-on the clone stashes the leftover changes under the branch and puts the clone
-back on the default branch. Uncommitted or untracked files on the default
-branch are different: they aren't skopos's, so every run on the repo stops
-with an error naming them until you commit, remove or `.gitignore` them.
+Before every run the clone goes back on its default branch:
+
+- **On another branch with nothing uncommitted:** it is switched back, whoever
+  checked that branch out.
+- **A worker killed mid-run** leaves the clone on the item's branch. The next
+  run on the clone stashes the leftover changes under the branch and puts the
+  clone back on the default branch. The worker knows the branch was its own
+  from a marker it writes in the clone's `.git` before the checkout.
+- **Uncommitted or untracked files no run left** — on the default branch, or
+  on a branch you checked out by hand — aren't skopos's: every run on the repo
+  stops with an error naming them until you commit, stash or remove them (or
+  `.gitignore` them). Nothing is stashed or switched under you. To work in the
+  clone yourself, [pause the worker](#pausing-a-worker) first.
 
 If the repo used worktrees before, an item's old worktree is removed when its
 next implement run starts in the clone. If that worktree has uncommitted
@@ -919,7 +927,8 @@ No secrets live in the service definition or the TOML. The daemon loads
 ## Presence
 
 The dashboard's Workers view (and `GET /api/workers`) shows each worker as
-**busy** (holds a claimed or running run), **idle** or **offline**:
+**busy** (holds a claimed or running run), **idle**, **paused** (see
+[Pausing a worker](#pausing-a-worker)) or **offline**:
 
 - **From the first poll.** Every claim poll reports the worker's runners,
   workspaces, skopos version and `poll_every`, so a new worker is visible
@@ -934,6 +943,37 @@ The dashboard's Workers view (and `GET /api/workers`) shows each worker as
 
 The pipeline settings dialog suggests the runners these workers offer and
 warns about a runner no worker serving the workspace offers yet.
+
+## Pausing a worker
+
+To work on a worker's machine yourself (an editor connected over SSH, your
+own Claude session), pause the worker instead of stopping the service:
+
+```sh
+skopos worker pause --for 2h --reason "working on the stock API by hand"
+skopos worker resume
+```
+
+- **What stops:** a paused worker claims nothing new, not even its own
+  interrupted runs (they wait for it), and does no idle work: no code
+  indexing, no cleanup sweep. Other workers take the queue, and a retry no
+  longer waits for a paused worker.
+- **What doesn't:** a run it already holds finishes. Stopping the service
+  instead cuts that run off.
+- **How long:** `--for` takes a duration (`90m`, `2h`); without it the pause
+  lasts until `skopos worker resume`.
+- **Which worker:** run on the worker's host, the commands find it the way
+  the daemon does: the config (`--config`, else `skopos-config.toml` in the
+  current directory or `~/.config/skopos`), the `skopos-worker.env` beside it
+  and the worker's key. `--worker-id` names another one.
+- **Who may:** the key the worker runs with, the root key, or an approver
+  whose scope covers every workspace the worker serves.
+
+The dashboard's Workers view has the same Pause and Resume buttons, and
+shows who paused a worker, until when and why. Pauses and resumes are in the
+audit log (`worker.pause`, `worker.resume`). The API is
+`POST /api/workers/{id}/pause` (`{"for": "2h", "reason": "…"}`, or `until`)
+and `POST /api/workers/{id}/resume`.
 
 ## Service management
 

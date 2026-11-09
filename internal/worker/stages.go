@@ -420,6 +420,9 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			rec.Worktree = ""
 		}
 		done := rl.stepf("fetching and checking out %s in the clone", branch)
+		// Before the checkout: a run killed from here on left the clone on
+		// this branch (readyClone then stashes what it left).
+		setRunMarker(ctx, repo.Path, branch)
 		if err := checkoutImplementBranch(ctx, repo.Path, branch, baseRef); err != nil {
 			w.park(repo, branch, log) // a failed merge happens on the branch
 			return retryable(fmt.Errorf("checkout: %w", err))

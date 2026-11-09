@@ -185,6 +185,7 @@ func TestRunStageHoldsTheClone(t *testing.T) {
 	t.Run("a killed run's branch is put back", func(t *testing.T) {
 		w, repo := branchCloneWorker(t, nil)
 		dir := repo.Path
+		setRunMarker(t.Context(), dir, "agent/x") // the run switched to it, then died
 		gitOut(t, dir, "checkout", "-q", "-b", "agent/x")
 		if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("half done"), 0o644); err != nil {
 			t.Fatal(err)
@@ -201,6 +202,9 @@ func TestRunStageHoldsTheClone(t *testing.T) {
 		}
 		if got := gitOut(t, dir, "status", "--porcelain"); got != "" {
 			t.Fatalf("the clone must be clean: %s", got)
+		}
+		if m := runMarker(t.Context(), dir); m != "" {
+			t.Fatalf("the run marker must go with the parked branch: %q", m)
 		}
 		release, ok, err := tryLockClone(t.Context(), dir)
 		if !ok || err != nil {
@@ -232,6 +236,42 @@ func TestRunStageHoldsTheClone(t *testing.T) {
 		}
 		if refs := stashRefs(t.Context(), repo.Path, "skopos:main"); len(refs) != 0 {
 			t.Fatalf("nothing is stashed: %v", refs)
+		}
+	})
+	// Someone working in the clone by hand: a clean branch is switched
+	// back, uncommitted work no run left stops the run where it is.
+	t.Run("a clean branch checked out by hand is switched back", func(t *testing.T) {
+		w, repo := branchCloneWorker(t, nil)
+		gitOut(t, repo.Path, "checkout", "-q", "-b", "feature/mine")
+		err := w.runStage(t.Context(), &Run{ID: "r", WorkspaceID: "ws", Stage: "bogus"}, w.log)
+		if err == nil || !strings.Contains(err.Error(), "unknown stage") {
+			t.Fatalf("err %v", err)
+		}
+		if got := gitOut(t, repo.Path, "symbolic-ref", "--short", "HEAD"); got != "main" {
+			t.Fatalf("on %s, want main", got)
+		}
+	})
+	t.Run("uncommitted work on a branch checked out by hand stops the run", func(t *testing.T) {
+		for _, marker := range []string{"", "agent/other"} {
+			w, repo := branchCloneWorker(t, nil)
+			setRunMarker(t.Context(), repo.Path, marker)
+			gitOut(t, repo.Path, "checkout", "-q", "-b", "agent/mine")
+			if err := os.WriteFile(filepath.Join(repo.Path, "AGENTS.md"), []byte("my edit"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			err := w.runStage(t.Context(), &Run{ID: "r", WorkspaceID: "ws", Stage: "bogus"}, w.log)
+			if err == nil || !strings.Contains(err.Error(), "no skopos run left") || !strings.Contains(err.Error(), "pause the worker") {
+				t.Fatalf("marker %q: want the run stopped, got %v", marker, err)
+			}
+			if got := gitOut(t, repo.Path, "symbolic-ref", "--short", "HEAD"); got != "agent/mine" {
+				t.Fatalf("marker %q: the branch must stay, on %s", marker, got)
+			}
+			if b, _ := os.ReadFile(filepath.Join(repo.Path, "AGENTS.md")); string(b) != "my edit" {
+				t.Fatalf("marker %q: the edit must stay: %q", marker, b)
+			}
+			if refs := stashRefs(t.Context(), repo.Path, stashLabel("agent/mine")); len(refs) != 0 {
+				t.Fatalf("marker %q: nothing is stashed: %v", marker, refs)
+			}
 		}
 	})
 }

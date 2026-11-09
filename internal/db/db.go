@@ -210,7 +210,10 @@ func RunMigrations(db *sql.DB) error {
 	// unhealthy: the workspaces whose preflight fails on the worker (JSON
 	// object workspace → reason; NULL = all healthy). indexable: the
 	// workspaces whose repo the worker can fetch and index (JSON array).
-	for _, col := range [][2]string{{"version", "TEXT"}, {"poll_ms", "INTEGER"}, {"offline_at", "TEXT"}, {"unhealthy", "TEXT"}, {"indexable", "TEXT NOT NULL DEFAULT '[]'"}} {
+	// paused_*: an operator's pause (no claims while it lasts; paused_until
+	// NULL = until resumed).
+	for _, col := range [][2]string{{"version", "TEXT"}, {"poll_ms", "INTEGER"}, {"offline_at", "TEXT"}, {"unhealthy", "TEXT"}, {"indexable", "TEXT NOT NULL DEFAULT '[]'"},
+		{"paused_at", "TEXT"}, {"paused_until", "TEXT"}, {"paused_by", "TEXT"}, {"pause_reason", "TEXT"}} {
 		if err := ensureColumn(db, "workers", col[0], col[1]); err != nil {
 			return err
 		}

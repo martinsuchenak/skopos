@@ -34,6 +34,8 @@ type Client struct {
 	// indexEnabled / indexDefault: the index duty of the last claim answer
 	// (indexer.go).
 	indexEnabled, indexDefault []string
+	// paused: the last claim answer's Skopos-Paused ("" = not paused).
+	paused string
 }
 
 func NewClient(base, key string) *Client {
@@ -146,6 +148,7 @@ func (c *Client) Claim(ctx context.Context, workerID string, runners, workspaces
 	}
 	c.mu.Lock()
 	c.indexEnabled, c.indexDefault = splitList(hdr.Get("Skopos-Index-Enabled")), splitList(hdr.Get("Skopos-Index-Default"))
+	c.paused = hdr.Get("Skopos-Paused")
 	c.mu.Unlock()
 	if run.ID == "" {
 		return nil, nil
@@ -257,6 +260,44 @@ func (c *Client) ServerVersion() string {
 // SetPollInterval: reported with every poll, so the server knows when a
 // silent worker counts as offline.
 func (c *Client) SetPollInterval(d time.Duration) { c.pollMS = d.Milliseconds() }
+
+// Paused is what the last claim answer said about a pause: "" (none),
+// "resume" (until someone resumes the worker) or when it ends (RFC 3339).
+func (c *Client) Paused() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.paused
+}
+
+// WorkerPause is a pause as the server stores it.
+type WorkerPause struct {
+	At     time.Time `json:"at"`
+	Until  time.Time `json:"until"`
+	By     string    `json:"by"`
+	Reason string    `json:"reason"`
+}
+
+// PauseWorker pauses a worker (for: a duration such as "2h", "" = until
+// resumed); via names the surface for the audit log.
+func (c *Client) PauseWorker(ctx context.Context, workerID, forDur, reason, via string) (*WorkerPause, error) {
+	req, err := c.build(ctx, http.MethodPost, "/api/workers/"+url.PathEscape(workerID)+"/pause", map[string]string{"for": forDur, "reason": reason})
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Skopos-Via", via)
+	var p WorkerPause
+	return &p, c.exec(req, &p)
+}
+
+// ResumeWorker ends a worker's pause.
+func (c *Client) ResumeWorker(ctx context.Context, workerID, via string) error {
+	req, err := c.build(ctx, http.MethodPost, "/api/workers/"+url.PathEscape(workerID)+"/resume", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Skopos-Via", via)
+	return c.exec(req, nil)
+}
 
 // Offline says goodbye on a clean shutdown (best effort).
 func (c *Client) Offline(ctx context.Context, workerID string) error {

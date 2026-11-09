@@ -131,6 +131,9 @@ type Worker struct {
 	// the config names (runlog.go).
 	logOutput    io.Writer
 	extraSecrets []string
+	// paused: the pause the last claim answer named ("" = none), logged
+	// when it changes.
+	paused string
 }
 
 // SetLogOutput sends every run's log lines to the log output too.
@@ -163,8 +166,14 @@ func (w *Worker) Loop(ctx context.Context) error {
 				w.stopIndexing()
 				return ErrRestartForUpgrade
 			}
-			w.maybeSweep(ctx)
-			w.maybeIndex(ctx)
+			// Paused (someone is working on this machine): no idle work
+			// either — indexing and cleanup touch the clones.
+			if w.notePause(w.client.Paused()) {
+				w.stopIndexing()
+			} else {
+				w.maybeSweep(ctx)
+				w.maybeIndex(ctx)
+			}
 			if !sleepCtx(ctx, w.cfg.PollEvery) {
 				w.stopIndexing()
 				return ctx.Err()
@@ -183,6 +192,23 @@ func (w *Worker) Loop(ctx context.Context) error {
 		}
 		w.execute(ctx, run)
 	}
+}
+
+// notePause logs a change of pause and reports whether the worker is
+// paused: until is "" (not paused), "resume" (until resumed) or the end.
+func (w *Worker) notePause(until string) bool {
+	if until != w.paused {
+		switch until {
+		case "":
+			w.log.Info("resumed: taking work again")
+		case "resume":
+			w.log.Info("paused: taking no work until resumed")
+		default:
+			w.log.Info("paused: taking no work until " + until)
+		}
+		w.paused = until
+	}
+	return until != ""
 }
 
 // PhaseAdmissible: the item statuses under which a stage's run may execute.

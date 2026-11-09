@@ -358,7 +358,7 @@ func (s *Storage) RunnersServing(ctx context.Context, ws string) (map[string]boo
 // Indexable lists the workers that can index a workspace now — the run
 // queue's rule (runs.IndexableWorkers), busy or not.
 func (s *Storage) Indexable(ctx context.Context, ws string, cutoffMS int64) ([]string, error) {
-	able, err := runs.IndexableWorkers(ctx, s.db, ws, time.UnixMilli(cutoffMS))
+	able, err := runs.IndexableWorkers(ctx, s.db, ws, time.UnixMilli(cutoffMS), time.Now())
 	if err != nil {
 		return nil, err
 	}

@@ -49,8 +49,10 @@ function keyIsAgentPreset(caps: string[]): boolean {
   return caps.length === agentPreset.length && [...caps].sort().every((c, i) => c === agentPreset[i]);
 }
 
-type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string; state: string; version: string; lastSeen: string; unhealthy: string[]; indexable: string[] };
-type WorkerSeen = { id: string; runners: string[]; workspaces: string[]; last_seen: string; version?: string; state?: string; unhealthy?: Record<string, string>; indexable?: string[] };
+// A worker's pause (an operator stopped it taking work); until "" = until resumed.
+type WorkerPause = { at: string; until?: string; by?: string; reason?: string };
+type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string; state: string; version: string; lastSeen: string; unhealthy: string[]; indexable: string[]; paused: WorkerPause | null };
+type WorkerSeen = { id: string; runners: string[]; workspaces: string[]; last_seen: string; version?: string; state?: string; unhealthy?: Record<string, string>; indexable?: string[]; paused?: WorkerPause };
 // Pipeline settings (which agents run each stage, per workspace or group).
 type PipeMember = { runner: string; focus?: string };
 type PipeStage = { members: PipeMember[]; policy?: string; early_exit?: boolean; timeout_ms?: number };
@@ -211,6 +213,11 @@ const appState = () => ({
   // workers (derived from run history — no registry yet)
   workers: [] as WorkerRow[],
   workersLoading: false,
+  // The worker whose pause form is open, and the form (for: a duration, ""
+  // = until resumed).
+  pausingWorker: '',
+  pauseForm: { for: '2h', reason: '' },
+  workerBusy: false,
 
   // code index
   indexBranches: [] as { branch: string; head_sha?: string; built_at: string; source?: string; file_count: number; symbol_count: number }[],
@@ -2368,12 +2375,12 @@ const appState = () => ({
     const byWorker = new Map<string, WorkerRow>();
     for (const entry of registered) {
       const reg = entry[1];
-      byWorker.set(entry[0], { id: entry[0], workspaces: [...(reg.workspaces || [])], stages: [], runners: [...(reg.runners || [])], active: 0, succeeded: 0, failed: 0, lastActive: '', currentLabel: '', state: reg.state || '', version: reg.version || '', lastSeen: reg.last_seen || '', unhealthy: Object.entries(reg.unhealthy || {}).map(([ws, why]) => ws + ': ' + why), indexable: [...(reg.indexable || [])] });
+      byWorker.set(entry[0], { id: entry[0], workspaces: [...(reg.workspaces || [])], stages: [], runners: [...(reg.runners || [])], active: 0, succeeded: 0, failed: 0, lastActive: '', currentLabel: '', state: reg.state || '', version: reg.version || '', lastSeen: reg.last_seen || '', unhealthy: Object.entries(reg.unhealthy || {}).map(([ws, why]) => ws + ': ' + why), indexable: [...(reg.indexable || [])], paused: reg.paused || null });
     }
     for (const run of runs) {
       if (!run.worker_id) continue; // queued, never claimed
       let w = byWorker.get(run.worker_id);
-      if (!w) { w = { id: run.worker_id, workspaces: [], stages: [], runners: [], active: 0, succeeded: 0, failed: 0, lastActive: run.updated_at, currentLabel: '', state: '', version: '', lastSeen: '', unhealthy: [], indexable: [] }; byWorker.set(run.worker_id, w); }
+      if (!w) { w = { id: run.worker_id, workspaces: [], stages: [], runners: [], active: 0, succeeded: 0, failed: 0, lastActive: run.updated_at, currentLabel: '', state: '', version: '', lastSeen: '', unhealthy: [], indexable: [], paused: null }; byWorker.set(run.worker_id, w); }
       const reg = registered.get(run.worker_id);
       if (reg) { for (const ws of reg.workspaces || []) if (!w.workspaces.includes(ws)) w.workspaces.push(ws); }
       if (run.workspace_id && !w.workspaces.includes(run.workspace_id)) w.workspaces.push(run.workspace_id);
@@ -2384,7 +2391,7 @@ const appState = () => ({
       if (run.updated_at > w.lastActive) w.lastActive = run.updated_at;
     }
     // Online first (busy, idle), then offline; newest activity within each.
-    const rank: Record<string, number> = { busy: 0, idle: 1, offline: 2 };
+    const rank: Record<string, number> = { busy: 0, idle: 1, paused: 1, offline: 2 };
     this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) => {
       const ra = rank[this.workerStatusLabel(a)] ?? 3, rb = rank[this.workerStatusLabel(b)] ?? 3;
       if (ra !== rb) return ra - rb;
@@ -2398,12 +2405,54 @@ const appState = () => ({
   workerStatusClass(w: WorkerRow): string {
     const s = this.workerStatusLabel(w);
     if (w.unhealthy.length && s !== 'offline') return 'tone-danger';
+    if (s === 'paused') return 'tone-warn';
     return s === 'busy' ? 'tone-success' : s === 'idle' ? 'tone-info' : 'tone-muted';
   },
-  // The badge: an online worker whose preflight fails somewhere says so.
+  // The badge: an online worker whose preflight fails somewhere says so; a
+  // busy one that is paused finishes its run first.
   workerBadge(w: WorkerRow): string {
     const s = this.workerStatusLabel(w);
+    if (s === 'busy' && w.paused) return 'busy · pausing';
     return w.unhealthy.length && s !== 'offline' ? s + ' · unhealthy' : s;
+  },
+  // "Paused until 16:30 by key martin: working on it by hand".
+  workerPauseText(w: WorkerRow): string {
+    const p = w.paused;
+    if (!p) return '';
+    let t = p.until ? 'Paused until ' + this.formatDateTime(p.until) : 'Paused until resumed';
+    if (p.by) t += ' by ' + p.by;
+    if (p.reason) t += ': ' + p.reason;
+    return t;
+  },
+  formatDateTime(v: string): string {
+    if (!v) return '';
+    return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(v));
+  },
+  openPauseWorker(w: WorkerRow) { this.pausingWorker = w.id; this.pauseForm = { for: '2h', reason: '' }; },
+  closePauseWorker() { this.pausingWorker = ''; },
+  setPauseFor(v: string) { this.pauseForm.for = v; },
+  setPauseReason(v: string) { this.pauseForm.reason = v; },
+  // Pause: the worker takes no new work (a run it holds finishes).
+  async pauseWorker(w: WorkerRow) {
+    if (this.workerBusy) return;
+    this.workerBusy = true;
+    const body: Record<string, string> = { reason: this.pauseForm.reason.trim() };
+    if (this.pauseForm.for) body.for = this.pauseForm.for;
+    const res = await this.authFetch('/api/workers/' + encodeURIComponent(w.id) + '/pause', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    this.workerBusy = false;
+    if (!await this.handleBad(res, 'Could not pause the worker')) return;
+    this.pausingWorker = '';
+    this.notify(w.id + ' paused', 'success');
+    await this.fetchWorkers();
+  },
+  async resumeWorker(w: WorkerRow) {
+    if (this.workerBusy) return;
+    this.workerBusy = true;
+    const res = await this.authFetch('/api/workers/' + encodeURIComponent(w.id) + '/resume', { method: 'POST' });
+    this.workerBusy = false;
+    if (!await this.handleBad(res, 'Could not resume the worker')) return;
+    this.notify(w.id + ' resumed', 'success');
+    await this.fetchWorkers();
   },
 
   // ---- run rows (preview modal) ----

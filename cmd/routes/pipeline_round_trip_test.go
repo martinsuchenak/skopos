@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	wk "github.com/martinsuchenak/skopos/internal/worker"
 )
 
 // Pipeline settings over HTTP, end to end: an approver sets a workspace's
@@ -11,7 +13,7 @@ import (
 // default reaches the workspace by pattern; worker presence shows a worker
 // from its first (idle) poll and its goodbye.
 func TestIntegrationPipelineSettingsAndPresence(t *testing.T) {
-	_, baseURL := workerStack(t)
+	sqlDB, baseURL := workerStack(t)
 	root := workerClient{base: baseURL, key: "root-secret"}
 	const ws = "github.com/fortix/api"
 	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`"}`), 201)
@@ -58,6 +60,40 @@ func TestIntegrationPipelineSettingsAndPresence(t *testing.T) {
 	eff := mustJSON(t, approver.req("GET", "/api/workspaces/"+escapeWS(ws)+"/pipeline", ""), 200).(map[string]any)["effective"].(map[string]any)
 	if eff["qa"].(map[string]any)["source"] != "group:fortix" || eff["plan"].(map[string]any)["source"] != "workspace" {
 		t.Fatalf("group default + workspace override: %v", eff)
+	}
+
+	// Pause: an approver over the worker's workspaces or the worker's own
+	// key (its CLI); a plain key may not. A paused worker's claim says so
+	// and hands it nothing — not even its own run, released by the poll.
+	mustDo(t, plain.req("POST", "/api/workers/w1/pause", `{"for":"1h"}`), 403)
+	mustDo(t, approver.req("POST", "/api/workers/w1/pause", `{"for":"soon"}`), 400)
+	p := mustJSON(t, approver.req("POST", "/api/workers/w1/pause", `{"for":"1h","reason":"hands-on"}`), 200).(map[string]any)
+	if p["reason"] != "hands-on" || p["by"] != "key martin" || p["until"] == nil {
+		t.Fatalf("pause: %v", p)
+	}
+	wc := wk.NewClient(baseURL, worker.key)
+	if r, err := wc.Claim(t.Context(), "w1", []string{"opencode-glm"}, []string{ws}, nil, nil); err != nil || r != nil || wc.Paused() == "" || wc.Paused() == "resume" {
+		t.Fatalf("paused claim: %+v %v %q", r, err, wc.Paused())
+	}
+	if w := workerList(t, root)[0].(map[string]any); w["state"] != "paused" || w["paused"].(map[string]any)["reason"] != "hands-on" {
+		t.Fatalf("listed paused: %v", w)
+	}
+	mustDo(t, worker.req("POST", "/api/workers/w1/pause", ""), 200) // until resumed
+	if _, err := wc.Claim(t.Context(), "w1", []string{"opencode-glm"}, []string{ws}, nil, nil); err != nil || wc.Paused() != "resume" {
+		t.Fatalf("paused until resumed: %v %q", err, wc.Paused())
+	}
+	if err := wc.ResumeWorker(t.Context(), "w1", "cli"); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := wc.Claim(t.Context(), "w1", []string{"opencode-glm"}, []string{ws}, nil, nil); err != nil || r == nil || r.ID != run["id"] || wc.Paused() != "" {
+		t.Fatalf("resumed: its run comes back: %+v %v %q", r, err, wc.Paused())
+	}
+	var audited string
+	if err := sqlDB.QueryRow(`SELECT group_concat(action || ' ' || actor || ' ' || COALESCE(via, ''), '; ') FROM (SELECT * FROM audit_log WHERE entity_type = 'worker' AND entity_id = 'w1' ORDER BY id)`).Scan(&audited); err != nil {
+		t.Fatal(err)
+	}
+	if audited != "worker.pause key martin api; worker.pause key worker-1 api; worker.resume key worker-1 cli" {
+		t.Fatalf("audit: %s", audited)
 	}
 
 	// Goodbye: only the key that owns the worker row may say it.

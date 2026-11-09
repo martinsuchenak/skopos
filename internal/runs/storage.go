@@ -161,6 +161,8 @@ type WorkerSeen struct {
 	Unhealthy map[string]string `json:"unhealthy,omitempty"`
 	// Indexable: workspaces whose repo it can fetch and index.
 	Indexable []string `json:"indexable,omitempty"`
+	// Paused: an operator's pause in force (nil when none, or it ended).
+	Paused *WorkerPause `json:"paused,omitempty"`
 }
 
 // unhealthyJSON stores a health map (nil when all healthy).
@@ -276,7 +278,8 @@ func (s *Storage) BusyWorkers(ctx context.Context) (map[string]bool, error) {
 
 // ListWorkers returns every worker that has ever claimed, newest first.
 func (st *Storage) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
-	rows, err := st.db.QueryContext(ctx, `SELECT id, runners, workspaces, last_seen, COALESCE(version, ''), COALESCE(poll_ms, 0), COALESCE(offline_at, ''), COALESCE(unhealthy, ''), indexable FROM workers ORDER BY last_seen DESC`)
+	rows, err := st.db.QueryContext(ctx, `SELECT id, runners, workspaces, last_seen, COALESCE(version, ''), COALESCE(poll_ms, 0), COALESCE(offline_at, ''), COALESCE(unhealthy, ''), indexable,
+		COALESCE(paused_at, ''), COALESCE(paused_until, ''), COALESCE(paused_by, ''), COALESCE(pause_reason, '') FROM workers ORDER BY last_seen DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("listing workers: %w", err)
 	}
@@ -284,9 +287,16 @@ func (st *Storage) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
 	var out []WorkerSeen
 	for rows.Next() {
 		var w WorkerSeen
-		var runners, workspaces, unhealthy, indexable string
-		if err := rows.Scan(&w.ID, &runners, &workspaces, &w.LastSeen, &w.Version, &w.PollMS, &w.OfflineAt, &unhealthy, &indexable); err != nil {
+		var runners, workspaces, unhealthy, indexable, pausedAt, pausedUntil, pausedBy, pauseReason string
+		if err := rows.Scan(&w.ID, &runners, &workspaces, &w.LastSeen, &w.Version, &w.PollMS, &w.OfflineAt, &unhealthy, &indexable,
+			&pausedAt, &pausedUntil, &pausedBy, &pauseReason); err != nil {
 			return nil, err
+		}
+		if pausedAt != "" {
+			w.Paused = &WorkerPause{At: parseTime(pausedAt), By: pausedBy, Reason: pauseReason}
+			if pausedUntil != "" {
+				w.Paused.Until = parseTime(pausedUntil)
+			}
 		}
 		if unhealthy != "" {
 			_ = json.Unmarshal([]byte(unhealthy), &w.Unhealthy)
@@ -395,6 +405,20 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 		string(StatusInterrupted), formatTime(now),
 		in.WorkerID, in.KeyID, string(StatusClaimed), string(StatusRunning)); err != nil {
 		return nil, fmt.Errorf("releasing orphaned runs: %w", err)
+	}
+
+	// A paused worker takes nothing: its own interrupted runs wait for it
+	// too (their session lives there).
+	var paused int
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM workers w WHERE w.id = ? AND `+pausedSQL+`)`,
+		in.WorkerID, formatTime(now)).Scan(&paused); err != nil {
+		return nil, fmt.Errorf("reading the worker's pause: %w", err)
+	}
+	if paused == 1 {
+		if err := recordWorker(ctx, tx, in, now, false); err != nil {
+			return nil, err
+		}
+		return nil, tx.Commit()
 	}
 
 	// Re-read candidates inside the transaction. Paused runs are NOT
@@ -696,21 +720,22 @@ func formatPreferUntil(t time.Time) string {
 func workerCanTake(ctx context.Context, tx *sql.Tx, id string, r *Run, now time.Time) (bool, error) {
 	var lastSeen, offlineAt string
 	var pollMS int64
-	var offers, healthy, runs int
+	var offers, healthy, runs, paused int
 	err := tx.QueryRowContext(ctx, `
 		SELECT last_seen, COALESCE(poll_ms, 0), COALESCE(offline_at, ''),
 			EXISTS (SELECT 1 FROM json_each(w.workspaces) WHERE value = ?),
 			NOT EXISTS (SELECT 1 FROM json_each(COALESCE(w.unhealthy, '{}')) WHERE key = ?),
-			(? = '' OR EXISTS (SELECT 1 FROM json_each(w.runners) WHERE value = ?))
-		FROM workers w WHERE w.id = ?`, r.WorkspaceID, r.WorkspaceID, r.Runner, r.Runner, id).
-		Scan(&lastSeen, &pollMS, &offlineAt, &offers, &healthy, &runs)
+			(? = '' OR EXISTS (SELECT 1 FROM json_each(w.runners) WHERE value = ?)),
+			`+pausedSQL+`
+		FROM workers w WHERE w.id = ?`, r.WorkspaceID, r.WorkspaceID, r.Runner, r.Runner, formatTime(now), id).
+		Scan(&lastSeen, &pollMS, &offlineAt, &offers, &healthy, &runs, &paused)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("reading worker %s: %w", id, err)
 	}
-	if offlineAt != "" || offers == 0 || healthy == 0 || runs == 0 {
+	if offlineAt != "" || offers == 0 || healthy == 0 || runs == 0 || paused == 1 {
 		return false, nil
 	}
 	window := 3 * time.Duration(pollMS) * time.Millisecond
@@ -868,13 +893,13 @@ type AbleWorker struct {
 // IndexableWorkers is the one rule for who can index a workspace (the run
 // queue's index duty and the pipeline view both use it): the worker's
 // registry row names ws indexable, it was seen since cutoff and has not
-// said goodbye. Sorted by id.
-func IndexableWorkers(ctx context.Context, db *sql.DB, ws string, cutoff time.Time) ([]AbleWorker, error) {
+// said goodbye, and is not paused (at now). Sorted by id.
+func IndexableWorkers(ctx context.Context, db *sql.DB, ws string, cutoff, now time.Time) ([]AbleWorker, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT w.id, EXISTS (SELECT 1 FROM runs r WHERE r.worker_id = w.id AND r.status IN ('claimed', 'running'))
 		FROM workers w, json_each(w.indexable) j
-		WHERE j.value = ? AND w.last_seen >= ? AND w.offline_at IS NULL
-		ORDER BY w.id`, ws, formatTime(cutoff))
+		WHERE j.value = ? AND w.last_seen >= ? AND w.offline_at IS NULL AND NOT `+pausedSQL+`
+		ORDER BY w.id`, ws, formatTime(cutoff), formatTime(now))
 	if err != nil {
 		return nil, err
 	}
@@ -893,6 +918,6 @@ func IndexableWorkers(ctx context.Context, db *sql.DB, ws string, cutoff time.Ti
 }
 
 // IndexableWorkers: see the package function.
-func (s *Storage) IndexableWorkers(ctx context.Context, ws string, cutoff time.Time) ([]AbleWorker, error) {
-	return IndexableWorkers(ctx, s.db, ws, cutoff)
+func (s *Storage) IndexableWorkers(ctx context.Context, ws string, cutoff, now time.Time) ([]AbleWorker, error) {
+	return IndexableWorkers(ctx, s.db, ws, cutoff, now)
 }

@@ -27,6 +27,8 @@ func (h *Handler) respondRunError(w http.ResponseWriter, err error, what string)
 		rest.RespondError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrOutOfScope):
 		rest.RespondError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, auth.ErrApproverRequired):
+		rest.RespondError(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, ErrLeaseHeld):
 		rest.RespondError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrRunCancelled):
@@ -53,6 +55,19 @@ func (h *Handler) Claim(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.respondRunError(w, err, "claim")
 		return
+	}
+	if run == nil {
+		// A paused worker skips its idle work too (indexing, cleanup):
+		// someone is using its machine.
+		if p := h.service.WorkerPaused(r.Context(), in.WorkerID); p != nil {
+			until := "resume"
+			if !p.Until.IsZero() {
+				until = p.Until.Format(time.RFC3339)
+			}
+			w.Header().Set("Skopos-Paused", until)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 	}
 	// What to index while idle (tmp/agent-mcp-and-indexing — design.md
 	// §3), in headers so the body stays the run (or nothing).

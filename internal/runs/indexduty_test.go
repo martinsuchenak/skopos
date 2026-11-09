@@ -43,7 +43,7 @@ func TestIndexDuty(t *testing.T) {
 	if _, err := s.ClaimNext(ctx, in); err != nil {
 		t.Fatal(err)
 	}
-	able, _ := s.storage.IndexableWorkers(ctx, "ws-a", s.now().Add(-indexDutyWindow))
+	able, _ := s.storage.IndexableWorkers(ctx, "ws-a", s.now().Add(-indexDutyWindow), s.now())
 	if slices.ContainsFunc(able, func(a AbleWorker) bool { return a.ID == "w3" }) {
 		t.Fatalf("w3 does not offer ws-a: %v", able)
 	}

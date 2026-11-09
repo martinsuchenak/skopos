@@ -85,7 +85,7 @@ func TestHoldCloneNotesTheWait(t *testing.T) {
 	for _, want := range []string{
 		"waiting for the clone " + repo.Path + ": another worker process is using it …",
 		"is using it: done in 1", // 10s, plus the retry interval
-		"the clone was left on agent/left by a run that never finished; putting it back on main",
+		"the clone was on agent/left with nothing uncommitted; switching it to main",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)

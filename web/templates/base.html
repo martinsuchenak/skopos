@@ -685,7 +685,7 @@
                 <p x-show="workersLoading && workers.length === 0" class="empty-state" role="status">Loading…</p>
                 <p x-show="!workersLoading && workers.length === 0" class="empty-state">No workers have connected yet. A worker appears here from its first poll.</p>
                 <ul class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                    <template x-for="w in workers" :key="w.id + '|' + w.lastActive + '|' + w.state + '|' + w.lastSeen">
+                    <template x-for="w in workers" :key="w.id + '|' + w.lastActive + '|' + w.state + '|' + w.lastSeen + '|' + (w.paused ? w.paused.at : '')">
                         <li class="card p-4">
                             <div class="flex items-start justify-between gap-2">
                                 <h2 class="min-w-0 break-all font-mono text-sm font-medium" x-text="w.id"></h2>
@@ -712,6 +712,31 @@
                                     <template x-for="u in w.unhealthy" :key="u"><li class="break-words" x-text="u"></li></template>
                                 </ul>
                             </div>
+                            <!-- Pause: someone works on the worker's machine; it takes no new work. -->
+                            <p x-show="w.paused" class="mt-3 break-words text-xs text-amber-300" x-text="workerPauseText(w)"></p>
+                            <div class="mt-3 flex flex-wrap items-center gap-1" x-show="pausingWorker !== w.id">
+                                <button type="button" x-show="!w.paused" @click="openPauseWorker(w)" class="btn btn-sm btn-ghost" :aria-label="'Pause worker ' + w.id">Pause…</button>
+                                <button type="button" x-show="w.paused" @click="resumeWorker(w)" :disabled="workerBusy" class="btn btn-sm btn-ghost" :aria-label="'Resume worker ' + w.id">Resume</button>
+                            </div>
+                            <form x-show="pausingWorker === w.id" @submit.prevent="pauseWorker(w)" class="mt-3 space-y-2 text-xs">
+                                <p class="text-zinc-400">It takes no new work; a run it holds finishes.</p>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <label class="text-zinc-300" :for="'pause-for-' + w.id">For</label>
+                                    <select :id="'pause-for-' + w.id" :value="pauseForm.for" @change="setPauseFor($event.target.value)" class="fld-sm w-auto">
+                                        <option value="1h">1 hour</option>
+                                        <option value="2h" selected>2 hours</option>
+                                        <option value="4h">4 hours</option>
+                                        <option value="8h">8 hours</option>
+                                        <option value="24h">1 day</option>
+                                        <option value="">until resumed</option>
+                                    </select>
+                                </div>
+                                <input type="text" :value="pauseForm.reason" @input="setPauseReason($event.target.value)" maxlength="500" placeholder="Reason (optional)" class="fld-sm block w-full" :aria-label="'Reason for pausing ' + w.id" autocomplete="off">
+                                <div class="flex gap-1">
+                                    <button type="submit" :disabled="workerBusy" class="btn btn-sm btn-primary">Pause</button>
+                                    <button type="button" @click="closePauseWorker()" class="btn btn-sm btn-ghost">Cancel</button>
+                                </div>
+                            </form>
                         </li>
                     </template>
                 </ul>

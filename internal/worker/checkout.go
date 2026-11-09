@@ -88,11 +88,12 @@ func (w *Worker) holdClone(ctx context.Context, repo *Repo, log *slog.Logger) (f
 	}
 }
 
-// readyClone puts back what a run that never finished left (the worker was
-// killed): a clone on an item's branch, its uncommitted changes stashed for
-// the item's next run. Uncommitted or untracked files on the default
-// branch, or on no branch, are someone else's: the run stops instead of
-// hiding them.
+// readyClone puts the clone back on its default branch before a run. A
+// clean clone on another branch is switched back. Uncommitted changes are
+// stashed for the item's next run only when a run of this worker left them
+// (the worker was killed: the run marker names the branch); anyone else's —
+// on the default branch, on no branch, or on a branch someone checked out
+// by hand — stop the run instead of being moved away.
 func (w *Worker) readyClone(ctx context.Context, repo *Repo, log *slog.Logger) error {
 	if checkMarked(ctx, repo.Path) {
 		// A branch review's checks were cut off (the worker died): what
@@ -112,11 +113,65 @@ func (w *Worker) readyClone(ctx context.Context, repo *Repo, log *slog.Logger) e
 			repo.Path, cmp.Or(current, "a detached HEAD"), firstLine(dirty))
 	}
 	if current == repo.DefaultBranch {
+		setRunMarker(ctx, repo.Path, "")
 		return nil
 	}
-	log.Warn("the clone was left on another branch; putting it back", "clone", repo.Path, "branch", current, "stashed", dirty != "")
+	if dirty == "" {
+		log.Info("the clone is on another branch with nothing uncommitted; switching it back", "clone", repo.Path, "branch", current)
+		runLogFrom(ctx).notef("the clone was on %s with nothing uncommitted; switching it to %s", current, repo.DefaultBranch)
+		if _, err := git(ctx, repo.Path, "checkout", "--quiet", repo.DefaultBranch); err != nil {
+			return err
+		}
+		setRunMarker(ctx, repo.Path, "")
+		return nil
+	}
+	if runMarker(ctx, repo.Path) != current {
+		return fmt.Errorf("the clone %s is on %s with uncommitted or untracked files no skopos run left (%s); commit or stash them and switch it back to %s, or pause the worker while you work in it",
+			repo.Path, current, firstLine(dirty), repo.DefaultBranch)
+	}
+	log.Warn("a run that never finished left the clone on its branch; putting it back", "clone", repo.Path, "branch", current)
 	runLogFrom(ctx).notef("the clone was left on %s by a run that never finished; putting it back on %s", current, repo.DefaultBranch)
-	return parkClone(ctx, repo.Path, repo.DefaultBranch, stashLabel(current))
+	if err := parkClone(ctx, repo.Path, repo.DefaultBranch, stashLabel(current)); err != nil {
+		return err
+	}
+	setRunMarker(ctx, repo.Path, "")
+	return nil
+}
+
+// The run marker names the branch a run switched the clone to, from just
+// before the checkout until the clone is parked again. Only a branch it
+// names is a killed run's: readyClone stashes what is uncommitted there.
+func runMarkerPath(ctx context.Context, clone string) string {
+	dir, err := git(ctx, clone, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "skopos-run-branch")
+}
+
+// setRunMarker records branch ("" removes the marker).
+func setRunMarker(ctx context.Context, clone, branch string) {
+	p := runMarkerPath(ctx, clone)
+	if p == "" {
+		return
+	}
+	if branch == "" {
+		_ = os.Remove(p)
+		return
+	}
+	_ = os.WriteFile(p, []byte(branch), 0o600)
+}
+
+func runMarker(ctx context.Context, clone string) string {
+	p := runMarkerPath(ctx, clone)
+	if p == "" {
+		return ""
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 // cloneSetup is what a branch-checkout clone was last set up for: the
@@ -209,7 +264,9 @@ func (w *Worker) park(repo *Repo, branch string, log *slog.Logger) {
 	}
 	if err := parkClone(ctx, repo.Path, repo.DefaultBranch, stashLabel(branch)); err != nil {
 		log.Error("the clone could not be put back on the default branch; the next run on it tries again", "clone", repo.Path, "err", err)
+		return
 	}
+	setRunMarker(ctx, repo.Path, "")
 }
 
 // stashRefs lists the stashes saved under label, newest first.
