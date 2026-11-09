@@ -84,13 +84,33 @@ and from the [Slack relay](../configuration.md#slack-relay-server).
 
 Notes given with **Approve**, **Request changes** and **Retry** are appended
 to the item, together with the status change, as `## Approval notes`,
-`## Review notes`, `## Change requests` and `## Answers`. That is where the
-next run's prompt reads them.
+`## Review notes` and `## Change requests`.
+
+**Questions and answers** are a record of their own. The planner and the
+implementer ask through their run (`POST /api/runs/{id}/questions`, the
+worker's key and lease); each set records who asked, the run, what it was
+about (plan revision and base, or a commit) and whether the item waits on
+it, and the item gets a `## Questions — planner|implementer` section written
+from it. Answers come with **Approve**, **Request changes** and **Retry**
+(`answers`: a list of `{question_id, option, text}`, or free text read line
+by line against the open questions), or on their own while the item waits
+(`POST /api/inbox/{id}/answers`, **Save answers**, Slack `answer:`, `skopos
+inbox answer`). A correction names the answer it replaces (`replaces`).
+Each answer records who gave it, through which surface, with which action
+and approval; the item gets an `## Answers` section written from them, and
+the response's `answers_matched` says what the text was read as. Open
+questions a gate passes unanswered are recorded as skipped. The next run's
+prompt reads the decisions from the record
+(`POST /api/runs/{id}/questions/read`), which notes the first run that used
+each answer. See [the pipeline tutorial](../guides/pipeline.md#6-run-your-first-item).
 
 **System moves** (`POST /api/inbox/{id}/transition`) belong to the executor,
-and the transition matrix refuses anything else. Every transition, approval
-and workflow-item edit is audit-logged with who acted and from where:
-`GET /api/inbox/{id}/timeline`.
+and the transition matrix refuses anything else. Every transition, approval,
+question, answer and workflow-item edit is audit-logged with who acted and
+from where: `GET /api/inbox/{id}/timeline`. "From where" is the
+`X-Skopos-Via` header: the dashboard, the CLI, the worker and the Slack
+relay send theirs (`dashboard`, `cli`, `worker`, `slack`); MCP calls record
+`mcp`; a REST call without the header records `api`.
 
 **Editing workflow items.**
 - **No workspace moves.** A workflow item can't change workspace, because its
@@ -121,13 +141,24 @@ dashboard), like the session and blackboard purges.
   `POST /api/inbox/{id}/claim|convert|discard|restore|complete|reopen`. List rows carry a plain-text
   excerpt; `GET /{id}` returns the full markdown plus `content_html`
   (rendered server-side with goldmark + bluemonday — safe by construction,
-  pinned by adversarial tests).
+  pinned by adversarial tests); `?parts=1` adds `content_parts`, the content
+  cut into the author's text and the pipeline's rounds.
+  Questions and answers: `GET /api/inbox/{id}/questions` (the item's record:
+  sets, each question's state and answers, free answers),
+  `POST /api/inbox/{id}/answers`, `GET /api/inbox/questions` (the decision
+  log across items; filters, paging, `format=csv`) and
+  `GET /api/inbox/questions/summary` (counts in total, per workspace and per
+  person). The full reference is `openapi.yaml`.
 - **MCP**: `inbox_create`, `inbox_list`, `inbox_read`, `inbox_update`,
   `inbox_claim`, `inbox_convert`, `inbox_discard`, `inbox_restore`,
-  `inbox_complete`, `inbox_reopen`. `skopos_context` includes
+  `inbox_complete`, `inbox_reopen`, and `inbox_questions` (read only: an
+  item's questions and answers, or the decision log). `skopos_context` includes
   an `inbox` section (open count + top 5 titles). In lean mode the tools are
   behind `tool_search`.
-- **CLI**: `skopos inbox add|list|show|update|claim|convert|discard|restore|complete|reopen|purge|delete`.
+- **CLI**: `skopos inbox add|list|show|update|claim|convert|discard|restore|complete|reopen|purge|delete`;
+  `skopos inbox questions --id <item>` (the item's full record, with the ids
+  a correction needs) and `skopos inbox answer`; `skopos questions` (the
+  decision log, `--format csv|json`) and `skopos questions summary`.
   `add`/`update` take `--content`, `--file <path>`, or `--file -` (stdin) —
   migrating a notes vault is a shell loop. `--tag` is repeatable.
 - **Dashboard**: the Inbox view has two layouts (remembered per browser):

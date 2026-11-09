@@ -20,7 +20,7 @@ func inboxQuestionCmds() []*cli.Command {
 	return []*cli.Command{
 		{
 			Name:  "questions",
-			Usage: "Show an item's questions and answers: who asked, the state of each question, who answered and how",
+			Usage: "An item's full question-and-answer record: every set as asked, every answer (replaced ones too), with the ids to correct an answer (skopos inbox answer --replaces)",
 			Flags: workflowFlags(),
 			Run: func(ctx context.Context, cmd *cli.Command) error {
 				c, id, err := workflowClient(cmd)

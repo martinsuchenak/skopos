@@ -75,7 +75,7 @@ func questionsClient(cmd *cli.Command) *apiClient {
 func questionsCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "questions",
-		Usage: "The decision log: every question asked across items, its state and its answer (who, how, with which approval)",
+		Usage: "The decision log across items: one row per question with its state and current answer (who, how, with which approval, the wait); --item narrows it to one item (its full record: skopos inbox questions --id)",
 		Flags: append(questionFlags(), &cli.StringFlag{Name: "format", DefaultValue: "table", Usage: "table, csv or json"}),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			c := questionsClient(cmd)
@@ -163,6 +163,9 @@ func printDecisionLog(w io.Writer, rows []qa.Row) {
 		_, _ = fmt.Fprintln(w, "no questions")
 		return
 	}
+	defer func() {
+		_, _ = fmt.Fprintln(w, "\nAn item's full record, with the ids to correct an answer: skopos inbox questions --id <item>")
+	}()
 	item := ""
 	for _, r := range rows {
 		if r.ItemID != item {
