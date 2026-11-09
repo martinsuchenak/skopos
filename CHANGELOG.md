@@ -4,6 +4,33 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.26.0] — 2026-11-09
+
+### Changed
+
+- **A retried implementation goes back to the worker that ran it.** An
+  implement or branch-review run queued again for an item (Retry, Request
+  changes) waits up to 15 minutes for the worker that ran that stage before;
+  its clone has the branch, the setup and the last run's uncommitted work.
+  Then, or once that worker is offline or can't take the run, any worker
+  takes it. The tracker shows which worker it waits for and until when.
+
+- **MCP library upgraded to paularlott/mcp v0.35.0.** `execute_tool` refuses
+  arguments it can't read instead of calling the tool without them, and a
+  tool's input errors (an unknown item, a missing workspace) come back as
+  tool results marked as errors, which the agent reads, instead of protocol
+  errors.
+
+### Fixed
+
+- **A retried implementation started over.** A run cut off by
+  `worker.impl_timeout`, a crash or a restart left its finished steps
+  committed, but the next run's implementer got the whole plan again with
+  nothing marked done. Steps whose commit is on the branch are now marked
+  done and the implementer continues with the next one; uncommitted changes
+  the earlier run left are listed for it to finish or undo, and an
+  `index.lock` a killed git command left is removed.
+
 ## [0.25.0] — 2026-11-08
 
 ### Added
