@@ -4,6 +4,17 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.32.1] — 2026-11-10
+
+### Added
+
+- **Subagents for claude stages.** A stage profile's `tools` can grant
+  `Agent` (`Task` on older Claude Code), so the agent can hand smaller jobs
+  to subagents, for example on a smaller model. A subagent stays inside the
+  stage's lockdown: files only in the worktree, the stage's Bash limits, and
+  no project instructions loaded. Checked against the real Claude Code CLI
+  by a new opt-in live test. Opencode runs ignore the grant.
+
 ## [0.32.0] — 2026-11-10
 
 ### Added
