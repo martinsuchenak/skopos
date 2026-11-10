@@ -166,7 +166,14 @@ func (s *Service) transitionWith(ctx context.Context, itemID string, to Status, 
 				return err
 			}
 		}
-		return tx.SetStatus(ctx, itemID, to, s.now().UTC())
+		if err := tx.SetStatus(ctx, itemID, to, s.now().UTC()); err != nil {
+			return err
+		}
+		kind, reason := actorPerson, ""
+		if class == ActorSystem {
+			kind, reason = actorSystem, notes
+		}
+		return s.emitStatus(ctx, tx, item, to, kind, reason)
 	})
 	if err != nil {
 		return nil, err

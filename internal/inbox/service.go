@@ -11,6 +11,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/martinsuchenak/skopos/internal/ids"
+	"github.com/martinsuchenak/skopos/internal/integrations"
 	"github.com/martinsuchenak/skopos/internal/qa"
 )
 
@@ -27,6 +28,7 @@ type Service struct {
 	secondOpinionDefault func(ctx context.Context, workspaceID string) string
 	runLister            RunLister
 	itemNotifier         ItemNotifier
+	events               *integrations.Emitter
 	questions            QuestionLog
 }
 
@@ -85,6 +87,53 @@ type ItemNotifier interface {
 
 // SetItemNotifier wires the outbound notification hook.
 func (s *Service) SetItemNotifier(n ItemNotifier) { s.itemNotifier = n }
+
+// SetEventEmitter records item events for other systems in the
+// transaction of each change (internal/integrations; nil = none).
+func (s *Service) SetEventEmitter(e *integrations.Emitter) { s.events = e }
+
+// Actor kinds on item.status_changed.
+const (
+	actorPerson = "person"
+	actorSystem = "system"
+	actorAgent  = "agent"
+)
+
+// emitStatus records a status change, and what it means to someone
+// following the item: a gate that waits for a person (item.needs_you, and
+// plan.ready at the plan gate) or the item's end (item.closed).
+func (s *Service) emitStatus(ctx context.Context, tx Store, item *Item, to Status, actorKind, reason string) error {
+	if s.events == nil || item.Status == to {
+		return nil
+	}
+	data := map[string]any{"status": string(to), "previous_status": string(item.Status), "actor_kind": actorKind}
+	if reason != "" {
+		data["reason"] = reason
+	}
+	evs := []integrations.Event{{Type: integrations.TypeItemStatusChanged, ItemID: item.ID, Data: data}}
+	gate := ""
+	switch to {
+	case StatusAwaitingApproval:
+		gate = "plan_approval"
+		evs = append(evs, integrations.Event{Type: integrations.TypePlanReady, ItemID: item.ID, Data: map[string]any{"plan_id": item.PlanID}})
+	case StatusInReview:
+		gate = "sign_off"
+	case StatusBlocked:
+		gate = "blocked"
+	case StatusFailed:
+		gate = "failed"
+	case StatusDone, StatusDiscarded:
+		evs = append(evs, integrations.Event{Type: integrations.TypeItemClosed, ItemID: item.ID, Data: map[string]any{"outcome": string(to)}})
+	}
+	if gate != "" {
+		nd := map[string]any{"gate": gate}
+		if reason != "" && (gate == "blocked" || gate == "failed") {
+			nd["reason"] = reason
+		}
+		evs = append(evs, integrations.Event{Type: integrations.TypeItemNeedsYou, ItemID: item.ID, Data: nd})
+	}
+	return s.events.Emit(ctx, tx.EventDB(), evs...)
+}
 
 // SetSlackThread records the item's Slack thread root (relay bookkeeping).
 func (s *Service) SetSlackThread(ctx context.Context, itemID, ts string) error {
@@ -185,7 +234,17 @@ func (s *Service) CreateItem(ctx context.Context, input CreateInput) (*Item, err
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
-	if err := s.store.CreateItem(ctx, item); err != nil {
+	err = s.store.RunInTx(ctx, func(tx Store) error {
+		if err := tx.CreateItem(ctx, item); err != nil {
+			return err
+		}
+		if s.events == nil {
+			return nil
+		}
+		return s.events.Emit(ctx, tx.EventDB(), integrations.Event{Type: integrations.TypeItemCreated, ItemID: item.ID,
+			WorkspaceID: item.WorkspaceID, Data: map[string]any{"title": item.Title}})
+	})
+	if err != nil {
 		return nil, err
 	}
 	if s.publisher != nil {
@@ -739,7 +798,10 @@ func (s *Service) Claim(ctx context.Context, itemID, agentID string) (*Item, err
 		if agentID != "" {
 			switch {
 			case item.Status == StatusOpen:
-				return tx.ClaimItem(ctx, itemID, agentID, s.now().UTC())
+				if err := tx.ClaimItem(ctx, itemID, agentID, s.now().UTC()); err != nil {
+					return err
+				}
+				return s.emitStatus(ctx, tx, item, StatusInProgress, actorAgent, "")
 			case item.Status == StatusInProgress && item.ClaimedByAgentID == agentID:
 				return nil // idempotent re-claim by the same agent
 			case item.Status == StatusInProgress:
@@ -753,7 +815,10 @@ func (s *Service) Claim(ctx context.Context, itemID, agentID string) (*Item, err
 		case StatusOpen:
 			return nil // nothing to release
 		case StatusInProgress:
-			return tx.ReleaseItem(ctx, itemID, s.now().UTC())
+			if err := tx.ReleaseItem(ctx, itemID, s.now().UTC()); err != nil {
+				return err
+			}
+			return s.emitStatus(ctx, tx, item, StatusOpen, actorAgent, "")
 		default:
 			return fmt.Errorf("%w: only open and in-progress items can be claimed or released (item is %s)", ErrInvalidInput, statusLabel(item.Status))
 		}
@@ -811,7 +876,10 @@ func (s *Service) Convert(ctx context.Context, itemID string, input ConvertInput
 			return fmt.Errorf("%w: plan %s belongs to a different workspace than the item — convert within one workspace",
 				ErrInvalidInput, planID)
 		}
-		return tx.ConvertItem(ctx, itemID, planID, s.now().UTC())
+		if err := tx.ConvertItem(ctx, itemID, planID, s.now().UTC()); err != nil {
+			return err
+		}
+		return s.emitStatus(ctx, tx, item, StatusConverted, actorPerson, "")
 	})
 	if err != nil {
 		return nil, err
@@ -836,7 +904,10 @@ func (s *Service) Restore(ctx context.Context, itemID string) error {
 		if item.Status != StatusDiscarded {
 			return fmt.Errorf("%w: only discarded items can be restored (item is %s)", ErrInvalidInput, statusLabel(item.Status))
 		}
-		return tx.RestoreItem(ctx, itemID, s.now().UTC())
+		if err := tx.RestoreItem(ctx, itemID, s.now().UTC()); err != nil {
+			return err
+		}
+		return s.emitStatus(ctx, tx, item, StatusOpen, actorPerson, "")
 	})
 	if err != nil {
 		return err
@@ -864,7 +935,10 @@ func (s *Service) Discard(ctx context.Context, itemID string) error {
 		case StatusDone, StatusDiscarded:
 			return fmt.Errorf("%w: item is %s (terminal)", ErrInvalidInput, statusLabel(item.Status))
 		default:
-			return tx.SetStatus(ctx, itemID, StatusDiscarded, s.now().UTC())
+			if err := tx.SetStatus(ctx, itemID, StatusDiscarded, s.now().UTC()); err != nil {
+				return err
+			}
+			return s.emitStatus(ctx, tx, item, StatusDiscarded, actorPerson, "")
 		}
 	})
 	if err != nil {
@@ -899,7 +973,10 @@ func (s *Service) Complete(ctx context.Context, itemID string) error {
 		case StatusDiscarded:
 			return fmt.Errorf("%w: item is discarded — restore it before completing", ErrInvalidInput)
 		default:
-			return tx.SetStatus(ctx, itemID, StatusDone, s.now().UTC())
+			if err := tx.SetStatus(ctx, itemID, StatusDone, s.now().UTC()); err != nil {
+				return err
+			}
+			return s.emitStatus(ctx, tx, item, StatusDone, actorPerson, "")
 		}
 	})
 	if err != nil {
@@ -927,7 +1004,10 @@ func (s *Service) Reopen(ctx context.Context, itemID string) error {
 		if item.Status != StatusDone {
 			return fmt.Errorf("%w: only done items can be reopened (item is %s)", ErrInvalidInput, statusLabel(item.Status))
 		}
-		return tx.ReopenItem(ctx, itemID, s.now().UTC())
+		if err := tx.ReopenItem(ctx, itemID, s.now().UTC()); err != nil {
+			return err
+		}
+		return s.emitStatus(ctx, tx, item, StatusOpen, actorPerson, "")
 	})
 	if err != nil {
 		return err
@@ -989,7 +1069,25 @@ func (s *Service) CompleteForPlan(ctx context.Context, planID string) (int64, er
 	if planID == "" {
 		return 0, fmt.Errorf("%w: plan_id is required", ErrInvalidInput)
 	}
-	n, err := s.store.CompleteForPlan(ctx, planID, s.now().UTC())
+	var n int64
+	err := s.store.RunInTx(ctx, func(tx Store) error {
+		// The converted items the plan finishes, for their status events.
+		linked, err := tx.ItemsByPlan(ctx, planID)
+		if err != nil {
+			return err
+		}
+		if n, err = tx.CompleteForPlan(ctx, planID, s.now().UTC()); err != nil {
+			return err
+		}
+		for i := range linked {
+			if linked[i].Status == StatusConverted {
+				if err := s.emitStatus(ctx, tx, &linked[i], StatusDone, actorSystem, "its plan is complete"); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return n, err
 	}

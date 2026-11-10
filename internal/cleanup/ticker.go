@@ -11,6 +11,7 @@ import (
 
 	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/martinsuchenak/skopos/internal/idempotency"
+	"github.com/martinsuchenak/skopos/internal/integrations"
 )
 
 type Cleaner struct {
@@ -118,6 +119,12 @@ func (c *Cleaner) clean(ctx context.Context) error {
 	// Run logs (gzipped batches, Unix ms) past the retention.
 	if _, err := c.db.ExecContext(ctx, `DELETE FROM run_logs WHERE created_ms < ?`, cutoff.UnixMilli()); err != nil {
 		return fmt.Errorf("deleting old run logs: %w", err)
+	}
+
+	// Integration events and webhook deliveries past the retention (events
+	// a subscription still has to deliver stay).
+	if err := integrations.Prune(ctx, c.db, cutoff); err != nil {
+		return err
 	}
 
 	// Idempotency keys past their 24 hours.

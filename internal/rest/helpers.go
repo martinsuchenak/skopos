@@ -95,3 +95,13 @@ func BodyLimit(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// Via is the surface a request names in X-Skopos-Via, else "api" (a REST
+// call that names none: an integration; audit.ViaAPI). The audit log keeps
+// only its known surfaces.
+func Via(r *http.Request) string {
+	if v := r.Header.Get("X-Skopos-Via"); v != "" {
+		return v
+	}
+	return "api"
+}

@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/qa"
 	"github.com/martinsuchenak/skopos/internal/rest"
@@ -42,10 +41,7 @@ func viaFrom(r *http.Request, explicit string) string {
 	if explicit != "" {
 		return explicit
 	}
-	if r.Header.Get("X-Skopos-Via") != "" {
-		return r.Header.Get("X-Skopos-Via")
-	}
-	return audit.ViaAPI
+	return rest.Via(r)
 }
 
 func (h *Handler) respondTransition(w http.ResponseWriter, item *Item, err error) {

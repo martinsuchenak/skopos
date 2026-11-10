@@ -3,6 +3,7 @@ package qa
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/martinsuchenak/skopos/internal/ids"
+	"github.com/martinsuchenak/skopos/internal/integrations"
 	"github.com/martinsuchenak/skopos/internal/itemtext"
 )
 
@@ -30,6 +32,10 @@ type Service struct {
 func NewService(storage *Storage) *Service { return &Service{storage: storage, now: time.Now} }
 
 func (s *Service) SetAuditRecorder(a AuditRecorder) { s.audit = a }
+
+// SetEventEmitter records questions.waiting and questions.answered for
+// other systems (internal/integrations; nil = none).
+func (s *Service) SetEventEmitter(e *integrations.Emitter) { s.storage.events = e }
 
 // SetPublisher installs the event bus: a run's questions publish
 // questions.waiting (nil = none).
@@ -112,7 +118,13 @@ func (s *Service) Ask(ctx context.Context, in AskInput) (*Set, error) {
 		}
 		set.Questions = append(set.Questions, Question{ID: ids.New(), SetID: set.ID, N: i + 1, Text: text, Options: opts, State: StateOpen})
 	}
-	if err := s.storage.InsertSet(ctx, set); err != nil {
+	var evs []integrations.Event
+	if in.Source != SourceImported {
+		evs = append(evs, integrations.Event{Type: integrations.TypeQuestionsWaiting, WorkspaceID: set.WorkspaceID, ItemID: set.ItemID,
+			Data: map[string]any{"set_id": set.ID, "count": len(set.Questions), "blocking": set.Blocking, "asker": set.Asker,
+				"label": set.Label, "run_id": set.RunID, "stage": set.Stage}})
+	}
+	if err := s.storage.InsertSet(ctx, set, evs...); err != nil {
 		return nil, err
 	}
 	if in.Source != SourceImported {
@@ -415,7 +427,7 @@ func (s *Service) Commit(ctx context.Context, p *Prepared, approvalID, via strin
 		a.CreatedAt = now.Add(time.Duration(i) * time.Millisecond)
 		rows[i] = a
 	}
-	if err := s.storage.InsertAnswers(ctx, rows); err != nil {
+	if err := s.storage.InsertAnswers(ctx, rows, answeredEvent(p, rows)); err != nil {
 		return err
 	}
 	s.recordedLive(ctx, p.ItemID)
@@ -472,4 +484,25 @@ func cleanVia(ctx context.Context, via string) string {
 		}
 	}
 	return ""
+}
+
+// answeredEvent is questions.answered for one action's answers.
+func answeredEvent(p *Prepared, rows []Answer) integrations.Event {
+	var sets []string
+	answered, skipped := 0, 0
+	for _, a := range rows {
+		if a.SetID != "" && !slices.Contains(sets, a.SetID) {
+			sets = append(sets, a.SetID)
+		}
+		if a.Kind == KindSkipped {
+			skipped++
+		} else {
+			answered++
+		}
+	}
+	if sets == nil {
+		sets = []string{}
+	}
+	return integrations.Event{Type: integrations.TypeQuestionsAnswered, WorkspaceID: p.WorkspaceID, ItemID: p.ItemID,
+		Data: map[string]any{"set_ids": sets, "answered": answered, "skipped": skipped, "action": p.Action}}
 }

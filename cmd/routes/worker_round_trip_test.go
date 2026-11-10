@@ -19,6 +19,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/idempotency"
 	"github.com/martinsuchenak/skopos/internal/inbox"
+	"github.com/martinsuchenak/skopos/internal/integrations"
 	"github.com/martinsuchenak/skopos/internal/itemstate"
 	"github.com/martinsuchenak/skopos/internal/pipeline"
 	"github.com/martinsuchenak/skopos/internal/plans"
@@ -274,6 +275,10 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	})
 	inboxService.SetSecondOpinionDefault(pipelineService.SecondOpinionRunner)
 	inboxService.SetRunLister(testRunLister{runsService})
+	emitter := integrations.NewEmitter()
+	inboxService.SetEventEmitter(emitter)
+	runsService.SetEventEmitter(emitter)
+	integrationsService := integrations.NewService(sqlDB, emitter, "test-key", integrations.URLPolicy{})
 	if configure != nil {
 		configure(runsService)
 	}
@@ -291,6 +296,7 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	apiMux := http.NewServeMux()
 	RegisterRoutes(webMux, apiMux, st, bb, pl, ib, ws, nil, ak, rh)
 	RegisterPipelineRoutes(apiMux, pipeline.NewHandler(pipelineService, authn))
+	MountIntegrations(apiMux, integrations.NewHandler(integrationsService))
 	root := http.NewServeMux()
 	root.Handle("/api/", authn.Middleware(idempotency.New(sqlDB).Middleware("/api/inbox")(apiMux)))
 	root.Handle("/", webMux)

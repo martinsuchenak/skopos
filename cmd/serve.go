@@ -30,6 +30,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/health"
 	"github.com/martinsuchenak/skopos/internal/idempotency"
 	"github.com/martinsuchenak/skopos/internal/inbox"
+	"github.com/martinsuchenak/skopos/internal/integrations"
 	"github.com/martinsuchenak/skopos/internal/itemstate"
 	"github.com/martinsuchenak/skopos/internal/itemtext"
 	"github.com/martinsuchenak/skopos/internal/notify"
@@ -167,6 +168,30 @@ func serveCmd() *cli.Command {
 				Usage:        "Days to retain data before automatic cleanup (0 to disable)",
 				ConfigPath:   []string{"cleanup.retention_days"},
 				EnvVars:      []string{"CLEANUP_RETENTION_DAYS"},
+			},
+			&cli.StringFlag{
+				Name:       "integrations-key",
+				Usage:      "Key that encrypts webhook secrets; without it webhooks are off (the event feed still works). Keep it: changing it makes stored secrets unreadable",
+				ConfigPath: []string{"integrations.secret_key"},
+				EnvVars:    []string{"SKOPOS_INTEGRATIONS_KEY"},
+			},
+			&cli.StringFlag{
+				Name:       "public-url",
+				Usage:      "The URL other systems reach this server at (e.g. https://skopos.example.com); webhook payloads link to the item from it",
+				ConfigPath: []string{"server.public_url"},
+				EnvVars:    []string{"SKOPOS_PUBLIC_URL"},
+			},
+			&cli.StringSliceFlag{
+				Name:       "webhooks-allow-private",
+				Usage:      "CIDRs (or addresses) webhooks may reach although private, loopback or link-local, e.g. 10.20.0.0/16",
+				ConfigPath: []string{"integrations.allow_private"},
+				EnvVars:    []string{"SKOPOS_WEBHOOKS_ALLOW_PRIVATE"},
+			},
+			&cli.StringSliceFlag{
+				Name:       "webhooks-allow-http",
+				Usage:      "Hosts webhooks may reach over plain http (otherwise https only)",
+				ConfigPath: []string{"integrations.allow_http"},
+				EnvVars:    []string{"SKOPOS_WEBHOOKS_ALLOW_HTTP"},
 			},
 		},
 		// go-scaffolder:serve-flags
@@ -536,6 +561,42 @@ func serveCmd() *cli.Command {
 			})
 			inboxService.SetRunQueuer(runsService)
 			inboxService.SetRunLister(runsListerAdapter{runs: runsService})
+			// Integrations (tmp/integrations — design.md §3): events in the
+			// transaction of each change, webhooks, and the event feed.
+			allowPrivate, err := integrations.ParseCIDRs(cmd.GetStringSlice("webhooks-allow-private"))
+			if err != nil {
+				return err
+			}
+			var allowHTTP []string
+			for _, h := range cmd.GetStringSlice("webhooks-allow-http") {
+				if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
+					allowHTTP = append(allowHTTP, h)
+				}
+			}
+			emitter := integrations.NewEmitter()
+			inboxService.SetEventEmitter(emitter)
+			runsService.SetEventEmitter(emitter)
+			qaService.SetEventEmitter(emitter)
+			integrationsService := integrations.NewService(sqlDB, emitter, cmd.GetString("integrations-key"),
+				integrations.URLPolicy{AllowHTTP: allowHTTP, AllowPrivate: allowPrivate})
+			integrationsService.PublicURL = strings.TrimRight(strings.TrimSpace(cmd.GetString("public-url")), "/")
+			integrationsService.SetAuditRecorder(auditService)
+			integrationsService.GroupExists = func(ctx context.Context, ref string) string {
+				g, err := apiKeysStorage.ResolveGroupRef(ctx, ref)
+				if err != nil {
+					return ""
+				}
+				return g.ID
+			}
+			integrationsService.GroupScope = func(ctx context.Context, groupID string) ([]string, []string, error) {
+				g, err := apiKeysStorage.GetGroup(ctx, groupID)
+				return g.Members, g.Patterns, err
+			}
+			if cmd.GetString("integrations-key") == "" {
+				log.Info("webhooks off: no integrations key (integrations.secret_key / SKOPOS_INTEGRATIONS_KEY); the event feed still works")
+			} else {
+				go integrations.NewDispatcher(integrationsService, log).Run(ctx)
+			}
 			// GET /api/inbox/{id}/state: the item's state for other
 			// systems (tmp/integrations — design.md §4).
 			inboxHandler.SetStateHandler(itemstate.NewHandler(&itemstate.Service{
@@ -607,6 +668,7 @@ func serveCmd() *cli.Command {
 			apiMux := http.NewServeMux()
 			routes.RegisterRoutes(webMux, apiMux, statusHandler, blackboardHandler, plansHandler, inboxHandler, workspacesHandler, codeIndexHandler, apiKeysHandler, runsHandler)
 			routes.RegisterPipelineRoutes(apiMux, pipeline.NewHandler(pipelineService, authn))
+			routes.MountIntegrations(apiMux, integrations.NewHandler(integrationsService))
 			mux := http.NewServeMux()
 			// Longest-pattern wins: the exact SSE route below overrides /api/.
 			// Idempotency-Key covers the inbox's POSTs (integrations retry

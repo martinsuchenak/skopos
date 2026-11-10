@@ -2473,6 +2473,380 @@ paths:
         "401": { description: Unauthorized }
         "404": { description: Unknown run }
 
+  /api/events:
+    get:
+      summary: The event feed (the same events webhooks deliver), oldest first
+      description: >
+        Events after a cursor, in the caller's scope (a scoped key sees its
+        workspaces' events). Pass next_after back as after. wait long-polls
+        (seconds, at most 25) when nothing is new. A cursor older than the
+        oldest kept event answers 410 with oldest_seq: events were missed;
+        resync from /api/inbox/{id}/state.
+      operationId: eventFeed
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: after, in: query, schema: { type: integer }, description: "Sequence number to read after (0 = from the oldest kept)" }
+        - { name: types, in: query, schema: { type: string }, description: "Comma-separated event types" }
+        - { name: workspace_id, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer }, description: "At most 500 (default 100)" }
+        - { name: wait, in: query, schema: { type: integer }, description: "Seconds to wait for an event when none is new (at most 25)" }
+      responses:
+        "200":
+          description: A page of events
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FeedPage" }
+        "400": { description: Invalid parameter }
+        "401": { description: Unauthorized }
+        "410":
+          description: Events after this cursor are no longer kept
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+                  oldest_seq: { type: integer }
+  /api/webhooks:
+    post:
+      summary: Create a webhook subscription (the signing secret is returned once)
+      description: >
+        Root for any subscription; an approver for workspaces in its scope
+        (groups need root). Needs the server's integrations key. Deliveries
+        follow Standard Webhooks: webhook-id, webhook-timestamp and
+        webhook-signature headers, at-least-once with retries for about 27
+        hours. The subscription gets events from its creation on.
+      operationId: createWebhook
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WebhookInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebhookWithSecret" }
+        "400": { description: Invalid input (URL not allowed, unknown type, no scope) }
+        "401": { description: Unauthorized }
+        "403": { description: Not an approver, workspace out of scope, or a group without root }
+        "409": { description: The server has no integrations key }
+    get:
+      summary: List the subscriptions the caller may manage
+      operationId: listWebhooks
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: Subscriptions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Webhook" }
+        "401": { description: Unauthorized }
+        "403": { description: Not an approver }
+  /api/webhooks/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get:
+      summary: One subscription
+      operationId: getWebhook
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: The subscription
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Webhook" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+    patch:
+      summary: Change a subscription; enabled false disables it, true re-enables it
+      description: Re-enabling delivers what waited while it was disabled (events are kept for cleanup.retention_days).
+      operationId: updateWebhook
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WebhookInput" }
+      responses:
+        "200":
+          description: The subscription
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Webhook" }
+        "400": { description: Invalid input }
+        "401": { description: Unauthorized }
+        "403": { description: The new scope is outside the caller's }
+        "404": { description: Not found }
+    delete:
+      summary: Delete a subscription and its deliveries
+      operationId: deleteWebhook
+      security: [{ BearerAuth: [] }]
+      responses:
+        "204": { description: Deleted }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+  /api/webhooks/{id}/rotate:
+    post:
+      summary: Replace the signing secret (the old one also signs for 24 hours)
+      operationId: rotateWebhook
+      security: [{ BearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        "200":
+          description: The new secret, shown once
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebhookWithSecret" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+  /api/webhooks/{id}/test:
+    post:
+      summary: Send a webhook.test event to this subscription
+      operationId: testWebhook
+      security: [{ BearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        "202":
+          description: The queued delivery
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebhookDelivery" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+  /api/webhooks/{id}/deliveries:
+    get:
+      summary: The subscription's deliveries, newest first, with every attempt
+      operationId: webhookDeliveries
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string, enum: [pending, delivered, failed] } }
+        - { name: limit, in: query, schema: { type: integer }, description: "At most 200 (default 50)" }
+      responses:
+        "200":
+          description: Deliveries
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/WebhookDelivery" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+  /api/webhooks/{id}/redeliver:
+    post:
+      summary: Deliver again, with the same webhook-id
+      operationId: redeliverWebhook
+      security: [{ BearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                delivery_id: { type: string, description: One delivery }
+                since: { type: string, format: date-time, description: Every failed delivery since then }
+      responses:
+        "200":
+          description: How many were queued again
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  redelivered: { type: integer }
+        "400": { description: Neither delivery_id nor since }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+webhooks:
+  item.created:
+    post:
+      summary: "An item was created (any source)"
+      description: "data: item_id, workspace_id, ref, external_url, status, seq, links (api, dashboard), plus title."
+      parameters:
+        - { name: webhook-id, in: header, required: true, schema: { type: string }, description: "msg_…; the same on every retry and redelivery" }
+        - { name: webhook-timestamp, in: header, required: true, schema: { type: integer }, description: Unix seconds }
+        - { name: webhook-signature, in: header, required: true, schema: { type: string }, description: "v1,<base64 HMAC-SHA256(secret, id.timestamp.body)>, space-separated during a rotation" }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EventPayload" }
+      responses:
+        "200": { description: "Any 2xx acknowledges; 410 disables the subscription; anything else is retried" }
+  item.status_changed:
+    post:
+      summary: "Every status change"
+      description: "data: item_id, workspace_id, ref, external_url, status, seq, links (api, dashboard), plus status, previous_status, actor_kind (person, system, agent), reason (system changes)."
+      parameters:
+        - { name: webhook-id, in: header, required: true, schema: { type: string }, description: "msg_…; the same on every retry and redelivery" }
+        - { name: webhook-timestamp, in: header, required: true, schema: { type: integer }, description: Unix seconds }
+        - { name: webhook-signature, in: header, required: true, schema: { type: string }, description: "v1,<base64 HMAC-SHA256(secret, id.timestamp.body)>, space-separated during a rotation" }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EventPayload" }
+      responses:
+        "200": { description: "Any 2xx acknowledges; 410 disables the subscription; anything else is retried" }
+  item.needs_you:
+    post:
+      summary: "The item waits for a person"
+      description: "data: item_id, workspace_id, ref, external_url, status, seq, links (api, dashboard), plus gate (plan_approval, sign_off, blocked, failed), reason."
+      parameters:
+        - { name: webhook-id, in: header, required: true, schema: { type: string }, description: "msg_…; the same on every retry and redelivery" }
+        - { name: webhook-timestamp, in: header, required: true, schema: { type: integer }, description: Unix seconds }
+        - { name: webhook-signature, in: header, required: true, schema: { type: string }, description: "v1,<base64 HMAC-SHA256(secret, id.timestamp.body)>, space-separated during a rotation" }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EventPayload" }
+      responses:
+        "200": { description: "Any 2xx acknowledges; 410 disables the subscription; anything else is retried" }
+  item.closed:
+    post:
+      summary: "The item is done or discarded"
+      description: "data: item_id, workspace_id, ref, external_url, status, seq, links (api, dashboard), plus outcome."
+      parameters:
+        - { name: webhook-id, in: header, required: true, schema: { type: string }, description: "msg_…; the same on every retry and redelivery" }
+        - { name: webhook-timestamp, in: header, required: true, schema: { type: integer }, description: Unix seconds }
+        - { name: webhook-signature, in: header, required: true, schema: { type: string }, description: "v1,<base64 HMAC-SHA256(secret, id.timestamp.body)>, space-separated during a rotation" }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EventPayload" }
+      responses:
+        "200": { description: "Any 2xx acknowledges; 410 disables the subscription; anything else is retried" }
+  plan.ready:
+    post:
+      summary: "A plan waits for approval"
+      description: "data: item_id, workspace_id, ref, external_url, status, seq, links (api, dashboard), plus plan_id."
+      parameters:
+        - { name: webhook-id, in: header, required: true, schema: { type: string }, description: "msg_…; the same on every retry and redelivery" }
+        - { name: webhook-timestamp, in: header, required: true, schema: { type: integer }, description: Unix seconds }
+        - { name: webhook-signature, in: header, required: true, schema: { type: string }, description: "v1,<base64 HMAC-SHA256(secret, id.timestamp.body)>, space-separated during a rotation" }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EventPayload" }
+      responses:
+        "200": { description: "Any 2xx acknowledges; 410 disables the subscription; anything else is retried" }
+  questions.waiting:
+    post:
+      summary: "A run asked questions"
+      description: "data: item_id, workspace_id, ref, external_url, status, seq, links (api, dashboard), plus set_id, count, blocking, asker, label, run_id, stage."
+      parameters:
+        - { name: webhook-id, in: header, required: true, schema: { type: string }, description: "msg_…; the same on every retry and redelivery" }
+        - { name: webhook-timestamp, in: header, required: true, schema: { type: integer }, description: Unix seconds }
+        - { name: webhook-signature, in: header, required: true, schema: { type: string }, description: "v1,<base64 HMAC-SHA256(secret, id.timestamp.body)>, space-separated during a rotation" }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EventPayload" }
+      responses:
+        "200": { description: "Any 2xx acknowledges; 410 disables the subscription; anything else is retried" }
+  questions.answered:
+    post:
+      summary: "Answers were recorded"
+      description: "data: item_id, workspace_id, ref, external_url, status, seq, links (api, dashboard), plus set_ids, answered, skipped, action."
+      parameters:
+        - { name: webhook-id, in: header, required: true, schema: { type: string }, description: "msg_…; the same on every retry and redelivery" }
+        - { name: webhook-timestamp, in: header, required: true, schema: { type: integer }, description: Unix seconds }
+        - { name: webhook-signature, in: header, required: true, schema: { type: string }, description: "v1,<base64 HMAC-SHA256(secret, id.timestamp.body)>, space-separated during a rotation" }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EventPayload" }
+      responses:
+        "200": { description: "Any 2xx acknowledges; 410 disables the subscription; anything else is retried" }
+  run.started:
+    post:
+      summary: "A run was claimed (only to subscriptions naming it)"
+      description: "data: item_id, workspace_id, ref, external_url, status, seq, links (api, dashboard), plus run_id, stage, runner, group_id, attempt."
+      parameters:
+        - { name: webhook-id, in: header, required: true, schema: { type: string }, description: "msg_…; the same on every retry and redelivery" }
+        - { name: webhook-timestamp, in: header, required: true, schema: { type: integer }, description: Unix seconds }
+        - { name: webhook-signature, in: header, required: true, schema: { type: string }, description: "v1,<base64 HMAC-SHA256(secret, id.timestamp.body)>, space-separated during a rotation" }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EventPayload" }
+      responses:
+        "200": { description: "Any 2xx acknowledges; 410 disables the subscription; anything else is retried" }
+  run.finished:
+    post:
+      summary: "A run reported (only to subscriptions naming it)"
+      description: "data: item_id, workspace_id, ref, external_url, status, seq, links (api, dashboard), plus run_id, stage, runner, outcome (succeeded, failed), reason, head_sha."
+      parameters:
+        - { name: webhook-id, in: header, required: true, schema: { type: string }, description: "msg_…; the same on every retry and redelivery" }
+        - { name: webhook-timestamp, in: header, required: true, schema: { type: integer }, description: Unix seconds }
+        - { name: webhook-signature, in: header, required: true, schema: { type: string }, description: "v1,<base64 HMAC-SHA256(secret, id.timestamp.body)>, space-separated during a rotation" }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EventPayload" }
+      responses:
+        "200": { description: "Any 2xx acknowledges; 410 disables the subscription; anything else is retried" }
+  checks.finished:
+    post:
+      summary: "An implementation's checks ran"
+      description: "data: item_id, workspace_id, ref, external_url, status, seq, links (api, dashboard), plus run_id, head_sha, passed, failed_names."
+      parameters:
+        - { name: webhook-id, in: header, required: true, schema: { type: string }, description: "msg_…; the same on every retry and redelivery" }
+        - { name: webhook-timestamp, in: header, required: true, schema: { type: integer }, description: Unix seconds }
+        - { name: webhook-signature, in: header, required: true, schema: { type: string }, description: "v1,<base64 HMAC-SHA256(secret, id.timestamp.body)>, space-separated during a rotation" }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EventPayload" }
+      responses:
+        "200": { description: "Any 2xx acknowledges; 410 disables the subscription; anything else is retried" }
+  review.finished:
+    post:
+      summary: "A review, branch review or second opinion reported"
+      description: "data: item_id, workspace_id, ref, external_url, status, seq, links (api, dashboard), plus run_id, stage, runner, focus, head_sha, passed, blocking, nits."
+      parameters:
+        - { name: webhook-id, in: header, required: true, schema: { type: string }, description: "msg_…; the same on every retry and redelivery" }
+        - { name: webhook-timestamp, in: header, required: true, schema: { type: integer }, description: Unix seconds }
+        - { name: webhook-signature, in: header, required: true, schema: { type: string }, description: "v1,<base64 HMAC-SHA256(secret, id.timestamp.body)>, space-separated during a rotation" }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EventPayload" }
+      responses:
+        "200": { description: "Any 2xx acknowledges; 410 disables the subscription; anything else is retried" }
+  pr.opened:
+    post:
+      summary: "An implement run opened or reused a pull request"
+      description: "data: item_id, workspace_id, ref, external_url, status, seq, links (api, dashboard), plus run_id, url, head_sha."
+      parameters:
+        - { name: webhook-id, in: header, required: true, schema: { type: string }, description: "msg_…; the same on every retry and redelivery" }
+        - { name: webhook-timestamp, in: header, required: true, schema: { type: integer }, description: Unix seconds }
+        - { name: webhook-signature, in: header, required: true, schema: { type: string }, description: "v1,<base64 HMAC-SHA256(secret, id.timestamp.body)>, space-separated during a rotation" }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EventPayload" }
+      responses:
+        "200": { description: "Any 2xx acknowledges; 410 disables the subscription; anything else is retried" }
+  webhook.test:
+    post:
+      summary: "skopos webhook test (that subscription only)"
+      description: "data: item_id, workspace_id, ref, external_url, status, seq, links (api, dashboard), plus webhook_id, message."
+      parameters:
+        - { name: webhook-id, in: header, required: true, schema: { type: string }, description: "msg_…; the same on every retry and redelivery" }
+        - { name: webhook-timestamp, in: header, required: true, schema: { type: integer }, description: Unix seconds }
+        - { name: webhook-signature, in: header, required: true, schema: { type: string }, description: "v1,<base64 HMAC-SHA256(secret, id.timestamp.body)>, space-separated during a rotation" }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EventPayload" }
+      responses:
+        "200": { description: "Any 2xx acknowledges; 410 disables the subscription; anything else is retried" }
+
 components:
   parameters:
     SessionId:  { name: id, in: path, required: true, schema: { type: string } }
@@ -2769,7 +3143,7 @@ components:
         approver: { type: boolean, description: Grant the approver permission (human-only workflow actions) }
         delegate: { type: boolean, description: "Grant the delegate permission (X-Skopos-On-Behalf-Of)" }
         capabilities: { type: array, items: { type: string }, description: "Limit the key (see ApiKey.capabilities); none = full access" }
-        preset: { type: string, enum: [agent, integration], description: "A named capability set joined with capabilities. agent = mcp, code:read, blackboard:write, plans:write, status:read, inbox:read. integration = rest, inbox:write, plans:read, runs:read" }
+        preset: { type: string, enum: [agent, integration], description: "A named capability set joined with capabilities. agent = mcp, code:read, blackboard:write, plans:write, status:read, inbox:read. integration = rest, inbox:write, plans:read, runs:read, events:read" }
 
     ApiKeyCreateResult:
       type: object
@@ -3153,6 +3527,92 @@ components:
             properties:
               item_id: { type: string }
               reason: { type: string }
+
+    EventPayload:
+      type: object
+      description: "Standard Webhooks payload: thin, ids and state only; read details from /api/inbox/{id}/state"
+      properties:
+        id: { type: string, description: "msg_…, also the webhook-id header" }
+        type: { type: string }
+        timestamp: { type: string, format: date-time }
+        data:
+          type: object
+          additionalProperties: true
+          properties:
+            seq: { type: integer, description: "The event's place in the log (the feed cursor); a receiver can ignore an event older than one it handled" }
+            item_id: { type: string }
+            workspace_id: { type: string }
+            ref: { type: string }
+            external_url: { type: string }
+            status: { type: string, description: The item's status when the event was recorded }
+            links:
+              type: object
+              properties:
+                api: { type: string }
+                dashboard: { type: string }
+
+    FeedPage:
+      type: object
+      properties:
+        events: { type: array, items: { $ref: "#/components/schemas/EventPayload" } }
+        next_after: { type: integer }
+
+    WebhookInput:
+      type: object
+      properties:
+        name: { type: string }
+        url: { type: string, description: "https (http only to hosts in integrations.allow_http); private addresses only inside integrations.allow_private" }
+        workspaces: { type: array, items: { type: string } }
+        groups: { type: array, items: { type: string }, description: Workspace group names or ids (root only) }
+        types: { type: array, items: { type: string }, description: "Event types; empty = every type but run.started and run.finished" }
+        enabled: { type: boolean, description: Update only }
+
+    Webhook:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        url: { type: string }
+        workspaces: { type: array, items: { type: string } }
+        groups: { type: array, items: { type: string } }
+        types: { type: array, items: { type: string } }
+        enabled: { type: boolean }
+        disabled_reason: { type: string, description: "Who disabled it, a 410 Gone, or 3 days of failed deliveries" }
+        failing_since: { type: string, format: date-time }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    WebhookWithSecret:
+      type: object
+      properties:
+        webhook: { $ref: "#/components/schemas/Webhook" }
+        secret: { type: string, description: "whsec_…, shown only once" }
+
+    WebhookDelivery:
+      type: object
+      properties:
+        id: { type: string }
+        event_id: { type: string }
+        event_type: { type: string }
+        event_seq: { type: integer }
+        item_id: { type: string }
+        state: { type: string, enum: [pending, delivered, failed] }
+        attempts: { type: integer }
+        next_at: { type: string, format: date-time }
+        last_code: { type: integer }
+        last_error: { type: string }
+        last_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        attempts_log:
+          type: array
+          items:
+            type: object
+            properties:
+              at: { type: string, format: date-time }
+              code: { type: integer }
+              error: { type: string }
+              duration_ms: { type: integer }
 
     RunCheck:
       type: object

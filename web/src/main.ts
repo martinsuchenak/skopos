@@ -338,6 +338,14 @@ const appState = () => ({
     this.activeWorkspace = localStorage.getItem('skopos:workspace') || '';
     const saved = localStorage.getItem('skopos:session') || '';
     if (saved) this.selectedSessionId = saved;
+    // A link to one item (/?item=<id>, as webhook payloads carry) opens the
+    // inbox with that item's detail.
+    const linked = new URLSearchParams(window.location.search).get('item');
+    if (linked) {
+      this.switchView('inbox');
+      history.replaceState(null, '', window.location.pathname);
+      this.openInboxPreview({ id: linked } as InboxItem);
+    }
     this.refresh();
     this.openEventStream();
   },

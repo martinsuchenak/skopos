@@ -55,7 +55,8 @@ var Presets = map[string][]string{
 	// the plans and runs behind them. Starting items and recording
 	// decisions also need the approver permission, and naming the person
 	// the delegate permission (both separate flags).
-	"integration": {SurfaceREST, AreaInbox + ":write", AreaPlans + ":read", AreaRuns + ":read"},
+	// events:read is the event feed (GET /api/events).
+	"integration": {SurfaceREST, AreaInbox + ":write", AreaPlans + ":read", AreaRuns + ":read", AreaEvents + ":read"},
 }
 
 // ErrInvalidCapability rejects an unknown capability name.
@@ -163,6 +164,7 @@ var restAreas = []struct{ prefix, area string }{
 	{"/api/workers", AreaRuns},
 	{"/api/workspaces", AreaWorkspaces},
 	{"/api/events", AreaEvents},
+	{"/api/webhooks", AreaEvents},
 }
 
 // alwaysAllowed paths answer any authenticated principal, whatever its

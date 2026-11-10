@@ -7,11 +7,16 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/martinsuchenak/skopos/internal/integrations"
 )
 
 // Storage writes and reads the questions and answers tables. Inserts only.
 type Storage struct {
 	db *sql.DB
+	// events records integration events in the same transaction
+	// (internal/integrations; nil = none).
+	events *integrations.Emitter
 }
 
 func NewStorage(db *sql.DB) *Storage { return &Storage{db: db} }
@@ -21,20 +26,21 @@ func fromMS(v int64) time.Time         { return time.UnixMilli(v).UTC() }
 func nullable(s string) sql.NullString { return sql.NullString{String: s, Valid: s != ""} }
 
 // InsertSet writes a set's questions in one transaction.
-func (st *Storage) InsertSet(ctx context.Context, s Set) error {
-	return st.InsertRecord(ctx, []Set{s}, nil)
+func (st *Storage) InsertSet(ctx context.Context, s Set, evs ...integrations.Event) error {
+	return st.InsertRecord(ctx, []Set{s}, nil, evs...)
 }
 
 // InsertAnswers writes answer rows in one transaction.
-func (st *Storage) InsertAnswers(ctx context.Context, as []Answer) error {
+func (st *Storage) InsertAnswers(ctx context.Context, as []Answer, evs ...integrations.Event) error {
 	if len(as) == 0 {
 		return nil
 	}
-	return st.InsertRecord(ctx, nil, as)
+	return st.InsertRecord(ctx, nil, as, evs...)
 }
 
-// InsertRecord writes sets and answers in one transaction: all or nothing.
-func (st *Storage) InsertRecord(ctx context.Context, sets []Set, as []Answer) error {
+// InsertRecord writes sets and answers in one transaction: all or nothing,
+// the integration events for them included.
+func (st *Storage) InsertRecord(ctx context.Context, sets []Set, as []Answer, evs ...integrations.Event) error {
 	tx, err := st.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -49,6 +55,9 @@ func (st *Storage) InsertRecord(ctx context.Context, sets []Set, as []Answer) er
 		if err := insertAnswer(ctx, tx, a); err != nil {
 			return err
 		}
+	}
+	if err := st.events.Emit(ctx, tx, evs...); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

@@ -124,6 +124,38 @@ func TestIntegrationExternalSystemFlow(t *testing.T) {
 		t.Fatalf("approval actor: %q", got)
 	}
 
+	// The event feed told the story, in order, to the integration's key.
+	code, body, _ = hReq(t, base, fortix, "GET", "/api/events?after=0", "", nil)
+	if code != 200 {
+		t.Fatalf("feed: %d %s", code, body)
+	}
+	var feed struct {
+		Events []struct {
+			Type string         `json:"type"`
+			Data map[string]any `json:"data"`
+		} `json:"events"`
+		NextAfter int64 `json:"next_after"`
+	}
+	if err := json.Unmarshal([]byte(body), &feed); err != nil {
+		t.Fatal(err)
+	}
+	var types []string
+	for _, e := range feed.Events {
+		types = append(types, e.Type)
+		if e.Data["item_id"] != itemID || e.Data["ref"] != "WR110375" {
+			t.Fatalf("event data: %v", e.Data)
+		}
+	}
+	want := []string{"item.created", "item.status_changed", "run.started", "item.status_changed", "run.finished",
+		"item.status_changed", "plan.ready", "item.needs_you", "item.status_changed"}
+	if strings.Join(types, ",") != strings.Join(want, ",") {
+		t.Fatalf("events:\n got %v\nwant %v", types, want)
+	}
+	last := feed.Events[len(feed.Events)-1].Data
+	if last["status"] != "approved" || last["previous_status"] != "awaiting_approval" || last["actor_kind"] != "person" {
+		t.Fatalf("approval event: %v", last)
+	}
+
 	// The preset keeps the key to the inbox, plans and runs reads.
 	if code, _, _ := hReq(t, base, fortix, "GET", "/api/runs?item_id="+itemID, "", nil); code != 200 {
 		t.Fatalf("runs read: %d", code)

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/dbtime"
+	"github.com/martinsuchenak/skopos/internal/integrations"
 )
 
 // Storage persists runs. The queue's correctness lives in Claim: the
@@ -22,6 +23,9 @@ import (
 // same run, whatever their timing.
 type Storage struct {
 	db *sql.DB
+	// events records run events in the claim and report transactions
+	// (internal/integrations; nil = none).
+	events *integrations.Emitter
 }
 
 func NewStorage(db *sql.DB) *Storage { return &Storage{db: db} }
@@ -569,6 +573,9 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 	if err != nil {
 		return nil, err
 	}
+	if err := s.events.Emit(ctx, tx, startedEvent(claimed)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -645,7 +652,12 @@ func (s *Storage) Report(ctx context.Context, id, workerID, keyID, tokenHash str
 			setupJSON = string(b)
 		}
 	}
-	res, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx, `
 		UPDATE runs SET status = ?, result_summary = ?, head_sha = CASE WHEN ? != '' THEN ? ELSE head_sha END, diffstat = ?, checks = ?,
 			log_ref = ?, fail_reason = ?, branch = CASE WHEN ? != '' THEN ? ELSE branch END,
 			base_sha = CASE WHEN ? != '' THEN ? ELSE base_sha END,
@@ -665,8 +677,18 @@ func (s *Storage) Report(ctx context.Context, id, workerID, keyID, tokenHash str
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil, ErrLeaseHeld
 	}
-	row := s.db.QueryRowContext(ctx, `SELECT `+runColumns+` FROM runs WHERE id = ?`, id)
-	return scanRun(row)
+	row := tx.QueryRowContext(ctx, `SELECT `+runColumns+` FROM runs WHERE id = ?`, id)
+	run, err := scanRun(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.events.Emit(ctx, tx, finishedEvents(run)...); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return run, nil
 }
 
 // Requeue ends a failed attempt by putting the run back in the queue

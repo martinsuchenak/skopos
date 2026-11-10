@@ -29,6 +29,10 @@ Optional — if absent, skopos runs on defaults. The file is gitignored (may con
 | `--insecure-no-api-key` | `SKOPOS_INSECURE_NO_API_KEY` | — | `false` | Allow running without an API key on a non-loopback bind (authentication stays disabled — know what you are exposing) |
 | `--health-stuck-threshold` | `HEALTH_STUCK_THRESHOLD` | `health.stuck_threshold_minutes` | `15` | Minutes before an active agent is marked stuck (0 disables) |
 | `--cleanup-retention-days` | `CLEANUP_RETENTION_DAYS` | `cleanup.retention_days` | `30` | Days to retain data (0 disables cleanup). The cleanup runs every 10 minutes; a run longer than a second is logged as a `slow cleanup` warning |
+| `--public-url` | `SKOPOS_PUBLIC_URL` | `server.public_url` | — | The URL other systems reach the server at; webhook and feed payloads link to items from it ([Connecting another system](guides/external-systems.md)) |
+| `--integrations-key` | `SKOPOS_INTEGRATIONS_KEY` | `integrations.secret_key` | — | Encrypts webhook secrets; without it webhooks are off (the event feed works). Keep it: a new key makes stored secrets unreadable |
+| `--webhooks-allow-private` | `SKOPOS_WEBHOOKS_ALLOW_PRIVATE` | `integrations.allow_private` | — | CIDRs or addresses webhooks may reach although private, loopback or link-local (e.g. `10.20.0.0/16`) |
+| `--webhooks-allow-http` | `SKOPOS_WEBHOOKS_ALLOW_HTTP` | `integrations.allow_http` | — | Hosts webhooks may reach over plain http (otherwise https only). Deliveries connect directly; proxy settings aren't used |
 | `--index-dir` | `SKOPOS_INDEX_DIR` | `codeindex.dir` | `.skopos/indexes` | Directory for per-workspace code index databases |
 | `--refresh-interval` | `SKOPOS_REFRESH_INTERVAL` | `codeindex.refresh_interval` | `0` (off) | Poll registered `git_url` workspaces for server-side refresh (e.g. `30m`, `1h`); CI can also POST the refresh endpoint on merge |
 | `--embeddings-url` | `SKOPOS_EMBEDDINGS_URL` | `codeindex.embeddings.url` | (empty = disabled) | OpenAI-compatible `/v1/embeddings` endpoint for semantic code search (local Ollama works) |

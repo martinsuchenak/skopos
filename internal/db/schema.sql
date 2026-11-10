@@ -510,3 +510,75 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS idx_idempotency_created ON idempotency_keys(created_ms);
+
+-- Integrations (internal/integrations, tmp/integrations — design.md §3):
+-- every event another system may hear about, in write order. seq is the
+-- feed cursor (AUTOINCREMENT: never reused, so a gap below the oldest row
+-- means pruned events). data is the thin JSON payload.
+CREATE TABLE IF NOT EXISTS integration_events (
+    seq          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id           TEXT NOT NULL UNIQUE,
+    type         TEXT NOT NULL,
+    workspace_id TEXT NOT NULL DEFAULT '',
+    item_id      TEXT NOT NULL DEFAULT '',
+    occurred_ms  INTEGER NOT NULL,
+    data         TEXT NOT NULL CHECK (json_valid(data))
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_integration_events_occurred ON integration_events(occurred_ms);
+
+-- Webhook subscriptions. Secrets are encrypted with the server's
+-- integrations key (they must be readable to sign). cursor_seq is the last
+-- event fanned out; failing_since_ms starts a run of failed attempts (a
+-- success, or 12 hours without a failed attempt, ends it; a run of 3 days
+-- disables the subscription); last_failure_ms is its newest failure.
+CREATE TABLE IF NOT EXISTS webhooks (
+    id               TEXT PRIMARY KEY,
+    name             TEXT NOT NULL,
+    url              TEXT NOT NULL,
+    workspaces       TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(workspaces)),
+    groups           TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(groups)),
+    types            TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(types)),
+    secret_enc       BLOB NOT NULL,
+    old_secret_enc   BLOB,
+    old_until_ms     INTEGER,
+    enabled          INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    disabled_reason  TEXT NOT NULL DEFAULT '',
+    failing_since_ms INTEGER,
+    last_failure_ms  INTEGER,
+    cursor_seq       INTEGER NOT NULL DEFAULT 0,
+    created_by       TEXT NOT NULL,
+    created_ms       INTEGER NOT NULL,
+    updated_ms       INTEGER NOT NULL
+) STRICT;
+
+-- One event to one subscription: state pending | delivered | failed;
+-- attempts counts this schedule's tries (a redelivery starts a new one).
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id           TEXT PRIMARY KEY,
+    webhook_id   TEXT NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+    event_seq    INTEGER NOT NULL,
+    item_id      TEXT NOT NULL DEFAULT '',
+    state        TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'delivered', 'failed')),
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    next_ms      INTEGER NOT NULL,
+    last_code    INTEGER NOT NULL DEFAULT 0,
+    last_error   TEXT NOT NULL DEFAULT '',
+    last_ms      INTEGER,
+    created_ms   INTEGER NOT NULL,
+    UNIQUE (webhook_id, event_seq)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_due ON webhook_deliveries(state, next_ms);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_hook ON webhook_deliveries(webhook_id, event_seq);
+
+-- Every attempt, for the deliveries log.
+CREATE TABLE IF NOT EXISTS webhook_attempts (
+    delivery_id TEXT NOT NULL REFERENCES webhook_deliveries(id) ON DELETE CASCADE,
+    at_ms       INTEGER NOT NULL,
+    code        INTEGER NOT NULL DEFAULT 0,
+    error       TEXT NOT NULL DEFAULT '',
+    duration_ms INTEGER NOT NULL DEFAULT 0
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_webhook_attempts_delivery ON webhook_attempts(delivery_id, at_ms);

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/martinsuchenak/skopos/internal/dbtime"
+	"github.com/martinsuchenak/skopos/internal/integrations"
 	"strings"
 	"time"
 )
@@ -57,6 +58,9 @@ type Store interface {
 	// DeleteByFilter bulk-deletes items in one workspace — every status, or
 	// one status when non-empty. Unfiled items (NULL workspace) never match.
 	DeleteByFilter(ctx context.Context, workspaceID string, status Status) (int64, error)
+	// EventDB is what integration events are written through: the
+	// transaction when the store is bound to one.
+	EventDB() integrations.DB
 	// RunInTx executes fn inside a single SQL transaction. The Store passed to
 	// fn is bound to the transaction, so all operations are atomic. If fn is
 	// called on a store already inside a transaction, fn runs inline (no nesting).
@@ -77,6 +81,9 @@ type Storage struct {
 func NewStorage(db *sql.DB) *Storage {
 	return &Storage{db: db}
 }
+
+// EventDB implements Store.EventDB.
+func (s *Storage) EventDB() integrations.DB { return s.db }
 
 // RunInTx implements Store.RunInTx.
 func (s *Storage) RunInTx(ctx context.Context, fn func(Store) error) error {

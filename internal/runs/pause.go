@@ -240,7 +240,7 @@ func (h *Handler) PauseWorker(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	in.Via = viaOf(r)
+	in.Via = rest.Via(r)
 	p, err := h.service.PauseWorker(r.Context(), r.PathValue("id"), in)
 	if err != nil {
 		h.respondRunError(w, err, "pause worker")
@@ -251,17 +251,9 @@ func (h *Handler) PauseWorker(w http.ResponseWriter, r *http.Request) {
 
 // ResumeWorker handles POST /api/workers/{id}/resume.
 func (h *Handler) ResumeWorker(w http.ResponseWriter, r *http.Request) {
-	if err := h.service.ResumeWorker(r.Context(), r.PathValue("id"), viaOf(r)); err != nil {
+	if err := h.service.ResumeWorker(r.Context(), r.PathValue("id"), rest.Via(r)); err != nil {
 		h.respondRunError(w, err, "resume worker")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// viaOf: the surface a request names (X-Skopos-Via), else api.
-func viaOf(r *http.Request) string {
-	if v := r.Header.Get("X-Skopos-Via"); v != "" {
-		return v
-	}
-	return audit.ViaAPI
 }

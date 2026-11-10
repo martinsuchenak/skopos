@@ -377,6 +377,12 @@ func keysCall(ctx context.Context, cmd *cli.Command, method, path string, body a
 
 // keysDo performs the HTTP call, decoding into out when non-nil.
 func keysDo(ctx context.Context, serverURL, apiKey, method, path string, body any, out any) error {
+	return apiDo(ctx, serverURL, apiKey, "", "api keys", method, path, body, out)
+}
+
+// apiDo is the CLI's REST call: via names the surface for the audit log
+// ("" = none), what labels errors.
+func apiDo(ctx context.Context, serverURL, apiKey, via, what, method, path string, body any, out any) error {
 	var payload []byte
 	if body != nil {
 		var err error
@@ -394,13 +400,16 @@ func keysDo(ctx context.Context, serverURL, apiKey, method, path string, body an
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
+	if via != "" {
+		req.Header.Set("X-Skopos-Via", via)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("contacting server: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("%s", apiErrorMessage("api keys", resp))
+		return fmt.Errorf("%s", apiErrorMessage(what, resp))
 	}
 	if out != nil {
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {

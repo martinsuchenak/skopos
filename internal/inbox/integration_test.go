@@ -2,11 +2,16 @@ package inbox
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/martinsuchenak/skopos/internal/auth"
+	"github.com/martinsuchenak/skopos/internal/db"
+	"github.com/martinsuchenak/skopos/internal/integrations"
+	"github.com/martinsuchenak/skopos/internal/plans"
 )
 
 // An integration creates and starts an item in one call, links it back to
@@ -113,4 +118,67 @@ type failingQueuer struct{ stubQueuer }
 
 func (*failingQueuer) QueueStage(context.Context, string, string, string, string, string, string) (string, error) {
 	return "", errors.New("queue unavailable")
+}
+
+// Status changes on every path record their events in the same
+// transaction: a workflow transition, a manual discard, and a converted
+// item finished by its plan.
+func TestStatusEvents(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "test.db") + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)&_txlock=immediate"
+	sqlDB, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.RunMigrations(sqlDB); err != nil {
+		t.Fatal(err)
+	}
+	plansSvc := plans.NewService(plans.NewStorage(sqlDB))
+	svc := NewService(NewStorage(sqlDB))
+	svc.SetPlanRevisions(plansSvc)
+	svc.SetEventEmitter(integrations.NewEmitter())
+	ctx := context.Background()
+	types := func(itemID string) string {
+		rows, err := sqlDB.Query(`SELECT type || ':' || json_extract(data, '$.status') FROM integration_events WHERE item_id = ? ORDER BY seq`, itemID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = rows.Close() }()
+		var out []string
+		for rows.Next() {
+			var s string
+			_ = rows.Scan(&s)
+			out = append(out, s)
+		}
+		return strings.Join(out, ",")
+	}
+
+	queued, err := svc.CreateItem(approverCtx(), CreateInput{WorkspaceID: "ws-a", Title: "q", AuthorAgentID: "a", Start: StartQueue})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := types(queued.ID); got != "item.created:open,item.status_changed:queued" {
+		t.Fatalf("queued: %s", got)
+	}
+	gone := mustCreate(t, svc, ctx, "discard me")
+	if err := svc.Discard(ctx, gone.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := types(gone.ID); got != "item.created:open,item.status_changed:discarded,item.closed:discarded" {
+		t.Fatalf("discarded: %s", got)
+	}
+	conv := mustCreate(t, svc, ctx, "convert me")
+	plan, err := plansSvc.CreatePlan(ctx, plans.CreatePlanInput{WorkspaceID: "ws-a", Name: "p", AuthorAgentID: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Convert(ctx, conv.ID, ConvertInput{PlanID: plan.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := svc.CompleteForPlan(ctx, plan.ID); err != nil || n != 1 {
+		t.Fatal(n, err)
+	}
+	if got := types(conv.ID); got != "item.created:open,item.status_changed:converted,item.status_changed:done,item.closed:done" {
+		t.Fatalf("converted then done: %s", got)
+	}
 }

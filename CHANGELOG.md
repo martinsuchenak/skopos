@@ -24,8 +24,34 @@ versions follow [Semantic Versioning](https://semver.org/).
     delegate key names the person it acts for with
     `X-Skopos-On-Behalf-Of`; the audit log, approvals and answers record
     "<person> (key <name>)".
-  - A key preset, `integration`: REST only, inbox write, plans and runs
-    read.
+  - A key preset, `integration`: REST only, inbox write, plans, runs and
+    events read.
+- **Webhooks and an event feed** tell another system what happens to items
+  ([guide](docs/guides/external-systems.md#hear-what-happens-webhooks)):
+  - Events: `item.created`, `item.status_changed`, `item.needs_you`,
+    `item.closed`, `plan.ready`, `questions.waiting`, `questions.answered`,
+    `checks.finished`, `review.finished`, `pr.opened`, and on request
+    `run.started` and `run.finished`. Each is recorded with the change that
+    caused it. Payloads carry ids and state, and link to the item's state.
+  - `skopos webhook create|list|show|update|enable|disable|rotate|test|deliveries|redeliver|delete`
+    and `/api/webhooks`: subscriptions per workspace (or workspace group,
+    root only), managed by root or by an approver for its own workspaces,
+    and recorded in the audit log.
+  - Deliveries are signed per Standard Webhooks (`webhook-id`,
+    `webhook-timestamp`, `webhook-signature`), sent at least once and
+    retried for about 27 hours. Every attempt is logged; failed deliveries
+    can be sent again with the same id. A rotated secret signs alongside
+    the new one for 24 hours.
+  - An endpoint answering 410, or failing for 3 days, has its subscription
+    disabled; its events wait (for the retention period) until it's enabled
+    again.
+  - Webhooks go to https, and to private addresses only inside
+    `integrations.allow_private`. They need the server's integrations key
+    (`integrations.secret_key`), which encrypts the secrets.
+  - `GET /api/events?after=<seq>&wait=25` serves the same events as a feed,
+    scoped to the key.
+  - `server.public_url` sets where payload links point; `/?item=<id>` opens
+    the item in the dashboard.
 
 ### Changed
 
