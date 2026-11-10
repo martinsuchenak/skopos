@@ -248,6 +248,11 @@ func RunMigrations(db *sql.DB) error {
 			return err
 		}
 	}
+	// webhooks.last_failure_ms (the failure run's newest failure) came
+	// after the table; a database from before it gets the column.
+	if err := ensureColumn(db, "webhooks", "last_failure_ms", "INTEGER"); err != nil {
+		return err
+	}
 	// GET /api/inbox?ref= (an integration finds its job's items).
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_inbox_ref ON inbox_items(ref) WHERE ref <> ''`); err != nil {
 		return fmt.Errorf("indexing inbox refs: %w", err)

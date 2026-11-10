@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/qa"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/inbox"
+	"github.com/martinsuchenak/skopos/internal/integrations"
 	"github.com/martinsuchenak/skopos/internal/itemtext"
 	"github.com/martinsuchenak/skopos/internal/notify"
 	"github.com/martinsuchenak/skopos/internal/runs"
@@ -420,6 +422,24 @@ func (r *slackRelay) PostWorkerHealth(ctx context.Context, h runs.WorkerHealth) 
 		return
 	}
 	r.post(ctx, "", "⚠️ Worker `"+h.Worker+"` stopped taking `"+h.Workspace+"` work: its preflight fails. Only other workers serving it pick up its items until it passes.\n"+truncate(h.Reason, 600))
+}
+
+// PostWebhookDisabled says a webhook subscription stopped delivering.
+func (r *slackRelay) PostWebhookDisabled(ctx context.Context, w integrations.Webhook, reason string) {
+	r.post(ctx, "", "⚠️ Webhook `"+w.Name+"` ("+endpointOnly(w.URL)+") is disabled: "+truncate(reason, 400)+
+		"\nIts events wait; enable it again with `skopos webhook enable "+w.ID+"` or from the dashboard's Webhooks view.")
+}
+
+// endpointOnly is a URL without its query and fragment: receivers often
+// authenticate with a token there, and a Slack channel is wider than the
+// people who manage webhooks.
+func endpointOnly(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "the endpoint"
+	}
+	u.RawQuery, u.Fragment, u.User = "", "", nil
+	return u.String()
 }
 
 func shortHead(sha string) string {

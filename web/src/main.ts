@@ -82,7 +82,15 @@ type AuditEntry = { id: string; action: string; actor: string; via?: string; not
 type InboxForm = { id: string; title: string; tags: string; workspace: string; agents: string; branch: string; ref: string; wsLocked: boolean };
 
 const UI_AUTHOR = 'ui';
-type View = 'sessions' | 'blackboard' | 'plans' | 'inbox' | 'index' | 'keys' | 'workspaces' | 'workers';
+type View = 'sessions' | 'blackboard' | 'plans' | 'inbox' | 'index' | 'keys' | 'workspaces' | 'workers' | 'webhooks';
+// Webhook subscriptions (internal/integrations; /api/webhooks).
+type Webhook = { id: string; name: string; url: string; workspaces: string[]; groups: string[]; types: string[]; enabled: boolean; disabled_reason?: string; failing_since?: string; created_by: string; created_at: string; updated_at: string };
+type WebhookAttempt = { at: string; code?: number; error?: string; duration_ms: number };
+type WebhookDelivery = { id: string; event_id: string; event_type: string; event_seq: number; item_id?: string; state: string; attempts: number; next_at?: string; last_code?: number; last_error?: string; last_at?: string; created_at: string; attempts_log?: WebhookAttempt[] };
+// The event types a subscription may name (internal/integrations Types);
+// run.* reach a subscription only when named.
+const WEBHOOK_TYPES = ['item.created', 'item.status_changed', 'item.needs_you', 'item.closed', 'plan.ready', 'questions.waiting',
+  'questions.answered', 'run.started', 'run.finished', 'checks.finished', 'review.finished', 'pr.opened'];
 
 // The inbox markdown editor lives OUTSIDE Alpine's reactive state: deep-
 // proxying a live CodeMirror view breaks it. One instance per open modal.
@@ -236,6 +244,10 @@ const appState = () => ({
 
   // api keys / identity
   whoami: null as Whoami | null,
+  // Role flags, set with whoami (fetchWhoami), for x-show inside dialogs.
+  // Static page elements gated on a role use syncRoles() instead.
+  isRoot: false,
+  isApprover: false,
   keys: [] as ApiKey[],
   keysLoading: false,
   groups: [] as KeyGroup[],
@@ -264,6 +276,19 @@ const appState = () => ({
   keyForm: { id: '', name: '', all: false, workspaces: [] as string[], groups: [] as string[], access: 'full', accessWas: 'full', custom: '' },
   keyErrors: {} as Record<string, string>,
   showSecretModal: false, newSecret: '', newSecretName: '', secretCopied: false,
+  // The secret dialog serves API keys and webhook signing secrets.
+  secretKind: 'key' as 'key' | 'webhook', secretTitle: 'API key created',
+
+  // webhooks
+  webhooks: [] as Webhook[],
+  webhooksLoading: false,
+  showWebhookModal: false, hookModalMode: 'create' as 'create' | 'edit', hookSaving: false,
+  hookErrors: {} as Record<string, string>,
+  hookForm: { id: '', name: '', url: '', workspaces: [] as string[], groups: [] as string[], types: [] as string[] },
+  hookOpen: '', // the subscription whose deliveries show
+  hookDeliveries: [] as WebhookDelivery[],
+  hookDeliveriesLoading: false,
+  hookBusy: '', // the subscription an action is running on
 
   // toasts
   toasts: [] as Toast[],
@@ -440,7 +465,7 @@ const appState = () => ({
   },
 
   anyModalOpen() {
-    return this.showKeyModal || this.showApiKeyModal || this.showSecretModal || this.showWsModal || this.showGroupModal
+    return this.showKeyModal || this.showApiKeyModal || this.showSecretModal || this.showWebhookModal || this.showWsModal || this.showGroupModal
       || this.showEntryModal || this.showPlanModal || this.showItemModal || this.showInboxItemModal || this.showInboxPreview
       || this.showFileModal || this.confirm.open || this.pipe.open || (this.sidebarOpen && window.matchMedia('(max-width: 767px)').matches);
   },
@@ -501,7 +526,7 @@ const appState = () => ({
 
   // ---- page chrome ----
   viewTitle(): string {
-    return ({ sessions: 'Sessions', blackboard: 'Blackboard', plans: 'Plans', inbox: 'Inbox', index: 'Code index', keys: 'API keys', workspaces: 'Workspaces', workers: 'Workers' } as Record<string, string>)[this.activeView] ?? '';
+    return ({ sessions: 'Sessions', blackboard: 'Blackboard', plans: 'Plans', inbox: 'Inbox', index: 'Code index', keys: 'API keys', workspaces: 'Workspaces', workers: 'Workers', webhooks: 'Webhooks' } as Record<string, string>)[this.activeView] ?? '';
   },
   // Phone navigation drawer: focus moves in on open, Escape closes and
   // returns focus to the menu button. Closed, the drawer is invisible to
@@ -620,6 +645,7 @@ const appState = () => ({
     if (v === 'keys') this.fetchKeys();
     if (v === 'workspaces') { this.fetchWorkspaces(); this.fetchGroups(); if (this.whoamiIsRoot()) this.fetchKeys(); }
     if (v === 'workers') this.fetchWorkers();
+    if (v === 'webhooks') { this.fetchWebhooks(); if (this.whoamiIsRoot()) this.fetchGroups(); }
   },
   whoamiIsRoot(): boolean { return !!this.whoami && this.whoami.root; },
   setWorkspace(ws: string) {
@@ -800,6 +826,7 @@ const appState = () => ({
     else if (this.activeView === 'keys') await this.fetchKeys();
     else if (this.activeView === 'workspaces') { await this.fetchWorkspaces(); await this.fetchGroups(); if (this.whoamiIsRoot()) await this.fetchKeys(); }
     else if (this.activeView === 'workers') await this.fetchWorkers();
+    else if (this.activeView === 'webhooks') { await this.fetchWebhooks(); if (this.whoamiIsRoot()) await this.fetchGroups(); }
   },
   async selectSession(id: string) {
     this.selectedSessionId = id; localStorage.setItem('skopos:session', id);
@@ -3007,6 +3034,9 @@ const appState = () => ({
       const res = await this.authFetch('/api/whoami');
       if (res.ok) this.whoami = (await res.json()) ?? null;
     } catch { /* non-fatal */ }
+    this.isRoot = this.whoamiIsRoot();
+    this.isApprover = this.canApprove();
+    this.syncRoles();
     if (this.whoami && !this.whoami.root && this.activeWorkspace) {
       const allowed = this.whoami.workspaces.some((w) => w.id === this.activeWorkspace);
       if (!allowed) {
@@ -3218,9 +3248,7 @@ const appState = () => ({
       this.showApiKeyModal = false;
       if (creating) {
         const data = await res.json();
-        this.newSecret = data.key_secret;
-        this.newSecretName = data.key.name;
-        this.showSecretModal = true;
+        this.showSecret('key', 'API key created', data.key_secret, data.key.name);
       } else {
         this.notify('Key updated', 'success');
       }
@@ -3229,12 +3257,18 @@ const appState = () => ({
       this.keySaving = false;
     }
   },
+  showSecret(kind: 'key' | 'webhook', title: string, secret: string, name: string) {
+    this.secretKind = kind; this.secretTitle = title;
+    this.newSecret = secret; this.newSecretName = name;
+    this.secretCopied = false;
+    this.showSecretModal = true;
+  },
   closeSecretModal() { this.newSecret = ''; this.newSecretName = ''; this.secretCopied = false; this.showSecretModal = false; },
   async copySecret() {
     try {
       await navigator.clipboard.writeText(this.newSecret);
       this.secretCopied = true;
-      this.notify('API key copied to clipboard', 'success');
+      this.notify('Secret copied to clipboard', 'success');
       window.setTimeout(() => { this.secretCopied = false; }, 2500);
     } catch {
       this.notify('Copy failed — select the secret and copy manually', 'error');
@@ -3245,6 +3279,171 @@ const appState = () => ({
   },
   deleteKey(k: ApiKey) {
     this.requestDelete('apikeyhard', k.id, k.name);
+  },
+
+  // ---- webhooks (tmp/integrations — design.md §3) ----
+  async fetchWebhooks() {
+    this.webhooksLoading = true;
+    try {
+      const res = await this.authFetch('/api/webhooks');
+      if (!res.ok) {
+        this.webhooks = [];
+        if (res.status === 403) this.notify('Webhooks need the root key or an approver key', 'error');
+        return;
+      }
+      this.webhooks = (await res.json()) ?? [];
+    } catch {
+      this.webhooks = [];
+    } finally {
+      this.webhooksLoading = false;
+    }
+  },
+  webhookTypeOptions(): string[] { return WEBHOOK_TYPES; },
+  webhookScope(w: Webhook): string {
+    const parts = [...(w.workspaces || [])];
+    for (const id of w.groups || []) parts.push('@' + (this.groups.find((g: KeyGroup) => g.id === id)?.name || id));
+    return parts.join(', ');
+  },
+  webhookTypesLabel(w: Webhook): string {
+    return w.types && w.types.length ? w.types.join(', ') : 'every event but run.started and run.finished';
+  },
+  webhookStateLabel(w: Webhook): string {
+    if (!w.enabled) return 'disabled';
+    return w.failing_since ? 'failing' : 'enabled';
+  },
+  webhookStateClass(w: Webhook): string {
+    return this.toneOf('status', !w.enabled ? 'failed' : (w.failing_since ? 'paused' : 'succeeded'));
+  },
+  webhookNote(w: Webhook): string {
+    if (!w.enabled) {
+      const r = w.disabled_reason || '';
+      const why = !r ? 'Disabled' : (r.startsWith('disabled by ') ? 'D' + r.slice(1) : 'Disabled: ' + r);
+      return why + '. Its events wait until it is enabled.';
+    }
+    return w.failing_since ? 'Deliveries failing since ' + this.formatDateTime(w.failing_since) + '; 3 days of failures disable it.' : '';
+  },
+  openNewWebhookModal() {
+    this.hookModalMode = 'create';
+    const ws = this.activeWorkspace ? [this.activeWorkspace] : [];
+    this.hookForm = { id: '', name: '', url: '', workspaces: ws, groups: [], types: [] };
+    this.hookErrors = {};
+    this.formNonce++;
+    this.showWebhookModal = true;
+  },
+  openEditWebhookModal(w: Webhook) {
+    this.hookModalMode = 'edit';
+    const groupNames = (w.groups || []).map((id: string) => this.groups.find((g: KeyGroup) => g.id === id)?.name || id);
+    this.hookForm = { id: w.id, name: w.name, url: w.url, workspaces: [...(w.workspaces || [])], groups: groupNames, types: [...(w.types || [])] };
+    this.hookErrors = {};
+    this.formNonce++;
+    this.showWebhookModal = true;
+  },
+  closeWebhookModal() { this.showWebhookModal = false; },
+  async submitWebhook() {
+    const f = this.hookForm;
+    const errs: Record<string, string> = {};
+    if (!f.name.trim()) errs.name = 'Name is required.';
+    if (!/^https?:\/\/\S+$/i.test(f.url.trim())) errs.url = 'An https URL (http only to hosts the server allows).';
+    if (f.workspaces.length === 0 && f.groups.length === 0) errs.workspaces = 'Pick the workspaces whose events it gets.';
+    this.hookErrors = errs;
+    if (Object.keys(errs).length) { this.focusFirstError(); return; }
+    const creating = this.hookModalMode === 'create';
+    const body: Record<string, unknown> = { name: f.name.trim(), url: f.url.trim(), workspaces: f.workspaces, types: f.types };
+    if (this.whoamiIsRoot()) body.groups = f.groups;
+    this.hookSaving = true;
+    try {
+      const res = creating
+        ? await this.authFetch('/api/webhooks', { method: 'POST', body: JSON.stringify(body) })
+        : await this.authFetch('/api/webhooks/' + encodeURIComponent(f.id), { method: 'PATCH', body: JSON.stringify(body) });
+      if (!await this.handleBad(res, creating ? 'Webhook not created' : 'Webhook not saved')) return;
+      this.showWebhookModal = false;
+      if (creating) {
+        const data = await res.json();
+        this.showSecret('webhook', 'Webhook created', data.secret, data.webhook.name);
+      } else {
+        this.notify('Webhook saved', 'success');
+      }
+      await this.fetchWebhooks();
+    } finally {
+      this.hookSaving = false;
+    }
+  },
+  async hookAction(w: Webhook, fn: () => Promise<void>) {
+    if (this.hookBusy) return;
+    this.hookBusy = w.id;
+    try { await fn(); } finally { this.hookBusy = ''; }
+  },
+  setWebhookEnabled(w: Webhook, enabled: boolean) {
+    return this.hookAction(w, async () => {
+      const res = await this.authFetch('/api/webhooks/' + encodeURIComponent(w.id), { method: 'PATCH', body: JSON.stringify({ enabled }) });
+      if (!await this.handleBad(res, enabled ? 'Not enabled' : 'Not disabled')) return;
+      this.notify(enabled ? 'Enabled: what waited is delivered now' : 'Disabled: its events wait', 'success');
+      await this.fetchWebhooks();
+    });
+  },
+  // Rotating starts a 24-hour deadline for the receiver: confirm first.
+  requestRotateWebhook(w: Webhook) {
+    this.confirm = {
+      open: true, title: 'Rotate the signing secret?', label: 'Rotate', busy: false,
+      message: `“${w.name}” gets a new signing secret. For 24 hours deliveries carry both signatures; the receiver must switch to the new secret before then.`,
+      pending: { kind: 'webhookrotate', id: w.id },
+    };
+  },
+  rotateWebhook(w: Webhook) {
+    return this.hookAction(w, async () => {
+      const res = await this.authFetch('/api/webhooks/' + encodeURIComponent(w.id) + '/rotate', { method: 'POST' });
+      if (!await this.handleBad(res, 'Secret not rotated')) return;
+      const data = await res.json();
+      this.showSecret('webhook', 'New signing secret', data.secret, data.webhook.name);
+    });
+  },
+  testWebhook(w: Webhook) {
+    return this.hookAction(w, async () => {
+      const res = await this.authFetch('/api/webhooks/' + encodeURIComponent(w.id) + '/test', { method: 'POST' });
+      if (!await this.handleBad(res, 'Test not sent')) return;
+      this.notify('Test event queued', 'success');
+      this.hookOpen = w.id;
+      await new Promise((r) => window.setTimeout(r, 2500));
+      if (this.hookOpen === w.id) await this.fetchWebhookDeliveries(w.id);
+    });
+  },
+  deleteWebhook(w: Webhook) { this.requestDelete('webhook', w.id, w.name); },
+  async toggleWebhookDeliveries(w: Webhook) {
+    if (this.hookOpen === w.id) { this.hookOpen = ''; return; }
+    this.hookOpen = w.id;
+    this.hookDeliveries = [];
+    await this.fetchWebhookDeliveries(w.id);
+  },
+  async fetchWebhookDeliveries(id: string) {
+    this.hookDeliveriesLoading = true;
+    try {
+      const res = await this.authFetch('/api/webhooks/' + encodeURIComponent(id) + '/deliveries?limit=30');
+      if (this.hookOpen !== id) return;
+      this.hookDeliveries = res.ok ? ((await res.json()) ?? []) : [];
+    } catch {
+      this.hookDeliveries = [];
+    } finally {
+      this.hookDeliveriesLoading = false;
+    }
+  },
+  deliveryStateClass(d: WebhookDelivery): string {
+    return this.toneOf('status', d.state === 'delivered' ? 'succeeded' : d.state === 'failed' ? 'failed' : 'queued');
+  },
+  deliveryDetail(d: WebhookDelivery): string {
+    const parts = [d.attempts === 1 ? '1 attempt' : d.attempts + ' attempts'];
+    if (d.last_code) parts.push('HTTP ' + d.last_code);
+    if (d.last_error && !/^HTTP \d+$/.test(d.last_error)) parts.push(d.last_error);
+    if (d.state === 'pending' && d.next_at) parts.push('next try ' + this.formatDateTime(d.next_at));
+    return parts.join(' · ');
+  },
+  redeliverWebhook(w: Webhook, d: WebhookDelivery) {
+    return this.hookAction(w, async () => {
+      const res = await this.authFetch('/api/webhooks/' + encodeURIComponent(w.id) + '/redeliver', { method: 'POST', body: JSON.stringify({ delivery_id: d.id }) });
+      if (!await this.handleBad(res, 'Not sent again')) return;
+      this.notify('Queued again', 'success');
+      await new Promise((r) => window.setTimeout(r, 2500));
+      if (this.hookOpen === w.id) await this.fetchWebhookDeliveries(w.id);
+    });
   },
 
   async fetchIndexStatus() {
@@ -3321,6 +3520,17 @@ const appState = () => ({
       pending: { kind: 'inboxpurge', id: this.activeWorkspace + '|' + status },
     };
   },
+  // Role-gated page elements (data-role="root" | "approver"), shown
+  // imperatively like syncSessionPurge: x-show applies a change in the next
+  // animation frame, and where frames don't run (a background or embedded
+  // view) the Keys item stayed hidden after whoami said root until a reload.
+  syncRoles() {
+    document.querySelectorAll('[data-role]').forEach((el) => {
+      const role = (el as HTMLElement).dataset.role;
+      const show = role === 'root' ? this.isRoot : role === 'approver' ? this.isApprover : false;
+      (el as HTMLElement).style.display = show ? '' : 'none';
+    });
+  },
   syncSessionPurge() {
     const btn = document.querySelector('[data-session-purge]') as HTMLElement | null;
     if (!btn) return;
@@ -3336,6 +3546,13 @@ const appState = () => ({
       this.confirm.open = false; this.confirm.pending = null;
       const notes = this.workflowNote.trim();
       await this.postWorkflowAction(p.id, 'reject', notes ? { notes } : null, 'Rejected');
+      return;
+    }
+    if (p.kind === 'webhookrotate') {
+      this.confirm.busy = false;
+      this.confirm.open = false; this.confirm.pending = null;
+      const w = this.webhooks.find((x: Webhook) => x.id === p.id);
+      if (w) await this.rotateWebhook(w);
       return;
     }
     // Discarding unsaved inbox edits closes the editor; nothing to delete.
@@ -3385,6 +3602,7 @@ const appState = () => ({
     else if (p.kind === 'apikey') url = `/api/keys/${encodeURIComponent(p.id)}`;
     else if (p.kind === 'apikeyhard') url = `/api/keys/${encodeURIComponent(p.id)}?hard=true`;
     else if (p.kind === 'inboxitem') url = `/api/inbox/${encodeURIComponent(p.id)}`;
+    else if (p.kind === 'webhook') url = `/api/webhooks/${encodeURIComponent(p.id)}`;
     const res = await this.authFetch(url, { method: 'DELETE' });
     this.confirm.busy = false;
     if (!await this.handleBad(res, 'Delete failed')) return;
@@ -3398,6 +3616,7 @@ const appState = () => ({
     else if (p.kind === 'inboxitem') { if (this.expandedInboxId === p.id) { this.expandedInboxId = ''; this.expandedInbox = null; } await this.fetchInbox(); }
     else if (p.kind === 'item' && this.expandedPlan) await this.reloadPlan(this.expandedPlan.id);
     else if (p.kind === 'apikey') await this.fetchKeys();
+    else if (p.kind === 'webhook') { if (this.hookOpen === p.id) this.hookOpen = ''; await this.fetchWebhooks(); }
   },
 
   // shared bad-response handler: returns true when ok, false (and notifies) when not

@@ -660,6 +660,9 @@ func serveCmd() *cli.Command {
 				runsService.SetWorkerHealthNotifier(func(_ context.Context, h runs.WorkerHealth) {
 					go relay.PostWorkerHealth(ctx, h)
 				})
+				integrationsService.SetDisableNotifier(func(_ context.Context, w integrations.Webhook, reason string) {
+					go relay.PostWebhookDisabled(ctx, w, reason)
+				})
 				go func() { _ = notifySvc.Run(ctx) }()
 				go func() { relay.Run(ctx) }()
 			}

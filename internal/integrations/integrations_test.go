@@ -549,3 +549,74 @@ func TestFinishAfterDelete(t *testing.T) {
 		t.Fatalf("attempts left: %d", n)
 	}
 }
+
+// The disable alert fires once; an old secret sealed under an earlier
+// integrations key is left out of the signatures, not a failed delivery.
+func TestDisableAlertAndUnreadableOldSecret(t *testing.T) {
+	st := newStack(t)
+	var alerts []string
+	st.svc.SetDisableNotifier(func(_ context.Context, w Webhook, reason string) { alerts = append(alerts, w.Name+": "+reason) })
+	created, _ := st.svc.Create(root(), Input{Name: ptr("jobs"), URL: ptr(st.url), Workspaces: ptr([]string{"ws"})})
+	st.rcv.codes = []int{410, 410, 410, 410}
+	for i := 0; i < 4; i++ {
+		st.emit(t, Event{Type: TypeItemCreated, WorkspaceID: "ws", ItemID: "i" + strconv.Itoa(i)})
+	}
+	st.run(t)
+	if len(alerts) != 1 || !strings.Contains(alerts[0], "410") {
+		t.Fatalf("alerts: %v", alerts)
+	}
+
+	// A rotation, then a new integrations key: the old secret can't be read.
+	_, _ = st.svc.Update(root(), created.Webhook.ID, Input{Enabled: ptr(true)})
+	rotated, err := st.svc.Rotate(root(), created.Webhook.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := NewService(st.db, st.em, "a-new-key", st.svc.policy)
+	other.now = st.svc.now
+	sealed, _ := other.seal(mustSecret(t, rotated.Secret))
+	if _, err := st.db.Exec(`UPDATE webhooks SET secret_enc = ? WHERE id = ?`, sealed, created.Webhook.ID); err != nil {
+		t.Fatal(err)
+	}
+	st.svc = other
+	st.disp = NewDispatcher(other, nil)
+	st.rcv.codes = nil
+	before := st.rcv.count()
+	if _, err := other.Test(root(), created.Webhook.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		st.run(t)
+	}
+	last := st.rcv.got[len(st.rcv.got)-1]
+	if st.rcv.count() <= before || strings.Count(last.Header.Get("webhook-signature"), "v1,") != 1 {
+		t.Fatalf("delivery with an unreadable old secret: %d requests, signature %q", st.rcv.count()-before, last.Header.Get("webhook-signature"))
+	}
+}
+
+func mustSecret(t *testing.T, shown string) []byte {
+	t.Helper()
+	b, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(shown, "whsec_"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// An edit names only the fields whose value changed.
+func TestUpdateAuditsOnlyChanges(t *testing.T) {
+	st := newStack(t)
+	rec := &auditRows{}
+	st.svc.SetAuditRecorder(rec)
+	created, _ := st.svc.Create(root(), Input{Name: ptr("jobs"), URL: ptr(st.url), Workspaces: ptr([]string{"ws", "ws2"}), Types: ptr([]string{TypePlanReady, TypeItemNeedsYou})})
+	if _, err := st.svc.Update(root(), created.Webhook.ID, Input{Name: ptr("jobs-2"), URL: ptr(st.url),
+		Workspaces: ptr([]string{"ws2", "ws"}), Groups: ptr([]string{}), Types: ptr([]string{TypeItemNeedsYou, TypePlanReady})}); err != nil {
+		t.Fatal(err)
+	}
+	rec.mu.Lock()
+	last := rec.rows[len(rec.rows)-1]
+	rec.mu.Unlock()
+	if last.Action != "webhook.update" || last.Notes != "name" {
+		t.Fatalf("audit: %+v", last)
+	}
+}

@@ -287,11 +287,11 @@ func (d *Dispatcher) secrets(w *Webhook) ([][]byte, error) {
 	}
 	out := [][]byte{cur}
 	if len(w.oldSecret) > 0 && d.svc.now().Before(w.oldUntil) {
-		old, err := d.svc.open(w.oldSecret)
-		if err != nil {
-			return nil, err
+		// The old secret only eases the switch-over: one sealed under an
+		// earlier integrations key is left out, not a failed delivery.
+		if old, err := d.svc.open(w.oldSecret); err == nil {
+			out = append(out, old)
 		}
-		out = append(out, old)
 	}
 	return out, nil
 }
@@ -384,6 +384,9 @@ func (d *Dispatcher) finish(ctx context.Context, w *Webhook, x due, code int, er
 	if disable != "" {
 		d.log.Warn("webhook disabled", "webhook", w.ID, "name", w.Name, "reason", disable)
 		d.svc.record(context.WithoutCancel(ctx), w, "webhook.disable", audit.ViaSystem, disable)
+		if d.svc.onDisable != nil {
+			d.svc.onDisable(context.WithoutCancel(ctx), *w, disable)
+		}
 	}
 	return nil
 }

@@ -127,6 +127,15 @@ type Service struct {
 	GroupExists func(ctx context.Context, group string) string
 	PublicURL   string
 	now         func() time.Time
+	// onDisable is told when the dispatcher disables a subscription (the
+	// Slack relay posts it); nil = nobody.
+	onDisable func(ctx context.Context, w Webhook, reason string)
+}
+
+// SetDisableNotifier wires the alert for a subscription the dispatcher
+// disabled (410 Gone, or 3 days of failures).
+func (s *Service) SetDisableNotifier(fn func(ctx context.Context, w Webhook, reason string)) {
+	s.onDisable = fn
 }
 
 // NewService: secretKey is the server's integrations key ("" = webhooks
@@ -437,23 +446,33 @@ func (s *Service) Update(ctx context.Context, id string, in Input) (*Webhook, er
 			w.URL, changed = u, append(changed, "url")
 		}
 	}
+	// A field counts as changed only when its value differs: the dashboard
+	// sends every field on each save.
 	if in.Workspaces != nil {
-		w.Workspaces, changed = cleanList(*in.Workspaces), append(changed, "workspaces")
+		if next := cleanList(*in.Workspaces); !sameSet(next, w.Workspaces) {
+			w.Workspaces, changed = next, append(changed, "workspaces")
+		}
 	}
 	if in.Groups != nil {
-		if w.Groups, err = s.resolveGroups(ctx, *in.Groups); err != nil {
+		next, err := s.resolveGroups(ctx, *in.Groups)
+		if err != nil {
 			return nil, err
 		}
-		changed = append(changed, "groups")
+		if !sameSet(next, w.Groups) {
+			w.Groups, changed = next, append(changed, "groups")
+		}
 	}
 	if len(w.Workspaces) == 0 && len(w.Groups) == 0 {
 		return nil, fmt.Errorf("%w: a webhook needs workspaces or groups", ErrInvalidInput)
 	}
 	if in.Types != nil {
-		if w.Types, err = s.checkTypes(*in.Types); err != nil {
+		next, err := s.checkTypes(*in.Types)
+		if err != nil {
 			return nil, err
 		}
-		changed = append(changed, "types")
+		if !sameSet(next, w.Types) {
+			w.Types, changed = next, append(changed, "types")
+		}
 	}
 	// The new scope must be the caller's too.
 	if err := mayManage(ctx, w.Workspaces, w.Groups); err != nil {
@@ -775,6 +794,18 @@ func (s *Service) record(ctx context.Context, w *Webhook, action, via, notes str
 		ws = w.Workspaces[0]
 	}
 	_ = s.audit.Record(ctx, audit.RecordInput{WorkspaceID: ws, EntityType: "webhook", EntityID: w.ID, Action: action, Via: via, Notes: notes})
+}
+
+// sameSet: the same values, in any order (the dashboard's checklists add
+// in click order).
+func sameSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	x, y := slices.Clone(a), slices.Clone(b)
+	slices.Sort(x)
+	slices.Sort(y)
+	return slices.Equal(x, y)
 }
 
 func jsonList(v []string) string {

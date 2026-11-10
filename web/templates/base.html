@@ -48,7 +48,7 @@
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 1.1.9 2 2 2h9M4 7l4-4 4 4M4 7h10a2 2 0 012 2v2m4 4l-4-2v4l4-2z m0 0v0z m-4-2l4 2"/></svg>
                 Index
             </button>
-            <button type="button" @click="switchView('keys')" class="nav-item" x-show="whoamiIsRoot()" x-cloak :aria-current="activeView === 'keys' ? 'page' : null">
+            <button type="button" @click="switchView('keys')" class="nav-item" data-role="root" style="display: none" :aria-current="activeView === 'keys' ? 'page' : null">
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a4 4 0 11-8 0 4 4 0 018 0zm3 9a4 4 0 00-4-4H8a4 4 0 00-4 4v1h14v-1z"/></svg>
                 Keys
             </button>
@@ -59,6 +59,10 @@
             <button type="button" @click="switchView('workers')" class="nav-item" :aria-current="activeView === 'workers' ? 'page' : null">
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 00.75 2.25m2.25-8.25h13.5"/></svg>
                 Workers
+            </button>
+            <button type="button" @click="switchView('webhooks')" class="nav-item" data-role="approver" style="display: none" :aria-current="activeView === 'webhooks' ? 'page' : null">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/></svg>
+                Webhooks
             </button>
         </nav>
         <div class="border-t border-zinc-800 p-4">
@@ -91,7 +95,7 @@
                     <span class="truncate" x-text="activeWorkspace ? workspaceLabel(activeWorkspace) : 'All workspaces'"></span>
                     <svg class="ml-auto h-3.5 w-3.5 shrink-0 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                 </button>
-                <button type="button" x-show="whoamiIsRoot()" x-cloak @click="openNewWorkspaceModal(true)" class="btn btn-sm shrink-0" aria-label="New workspace" title="New workspace">
+                <button type="button" data-role="root" style="display: none" @click="openNewWorkspaceModal(true)" class="btn btn-sm shrink-0" aria-label="New workspace" title="New workspace">
                     <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                     <span class="hidden lg:inline">New</span>
                 </button>
@@ -742,6 +746,71 @@
                 </ul>
             </section>
 
+            <!-- ===================== WEBHOOKS ===================== -->
+            <section x-show="activeView === 'webhooks'" x-cloak>
+                <div class="mb-6 flex flex-wrap items-start justify-between gap-3">
+                    <p class="max-w-2xl text-sm text-zinc-400">
+                        Subscriptions that tell another system what happens to items: signed deliveries (Standard Webhooks),
+                        retried for about a day. The receiver reads the details from the item's state endpoint.
+                    </p>
+                    <div class="flex gap-1">
+                        <button type="button" @click="fetchWebhooks()" class="btn btn-sm btn-ghost">Refresh</button>
+                        <button type="button" @click="openNewWebhookModal()" class="btn btn-primary btn-sm"><span aria-hidden="true">+</span> New webhook</button>
+                    </div>
+                </div>
+                <p x-show="webhooksLoading && webhooks.length === 0" class="empty-state" role="status">Loading…</p>
+                <p x-show="!webhooksLoading && webhooks.length === 0" class="empty-state">No webhooks yet. Create one for each system that should hear about items.</p>
+                <ul class="space-y-3" x-show="webhooks.length > 0">
+                    <template x-for="w in webhooks" :key="w.id + '|' + w.updated_at + '|' + w.enabled">
+                        <li class="card p-4">
+                            <div class="flex flex-wrap items-start justify-between gap-3">
+                                <div class="min-w-0 flex-1">
+                                    <div class="flex flex-wrap items-baseline gap-2">
+                                        <span class="font-medium" x-text="w.name"></span>
+                                        <span class="badge" :class="webhookStateClass(w)" x-text="webhookStateLabel(w)"></span>
+                                    </div>
+                                    <p class="mt-1 break-all font-mono text-xs text-zinc-300" x-text="w.url"></p>
+                                    <dl class="mt-2 space-y-0.5 text-xs text-zinc-400">
+                                        <div><dt class="inline text-zinc-300">workspaces:</dt> <dd class="inline break-all" x-text="webhookScope(w)"></dd></div>
+                                        <div><dt class="inline text-zinc-300">events:</dt> <dd class="inline" x-text="webhookTypesLabel(w)"></dd></div>
+                                        <div><dt class="inline text-zinc-300">created:</dt> <dd class="inline"><span x-text="formatTime(w.created_at)"></span> by <span x-text="w.created_by"></span></dd></div>
+                                    </dl>
+                                    <p x-show="webhookNote(w)" class="mt-2 break-words text-xs" :class="w.enabled ? 'text-amber-300' : 'text-rose-300'" x-text="webhookNote(w)"></p>
+                                </div>
+                                <div class="flex flex-wrap items-center gap-1">
+                                    <button type="button" @click="toggleWebhookDeliveries(w)" class="btn btn-sm btn-ghost" :aria-expanded="hookOpen === w.id ? 'true' : 'false'" :aria-label="'Deliveries of webhook ' + w.name">Deliveries</button>
+                                    <button type="button" @click="testWebhook(w)" :disabled="hookBusy !== ''" class="btn btn-sm btn-ghost" :aria-label="'Send a test event to webhook ' + w.name">Test</button>
+                                    <button type="button" x-show="w.enabled" @click="setWebhookEnabled(w, false)" :disabled="hookBusy !== ''" class="btn btn-sm btn-ghost" :aria-label="'Disable webhook ' + w.name">Disable</button>
+                                    <button type="button" x-show="!w.enabled" @click="setWebhookEnabled(w, true)" :disabled="hookBusy !== ''" class="btn btn-sm btn-ghost" :aria-label="'Enable webhook ' + w.name">Enable</button>
+                                    <button type="button" @click="requestRotateWebhook(w)" :disabled="hookBusy !== ''" class="btn btn-sm btn-ghost" :aria-label="'Rotate the signing secret of webhook ' + w.name">Rotate secret</button>
+                                    <button type="button" @click="openEditWebhookModal(w)" class="btn btn-sm btn-ghost" :aria-label="'Edit webhook ' + w.name">Edit</button>
+                                    <button type="button" @click="deleteWebhook(w)" class="btn btn-sm btn-ghost btn-bad" :aria-label="'Delete webhook ' + w.name">Delete</button>
+                                </div>
+                            </div>
+                            <div x-show="hookOpen === w.id" class="mt-3 border-t border-zinc-800 pt-3">
+                                <div class="mb-2 flex items-center justify-between gap-2">
+                                    <h3 class="text-sm font-medium">Deliveries, newest first</h3>
+                                    <button type="button" @click="fetchWebhookDeliveries(w.id)" class="btn btn-sm btn-ghost">Refresh</button>
+                                </div>
+                                <p x-show="hookDeliveriesLoading && hookDeliveries.length === 0" class="text-xs text-zinc-400" role="status">Loading…</p>
+                                <p x-show="!hookDeliveriesLoading && hookDeliveries.length === 0" class="text-xs text-zinc-400">No deliveries yet. Send a test event to try the endpoint.</p>
+                                <ul class="divide-y divide-zinc-800 text-xs">
+                                    <template x-for="d in hookDeliveries" :key="d.id + '|' + d.state + '|' + d.attempts">
+                                        <li class="flex flex-wrap items-center gap-2 py-1.5">
+                                            <span class="badge" :class="deliveryStateClass(d)" x-text="d.state"></span>
+                                            <span class="font-mono text-zinc-200" x-text="d.event_type || 'event no longer kept'"></span>
+                                            <span class="text-zinc-400" x-text="formatTime(d.created_at)"></span>
+                                            <span class="min-w-0 flex-1 break-words text-zinc-400" x-text="deliveryDetail(d)"></span>
+                                            <button type="button" x-show="d.state !== 'pending'" @click="redeliverWebhook(w, d)" :disabled="hookBusy !== ''" class="btn btn-sm btn-ghost" :aria-label="'Deliver ' + (d.event_type || 'this event') + ' again'">Send again</button>
+                                        </li>
+                                    </template>
+                                </ul>
+                            </div>
+                        </li>
+                    </template>
+                </ul>
+            </section>
+
             <!-- ===================== API KEYS ===================== -->
             <section x-show="activeView === 'keys'" x-cloak>
                 <div class="mb-6 flex flex-wrap items-start justify-between gap-3">
@@ -788,7 +857,7 @@
                         The registry every domain scopes by. Allocate workspaces to groups here — a key's scope is
                         its workspaces plus its groups' members and pattern matches.
                     </p>
-                    <button type="button" @click="openNewWorkspaceModal()" class="btn btn-primary btn-sm" x-show="whoamiIsRoot()" x-cloak><span aria-hidden="true">+</span> New workspace</button>
+                    <button type="button" @click="openNewWorkspaceModal()" class="btn btn-primary btn-sm" data-role="root" style="display: none"><span aria-hidden="true">+</span> New workspace</button>
                 </div>
                 <p class="empty-state" x-show="registeredWorkspaces.length === 0">No workspaces registered yet. Workspaces appear as agents report sessions, or register one above.</p>
                 <ul class="card divide-y divide-zinc-800" x-show="registeredWorkspaces.length > 0">
@@ -824,7 +893,7 @@
                             from the workspace side; patterns and names live here.
                         </p>
                     </div>
-                    <button type="button" @click="openNewGroupModal()" class="btn btn-primary btn-sm" x-show="whoamiIsRoot()" x-cloak><span aria-hidden="true">+</span> New group</button>
+                    <button type="button" @click="openNewGroupModal()" class="btn btn-primary btn-sm" data-role="root" style="display: none"><span aria-hidden="true">+</span> New group</button>
                 </div>
                 <p x-show="groupsLoading && groups.length === 0" class="empty-state" role="status">Loading…</p>
                 <p x-show="!groupsLoading && groups.length === 0" class="empty-state">No workspace groups yet. Create one to give keys access to many workspaces at once.</p>
@@ -1340,15 +1409,54 @@
             </form>
     {{template "modal-close"}}
 
+    <!-- ===================== WEBHOOK: create / edit ===================== -->
+    {{template "modal-open" (dict "ID" "webhook-modal" "Show" "showWebhookModal" "Close" "closeWebhookModal()")}}
+            <h2 id="webhook-modal-title" class="modal-title" x-text="hookModalMode === 'create' ? 'New webhook' : 'Edit webhook'"></h2>
+            <p class="-mt-2 mb-4 text-sm text-zinc-400" x-text="hookModalMode === 'create' ? 'The signing secret is shown once after creation. The webhook gets events from now on.' : 'Changes apply to the next delivery.'"></p>
+            <form @submit.prevent="submitWebhook()" class="space-y-4">
+                <div>
+                    <label class="lbl" for="webhook-name">Name <span aria-hidden="true">*</span></label>
+                    <input id="webhook-name" type="text" x-model="hookForm.name" class="fld" placeholder="fortix, jobs, …" autocomplete="off" autofocus aria-required="true"
+                        :aria-invalid="hookErrors.name ? 'true' : 'false'" :aria-describedby="hookErrors.name ? 'webhook-name-err' : null" />
+                    <p id="webhook-name-err" x-show="hookErrors.name" class="field-error" x-text="hookErrors.name"></p>
+                </div>
+                <div>
+                    <label class="lbl" for="webhook-url">Endpoint URL <span aria-hidden="true">*</span></label>
+                    <input id="webhook-url" type="url" x-model="hookForm.url" class="fld font-mono" placeholder="https://jobs.example/hooks/skopos" autocomplete="off" aria-required="true"
+                        :aria-invalid="hookErrors.url ? 'true' : 'false'" aria-describedby="webhook-url-hint" />
+                    <p x-show="hookErrors.url" class="field-error" x-text="hookErrors.url"></p>
+                    <p id="webhook-url-hint" class="mt-1 text-xs text-zinc-400">https; a private address only when the server allows it (integrations.allow_private).</p>
+                </div>
+                <div>
+                    <span class="lbl" id="webhook-ws-lbl">Workspaces</span>
+                    {{template "checklist" (dict "LabelID" "webhook-ws-lbl" "For" "o in workspaceOptions()" "Key" "o.id" "Value" "o.id" "Text" "o.label" "Path" "hookForm.workspaces" "Max" "max-h-40")}}
+                    <p id="webhook-workspaces-err" x-show="hookErrors.workspaces" class="field-error" role="alert" x-text="hookErrors.workspaces"></p>
+                </div>
+                <div x-show="isRoot">
+                    <span class="lbl" id="webhook-groups-lbl">Groups</span>
+                    {{template "checklist" (dict "LabelID" "webhook-groups-lbl" "For" "g in groups" "Key" "g.id" "Value" "g.name" "Text" "g.name" "Path" "hookForm.groups" "Empty" "groups.length === 0" "EmptyText" "No groups yet — manage them under Workspaces." "Max" "max-h-28")}}
+                </div>
+                <div>
+                    <span class="lbl" id="webhook-types-lbl">Events</span>
+                    {{template "checklist" (dict "LabelID" "webhook-types-lbl" "For" "t in webhookTypeOptions()" "Key" "t" "Value" "t" "Text" "t" "Path" "hookForm.types" "Max" "max-h-48")}}
+                    <p class="mt-1 text-xs text-zinc-400">None picked: every event but run.started and run.finished.</p>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" @click="closeWebhookModal()" class="btn">Cancel</button>
+                    <button type="submit" class="btn btn-primary" :disabled="hookSaving" x-text="hookSaving ? 'Saving…' : (hookModalMode === 'create' ? 'Create webhook' : 'Save changes')"></button>
+                </div>
+            </form>
+    {{template "modal-close"}}
+
     <!-- ===================== NEW KEY SECRET ===================== -->
     <!-- No backdrop dismissal and no X: closing loses the secret for good, so
          only Done (or Escape) closes it. -->
     {{template "modal-open" (dict "ID" "secret-modal" "Show" "showSecretModal" "Close" "closeSecretModal()" "Size" "max-w-lg" "NoX" true "NoBackdropDismiss" true)}}
-            <h2 id="secret-modal-title" class="modal-title mb-1">API key created</h2>
+            <h2 id="secret-modal-title" class="modal-title mb-1" x-text="secretTitle"></h2>
             <p class="mb-3 text-sm text-amber-300">Store this secret now — it is shown only once and cannot be recovered.</p>
             <div class="flex items-start gap-2 rounded-lg border border-zinc-700 bg-zinc-950 p-3">
                 <code class="min-w-0 flex-1 break-all font-mono text-sm text-emerald-300" x-text="newSecret"></code>
-                <button type="button" @click="copySecret()" class="btn btn-sm shrink-0" :aria-label="secretCopied ? 'Copied' : 'Copy API key to clipboard'">
+                <button type="button" @click="copySecret()" class="btn btn-sm shrink-0" :aria-label="secretCopied ? 'Copied' : 'Copy the secret to the clipboard'">
                     <span x-show="!secretCopied" class="flex items-center gap-1">
                         <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                         Copy
@@ -1359,7 +1467,12 @@
                     </span>
                 </button>
             </div>
-            <p class="mt-3 text-xs text-zinc-400">
+            <p x-show="secretKind === 'webhook'" class="mt-3 text-xs text-zinc-400">
+                Webhook <span class="text-zinc-300" x-text="newSecretName"></span> — the receiving system verifies the
+                <code class="rounded bg-zinc-800 px-1">webhook-signature</code> header with it (Standard Webhooks).
+                After a rotation, deliveries carry both signatures for 24 hours.
+            </p>
+            <p x-show="secretKind === 'key'" class="mt-3 text-xs text-zinc-400">
                 Key <span class="text-zinc-300" x-text="newSecretName"></span> — use it as
                 <code class="rounded bg-zinc-800 px-1">Authorization: Bearer &lt;secret&gt;</code> or configure it as the client api_key
                 (<code class="rounded bg-zinc-800 px-1">skopos install --api-key</code>, <code class="rounded bg-zinc-800 px-1">skopos-config.toml</code>).
@@ -1501,7 +1614,7 @@
                         <label class="lbl" for="ib-ws">Workspace <span aria-hidden="true">*</span></label>
                         <select id="ib-ws" x-model="inboxForm.workspace" class="fld" :aria-invalid="inboxErrors.workspace ? 'true' : 'false'" :aria-describedby="inboxErrors.workspace ? 'inbox-workspace-err' : null" aria-required="true">
                             <option value="" x-text="inboxForm.id ? 'keep current' : 'Select workspace…'"></option>
-                            <option value="unfiled" x-show="!inboxForm.id && whoamiIsRoot()">Unfiled — decide later</option>
+                            <option value="unfiled" x-show="!inboxForm.id && isRoot">Unfiled — decide later</option>
                             <template x-for="o in workspaceOptions()" :key="o.id">
                                 <option :value="o.id" x-text="o.label"></option>
                             </template>

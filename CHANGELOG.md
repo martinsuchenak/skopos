@@ -4,6 +4,27 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **A Webhooks view in the dashboard** (root and approver keys): each
+  subscription's state, scope, events and failures; its deliveries with
+  every attempt; and Test, Send again, Enable, Disable, Rotate secret, Edit
+  and Delete. Creating a subscription or rotating its secret shows the
+  signing secret once.
+- **Slack is told when a webhook disables itself** (410 Gone, or 3 days of
+  failed deliveries), with the reason and how to enable it again.
+
+### Fixed
+
+- **The Keys menu item could stay hidden for the root key** until the page was
+  reloaded; Keys, Webhooks and the root-only buttons now appear as soon as the
+  dashboard knows the key.
+- After the integrations key changed, a rotated webhook's deliveries failed
+  for the 24 hours its old secret also signed. They are now signed with the
+  new secret alone.
+
 ## [0.31.0] — 2026-11-10
 
 ### Added

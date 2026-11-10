@@ -95,8 +95,8 @@ secret_key = "…a long random string…"   # or SKOPOS_INTEGRATIONS_KEY
 allow_private = ["10.20.0.0/16"]         # only for an endpoint on a private network
 ```
 
-Create the subscription with the root key, or an approver key for its own
-workspaces:
+Create the subscription in the dashboard's **Webhooks** view (root, or an
+approver key for its own workspaces), or with the CLI:
 
 ```bash
 skopos webhook create --name jobs --url https://jobs.example/hooks/skopos \
@@ -166,6 +166,11 @@ The receiver:
   `skopos webhook redeliver <id> --delivery <id>` (or `--since 24h` for every
   failed one) sends again with the same `webhook-id`.
 - `skopos webhook test <id>` sends a `webhook.test` event.
+- The dashboard's Webhooks view does the same: each subscription's state and
+  failures, its deliveries with their attempts, Test, Send again, Enable,
+  Disable, Rotate secret, Edit and Delete.
+- With the Slack relay on, a subscription that disables itself is posted to
+  Slack with the reason.
 - `skopos webhook rotate <id>` replaces the secret. For 24 hours deliveries
   carry two signatures, one per secret, so the receiver can switch over.
 
