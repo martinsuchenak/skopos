@@ -33,14 +33,25 @@ func TestDashboardAssetVersioning(t *testing.T) {
 		t.Fatalf("dashboard HTML must be revalidated every load, got %q", w.Header().Get("Cache-Control"))
 	}
 
-	// Versioned asset URLs may be cached forever (the URL changes with the
-	// content). The header is set before the file server answers, so this
-	// holds even in an unbuilt checkout where app.js itself 404s.
-	r = httptest.NewRequest(http.MethodGet, "/static/app.js?v=whatever", nil)
-	w = httptest.NewRecorder()
-	mux.ServeHTTP(w, r)
-	if cc := w.Header().Get("Cache-Control"); cc != "public, max-age=31536000, immutable" {
-		t.Fatalf("static assets must be immutable, got %q", cc)
+	// The page's versioned asset URLs may be cached forever (the URL changes
+	// with the content). The header is set before the file server answers,
+	// so this holds even in an unbuilt checkout where app.js itself 404s.
+	version := regexp.MustCompile(`/static/app\.js\?v=([A-Za-z0-9._-]+)`).FindStringSubmatch(body)[1]
+	cacheControl := func(url string) string {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, url, nil))
+		return w.Header().Get("Cache-Control")
+	}
+	if cc := cacheControl("/static/app.js?v=" + version); cc != "public, max-age=31536000, immutable" {
+		t.Fatalf("this bundle's assets must be immutable, got %q", cc)
+	}
+	// Another bundle's version (a redeploy: the new page's URL answered by
+	// the old server) or none must never be cached: the content isn't what
+	// that URL names.
+	for _, url := range []string{"/static/app.js?v=0123456789ab", "/static/app.js"} {
+		if cc := cacheControl(url); cc != "no-store" {
+			t.Fatalf("%s: an asset outside this bundle's version must not be cached, got %q", url, cc)
+		}
 	}
 }
 

@@ -4,6 +4,21 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.32.2] — 2026-11-10
+
+### Fixed
+
+- **The dashboard no longer keeps old code after a redeploy.** Scripts and
+  styles are cached only when their version matches the running server's;
+  any other version is served uncached. Before, a browser could keep a
+  previous release's script until a hard reload, with menu items such as
+  Keys missing and an item's view out of date.
+- **An open item stays current.** Its preview reads the item again every
+  20 seconds and when the live connection comes back after a server
+  restart, so a finished run, its pull request and its log show without
+  reopening it. A refresh with no change no longer redraws the preview,
+  and a failed refresh (a 502 while the server restarts) keeps it open.
+
 ## [0.32.1] — 2026-11-10
 
 ### Added

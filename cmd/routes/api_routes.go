@@ -184,9 +184,17 @@ func registerWebRoutes(mux *http.ServeMux) {
 				http.NotFound(w, r)
 				return
 			}
-			// URLs are content-versioned in the HTML (see assetsVersion);
-			// a versioned URL always serves that exact content forever.
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			// URLs are content-versioned in the HTML (see assetsVersion):
+			// a URL naming this bundle's version serves that exact content
+			// forever. Any other version is not this binary's to promise:
+			// during a redeploy the old server can be asked for the new
+			// page's URL, and caching its old app.js under the new version
+			// kept it in browsers until a hard reload.
+			if r.URL.Query().Get("v") == assetsVersion {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			} else {
+				w.Header().Set("Cache-Control", "no-store")
+			}
 			files.ServeHTTP(w, r)
 		}))
 	}

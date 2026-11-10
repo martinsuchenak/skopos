@@ -402,6 +402,8 @@ const appState = () => ({
       this.streamRetryDelay = 2000; // reset backoff
       this.startPolling(30000); // slow reconciliation while connected
       this.refresh();
+      // Events missed while the stream was down: catch the open item up.
+      if (this.showInboxPreview && this.previewItem && !this.workflowNote) this.reloadPreview();
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -1187,12 +1189,15 @@ const appState = () => ({
   // Every 20s while the preview is open on an item the pipeline is working
   // on: refetch runs and workers. Inbox events only fire on item changes, so
   // a review run starting or a worker dying would otherwise go unseen.
+  // The item is re-read too (reloadPreview swaps it only when it changed):
+  // a transition missed while the event stream was down — a server
+  // restart — would otherwise leave the tracker on the old phase.
   pollPreview() {
     const item = this.previewItem;
     if (!this.showInboxPreview || !item) return;
-    if (!['queued', 'planning', 'approved', 'implementing', 'in_review'].includes(item.status)) return;
-    this.fetchPreviewRuns(item.id);
-    this.fetchPreviewExtras(item.id);
+    if (['open', 'converted', 'done', 'discarded'].includes(item.status)) return;
+    if (this.workflowNote) { this.fetchPreviewRuns(item.id); this.fetchPreviewExtras(item.id); return; }
+    this.reloadPreview();
   },
   // Workers (stuck-run warning) and the audit trail (History): refetched with
   // the runs on every live refresh.
@@ -2111,17 +2116,24 @@ const appState = () => ({
 
   // Refresh the open modal after an action — the note input is KEPT (only
   // openInboxPreview resets it), so an approve-with-notes flow survives.
+  // Re-read the open item. Inbox events fire for every item in scope, and
+  // swapping previewItem re-renders the description (blank until the next
+  // tick refills it): so the item is swapped only when it changed (status
+  // or updated_at); runs and workers always refresh.
   async reloadPreview() {
     if (!this.showInboxPreview || !this.previewItem) return;
     const id = this.previewItem.id;
     const res = await this.authFetch('/api/inbox/' + encodeURIComponent(id) + '?parts=1');
-    if (!this.showInboxPreview) return;
-    if (!res.ok) { this.closeInboxPreview(); return; }
-    this.previewItem = (await res.json()) as InboxDetail;
-    this.injectPreviewContent();
-    this.syncPreviewSections();
+    if (!this.showInboxPreview || !this.previewItem || this.previewItem.id !== id) return;
+    if (!res.ok) { if (res.status === 404) this.closeInboxPreview(); return; }
+    const fresh = (await res.json()) as InboxDetail;
+    if (fresh.updated_at !== this.previewItem.updated_at || fresh.status !== this.previewItem.status) {
+      this.previewItem = fresh;
+      this.injectPreviewContent();
+      this.syncPreviewSections();
+      this.fetchPreviewRevision();
+    }
     this.fetchPreviewRuns(id);
-    this.fetchPreviewRevision();
     this.fetchPreviewExtras(id).then(() => this.fillSecondOpinion());
   },
   inboxCanRank(item: InboxItem): boolean { return this.inboxItemEditable(item); },
