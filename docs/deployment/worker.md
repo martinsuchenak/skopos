@@ -634,6 +634,11 @@ profile = "php"
   claude runner only**; other runners need a wrapper.
 - **`tools`** are extra allowed tools for the stage, in Claude-style names
   (`Bash(cmd:*)`). They are translated for opencode.
+  - `Agent` (`Task` on older Claude Code) lets a claude stage start
+    subagents, for example to hand smaller jobs to a smaller model; opencode
+    runs ignore it. A subagent stays inside the stage's lockdown: files only
+    in the worktree, the stage's Bash limits, no project instructions loaded
+    (checked by the live lockdown tests).
 - **`env`** is extra agent environment. `${VAR}` expands from the env file.
 
 **Fail closed.** Only a contained stage may be granted `tools`, `env` or

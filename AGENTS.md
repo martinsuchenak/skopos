@@ -23,7 +23,7 @@ Running a single test package: `go test ./internal/status/... -v -count=1`
 
 The server must be running for MCP/REST integration testing: `go run . serve` (HTTP on :8080, MCP at /mcp).
 
-Live agent-CLI tests are opt-in (they spend tokens): `SKOPOS_LIVE_CLAUDE=1` / `SKOPOS_LIVE_OPENCODE=1 go test ./internal/worker -run TestLive -v` — they define what "verified lockdown" means; re-run them after upgrading an agent CLI.
+Live agent-CLI tests are opt-in (they spend tokens): `SKOPOS_LIVE_CLAUDE=1` / `SKOPOS_LIVE_OPENCODE=1 go test ./internal/worker -run TestLive -v` — they define what "verified lockdown" means; re-run them after upgrading an agent CLI. `TestLiveSubagentLockdown` checks a claude subagent (the `Agent` tool, `SKOPOS_LIVE_SUBAGENT_TOOL` for another name) stays in the same lockdown; it asserts from the event stream that the subagent really ran.
 
 User-facing docs: the pipeline tutorial is `docs/guides/pipeline.md`, the worker reference `docs/deployment/worker.md`, config keys `docs/configuration.md` — keep them in step with worker/runner changes.
 
