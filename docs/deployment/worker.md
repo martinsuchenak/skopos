@@ -368,10 +368,12 @@ These hold for every runner, regardless of configuration.
 - **Stage allowlists.** Plan is read-only; implement can edit and run a short
   list of git and read commands; review can read and diff. Commits are
   allowed only as `git commit -m …` (git then refuses `-F`, so a commit
-  can't take its message from a file). Every runner also refuses options
-  of allowed commands that reach past the allowlist: `git --output` (writes
-  a file), `--pathspec-from-file` (echoes one), `rg --pre` and
-  `rg --hostname-bin` (run a command). The prompts name
+  can't take its message from a file). Claude and opencode runs also refuse
+  options of allowed commands that reach past the allowlist: `git --output`
+  (writes a file), `--pathspec-from-file` (echoes one), `rg --pre` and
+  `rg --hostname-bin` (run a command). Codex runs need no such list, since
+  nothing is writable in their sandbox and it covers the files they read;
+  agy (wrapper-only) relies on its wrapper. The prompts name
   the exact shell commands the stage allows and the checks the worker runs
   afterwards, and tell the agent not to chain commands. A profile can grant
   more tools (see [Containing agent runs](#containing-agent-runs)).
@@ -385,6 +387,11 @@ These hold for every runner, regardless of configuration.
   - an account's `env` (with `${VAR}` references) passes credentials to the
     agent;
   - `setup_env` passes what setup needs.
+
+  Setup and checks run the branch's code, which the agent wrote, as the
+  worker user. The agent's lockdown doesn't cover them; only the scrubbed
+  environment and the timeouts apply. Where that matters, run the worker
+  itself in a container or as a user that can reach only what it needs.
 - **The right working directory.** Every agent command gets `PWD` set to its
   run directory, and opencode also gets `--dir`, because opencode trusts
   `$PWD`.

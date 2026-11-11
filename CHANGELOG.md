@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.32.3] — 2026-11-11
 
 ### Security
 
@@ -32,8 +32,12 @@ versions follow [Semantic Versioning](https://semver.org/).
   any file, including `.git/config` (a line there can make git run a
   command), in review runs too; and `rg --pre` ran a script the agent had
   written. Commits are now allowed only as `git commit -m …`, and these
-  options are refused for every runner. Checked against Claude Code
-  2.1.318 and opencode 1.19.5; both live tests now try each of these.
+  options are refused on Claude and opencode runs (Codex runs can't write,
+  and their sandbox covers what they read). The implementer is asked to
+  leave `$`, `>`, `~`, `..` and `/`-paths out of commit messages, and
+  committed steps are matched by their letters and digits only. Checked
+  against Claude Code 2.1.318 and opencode 1.19.5; both live tests now try
+  each of these.
 
 ## [0.32.2] — 2026-11-10
 

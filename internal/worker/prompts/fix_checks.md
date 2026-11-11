@@ -22,8 +22,9 @@ Run them one at a time. You may not be able to run the checks yourself: the work
 after this round.
 {{end}}
 Commit the fix with two separate commands: `git add -A`, then
-`git commit -m "agent: fix checks - <what you fixed>"`. Never push, never change remotes,
-branches or git config.
+`git commit -m "agent: fix checks - <what you fixed>"` (leave `$`, backticks, `>`, `~`, `..` and
+paths starting with `/` out of the message: the shell may refuse them). Never push, never change
+remotes, branches or git config.
 
 If the failure can't be fixed within the plan (the plan is wrong), return status "amendment" with
 the reason and the full proposed list of remaining steps. If it can't be fixed for another reason

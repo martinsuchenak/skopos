@@ -34,8 +34,10 @@ func TestResumeAfterCutOffRun(t *testing.T) {
 	commit("a.txt", "agent: step 1 - Document the current API")
 	commit("b.txt", "[#0] agent: step 1 - Pin the quote calculation with tests")
 	commit("c.txt", "agent: step 2 - Add priceQuote.")
-	steps := []Step{{Title: "Pin the quote calculation with tests"}, {Title: "Add priceQuote"}, {Title: "Quote write APIs"}}
-	if got := committedSteps(t.Context(), dir, base, steps); !reflect.DeepEqual(got, []bool{true, true, false}) {
+	commit("d.txt", "agent: step 3 - Map GET api/quotes to the handler")
+	steps := []Step{{Title: "Pin the quote calculation with tests"}, {Title: "Add priceQuote"}, {Title: "Quote write APIs"},
+		{Title: "Map GET /api/quotes to the handler"}}
+	if got := committedSteps(t.Context(), dir, base, steps); !reflect.DeepEqual(got, []bool{true, true, false, true}) {
 		t.Fatalf("committed: %v", got)
 	}
 

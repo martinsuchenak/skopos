@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/martinsuchenak/skopos/internal/srvurl"
 )
@@ -575,8 +576,17 @@ func committedSteps(ctx context.Context, dir, base string, steps []Step) []bool 
 	return done
 }
 
+// normTitle keeps only a title's letters and digits, lowercased: the
+// implementer leaves shell-special characters out of commit messages (the
+// prompt asks it to — opencode refuses `/api`, `->`, `$` in a command), so
+// "Add /api/inbox route" is committed as "Add api/inbox route".
 func normTitle(s string) string {
-	return strings.ToLower(strings.TrimRight(strings.Join(strings.Fields(s), " "), "."))
+	return strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, s)
 }
 
 // leftoverChanges lists what an earlier run left uncommitted in dir (git

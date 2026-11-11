@@ -62,7 +62,8 @@ name with `git add <file>` instead of `git add -A`) and say so in your summary.
   yourself, skip it — do not block on it.
 {{end}}
 - After finishing each step, commit it with two separate commands: `git add -A`, then
-  `git commit -m "agent: step N - <step title>"`.
+  `git commit -m "agent: step N - <step title>"`. Leave `$`, backticks, `>`, `~`, `..` and paths
+  starting with `/` out of the message (write `api/inbox`, `a to b`): the shell may refuse them.
 - Never push, never change remotes, upstreams, branches or git config. The tool pushes for you.
 - Verify each step as the plan says, with the commands you have. Repository-specific verification
   rules come from the repository instructions above.
