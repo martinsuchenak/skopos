@@ -27,6 +27,9 @@ var ErrInvalidInput = fmt.Errorf("invalid code index input")
 type Service struct {
 	store   *Store
 	vectors VectorStore
+	// embedGate: whether a workspace may use the embeddings endpoint at
+	// all (embed.go); nil = every workspace may.
+	embedGate EmbeddingsGate
 }
 
 func NewService(store *Store) *Service {

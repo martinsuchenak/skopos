@@ -18,7 +18,7 @@ import (
 // revision (bound to the base the planner read), link it. The queue's
 // chaining moves the item to awaiting_approval on the success report.
 func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) error {
-	repo := w.cfg.Repos[run.WorkspaceID]
+	repo := w.repo(run.WorkspaceID)
 	if repo == nil {
 		return w.failNoRepo(run.WorkspaceID)
 	}
@@ -157,7 +157,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 		return err
 	}
 	log.Info("planning", "account", account.Name, "base", baseSHA, "branch", branch, "handover", choice.Exists, "group", run.GroupID != "", "seeded", seed != nil)
-	res := w.runAgent(ctx, w.agentRun(dir, prompt, planSchema, planTools, w.cfg.PlanTimeout, account, run, "plan"))
+	res := w.runAgent(ctx, w.agentRun(dir, prompt, planSchema, w.planToolsFor(run.WorkspaceID), w.planTimeout(run.WorkspaceID), account, run, "plan"))
 	w.addCost(run, res)
 	if err := w.handleAgentOutcome(ctx, run, res, account, "plan"); err != nil {
 		return err
@@ -337,7 +337,7 @@ func (w *Worker) submitCandidate(ctx context.Context, run *Run, item *Item, pr p
 // plan, run checks, push the branch, report the head.
 func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger) error {
 	rl := runLogFrom(ctx)
-	repo := w.cfg.Repos[run.WorkspaceID]
+	repo := w.repo(run.WorkspaceID)
 	if repo == nil {
 		return w.failNoRepo(run.WorkspaceID)
 	}
@@ -352,6 +352,9 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	if account == nil {
 		return w.noAccount(run, "implementation")
 	}
+	// Setup and checks run the branch's code: behind the stage's wrapper,
+	// when it has one.
+	ctx = withShellWrap(ctx, w.stageShellWrap(run, account, "implement"))
 
 	branch := run.Branch
 	if branch == "" {
@@ -540,7 +543,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			return err
 		}
 		log.Info("implementing", "account", account.Name, "branch", branch, "worktree", worktree)
-		res := w.runAgent(ctx, w.agentRun(worktree, prompt, implSchema, implTools, w.cfg.ImplTimeout, account, run, "implement"))
+		res := w.runAgent(ctx, w.agentRun(worktree, prompt, implSchema, w.implToolsFor(run.WorkspaceID), w.implTimeout(run.WorkspaceID), account, run, "implement"))
 		w.addCost(run, res)
 		if err := w.handleAgentOutcome(ctx, run, res, account, "implement"); err != nil {
 			return err
@@ -694,7 +697,7 @@ func (w *Worker) fixChecksRound(ctx context.Context, run *Run, item *Item, repo 
 	if err != nil {
 		return nil, err
 	}
-	res := w.runAgent(ctx, w.agentRun(worktree, prompt, implSchema, implTools, w.cfg.ImplTimeout, account, run, "implement"))
+	res := w.runAgent(ctx, w.agentRun(worktree, prompt, implSchema, w.implToolsFor(run.WorkspaceID), w.implTimeout(run.WorkspaceID), account, run, "implement"))
 	w.addCost(run, res)
 	if err := w.handleAgentOutcome(ctx, run, res, account, "implement"); err != nil {
 		return nil, err
@@ -781,7 +784,7 @@ func (w *Worker) stageReview(ctx context.Context, run *Run, log *slog.Logger) er
 // review is the review/QA/second-opinion stage; br is set for a review-only
 // item's branch_review (the head it checked and the checks' results).
 func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *branchReview) error {
-	repo := w.cfg.Repos[run.WorkspaceID]
+	repo := w.repo(run.WorkspaceID)
 	if repo == nil {
 		return w.failNoRepo(run.WorkspaceID)
 	}
@@ -918,7 +921,7 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 		return err
 	}
 	log.Info("reviewing", "account", account.Name, "stage", run.Stage, "branch", run.Branch)
-	res := w.runAgent(ctx, w.agentRun(wt, prompt, reviewSchema, reviewTools, w.cfg.PlanTimeout, account, run, phase))
+	res := w.runAgent(ctx, w.agentRun(wt, prompt, reviewSchema, reviewTools, w.planTimeout(run.WorkspaceID), account, run, phase))
 	w.addCost(run, res)
 	if err := w.handleAgentOutcome(ctx, run, res, account, phase); err != nil {
 		return err
@@ -1004,7 +1007,7 @@ func (w *Worker) proposeAmendment(ctx context.Context, run *Run, item *Item, ir 
 	w.appendImplQuestions(ctx, run, ir)
 	base := run.BaseSHA
 	if base == "" {
-		base, _ = git(ctx, w.cfg.Repos[run.WorkspaceID].Path, "rev-parse", "origin/"+w.cfg.Repos[run.WorkspaceID].DefaultBranch)
+		base, _ = git(ctx, w.repo(run.WorkspaceID).Path, "rev-parse", "origin/"+w.repo(run.WorkspaceID).DefaultBranch)
 		base = strings.TrimSpace(base)
 	}
 	// Amend FIRST (the guard accepts implementing), THEN move the item to
@@ -1160,7 +1163,7 @@ type branchReview struct {
 // it: they are findings. The run succeeds whatever the verdict; Martin
 // decides at in_review.
 func (w *Worker) stageBranchReview(ctx context.Context, run *Run, log *slog.Logger) error {
-	repo := w.cfg.Repos[run.WorkspaceID]
+	repo := w.repo(run.WorkspaceID)
 	if repo == nil {
 		return w.failNoRepo(run.WorkspaceID)
 	}
@@ -1195,7 +1198,13 @@ func (w *Worker) stageBranchReview(ctx context.Context, run *Run, log *slog.Logg
 		log.Info("reusing the checks another reviewer ran on this head", "branch", choice.Name, "head", head)
 	} else {
 		log.Info("checking the branch before its review", "branch", choice.Name, "head", head)
-		if checks, setup, err = w.checkHead(ctx, run, repo, choice.Name, head, log); err != nil {
+		// Setup and checks run the branch's code: behind the review
+		// stage's wrapper, when it has one (which needs the account).
+		account := w.pickAccount(run, log)
+		if account == nil {
+			return w.noAccount(run, "review")
+		}
+		if checks, setup, err = w.checkHead(withShellWrap(ctx, w.stageShellWrap(run, account, "review")), run, repo, choice.Name, head, log); err != nil {
 			return w.report(ctx, run, false, map[string]any{"reason": err.Error(), "setup": setup, "head_sha": head, "branch": choice.Name, "retryable": true})
 		}
 		if hung := stoppedChecks(checks); len(hung) > 0 {

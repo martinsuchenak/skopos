@@ -176,7 +176,7 @@ func writeWorkerEnvFile(out io.Writer, configPath string) error {
 # The push token for repos.*.push.token_env lives HERE, never in the TOML.
 
 # SKOPOS_API_KEY=sk_...
-# SKOPOS_AGENT_KEY=sk_...       # MCP-only key agent runs reach skopos with: skopos key create --preset agent
+# SKOPOS_AGENT_KEY=sk_...       # only for a server before v0.33: runs now get their own token from the claim
 # CLAUDE_1_API_KEY=sk-ant-...   # for [[worker.accounts]] env = { ANTHROPIC_API_KEY = "${CLAUDE_1_API_KEY}" }
 # GITEA_PUSH_TOKEN=...
 `
@@ -258,6 +258,11 @@ token_env = %q                    # env var holding the token (set it in skopos-
 # server's orphan cleanup never touches hand-made ones).
 id = %q
 state_dir = "~/.local/state/skopos-worker"
+# server_commands: take a workspace's setup, check and preflight commands
+# from the server once the server holds its config (skopos workspace config).
+# Whoever may change them there runs commands on this machine; set false to
+# keep them in this file.
+server_commands = true
 # runners: what claims offer — defaults to every runner the accounts below
 # use. Add runners (and their accounts) with: skopos worker runner add
 workspaces = [%s]

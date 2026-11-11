@@ -79,3 +79,60 @@ func TestPlansWorkspaceScopeMatrix(t *testing.T) {
 		t.Fatalf("add item to own plan: %v", err)
 	}
 }
+
+func runCtx(stage, planID string) context.Context {
+	return auth.WithPrincipal(context.Background(), &auth.Principal{
+		KeyID: "run:r1", Name: "run r1", Workspaces: map[string]struct{}{"ws-a": {}},
+		Run: &auth.RunIdentity{ID: "r1", WorkspaceID: "ws-a", Stage: stage, PlanID: planID},
+	})
+}
+
+// A run's agent token marks the steps of its own item's plan while it
+// implements — not another plan in the same workspace (an agent key
+// could), and not from a plan or review run. A refusal reads like a
+// foreign plan.
+func TestRunMarksOnlyItsOwnPlan(t *testing.T) {
+	svc := NewService(testFileStorage(t))
+	ctx := context.Background()
+	own, err := svc.CreatePlan(ctx, CreatePlanInput{Name: "own", AuthorAgentID: "a", WorkspaceID: "ws-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	neighbour, err := svc.CreatePlan(ctx, CreatePlanInput{Name: "neighbour", AuthorAgentID: "a", WorkspaceID: "ws-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := func(planID string) string {
+		it, err := svc.AddItem(ctx, planID, CreateItemInput{Title: "step"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return it.ID
+	}
+	ownItem, neighbourItem := item(own.ID), item(neighbour.ID)
+
+	if _, err := svc.UpdateItem(runCtx("implement", own.ID), own.ID, ownItem, UpdateItemInput{Status: ItemInProgress}); err != nil {
+		t.Fatalf("an implement run marks its own plan's step: %v", err)
+	}
+	for name, c := range map[string]struct {
+		ctx          context.Context
+		plan, itemID string
+	}{
+		"another plan in the workspace": {runCtx("implement", own.ID), neighbour.ID, neighbourItem},
+		"a review run":                  {runCtx("review", own.ID), own.ID, ownItem},
+		"a plan run":                    {runCtx("plan", own.ID), own.ID, ownItem},
+		"a run whose item has no plan":  {runCtx("implement", ""), own.ID, ownItem},
+	} {
+		if _, err := svc.UpdateItem(c.ctx, c.plan, c.itemID, UpdateItemInput{Status: ItemDone}); !errors.Is(err, ErrNotFound) {
+			t.Errorf("%s: want not found, got %v", name, err)
+		}
+	}
+	// Reading the neighbour plan stays possible: same workspace.
+	if _, err := svc.GetPlan(runCtx("implement", own.ID), neighbour.ID); err != nil {
+		t.Fatalf("a run reads plans in its workspace: %v", err)
+	}
+	// An agent key (no run) is unchanged.
+	if _, err := svc.UpdateItem(scopedCtx(), neighbour.ID, neighbourItem, UpdateItemInput{Status: ItemInProgress}); err != nil {
+		t.Fatalf("a key is not narrowed: %v", err)
+	}
+}

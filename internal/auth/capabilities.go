@@ -163,6 +163,8 @@ var restAreas = []struct{ prefix, area string }{
 	{"/api/runs", AreaRuns},
 	{"/api/workers", AreaRuns},
 	{"/api/workspaces", AreaWorkspaces},
+	// Runner definitions: what a worker reads before it offers runners.
+	{"/api/fleet", AreaWorkspaces},
 	{"/api/events", AreaEvents},
 	{"/api/webhooks", AreaEvents},
 }

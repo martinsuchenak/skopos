@@ -54,4 +54,9 @@ const (
 	ViaWorker    = "worker"
 	ViaMigration = "migration"
 	ViaSystem    = "system"
+	// ViaApply: a change made by applying a configuration file (skopos
+	// config apply); ViaImport: one taken from a worker's file (skopos
+	// workspace config import).
+	ViaApply  = "apply"
+	ViaImport = "import"
 )

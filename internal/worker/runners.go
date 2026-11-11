@@ -9,11 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"slices"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/martinsuchenak/skopos/internal/wsconfig"
 )
 
 // Runners: the worker is agent-CLI agnostic. A Runner turns one AgentRun
@@ -65,51 +65,29 @@ type RunnerSpec struct {
 	// Command (command): the argv template. {prompt} {dir} {model}
 	// {effort} expand; without {prompt} the prompt goes to stdin.
 	Command []string `toml:"command"`
+	// Provider and Endpoint declare where the runner's requests go when the
+	// worker cannot tell (facts.go): a model on another machine on the
+	// local network (provider = "local"), a router (provider = "llmrouter"),
+	// any `command` runner. A workspace's policy matches on the provider.
+	Provider string `toml:"provider"`
+	Endpoint string `toml:"endpoint"`
 }
 
 var runnerKinds = map[string]bool{"claude": true, "opencode": true, "codex": true, "antigravity": true, "command": true}
 
-// effortLevels are the values each CLI's effort setting takes (from its
-// --help / config reference). opencode's --variant is provider-specific and
-// command's {effort} is the operator's own: any plain word.
-var effortLevels = map[string][]string{
-	"claude":      {"low", "medium", "high", "xhigh", "max"},
-	"antigravity": {"low", "medium", "high", "xhigh", "max"},
-	"codex":       {"minimal", "low", "medium", "high", "xhigh"},
-}
-
-var reEffortWord = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$`)
-
 // EffortLevels lists the effort values a runner kind takes; nil = any plain
 // word (opencode variants, command templates).
-func EffortLevels(kind string) []string { return effortLevels[kind] }
+func EffortLevels(kind string) []string { return wsconfig.EffortLevels(kind) }
 
 // ValidateEffort refuses an effort a runner kind can't take ("" is always
 // fine), so a setting is never silently dropped. command = the template of
-// a command runner.
+// a command runner. The rule is the server's too (a runner definition).
 func ValidateEffort(kind string, command []string, effort string) error {
-	if effort == "" {
-		return nil
-	}
-	if levels, ok := effortLevels[kind]; ok {
-		if !slices.Contains(levels, effort) {
-			return fmt.Errorf("effort %q: the %s runner takes %s", effort, kind, strings.Join(levels, ", "))
-		}
-		return nil
-	}
-	if !reEffortWord.MatchString(effort) {
-		return fmt.Errorf("effort %q: use a plain word (letters, digits, - _ ., at most 32)", effort)
-	}
-	if kind == "command" && !TemplateHasEffort(command) {
-		return fmt.Errorf("effort %q: the command has no {effort} placeholder", effort)
-	}
-	return nil
+	return wsconfig.ValidateEffort(kind, command, effort)
 }
 
 // TemplateHasEffort: a command template uses {effort}.
-func TemplateHasEffort(command []string) bool {
-	return slices.ContainsFunc(command, func(s string) bool { return strings.Contains(s, "{effort}") })
-}
+func TemplateHasEffort(command []string) bool { return wsconfig.TemplateHasEffort(command) }
 
 // checkEffort validates an account's effort for its runner. A command
 // template with {effort} needs it on every account: it would expand empty.
@@ -126,11 +104,21 @@ func (c *Config) runnerSpec(name string) (*RunnerSpec, string) {
 		name = "claude"
 	}
 	spec := c.RunnerSpecs[name]
+	// A runner the server defines is of the definition's kind, and without
+	// a block of its own takes its kind's (runner_config.opencode.config
+	// serves every defined opencode runner).
+	d := c.def(name)
+	if spec == nil && d != nil {
+		spec = c.RunnerSpecs[d.Kind]
+	}
 	if spec == nil {
 		spec = &RunnerSpec{}
 	}
 	kind := spec.Kind
-	if kind == "" {
+	switch {
+	case d != nil:
+		kind = d.Kind
+	case kind == "":
 		kind = name
 	}
 	return spec, kind
@@ -205,6 +193,13 @@ func (c *Config) UsedRunners() []string {
 		}
 	}
 	if len(out) == 0 {
+		// A worker whose accounts only name a kind feeds no runner until
+		// the server's definitions arrive: it has no claude to check.
+		for _, a := range c.fileAccounts {
+			if a.poolAccount() {
+				return nil
+			}
+		}
 		out = []string{"claude"}
 	}
 	sort.Strings(out)
@@ -310,11 +305,14 @@ func (w *Worker) runAgent(ctx context.Context, ar AgentRun) AgentResult {
 	if err != nil {
 		return AgentResult{Outcome: OutcomeError, Detail: err.Error()}
 	}
-	contained := len(ar.Wrapper) > 0 || (ar.Sandboxed && r.HonorsSettings())
+	if ar.StartErr != "" {
+		return AgentResult{Outcome: OutcomeError, Detail: ar.StartErr}
+	}
+	contained := len(ar.Wrapper) > 0 || ar.HostContained || (ar.Sandboxed && r.HonorsSettings())
 	if !contained {
 		if !r.Verified() {
 			return AgentResult{Outcome: OutcomeError, Detail: fmt.Sprintf(
-				"runner %q has no lockdown skopos has verified — it only runs on stages contained by a wrapper (worker.profiles.<name>.<stage>.wrapper)", ar.Runner)}
+				"runner %q has no lockdown skopos has verified — it only runs on stages contained by a wrapper (worker.profiles.<name>.<stage>.wrapper) or on a worker whose host is a container (worker.contained_by)", ar.Runner)}
 		}
 		if ar.Granted {
 			return AgentResult{Outcome: OutcomeError, Detail: fmt.Sprintf(
@@ -566,7 +564,7 @@ func writeRunLog(path string, stdout, stderr []byte) {
 		return
 	}
 	_ = os.MkdirAll(logsDirOf(path), 0o700)
-	_ = os.WriteFile(path, append(stdout, append([]byte("\n--- stderr\n"), stderr...)...), 0o600)
+	_ = writeNoFollow(path, append(stdout, append([]byte("\n--- stderr\n"), stderr...)...), 0o600)
 }
 
 // runDetail names the model and effort for notes ("opus, effort high").

@@ -13,6 +13,9 @@ type Key struct {
 	// Delegate: the key may name the person it acts for
 	// (X-Skopos-On-Behalf-Of) — an integration recording people's decisions.
 	Delegate bool `json:"delegate"`
+	// Admin: the key may change policy and configuration within its scope
+	// (auth.RequireAdmin*). Never for agent or worker keys.
+	Admin bool `json:"admin"`
 	// Capabilities limit the key's surfaces and areas (internal/auth
 	// capabilities.go); null = full access.
 	Capabilities []string   `json:"capabilities"`

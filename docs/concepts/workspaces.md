@@ -38,6 +38,15 @@ read them through the MCP tool `workspace_pipeline`. Unregistering a
 workspace drops its settings. Details: [Pipeline
 settings](../configuration.md#pipeline-settings-agent-pipeline).
 
+Which runners may be chosen at all is the **runner policy**: allow rules by
+provider, model and stage, set on a workspace, a group or the whole fleet.
+See [Runner policy](runner-policy.md).
+
+A workspace's shared worker settings — branches, setup and check commands,
+timeouts, push settings — can be held on the server too, with a group's
+values as defaults under them. See
+[Workspace config on the server](workspace-config.md).
+
 ## Strict scoping
 
 When a workspace filter is active (a workspace is selected in the picker or passed as a query parameter), blackboard entries and plans require an **exact** `workspace_id` match:

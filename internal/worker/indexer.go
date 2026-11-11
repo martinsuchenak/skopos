@@ -121,7 +121,7 @@ func (w *Worker) indexable() []string {
 	w.loadIndexState()
 	var out []string
 	for _, ws := range w.cfg.Workspaces {
-		repo := w.cfg.Repos[ws]
+		repo := w.repo(ws)
 		if repo == nil || repo.Path == "" {
 			continue
 		}
@@ -309,7 +309,7 @@ func (w *Worker) indexPass(ctx context.Context, enabled, def []string) {
 		if ctx.Err() != nil {
 			return
 		}
-		repo := w.cfg.Repos[ws]
+		repo := w.repo(ws)
 		w.index.mu.Lock()
 		due := repo != nil && time.Since(w.index.checked[ws]) >= indexCheckEvery && time.Since(w.index.failed[ws]) >= indexRetryAfter
 		if due {
@@ -343,7 +343,7 @@ func (w *Worker) indexPass(ctx context.Context, enabled, def []string) {
 		if ctx.Err() != nil {
 			return
 		}
-		if repo := w.cfg.Repos[ws]; repo != nil {
+		if repo := w.repo(ws); repo != nil {
 			w.pruneStaleIndexes(ctx, repo, ws)
 		}
 	}
@@ -355,7 +355,7 @@ func (w *Worker) indexPass(ctx context.Context, enabled, def []string) {
 		if ctx.Err() != nil {
 			return
 		}
-		repo := w.cfg.Repos[job.Workspace]
+		repo := w.repo(job.Workspace)
 		forget := func() {
 			w.index.mu.Lock()
 			w.index.state.Queue = slices.DeleteFunc(w.index.state.Queue, func(j indexJob) bool { return j == job })

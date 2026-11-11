@@ -292,13 +292,16 @@ func (w *Worker) redactor() *strings.Replacer {
 	for _, v := range w.extraSecrets {
 		add(v)
 	}
+	for _, v := range w.runSecrets {
+		add(v)
+	}
 	for _, k := range w.cfg.TokenEnvs() {
 		add(os.Getenv(k))
 	}
 	for _, k := range w.envFileKeys {
 		add(os.Getenv(k))
 	}
-	for _, a := range w.cfg.Accounts {
+	for _, a := range w.cfg.FileAccounts() {
 		for k, v := range a.Env {
 			if secretName(k) {
 				add(v)

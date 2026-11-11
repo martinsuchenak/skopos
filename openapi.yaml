@@ -252,6 +252,9 @@ paths:
                   approver:
                     type: boolean
                     description: Approver permission; omitted = unchanged
+                  admin:
+                    type: boolean
+                    description: Admin permission (change policy and configuration within the key's scope); omitted = unchanged
       responses:
         "200":
           description: Updated key
@@ -377,10 +380,551 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PipelineView" }
         "400": { description: Invalid settings (unknown stage, a list on a single-runner stage, bad focus or policy) }
+        "409": { description: "The save newly names a runner the server defines whose declared provider and model the workspace's runner policy allows on no worker; the message names the runner, the stage and the policy" }
         "401": { description: Unauthorized }
         "403": { description: Requires the root key }
         "404": { description: Not found or out of scope }
         "409": { description: Another group already sets one of these stages (or the agents default) for a workspace this group holds }
+
+  /api/policy/fleet/{level}:
+    get:
+      summary: The fleet's runner policy (any authenticated caller)
+      operationId: getFleetPolicy
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: level, in: path, required: true, schema: { type: string, enum: [ceiling, default] }, description: "ceiling: always applied to every workspace. default: for workspaces with no policy of their own and in no group that has one" }
+      responses:
+        "200":
+          description: The policy at this level (policy null when none is set)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyView" }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission at this level }
+        "404": { description: Unknown level }
+    put:
+      summary: Set the fleet's runner policy (admin key that reaches all workspaces, or root)
+      description: >-
+        Replaces the policy at this level with the given allow rules, as a
+        new revision. Refused with 409 when it would newly strand configured
+        runners (a stage's runner that workers offer but none would be
+        allowed to run) or drop a workspace's embedded code index, unless
+        force is true. Audited as `policy.set` with the old and new revision.
+      operationId: putFleetPolicy
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: level, in: path, required: true, schema: { type: string, enum: [ceiling, default] }, description: "ceiling: always applied to every workspace. default: for workspaces with no policy of their own and in no group that has one" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PolicyInput" }
+      responses:
+        "200":
+          description: Saved (warnings lists what a forced save stranded)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyView" }
+        "400": { description: "Invalid policy: no rules, an unknown stage or kind" }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission at this level }
+        "404": { description: Unknown level }
+        "409": { description: The policy would strand current settings; the message lists them. Save with force }
+    delete:
+      summary: Remove the fleet's runner policy (admin key that reaches all workspaces, or root)
+      description: The revisions stay; what then applies may be narrower (the fleet default instead of a workspace's own). `?force=true` as for PUT. Audited as `policy.delete`.
+      operationId: deleteFleetPolicy
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: level, in: path, required: true, schema: { type: string, enum: [ceiling, default] }, description: "ceiling: always applied to every workspace. default: for workspaces with no policy of their own and in no group that has one" }
+      responses:
+        "200":
+          description: Cleared
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyView" }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission at this level }
+        "404": { description: Unknown level }
+        "409": { description: Clearing would strand current settings; pass force=true }
+
+  /api/workspaces/{id}/config:
+    get:
+      summary: A workspace's config on the server (any key with the workspace in scope)
+      description: >-
+        The part of a workspace's configuration every worker serving it
+        shares: branches, setup and check commands, timeouts, push settings
+        and the MCP allow and deny lists. A workspace with a config of its own
+        is managed: those fields come from the server and the same fields in
+        a worker's file are ignored. `effective` is what applies, with where
+        each field comes from.
+      operationId: getWorkspaceConfig
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The stored config (config null when the workspace is not managed) and what applies
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigView" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found or out of scope }
+    put:
+      summary: Save a workspace's config (admin key with the workspace in scope)
+      description: >-
+        Replaces the workspace's config with the given fields, as a new
+        revision; a field left out is not set at this level (its group's
+        value, else the default, applies). Saving one makes the workspace
+        managed. Refused when the merged result cannot work (a push without
+        a remote URL). `setup`, `checks` and `preflight` run on every worker
+        serving the workspace that has `worker.server_commands` on; their
+        values are recorded in full. Audited as `config.update`
+        (`config.import` when the request names the surface `import`) with
+        the old and new revision and the fields changed.
+      operationId: putWorkspaceConfig
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfigInput" }
+      responses:
+        "200":
+          description: Saved (changed lists the fields that differ; empty when nothing changed)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigView" }
+        "400": { description: "Invalid config: an unknown field, a body without config, an unknown value, a limit exceeded, a push without a remote URL" }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission for the workspace }
+        "404": { description: Not found or out of scope }
+        "409": { description: The stored revision is no longer if_rev }
+    delete:
+      summary: Remove a workspace's config (admin key with the workspace in scope)
+      description: The workspace is no longer managed, and its workers go back to their own files. The revisions stay readable. Audited as `config.delete`.
+      operationId: deleteWorkspaceConfig
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Cleared
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigView" }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission for the workspace }
+        "404": { description: Not found or out of scope }
+
+  /api/workspaces/{id}/config/effective:
+    get:
+      summary: What applies to a workspace now (any key with the workspace in scope)
+      description: Its groups' configs in name order, then its own on top, as one set of fields. `managed` false means the server holds no config for it.
+      operationId: getEffectiveWorkspaceConfig
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The effective config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EffectiveConfig" }
+        "401": { description: Unauthorized }
+        "404": { description: Out of scope }
+
+  /api/workspaces/{id}/config/{rev}:
+    get:
+      summary: The config a revision id names (any key with the workspace in scope)
+      description: >-
+        The effective config as it was when that revision was resolved, built
+        from the stored revisions it stands for. A run's `config_rev` is such
+        an id: the worker fetches it and runs under exactly that config.
+      operationId: getWorkspaceConfigAt
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: rev, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The config at that revision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EffectiveConfig" }
+        "401": { description: Unauthorized }
+        "404": { description: No such revision for this workspace, or out of scope }
+
+  /api/groups/{id}/config:
+    get:
+      summary: A group's config (admin key whose scope covers every workspace in the group)
+      operationId: getGroupConfig
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, description: Group id or name }
+      responses:
+        "200":
+          description: The stored config (config null when none)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigView" }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission for the group }
+        "404": { description: Not found }
+    put:
+      summary: Save a group's config (admin key whose scope covers every workspace in the group)
+      description: >-
+        A group's values are defaults for its managed workspaces, field by
+        field; they never make a workspace managed on their own. Refused with
+        409 when another group already sets one of the fields for a workspace
+        both contain, and with 400 when the result would leave a managed
+        member with a config that cannot work.
+      operationId: putGroupConfig
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, description: Group id or name }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfigInput" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigView" }
+        "400": { description: Invalid config }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission for the group }
+        "404": { description: Not found }
+        "409": { description: Another group sets the same field for a shared workspace }
+    delete:
+      summary: Remove a group's config (admin key whose scope covers every workspace in the group)
+      operationId: deleteGroupConfig
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, description: Group id or name }
+      responses:
+        "200":
+          description: Cleared
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigView" }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission for the group }
+        "404": { description: Not found }
+
+  /api/fleet/config:
+    get:
+      summary: The runner definitions and the revision that names them (any key)
+      description: What a worker fetches before it offers runners. Claim answers carry the revision as `Skopos-Fleet-Rev`.
+      operationId: getFleetConfig
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: The definitions (rev empty when there are none)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rev: { type: string }
+                  runners: { type: array, items: { $ref: "#/components/schemas/RunnerDef" } }
+        "401": { description: Unauthorized }
+
+  /api/fleet/runners:
+    get:
+      summary: List the runner definitions (any key)
+      operationId: listRunnerDefs
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: The definitions with their revisions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runners:
+                    type: array
+                    items:
+                      allOf:
+                        - { $ref: "#/components/schemas/RunnerDef" }
+                        - type: object
+                          properties:
+                            rev: { type: string }
+                            updated_at: { type: string, format: date-time }
+                            updated_by: { type: string }
+        "401": { description: Unauthorized }
+
+  /api/fleet/runners/{name}:
+    put:
+      summary: Define or redefine a runner (admin key that reaches every workspace)
+      description: >-
+        One definition per runner name, for every worker: the CLI, the model,
+        the effort and the declared provider. A worker offers it when one of
+        its accounts is a login for that kind (`kind = "claude"` on the
+        account) and its endpoint does not contradict the declared provider.
+        A `command` runner cannot be defined here: its argv runs on the
+        worker's host. Audited as `runner_def.create` / `runner_def.update`.
+      operationId: putRunnerDef
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RunnerDef" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunnerDef" }
+        "400": { description: "Invalid definition: an unknown kind, an effort the CLI does not take, a provider the model contradicts" }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission over every workspace }
+    delete:
+      summary: Remove a runner definition (admin key that reaches every workspace)
+      description: Workers then offer the name only when their own file defines it. Audited as `runner_def.delete`.
+      operationId: deleteRunnerDef
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Removed }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission over every workspace }
+        "404": { description: Not defined }
+
+  /api/config/export:
+    get:
+      summary: Everything about how runs are configured, as one document (admin key that reaches every workspace)
+      description: Runner definitions, the fleet's policies, every group with its members, and each group's and workspace's policy, pipeline and config. `skopos config export` writes it as TOML.
+      operationId: exportConfig
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: The document
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigDocument" }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission over every workspace }
+
+  /api/config/apply:
+    post:
+      summary: Make the server match a configuration document, or list what that would change (admin key)
+      description: >-
+        The document is authoritative for what it lists: a workspace or group
+        in it gets exactly the policy, pipeline and config it gives (a section
+        left out is cleared); `fleet` and `runners`, when present, state the
+        fleet's policies and the full set of runner definitions. What it does
+        not list is left as it is and named in `unlisted` (cut to the
+        caller's scope). Every change is checked first against the server's
+        current state (permission, validation, conflicts, what a policy
+        strands) and nothing is written unless all pass; the settings of an
+        owner the same document creates, and a pipeline the current policy
+        refuses while the document changes a policy, are decided when
+        applied and carry a warning in the plan. Each change needs the
+        permission its own save needs (root for a group's members and
+        pipeline, approver for a workspace's pipeline); a section left as
+        it is needs none. A field the document schema does not have is
+        refused. With `plan` nothing is written. An apply is audited as `config.apply` with
+        the file's hash and commit, and each change inside it by its own
+        action with the surface `apply`.
+      operationId: applyConfig
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [document]
+              properties:
+                document: { $ref: "#/components/schemas/ConfigDocument" }
+                file_hash: { type: string, description: sha256 of the file the document was read from }
+                commit: { type: string, description: The git commit the file comes from }
+                force: { type: boolean, description: Save policies that strand configured runners }
+                plan: { type: boolean, description: List the changes and make none }
+      responses:
+        "200":
+          description: The changes made, or with plan the changes an apply would make
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  applied: { type: boolean }
+                  changes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind: { type: string, enum: [runner, workspace, group, policy, pipeline, config] }
+                        owner: { type: string, description: "fleet:ceiling, fleet:default, group:<name>, workspace:<id> or runner:<name>" }
+                        action: { type: string, enum: [create, update, clear, delete] }
+                        detail: { type: string }
+                        revision: { type: string, description: The revision the apply created }
+                        warnings: { type: array, items: { type: string } }
+                  unlisted: { type: array, items: { type: string }, description: Groups and workspaces with settings on the server that the document does not list }
+                  file_hash: { type: string }
+                  commit: { type: string }
+        "400": { description: Invalid document or section }
+        "401": { description: Unauthorized }
+        "403": { description: A change needs a permission the key does not hold }
+        "404": { description: A group or workspace a change names is not found }
+        "409": { description: "A change is refused as it stands: a policy that strands current settings (pass force), two groups setting the same thing, a runner the policy forbids" }
+
+  /api/workspaces/{id}/policy:
+    get:
+      summary: A workspace's own runner policy (any key with the workspace in scope)
+      operationId: getWorkspacePolicy
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The policy at this level (policy null when none is set)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyView" }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission at this level }
+        "404": { description: Not found or out of scope }
+    put:
+      summary: Set a workspace's own runner policy (admin key with the workspace in scope)
+      description: >-
+        Replaces the policy at this level with the given allow rules, as a
+        new revision. Refused with 409 when it would newly strand configured
+        runners (a stage's runner that workers offer but none would be
+        allowed to run) or drop a workspace's embedded code index, unless
+        force is true. Audited as `policy.set` with the old and new revision.
+      operationId: putWorkspacePolicy
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PolicyInput" }
+      responses:
+        "200":
+          description: Saved (warnings lists what a forced save stranded)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyView" }
+        "400": { description: "Invalid policy: no rules, an unknown stage or kind" }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission at this level }
+        "404": { description: Not found or out of scope }
+        "409": { description: The policy would strand current settings; the message lists them. Save with force }
+    delete:
+      summary: Remove a workspace's own runner policy (admin key with the workspace in scope)
+      description: The revisions stay; what then applies may be narrower (the fleet default instead of a workspace's own). `?force=true` as for PUT. Audited as `policy.delete`.
+      operationId: deleteWorkspacePolicy
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Cleared
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyView" }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission at this level }
+        "404": { description: Not found or out of scope }
+        "409": { description: Clearing would strand current settings; pass force=true }
+
+  /api/workspaces/{id}/policy/effective:
+    get:
+      summary: Every runner policy that applies to a workspace, and where each comes from
+      description: >-
+        The fleet ceiling, then the workspace's groups' and its own policies —
+        or the fleet default when it has none of those. A runner must be
+        allowed by every layer. No layers means no policy: every runner is
+        allowed.
+      operationId: getEffectivePolicy
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The effective policy
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EffectivePolicy" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found or out of scope }
+
+  /api/groups/{id}/policy:
+    get:
+      summary: A group's runner policy (admin key that reaches every workspace in the group)
+      operationId: getGroupPolicy
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The policy at this level (policy null when none is set)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyView" }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission at this level }
+        "404": { description: Unknown group }
+    put:
+      summary: Set a group's runner policy (admin key that reaches every workspace in the group)
+      description: >-
+        Replaces the policy at this level with the given allow rules, as a
+        new revision. Refused with 409 when it would newly strand configured
+        runners (a stage's runner that workers offer but none would be
+        allowed to run) or drop a workspace's embedded code index, unless
+        force is true. Audited as `policy.set` with the old and new revision.
+      operationId: putGroupPolicy
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PolicyInput" }
+      responses:
+        "200":
+          description: Saved (warnings lists what a forced save stranded)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyView" }
+        "400": { description: "Invalid policy: no rules, an unknown stage or kind" }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission at this level }
+        "404": { description: Unknown group }
+        "409": { description: The policy would strand current settings; the message lists them. Save with force }
+    delete:
+      summary: Remove a group's runner policy (admin key that reaches every workspace in the group)
+      description: The revisions stay; what then applies may be narrower (the fleet default instead of a workspace's own). `?force=true` as for PUT. Audited as `policy.delete`.
+      operationId: deleteGroupPolicy
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Cleared
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyView" }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission at this level }
+        "404": { description: Unknown group }
+        "409": { description: Clearing would strand current settings; pass force=true }
 
   /api/groups/{id}:
     get:
@@ -914,6 +1458,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PipelineView" }
         "400": { description: Invalid settings (unknown stage, a list on a single-runner stage, bad focus or policy) }
+        "409": { description: "The save newly names a runner the server defines whose declared provider and model the workspace's runner policy allows on no worker; the message names the runner, the stage and the policy" }
         "401": { description: Unauthorized }
         "403": { description: Requires the approver permission and the workspace in scope }
         "404": { description: Not found or out of scope }
@@ -1591,7 +2136,7 @@ paths:
                   head_sha: { type: string }
         "400": { description: "Not applicable (status, no implemented head, no runner and no default)" }
         "401": { description: Unauthorized }
-        "403": { description: Requires the approver permission }
+        "403": { description: "Requires the approver permission; or the workspace's runner policy does not allow the runner for second opinions (the body then carries reason: policy)" }
         "404": { description: Not found or out of scope }
         "409": { description: "One is already running for the item, or this runner already reviewed this head (pass force)" }
 
@@ -2232,13 +2777,23 @@ paths:
                   additionalProperties: { type: string }
                   description: "Offered workspaces whose preflight fails on the worker (workspace → reason). None of their runs is handed out — not even the worker's own interrupted ones, which age into takeovers for other workers. Changes are posted to Slack."
                 indexable: { type: array, items: { type: string }, description: "Offered workspaces whose repo the worker can fetch and index" }
+                runner_facts:
+                  type: array
+                  items: { $ref: "#/components/schemas/RunnerFacts" }
+                  description: "Every runner the worker has configured, in its order of preference. The claim resolves the one runner of each run, checks it against the workspace's policy with these facts, and — for a run nothing pins — picks the first that fits. A worker that sends none gets runs only from workspaces without a policy. A change is audited as worker.facts."
+                executors:
+                  type: object
+                  additionalProperties: { type: array, items: { $ref: "#/components/schemas/ExecutorFact" } }
+                  description: "What contains a run on the worker: per offered workspace, the executor by stage and runner. A policy rule with executor is matched on the one for the run's workspace, stage and runner. A worker that sends none gets no run whose rule needs an executor. A change is audited as worker.facts."
+                server_commands: { type: boolean, description: "The worker takes a managed workspace's setup, check and preflight commands from the server (worker.server_commands). A change is audited as worker.facts." }
+                fleet_rev: { type: string, description: "The runner definitions the worker holds (GET /api/fleet/config rev). A change is audited as worker.config_applied." }
       responses:
         "200":
           description: "The claimed run (lease started). Every response carries a Skopos-Version header (the server's release; idle workers upgrade to it), and — when set — Skopos-Index-Enabled (offered workspaces with the code_index switch on) and Skopos-Index-Default (those whose default branch this worker indexes), comma-separated."
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Run" }
-        "204": { description: Nothing for this worker (with the Skopos-Version header) }
+        "204": { description: "Nothing for this worker (with the Skopos-Version header). Every claim answer also carries Skopos-Runner-Facts: this server reads runner_facts and names the runner of every run it hands a worker that sent them; Skopos-Fleet-Rev when runner definitions exist (their revision); and Skopos-Config-Rev when one of the offered workspaces is managed (one value for their config: a worker refetches when it changes)" }
         "400": { description: Invalid input }
         "401": { description: Unauthorized }
         "404": { description: Workspace out of scope }
@@ -2297,7 +2852,8 @@ paths:
                 retryable: { type: boolean, description: "On failure: the worker's problem (setup, a hung check, git, the push, the provider). The run goes back to the queue — not claimable for 1 then 5 minutes, and from the second retry not by the failing worker for 30 minutes more — until 3 attempts are spent; only then does the item block." }
                 branch: { type: string }
                 base_sha: { type: string }
-                executor: { type: string }
+                executor: { type: string, description: "What contained the agent. Compared with the executor the claim matched on: a difference is audited as run.executor_mismatch, and when the policy does not allow the runner with this executor the run is recorded as failed" }
+                grants: { type: string, description: "A hash of the capabilities the stage profile granted the run (extra tools, env names, settings allow rules); empty when none" }
                 cost_usd: { type: number, description: What the agent run cost, when the runner reports it }
                 findings:
                   type: array
@@ -2392,6 +2948,13 @@ paths:
                       additionalProperties: { type: string }
                       description: Workspaces whose preflight fails on it (workspace → reason); it takes none of their work
                     paused: { $ref: "#/components/schemas/WorkerPause" }
+                    runner_facts: { type: array, items: { $ref: "#/components/schemas/RunnerFacts" }, description: What the worker reports about each runner it has }
+                    executors:
+                      type: object
+                      additionalProperties: { type: array, items: { $ref: "#/components/schemas/ExecutorFact" } }
+                      description: What contains its runs, per workspace in the caller's scope
+                    server_commands: { type: boolean, description: "It takes commands from the server; absent for a worker that does not say" }
+                    fleet_rev: { type: string, description: The runner definitions it holds }
                     state:
                       type: string
                       enum: [busy, idle, paused, offline]
@@ -3047,6 +3610,201 @@ components:
           items: { type: object, properties: { id: { type: string }, name: { type: string } } }
         conflicts: { type: array, items: { type: string }, description: Stages two groups both set (the first group by name wins until fixed) }
         unknown_runners: { type: array, items: { type: string }, description: Runners no worker serving this workspace offers yet }
+        policy: { $ref: "#/components/schemas/EffectivePolicy" }
+        policy_refused: { type: array, items: { type: string }, description: "Workspace only: configured runners the policy allows on no worker that offers them — their runs would wait" }
+    WorkspaceConfig:
+      type: object
+      description: "The shared part of a workspace's configuration. A field left out is not set at this level; an empty list is set, to nothing. Durations are text (\"90s\", \"10m\")."
+      properties:
+        default_branch: { type: string, description: Default main }
+        branch_prefix: { type: string, description: Default agent/ }
+        branch_template: { type: string, description: "An item branch's name: {prefix}, {tail}, {slug}, {ref}; needs {tail} or {ref}" }
+        checkout: { type: string, enum: [worktree, branch] }
+        protected_branches: { type: array, items: { type: string } }
+        setup: { type: array, items: { type: string }, description: Commands run in every fresh worktree. A command field }
+        checks: { type: array, items: { type: string }, description: Verification commands run after an implementation. A command field }
+        check_fix_rounds: { type: integer, minimum: 0, maximum: 5 }
+        preflight: { type: array, items: { type: string }, description: Commands that say whether a worker can take the repository's work. A command field }
+        preflight_interval: { type: string }
+        setup_timeout: { type: string }
+        check_timeout: { type: string }
+        quiet_timeout: { type: string, description: "Stops a setup or check command that prints nothing for this long; 0s = off" }
+        plan_timeout: { type: string }
+        impl_timeout: { type: string }
+        push:
+          type: object
+          properties:
+            kind: { type: string, enum: [github, gitea, none] }
+            remote_url: { type: string, description: "An http(s) push URL without credentials: the token comes from the worker's environment" }
+            pull_request: { type: string, enum: [draft, ready, none] }
+            steps: { type: boolean, description: Push the implementer's commits as they are made }
+        mcp_deny: { type: array, items: { type: string }, description: MCP tools runs may not use }
+        mcp_servers: { type: array, items: { type: string }, description: "MCP tool prefixes runs may use (mcp__<server>…)" }
+    ConfigInput:
+      type: object
+      required: [config]
+      properties:
+        config: { $ref: "#/components/schemas/WorkspaceConfig" }
+        note: { type: string, description: Kept with the revision }
+        if_rev: { type: string, description: "Save only when the stored revision is still this one (empty = none stored); otherwise 409. For a read-modify-write" }
+    EffectiveConfig:
+      type: object
+      properties:
+        workspace: { type: string }
+        managed: { type: boolean, description: The workspace has a config of its own on the server }
+        rev: { type: string, description: "Names this combination of stored revisions; runs record it as config_rev" }
+        config: { $ref: "#/components/schemas/WorkspaceConfig" }
+        sources: { type: object, additionalProperties: { type: string }, description: "Per field (push.kind for a push field): workspace or group:<name>" }
+        parts:
+          type: array
+          description: The stored revisions that make it up, in the order they apply
+          items:
+            type: object
+            properties:
+              owner: { type: string }
+              revision: { type: string }
+              source: { type: string }
+        conflicts: { type: array, items: { type: string }, description: Fields two of the workspace's groups both set; the first group by name keeps the field }
+    ConfigView:
+      type: object
+      properties:
+        owner_kind: { type: string, enum: [workspace, group] }
+        owner_id: { type: string }
+        config:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/WorkspaceConfig" }]
+        rev: { type: string, description: The stored revision }
+        updated_at: { type: string, format: date-time }
+        updated_by: { type: string }
+        via: { type: string }
+        effective: { $ref: "#/components/schemas/EffectiveConfig" }
+        changed: { type: array, items: { type: string }, description: The fields a save changed }
+    RunnerDef:
+      type: object
+      required: [kind]
+      properties:
+        name: { type: string }
+        kind: { type: string, enum: [claude, opencode, codex, antigravity] }
+        model: { type: string, description: "opencode: <provider>/<model>" }
+        effort: { type: string, description: Reasoning effort, as the CLI takes it }
+        provider: { type: string, description: "The declared provider: what a runner policy matches" }
+    ConfigDocument:
+      type: object
+      description: The file form of the run configuration (skopos config export / apply)
+      properties:
+        fleet:
+          type: object
+          description: When present, states both fleet policies; one left out is cleared
+          properties:
+            ceiling: { $ref: "#/components/schemas/PolicyInput" }
+            default: { $ref: "#/components/schemas/PolicyInput" }
+        runners:
+          type: object
+          nullable: true
+          description: When present (an object, even empty), the full set of runner definitions by name; null or left out leaves the server's
+          additionalProperties: { $ref: "#/components/schemas/RunnerDef" }
+        groups:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              description: { type: string }
+              workspaces: { type: array, items: { type: string } }
+              patterns: { type: array, items: { type: string } }
+              policy: { $ref: "#/components/schemas/PolicyInput" }
+              pipeline: { $ref: "#/components/schemas/ConfigDocumentPipeline" }
+              config: { $ref: "#/components/schemas/WorkspaceConfig" }
+        workspaces:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              policy: { $ref: "#/components/schemas/PolicyInput" }
+              pipeline: { $ref: "#/components/schemas/ConfigDocumentPipeline" }
+              config: { $ref: "#/components/schemas/WorkspaceConfig" }
+    ConfigDocumentPipeline:
+      type: object
+      properties:
+        stages:
+          type: object
+          additionalProperties:
+            type: object
+            required: [members]
+            properties:
+              members: { type: string, description: "[focus@]runner, comma-separated" }
+              policy: { type: string, enum: [any-blocks, majority, all-pass] }
+              early_exit: { type: boolean }
+              timeout: { type: string }
+        agents_default: { type: string, enum: [panel, solo] }
+        second_opinion_runner: { type: string }
+        code_index: { type: boolean }
+    PolicyRule:
+      type: object
+      description: "Allows a runner when every field it sets matches what the worker reports about the runner. provider, model and runner are globs (* any run of characters, ? one), compared without regard to case. A rule that sets no provider matches any provider."
+      properties:
+        provider: { type: string, description: "Who receives the code: anthropic, openai, zai, google, aws, local, a name a runner declares, or unknown:<host>" }
+        model: { type: string, description: "A glob on the model id, e.g. claude-opus-*" }
+        kind: { type: string, enum: [claude, opencode, codex, antigravity, command], description: The agent CLI }
+        runner: { type: string, description: A glob on the runner name }
+        stages: { type: array, items: { type: string, enum: [plan, implement, review, qa, compare, synthesize, second_opinion, embeddings] }, description: "The stages the rule covers (default: all). embeddings is the code index's embeddings endpoint" }
+        executor: { type: string, description: "What must contain the run: isolated (a stage wrapper, or a runner whose own lockdown is a sandbox), contained (either of those, or a worker whose host is a container), or a glob on the executor id that starts with a class, e.g. wrapper:bwrap:* or sandbox:*. Left out: any executor" }
+    PolicyInput:
+      type: object
+      required: [allow]
+      properties:
+        allow: { type: array, items: { $ref: "#/components/schemas/PolicyRule" }, description: "A runner is allowed when at least one rule matches. At least one rule: clear the policy to remove it" }
+        force: { type: boolean, description: Save although it strands configured runners or drops a workspace's embedded code index }
+        via: { type: string }
+    PolicyView:
+      type: object
+      properties:
+        owner_kind: { type: string, enum: [fleet-ceiling, fleet-default, group, workspace] }
+        owner_id: { type: string }
+        policy:
+          nullable: true
+          type: object
+          properties:
+            allow: { type: array, items: { $ref: "#/components/schemas/PolicyRule" } }
+        rev: { type: string, description: The revision that holds it }
+        updated_at: { type: string, format: date-time }
+        updated_by: { type: string }
+        warnings: { type: array, items: { type: string }, description: What a forced save stranded }
+    EffectivePolicy:
+      type: object
+      properties:
+        workspace_id: { type: string }
+        allow_all: { type: boolean, description: No policy applies }
+        rev: { type: string, description: A hash of the layers' revisions; runs record it as policy_rev }
+        layers:
+          type: array
+          items:
+            type: object
+            properties:
+              source: { type: string, description: "fleet ceiling, fleet default, group <name> or workspace" }
+              rev: { type: string }
+              policy:
+                type: object
+                properties:
+                  allow: { type: array, items: { $ref: "#/components/schemas/PolicyRule" } }
+    RunnerFacts:
+      type: object
+      description: What a worker reports about one runner it has configured. A workspace's policy is matched against these at every claim.
+      properties:
+        name: { type: string }
+        kind: { type: string, description: "The agent CLI: claude, opencode, codex, antigravity, command" }
+        model: { type: string }
+        effort: { type: string }
+        provider: { type: string, description: "Who receives the code, declared on the runner or derived from the endpoint; unknown:<host> when it cannot be derived" }
+        endpoint: { type: string, description: The host the CLI sends its requests to }
+        stages: { type: array, items: { type: string }, description: "The stages it can run (a read-only runner lists every stage but implement); empty = all" }
+    ExecutorFact:
+      type: object
+      description: "The executor a worker's runs get in one workspace, for a stage and a runner or for all of either when left out. The most specific entry applies: stage and runner, then stage, then runner, then neither."
+      required: [executor]
+      properties:
+        stage: { type: string }
+        runner: { type: string }
+        executor: { type: string, description: "local, host:<name>, wrapper:<name>:<hash>, sandbox:<hash> or runner:<kind>" }
     Error:
       type: object
       properties:
@@ -3070,8 +3828,19 @@ components:
             all_workspaces: { type: boolean }
             approver: { type: boolean }
             delegate: { type: boolean }
+            admin: { type: boolean }
             workspaces: { type: array, items: { type: string } }
             capabilities: { type: array, nullable: true, items: { type: string }, description: "null = full access. whoami answers every authenticated key, whatever its capabilities." }
+        run:
+          type: object
+          description: "Present when the credential is a run's agent token (skr_…): the run it belongs to. key then describes the run's own identity (id run:<run id>, the run's workspace only, MCP only)."
+          properties:
+            id: { type: string }
+            workspace_id: { type: string }
+            item_id: { type: string }
+            stage: { type: string }
+            runner: { type: string }
+            worker_id: { type: string }
         workspaces:
           type: array
           items:
@@ -3089,6 +3858,7 @@ components:
         all_workspaces: { type: boolean }
         approver: { type: boolean, description: May perform human-only workflow actions; root implies it }
         delegate: { type: boolean, description: "May name the person it acts for (X-Skopos-On-Behalf-Of)" }
+        admin: { type: boolean, description: "May change policy and configuration within its scope; root implies it. Never for agent or worker keys" }
         capabilities:
           type: array
           nullable: true
@@ -3142,6 +3912,7 @@ components:
           items: { type: string }
         approver: { type: boolean, description: Grant the approver permission (human-only workflow actions) }
         delegate: { type: boolean, description: "Grant the delegate permission (X-Skopos-On-Behalf-Of)" }
+        admin: { type: boolean, description: "Grant the admin permission (change policy and configuration within the key's scope)" }
         capabilities: { type: array, items: { type: string }, description: "Limit the key (see ApiKey.capabilities); none = full access" }
         preset: { type: string, enum: [agent, integration], description: "A named capability set joined with capabilities. agent = mcp, code:read, blackboard:write, plans:write, status:read, inbox:read. integration = rest, inbox:write, plans:read, runs:read, events:read" }
 
@@ -3374,13 +4145,22 @@ components:
         item_id: { type: string }
         plan_rev_id: { type: string }
         stage: { type: string, enum: [plan, implement, review, qa, compare, synthesize, second_opinion] }
-        runner: { type: string, description: The resolved stage preference at queue time }
+        runner: { type: string, description: "The runner the run is for: set at queue time from the stage preference, then resolved, checked against the workspace's policy and written by the claim" }
+        runner_picked: { type: boolean, description: "The server chose the runner of a run nothing pinned (a requeue clears the choice)" }
+        policy_rev: { type: string, description: "The effective policy the claim decided with (EffectivePolicy.rev); empty when none applied" }
+        config_rev: { type: string, description: "The workspace's effective config the claim named (EffectiveConfig.rev): the worker fetches it and runs under exactly that one. Empty when the server does not manage the workspace" }
+        facts:
+          type: object
+          description: "What the claiming worker reported about the runner (RunnerFacts fields) and the executor it reported for the run's workspace, stage and runner, plus policy (the layers' revisions, in order), rules (per layer, the index of the rule that allowed it) and picked"
+        stranded: { type: string, description: "Why no worker may take this queued run under the policy; empty when not stranded. Recorded once as run.stranded" }
         worker_id: { type: string, description: Affinity owner }
         status: { type: string, enum: [queued, claimed, running, paused, succeeded, failed, interrupted, cancelled] }
         resume_kind: { type: string, enum: ["", session, branch] }
         lease_expires_at: { type: string, format: date-time }
         resume_after: { type: string, format: date-time, description: Quota reset — a paused run past it is reclaimable by its owner via any claim }
         attempt: { type: integer }
+        lease_token: { type: string, description: "Only in the claim answer: the fencing token the worker presents (X-Skopos-Lease) on every later call for this attempt" }
+        agent_token: { type: string, description: "Only in the claim answer: the run's own credential for skopos over MCP (skr_…). Valid while this attempt is claimed or running with a live lease; a report, pause, requeue or cancel ends it. Scoped to the run's workspace, MCP only, the stage's tools only" }
         branch: { type: string }
         base_sha: { type: string }
         head_sha: { type: string }
@@ -3397,7 +4177,8 @@ components:
               stopped: { type: boolean, description: "The check never finished: check_timeout or quiet_timeout stopped it" }
         log_ref: { type: string }
         fail_reason: { type: string }
-        executor: { type: string, description: 'How the worker ran the agent stage: "local", or the stage profile''s "wrapper:<hash>" / "sandbox:<hash>"' }
+        executor: { type: string, description: "What contained the agent on the worker: local, host:<name>, wrapper:<name>:<hash>, sandbox:<hash> or runner:<kind>" }
+        grants: { type: string, description: "A hash of the capabilities the stage profile granted the run; empty when none" }
         group_id: { type: string, description: Set when the run is one member of a multi-agent stage group }
         focus: { type: string, description: 'The member''s focus brief (.skopos/focus/<name>.md, read at the approved base)' }
         cost_usd: { type: number }

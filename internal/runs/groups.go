@@ -193,7 +193,8 @@ func (s *Service) SweepGroups(ctx context.Context) {
 	}
 }
 
-// RunSweepLoop runs SweepGroups every interval until ctx ends.
+// RunSweepLoop runs SweepGroups and SweepStranded every interval until ctx
+// ends.
 func (s *Service) RunSweepLoop(ctx context.Context, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
@@ -203,6 +204,7 @@ func (s *Service) RunSweepLoop(ctx context.Context, every time.Duration) {
 			return
 		case <-t.C:
 			s.SweepGroups(ctx)
+			s.SweepStranded(ctx)
 		}
 	}
 }

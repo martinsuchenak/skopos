@@ -29,6 +29,7 @@ func workspaceCmd() *cli.Command {
 		},
 		Commands: []*cli.Command{
 			pipelineCmd(pipeline.KindWorkspace),
+			configCmd(pipeline.KindWorkspace),
 			{
 				Name:  "add",
 				Usage: "Register a workspace on the server (root key; default: this checkout's workspace)",

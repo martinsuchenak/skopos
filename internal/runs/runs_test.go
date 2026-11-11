@@ -589,11 +589,11 @@ func TestReportRecordsExecutor(t *testing.T) {
 	}
 	_ = mustQueue(t, s, ctx, "ws-a", "item-y", StagePlan)
 	run2, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
-	got2, err := s.Report(ctx, run2.ID, ReportInput{WorkerID: "w1", Status: StatusFailed, Reason: "x", Executor: strings.Repeat("e", 200)}, run2.LeaseToken)
+	got2, err := s.Report(ctx, run2.ID, ReportInput{WorkerID: "w1", Status: StatusFailed, Reason: "x", Executor: strings.Repeat("e", 500)}, run2.LeaseToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got2.Executor) != 64 {
+	if len(got2.Executor) != 200 {
 		t.Fatalf("executor must be bounded: %d", len(got2.Executor))
 	}
 }

@@ -123,6 +123,11 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "api_keys", "delegate", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+	// admin: the key may change policy and configuration within its scope
+	// (tmp/central-config — design.md, phase 0).
+	if err := ensureColumn(db, "api_keys", "admin", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 	if err := ensureColumn(db, "runs", "lease_token_hash", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -226,6 +231,50 @@ func RunMigrations(db *sql.DB) error {
 		if err := ensureColumn(db, "workers", col[0], col[1]); err != nil {
 			return err
 		}
+	}
+	// Runner policy (tmp/central-config — design.md, phase 1a). A worker
+	// reports facts about each runner it offers (workers.runner_info, JSON
+	// array). The claim resolves one runner per run, checks it against the
+	// workspace's policy and records what it decided with: runner_picked (the
+	// server chose the runner of an unpinned run; cleared by a requeue),
+	// policy_rev (the effective policy's revision, '' = none applied),
+	// facts (the runner's facts and the policy revisions matched, JSON).
+	// stranded_ms/stranded_reason: a queued run no worker may take under
+	// the policy (NULL = not stranded).
+	if err := ensureColumn(db, "workers", "runner_info", "TEXT"); err != nil {
+		return err
+	}
+	// Containment as a policy rule (phase 1c). A worker reports what
+	// contains its runs per workspace, stage and runner
+	// (workers.executor_info, JSON object workspace → facts); a run keeps
+	// the capabilities its stage profile granted apart from its executor
+	// (runs.grants, a hash, '' = none).
+	if err := ensureColumn(db, "workers", "executor_info", "TEXT"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "runs", "grants", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	for _, col := range [][2]string{{"runner_picked", "INTEGER NOT NULL DEFAULT 0"}, {"policy_rev", "TEXT NOT NULL DEFAULT ''"},
+		{"facts", "TEXT NOT NULL DEFAULT ''"}, {"stranded_ms", "INTEGER"}, {"stranded_reason", "TEXT NOT NULL DEFAULT ''"}} {
+		if err := ensureColumn(db, "runs", col[0], col[1]); err != nil {
+			return err
+		}
+	}
+	// Workspace config on the server (phase 2). runs.config_rev: the
+	// effective config revision the claim named ('' = the workspace is not
+	// managed: the worker used its own file). workers.server_commands: the
+	// worker takes setup, check and preflight commands from the server
+	// (NULL = not reported); workers.fleet_rev: the runner definitions it
+	// last said it holds.
+	if err := ensureColumn(db, "runs", "config_rev", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "workers", "server_commands", "INTEGER"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "workers", "fleet_rev", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
 	}
 	// Idle-worker code indexing per workspace (NULL = off).
 	if err := ensureColumn(db, "pipeline_defaults", "code_index", "INTEGER CHECK (code_index IS NULL OR code_index IN (0, 1))"); err != nil {

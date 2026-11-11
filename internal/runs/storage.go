@@ -16,6 +16,7 @@ import (
 
 	"github.com/martinsuchenak/skopos/internal/dbtime"
 	"github.com/martinsuchenak/skopos/internal/integrations"
+	"github.com/martinsuchenak/skopos/internal/policy"
 )
 
 // Storage persists runs. The queue's correctness lives in Claim: the
@@ -41,7 +42,7 @@ const runColumns = `id, workspace_id, item_id, plan_rev_id, stage, runner, worke
 	resume_kind, lease_expires_at, resume_after, attempt, branch, base_sha, head_sha,
 	result_summary, diffstat, checks, log_ref, fail_reason, lease_token_hash, claimed_key_id, created_at, updated_at, executor,
 	group_id, focus, cost_usd, findings, pushed, pr_url, setup, fix_rounds, phase, retries, retry_after, avoid_worker,
-	prefer_worker, prefer_until`
+	prefer_worker, prefer_until, runner_picked, policy_rev, facts, stranded_reason, grants, config_rev`
 
 func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	var r Run
@@ -50,15 +51,21 @@ func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	var groupID, focus, findings sql.NullString
 	var cost sql.NullFloat64
 	var pushed sql.NullBool
+	var picked int
+	var facts string
 	if err := row.Scan(&r.ID, &r.WorkspaceID, &r.ItemID, &r.PlanRevID, &r.Stage, &r.Runner, &r.WorkerID, &r.Status,
 		&r.ResumeKind, &lease, &resumeAfter, &r.Attempt, &r.Branch, &r.BaseSHA, &r.HeadSHA,
 		&r.ResultSummary, &r.Diffstat, &checks, &r.LogRef, &r.FailReason, &r.LeaseTokenHash, &r.ClaimedKeyID, &createdAt, &updatedAt, &r.Executor,
 		&groupID, &focus, &cost, &findings, &pushed, &r.PRURL, &setup, &r.FixRounds, &r.Phase, &r.Retries, &retryAfter, &r.AvoidWorker,
-		&r.PreferWorker, &preferUntil); err != nil {
+		&r.PreferWorker, &preferUntil, &picked, &r.PolicyRev, &facts, &r.Stranded, &r.Grants, &r.ConfigRev); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("scanning run: %w", err)
+	}
+	r.RunnerPicked = picked != 0
+	if facts != "" {
+		r.Facts = json.RawMessage(facts)
 	}
 	r.LeaseExpires = parseTime(lease)
 	r.ResumeAfter = parseTime(resumeAfter)
@@ -167,6 +174,18 @@ type WorkerSeen struct {
 	Indexable []string `json:"indexable,omitempty"`
 	// Paused: an operator's pause in force (nil when none, or it ended).
 	Paused *WorkerPause `json:"paused,omitempty"`
+	// RunnerFacts: what the worker reports about each runner it has — the
+	// CLI, the model, and where its requests go (policy.go). Empty for a
+	// worker from before runner facts.
+	RunnerFacts []policy.Facts `json:"runner_facts,omitempty"`
+	// Executors: what contains a run on the worker, per workspace, then by
+	// stage and runner. Empty for a worker that reports none.
+	Executors map[string][]policy.ExecutorFact `json:"executors,omitempty"`
+	// ServerCommands: the worker takes a managed workspace's commands from
+	// the server (nil = it does not say: a worker from before workspace
+	// config). FleetRev: the runner definitions it holds.
+	ServerCommands *bool  `json:"server_commands,omitempty"`
+	FleetRev       string `json:"fleet_rev,omitempty"`
 }
 
 // unhealthyJSON stores a health map (nil when all healthy).
@@ -190,6 +209,101 @@ func (s *Storage) WorkerUnhealthy(ctx context.Context, workerID string) map[stri
 	var m map[string]string
 	_ = json.Unmarshal([]byte(raw.String), &m)
 	return m
+}
+
+// WaitingRuns lists the runs waiting for a worker — queued, and
+// interrupted ones any worker may take over from the branch — oldest first.
+func (s *Storage) WaitingRuns(ctx context.Context) ([]*Run, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+runColumns+` FROM runs WHERE status = ? OR (status = ? AND resume_kind = ?) ORDER BY created_at ASC`,
+		string(StatusQueued), string(StatusInterrupted), ResumeBranch)
+	if err != nil {
+		return nil, fmt.Errorf("listing waiting runs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*Run
+	for rows.Next() {
+		r, err := scanRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// WorkerOffers lists what the workers seen since `since` offer: their
+// workspaces, their runners and what they report about them. A worker
+// gone longer than that is no reason to call a run takeable.
+func (s *Storage) WorkerOffers(ctx context.Context, since time.Time) ([]workerOffer, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT runners, workspaces, COALESCE(runner_info, ''), COALESCE(executor_info, '') FROM workers WHERE last_seen >= ?`, formatTime(since))
+	if err != nil {
+		return nil, fmt.Errorf("listing workers: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []workerOffer
+	for rows.Next() {
+		var rawRunners, rawWorkspaces, rawFacts, rawExecutors string
+		if err := rows.Scan(&rawRunners, &rawWorkspaces, &rawFacts, &rawExecutors); err != nil {
+			return nil, err
+		}
+		var runners, workspaces []string
+		_ = json.Unmarshal([]byte(rawRunners), &runners)
+		_ = json.Unmarshal([]byte(rawWorkspaces), &workspaces)
+		// What a worker has configured, not only what has a free account
+		// this minute: a quota wait is not a policy refusal.
+		facts := parseFacts(rawFacts)
+		for _, f := range facts {
+			runners = append(runners, f.Name)
+		}
+		o := workerOffer{workspaces: map[string]bool{}, facts: newClaimFacts(runners, facts, parseExecutors(rawExecutors))}
+		for _, w := range workspaces {
+			o.workspaces[w] = true
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// ClearStaleStranded removes the stranded mark from runs that no longer
+// wait for a worker (claimed, cancelled, finished).
+func (s *Storage) ClearStaleStranded(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE runs SET stranded_ms = NULL, stranded_reason = '' WHERE stranded_ms IS NOT NULL AND status NOT IN (?, ?)`,
+		string(StatusQueued), string(StatusInterrupted))
+	return err
+}
+
+// SetStranded records (reason != "") or clears (reason == "") a waiting
+// run's stranded mark; changed reports whether the reason changed.
+func (s *Storage) SetStranded(ctx context.Context, id, reason string, now time.Time) (changed bool, err error) {
+	var res sql.Result
+	if reason == "" {
+		res, err = s.db.ExecContext(ctx, `UPDATE runs SET stranded_ms = NULL, stranded_reason = '' WHERE id = ? AND stranded_ms IS NOT NULL`, id)
+	} else {
+		res, err = s.db.ExecContext(ctx, `UPDATE runs SET stranded_ms = ?, stranded_reason = ? WHERE id = ? AND status IN (?, ?) AND stranded_reason != ?`,
+			now.UnixMilli(), reason, id, string(StatusQueued), string(StatusInterrupted), reason)
+	}
+	if err != nil {
+		return false, fmt.Errorf("marking a stranded run: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// workerFactsRow is what the registry holds of a worker's own word: its
+// runner facts and its executor facts, as stored ("" = none).
+// commands: whether it takes commands from the server ("" = it does not
+// say, "0", "1"); fleetRev: the runner definitions it holds.
+type workerFactsRow struct{ runners, executors, commands, fleetRev string }
+
+// WorkerFacts returns the facts the registry holds for a worker and
+// whether the worker has a row at all.
+func (s *Storage) WorkerFacts(ctx context.Context, workerID string) (workerFactsRow, bool) {
+	var runners, executors, commands sql.NullString
+	var fleet string
+	if err := s.db.QueryRowContext(ctx, `SELECT runner_info, executor_info, CAST(server_commands AS TEXT), fleet_rev FROM workers WHERE id = ?`, workerID).Scan(&runners, &executors, &commands, &fleet); err != nil {
+		return workerFactsRow{}, false
+	}
+	return workerFactsRow{runners.String, executors.String, commands.String, fleet}, true
 }
 
 // presenceRefresh: an unchanged worker row is rewritten at most this often
@@ -216,23 +330,32 @@ func recordWorker(ctx context.Context, tx *sql.Tx, in ClaimInput, now time.Time,
 	if force {
 		forced = 1
 	}
+	var commands any
+	if in.ServerCommands != nil {
+		commands = boolInt(*in.ServerCommands)
+	}
 	res, err := tx.ExecContext(ctx, `
-		INSERT INTO workers (id, runners, workspaces, last_seen, updated_at, key_id, version, poll_ms, offline_at, unhealthy, indexable)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+		INSERT INTO workers (id, runners, workspaces, last_seen, updated_at, key_id, version, poll_ms, offline_at, unhealthy, indexable, runner_info, executor_info, server_commands, fleet_rev)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			runners = excluded.runners, workspaces = excluded.workspaces,
 			last_seen = excluded.last_seen, updated_at = excluded.updated_at, key_id = excluded.key_id,
 			version = excluded.version, poll_ms = excluded.poll_ms, offline_at = NULL, unhealthy = excluded.unhealthy,
-			indexable = excluded.indexable
+			indexable = excluded.indexable, runner_info = excluded.runner_info, executor_info = excluded.executor_info,
+			server_commands = excluded.server_commands, fleet_rev = excluded.fleet_rev
 		WHERE (workers.key_id IS NULL OR workers.key_id = excluded.key_id)
 			AND (? = 1 OR workers.runners != excluded.runners OR workers.workspaces != excluded.workspaces
 				OR COALESCE(workers.version, '') != COALESCE(excluded.version, '')
 				OR COALESCE(workers.poll_ms, 0) != COALESCE(excluded.poll_ms, 0)
 				OR COALESCE(workers.unhealthy, '') != COALESCE(excluded.unhealthy, '')
 				OR workers.indexable != excluded.indexable
+				OR COALESCE(workers.runner_info, '') != COALESCE(excluded.runner_info, '')
+				OR COALESCE(workers.executor_info, '') != COALESCE(excluded.executor_info, '')
+				OR COALESCE(workers.server_commands, -1) != COALESCE(excluded.server_commands, -1)
+				OR workers.fleet_rev != excluded.fleet_rev
 				OR workers.offline_at IS NOT NULL OR workers.last_seen < ?)`,
 		in.WorkerID, jsonList(in.Runners), jsonList(in.Workspaces), formatTime(now), formatTime(now), in.KeyID,
-		version, poll, unhealthyJSON(in.Unhealthy), jsonList(in.Indexable), forced, formatTime(now.Add(-presenceRefresh)))
+		version, poll, unhealthyJSON(in.Unhealthy), jsonList(in.Indexable), nullIfEmpty(factsJSON(in.RunnerFacts)), nullIfEmpty(executorsJSON(in.Executors)), commands, in.FleetRev, forced, formatTime(now.Add(-presenceRefresh)))
 	if err != nil {
 		return fmt.Errorf("recording worker: %w", err)
 	}
@@ -283,7 +406,8 @@ func (s *Storage) BusyWorkers(ctx context.Context) (map[string]bool, error) {
 // ListWorkers returns every worker that has ever claimed, newest first.
 func (st *Storage) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
 	rows, err := st.db.QueryContext(ctx, `SELECT id, runners, workspaces, last_seen, COALESCE(version, ''), COALESCE(poll_ms, 0), COALESCE(offline_at, ''), COALESCE(unhealthy, ''), indexable,
-		COALESCE(paused_at, ''), COALESCE(paused_until, ''), COALESCE(paused_by, ''), COALESCE(pause_reason, '') FROM workers ORDER BY last_seen DESC`)
+		COALESCE(paused_at, ''), COALESCE(paused_until, ''), COALESCE(paused_by, ''), COALESCE(pause_reason, ''), COALESCE(runner_info, ''), COALESCE(executor_info, ''),
+		server_commands, fleet_rev FROM workers ORDER BY last_seen DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("listing workers: %w", err)
 	}
@@ -291,11 +415,17 @@ func (st *Storage) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
 	var out []WorkerSeen
 	for rows.Next() {
 		var w WorkerSeen
-		var runners, workspaces, unhealthy, indexable, pausedAt, pausedUntil, pausedBy, pauseReason string
+		var runners, workspaces, unhealthy, indexable, pausedAt, pausedUntil, pausedBy, pauseReason, facts, executors string
+		var commands sql.NullBool
 		if err := rows.Scan(&w.ID, &runners, &workspaces, &w.LastSeen, &w.Version, &w.PollMS, &w.OfflineAt, &unhealthy, &indexable,
-			&pausedAt, &pausedUntil, &pausedBy, &pauseReason); err != nil {
+			&pausedAt, &pausedUntil, &pausedBy, &pauseReason, &facts, &executors, &commands, &w.FleetRev); err != nil {
 			return nil, err
 		}
+		if commands.Valid {
+			w.ServerCommands = &commands.Bool
+		}
+		w.RunnerFacts = parseFacts(facts)
+		w.Executors = parseExecutors(executors)
 		if pausedAt != "" {
 			w.Paused = &WorkerPause{At: parseTime(pausedAt), By: pausedBy, Reason: pauseReason}
 			if pausedUntil != "" {
@@ -317,6 +447,16 @@ func (st *Storage) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
 		out = append(out, w)
 	}
 	return out, rows.Err()
+}
+
+// SetConfigRev records the effective config a claim named for the run's
+// attempt (” clears an earlier attempt's).
+func (s *Storage) SetConfigRev(ctx context.Context, id string, attempt int, rev string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE runs SET config_rev = ? WHERE id = ? AND attempt = ? AND status = ?`, rev, id, attempt, string(StatusClaimed))
+	if err != nil {
+		return fmt.Errorf("recording the run's config revision: %w", err)
+	}
+	return nil
 }
 
 func (s *Storage) Get(ctx context.Context, id string) (*Run, error) {
@@ -356,7 +496,7 @@ func (s *Storage) List(ctx context.Context, status Status, itemID string) ([]Run
 // Claim atomically claims a run for the worker: candidate selection and the
 // status/lease/owner write happen in one transaction. Attempt increments on
 // re-claims (interrupted/paused), carrying retry history.
-func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*WorkspacePrefs, lease time.Duration, now time.Time) (*Run, error) {
+func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs func(workspace string) *WorkspacePrefs, lease time.Duration, now time.Time) (*Run, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin transaction: %w", err)
@@ -410,6 +550,11 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 		in.WorkerID, in.KeyID, string(StatusClaimed), string(StatusRunning)); err != nil {
 		return nil, fmt.Errorf("releasing orphaned runs: %w", err)
 	}
+	// Tokens of runs the sweeps above (or a report, pause or cancel since
+	// the last poll) took out of execution get their end recorded.
+	if err := settleTokens(ctx, tx, now); err != nil {
+		return nil, err
+	}
 
 	// A paused worker takes nothing: its own interrupted runs wait for it
 	// too (their session lives there).
@@ -429,19 +574,51 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 	// candidates EXCEPT quota pauses past their resume_after (A2): an
 	// amendment pause has no resume_after and only its approval re-arms it
 	// (H4).
+	offer := newClaimFacts(in.Runners, in.RunnerFacts, in.Executors)
 	var cand *Run
+	var chosen decision
 	{
-		row := tx.QueryRowContext(ctx, `
+		// The worker's own runs first — checked against the policy like
+		// any other. One it may no longer run (the policy changed while it
+		// was paused, or the worker now reports another endpoint for the
+		// runner) is released for another worker to take over from the
+		// branch, and the scan goes on to the next.
+		rows, err := tx.QueryContext(ctx, `
 			SELECT `+runColumns+` FROM runs
 			WHERE worker_id = ? AND (status = ? OR (status = ? AND resume_after != '' AND resume_after <= ?))
 				AND NOT EXISTS (SELECT 1 FROM json_each(?) WHERE json_each.key = runs.workspace_id)
-			ORDER BY created_at ASC LIMIT 1`,
+			ORDER BY created_at ASC`,
 			in.WorkerID, string(StatusInterrupted), string(StatusPaused), formatTime(now), unhealthyObject(in.Unhealthy))
-		r, err := scanRun(row)
-		if err == nil {
-			cand = r
-		} else if !errors.Is(err, ErrNotFound) {
+		if err != nil {
+			return nil, fmt.Errorf("own-runs scan: %w", err)
+		}
+		var own []*Run
+		for rows.Next() {
+			r, err := scanRun(rows)
+			if err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			own = append(own, r)
+		}
+		_ = rows.Close()
+		if err := rows.Err(); err != nil {
 			return nil, err
+		}
+		for _, r := range own {
+			d := decideResume(r, prefs(r.WorkspaceID), offer)
+			if d.ok {
+				cand, chosen = r, d
+				break
+			}
+			if d.hold {
+				// The policy could not be read just now: neither hand the
+				// run back nor give it away (its session lives here).
+				continue
+			}
+			if err := releaseForTakeover(ctx, tx, r.ID, now); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if cand == nil {
@@ -463,10 +640,6 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 		if err := rows.Err(); err != nil {
 			return nil, err
 		}
-		runnerSet := map[string]bool{}
-		for _, r := range in.Runners {
-			runnerSet[r] = true
-		}
 		wsSet := map[string]bool{}
 		for _, w := range in.Workspaces {
 			wsSet[w] = in.Unhealthy[w] == ""
@@ -476,14 +649,14 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 				continue
 			}
 			if r.PreferWorker != "" && r.PreferWorker != in.WorkerID && now.Before(r.PreferUntil) {
-				if able, err := workerCanTake(ctx, tx, r.PreferWorker, r, now); err != nil {
+				if able, err := workerCanTake(ctx, tx, r.PreferWorker, r, prefs(r.WorkspaceID), now); err != nil {
 					return nil, err
 				} else if able {
 					continue // waiting for the worker whose clone has the item's work
 				}
 			}
-			if claimable(r, prefs, runnerSet) {
-				cand = r
+			if d := decide(r, prefs(r.WorkspaceID), offer); d.ok {
+				cand, chosen = r, d
 				break
 			}
 		}
@@ -511,10 +684,6 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 		if err := rows.Err(); err != nil {
 			return nil, err
 		}
-		runnerSet := map[string]bool{}
-		for _, r := range in.Runners {
-			runnerSet[r] = true
-		}
 		wsSet := map[string]bool{}
 		for _, w := range in.Workspaces {
 			wsSet[w] = in.Unhealthy[w] == ""
@@ -523,8 +692,8 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 			if !wsSet[r.WorkspaceID] {
 				continue
 			}
-			if claimable(r, prefs, runnerSet) {
-				cand = r
+			if d := decide(r, prefs(r.WorkspaceID), offer); d.ok {
+				cand, chosen = r, d
 				break
 			}
 		}
@@ -548,16 +717,32 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 	} else {
 		resumeKind = ResumeSession // first claim: only the owner may resume
 	}
+	// What the claim decided (policy.go): the one runner the worker runs,
+	// whether the server chose it, and the policy and facts it was checked
+	// with. A worker without runner facts under no policy keeps choosing
+	// for itself (runner stays as queued).
+	runner, picked := cand.Runner, cand.RunnerPicked
+	switch {
+	case chosen.runner != "":
+		runner, picked = chosen.runner, chosen.picked || (cand.RunnerPicked && chosen.runner == cand.Runner)
+	case cand.RunnerPicked:
+		// An earlier claim's pick, now taken by a worker that picks for
+		// itself: the old pick names a runner it may not even have.
+		runner, picked = "", false
+	}
+	policyRev, factsRec := chosen.record(prefs(cand.WorkspaceID))
 	// M5: a fresh lease token per claim (including re-claims/takeovers) —
 	// the fencing token every later call must present.
 	token := newLeaseToken()
 	tokenHash := hashLeaseToken(token)
 	res, err := tx.ExecContext(ctx, `
 		UPDATE runs SET status = ?, worker_id = ?, resume_kind = ?, lease_expires_at = ?, resume_after = '',
-			attempt = ?, lease_token_hash = ?, claimed_key_id = ?, phase = '', updated_at = ?
+			attempt = ?, lease_token_hash = ?, claimed_key_id = ?, phase = '', updated_at = ?,
+			runner = ?, runner_picked = ?, policy_rev = ?, facts = ?, stranded_ms = NULL, stranded_reason = ''
 		WHERE id = ? AND status = ?`,
 		string(StatusClaimed), in.WorkerID, resumeKind, formatTime(now.Add(lease)),
-		attempt, tokenHash, in.KeyID, formatTime(now), cand.ID, string(cand.Status))
+		attempt, tokenHash, in.KeyID, formatTime(now),
+		runner, boolInt(picked), policyRev, factsRec, cand.ID, string(cand.Status))
 	if err != nil {
 		return nil, fmt.Errorf("claiming run: %w", err)
 	}
@@ -565,6 +750,12 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 		return nil, nil // raced: another worker claimed it between scan and write
 	}
 
+	// The attempt's agent token (tokens.go): minted with the claim, so the
+	// run's agent never needs a key shared with other runs.
+	agentToken, err := mintAgentToken(ctx, tx, cand.ID, attempt, now)
+	if err != nil {
+		return nil, err
+	}
 	if err := recordWorker(ctx, tx, in, now, true); err != nil {
 		return nil, err
 	}
@@ -580,22 +771,24 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs map[string]*Wo
 		return nil, err
 	}
 	claimed.LeaseToken = token // plain token ONLY in the claim response
+	claimed.AgentToken = agentToken
 	return claimed, nil
 }
 
-// claimable: does a worker offering runnerSet match this run? A group
-// member is pinned to the runner it was queued for (each member is a
-// different agent); an ordinary run follows the workspace's current
-// preference, as before.
-func claimable(r *Run, prefs map[string]*WorkspacePrefs, runnerSet map[string]bool) bool {
-	pref := prefs[r.WorkspaceID].StageRunner(r.Stage)
-	// A group member, or a run pinned at queue time where the workspace has
-	// no single-runner preference (a seeded revise of a group stage), waits
-	// for its own runner.
-	if r.GroupID != "" || (pref == "" && r.Runner != "") {
-		pref = r.Runner
+// releaseForTakeover gives up a run its owner may no longer resume under
+// the policy: it becomes a branch takeover any allowed worker can claim. A
+// runner the server had picked is forgotten, so the next worker's own is
+// picked. A no-op for a run already released.
+func releaseForTakeover(ctx context.Context, tx *sql.Tx, id string, now time.Time) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE runs SET status = ?, resume_kind = ?, resume_after = '',
+			runner = CASE WHEN runner_picked = 1 THEN '' ELSE runner END, runner_picked = 0, updated_at = ?
+		WHERE id = ? AND NOT (status = ? AND resume_kind = ? AND runner_picked = 0)`,
+		string(StatusInterrupted), ResumeBranch, formatTime(now), id, string(StatusInterrupted), ResumeBranch)
+	if err != nil {
+		return fmt.Errorf("releasing a run its owner may no longer take: %w", err)
 	}
-	return pref == "" || runnerSet[pref]
+	return nil
 }
 
 // newLeaseToken: 128 random bits, base64url.
@@ -662,13 +855,14 @@ func (s *Storage) Report(ctx context.Context, id, workerID, keyID, tokenHash str
 			log_ref = ?, fail_reason = ?, branch = CASE WHEN ? != '' THEN ? ELSE branch END,
 			base_sha = CASE WHEN ? != '' THEN ? ELSE base_sha END,
 			executor = CASE WHEN ? != '' THEN ? ELSE executor END,
+			grants = CASE WHEN ? != '' THEN ? ELSE grants END,
 			pr_url = CASE WHEN ? != '' THEN ? ELSE pr_url END,
 			setup = CASE WHEN ? != '' THEN ? ELSE setup END, fix_rounds = ?, phase = '',
 			cost_usd = `+addCost+`, findings = COALESCE(?, findings), pushed = COALESCE(?, pushed),
 			lease_expires_at = '', resume_after = '', updated_at = ?
 		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
 		string(in.Status), in.Summary, in.HeadSHA, in.HeadSHA, in.Diffstat, string(checks),
-		in.LogRef, in.Reason, in.Branch, in.Branch, in.BaseSHA, in.BaseSHA, in.Executor, in.Executor, in.PRURL, in.PRURL, setupJSON, setupJSON, in.FixRounds,
+		in.LogRef, in.Reason, in.Branch, in.Branch, in.BaseSHA, in.BaseSHA, in.Executor, in.Executor, in.Grants, in.Grants, in.PRURL, in.PRURL, setupJSON, setupJSON, in.FixRounds,
 		costArg(in.CostUSD), costArg(in.CostUSD), findingsJSON(in.Findings), boolArg(in.Pushed),
 		formatTime(now), id, workerID, keyID, tokenHash, string(StatusClaimed), string(StatusRunning), string(StatusPaused))
 	if err != nil {
@@ -712,6 +906,7 @@ func (s *Storage) Requeue(ctx context.Context, id, workerID, keyID, tokenHash st
 			lease_token_hash = '', claimed_key_id = '', phase = '', fail_reason = ?, checks = ?,
 			setup = CASE WHEN ? != '' THEN ? ELSE setup END, cost_usd = `+addCost+`,
 			retries = retries + 1, retry_after = ?, avoid_worker = ?, prefer_worker = '', prefer_until = '',
+			runner = CASE WHEN runner_picked = 1 THEN '' ELSE runner END, runner_picked = 0,
 			attempt = attempt + 1, updated_at = ?
 		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
 		string(StatusQueued), note, string(checks), setupJSON, setupJSON, costArg(in.CostUSD), costArg(in.CostUSD),
@@ -739,8 +934,8 @@ func formatPreferUntil(t time.Time) string {
 // a heartbeat within workerState's idle window and has not said goodbye,
 // it still offers r's workspace (healthy) and runner. A run waiting for it
 // stops waiting the moment that no longer holds.
-func workerCanTake(ctx context.Context, tx *sql.Tx, id string, r *Run, now time.Time) (bool, error) {
-	var lastSeen, offlineAt string
+func workerCanTake(ctx context.Context, tx *sql.Tx, id string, r *Run, prefs *WorkspacePrefs, now time.Time) (bool, error) {
+	var lastSeen, offlineAt, rawRunners, rawFacts, rawExecutors string
 	var pollMS int64
 	var offers, healthy, runs, paused int
 	err := tx.QueryRowContext(ctx, `
@@ -748,9 +943,9 @@ func workerCanTake(ctx context.Context, tx *sql.Tx, id string, r *Run, now time.
 			EXISTS (SELECT 1 FROM json_each(w.workspaces) WHERE value = ?),
 			NOT EXISTS (SELECT 1 FROM json_each(COALESCE(w.unhealthy, '{}')) WHERE key = ?),
 			(? = '' OR EXISTS (SELECT 1 FROM json_each(w.runners) WHERE value = ?)),
-			`+pausedSQL+`
+			`+pausedSQL+`, w.runners, COALESCE(w.runner_info, ''), COALESCE(w.executor_info, '')
 		FROM workers w WHERE w.id = ?`, r.WorkspaceID, r.WorkspaceID, r.Runner, r.Runner, formatTime(now), id).
-		Scan(&lastSeen, &pollMS, &offlineAt, &offers, &healthy, &runs, &paused)
+		Scan(&lastSeen, &pollMS, &offlineAt, &offers, &healthy, &runs, &paused, &rawRunners, &rawFacts, &rawExecutors)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -758,6 +953,13 @@ func workerCanTake(ctx context.Context, tx *sql.Tx, id string, r *Run, now time.
 		return false, fmt.Errorf("reading worker %s: %w", id, err)
 	}
 	if offlineAt != "" || offers == 0 || healthy == 0 || runs == 0 || paused == 1 {
+		return false, nil
+	}
+	// The policy too, by what that worker reports: a run must not wait out
+	// its preference for a worker that may not run it.
+	var offered []string
+	_ = json.Unmarshal([]byte(rawRunners), &offered)
+	if !decide(r, prefs, newClaimFacts(offered, parseFacts(rawFacts), parseExecutors(rawExecutors))).ok {
 		return false, nil
 	}
 	window := 3 * time.Duration(pollMS) * time.Millisecond

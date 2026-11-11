@@ -106,6 +106,15 @@ group; a repository overrides only the stages it needs.
   finished branch comes straight to you.
 - **Use a different model for review.** A second opinion catches more than
   the implementer reviewing itself.
+- **Limit which models may see a repository.** A runner policy allows
+  runners by provider, model and stage, per workspace, group or fleet:
+  `skopos policy set --group fortix --allow provider=anthropic`. See
+  [Runner policy](../concepts/runner-policy.md).
+- **Keep a repository's checks in one place.** With several workers, hold
+  its setup and check commands, branches and push settings on the server
+  instead of in each worker's file, and define each runner's model once:
+  `skopos workspace config set`, `skopos runner set`. See
+  [Workspace config on the server](../concepts/workspace-config.md).
 - **Names must match.** Runner names here must match the worker's runners
   (step 5); the dialog suggests the runners your workers offer and warns
   about one no worker offers yet. A run pinned to a runner waits for that
@@ -148,7 +157,7 @@ you can check or adjust the two files it writes:
 
 ```bash
 SKOPOS_API_KEY=sk_...            # the worker key from step 2
-SKOPOS_AGENT_KEY=sk_...          # optional: MCP-only key for agent runs (skopos key create --preset agent)
+# SKOPOS_AGENT_KEY=sk_...        # only for a server before v0.33: runs now get their own token from the claim
 GITEA_PUSH_TOKEN=...             # the push token from step 3
 ```
 

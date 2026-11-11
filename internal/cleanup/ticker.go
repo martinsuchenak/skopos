@@ -121,6 +121,12 @@ func (c *Cleaner) clean(ctx context.Context) error {
 		return fmt.Errorf("deleting old run logs: %w", err)
 	}
 
+	// Run tokens that ended before the retention (hashes of credentials
+	// that stopped working then; a token still open is never touched).
+	if _, err := c.db.ExecContext(ctx, `DELETE FROM run_tokens WHERE ended_ms IS NOT NULL AND ended_ms < ?`, cutoff.UnixMilli()); err != nil {
+		return fmt.Errorf("deleting old run tokens: %w", err)
+	}
+
 	// Integration events and webhook deliveries past the retention (events
 	// a subscription still has to deliver stay).
 	if err := integrations.Prune(ctx, c.db, cutoff); err != nil {

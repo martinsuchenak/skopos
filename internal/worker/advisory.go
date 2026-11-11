@@ -66,7 +66,7 @@ func candidateViews(cands []Revision) []candidateView {
 // only checkout at the candidates' base (they share it: the round pinned it).
 func (w *Worker) advisoryContext(ctx context.Context, run *Run) (*Item, []Revision, string, string, func(), error) {
 	noop := func() {}
-	repo := w.cfg.Repos[run.WorkspaceID]
+	repo := w.repo(run.WorkspaceID)
 	if repo == nil {
 		return nil, nil, "", "", noop, w.failNoRepo(run.WorkspaceID)
 	}
@@ -115,7 +115,7 @@ func (w *Worker) stageCompare(ctx context.Context, run *Run, log *slog.Logger) e
 	if err != nil {
 		return err
 	}
-	repo := w.cfg.Repos[run.WorkspaceID]
+	repo := w.repo(run.WorkspaceID)
 	prompt, err := renderPrompt("compare.md", map[string]any{
 		"Title": item.Title, "Content": advisoryBrief(item.Content), "Candidates": candidateViews(cands),
 		"Instructions": repoInstructions(ctx, repo.Path, base),
@@ -124,7 +124,7 @@ func (w *Worker) stageCompare(ctx context.Context, run *Run, log *slog.Logger) e
 		return err
 	}
 	log.Info("comparing candidates", "account", account.Name, "candidates", len(cands))
-	res := w.runAgent(ctx, w.agentRun(dir, prompt, compareSchema, planTools, w.cfg.PlanTimeout, account, run, "compare"))
+	res := w.runAgent(ctx, w.agentRun(dir, prompt, compareSchema, w.planToolsFor(run.WorkspaceID), w.planTimeout(run.WorkspaceID), account, run, "compare"))
 	w.addCost(run, res)
 	if err := w.handleAgentOutcome(ctx, run, res, account, "compare"); err != nil {
 		return err
@@ -174,7 +174,7 @@ func (w *Worker) stageSynthesize(ctx context.Context, run *Run, log *slog.Logger
 	if err != nil {
 		return err
 	}
-	repo := w.cfg.Repos[run.WorkspaceID]
+	repo := w.repo(run.WorkspaceID)
 	skills := repoSkills(ctx, repo.Path, base)
 	prompt, err := renderPrompt("synthesize.md", map[string]any{
 		"Title": item.Title, "Content": advisoryBrief(item.Content), "Candidates": candidateViews(cands),
@@ -186,7 +186,7 @@ func (w *Worker) stageSynthesize(ctx context.Context, run *Run, log *slog.Logger
 		return err
 	}
 	log.Info("synthesizing candidates", "account", account.Name, "candidates", len(cands))
-	res := w.runAgent(ctx, w.agentRun(dir, prompt, planSchema, planTools, w.cfg.PlanTimeout, account, run, "synthesize"))
+	res := w.runAgent(ctx, w.agentRun(dir, prompt, planSchema, w.planToolsFor(run.WorkspaceID), w.planTimeout(run.WorkspaceID), account, run, "synthesize"))
 	w.addCost(run, res)
 	if err := w.handleAgentOutcome(ctx, run, res, account, "synthesize"); err != nil {
 		return err

@@ -51,6 +51,14 @@ func (h *Handler) Claim(w http.ResponseWriter, r *http.Request) {
 	// The server's release, so an idle worker can upgrade itself to it
 	// (tmp/self-healing-workers — design.md §5).
 	w.Header().Set("Skopos-Version", build.Version)
+	// This server reads runner facts: a run it hands a worker that sent
+	// them always names its runner (the worker refuses one that doesn't).
+	w.Header().Set("Skopos-Runner-Facts", "1")
+	// The runner definitions in force: a worker holding another revision
+	// fetches them before it offers runners again.
+	if rev := h.service.FleetRev(r.Context()); rev != "" {
+		w.Header().Set("Skopos-Fleet-Rev", rev)
+	}
 	run, err := h.service.ClaimNext(r.Context(), in)
 	if err != nil {
 		h.respondRunError(w, err, "claim")
@@ -71,6 +79,11 @@ func (h *Handler) Claim(w http.ResponseWriter, r *http.Request) {
 	}
 	// What to index while idle (tmp/agent-mcp-and-indexing — design.md
 	// §3), in headers so the body stays the run (or nothing).
+	// What the worker holds of its workspaces' config may be out of date:
+	// one value it compares, and refetches while idle when it changed.
+	if d := h.service.ConfigDigest(r.Context(), in.Workspaces); d != "" {
+		w.Header().Set("Skopos-Config-Rev", d)
+	}
 	duty := h.service.IndexDuty(r.Context(), in)
 	if len(duty.Enabled) > 0 {
 		w.Header().Set("Skopos-Index-Enabled", strings.Join(duty.Enabled, ","))

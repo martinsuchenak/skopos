@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"math"
@@ -161,7 +162,70 @@ func (s *Service) RecordEmbeddingError(workspace string, err error) {
 	_ = s.store.SetMeta(workspace, "embedding_run_at", time.Now().UTC().Format(time.RFC3339))
 }
 
+// EmbeddingsGate says whether a workspace may use the embeddings endpoint:
+// what is embedded (symbol names, signatures, doc summaries) and every
+// semantic query goes to that endpoint, so a workspace's runner policy
+// covers it like a runner (tmp/central-config — design.md, phase 1a).
+// known is false while the answer cannot be given yet (the policy is not
+// wired, or could not be read): nothing is sent and nothing is dropped.
+type EmbeddingsGate func(ctx context.Context, workspace string) (allowed, known bool)
+
+// SetEmbeddingsGate installs the policy check (nil = every workspace may).
+func (s *Service) SetEmbeddingsGate(fn EmbeddingsGate) { s.embedGate = fn }
+
+// ErrEmbeddingsHeld: the pass did nothing because the workspace's policy
+// does not allow the embeddings endpoint (or cannot be read yet). Not a
+// failure: the embedding manager records neither success nor an error.
+var ErrEmbeddingsHeld = errors.New("embeddings are held by the workspace's runner policy")
+
+// embeddingsRefused is the status note of a workspace the policy keeps
+// away from the embeddings endpoint.
+const embeddingsRefused = "not embedded: the workspace's runner policy does not allow the embeddings endpoint"
+
+// embeddingsAllowed applies the gate. skip: do nothing now; drop: the
+// workspace may not be embedded, so vectors it has must go.
+func (s *Service) embeddingsAllowed(ctx context.Context, workspace string) (allowed, drop bool) {
+	if s.embedGate == nil {
+		return true, false
+	}
+	ok, known := s.embedGate(ctx, workspace)
+	if !known {
+		return false, false
+	}
+	return ok, !ok
+}
+
+// Embedded reports whether a workspace has stored vectors.
+func (s *Service) Embedded(ctx context.Context, workspace string) bool {
+	n, exists, err := s.vectors.Count(ctx, workspace)
+	return err == nil && exists && n > 0
+}
+
+// dropEmbeddings removes a workspace's vectors and forgets their version,
+// so a later pass (the policy allows it again) rebuilds from scratch.
+func (s *Service) dropEmbeddings(ctx context.Context, workspace string) error {
+	if s.Embedded(ctx, workspace) {
+		if err := s.vectors.DropWorkspace(ctx, workspace); err != nil {
+			return err
+		}
+	}
+	_ = s.store.SetMeta(workspace, "embedding_version", "")
+	_ = s.store.SetMeta(workspace, "embedding_error", embeddingsRefused)
+	_ = s.store.SetMeta(workspace, "embedding_run_at", time.Now().UTC().Format(time.RFC3339))
+	return nil
+}
+
 func (s *Service) EmbedPending(ctx context.Context, workspace string, embedder Embedder) (int, error) {
+	// The workspace's policy first: one that does not allow the embeddings
+	// endpoint sends nothing there, and loses the vectors it had.
+	if allowed, drop := s.embeddingsAllowed(ctx, workspace); !allowed {
+		if drop {
+			if err := s.dropEmbeddings(ctx, workspace); err != nil {
+				return 0, err
+			}
+		}
+		return 0, ErrEmbeddingsHeld
+	}
 	if err := s.ensureEmbeddingVersion(workspace, embedder); err != nil {
 		return 0, err
 	}
@@ -335,6 +399,11 @@ func (s *Service) SemanticSearch(ctx context.Context, workspace, branch, query, 
 	if err != nil || embedder == nil {
 		return base, err
 	}
+	// The query itself goes to the embeddings endpoint: not for a workspace
+	// whose policy refuses it. The plain text search answers instead.
+	if allowed, _ := s.embeddingsAllowed(ctx, workspace); !allowed {
+		return base, nil
+	}
 	vecs, err := embedder.Embed(ctx, []string{query})
 	if err != nil || len(vecs) != 1 || len(vecs[0]) == 0 {
 		return base, nil // embedding unavailable: graceful degradation
@@ -492,12 +561,13 @@ type EmbeddingManager struct {
 	embedder Embedder
 	onError  func(workspace string, err error)
 
-	mu   sync.Mutex
-	jobs map[string]bool
+	mu    sync.Mutex
+	jobs  map[string]bool
+	again map[string]bool // a pass was asked for while one was running
 }
 
 func NewEmbeddingManager(service *Service, embedder Embedder) *EmbeddingManager {
-	return &EmbeddingManager{service: service, embedder: embedder, jobs: map[string]bool{}}
+	return &EmbeddingManager{service: service, embedder: embedder, jobs: map[string]bool{}, again: map[string]bool{}}
 }
 
 // SetErrorHandler installs a callback for background pass failures; without
@@ -512,6 +582,10 @@ func (m *EmbeddingManager) Enqueue(workspace string) {
 	}
 	m.mu.Lock()
 	if m.jobs[workspace] {
+		// A pass is running: ask for one more after it. What changed since
+		// it started (a commit, the workspace's policy) must not be missed
+		// because it was already past that point.
+		m.again[workspace] = true
 		m.mu.Unlock()
 		return
 	}
@@ -522,13 +596,21 @@ func (m *EmbeddingManager) Enqueue(workspace string) {
 		defer func() {
 			m.mu.Lock()
 			delete(m.jobs, workspace)
+			rerun := m.again[workspace]
+			delete(m.again, workspace)
 			m.mu.Unlock()
+			if rerun {
+				m.Enqueue(workspace)
+			}
 		}()
 		// Loop until the pending set is drained (commits race the worker).
 		for i := 0; i < 100; i++ {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			n, err := m.service.EmbedPending(ctx, workspace, m.embedder)
 			cancel()
+			if errors.Is(err, ErrEmbeddingsHeld) {
+				return // the policy keeps this workspace away from the endpoint
+			}
 			if err != nil {
 				m.service.RecordEmbeddingError(workspace, err)
 				if m.onError != nil {

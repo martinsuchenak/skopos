@@ -175,7 +175,7 @@ func (w *Worker) sweepBranches(ctx context.Context, now time.Time) {
 			}
 			continue
 		}
-		repo := w.cfg.Repos[rec.WorkspaceID]
+		repo := w.repo(rec.WorkspaceID)
 		if repo == nil {
 			log.Warn("finished item's repo is no longer configured; forgetting its worktree", "worktree", rec.Worktree)
 			w.dropBranch(rec.ItemID)

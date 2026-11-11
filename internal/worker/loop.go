@@ -16,6 +16,8 @@ import (
 	"sync"
 	"text/template"
 	"time"
+
+	"github.com/martinsuchenak/skopos/internal/policy"
 )
 
 //go:embed prompts/*.md
@@ -117,6 +119,9 @@ type Worker struct {
 	// executors remembers how each run's agent stage was executed (the
 	// stage profile's Executor id) so every report can record it.
 	executors map[string]string
+	// grants: the capabilities each run's stage profile granted (a hash),
+	// reported apart from the executor.
+	grants map[string]string
 	// costs: what each run's agent turns cost, sent with its report.
 	costs map[string]float64
 	// lastSweep: when finished items' worktrees were last cleaned up.
@@ -126,6 +131,17 @@ type Worker struct {
 	phases sync.Map
 	// health: each repo's last preflight (workspace → result).
 	health map[string]preflightResult
+	// Workspace config from the server (managed.go): what the worker holds
+	// per managed workspace, why one cannot be used here, and the claim
+	// answer's digest it was last refreshed for. cfgMu guards the two maps:
+	// a background index pass reads repos while a run's config is applied.
+	cfgMu          sync.RWMutex
+	managed        map[string]*managedWS
+	configProblems map[string]string
+	configDigest   string
+	// configStale: a run was executed under another revision than the one
+	// idle work held, so the next idle poll refetches the newest.
+	configStale bool
 	// upgradeTried: when the last self-upgrade attempt failed (retried
 	// after upgradeRetry); exePath and upgradeHTTP are swapped in tests.
 	upgradeTried time.Time
@@ -136,6 +152,24 @@ type Worker struct {
 	// agentMCPRefresh rewrites it before each run (srv+ server URL).
 	agentMCP        string
 	agentMCPRefresh func() error
+	// tokenRun: the run being executed came with an agent token (its id;
+	// "" = none). runMCP: that run's own MCP config, written from the token
+	// and removed when the run ends ("" when it could not be written — the
+	// run then gets no skopos tools, never the shared agent key).
+	// runSecrets: the token, redacted from the run's log. runTokensSeen:
+	// the server issues run tokens (logged once).
+	// facts: what the worker reports about its runners (facts.go), derived
+	// once.
+	facts    []policy.Facts
+	factsSet bool
+	factsMu  sync.Mutex
+	// fleetLoaded: the server's runner definitions were fetched at least
+	// once (defs.go).
+	fleetLoaded   bool
+	tokenRun      string
+	runMCP        string
+	runSecrets    []string
+	runTokensSeen bool
 	// index: idle-time code indexing (indexer.go).
 	index indexer
 	// logOutput: the log output (--log-output-url) run logs also go to;
@@ -152,20 +186,27 @@ type Worker struct {
 func (w *Worker) SetLogOutput(out io.Writer) { w.logOutput = out }
 
 func New(cfg *Config, client *Client, log *slog.Logger) *Worker {
-	w := &Worker{cfg: cfg, client: client, log: log, sessions: map[string]string{}, accounts: map[string]string{}, executors: map[string]string{}, costs: map[string]float64{}, health: map[string]preflightResult{}}
+	w := &Worker{cfg: cfg, client: client, log: log, sessions: map[string]string{}, accounts: map[string]string{}, executors: map[string]string{}, grants: map[string]string{}, costs: map[string]float64{}, health: map[string]preflightResult{}}
 	w.loadSessions()
 	w.ApplyMCPServers()
+	if client != nil {
+		client.SetServerCommands(cfg.ServerCommands)
+	}
 	return w
 }
 
 // Loop runs until the context is cancelled: claim, execute, report; pause on
 // quota (affinity keeps the run); idle polls at cfg.PollEvery.
 func (w *Worker) Loop(ctx context.Context) error {
+	w.loadServerConfig(ctx)
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		run, err := w.client.Claim(ctx, w.cfg.ID, w.cfg.AvailableRunners(time.Now()), w.cfg.Workspaces, w.checkHealth(ctx), w.indexable())
+		// Between runs, never during one: a worker that always finds work
+		// would otherwise keep the runner definitions it started with.
+		w.maybeRefreshFleet(ctx)
+		run, err := w.client.Claim(ctx, w.cfg.ID, w.cfg.AvailableRunners(time.Now()), w.cfg.Workspaces, w.checkHealth(ctx), w.indexable(), w.runnerFacts())
 		if err != nil {
 			w.log.Error("claim failed", "err", err)
 			if !sleepCtx(ctx, w.cfg.PollEvery) {
@@ -183,6 +224,7 @@ func (w *Worker) Loop(ctx context.Context) error {
 			if w.notePause(w.client.Paused()) {
 				w.stopIndexing()
 			} else {
+				w.maybeRefreshConfig(ctx)
 				w.maybeSweep(ctx)
 				w.maybeIndex(ctx)
 			}
@@ -255,6 +297,19 @@ var heartbeatEvery = 30 * time.Second
 // execute runs one claimed stage to a terminal report or pause.
 func (w *Worker) execute(ctx context.Context, run *Run) {
 	log := w.log.With("run", run.ID, "item", run.ItemID, "stage", run.Stage)
+	// The run's own MCP config, when the claim came with an agent token —
+	// before the run log opens, so its redactor knows the token.
+	forgetMCP, err := w.prepareRunMCP(run)
+	defer forgetMCP()
+	// The runners' temporary directories of this run go with it.
+	defer func() {
+		if w.cfg.StateDir != "" && plainRunID(run.ID) {
+			_ = os.RemoveAll(filepath.Join(w.cfg.runDir(run.ID), "tmp"))
+		}
+	}()
+	if err != nil {
+		log.Warn("the run's MCP config could not be written: its agents get no skopos tools (the shared agent key is not used in its place)", "err", err)
+	}
 	// The run log streams from here to the end (runlog.go); its last lines
 	// go after the report — skopos takes them under the claim's lease.
 	rl := w.openRunLog(run)
@@ -298,6 +353,37 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 	}()
 	defer hbStop()
 
+	// The server named the runner and checked it against the workspace's
+	// policy with what this worker reported. A run it could not have
+	// checked — no runner, or one this worker does not have — is not run
+	// on whatever account happens to be free.
+	why := w.refuseRunner(run)
+	if why == "" {
+		why = w.refuseExecutor(run)
+	}
+	if why != "" {
+		log.Error("not running the run", "reason", why)
+		rl.notef("not run: %s", why)
+		_ = w.report(ctx, run, false, map[string]any{"reason": why})
+		return
+	}
+	// The run executes under the config its claim named, and no other: a
+	// revision that cannot be fetched or used here gives the run back.
+	if err := w.holdConfig(ctx, run); err != nil {
+		log.Error("not running the run", "reason", err)
+		rl.notef("not run: %s", err)
+		_ = w.report(ctx, run, false, map[string]any{"reason": "config: " + err.Error(), "retryable": true})
+		return
+	}
+	if run.ConfigRev != "" {
+		note := "config revision " + run.ConfigRev
+		if m := w.managedFor(run.WorkspaceID); m != nil && len(m.local) > 0 {
+			// The revision does not describe these: say so on the run.
+			note += " (" + strings.Join(m.local, ", ") + " from this worker's file: server_commands is off)"
+		}
+		rl.notef("%s", note)
+	}
+
 	// Transient failures retry in-place (round 7: a loop, not recursion —
 	// one heartbeat goroutine for the whole stage, no nested stacks).
 	const maxTransient = 3
@@ -338,7 +424,7 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 // every stage fetches into it. The back-offs between attempts and after a
 // quota pause run without it.
 func (w *Worker) runStage(ctx context.Context, run *Run, log *slog.Logger) error {
-	if repo := w.cfg.Repos[run.WorkspaceID]; repo != nil && repo.Checkout == checkoutBranch {
+	if repo := w.repo(run.WorkspaceID); repo != nil && repo.Checkout == checkoutBranch {
 		release, err := w.holdClone(ctx, repo, log)
 		if err != nil {
 			return err
@@ -434,8 +520,8 @@ func (w *Worker) noAccount(run *Run, what string) error {
 			if !w.cfg.canRunStage(accountRunner(a), run.Stage) {
 				continue
 			}
-			if reset.IsZero() || a.exhaustedUntil.Before(reset) {
-				reset = a.exhaustedUntil
+			if reset.IsZero() || a.quota().exhaustedUntil.Before(reset) {
+				reset = a.quota().exhaustedUntil
 			}
 		}
 		return &quotaError{detail: "no available account for " + what, resetAt: reset}
@@ -492,11 +578,27 @@ func (e *transientError) Error() string { return "transient: " + e.detail }
 // happens only for genuinely new runs.
 func (w *Worker) pickAccount(run *Run, log *slog.Logger) *Account {
 	if name := w.accounts[run.ID]; name != "" {
+		// The account this run used before — as long as it still is the
+		// runner the server named. The claim checked run.Runner against
+		// the workspace's policy; a run that comes back for another runner
+		// (the policy or the preference changed while it was paused, a
+		// takeover of its own run) must not carry on with the old account
+		// and its session. One login may feed several defined runners: the
+		// one for this run's runner is the run's account.
+		was := ""
 		for _, a := range w.cfg.Accounts {
-			if a.Name == name {
+			if a.Name != name {
+				continue
+			}
+			if run.Runner == "" || accountRunner(a) == run.Runner {
 				return a
 			}
+			was = accountRunner(a)
 		}
+		if was != "" {
+			log.Info("the run now names another runner; dropping its earlier account and session", "was", was, "now", run.Runner)
+		}
+		w.forgetRun(run.ID)
 	}
 	// A run that names a runner (the workspace's stage preference — e.g.
 	// plan on opencode-glm, implement on opencode-qwen) is PINNED to it: it
@@ -516,7 +618,7 @@ func (w *Worker) pickAccount(run *Run, log *slog.Logger) *Account {
 		// stage: a read-only runner (codex) would refuse implement and fail
 		// the item, where waiting for a claude reset only pauses it.
 		for _, cand := range w.cfg.Accounts {
-			if now.After(cand.exhaustedUntil) && w.cfg.canRunStage(accountRunner(cand), run.Stage) {
+			if now.After(cand.quota().exhaustedUntil) && w.cfg.canRunStage(accountRunner(cand), run.Stage) {
 				a = cand
 				break
 			}
@@ -530,28 +632,33 @@ func (w *Worker) agentRun(dir, prompt, schema string, tools []string, timeout ti
 	sessionKey := run.ID + ":" + phase
 	sess := w.sessions[sessionKey]
 	prof := w.cfg.StageProfile(run.WorkspaceID, phase)
-	w.executors[run.ID] = prof.Executor()
 	runner := account.Runner
 	if runner == "" {
 		runner = "claude"
 	}
+	// What contains this run and what it was given, for the report: the
+	// server compares the executor with the one the claim matched on.
+	w.executors[run.ID] = w.cfg.ExecutorFor(run.WorkspaceID, run.Stage, runner)
+	w.grants[run.ID] = prof.Grants()
 	mcpConfig := w.cfg.MCPConfig
-	if w.agentMCP != "" && w.cfg.runnerHasSkopos(runner) {
-		mcpConfig = w.agentMCP
+	if skopos := w.mcpFor(run); skopos != "" && w.cfg.runnerHasSkopos(runner) {
+		mcpConfig = skopos
 		tools = append(slices.Clone(tools), skoposTools(phase)...)
 	}
 	ar := AgentRun{
 		Bin: w.cfg.RunnerBin(runner), Dir: dir, Prompt: prompt, Runner: runner, Model: account.Model, Effort: account.Effort,
 		SessionID: sess, Resume: sess != "",
 		Schema: schema, AllowedTools: tools,
-		Settings:  settingsJSON(w.cfg.MCPDeny, ""),
+		Settings:  settingsJSON(w.mcpDeny(run.WorkspaceID), ""),
 		Timeout:   timeout,
 		LogFile:   filepath.Join(w.cfg.StateDir, "runs", run.ID, phase+".log"),
 		Env:       account.Env,
 		TokenEnvs: w.cfg.TokenEnvs(),
 		MCPConfig: mcpConfig,
 
-		FileEnvKeys: w.envFileKeys,
+		FileEnvKeys:   w.envFileKeys,
+		TempDir:       w.cfg.runTempDir(run.ID),
+		HostContained: w.cfg.hostContainer(prof) != "",
 	}
 	if prof == nil {
 		return ar
@@ -563,7 +670,7 @@ func (w *Worker) agentRun(dir, prompt, schema string, tools []string, timeout ti
 	ar.Granted = len(prof.Tools) > 0 || len(prof.Env) > 0 || prof.grantsAllow()
 	ar.Sandboxed = prof.sandboxed()
 	ar.AllowedTools = append(append([]string{}, tools...), prof.Tools...)
-	ar.Settings = settingsJSON(w.cfg.MCPDeny, prof.Settings)
+	ar.Settings = settingsJSON(w.mcpDeny(run.WorkspaceID), prof.Settings)
 	if len(prof.Env) > 0 {
 		env := make(map[string]string, len(account.Env)+len(prof.Env))
 		for k, v := range account.Env {
@@ -575,10 +682,13 @@ func (w *Worker) agentRun(dir, prompt, schema string, tools []string, timeout ti
 		ar.Env = env
 	}
 	if len(prof.Wrapper) > 0 {
-		r := strings.NewReplacer("{dir}", dir, "{run}", run.ID, "{stage}", phase, "{workspace}", run.WorkspaceID)
-		ar.Wrapper = make([]string, len(prof.Wrapper))
-		for i, a := range prof.Wrapper {
-			ar.Wrapper[i] = r.Replace(a)
+		wrapper, err := w.stageWrapper(prof, dir, phase, run, account)
+		if err != nil {
+			ar.StartErr = err.Error()
+		}
+		ar.Wrapper = wrapper
+		if strings.Contains(strings.Join(prof.Wrapper, " "), "{cli}") {
+			ar.WrapBin = cliPath(ar.Bin)
 		}
 	}
 	return ar
@@ -592,8 +702,12 @@ func (w *Worker) report(ctx context.Context, run *Run, succeeded bool, fields ma
 			fields = map[string]any{}
 		}
 		fields["executor"] = ex
+		if g := w.grants[run.ID]; g != "" {
+			fields["grants"] = g
+		}
 	}
 	delete(w.executors, run.ID)
+	delete(w.grants, run.ID)
 	if c, ok := w.costs[run.ID]; ok {
 		if fields == nil {
 			fields = map[string]any{}
@@ -628,7 +742,10 @@ func (w *Worker) addCost(run *Run, res AgentResult) {
 
 // SetEnvFileKeys records which variables came from the env file (the CLI
 // loads it before the daemon starts).
-func (w *Worker) SetEnvFileKeys(keys []string) { w.envFileKeys = keys }
+func (w *Worker) SetEnvFileKeys(keys []string) {
+	w.envFileKeys = keys
+	w.cfg.SetEnvFileKeys(keys) // the runner facts ignore them too (facts.go)
+}
 
 func (w *Worker) saveSession(run *Run, phase, sessionID string) {
 	if sessionID == "" {
@@ -657,6 +774,18 @@ func (w *Worker) persist() {
 	}
 	_ = os.MkdirAll(w.cfg.StateDir, 0o700)
 	_ = os.WriteFile(filepath.Join(w.cfg.StateDir, "sessions.json"), b, 0o600)
+}
+
+// forgetRun drops the account and the agent sessions a run used before: it
+// starts again on whatever account fits the runner it now names.
+func (w *Worker) forgetRun(runID string) {
+	delete(w.accounts, runID)
+	for key := range w.sessions {
+		if strings.HasPrefix(key, runID+":") {
+			delete(w.sessions, key)
+		}
+	}
+	w.persist()
 }
 
 func (w *Worker) rememberAccount(run *Run, a *Account) {
@@ -741,4 +870,60 @@ type Check struct {
 	// stopped it, or the timeout came before it ran. A hang is the
 	// worker's problem, not the implementer's: never a fix round.
 	Stopped bool `json:"stopped,omitempty"`
+}
+
+// runnerFacts is what the worker reports about its runners with every
+// claim (facts.go), derived once: the config does not change while it runs.
+func (w *Worker) runnerFacts() []policy.Facts {
+	w.factsMu.Lock()
+	defer w.factsMu.Unlock()
+	if !w.factsSet {
+		w.facts, w.factsSet = w.cfg.RunnerFacts(), true
+		if w.client != nil {
+			w.client.SetExecutors(w.cfg.ExecutorFacts())
+		}
+	}
+	return w.facts
+}
+
+// refuseExecutor says why a claimed run must not be executed ("" = run
+// it): the server matched the workspace's policy on the executor this
+// worker reported for the run, and recorded it on the run. When the worker
+// would now run it in something else — its configuration changed since the
+// claim, or the server read the report differently — the policy check does
+// not cover what would run, so nothing is started.
+func (w *Worker) refuseExecutor(run *Run) string {
+	if len(run.Facts) == 0 || run.Runner == "" {
+		return ""
+	}
+	var claimed struct {
+		Executor string `json:"executor"`
+	}
+	if json.Unmarshal(run.Facts, &claimed) != nil || claimed.Executor == "" {
+		return ""
+	}
+	if here := w.cfg.ExecutorFor(run.WorkspaceID, run.Stage, run.Runner); here != claimed.Executor {
+		return fmt.Sprintf("the server matched this run on executor %s; this worker would run it in %s", claimed.Executor, here)
+	}
+	return ""
+}
+
+// refuseRunner says why a claimed run must not be executed ("" = run it):
+// from a server that reads runner facts, every run names a runner, and one
+// of those this worker reported. Without that the policy check behind the
+// claim did not cover what would run here. A server from before runner
+// facts hands out unpinned runs as it always did.
+func (w *Worker) refuseRunner(run *Run) string {
+	if w.client == nil || !w.client.FactsUsed() {
+		return ""
+	}
+	if run.Runner == "" {
+		return "the server handed out a run without a runner although it reads this worker's runner facts"
+	}
+	for _, f := range w.runnerFacts() {
+		if f.Name == run.Runner {
+			return ""
+		}
+	}
+	return fmt.Sprintf("the server handed out a run for runner %q, which this worker does not have", run.Runner)
 }

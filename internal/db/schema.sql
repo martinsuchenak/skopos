@@ -400,6 +400,64 @@ CREATE TABLE IF NOT EXISTS run_logs (
 CREATE INDEX IF NOT EXISTS idx_run_logs_run ON run_logs(run_id, seq);
 CREATE INDEX IF NOT EXISTS idx_run_logs_created ON run_logs(created_ms);
 
+-- Policy and configuration as append-only revisions (tmp/central-config —
+-- design.md, phase 0; internal/confrev). A change is a new row; nothing
+-- here is updated or deleted, so what applied on a given day can be shown
+-- later. owner: "fleet:ceiling", "fleet:default", "group:<id>",
+-- "workspace:<id>". config_heads points each owner at its current revision
+-- (NULL = cleared).
+CREATE TABLE IF NOT EXISTS config_revisions (
+    id            TEXT    PRIMARY KEY,
+    kind          TEXT    NOT NULL,
+    owner         TEXT    NOT NULL,
+    content       TEXT    NOT NULL CHECK (json_valid(content)),
+    content_hash  TEXT    NOT NULL,
+    created_ms    INTEGER NOT NULL,
+    actor         TEXT    NOT NULL DEFAULT '',
+    actor_key_id  TEXT    NOT NULL DEFAULT '',
+    via           TEXT    NOT NULL DEFAULT '',
+    note          TEXT    NOT NULL DEFAULT ''
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_config_revisions_owner ON config_revisions(kind, owner, created_ms);
+
+CREATE TABLE IF NOT EXISTS config_heads (
+    kind         TEXT    NOT NULL,
+    owner        TEXT    NOT NULL,
+    revision_id  TEXT,
+    updated_ms   INTEGER NOT NULL,
+    PRIMARY KEY (kind, owner)
+) STRICT;
+
+-- What applies to a workspace at a moment (tmp/central-config — design.md,
+-- phase 2): rev names an ordered list of config_revisions (its groups', then
+-- its own), so the config a run was claimed with can be read back after the
+-- heads have moved on. Rows are written when a combination is first
+-- resolved and never changed.
+CREATE TABLE IF NOT EXISTS config_effective (
+    rev           TEXT    PRIMARY KEY,
+    workspace_id  TEXT    NOT NULL,
+    parts         TEXT    NOT NULL CHECK (json_valid(parts)),
+    created_ms    INTEGER NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_config_effective_ws ON config_effective(workspace_id, created_ms);
+
+-- Per-attempt run tokens (tmp/central-config — design.md, phase 0): the
+-- hash of each token a claim mints. kind 'agent' is the credential the
+-- run's agent reaches skopos with over MCP. A token is valid only while
+-- its run is claimed or running with a live lease, read from the run
+-- (internal/runs/tokens.go); ended_ms records when it stopped being so.
+-- 'lease' and 'log' are reserved for the lease token and the run-log token.
+CREATE TABLE IF NOT EXISTS run_tokens (
+    token_hash  TEXT    PRIMARY KEY,
+    run_id      TEXT    NOT NULL,
+    attempt     INTEGER NOT NULL CHECK (attempt >= 1),
+    kind        TEXT    NOT NULL CHECK (kind IN ('lease', 'agent', 'log')),
+    issued_ms   INTEGER NOT NULL,
+    ended_ms    INTEGER
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_run_tokens_run ON run_tokens(run_id, kind);
+CREATE INDEX IF NOT EXISTS idx_run_tokens_open ON run_tokens(run_id) WHERE ended_ms IS NULL;
+
 -- Pipeline settings (tmp/workspace-pipeline-settings — design.md): which
 -- agents run each stage, per workspace or per workspace group. Resolution
 -- per stage: the workspace's own row, else its group's, else not set.

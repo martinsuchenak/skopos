@@ -8,9 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/martinsuchenak/skopos/internal/policy"
+	"github.com/martinsuchenak/skopos/internal/wsconfig"
 )
 
 // Config is the worker's TOML config ([worker] section of skopos-config).
@@ -22,6 +26,19 @@ type Config struct {
 	Runners    []string      `toml:"runners"`    // what this instance offers ("claude", ...)
 	Workspaces []string      `toml:"workspaces"` // scope: must match the repos below
 	PollEvery  time.Duration `toml:"poll_every"` // idle claim interval
+	// ContainedBy names the container the worker's whole host is (a Knot
+	// space, a VM, a Docker container): every run's executor is then
+	// host:<name> unless a wrapper or a sandbox goes around the run itself,
+	// and stage profiles may grant capabilities without a wrapper. It says
+	// the host is confined — not that runs are kept apart from each other:
+	// inside it a run still sees every clone on the worker.
+	ContainedBy string `toml:"contained_by"`
+	// ServerCommands: take a managed workspace's setup, check and preflight
+	// commands from the server. Off, those fields stay this file's even for
+	// a workspace the server manages (its other fields still come from the
+	// server): whoever may edit them on the server runs commands on this
+	// host.
+	ServerCommands bool `toml:"server_commands"`
 	// AutoUpgrade: an idle worker replaces its own binary with the
 	// server's release and restarts (nil = true; design §5).
 	AutoUpgrade *bool `toml:"auto_upgrade"`
@@ -64,6 +81,33 @@ type Config struct {
 	// RunnerSpecs configure runner names beyond the defaults (claude and
 	// opencode need no block; "command" runs any CLI, wrapper-only).
 	RunnerSpecs map[string]*RunnerSpec `toml:"runner_config"`
+
+	// envFileKeys: the variables the worker's env file provided (facts.go).
+	envFileKeys []string
+
+	// Runner definitions from the server (defs.go). fileAccounts: the
+	// accounts as the file has them; Accounts is rebuilt from them and
+	// defs. runnersExplicit: the file lists runners itself, which then
+	// restricts what the worker offers.
+	fileAccounts    []*Account
+	defs            []wsconfig.RunnerDef
+	defsRev         string
+	runnersExplicit bool
+	// mcpDenyFile: the deny list the file itself sets (empty when it sets
+	// none and the default applies) — kept in force for a workspace the
+	// server manages. globalSet: the worker-wide fields the file sets that
+	// are per workspace on the server (managed.go).
+	mcpDenyFile []string
+	globalSet   []string
+}
+
+// FileAccounts lists the accounts as the worker's file has them (Accounts
+// is what runs use: these combined with the server's runner definitions).
+func (c *Config) FileAccounts() []*Account {
+	if c.fileAccounts == nil {
+		return c.Accounts
+	}
+	return c.fileAccounts
 }
 
 // Stages a profile may configure.
@@ -76,10 +120,84 @@ var profileStages = map[string]bool{"plan": true, "implement": true, "review": t
 // (fail closed: skopos cannot verify a wrapper isolates, but it refuses to
 // grant capabilities when nothing at all contains them).
 type StageProfile struct {
-	Wrapper  []string          `toml:"wrapper"`  // argv prefix; {dir} {run} {stage} {workspace}
+	Wrapper  []string          `toml:"wrapper"`  // argv prefix; {dir} {gitdir} {login} {rundir} {cli} {run} {stage} {workspace}
 	Settings string            `toml:"settings"` // JSON merged into --settings (skopos's deny list is kept)
 	Tools    []string          `toml:"tools"`    // extra --allowedTools entries
 	Env      map[string]string `toml:"env"`      // extra agent env; ${VAR} expands from the environment
+
+	// name: the profile's name ("repo" for a repo's own stage block), the
+	// part of a wrapper's executor id a policy rule can match on.
+	name string
+}
+
+// hostWrapper recognises a wrapper that only sets variables — `env K=V …`,
+// the way a worker inside a container used to say "this stage is
+// contained" — and returns the name it declares (SKOPOS_CONTAINED_BY's
+// value, else "env"). Such a wrapper puts nothing around the run: the
+// containment is the host's, so the run's executor is host:<name>, not a
+// wrapper. worker.contained_by says the same thing directly.
+//
+// An env argv is a real wrapper only when it runs a command of its own
+// (`env A=b bwrap …`). Options (-i, -u NAME, -C DIR, --) run nothing, and
+// -S hides what it runs: both count as the host, never as a wrapper.
+func (p *StageProfile) hostWrapper() (string, bool) {
+	if p == nil || len(p.Wrapper) == 0 || filepath.Base(p.Wrapper[0]) != "env" {
+		return "", false
+	}
+	name := "env"
+	args := p.Wrapper[1:]
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "-u" || a == "--unset" || a == "-C" || a == "--chdir":
+			i++ // the option's value
+		case strings.HasPrefix(a, "-S") || strings.HasPrefix(a, "--split-string"):
+			return name, true
+		case strings.HasPrefix(a, "-"):
+		default:
+			k, v, ok := strings.Cut(a, "=")
+			if !ok || k == "" {
+				return "", false // a command: env runs a wrapper
+			}
+			if k == "SKOPOS_CONTAINED_BY" && v != "" {
+				name = executorName(v)
+			}
+		}
+	}
+	return name, true
+}
+
+// executorName makes a profile or container name safe inside an executor
+// id: letters, digits, dot, dash and underscore, at most 40 characters.
+func executorName(s string) string {
+	var b strings.Builder
+	for _, r := range strings.TrimSpace(s) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+		if b.Len() == 40 {
+			break
+		}
+	}
+	if b.Len() == 0 {
+		return "unnamed"
+	}
+	return b.String()
+}
+
+// wrapperPlaceholder finds {name} placeholders in a wrapper argument.
+var wrapperPlaceholder = regexp.MustCompile(`\{[a-z]+\}`)
+
+// wraps reports whether the profile puts a real wrapper around the run.
+func (p *StageProfile) wraps() bool {
+	if p == nil || len(p.Wrapper) == 0 {
+		return false
+	}
+	_, host := p.hostWrapper()
+	return !host
 }
 
 // sandboxed reports whether Settings enables the runner's own sandbox.
@@ -95,7 +213,10 @@ func (p *StageProfile) sandboxed() bool {
 	return json.Unmarshal([]byte(p.Settings), &s) == nil && s.Sandbox.Enabled
 }
 
-// Contained: the stage runs inside something the operator provides.
+// Contained: the stage runs inside something the operator provides — a
+// wrapper (one that only declares the host a container included) or the
+// runner's sandbox settings. A worker whose whole host is a container
+// (worker.contained_by) contains every stage; validate takes that in.
 func (p *StageProfile) Contained() bool {
 	return p != nil && (len(p.Wrapper) > 0 || p.sandboxed())
 }
@@ -117,7 +238,7 @@ func (p *StageProfile) grantsAllow() bool {
 
 // validate checks one stage profile: parseable settings, and the fail-closed
 // rule — capabilities only on a contained stage.
-func (p *StageProfile) validate(where string) error {
+func (p *StageProfile) validate(where string, hostContained bool) error {
 	if p == nil {
 		return nil
 	}
@@ -127,28 +248,50 @@ func (p *StageProfile) validate(where string) error {
 			return fmt.Errorf("%s: settings is not valid JSON: %v", where, err)
 		}
 	}
-	if (len(p.Tools) > 0 || len(p.Env) > 0 || p.grantsAllow()) && !p.Contained() {
-		return fmt.Errorf("%s: grants capabilities (tools/env/settings allow) but is not contained — set a wrapper, or settings with sandbox.enabled = true (skopos only grants capabilities to stages the operator contains)", where)
+	for _, a := range p.Wrapper {
+		for _, ph := range wrapperPlaceholder.FindAllString(a, -1) {
+			if !slices.Contains(wrapperPlaceholders, ph) {
+				return fmt.Errorf("%s: the wrapper uses %s, which is not a placeholder (%s)", where, ph, strings.Join(wrapperPlaceholders, " "))
+			}
+		}
+	}
+	if (len(p.Tools) > 0 || len(p.Env) > 0 || p.grantsAllow()) && !p.Contained() && !hostContained {
+		return fmt.Errorf("%s: grants capabilities (tools/env/settings allow) but is not contained — set a wrapper, settings with sandbox.enabled = true, or worker.contained_by when the whole host is a container (skopos only grants capabilities to stages the operator contains)", where)
 	}
 	return nil
 }
 
-// Executor identifies how a stage ran, for the run record: "local", or
-// "wrapper:"/"sandbox:" plus a short hash over the resolved profile
-// (wrapper argv, settings, tools, env NAMES — never values).
-func (p *StageProfile) Executor() string {
+// shortHash is the 12-hex id of a profile part.
+func shortHash(v any) string {
+	buf, _ := json.Marshal(v)
+	sum := sha256.Sum256(buf)
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// sandboxSettings is the sandbox block of the profile's settings (what a
+// sandbox executor's hash covers).
+func (p *StageProfile) sandboxSettings() string {
+	var s struct {
+		Sandbox json.RawMessage `json:"sandbox"`
+	}
+	_ = json.Unmarshal([]byte(p.Settings), &s)
+	return string(s.Sandbox)
+}
+
+// Grants identifies what the profile gives its stage — extra tools, env
+// NAMES (never values) and every setting besides the sandbox block (allow
+// rules, additional directories, hooks, …) — as a short hash, "" when it
+// gives nothing. Recorded on the run apart from the executor: the executor
+// says what contains the run, this says what the run was given.
+func (p *StageProfile) Grants() string {
 	if p == nil {
-		return "local"
+		return ""
 	}
-	kind := "local"
-	switch {
-	case len(p.Wrapper) > 0:
-		kind = "wrapper"
-	case p.sandboxed():
-		kind = "sandbox"
-	}
-	if kind == "local" && len(p.Tools) == 0 && len(p.Env) == 0 && strings.TrimSpace(p.Settings) == "" {
-		return "local"
+	var settings map[string]json.RawMessage
+	_ = json.Unmarshal([]byte(p.Settings), &settings)
+	delete(settings, "sandbox")
+	if len(p.Tools) == 0 && len(p.Env) == 0 && len(settings) == 0 {
+		return ""
 	}
 	names := make([]string, 0, len(p.Env))
 	for k := range p.Env {
@@ -157,14 +300,194 @@ func (p *StageProfile) Executor() string {
 	sort.Strings(names)
 	tools := append([]string{}, p.Tools...)
 	sort.Strings(tools)
-	buf, _ := json.Marshal(struct {
-		W []string `json:"w"`
-		S string   `json:"s"`
-		T []string `json:"t"`
-		E []string `json:"e"`
-	}{p.Wrapper, strings.TrimSpace(p.Settings), tools, names})
-	sum := sha256.Sum256(buf)
-	return kind + ":" + hex.EncodeToString(sum[:])[:12]
+	return shortHash(struct {
+		T []string                   `json:"t"`
+		E []string                   `json:"e"`
+		S map[string]json.RawMessage `json:"s,omitempty"`
+	}{tools, names, settings})
+}
+
+// runsRepoCommands: for these stages the worker itself runs the repo's
+// setup and check commands on the branch — code the implementer wrote.
+// Only a wrapper goes around those; a runner's own sandbox does not.
+func runsRepoCommands(stage string) bool {
+	return stage == "implement" || stage == "branch_review"
+}
+
+// stagePhase is the profile stage a run's stage uses: a second opinion and
+// a branch review run as a review; compare and synthesize have no profile
+// of their own.
+func stagePhase(stage string) string {
+	switch stage {
+	case "second_opinion", "branch_review":
+		return "review"
+	}
+	return stage
+}
+
+// executorStages are the run stages a worker reports executors for.
+var executorStages = []string{"plan", "implement", "review", "qa", "compare", "synthesize", "second_opinion", "branch_review"}
+
+// ExecutorFor identifies what contains a run of a stage (the run's stage:
+// plan, implement, review, qa, compare, synthesize, second_opinion,
+// branch_review) on a runner, in order (tmp/central-config — design.md,
+// phase 1c):
+//
+//	wrapper:<name>:<hash>  the stage profile's wrapper (the hash covers its
+//	                       argv); the agent and the worker's setup and check
+//	                       commands for the stage all run inside it
+//	runner:<kind>          a runner whose own verified lockdown is a sandbox
+//	                       (codex) — not for a stage whose setup and checks
+//	                       the worker runs itself, outside that sandbox
+//	host:<name>            the worker's whole host is a container
+//	                       (worker.contained_by, or a wrapper that only
+//	                       declares it)
+//	sandbox:<hash>         the profile's sandbox settings, for a runner that
+//	                       honours them
+//	local                  nothing but the agent CLI's own lockdown
+//
+// The first that applies is the run's executor. What the profile grants is
+// recorded apart (Grants).
+func (c *Config) ExecutorFor(workspace, stage, runner string) string {
+	prof := c.StageProfile(workspace, stagePhase(stage))
+	if prof.wraps() {
+		name := prof.name
+		if name == "" {
+			name = "repo"
+		}
+		return policy.WrapperExecutor(executorName(name), shortHash(prof.Wrapper))
+	}
+	r, rerr := c.RunnerFor(runner)
+	if rerr == nil && !runsRepoCommands(stage) {
+		if sb, ok := r.(interface{ SandboxLockdown() bool }); ok && sb.SandboxLockdown() {
+			_, kind := c.runnerSpec(runner)
+			return policy.RunnerExecutor(kind)
+		}
+	}
+	if host := c.hostContainer(prof); host != "" {
+		return policy.HostExecutor(host)
+	}
+	if prof != nil && prof.sandboxed() && rerr == nil && r.HonorsSettings() {
+		return policy.SandboxExecutor(shortHash(prof.sandboxSettings()))
+	}
+	return policy.ExecutorLocal
+}
+
+// DescribeExecutors renders a workspace's executor facts as one line: the
+// default, then what differs ("local; review=sandbox:…; implement/glm=wrapper:…").
+func DescribeExecutors(facts []policy.ExecutorFact) string {
+	parts := make([]string, 0, len(facts))
+	for _, f := range facts {
+		switch {
+		case f.Stage != "" && f.Runner != "":
+			parts = append(parts, f.Stage+"/"+f.Runner+"="+f.Executor)
+		case f.Stage != "":
+			parts = append(parts, f.Stage+"="+f.Executor)
+		case f.Runner != "":
+			parts = append(parts, f.Runner+"="+f.Executor)
+		default:
+			parts = append(parts, f.Executor)
+		}
+	}
+	return strings.Join(parts, "; ")
+}
+
+// ExecutorNotes are things the operator should know about what contains
+// the worker's runs: a wrapper that only sets variables (it declares the
+// host; worker.contained_by says so directly).
+func (c *Config) ExecutorNotes() []string {
+	var out []string
+	note := func(where string, p *StageProfile) {
+		if name, ok := p.hostWrapper(); ok && strings.TrimSpace(c.ContainedBy) == "" {
+			out = append(out, fmt.Sprintf("%s: the wrapper only sets variables, so nothing goes around the run — it counts as host:%s (contained, not isolated). Say it with worker.contained_by = %q instead", where, name, name))
+		}
+	}
+	names := make([]string, 0, len(c.Profiles))
+	for n := range c.Profiles {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		for _, stage := range []string{"plan", "implement", "review", "qa"} {
+			note("profile "+n+"."+stage, c.Profiles[n][stage])
+		}
+	}
+	repos := make([]string, 0, len(c.Repos))
+	for ws := range c.Repos {
+		repos = append(repos, ws)
+	}
+	sort.Strings(repos)
+	for _, ws := range repos {
+		for _, stage := range []string{"plan", "implement", "review", "qa"} {
+			note("repo "+ws+" stage "+stage, c.Repos[ws].Stages[stage])
+		}
+	}
+	return out
+}
+
+// hostContainer names the container the whole host is, when the worker
+// says so: worker.contained_by, else a stage wrapper that only declares it.
+func (c *Config) hostContainer(prof *StageProfile) string {
+	if name := strings.TrimSpace(c.ContainedBy); name != "" {
+		return executorName(name)
+	}
+	if name, ok := prof.hostWrapper(); ok {
+		return name
+	}
+	return ""
+}
+
+// ExecutorFacts is what the worker reports about containment: per
+// workspace, the executor a run gets by stage and runner. One default per
+// workspace, then only the stages (and runners in a stage) that differ.
+func (c *Config) ExecutorFacts() map[string][]policy.ExecutorFact {
+	var runners []string
+	for _, f := range c.RunnerFacts() {
+		runners = append(runners, f.Name)
+	}
+	out := map[string][]policy.ExecutorFact{}
+	for _, ws := range c.Workspaces {
+		// The default: the most common executor across stages and runners.
+		count := map[string]int{}
+		table := map[string]map[string]string{}
+		for _, stage := range executorStages {
+			table[stage] = map[string]string{}
+			for _, r := range runners {
+				e := c.ExecutorFor(ws, stage, r)
+				table[stage][r] = e
+				count[e]++
+			}
+		}
+		def, best := policy.ExecutorLocal, 0
+		for e, n := range count {
+			if n > best || (n == best && e < def) {
+				def, best = e, n
+			}
+		}
+		facts := []policy.ExecutorFact{{Executor: def}}
+		for _, stage := range executorStages {
+			same, first := true, ""
+			for i, r := range runners {
+				if i == 0 {
+					first = table[stage][r]
+				} else if table[stage][r] != first {
+					same = false
+				}
+			}
+			switch {
+			case same && first != def && first != "":
+				facts = append(facts, policy.ExecutorFact{Stage: stage, Executor: first})
+			case !same:
+				for _, r := range runners {
+					if e := table[stage][r]; e != def {
+						facts = append(facts, policy.ExecutorFact{Stage: stage, Runner: r, Executor: e})
+					}
+				}
+			}
+		}
+		out[ws] = facts
+	}
+	return out
 }
 
 // StageProfile resolves a workspace's profile for a stage: the repo's own
@@ -227,6 +550,12 @@ type Repo struct {
 	Profile string                   `toml:"profile"`
 	Stages  map[string]*StageProfile `toml:"stages"`
 
+	// localSet: the shared fields the file set for this repo, noted before
+	// defaults are filled in — what a managed workspace ignores.
+	localSet []string
+	// tokenOnly: the file's push block names only token_env.
+	tokenOnly bool
+
 	// Push: remote-agnostic. Token from env (never argv); Kind selects the
 	// credential flavor (pushAuthHeader): "gitea" sends Gitea's token
 	// header; "github" sends HTTP Basic with user x-access-token — any
@@ -263,6 +592,20 @@ type Account struct {
 	// opencode --variant, command {effort}. Checked per kind at load.
 	Effort string            `toml:"effort"`
 	Env    map[string]string `toml:"env"` // ANTHROPIC_API_KEY / CLAUDE_CONFIG_DIR / ...
+	// LoginDir is where the account's CLI keeps its login — what a stage
+	// wrapper's {login} expands to ("" = the directory its kind uses).
+	LoginDir string `toml:"login_dir"`
+	// Kind makes the account a login for a CLI (claude, opencode, codex,
+	// antigravity) instead of for one runner: it feeds every runner of that
+	// kind the server defines, with the definition's model and effort
+	// (defs.go). Models narrows that to the definitions whose model matches
+	// one of the patterns (`zai-coding-plan/*`).
+	Kind   string   `toml:"kind"`
+	Models []string `toml:"models"`
+
+	// base: the file's account this one was built from for a defined
+	// runner (nil = it is the file's own).
+	base *Account `toml:"-"`
 
 	// Quota state is worker-local (learned from usage-limit errors, exactly
 	// as agent-trial does); not part of the config file.
@@ -277,7 +620,7 @@ func (c *Config) AccountFor(runner string, now time.Time) *Account {
 		if accountRunner(a) != runner {
 			continue
 		}
-		if now.Before(a.exhaustedUntil) {
+		if now.Before(a.quota().exhaustedUntil) {
 			continue
 		}
 		if best == nil || a.Priority < best.Priority {
@@ -305,11 +648,11 @@ func (c *Config) NextAvailable(runner string, now time.Time) (time.Time, bool) {
 			continue
 		}
 		found = true
-		if !now.Before(a.exhaustedUntil) {
+		if !now.Before(a.quota().exhaustedUntil) {
 			return time.Time{}, true
 		}
-		if next.IsZero() || a.exhaustedUntil.Before(next) {
-			next = a.exhaustedUntil
+		if next.IsZero() || a.quota().exhaustedUntil.Before(next) {
+			next = a.quota().exhaustedUntil
 		}
 	}
 	return next, found
@@ -332,7 +675,7 @@ func (c *Config) AvailableRunners(now time.Time) []string {
 // anyAccountAvailable: at least one account can start a run now.
 func (c *Config) anyAccountAvailable(now time.Time) bool {
 	for _, a := range c.Accounts {
-		if !now.Before(a.exhaustedUntil) {
+		if !now.Before(a.quota().exhaustedUntil) {
 			return true
 		}
 	}
@@ -344,7 +687,7 @@ func (a *Account) MarkExhausted(until time.Time, defaultBackoff time.Duration, n
 	if until.IsZero() || !until.After(now) {
 		until = now.Add(defaultBackoff)
 	}
-	a.exhaustedUntil = until
+	a.quota().exhaustedUntil = until
 }
 
 // Default fills unset fields with working defaults. It also normalizes
@@ -354,6 +697,9 @@ func (a *Account) MarkExhausted(until time.Time, defaultBackoff time.Duration, n
 // (the env file has been loaded by then) so token VALUES stay out of the
 // TOML (review M4).
 func (c *Config) Default(home string) error {
+	if cb := strings.TrimSpace(c.ContainedBy); cb != "" && cb != executorName(cb) {
+		return fmt.Errorf("contained_by %q: a short name of letters, digits, dot, dash and underscore (at most 40 characters)", cb)
+	}
 	if c.ID == "" {
 		h, _ := os.Hostname()
 		c.ID = "worker-" + h
@@ -373,6 +719,18 @@ func (c *Config) Default(home string) error {
 	if c.Bin == "" {
 		c.Bin = "claude"
 	}
+	if c.fileAccounts == nil { // first load only: before defaults are filled in
+		c.mcpDenyFile = slices.Clone(c.MCPDeny)
+		if c.PlanTimeout != 0 {
+			c.globalSet = append(c.globalSet, "plan_timeout")
+		}
+		if c.ImplTimeout != 0 {
+			c.globalSet = append(c.globalSet, "impl_timeout")
+		}
+		if len(c.MCPServers) > 0 {
+			c.globalSet = append(c.globalSet, "mcp_servers")
+		}
+	}
 	if c.PlanTimeout == 0 {
 		c.PlanTimeout = 10 * time.Minute
 	}
@@ -381,20 +739,15 @@ func (c *Config) Default(home string) error {
 	}
 	if len(c.MCPDeny) == 0 {
 		// R12 default: Fortix production writes + scriptling stores.
-		c.MCPDeny = []string{
-			"mcp__llmrouter__execute_tool",
-			"mcp__llmrouter__fortix__create_work_request",
-			"mcp__llmrouter__fortix__reply_to_work_request",
-			"mcp__llmrouter__fortix__create_client_from_email",
-			"mcp__llmrouter__fortix__request_file_upload",
-			"mcp__llmrouter__scriptling__qdrant_upsert",
-			"mcp__llmrouter__scriptling__set_prompt",
-			"mcp__llmrouter__scriptling__set_skill",
-		}
+		c.MCPDeny = slices.Clone(wsconfig.DefaultMCPDeny)
 	}
 	// runners defaults to every runner the accounts feed: adding a runner
 	// is adding an account (an explicit list still restricts what claims
 	// offer).
+	c.runnersExplicit = len(c.Runners) > 0
+	if err := c.splitAccounts(); err != nil {
+		return err
+	}
 	if len(c.Runners) == 0 {
 		c.Runners = c.UsedRunners()
 	}
@@ -404,6 +757,7 @@ func (c *Config) Default(home string) error {
 		}
 	}
 	for ws, r := range c.Repos {
+		r.localSet = r.sharedSet()
 		r.Path = expandHome(r.Path, home)
 		if r.DefaultBranch == "" {
 			r.DefaultBranch = "main"
@@ -417,7 +771,7 @@ func (c *Config) Default(home string) error {
 			}
 		}
 		if len(r.Protected) == 0 {
-			r.Protected = []string{"PROD", "main", "master", "develop", "release/**", "hotfix/**"}
+			r.Protected = slices.Clone(wsconfig.DefaultProtected)
 		}
 		if r.Push.TokenEnv == "" && r.Push.Kind != "" && r.Push.Kind != "none" {
 			return fmt.Errorf("repo %s: push.token_env is required (tokens come from the environment)", ws)
@@ -426,9 +780,14 @@ func (c *Config) Default(home string) error {
 			// A push block without a kind used to fall back to "none"
 			// silently: the worker never pushed, and links and reviews
 			// failed far from the cause.
-			if r.Push.RemoteURL != "" || r.Push.TokenEnv != "" {
+			if r.Push.RemoteURL != "" {
 				return fmt.Errorf("repo %s: push.kind is required when push is configured (github, gitea or none)", ws)
 			}
+			// Only the token's variable: the rest of the push settings are
+			// the server's, for a workspace it manages. For one it does
+			// not manage this is the old mistake, reported once the worker
+			// knows which it is (managed.go, pushProblem).
+			r.tokenOnly = r.Push.TokenEnv != ""
 			r.Push.Kind = "none"
 		}
 		switch r.Push.Kind {
@@ -513,7 +872,8 @@ func (c *Config) Default(home string) error {
 			if !profileStages[stage] {
 				return fmt.Errorf("profile %s: unknown stage %q (plan, implement, review, qa)", name, stage)
 			}
-			if err := p.validate("profile " + name + "." + stage); err != nil {
+			p.name = name
+			if err := p.validate("profile "+name+"."+stage, strings.TrimSpace(c.ContainedBy) != ""); err != nil {
 				return err
 			}
 			expandProfileEnv(p, home)
@@ -527,7 +887,8 @@ func (c *Config) Default(home string) error {
 			if !profileStages[stage] {
 				return fmt.Errorf("repo %s: unknown stage %q (plan, implement, review, qa)", ws, stage)
 			}
-			if err := p.validate("repo " + ws + " stage " + stage); err != nil {
+			p.name = "repo"
+			if err := p.validate("repo "+ws+" stage "+stage, strings.TrimSpace(c.ContainedBy) != ""); err != nil {
 				return err
 			}
 			expandProfileEnv(p, home)
@@ -536,7 +897,7 @@ func (c *Config) Default(home string) error {
 			r.SetupEnv[k] = expandHome(expandEnvRefs(v), home)
 		}
 	}
-	for _, a := range c.Accounts {
+	for _, a := range c.FileAccounts() {
 		for k, v := range a.Env {
 			// ${NAME} only: os.Expand rewrites every $, silently mangling
 			// literal values that merely contain one. Unset names expand
@@ -544,6 +905,10 @@ func (c *Config) Default(home string) error {
 			// (CLAUDE_CONFIG_DIR = "~/.claude" in the template comment).
 			v = expandEnvRefs(v)
 			a.Env[k] = expandHome(v, home)
+		}
+		a.LoginDir = expandHome(a.LoginDir, home)
+		if a.LoginDir != "" && !filepath.IsAbs(a.LoginDir) {
+			return fmt.Errorf("account %s: login_dir must be an absolute path", a.Name)
 		}
 	}
 	return nil

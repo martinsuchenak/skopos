@@ -432,7 +432,17 @@ var processWaitDelay = 10 * time.Second
 func runShell(ctx context.Context, dir string, env []string, line string, quiet time.Duration) ([]byte, error) {
 	cctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	cmd := exec.CommandContext(cctx, "sh", "-c", line)
+	name, args := "sh", []string{"-c", line}
+	if wrap := shellWrapFrom(ctx); wrap != nil {
+		// A wrapped stage: the command runs behind the stage's wrapper,
+		// like the agent (it executes the branch's code).
+		prefix, err := wrap(dir)
+		if err != nil {
+			return nil, err
+		}
+		name, args = prefix[0], append(append([]string{}, prefix[1:]...), "sh", "-c", line)
+	}
+	cmd := exec.CommandContext(cctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = env
 	containProcess(cmd)

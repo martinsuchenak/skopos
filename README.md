@@ -68,6 +68,8 @@ See [Agent integration](docs/getting-started.md#connecting-an-agent) and [Integr
 | Inbox (capture → enrich → convert to plan) | [docs/concepts/inbox.md](docs/concepts/inbox.md) |
 | Status (reporting, health checker) | [docs/concepts/status.md](docs/concepts/status.md) |
 | Workspaces (scoping, registry) | [docs/concepts/workspaces.md](docs/concepts/workspaces.md) |
+| Runner policy (which models may work on which repositories) | [docs/concepts/runner-policy.md](docs/concepts/runner-policy.md) |
+| Workspace config and runner definitions on the server, one file to apply | [docs/concepts/workspace-config.md](docs/concepts/workspace-config.md) |
 | Events (SSE, real-time) | [docs/concepts/events.md](docs/concepts/events.md) |
 | Guide: local-only workflow | [docs/guides/local.md](docs/guides/local.md) |
 | Guide: remote/central workflow | [docs/guides/remote.md](docs/guides/remote.md) |

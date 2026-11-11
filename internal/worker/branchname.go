@@ -3,10 +3,11 @@ package worker
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/martinsuchenak/skopos/internal/wsconfig"
 )
 
 // Branch names (tmp/branch-handover — design.md §2). An item works on the
@@ -18,24 +19,10 @@ import (
 // prefix, the item id's tail, a slug of the title.
 const defaultBranchTemplate = "{prefix}{tail}-{slug}"
 
-var reTemplatePlaceholder = regexp.MustCompile(`\{[a-z]+\}`)
-
 // validateBranchTemplate checks a repo's branch_template: known
 // placeholders only, and {tail} or {ref} in it, so two items never get the
 // same name and take over each other's branch.
-func validateBranchTemplate(t string) error {
-	for _, p := range reTemplatePlaceholder.FindAllString(t, -1) {
-		switch p {
-		case "{prefix}", "{tail}", "{slug}", "{ref}":
-		default:
-			return fmt.Errorf("branch_template %q: unknown placeholder %s (use {prefix}, {tail}, {slug}, {ref})", t, p)
-		}
-	}
-	if !strings.Contains(t, "{tail}") && !strings.Contains(t, "{ref}") {
-		return fmt.Errorf("branch_template %q: needs {tail} or {ref}, or two items with the same title would share a branch", t)
-	}
-	return nil
-}
+func validateBranchTemplate(t string) error { return wsconfig.ValidateBranchTemplate(t) }
 
 // validBranch is the worker's guard on every branch name it checks out or
 // pushes: letters, digits, '.', '_', '/', '-'; no "..", "//", trailing '/'

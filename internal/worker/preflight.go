@@ -4,13 +4,15 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/martinsuchenak/skopos/internal/wsconfig"
 )
 
 const (
 	// defaultPreflightInterval: how often a repo's preflight runs unless
 	// preflight_interval says otherwise.
 	defaultPreflightInterval = 5 * time.Minute
-	maxPreflightInterval     = 24 * time.Hour
+	maxPreflightInterval     = wsconfig.MaxPreflightInterval
 )
 
 // preflightTimeout bounds one repo's preflight commands together.
@@ -40,7 +42,16 @@ func (w *Worker) checkHealth(ctx context.Context) map[string]string {
 	var out map[string]string
 	now := time.Now()
 	for _, ws := range w.cfg.Workspaces {
-		repo := w.cfg.Repos[ws]
+		// The server's config for the workspace cannot be used on this
+		// host (managed.go): none of its runs until that is fixed.
+		if why := w.configProblem(ws); why != "" {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[ws] = why
+			continue
+		}
+		repo := w.repo(ws)
 		if repo == nil || len(repo.Preflight) == 0 {
 			continue
 		}

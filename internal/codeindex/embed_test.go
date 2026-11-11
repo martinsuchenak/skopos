@@ -261,3 +261,140 @@ func (t4) Dup() {}
 		t.Fatalf("expected Best to outrank the duplicated symbol, got %+v", res.Hits)
 	}
 }
+
+// countingEmbedder counts what is sent to the embeddings endpoint.
+type countingEmbedder struct {
+	RandomEmbedder
+	calls atomic.Int64
+}
+
+func (c *countingEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	c.calls.Add(1)
+	return c.RandomEmbedder.Embed(ctx, texts)
+}
+
+// A workspace's runner policy covers the embeddings endpoint: when it does
+// not allow it, nothing is sent — no symbols, no query — and the vectors
+// the workspace had are dropped; when the answer is not known yet, nothing
+// is sent and nothing is dropped; allowed again, it is embedded afresh.
+func TestEmbeddingsFollowThePolicyGate(t *testing.T) {
+	store := newTestStore(t)
+	buildInto(t, store, embedRepo(t), "main")
+	svc := NewService(store)
+	emb := &countingEmbedder{RandomEmbedder: RandomEmbedder{Dims: 32}}
+	ctx := context.Background()
+
+	allowed, known := true, true
+	svc.SetEmbeddingsGate(func(_ context.Context, ws string) (bool, bool) {
+		if ws != "ws" {
+			t.Errorf("gate asked about %q", ws)
+		}
+		return allowed, known
+	})
+	if n, err := svc.EmbedPending(ctx, "ws", emb); err != nil || n == 0 || !svc.Embedded(ctx, "ws") {
+		t.Fatalf("allowed: the workspace is embedded: %d %v", n, err)
+	}
+	if res, err := svc.SemanticSearch(ctx, "ws", "main", "auth", "", 10, emb); err != nil || !res.Semantic {
+		t.Fatalf("allowed: semantic search: %+v %v", res, err)
+	}
+
+	// Not known yet (the policy could not be read): nothing sent, nothing
+	// dropped.
+	known = false
+	before := emb.calls.Load()
+	if _, err := svc.EmbedPending(ctx, "ws", emb); err != ErrEmbeddingsHeld {
+		t.Fatalf("unknown: the pass is held: %v", err)
+	}
+	if res, err := svc.SemanticSearch(ctx, "ws", "main", "auth", "", 10, emb); err != nil || res.Semantic || len(res.Hits) == 0 {
+		t.Fatalf("unknown: the text search answers alone: %+v %v", res, err)
+	}
+	if emb.calls.Load() != before || !svc.Embedded(ctx, "ws") {
+		t.Fatal("unknown: nothing may be sent and nothing dropped")
+	}
+
+	// Refused: nothing sent, the vectors go, the status says why.
+	allowed, known = false, true
+	if _, err := svc.EmbedPending(ctx, "ws", emb); err != ErrEmbeddingsHeld {
+		t.Fatalf("refused: the pass is held: %v", err)
+	}
+	if svc.Embedded(ctx, "ws") {
+		t.Fatal("refused: the workspace's vectors must be dropped")
+	}
+	if res, err := svc.SemanticSearch(ctx, "ws", "main", "auth", "", 10, emb); err != nil || res.Semantic {
+		t.Fatalf("refused: no query goes to the endpoint: %+v %v", res, err)
+	}
+	if emb.calls.Load() != before {
+		t.Fatalf("refused: %d calls reached the embedder", emb.calls.Load()-before)
+	}
+	if note, _ := store.GetMeta("ws", "embedding_error"); !strings.Contains(note, "runner policy does not allow") {
+		t.Fatalf("the index status must say why it is not embedded: %q", note)
+	}
+	// The manager records neither success nor a failure for a held pass.
+	m := NewEmbeddingManager(svc, emb)
+	failed := false
+	m.SetErrorHandler(func(string, error) { failed = true })
+	m.Enqueue("ws")
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		m.mu.Lock()
+		busy := m.jobs["ws"]
+		m.mu.Unlock()
+		if !busy {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if failed || svc.Embedded(ctx, "ws") {
+		t.Fatal("a held pass is not a failure and embeds nothing")
+	}
+	if note, _ := store.GetMeta("ws", "embedding_error"); !strings.Contains(note, "runner policy") {
+		t.Fatalf("a held pass must not clear the note as if it had succeeded: %q", note)
+	}
+
+	// Allowed again: embedded from scratch.
+	allowed = true
+	if n, err := svc.EmbedPending(ctx, "ws", emb); err != nil || n == 0 || !svc.Embedded(ctx, "ws") {
+		t.Fatalf("allowed again: re-embedded: %d %v", n, err)
+	}
+}
+
+// A pass asked for while one is running is not lost: another runs after
+// it, so a policy change that arrives mid-pass is still applied.
+func TestEmbeddingManagerRunsAgainWhenAskedMidPass(t *testing.T) {
+	store := newTestStore(t)
+	buildInto(t, store, embedRepo(t), "main")
+	svc := NewService(store)
+	var allowed atomic.Bool
+	allowed.Store(true)
+	started, release := make(chan struct{}, 4), make(chan struct{})
+	first := true
+	svc.SetEmbeddingsGate(func(context.Context, string) (bool, bool) {
+		if first {
+			first = false
+			started <- struct{}{}
+			<-release // hold the first pass open
+		}
+		return allowed.Load(), true
+	})
+	m := NewEmbeddingManager(svc, &RandomEmbedder{Dims: 16})
+	m.Enqueue("ws")
+	<-started
+	// The policy changes while the first pass is in flight.
+	allowed.Store(false)
+	m.Enqueue("ws")
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		m.mu.Lock()
+		idle := !m.jobs["ws"] && !m.again["ws"]
+		m.mu.Unlock()
+		note, _ := store.GetMeta("ws", "embedding_error")
+		if idle && strings.Contains(note, "runner policy") && !svc.Embedded(context.Background(), "ws") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the second pass must apply the refusal: idle=%v note=%q embedded=%v", idle, note, svc.Embedded(context.Background(), "ws"))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}

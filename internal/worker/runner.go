@@ -68,6 +68,20 @@ type AgentRun struct {
 	Runner    string
 	Granted   bool
 	Sandboxed bool
+	// HostContained: the worker says its whole host is a container
+	// (worker.contained_by, or a wrapper that only declares it) — enough
+	// for the fail-closed rule, like a wrapper.
+	HostContained bool
+	// TempDir is where the runner creates its temporary config
+	// directories: the run's own directory ("" = the system's).
+	TempDir string
+	// StartErr: the run must not start — the stage wrapper could not be
+	// prepared (a placeholder without a value). The run fails with it.
+	StartErr string
+	// WrapBin: the agent CLI's resolved path, set when the wrapper binds
+	// {cli}: inside such a wrapper the shim directory on PATH is not there,
+	// the resolved binary is.
+	WrapBin string
 }
 
 // withPWD pins $PWD to the run's directory. The scrubbed environment
@@ -149,7 +163,11 @@ func agentCommand(r AgentRun, args []string) (string, []string) {
 	if len(r.Wrapper) == 0 {
 		return r.Bin, args
 	}
-	argv := append(append(append([]string{}, r.Wrapper[1:]...), r.Bin), args...)
+	bin := r.Bin
+	if r.WrapBin != "" {
+		bin = r.WrapBin
+	}
+	argv := append(append(append([]string{}, r.Wrapper[1:]...), bin), args...)
 	return r.Wrapper[0], argv
 }
 

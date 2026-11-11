@@ -74,6 +74,28 @@ func DecodeJSONLimit(w http.ResponseWriter, r *http.Request, v interface{}, limi
 	return nil
 }
 
+// DecodeJSONStrict is DecodeJSON that refuses a field the target does not
+// have. For bodies that replace something whole (a workspace's config, the
+// run configuration document): a misspelt field must not read as "left
+// out", which there means cleared.
+func DecodeJSONStrict(w http.ResponseWriter, r *http.Request, v interface{}) error {
+	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
+	if !strings.HasPrefix(contentType, "application/json") {
+		return fmt.Errorf("content type must be application/json, got %q", contentType)
+	}
+	defer func() { _ = r.Body.Close() }()
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		if strings.Contains(err.Error(), "request body too large") {
+			return fmt.Errorf("%w (%d bytes)", ErrBodyTooLarge, maxBodyBytes)
+		}
+		return err
+	}
+	return nil
+}
+
 // QueryAlias returns the first non-empty value among the named query
 // parameters, so a canonical name (e.g. workspace_id) can be accepted while an
 // older spelling stays as a working alias.

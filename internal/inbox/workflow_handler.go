@@ -148,6 +148,10 @@ func (h *Handler) SecondOpinion(w http.ResponseWriter, r *http.Request) {
 			rest.RespondError(w, http.StatusConflict, err.Error())
 			return
 		}
+		if errors.Is(err, ErrPolicyRefused) {
+			rest.RespondJSON(w, http.StatusForbidden, map[string]string{"error": err.Error(), "reason": "policy"})
+			return
+		}
 		h.respondTransition(w, nil, err)
 		return
 	}

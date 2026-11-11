@@ -129,9 +129,38 @@ func workerCmd() *cli.Command {
 			if problems := cfg.CheckRunners(ctx, ""); len(problems) > 0 {
 				return fmt.Errorf("agent runners not ready: %s", strings.Join(problems, "; "))
 			}
+			// What the worker tells the server about its runners decides
+			// which runs the policy lets it take: refuse a config whose
+			// facts would be untrue (a proxy in an account's env, accounts
+			// of one runner on different models or providers, a declared
+			// provider the endpoint contradicts).
+			if problems := cfg.FactProblems(); len(problems) > 0 {
+				return fmt.Errorf("runner facts: %s", strings.Join(problems, "; "))
+			}
+			for _, f := range cfg.RunnerFacts() {
+				log.Info("runner", "name", f.Name, "kind", f.Kind, "provider", f.Provider, "endpoint", f.Endpoint, "model", f.Model)
+			}
+			// What contains a run here (a policy rule may require it).
+			for ws, facts := range cfg.ExecutorFacts() {
+				log.Info("executors", "workspace", ws, "runs_in", worker.DescribeExecutors(facts))
+			}
+			for _, note := range cfg.ExecutorNotes() {
+				log.Warn(note)
+			}
+			// The worker's own key must not be able to change policy or
+			// configuration (the admin permission).
+			keyWarnings, err := worker.CheckWorkerKey(ctx, expandTilde(serverURL, home), key)
+			if err != nil {
+				return err
+			}
+			for _, warn := range keyWarnings {
+				log.Warn(warn)
+			}
 			// Agent runs reach skopos (the code index, the blackboard, their
-			// plan) with the agent key — refused unless it is MCP-only, so an
-			// agent never holds the REST API the worker key can use.
+			// plan) with their run's own token, which the server mints at
+			// the claim. The agent key is the fallback for a server from
+			// before run tokens — refused unless it is MCP-only, so an agent
+			// never holds the REST API the worker key can use.
 			if agentKey := resolveWorkerSetting(cmd.GetString("agent-key"), "SKOPOS_AGENT_KEY", ""); agentKey != "" {
 				base := expandTilde(serverURL, home)
 				if err := worker.CheckAgentKey(ctx, base, agentKey); err != nil {
@@ -149,9 +178,9 @@ func workerCmd() *cli.Command {
 					}
 				}
 				w.EnableAgentMCP(path, refresh)
-				log.Info("agent runs get the skopos MCP tools", "mcp_config", path)
+				log.Info("agent runs get the skopos MCP tools (their run token, or this agent key on a server that issues none)", "mcp_config", path)
 			} else {
-				log.Warn("no agent key: agent runs get no skopos tools (code index, blackboard, plan steps) — set SKOPOS_AGENT_KEY to a key from: skopos key create --preset agent")
+				log.Info("no agent key: agent runs get the skopos tools from their run token (a server before run tokens gives them none)")
 			}
 			runCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()

@@ -75,10 +75,20 @@ func (s *Service) Record(ctx context.Context, input RecordInput) error {
 // reserved for internal callers and system for the server itself.
 func validVia(v string) bool {
 	switch v {
-	case ViaDashboard, ViaSlack, ViaCLI, ViaMCP, ViaAPI, ViaWorker, ViaSystem, "":
+	case ViaDashboard, ViaSlack, ViaCLI, ViaMCP, ViaAPI, ViaWorker, ViaSystem, ViaApply, ViaImport, "":
 		return true
 	}
 	return false
+}
+
+// CleanVia returns a surface label a caller named when it is one the audit
+// log knows, else "api": what other records of a change (a revision's
+// metadata) keep.
+func CleanVia(via string) string {
+	if via = strings.TrimSpace(via); via != "" && via != ViaMigration && validVia(via) {
+		return via
+	}
+	return ViaAPI
 }
 
 // sanitizeVia validates and rights the label: unknown labels drop to empty

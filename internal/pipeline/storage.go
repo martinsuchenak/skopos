@@ -8,6 +8,8 @@ import (
 	"path"
 	"time"
 
+	"github.com/martinsuchenak/skopos/internal/dbtime"
+	"github.com/martinsuchenak/skopos/internal/policy"
 	"github.com/martinsuchenak/skopos/internal/runs"
 )
 
@@ -353,6 +355,98 @@ func (s *Storage) RunnersServing(ctx context.Context, ws string) (map[string]boo
 		}
 	}
 	return out, rows.Err()
+}
+
+// AllWorkspaces lists every registered workspace id.
+func (s *Storage) AllWorkspaces(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM workspaces ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// workerRecent: a worker not seen for this long says nothing about what
+// could run today (the run queue's stranded sweep uses the same window).
+const workerRecent = 24 * time.Hour
+
+// workerFacts is what one worker reports for a workspace: its runner facts
+// (empty for a worker that sends none) and what contains its runs there.
+type workerFacts struct {
+	runners   []policy.Facts
+	executors []policy.ExecutorFact
+}
+
+// at is the worker's runner facts as a run of stage would see them: each
+// with the executor the worker reports for that stage and runner.
+func (w workerFacts) at(stage string) []policy.Facts {
+	out := make([]policy.Facts, len(w.runners))
+	for i, f := range w.runners {
+		f.Executor = policy.ResolveExecutor(w.executors, stage, f.Name)
+		out[i] = f
+	}
+	return out
+}
+
+// WorkerFacts lists, per recently seen worker serving a workspace, what it
+// reports.
+func (s *Storage) WorkerFacts(ctx context.Context, ws string, now time.Time) ([]workerFacts, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT workspaces, COALESCE(runner_info, ''), COALESCE(executor_info, '') FROM workers WHERE last_seen >= ?`,
+		dbtime.Format(now.Add(-workerRecent)))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []workerFacts
+	for rows.Next() {
+		var rawWorkspaces, rawFacts, rawExecutors string
+		if err := rows.Scan(&rawWorkspaces, &rawFacts, &rawExecutors); err != nil {
+			return nil, err
+		}
+		var workspaces []string
+		_ = json.Unmarshal([]byte(rawWorkspaces), &workspaces)
+		serves := false
+		for _, w := range workspaces {
+			if w == ws {
+				serves = true
+				break
+			}
+		}
+		if !serves {
+			continue
+		}
+		var facts []policy.Facts
+		if rawFacts != "" {
+			_ = json.Unmarshal([]byte(rawFacts), &facts)
+		}
+		var executors map[string][]policy.ExecutorFact
+		if rawExecutors != "" {
+			_ = json.Unmarshal([]byte(rawExecutors), &executors)
+		}
+		out = append(out, workerFacts{runners: facts, executors: executors[ws]})
+	}
+	return out, rows.Err()
+}
+
+// byRunner indexes per-worker facts by runner name, as a run of stage
+// would see them.
+func byRunner(workers []workerFacts, stage string) map[string][]policy.Facts {
+	out := map[string][]policy.Facts{}
+	for _, w := range workers {
+		for _, f := range w.at(stage) {
+			out[f.Name] = append(out[f.Name], f)
+		}
+	}
+	return out
 }
 
 // Indexable lists the workers that can index a workspace now — the run

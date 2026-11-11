@@ -56,6 +56,15 @@ type codexRunner struct {
 func (codexRunner) Verified() bool       { return true }
 func (codexRunner) HonorsSettings() bool { return false }
 
+// SandboxLockdown: codex's verified lockdown is itself a sandbox (a
+// read-only permission profile confined to the worktree, no network from
+// the shell), so a codex run's executor is runner:codex — where that
+// lockdown has been verified live (TestCodexLockdownProbe: macOS).
+func (codexRunner) SandboxLockdown() bool { return codexSandboxVerified }
+
+// codexSandboxVerified: the OS the codex lockdown is live-verified on.
+var codexSandboxVerified = runtime.GOOS == "darwin"
+
 // ReadOnly: the runner refuses stages that edit (runner list says so).
 func (codexRunner) ReadOnly() bool { return true }
 
@@ -167,7 +176,7 @@ func (c codexRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 	if p := codexHomeProblem(r.Env); p != "" && !c.skipHomeCheck {
 		return AgentResult{Outcome: OutcomeError, Detail: p}
 	}
-	tmp, err := os.MkdirTemp("", "skopos-codex-")
+	tmp, err := os.MkdirTemp(r.TempDir, "skopos-codex-")
 	if err != nil {
 		return AgentResult{Outcome: OutcomeError, Detail: err.Error()}
 	}

@@ -78,7 +78,11 @@ their own clones and credentials. See
 ### 5. Semantic search (optional)
 
 Enable an OpenAI-compatible embeddings endpoint (local Ollama keeps
-everything on-host) and push again — vectors build in the background:
+everything on-host) and push again — vectors build in the background.
+The endpoint receives each symbol's name, signature, doc summary and
+attributes, and every semantic query; a workspace's
+[runner policy](runner-policy.md#embeddings) decides whether it may be
+embedded there at all:
 
 ```sh
 skopos serve --embeddings-url http://localhost:11434/v1              --embeddings-model nomic-embed-text

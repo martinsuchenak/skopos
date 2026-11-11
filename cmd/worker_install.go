@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/martinsuchenak/skopos/internal/worker"
@@ -300,6 +301,17 @@ func placeholderish(v string) bool {
 	return strings.ContainsAny(v, "<>") || strings.Contains(v, "...") || strings.Contains(v, "example.com")
 }
 
+// checkWorkerKey asks the server about the worker's key (swapped in tests,
+// which must not reach the network).
+var checkWorkerKey = worker.CheckWorkerKey
+
+// checkServerConfig asks the server for the runner definitions and the
+// workspaces' config and checks the result against this worker's file
+// (swapped in tests, which must not reach the network).
+var checkServerConfig = func(ctx context.Context, cfg *worker.Config, serverURL, key string) (problems, notes []string) {
+	return worker.CheckServerConfig(ctx, cfg, worker.NewClient(serverURL, key))
+}
+
 // runWorkerChecks validates that the config can actually run: the key
 // resolves (after the env file), repo paths are git clones, no placeholders
 // remain, an account exists, and the agent CLI is on PATH. It mirrors the
@@ -312,10 +324,13 @@ func runWorkerChecks(configPath, envFile, pathEnv, home string) ([]string, error
 	ambientKey := os.Getenv("SKOPOS_API_KEY") != ""
 	restore := isolateEnv(map[string]string{"PATH": pathEnv, "HOME": home})
 	defer restore()
+	var fileKeys []string
 	if envFile != "" {
-		if _, _, err := loadWorkerEnvFile(envFile); err != nil {
+		keys, _, err := loadWorkerEnvFile(envFile)
+		if err != nil {
 			return nil, err
 		}
+		fileKeys = keys
 	}
 	var file struct {
 		Client struct {
@@ -346,6 +361,18 @@ func runWorkerChecks(configPath, envFile, pathEnv, home string) ([]string, error
 		problems = append(problems, "server URL looks like a placeholder: "+serverURL)
 	}
 
+	// What the server says about the key, when it can be asked: the
+	// service refuses to start with a key that holds the admin permission,
+	// so the check must not pass one. A server that is down or unreachable
+	// is not this check's finding.
+	if key != "" && !placeholderish(key) && !placeholderish(serverURL) {
+		kctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if _, err := checkWorkerKey(kctx, expandTilde(serverURL, home), key); err != nil {
+			problems = append(problems, err.Error())
+		}
+		cancel()
+	}
+
 	ws := file.Worker
 	if ws == nil {
 		return append(problems, "no [worker] section — run 'skopos worker init'"), nil
@@ -353,10 +380,26 @@ func runWorkerChecks(configPath, envFile, pathEnv, home string) ([]string, error
 	if err := ws.Default(home); err != nil {
 		problems = append(problems, err.Error())
 	}
-	if len(ws.Accounts) == 0 {
+	if len(ws.FileAccounts()) == 0 {
 		problems = append(problems, "no [[worker.accounts]] configured — every run would fail for lack of a credential")
 	}
-	for _, a := range ws.Accounts {
+	// The service refuses to start on these (cmd/worker.go). Env-file
+	// values never reach an agent, so they don't shape the facts.
+	ws.SetEnvFileKeys(fileKeys)
+	// What the server holds for this worker: its runner definitions decide
+	// what the accounts feed, and a managed workspace's config replaces the
+	// file's shared fields. The merged result is what the rest checks.
+	if key != "" && !placeholderish(key) && !placeholderish(serverURL) {
+		sctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		serverProblems, notes := checkServerConfig(sctx, ws, expandTilde(serverURL, home), key)
+		cancel()
+		problems = append(problems, serverProblems...)
+		for _, n := range notes {
+			fmt.Println("note: " + n)
+		}
+	}
+	problems = append(problems, ws.FactProblems()...)
+	for _, a := range ws.FileAccounts() {
 		for k, v := range a.Env {
 			if placeholderish(v) {
 				problems = append(problems, fmt.Sprintf("account %s: env %s looks like a placeholder", a.Name, k))
@@ -394,9 +437,10 @@ func runWorkerChecks(configPath, envFile, pathEnv, home string) ([]string, error
 			problems = append(problems, err.Error())
 		} else if err := ws.CheckRunner(context.Background(), name, r, pathEnv); err != nil {
 			problems = append(problems, fmt.Sprintf("runner %s: %v", name, err))
-		} else if !r.Verified() {
+		} else if !r.Verified() && strings.TrimSpace(ws.ContainedBy) == "" {
 			// Unverified (kind command or antigravity): skopos refuses to run
-			// it outside a wrapper, so every stage it may execute needs one.
+			// it outside a wrapper, so every stage it may execute needs one —
+			// unless the worker's whole host is a container (contained_by).
 			var bare []string
 			for id := range ws.Repos {
 				for _, stage := range []string{"plan", "implement", "review"} {
@@ -407,7 +451,7 @@ func runWorkerChecks(configPath, envFile, pathEnv, home string) ([]string, error
 			}
 			if len(bare) > 0 {
 				sort.Strings(bare)
-				problems = append(problems, fmt.Sprintf("runner %s is unverified and only runs inside a wrapper — these stages have none: %s", name, strings.Join(bare, ", ")))
+				problems = append(problems, fmt.Sprintf("runner %s is unverified and only runs inside a wrapper, or on a worker whose host is a container (worker.contained_by) — these stages have no wrapper: %s", name, strings.Join(bare, ", ")))
 			}
 		}
 	}

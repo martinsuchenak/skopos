@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/martinsuchenak/skopos/internal/policy"
 	"github.com/martinsuchenak/skopos/internal/worker"
 	"github.com/mattn/go-isatty"
 	"github.com/paularlott/cli"
@@ -185,6 +186,10 @@ func printRunnerList(ctx context.Context, out io.Writer, cfg *worker.Config) {
 		sorted = append(sorted, n)
 	}
 	sort.Strings(sorted)
+	facts := map[string]policy.Facts{}
+	for _, f := range cfg.RunnerFacts() {
+		facts[f.Name] = f
+	}
 	for _, name := range sorted {
 		r, err := cfg.RunnerFor(name)
 		if err != nil {
@@ -199,6 +204,9 @@ func printRunnerList(ctx context.Context, out io.Writer, cfg *worker.Config) {
 		lock := "verified lockdown"
 		if !r.Verified() {
 			lock = "UNVERIFIED — runs only on wrapped stages"
+			if strings.TrimSpace(cfg.ContainedBy) != "" {
+				lock = "UNVERIFIED — runs because the host is a container (contained_by = " + cfg.ContainedBy + ")"
+			}
 		} else if ro, ok := r.(interface{ ReadOnly() bool }); ok && ro.ReadOnly() {
 			lock += " — read-only stages only (plan, review, compare, second opinion)"
 		}
@@ -207,6 +215,38 @@ func printRunnerList(ctx context.Context, out io.Writer, cfg *worker.Config) {
 			offer = "NOT offered (not in worker.runners)"
 		}
 		pf("%s\n  cli:      %s (%s)\n  lockdown: %s\n  claims:   %s\n", name, bin, installed, lock, offer)
+		// What the worker tells the server about the runner: a workspace's
+		// runner policy is matched on the provider.
+		if f, ok := facts[name]; ok {
+			sends := "provider " + f.Provider
+			if f.Endpoint != "" {
+				sends += " (" + f.Endpoint + ")"
+			}
+			if strings.HasPrefix(f.Provider, "unknown:") {
+				sends += " — a policy that names providers will not allow it; declare one: [worker.runner_config." + name + "] provider = \"…\""
+			}
+			pf("  sends to: %s\n", sends)
+		}
+		// What contains a run of this runner, per workspace and stage (a
+		// policy rule may require `isolated` or `contained`).
+		for _, ws := range cfg.Workspaces {
+			var stages []string
+			same, first := true, ""
+			for i, stage := range []string{"plan", "implement", "review", "qa"} {
+				e := cfg.ExecutorFor(ws, stage, name)
+				if i == 0 {
+					first = e
+				} else if e != first {
+					same = false
+				}
+				stages = append(stages, stage+"="+e)
+			}
+			in := strings.Join(stages, " ")
+			if same {
+				in = first
+			}
+			pf("  runs in:  %s: %s\n", ws, in)
+		}
 		any := false
 		for _, a := range cfg.Accounts {
 			ar := a.Runner
@@ -227,8 +267,23 @@ func printRunnerList(ctx context.Context, out io.Writer, cfg *worker.Config) {
 			pf("  account:  none — nothing can run on this runner\n")
 		}
 	}
+	// Accounts that name a kind feed the runners the server defines.
+	for _, a := range cfg.FileAccounts() {
+		if a.Kind == "" {
+			continue
+		}
+		models := ""
+		if len(a.Models) > 0 {
+			models = "  models=" + strings.Join(a.Models, ",")
+		}
+		pf("\naccount %s  kind=%s%s  priority=%d%s\n  feeds every runner of that kind the server defines (skopos runner list; `skopos worker check` shows which)\n",
+			a.Name, a.Kind, models, a.Priority, envSummary(a.Env))
+	}
 	for _, w := range cfg.AccountWarnings() {
 		pf("\nwarning: %s\n", w)
+	}
+	for _, n := range cfg.ExecutorNotes() {
+		pf("\nnote: %s\n", n)
 	}
 	pf("\nPin a stage to a runner on the server: skopos workspace pipeline set --workspace <ws> --stage <stage> --runners <runner>\n(or the dashboard: Workspaces → Pipeline)\n")
 }

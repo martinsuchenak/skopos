@@ -11,12 +11,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/martinsuchenak/skopos/cmd/mcp"
 	"github.com/martinsuchenak/skopos/internal/apikeys"
 	"github.com/martinsuchenak/skopos/internal/approvals"
 	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
+	"github.com/martinsuchenak/skopos/internal/codeindex"
+	"github.com/martinsuchenak/skopos/internal/confrev"
 	"github.com/martinsuchenak/skopos/internal/db"
+	"github.com/martinsuchenak/skopos/internal/fleetfile"
 	"github.com/martinsuchenak/skopos/internal/idempotency"
 	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/integrations"
@@ -27,6 +31,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/runs"
 	"github.com/martinsuchenak/skopos/internal/status"
 	"github.com/martinsuchenak/skopos/internal/workspaces"
+	"github.com/martinsuchenak/skopos/internal/wsconfig"
 	logslog "github.com/paularlott/logger/slog"
 	_ "modernc.org/sqlite"
 )
@@ -230,6 +235,7 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	rest.SetLogger(log)
 
 	authn := auth.NewAuthenticator("root-secret", apikeys.NewStorage(sqlDB))
+	authn.SetRunLookup(runs.NewStorage(sqlDB)) // run tokens, as serve.go wires them
 	auditService := audit.NewService(audit.NewStorage(sqlDB))
 	approvalsService := approvals.NewService(approvals.NewStorage(sqlDB))
 	plansService := plans.NewService(plans.NewStorage(sqlDB))
@@ -268,12 +274,22 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	})
 	// Pipeline settings, as serve.go wires them (a test's configure may
 	// still pin routing with SetPrefs, which replaces this source).
-	pipelineService := pipeline.NewService(pipeline.NewStorage(sqlDB))
+	pipelineStorage := pipeline.NewStorage(sqlDB)
+	pipelineService := pipeline.NewService(pipelineStorage)
 	pipelineService.SetAuditSink(auditService)
+	revisions := confrev.NewStore(sqlDB)
+	pipelineService.SetRevisions(revisions)
+	// Workspace config and runner definitions, as serve.go wires them.
+	configService := wsconfig.NewService(sqlDB, revisions, pipelineStorage)
+	configService.SetAuditSink(auditService)
+	runsService.SetConfigSource(configService.Rev, configService.Digest)
+	runsService.SetFleetRev(configService.FleetRev)
+	pipelineService.SetRunnerDefs(configService.RunnerFacts)
 	runsService.SetPrefsSource(func(ctx context.Context, ws string) *runs.WorkspacePrefs {
 		return pipelineService.Prefs(ctx, ws)
 	})
 	inboxService.SetSecondOpinionDefault(pipelineService.SecondOpinionRunner)
+	inboxService.SetRunnerPolicy(pipelineService.RunnerAllowed)
 	inboxService.SetRunLister(testRunLister{runsService})
 	emitter := integrations.NewEmitter()
 	inboxService.SetEventEmitter(emitter)
@@ -296,9 +312,21 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	apiMux := http.NewServeMux()
 	RegisterRoutes(webMux, apiMux, st, bb, pl, ib, ws, nil, ak, rh)
 	RegisterPipelineRoutes(apiMux, pipeline.NewHandler(pipelineService, authn))
+	fleetService := fleetfile.NewService(apikeys.NewService(apikeys.NewStorage(sqlDB)), workspaces.NewService(workspaces.NewStorage(sqlDB)), pipelineService, configService)
+	fleetService.SetAuditSink(auditService)
+	RegisterConfigRoutes(apiMux, wsconfig.NewHandler(configService, authn), fleetfile.NewHandler(fleetService, authn))
 	MountIntegrations(apiMux, integrations.NewHandler(integrationsService))
 	root := http.NewServeMux()
 	root.Handle("/api/", authn.Middleware(idempotency.New(sqlDB).Middleware("/api/inbox")(apiMux)))
+	// The MCP endpoint behind the same authentication, as serve.go mounts it.
+	indexStore, err := codeindex.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(indexStore.Close)
+	root.Handle("/mcp", authn.Middleware(mcp.NewMCPHandler(
+		status.NewService(status.NewStorage(sqlDB)), blackboard.NewService(blackboard.NewStorage(sqlDB)),
+		plansService, inboxService, codeindex.NewService(indexStore), workspaces.NewService(workspaces.NewStorage(sqlDB)))))
 	root.Handle("/", webMux)
 	ts := httptest.NewServer(root)
 	t.Cleanup(ts.Close)

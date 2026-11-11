@@ -26,10 +26,13 @@ type Service struct {
 	// secondOpinionDefault resolves a workspace's default second-opinion
 	// runner (pipeline settings); nil = a runner must always be named.
 	secondOpinionDefault func(ctx context.Context, workspaceID string) string
-	runLister            RunLister
-	itemNotifier         ItemNotifier
-	events               *integrations.Emitter
-	questions            QuestionLog
+	// runnerPolicy answers whether the workspace's policy allows a runner
+	// for a stage (second_opinion.go); nil = no policy is consulted.
+	runnerPolicy RunnerPolicy
+	runLister    RunLister
+	itemNotifier ItemNotifier
+	events       *integrations.Emitter
+	questions    QuestionLog
 }
 
 func NewService(store Store) *Service {

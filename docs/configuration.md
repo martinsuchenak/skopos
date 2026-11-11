@@ -37,6 +37,7 @@ Optional — if absent, skopos runs on defaults. The file is gitignored (may con
 | `--refresh-interval` | `SKOPOS_REFRESH_INTERVAL` | `codeindex.refresh_interval` | `0` (off) | Poll registered `git_url` workspaces for server-side refresh (e.g. `30m`, `1h`); CI can also POST the refresh endpoint on merge |
 | `--embeddings-url` | `SKOPOS_EMBEDDINGS_URL` | `codeindex.embeddings.url` | (empty = disabled) | OpenAI-compatible `/v1/embeddings` endpoint for semantic code search (local Ollama works) |
 | `--embeddings-model` | `SKOPOS_EMBEDDINGS_MODEL` | `codeindex.embeddings.model` | (empty) | Embedding model name (required with `--embeddings-url`) |
+| `--embeddings-provider` | `SKOPOS_EMBEDDINGS_PROVIDER` | `codeindex.embeddings.provider` | (derived from the URL) | Who runs the embeddings endpoint, for [runner policies](concepts/runner-policy.md#embeddings). A loopback URL is `local`; declare `local` for a model on another machine on your network |
 | `--embeddings-api-key` | `SKOPOS_EMBEDDINGS_API_KEY` | `codeindex.embeddings.api_key` | (empty) | API key for the embeddings endpoint (not needed locally) |
 | `--vector-store` | `SKOPOS_VECTOR_STORE` | `codeindex.embeddings.vector_store` | `sqlite` | Vector backend: `sqlite` (embedded brute force) or `qdrant` (external, monorepo scale) |
 | `--qdrant-url` | `SKOPOS_QDRANT_URL` | `codeindex.embeddings.qdrant_url` | (empty) | Qdrant REST address when `--vector-store=qdrant` (e.g. `http://localhost:6333`) |
@@ -70,22 +71,46 @@ walkthrough.
 | `worker.runners` | — | every runner the accounts use | Runners claims offer (only those with a usable account are offered at any moment) |
 | `worker.workspaces` | `--workspace` | (from repos) | Workspace IDs this worker serves |
 | `worker.poll_every` | — | `30s` | Idle claim interval |
+| `worker.server_commands` | — | `false` | Take a workspace's `setup`, `checks` and `preflight` commands from the server once the server holds its config. Off, those three stay this file's; the workspace's other shared fields still come from the server. `skopos worker init` sets it for a new worker — see [Workspace config on the server](concepts/workspace-config.md#commands-from-the-server) |
+| `worker.contained_by` | — | — | Names the container the worker's whole host is (a Knot space, a VM, a Docker container). Runs then record the executor `host:<name>` unless a wrapper or a sandbox goes around the run, and stage profiles may grant capabilities without a wrapper — see [A worker inside a container](deployment/worker.md#a-worker-inside-a-container) |
 | `worker.auto_upgrade` | — | `true` | An idle worker behind the server's release downloads it, verifies its checksum, replaces its own binary and exits with code 75 for its service manager to restart it — see [Self-healing](deployment/worker.md#self-healing) |
 | `worker.upgrade_url` | — | GitHub releases | Where releases come from: `<url>/v<version>/skopos_<os>_<arch>` and `checksums.txt` |
-| `worker.repos."<workspace-id>"` | — | — | Per-workspace local clone: `path`, `default_branch`, `branch_prefix`, `branch_template` (default `{prefix}{tail}-{slug}`; placeholders `{prefix}`, `{tail}`, `{slug}`, `{ref}`; needs `{tail}` or `{ref}` — see [Branch names and existing branches](deployment/worker.md#branch-names-and-existing-branches)), `setup`, `setup_env`, `setup_timeout` (all setup commands together, default `10m`, at most `2h` — see [Setup](deployment/worker.md#setup)), `check_timeout` (all checks together, default `30m`, at most `2h`), `quiet_timeout` (stops one setup or check command that prints nothing for that long; off by default, at most `2h`), `preflight` / `preflight_interval` (commands that say whether this worker can take the repo's work now, run every `5m` by default; failing keeps the workspace out of its claims — see [Self-healing](deployment/worker.md#self-healing)), `checkout` (`worktree`, the default: a worktree per item; `branch`: the clone itself, switched to the item's branch for the run — see [Branch checkout](deployment/worker.md#branch-checkout)), `checks` (run after every implementation; a failure goes back to the implementer up to `check_fix_rounds` times, default 2, then blocks the item — see [Checks](guides/pipeline.md)), `check_fix_rounds`, `protected_branches`, `profile`, `stages.<stage>`, and `push.{kind,remote_url,token_env,pull_request,steps}` (`kind` is `github`, `gitea` or `none`; with no push block the worker never pushes, and a block without `kind` is refused at startup; `pull_request` = `draft`, `ready` or `none` opens a pull request after the push — see [Pushing and pull requests](deployment/worker.md#pushing-and-pull-requests); `steps = false` stops pushing the implementer's commits as it makes them) |
-| `worker.accounts` | — | — | Credential pool: `name`, `runner` (`claude`, `opencode`, `codex`, or a `runner_config` name such as an `antigravity` one), `priority`, `model`, `effort` (reasoning effort, checked against the runner's CLI: claude/antigravity `low`…`max`, codex `minimal`…`xhigh`, opencode a model variant, command `{effort}`), `env` (injected into agent runs only) |
+| `worker.repos."<workspace-id>"` | — | — | Per-workspace local clone: `path`, `default_branch`, `branch_prefix`, `branch_template` (default `{prefix}{tail}-{slug}`; placeholders `{prefix}`, `{tail}`, `{slug}`, `{ref}`; needs `{tail}` or `{ref}` — see [Branch names and existing branches](deployment/worker.md#branch-names-and-existing-branches)), `setup`, `setup_env`, `setup_timeout` (all setup commands together, default `10m`, at most `2h` — see [Setup](deployment/worker.md#setup)), `check_timeout` (all checks together, default `30m`, at most `2h`), `quiet_timeout` (stops one setup or check command that prints nothing for that long; off by default, at most `2h`), `preflight` / `preflight_interval` (commands that say whether this worker can take the repo's work now, run every `5m` by default; failing keeps the workspace out of its claims — see [Self-healing](deployment/worker.md#self-healing)), `checkout` (`worktree`, the default: a worktree per item; `branch`: the clone itself, switched to the item's branch for the run — see [Branch checkout](deployment/worker.md#branch-checkout)), `checks` (run after every implementation; a failure goes back to the implementer up to `check_fix_rounds` times, default 2, then blocks the item — see [Checks](guides/pipeline.md)), `check_fix_rounds`, `protected_branches`, `profile`, `stages.<stage>`, and `push.{kind,remote_url,token_env,pull_request,steps}` (`kind` is `github`, `gitea` or `none`; with no push block the worker never pushes, and a block with `remote_url` and no `kind` is refused at startup; a block with only `token_env` is for a workspace whose push settings the server holds, and keeps the workspace out of the worker's claims while the server does not; `pull_request` = `draft`, `ready` or `none` opens a pull request after the push — see [Pushing and pull requests](deployment/worker.md#pushing-and-pull-requests); `steps = false` stops pushing the implementer's commits as it makes them) |
+| `worker.accounts` | — | — | Credential pool: `name`, `runner` (`claude`, `opencode`, `codex`, or a `runner_config` name such as an `antigravity` one), `priority`, `model`, `effort` (reasoning effort, checked against the runner's CLI: claude/antigravity `low`…`max`, codex `minimal`…`xhigh`, opencode a model variant, command `{effort}`), `env` (injected into agent runs only), `login_dir` (where the account's CLI keeps its login, for a stage wrapper's `{login}`; default: the directory its kind uses). Or, in place of `runner`, `model` and `effort`: `kind` (`claude`, `opencode`, `codex`, `antigravity`) makes the account a login that feeds every runner of that kind the server defines, and `models` (patterns such as `zai-coding-plan/*`) narrows which — see [Runner definitions](concepts/workspace-config.md#runner-definitions) |
 | `worker.runner_config.<name>` | — | — | Agent CLI per runner name: `kind` (`claude` / `opencode` / `codex` / `antigravity` / `command`; codex takes read-only stages only; antigravity and command are unverified, wrapper-only), `bin`, `config` (opencode base config: providers/models), `command` (argv template for any other CLI: `{prompt}` `{dir}` `{model}` `{effort}` — unverified, wrapper-only) |
 | `worker.claude_bin` | — | `claude` | Claude Code binary (or `runner_config.claude.bin`) — must support `--setting-sources`, `--restricted`, `--strict-mcp-config` (checked at start) |
 | `worker.plan_timeout` / `worker.impl_timeout` | — | `10m` / `90m` | Agent run timeouts (review/qa use the plan timeout) |
 | `worker.mcp_config` | — | — | JSON file with the MCP servers pipeline runs get (Claude Code `mcpServers` shape); required when `mcp_servers` is set |
 | `worker.mcp_servers` | — | — | MCP tool prefixes allowed in plan/implement runs, e.g. `["mcp__skopos"]` |
 | `worker.mcp_deny` | — | Fortix production-write tools | MCP tools denied in every run (added to the built-in git/network denials) |
-| `worker.profiles.<name>.<stage>` | — | — | Operator-supplied stage executor (`plan`/`implement`/`review`/`qa`): `wrapper`, `settings`, `tools`, `env` — see [deployment/worker.md](deployment/worker.md#containing-agent-runs) |
+| `worker.profiles.<name>.<stage>` | — | — | Operator-supplied stage executor (`plan`/`implement`/`review`/`qa`): `wrapper` (placeholders `{dir}` `{gitdir}` `{login}` `{rundir}` `{cli}` `{run}` `{stage}` `{workspace}`), `settings`, `tools`, `env` — see [deployment/worker.md](deployment/worker.md#containing-agent-runs) |
 | — | `--env-file` / `SKOPOS_WORKER_ENV` | `<config-dir>/skopos-worker.env` when present | `KEY=VALUE` secrets loaded before the config (real environment wins) |
 
 Manage runners and accounts with `skopos worker runner add | list | test`
 instead of editing these by hand — see
 [deployment/worker.md](deployment/worker.md#adding-runners-the-wizard).
+
+### Workspace config on the server
+
+A workspace's shared settings — branches, `setup`, `checks`, `preflight`,
+timeouts, push settings, `mcp_deny`, `mcp_servers` — can be held on the
+server instead of in each worker's file, as revisions:
+`skopos workspace config show|set|clear|import`, `skopos group config …`,
+or over REST. Runner definitions (`skopos runner list|set|delete`) give a
+runner name one model, effort and provider on every worker. The whole run
+configuration exports as one file and applies back:
+`skopos config export`, `skopos config apply [--plan]`. Changing any of it
+needs the admin permission. A workspace with a config on the server ignores
+the same fields in a worker's file. See
+[Workspace config on the server](concepts/workspace-config.md).
+
+### Runner policy
+
+Which runners may work on a workspace — by provider, model, agent CLI and
+stage — is stored in the database as revisions and edited without a
+restart: `skopos policy show|set|clear` with `--workspace`, `--group` or
+`--fleet ceiling|default`, or over REST. Changing one needs the admin
+permission at that level. See [Runner policy](concepts/runner-policy.md).
 
 ### Pipeline settings (agent pipeline)
 

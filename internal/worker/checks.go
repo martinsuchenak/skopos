@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/martinsuchenak/skopos/internal/wsconfig"
 )
 
 const (
 	// defaultCheckFixRounds: a failing check goes back to the implementer
 	// this often before the item blocks.
 	defaultCheckFixRounds = 2
-	maxCheckFixRounds     = 5
+	maxCheckFixRounds     = wsconfig.MaxCheckFixRounds
 	// committedCheck names the check that the tested tree is the pushed
 	// one: checks run on the worktree, the push sends commits only.
 	committedCheck = "committed"
@@ -19,14 +21,14 @@ const (
 	// setup_timeout says otherwise (a big project's dependency installs,
 	// asset build and DB updates can need more).
 	defaultSetupTimeout = 10 * time.Minute
-	maxSetupTimeout     = 2 * time.Hour
+	maxSetupTimeout     = wsconfig.MaxSetupTimeout
 	// defaultCheckTimeout bounds a repo's checks together unless
 	// check_timeout says otherwise.
 	defaultCheckTimeout = 30 * time.Minute
-	maxCheckTimeout     = 2 * time.Hour
+	maxCheckTimeout     = wsconfig.MaxCheckTimeout
 	// maxQuietTimeout bounds quiet_timeout (off unless set: a legitimately
 	// silent migration or test run must not be stopped by a default).
-	maxQuietTimeout = 2 * time.Hour
+	maxQuietTimeout = wsconfig.MaxQuietTimeout
 	// The phases a running implement run reports past its first turn (the
 	// server's runs.PhaseChecks / PhaseFixing): the dashboard's Checks step
 	// shows them running.

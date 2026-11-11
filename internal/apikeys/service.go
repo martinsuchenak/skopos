@@ -26,6 +26,7 @@ type Service struct {
 	now      func() time.Time
 	onRevoke func(keyID string)
 	onScope  func(keyIDs []string)
+	audit    AuditRecorder
 }
 
 func NewService(storage *Storage) *Service {
@@ -68,6 +69,7 @@ type CreateInput struct {
 	AllWorkspaces bool
 	Approver      bool // may perform human-only workflow actions (agent-pipeline §2); root-only to grant
 	Delegate      bool // may name the person it acts for (X-Skopos-On-Behalf-Of)
+	Admin         bool // may change policy and configuration within its scope (auth.RequireAdmin*)
 	// Capabilities limit the key (internal/auth capabilities.go); Preset
 	// names a set in auth.Presets, joined with Capabilities. Neither = full
 	// access.
@@ -210,6 +212,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (*CreateResult,
 		AllWorkspaces: input.AllWorkspaces,
 		Approver:      input.Approver,
 		Delegate:      input.Delegate,
+		Admin:         input.Admin,
 		Capabilities:  capabilities,
 		Workspaces:    workspaces,
 		Groups:        groupNames,
@@ -218,6 +221,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (*CreateResult,
 	if err := s.storage.Write(ctx, key, auth.HashKey(secret), groupIDs); err != nil {
 		return nil, err
 	}
+	s.record(ctx, "key.create", key, describeKey(key))
 	return &CreateResult{Key: key, Secret: secret}, nil
 }
 
@@ -241,9 +245,15 @@ func (s *Service) Revoke(ctx context.Context, id string) error {
 	if id == "" {
 		return fmt.Errorf("%w: id is required", ErrInvalidInput)
 	}
+	// What the key was, for the record (best-effort: a missing row is the
+	// storage call's error to report).
+	existing, _ := s.storage.Get(ctx, id)
 	revoked, err := s.storage.Revoke(ctx, id)
 	if err != nil {
 		return err
+	}
+	if revoked {
+		s.record(ctx, "key.revoke", Key{ID: id}, describeKey(existing))
 	}
 	if revoked && s.onRevoke != nil {
 		s.onRevoke(id)
@@ -259,6 +269,7 @@ type UpdateInput struct {
 	Groups     []string // nil = unchanged; names or ids, [] clears
 	Approver   *bool    // nil = unchanged
 	Delegate   *bool    // nil = unchanged
+	Admin      *bool    // nil = unchanged
 	// Capabilities: nil = unchanged; [] = full access; otherwise the new
 	// list. Preset (if set) is joined with it.
 	Capabilities *[]string
@@ -382,7 +393,11 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (*Ke
 	if input.Delegate != nil {
 		delegate = *input.Delegate
 	}
-	if err := s.storage.Update(ctx, id, name, all, approver, delegate, capabilities, workspaces, groupIDs); err != nil {
+	admin := existing.Admin
+	if input.Admin != nil {
+		admin = *input.Admin
+	}
+	if err := s.storage.Update(ctx, id, name, all, approver, delegate, admin, capabilities, workspaces, groupIDs); err != nil {
 		return nil, err
 	}
 	// A scope or capability change re-shapes what the key's open SSE
@@ -394,10 +409,11 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (*Ke
 	if err != nil {
 		return nil, err
 	}
+	s.record(ctx, "key.update", updated, "was: "+describeKey(existing)+"; now: "+describeKey(updated))
 	return &updated, nil
 }
 
-// Delete hard-deletes a key (audit trail included) — for cleaning up old or
+// Delete hard-deletes a key's row (the audit events about it stay) — for cleaning up old or
 // revoked keys. Active keys should usually be revoked first so their SSE
 // streams terminate; hard-deleting an active key leaves its streams open
 // until they reconnect.
@@ -409,7 +425,12 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if id == "" {
 		return fmt.Errorf("%w: id is required", ErrInvalidInput)
 	}
-	return s.storage.Delete(ctx, id)
+	existing, _ := s.storage.Get(ctx, id)
+	if err := s.storage.Delete(ctx, id); err != nil {
+		return err
+	}
+	s.record(ctx, "key.delete", Key{ID: id}, describeKey(existing))
+	return nil
 }
 
 // GenerateSecret produces a key like "sk_" + 43 base64url chars (256 bits).
@@ -545,6 +566,7 @@ func (s *Service) CreateGroup(ctx context.Context, input GroupInput) (*Group, er
 		}
 		return nil, err
 	}
+	s.recordGroup(ctx, "group.create", g.ID, describeGroup(g))
 	return &g, nil
 }
 
@@ -627,6 +649,11 @@ func (s *Service) UpdateGroup(ctx context.Context, id string, input GroupUpdateI
 		}
 		return nil, err
 	}
+	// A group's members and patterns are the scope of every key that holds
+	// it — an admin or approver key's reach included.
+	after := existing
+	after.Name, after.Members, after.Patterns = name, members, patterns
+	s.recordGroup(ctx, "group.update", id, "was: "+describeGroup(existing)+"; now: "+describeGroup(after))
 	// Scope widened or narrowed for every key holding the group.
 	if memberPtr != nil || patternPtr != nil {
 		keyIDs, err := s.storage.KeysInGroup(ctx, id)
@@ -652,9 +679,11 @@ func (s *Service) DeleteGroup(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	existing, _ := s.storage.GetGroup(ctx, id)
 	if err := s.storage.DeleteGroup(ctx, id); err != nil {
 		return err
 	}
+	s.recordGroup(ctx, "group.delete", id, describeGroup(existing))
 	s.dropKeys(keyIDs)
 	return nil
 }

@@ -66,6 +66,44 @@ type Service struct {
 	// workspace; "" ends the sequence. Defaults to: plan -> implement -> done
 	// (review/qa only when configured).
 	nextStage func(workspaceID, stage string) string
+	// configRev / configDigest: the workspace config source (SetConfigSource).
+	configRev    func(ctx context.Context, workspaceID string) string
+	configDigest func(ctx context.Context, workspaces []string) string
+	// fleetRev: the runner definitions' revision (SetFleetRev).
+	fleetRev func(ctx context.Context) string
+}
+
+// UnreadableConfigRev is the revision a claim names when the workspace's
+// config could not be resolved or recorded: no fetch answers it, so the
+// worker gives the run back instead of running it with other settings.
+const UnreadableConfigRev = "unreadable"
+
+// SetConfigSource wires the workspace config (internal/wsconfig): rev names
+// what applies to a workspace now ("" = not managed), digest the configs of
+// a set of workspaces together (the claim answer's Skopos-Config-Rev).
+func (s *Service) SetConfigSource(rev func(ctx context.Context, workspaceID string) string, digest func(ctx context.Context, workspaces []string) string) {
+	s.configRev, s.configDigest = rev, digest
+}
+
+// SetFleetRev wires the revision of the runner definitions every claim
+// answer carries (Skopos-Fleet-Rev).
+func (s *Service) SetFleetRev(fn func(ctx context.Context) string) { s.fleetRev = fn }
+
+// FleetRev is the runner definitions' revision ("" = none defined).
+func (s *Service) FleetRev(ctx context.Context) string {
+	if s.fleetRev == nil {
+		return ""
+	}
+	return s.fleetRev(ctx)
+}
+
+// ConfigDigest names the effective configs of the workspaces a claim
+// offers ("" = none of them is managed, or no config source is wired).
+func (s *Service) ConfigDigest(ctx context.Context, workspaces []string) string {
+	if s.configDigest == nil {
+		return ""
+	}
+	return s.configDigest(ctx, workspaces)
 }
 
 func NewService(storage *Storage) *Service {
@@ -240,7 +278,11 @@ func lastWorkerFor(existing []Run, stage, runner string) string {
 	}
 	for _, r := range existing {
 		if r.Stage == stage && r.WorkerID != "" {
-			if r.GroupID != "" || r.Runner != runner {
+			// The same runner: the name it was queued for, or — for a run
+			// nothing pins — one the server picked last time (the claim
+			// writes the pick to the run; the new run has none yet).
+			same := r.Runner == runner || (runner == "" && r.RunnerPicked)
+			if r.GroupID != "" || !same {
 				return ""
 			}
 			return r.WorkerID
@@ -342,6 +384,24 @@ func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 	}
 	sort.Strings(indexable)
 	in.Indexable = indexable
+	// What the worker says about its runners is the input to every policy
+	// decision: bounded like any client claim, and a change is an audit
+	// event (a worker that starts reporting another provider or endpoint
+	// for a runner must show in the trail).
+	if len(in.FleetRev) > 64 {
+		in.FleetRev = in.FleetRev[:64]
+	}
+	in.RunnerFacts = sanitizeFacts(in.RunnerFacts)
+	in.Executors = sanitizeExecutors(in.Executors, offered)
+	if s.audit != nil {
+		before, known := s.storage.WorkerFacts(ctx, in.WorkerID)
+		defer func() {
+			fctx := context.WithoutCancel(ctx)
+			if after, _ := s.storage.WorkerFacts(fctx, in.WorkerID); after != before {
+				s.recordFacts(fctx, in.WorkerID, before, after, known)
+			}
+		}()
+	}
 	if s.healthNotify != nil {
 		// What the registry held before and after this poll: a row this
 		// key may not write (another key's worker id) never changes, so it
@@ -352,14 +412,54 @@ func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 			s.healthChanged(hctx, in.WorkerID, before, s.storage.WorkerUnhealthy(hctx, in.WorkerID))
 		}()
 	}
+	// A worker from before workspace config reads none of it: it would run
+	// a managed workspace from its own file while the run recorded the
+	// server's revision. It gets none of those workspaces' runs until it is
+	// upgraded, and shows as unhealthy for them with that reason.
+	if in.ServerCommands == nil && s.configRev != nil {
+		for _, ws := range in.Workspaces {
+			if _, set := in.Unhealthy[ws]; set || s.configRev(ctx, ws) == "" {
+				continue
+			}
+			if in.Unhealthy == nil {
+				in.Unhealthy = map[string]string{}
+			}
+			in.Unhealthy[ws] = "this worker's release cannot read the workspace's config from the server: upgrade it"
+		}
+	}
 	// Routing of the offered workspaces, resolved once per claim.
 	prefs := make(map[string]*WorkspacePrefs, len(in.Workspaces))
 	for _, ws := range in.Workspaces {
 		prefs[ws] = s.prefsOf(ctx, ws)
 	}
-	run, err := s.storage.Claim(ctx, in, prefs, s.lease, s.now().UTC())
+	// The worker's own runs may sit in a workspace this claim does not
+	// offer: their routing and policy are resolved on demand, never
+	// assumed absent.
+	prefsFor := func(ws string) *WorkspacePrefs {
+		if p, ok := prefs[ws]; ok {
+			return p
+		}
+		p := s.prefsOf(ctx, ws)
+		prefs[ws] = p
+		return p
+	}
+	run, err := s.storage.Claim(ctx, in, prefsFor, s.lease, s.now().UTC())
 	if err != nil || run == nil {
 		return run, err
+	}
+	// The config the run executes under is named now and never changes for
+	// this attempt: the worker fetches exactly this revision. A workspace
+	// whose config cannot be resolved gets a revision nothing can fetch, so
+	// the worker gives the run back rather than run it with other settings.
+	if s.configRev != nil {
+		rev := s.configRev(ctx, run.WorkspaceID)
+		if err := s.storage.SetConfigRev(context.WithoutCancel(ctx), run.ID, run.Attempt, rev); err != nil {
+			// Not recorded: the run must not execute under a revision its
+			// record does not name.
+			slog.Warn("runs: the claim's config revision was not recorded; the worker is given one it cannot fetch", "run", run.ID, "err", err)
+			rev = UnreadableConfigRev
+		}
+		run.ConfigRev = rev
 	}
 	// The claim has committed: what follows must not depend on the worker
 	// still waiting for the response (a client timeout used to leave the item
@@ -524,11 +624,16 @@ func (s *Service) Report(ctx context.Context, id string, in ReportInput, leaseTo
 	if err := s.checkScope(ctx, id); err != nil {
 		return nil, err
 	}
-	// The executor id is a short worker-chosen label ("local",
-	// "wrapper:<12 hex>"); bound it like any client string.
-	if in.Executor = strings.TrimSpace(in.Executor); len(in.Executor) > 64 {
-		in.Executor = in.Executor[:64]
+	// The executor id and the grants hash are short worker-chosen labels
+	// ("local", "wrapper:<name>:<12 hex>"); bound them like any client
+	// string.
+	if in.Executor = strings.TrimSpace(in.Executor); len(in.Executor) > 200 {
+		in.Executor = in.Executor[:200]
 	}
+	if in.Grants = strings.TrimSpace(in.Grants); len(in.Grants) > 64 {
+		in.Grants = in.Grants[:64]
+	}
+	mismatch := s.checkExecutor(ctx, id, &in)
 	// The dashboard renders pr_url as a link: http(s) only, bounded.
 	if in.PRURL = strings.TrimSpace(in.PRURL); len(in.PRURL) > 512 ||
 		(!strings.HasPrefix(in.PRURL, "https://") && !strings.HasPrefix(in.PRURL, "http://")) {
@@ -537,6 +642,9 @@ func (s *Service) Report(ctx context.Context, id string, in ReportInput, leaseTo
 	if in.Status == StatusFailed && in.Retryable {
 		run, requeued, err := s.retry(ctx, id, in, leaseToken)
 		if err != nil || requeued {
+			if err == nil {
+				s.recordMismatch(ctx, run, mismatch)
+			}
 			return run, err
 		}
 		in.Reason = fmt.Sprintf("failed after %d attempts: %s", maxRetries+1, in.Reason)
@@ -545,6 +653,7 @@ func (s *Service) Report(ctx context.Context, id string, in ReportInput, leaseTo
 	if err != nil {
 		return nil, err
 	}
+	s.recordMismatch(ctx, run, mismatch)
 	s.chain(ctx, run, in)
 	return run, nil
 }
@@ -771,6 +880,11 @@ func (s *Service) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
 			}
 		}
 		w.Indexable = slices.DeleteFunc(w.Indexable, func(ws string) bool { return !p.CanAccess(ws) })
+		for ws := range w.Executors {
+			if !p.CanAccess(ws) {
+				delete(w.Executors, ws)
+			}
+		}
 		out = append(out, w)
 	}
 	return out, nil

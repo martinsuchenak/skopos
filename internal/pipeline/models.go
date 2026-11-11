@@ -81,6 +81,12 @@ type View struct {
 	// UnknownRunners: effective runners no worker serving this workspace
 	// offers yet — their runs wait until one does.
 	UnknownRunners []string `json:"unknown_runners,omitempty"`
+	// Policy: every runner policy that applies to the workspace, with
+	// where each comes from (policy.go); PolicyRefused: configured runners
+	// the policy does not allow on any worker that offers them — their
+	// runs would wait for a worker that may not take them.
+	Policy        *EffectivePolicyView `json:"policy,omitempty"`
+	PolicyRefused []string             `json:"policy_refused,omitempty"`
 	// IndexableBy: the workers that can fetch this workspace's repo now
 	// (their last claim said so) — the code_index switch needs one.
 	IndexableBy []string `json:"indexable_by"`

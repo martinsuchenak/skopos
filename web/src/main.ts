@@ -17,11 +17,11 @@ type Bundle = { entries: Entry[]; markdown_bundle: string };
 type PlanItem = { id: string; plan_id: string; title: string; description?: string; phase?: string; status: string; position: number; claimed_by_agent_id?: string; depends_on?: string[] };
 type Plan = { id: string; name: string; branch_name?: string; workspace_id?: string; description?: string; status: string; author_agent_id: string; items?: PlanItem[]; depends_on?: string[]; created_at: string };
 type Toast = { id: number; message: string; type: 'success' | 'error' | 'info' };
-type ApiKey = { id: string; name: string; key_prefix: string; all_workspaces: boolean; approver?: boolean; delegate?: boolean; capabilities?: string[] | null; workspaces: string[]; groups?: string[]; created_at: string; last_used_at?: string; revoked_at?: string };
+type ApiKey = { id: string; name: string; key_prefix: string; all_workspaces: boolean; approver?: boolean; delegate?: boolean; admin?: boolean; capabilities?: string[] | null; workspaces: string[]; groups?: string[]; created_at: string; last_used_at?: string; revoked_at?: string };
 type KeyGroup = { id: string; name: string; description?: string; members: string[]; patterns: string[]; created_at: string };
 type KeyReach = { key: ApiKey; via: string };
 type WorkspaceRow = { id: string; name?: string; git_url?: string; created_at: string };
-type Whoami = { root: boolean; key?: { id: string; name: string; all_workspaces: boolean; approver?: boolean; workspaces: string[] }; workspaces: { id: string; name: string }[] };
+type Whoami = { root: boolean; key?: { id: string; name: string; all_workspaces: boolean; approver?: boolean; admin?: boolean; workspaces: string[] }; workspaces: { id: string; name: string }[] };
 type KeyForm = { name: string; all: boolean; workspaces: string[] };
 type EntryForm = { scope: 'project' | 'branch' | 'session'; entry_type: 'finding' | 'decision' | 'bug' | 'debt' | 'warning' | 'context'; title: string; content: string; code_ref: string; branch_name: string; session_id: string };
 type PlanForm = { name: string; description: string; branch_name: string };
@@ -51,12 +51,20 @@ function keyIsAgentPreset(caps: string[]): boolean {
 
 // A worker's pause (an operator stopped it taking work); until "" = until resumed.
 type WorkerPause = { at: string; until?: string; by?: string; reason?: string };
-type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string; state: string; version: string; lastSeen: string; unhealthy: string[]; indexable: string[]; paused: WorkerPause | null };
-type WorkerSeen = { id: string; runners: string[]; workspaces: string[]; last_seen: string; version?: string; state?: string; unhealthy?: Record<string, string>; indexable?: string[]; paused?: WorkerPause };
+type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string; state: string; version: string; lastSeen: string; unhealthy: string[]; indexable: string[]; paused: WorkerPause | null; facts: string[]; executors: string[]; factsWarning: string; serverConfig: string };
+type RunnerFacts = { name: string; kind?: string; model?: string; effort?: string; provider?: string; endpoint?: string; stages?: string[] };
+type WorkerSeen = { id: string; runners: string[]; workspaces: string[]; last_seen: string; version?: string; state?: string; unhealthy?: Record<string, string>; indexable?: string[]; paused?: WorkerPause; runner_facts?: RunnerFacts[]; executors?: Record<string, ExecutorFact[]>; server_commands?: boolean; fleet_rev?: string };
+// Workspace config held on the server (internal/wsconfig).
+type ConfigEffective = { workspace: string; managed: boolean; rev?: string; config: Record<string, unknown>; sources?: Record<string, string>; conflicts?: string[] };
+type ConfigView = { owner_kind: string; owner_id: string; config: Record<string, unknown> | null; rev?: string; updated_by?: string; effective?: ConfigEffective; changed?: string[] };
+type RunnerDef = { name: string; kind: string; model?: string; effort?: string; provider?: string };
+type PolicyRule = { provider?: string; model?: string; kind?: string; runner?: string; stages?: string[]; executor?: string };
+type ExecutorFact = { stage?: string; runner?: string; executor: string };
+type PolicyLayer = { source: string; rev: string; policy: { allow: PolicyRule[] | null } };
 // Pipeline settings (which agents run each stage, per workspace or group).
 type PipeMember = { runner: string; focus?: string };
 type PipeStage = { members: PipeMember[]; policy?: string; early_exit?: boolean; timeout_ms?: number };
-type PipeView = { owner_kind: string; owner_id: string; indexable_by?: string[]; own: { stages: Record<string, PipeStage> | null; agents_default?: string; second_opinion_runner?: string; code_index?: boolean }; effective?: Record<string, PipeStage & { source: string }>; effective_agents_default?: string; agents_default_source?: string; effective_second_opinion_runner?: string; second_opinion_source?: string; groups?: { id: string; name: string }[]; conflicts?: string[]; unknown_runners?: string[] };
+type PipeView = { owner_kind: string; owner_id: string; indexable_by?: string[]; own: { stages: Record<string, PipeStage> | null; agents_default?: string; second_opinion_runner?: string; code_index?: boolean }; effective?: Record<string, PipeStage & { source: string }>; effective_agents_default?: string; agents_default_source?: string; effective_second_opinion_runner?: string; second_opinion_source?: string; groups?: { id: string; name: string }[]; conflicts?: string[]; unknown_runners?: string[]; policy?: { allow_all: boolean; rev?: string; layers: PolicyLayer[] }; policy_refused?: string[] };
 // One dialog row per stage. mode: own (set at this level, editable),
 // inherited (from a group; Override copies it here), unset.
 type PipeRow = { stage: string; label: string; multi: boolean; rule: boolean; mode: string; members: PipeMember[]; policy: string; earlyExit: boolean; timeoutMin: string; inherited: PipeStage | null; inheritedFrom: string; addRunner: string; addFocus: string };
@@ -65,7 +73,7 @@ type PlanRevisionInfo = { id: string; revision_no: number; content_hash: string;
 // One thing the approver can approve at the gate: the plan revision, or one
 // candidate of a multi-agent plan round.
 type ApproveTarget = { id: string; title: string; meta: string; steps: string[]; candidate: boolean; hash: string; toast: string };
-type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { severity: string; text: string; file?: string }[]; lease_expires_at?: string; pushed?: boolean; pr_url?: string; checks?: { name: string; passed: boolean; output?: string }[]; setup?: { name: string; passed: boolean; output?: string }[]; fix_rounds?: number; phase?: string; retries?: number; retry_after?: string; prefer_worker?: string; prefer_until?: string; created_at: string; updated_at: string };
+type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { severity: string; text: string; file?: string }[]; lease_expires_at?: string; pushed?: boolean; pr_url?: string; checks?: { name: string; passed: boolean; output?: string }[]; setup?: { name: string; passed: boolean; output?: string }[]; fix_rounds?: number; phase?: string; retries?: number; retry_after?: string; prefer_worker?: string; prefer_until?: string; stranded?: string; runner_picked?: boolean; policy_rev?: string; created_at: string; updated_at: string };
 // One row of the preview's stage tracker. state: done | run | you | bad |
 // up (not reached) | skip (not configured, or never reached on a discarded item).
 type LinkRow = { key: string; href: string; text: string };
@@ -264,7 +272,10 @@ const appState = () => ({
   // re-evaluates when a dialog reopens for different data (CSP build)
   formNonce: 0,
   showGroupModal: false,
-  pipe: { open: false, kind: 'workspace', id: '', label: '', saving: false, readOnly: false, rev: 0, rows: [] as PipeRow[], agentsDefault: '', agentsInherited: '', agentsInheritedFrom: '', secondOpinion: '', secondInherited: '', codeIndex: false, codeIndexWas: false, indexableBy: [] as string[], notes: [] as { key: string; tone: string; text: string }[], runnerOptions: [] as string[] },
+  pipe: { open: false, kind: 'workspace', id: '', label: '', saving: false, readOnly: false, rev: 0, rows: [] as PipeRow[], agentsDefault: '', agentsInherited: '', agentsInheritedFrom: '', secondOpinion: '', secondInherited: '', codeIndex: false, codeIndexWas: false, indexableBy: [] as string[], notes: [] as { key: string; tone: string; text: string }[], runnerOptions: [] as string[], policyBound: false },
+  // The workspace's (or group's) config on the server, in the pipeline
+  // dialog: what applies, and for an admin the stored config as JSON.
+  pipeConfig: { shown: false, status: '', lines: [] as string[], text: '', was: '', stored: false, saving: false, canEdit: false, rev: 0 },
   groupModalMode: 'create' as 'create' | 'edit',
   groupSaving: false,
   groupErrors: {} as Record<string, string>,
@@ -2251,11 +2262,14 @@ const appState = () => ({
   // keyed x-for is the reliable re-render path in the CSP build.
   async openPipeline(kind: string, id: string, label: string) {
     const base = kind === 'group' ? '/api/groups/' : '/api/workspaces/';
-    const [res, wres] = await Promise.all([this.authFetch(base + encodeURIComponent(id) + '/pipeline'), this.authFetch('/api/workers')]);
+    const [res, wres, dres] = await Promise.all([this.authFetch(base + encodeURIComponent(id) + '/pipeline'), this.authFetch('/api/workers'), this.authFetch('/api/fleet/runners')]);
     if (!await this.handleBad(res, 'Could not load the pipeline')) return;
     const v = (await res.json()) as PipeView;
     const runners: string[] = [];
     if (wres.ok) for (const w of (await wres.json()) as WorkerSeen[]) for (const r of w.runners || []) if (!runners.includes(r)) runners.push(r);
+    // Runners the server defines can be chosen before any worker offers them.
+    if (dres.ok) for (const d of (((await dres.json()) as { runners?: RunnerDef[] }).runners || [])) if (!runners.includes(d.name)) runners.push(d.name);
+    await this.loadPipeConfig(kind, v.owner_id);
     this.pipe.kind = kind; this.pipe.id = v.owner_id; this.pipe.label = label;
     this.pipe.runnerOptions = runners.sort();
     this.pipe.agentsDefault = v.own.agents_default || '';
@@ -2290,6 +2304,15 @@ const appState = () => ({
     if (this.pipe.readOnly) notes.push({ key: 'ro', tone: 'tone-neutral', text: kind === 'group' ? 'Read only: group pipelines need the root key.' : 'Read only: changing a workspace pipeline needs an approver key.' });
     for (const c of v.conflicts || []) notes.push({ key: 'c|' + c, tone: 'tone-danger', text: 'Conflict: ' + c });
     if ((v.unknown_runners || []).length) notes.push({ key: 'u', tone: 'tone-warn', text: 'No worker serving this workspace offers ' + (v.unknown_runners || []).join(', ') + ' yet; those runs wait until one does.' });
+    // The runner policy binds what can be chosen here: every layer must
+    // allow a runner (set with `skopos policy`, admin permission).
+    this.pipe.policyBound = !!(v.policy && !v.policy.allow_all);
+    if (v.policy && !v.policy.allow_all) {
+      for (const l of v.policy.layers || []) {
+        notes.push({ key: 'p|' + l.source, tone: 'tone-info', text: 'Runner policy (' + l.source + '): allow ' + ((l.policy.allow || []).map((r: PolicyRule) => this.policyRuleText(r)).join('; ') || 'nothing') });
+      }
+    }
+    for (const r of v.policy_refused || []) notes.push({ key: 'pr|' + r, tone: 'tone-danger', text: 'Refused by the runner policy: ' + r });
     if (kind === 'workspace' && (v.groups || []).length) notes.push({ key: 'g', tone: 'tone-neutral', text: 'Inherits from group' + ((v.groups || []).length > 1 ? 's ' : ' ') + (v.groups || []).map((g: { name: string }) => g.name).join(', ') + ' where a stage is not set here.' });
     this.pipe.notes = notes;
     this.pipe.rev++;
@@ -2345,7 +2368,7 @@ const appState = () => ({
   },
   pipeRowHint(r: PipeRow): string {
     if (r.mode === 'inherited') return 'from group ' + r.inheritedFrom;
-    if (r.mode === 'unset') return r.stage === 'review' || r.stage === 'qa' ? 'not set — skipped' : (r.stage === 'compare' || r.stage === 'synthesize' ? 'not set — off' : 'not set — any runner');
+    if (r.mode === 'unset') return r.stage === 'review' || r.stage === 'qa' ? 'not set — skipped' : (r.stage === 'compare' || r.stage === 'synthesize' ? 'not set — off' : (this.pipe.policyBound ? 'not set — any allowed runner' : 'not set — any runner'));
     return r.inherited ? 'set here (overrides group ' + r.inheritedFrom + ')' : 'set here';
   },
   pipeCanAdd(r: PipeRow): boolean { return r.multi || r.members.length === 0; },
@@ -2428,12 +2451,12 @@ const appState = () => ({
     const byWorker = new Map<string, WorkerRow>();
     for (const entry of registered) {
       const reg = entry[1];
-      byWorker.set(entry[0], { id: entry[0], workspaces: [...(reg.workspaces || [])], stages: [], runners: [...(reg.runners || [])], active: 0, succeeded: 0, failed: 0, lastActive: '', currentLabel: '', state: reg.state || '', version: reg.version || '', lastSeen: reg.last_seen || '', unhealthy: Object.entries(reg.unhealthy || {}).map(([ws, why]) => ws + ': ' + why), indexable: [...(reg.indexable || [])], paused: reg.paused || null });
+      byWorker.set(entry[0], { id: entry[0], workspaces: [...(reg.workspaces || [])], stages: [], runners: [...(reg.runners || [])], active: 0, succeeded: 0, failed: 0, lastActive: '', currentLabel: '', state: reg.state || '', version: reg.version || '', lastSeen: reg.last_seen || '', unhealthy: Object.entries(reg.unhealthy || {}).map(([ws, why]) => ws + ': ' + why), indexable: [...(reg.indexable || [])], paused: reg.paused || null, facts: (reg.runner_facts || []).map((f: RunnerFacts) => this.runnerFactsLine(f)), executors: Object.entries(reg.executors || {}).sort((a, b) => a[0] < b[0] ? -1 : 1).map(([ws, facts]) => this.executorsLine(ws, facts as ExecutorFact[])), factsWarning: '', serverConfig: this.workerConfigLine(reg) });
     }
     for (const run of runs) {
       if (!run.worker_id) continue; // queued, never claimed
       let w = byWorker.get(run.worker_id);
-      if (!w) { w = { id: run.worker_id, workspaces: [], stages: [], runners: [], active: 0, succeeded: 0, failed: 0, lastActive: run.updated_at, currentLabel: '', state: '', version: '', lastSeen: '', unhealthy: [], indexable: [], paused: null }; byWorker.set(run.worker_id, w); }
+      if (!w) { w = { id: run.worker_id, workspaces: [], stages: [], runners: [], active: 0, succeeded: 0, failed: 0, lastActive: run.updated_at, currentLabel: '', state: '', version: '', lastSeen: '', unhealthy: [], indexable: [], paused: null, facts: [], executors: [], factsWarning: '', serverConfig: '' }; byWorker.set(run.worker_id, w); }
       const reg = registered.get(run.worker_id);
       if (reg) { for (const ws of reg.workspaces || []) if (!w.workspaces.includes(ws)) w.workspaces.push(ws); }
       if (run.workspace_id && !w.workspaces.includes(run.workspace_id)) w.workspaces.push(run.workspace_id);
@@ -2443,6 +2466,21 @@ const appState = () => ({
       if (run.status === 'failed') w.failed++;
       if (run.updated_at > w.lastActive) w.lastActive = run.updated_at;
     }
+    // One runner name should mean one thing: a workspace's policy is
+    // matched on what each worker reports, so a name with different
+    // providers or models on different workers behaves differently per worker.
+    const meanings = new Map<string, Set<string>>();
+    for (const entry of registered) {
+      for (const f of entry[1].runner_facts || []) {
+        if (!meanings.has(f.name)) meanings.set(f.name, new Set<string>());
+        (meanings.get(f.name) as Set<string>).add((f.provider || '') + '|' + (f.model || ''));
+      }
+    }
+    for (const entry of registered) {
+      const differing = (entry[1].runner_facts || []).filter((f: RunnerFacts) => (meanings.get(f.name) as Set<string>).size > 1).map((f: RunnerFacts) => f.name);
+      const row = byWorker.get(entry[0]);
+      if (row && differing.length) row.factsWarning = 'Runner ' + differing.join(', ') + ' is a different provider or model on another worker.';
+    }
     // Online first (busy, idle), then offline; newest activity within each.
     const rank: Record<string, number> = { busy: 0, idle: 1, paused: 1, offline: 2 };
     this.workers = Array.from(byWorker.values()).sort((a: WorkerRow, b: WorkerRow) => {
@@ -2451,6 +2489,131 @@ const appState = () => ({
       const la = a.lastSeen || a.lastActive, lb = b.lastSeen || b.lastActive;
       return la < lb ? 1 : -1;
     });
+  },
+  // What a worker takes from the server: commands for managed workspaces
+  // (worker.server_commands), and which runner definitions it holds. Empty
+  // for a worker that reports neither (from before workspace config).
+  workerConfigLine(w: WorkerSeen): string {
+    const parts: string[] = [];
+    if (w.server_commands === true) parts.push('takes setup and check commands from the server');
+    if (w.server_commands === false) parts.push('keeps setup and check commands in its own file');
+    if (w.fleet_rev) parts.push('runner definitions ' + w.fleet_rev);
+    return parts.join(' \u00b7 ');
+  },
+  canAdmin(): boolean {
+    return !!this.whoami && (this.whoami.root || !!(this.whoami.key && this.whoami.key.admin));
+  },
+  // The config block of the pipeline dialog: what the server holds for the
+  // workspace or group. A workspace with a config of its own is managed;
+  // without one each worker uses its own file.
+  async loadPipeConfig(kind: string, id: string) {
+    const c = this.pipeConfig;
+    c.shown = false; c.status = ''; c.lines = []; c.text = ''; c.was = ''; c.stored = false; c.canEdit = this.canAdmin();
+    const base = kind === 'group' ? '/api/groups/' : '/api/workspaces/';
+    const res = await this.authFetch(base + encodeURIComponent(id) + '/config');
+    // A group's config is its admins' to read; a server from before
+    // workspace config has no such route.
+    if (!res.ok) return;
+    this.showPipeConfig(kind, (await res.json()) as ConfigView);
+  },
+  showPipeConfig(kind: string, v: ConfigView) {
+    const c = this.pipeConfig;
+    c.shown = true;
+    c.stored = !!v.config;
+    c.text = c.was = v.config ? JSON.stringify(v.config, null, 2) : '';
+    const eff = v.effective;
+    const lines: string[] = [];
+    if (kind === 'group') {
+      c.status = v.config ? 'Defaults for the managed workspaces of this group (revision ' + (v.rev || '') + ').' : 'No config at this level.';
+      for (const [k, val] of this.configFields(v.config || {})) lines.push(k + ' = ' + val);
+    } else if (eff && eff.managed) {
+      c.status = 'Managed by the server: every worker takes these from here. Runs record config revision ' + (eff.rev || '') + '.';
+      const sources = eff.sources || {};
+      for (const [k, val] of this.configFields(eff.config || {})) lines.push(k + ' = ' + val + (sources[k] && sources[k] !== 'workspace' ? '   (' + sources[k].replace('group:', 'group ') + ')' : ''));
+      for (const conflict of eff.conflicts || []) lines.push('conflict: ' + conflict);
+      lines.push('every other field has its default');
+    } else {
+      c.status = 'Not managed: each worker uses its own file.';
+    }
+    c.lines = lines;
+    c.rev++;
+  },
+  // A config flattened to "push.kind"-style names, sorted.
+  configFields(cfg: Record<string, unknown>): [string, string][] {
+    const out: [string, string][] = [];
+    for (const k of Object.keys(cfg)) {
+      const val = cfg[k];
+      if (k === 'push' && val && typeof val === 'object') {
+        for (const pk of Object.keys(val as Record<string, unknown>)) out.push(['push.' + pk, JSON.stringify((val as Record<string, unknown>)[pk])]);
+      } else out.push([k, JSON.stringify(val)]);
+    }
+    return out.sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  },
+  pipeConfigHint(): string {
+    if (!this.pipeConfig.canEdit) return 'Changing it needs the admin permission (skopos workspace config set).';
+    return this.pipe.kind === 'group'
+      ? 'JSON: the fields this group sets for its managed workspaces. Empty and saved removes it.'
+      : 'JSON: the fields this workspace sets; {} manages it with every default. setup, checks and preflight run on its workers. Empty and saved hands it back to the workers\u2019 files.';
+  },
+  pipeConfigDirty(): boolean { return this.pipeConfig.text.trim() !== this.pipeConfig.was.trim(); },
+  pipeConfigSaveLabel(): string {
+    if (this.pipeConfig.saving) return 'Saving\u2026';
+    return this.pipeConfig.stored && this.pipeConfig.text.trim() === '' ? 'Remove config' : 'Save config';
+  },
+  async savePipeConfig() {
+    const c = this.pipeConfig;
+    if (c.saving || !c.canEdit || !this.pipeConfigDirty()) return;
+    const url = (this.pipe.kind === 'group' ? '/api/groups/' : '/api/workspaces/') + encodeURIComponent(this.pipe.id) + '/config';
+    const text = c.text.trim();
+    let res: Response;
+    c.saving = true;
+    try {
+      if (text === '') {
+        // Emptying the box and pressing "Remove config" is the two steps.
+        res = await this.authFetch(url, { method: 'DELETE' });
+      } else {
+        let parsed: unknown;
+        try { parsed = JSON.parse(text); } catch { this.notify('The config is not valid JSON', 'error'); return; }
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) { this.notify('The config is a JSON object of fields', 'error'); return; }
+        res = await this.authFetch(url, { method: 'PUT', body: JSON.stringify({ config: parsed }) });
+      }
+      if (!await this.handleBad(res, 'Config not saved')) return;
+      const v = (await res.json()) as ConfigView;
+      this.showPipeConfig(this.pipe.kind, v);
+      this.notify(text === '' ? 'Config removed' : ((v.changed || []).length ? 'Config saved: ' + (v.changed || []).join(', ') : 'Nothing changed'), 'success');
+    } finally {
+      c.saving = false;
+    }
+  },
+  // One runner as its worker reports it: name, provider, model, endpoint.
+  runnerFactsLine(f: RunnerFacts): string {
+    const parts = [f.provider || 'unknown provider'];
+    if (f.model) parts.push(f.model);
+    if (f.endpoint) parts.push(f.endpoint);
+    if ((f.stages || []).length) parts.push('read-only stages');
+    return f.name + ': ' + parts.join(' \u00b7 ');
+  },
+  // What contains a worker's runs in one workspace: the default, then the
+  // stages and runners that differ.
+  executorsLine(ws: string, facts: ExecutorFact[]): string {
+    const parts = (facts || []).map((f: ExecutorFact) => {
+      if (f.stage && f.runner) return f.stage + '/' + f.runner + ': ' + f.executor;
+      if (f.stage) return f.stage + ': ' + f.executor;
+      if (f.runner) return f.runner + ': ' + f.executor;
+      return f.executor;
+    });
+    return ws + ': ' + parts.join(' \u00b7 ');
+  },
+  // A policy rule the way the CLI writes it.
+  policyRuleText(r: PolicyRule): string {
+    const parts: string[] = [];
+    if (r.provider) parts.push('provider=' + r.provider);
+    if (r.model) parts.push('model=' + r.model);
+    if (r.kind) parts.push('kind=' + r.kind);
+    if (r.runner) parts.push('runner=' + r.runner);
+    if ((r.stages || []).length) parts.push('stages=' + (r.stages || []).join('|'));
+    if (r.executor) parts.push('executor=' + r.executor);
+    return parts.length ? parts.join(',') : 'any';
   },
   // Presence comes from the server (busy / idle / offline); a worker known
   // only from run history (pre-presence) falls back to its runs.
@@ -3207,6 +3370,7 @@ const appState = () => ({
   },
   keyIsApprover(k: ApiKey): boolean { return !!k.approver; },
   keyIsDelegate(k: ApiKey): boolean { return !!k.delegate; },
+  keyIsAdmin(k: ApiKey): boolean { return !!k.admin; },
   // keyCapsLabel names a capped key's limits ("" = full access, no chip).
   keyCapsLabel(k: ApiKey): string {
     const caps = k.capabilities;

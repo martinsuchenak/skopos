@@ -72,27 +72,29 @@ func TestIntegrationPipelineSettingsAndPresence(t *testing.T) {
 		t.Fatalf("pause: %v", p)
 	}
 	wc := wk.NewClient(baseURL, worker.key)
-	if r, err := wc.Claim(t.Context(), "w1", []string{"opencode-glm"}, []string{ws}, nil, nil); err != nil || r != nil || wc.Paused() == "" || wc.Paused() == "resume" {
+	if r, err := wc.Claim(t.Context(), "w1", []string{"opencode-glm"}, []string{ws}, nil, nil, nil); err != nil || r != nil || wc.Paused() == "" || wc.Paused() == "resume" {
 		t.Fatalf("paused claim: %+v %v %q", r, err, wc.Paused())
 	}
 	if w := workerList(t, root)[0].(map[string]any); w["state"] != "paused" || w["paused"].(map[string]any)["reason"] != "hands-on" {
 		t.Fatalf("listed paused: %v", w)
 	}
 	mustDo(t, worker.req("POST", "/api/workers/w1/pause", ""), 200) // until resumed
-	if _, err := wc.Claim(t.Context(), "w1", []string{"opencode-glm"}, []string{ws}, nil, nil); err != nil || wc.Paused() != "resume" {
+	if _, err := wc.Claim(t.Context(), "w1", []string{"opencode-glm"}, []string{ws}, nil, nil, nil); err != nil || wc.Paused() != "resume" {
 		t.Fatalf("paused until resumed: %v %q", err, wc.Paused())
 	}
 	if err := wc.ResumeWorker(t.Context(), "w1", "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if r, err := wc.Claim(t.Context(), "w1", []string{"opencode-glm"}, []string{ws}, nil, nil); err != nil || r == nil || r.ID != run["id"] || wc.Paused() != "" {
+	if r, err := wc.Claim(t.Context(), "w1", []string{"opencode-glm"}, []string{ws}, nil, nil, nil); err != nil || r == nil || r.ID != run["id"] || wc.Paused() != "" {
 		t.Fatalf("resumed: its run comes back: %+v %v %q", r, err, wc.Paused())
 	}
 	var audited string
 	if err := sqlDB.QueryRow(`SELECT group_concat(action || ' ' || actor || ' ' || COALESCE(via, ''), '; ') FROM (SELECT * FROM audit_log WHERE entity_type = 'worker' AND entity_id = 'w1' ORDER BY id)`).Scan(&audited); err != nil {
 		t.Fatal(err)
 	}
-	if audited != "worker.pause key martin api; worker.pause key worker-1 api; worker.resume key worker-1 cli" {
+	// The worker's first word about itself is recorded too: here, that it
+	// does not take commands from the server.
+	if audited != "worker.pause key martin api; worker.facts key worker-1 worker; worker.pause key worker-1 api; worker.resume key worker-1 cli" {
 		t.Fatalf("audit: %s", audited)
 	}
 

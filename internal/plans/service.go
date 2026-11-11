@@ -323,6 +323,12 @@ func (s *Service) UpdateItem(ctx context.Context, planID, itemID string, input U
 	if err := s.requirePlanScopeQuiet(ctx, planID); err != nil {
 		return nil, err
 	}
+	// A run's agent token marks the steps of its own item's plan while it
+	// implements, and nothing else: not another item's plan in the same
+	// workspace (an agent key could). Answered like a foreign plan.
+	if run := auth.RunOf(ctx); run != nil && (run.Stage != "implement" || run.PlanID == "" || run.PlanID != strings.TrimSpace(planID)) {
+		return nil, fmt.Errorf("%w: plan %s", ErrNotFound, planID)
+	}
 	planID = strings.TrimSpace(planID)
 	itemID = strings.TrimSpace(itemID)
 	if planID == "" {

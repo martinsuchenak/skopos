@@ -25,6 +25,10 @@ type SecondOpinionQueuer interface {
 // runner already reviewed this head (pass force to run it again).
 var ErrSecondOpinionConflict = errors.New("second opinion conflict")
 
+// ErrPolicyRefused: the workspace's runner policy does not allow the runner
+// for the stage (answered 403 with reason "policy").
+var ErrPolicyRefused = errors.New("refused by the runner policy")
+
 var reRunnerName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 // SecondOpinionInput: Runner empty = the workspace's default
@@ -41,6 +45,15 @@ type SecondOpinionRequest struct {
 	Runner  string `json:"runner"`
 	HeadSHA string `json:"head_sha"`
 }
+
+// RunnerPolicy answers whether a named runner may work on a workspace's
+// stage under its policy: known is false when no worker serving the
+// workspace reports that runner (nothing can be said yet — the claim still
+// decides); refused names the policy that would not allow it.
+type RunnerPolicy func(ctx context.Context, workspaceID, stage, runner string) (allowed, known bool, refused string, err error)
+
+// SetRunnerPolicy wires the policy lookup (pipeline settings).
+func (s *Service) SetRunnerPolicy(fn RunnerPolicy) { s.runnerPolicy = fn }
 
 // SetSecondOpinionDefault wires the default-runner lookup (pipeline
 // settings: the workspace's, else its group's).
@@ -81,6 +94,17 @@ func (s *Service) RequestSecondOpinion(ctx context.Context, itemID string, in Se
 	}
 	if !reRunnerName.MatchString(runner) {
 		return nil, fmt.Errorf("%w: runner %q: letters, digits, '.', '_' or '-'", ErrInvalidInput, runner)
+	}
+	// A runner the workspace's policy refuses is turned down here, not
+	// queued to wait for a worker that may never be allowed to take it.
+	if s.runnerPolicy != nil {
+		allowed, known, refused, err := s.runnerPolicy(ctx, item.WorkspaceID, "second_opinion", runner)
+		if err != nil {
+			return nil, err
+		}
+		if known && !allowed {
+			return nil, fmt.Errorf("%w: the %s policy does not allow runner %s for second opinions on %s", ErrPolicyRefused, refused, runner, item.WorkspaceID)
+		}
 	}
 	head, branch, err := SecondOpinionHead(item, itemRuns)
 	if err != nil {

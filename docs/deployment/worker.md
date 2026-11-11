@@ -159,6 +159,93 @@ command = ["aider", "--yes", "--message", "{prompt}"] # {prompt} {dir} {model} {
 use. Built-in names (`claude`, `opencode`, `codex`) need no `runner_config`
 block.
 
+### Runners the server defines
+
+When the server holds [runner definitions](../concepts/workspace-config.md#runner-definitions),
+an account can name the CLI it is a login for and leave the runner, model
+and effort to the server:
+
+```toml
+[[worker.accounts]]
+name = "claude-1"
+kind = "claude"                       # feeds every claude runner the server defines
+env  = { CLAUDE_CONFIG_DIR = "~/.claude-1" }
+
+[[worker.accounts]]
+name   = "opencode-zai"
+kind   = "opencode"
+models = ["zai-coding-plan/*"]        # only the runners whose model matches
+env    = { ZAI_API_KEY = "${ZAI_API_KEY}" }
+```
+
+- **The worker fetches the definitions before its first claim** and again,
+  between runs, whenever a claim answer names another revision.
+- **`runner_config.<kind>`** (an opencode `config`, a `bin`, a declared
+  `endpoint`) serves every defined runner of that kind, unless the runner
+  has a block under its own name.
+- **An account that names a `runner`** keeps working. If the server defines
+  that name, the definition's model and effort replace the account's.
+- **A runner is not offered** when the file gives its name another kind,
+  when the endpoint here contradicts the provider the definition declares,
+  or when its CLI fails the lockdown check. The log and
+  `skopos worker check` say which and why.
+- **One login, one quota:** a limit hit under one runner pauses every
+  runner the same account feeds.
+- **A `command` runner** stays in this file: its argv runs on this host.
+
+### What the worker reports about its runners
+
+With every claim the worker tells the server, for each runner: the CLI, the
+model, the endpoint the CLI sends its requests to, and the provider behind
+that endpoint. A workspace's [runner policy](../concepts/runner-policy.md)
+is matched against these, so they decide which runs the worker is given. It
+logs them at startup; `skopos worker runner list` shows each runner's
+provider ("sends to") and says when one needs declaring; the dashboard's
+Workers view shows them too.
+
+- **Derived where it can be:** from `ANTHROPIC_BASE_URL`,
+  `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_USE_VERTEX` for claude, from
+  `OPENAI_BASE_URL` for codex, and from the model's provider and the
+  runner's opencode config for opencode. The values are read from the
+  account's `env`, else the service's own environment.
+- **Declared where it can't:** a model on another machine on your network,
+  a router that forwards to several companies, and any `command` runner.
+
+  ```toml
+  [worker.runner_config.opencode-local]
+  kind = "opencode"
+  provider = "local"          # a model on another machine on this network
+
+  [worker.runner_config.aider]
+  kind = "command"
+  command = ["aider", "--yes", "--message", "{prompt}"]
+  endpoint = "https://api.openai.com"   # provider derived: openai
+  ```
+
+  Undeclared, such a runner reports `unknown:<host>`, which a policy
+  allows only by naming it.
+- **Only what the agent really gets counts.** Values in the worker's env
+  file never reach an agent (the scrub drops them), so an
+  `ANTHROPIC_BASE_URL` there changes nothing an agent does and nothing the
+  worker reports. Set such a variable in the account's `env`.
+- **Derived once, at startup.** Restart the worker after changing an
+  account, a runner or an opencode config.
+- **Refused at startup, and by `skopos worker check`:**
+  - an account's `env` sets `HTTPS_PROXY`, `HTTP_PROXY` or `ALL_PROXY`
+    (a proxy for the whole host belongs in the service's environment);
+  - a stage profile's `env` sets a proxy or an endpoint variable
+    (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CLAUDE_CODE_USE_*`,
+    `OPENCODE_CONFIG`);
+  - two accounts of one runner differ in model, provider or endpoint.
+    Before, this was a warning. Give each its own runner name. Accounts
+    that differ only in `effort` still get the warning;
+  - a declared provider contradicts the endpoint.
+- **The server names the runner of every run.** For a stage with no
+  preference it picks the first runner in the worker's order that the
+  policy allows and that can run the stage: `claude` first, then the order
+  of `worker.runners`. A worker doesn't run a run that names no runner, or
+  one it doesn't have.
+
 ### Codex
 
 Codex takes the read-only stages: plan, review, compare and second
@@ -409,27 +496,58 @@ CLI can't do its lockdown (for example, an older Claude Code without
 
 ## Skopos tools for agent runs
 
-With an **agent key**, claude and opencode runs reach skopos over MCP: the
-code index, the blackboard, and their plan's steps.
+Claude and opencode runs reach skopos over MCP: the code index, the
+blackboard, and their plan's steps. There is nothing to set up.
 
-1. Mint an MCP-only key for the worker's workspaces (root key):
+**Each run gets its own token.** The server mints it when the worker claims
+the run, and the worker writes it into that run's MCP config:
+`<state_dir>/runs/<run>/mcp.json` (the directory 0700, the file 0600),
+holding your `mcp_config` servers plus a `skopos` server with the token.
+The file is removed when the run ends.
 
-   ```sh
-   skopos key create --name knot-1-agent --workspace github.com/you/repo --preset agent
-   ```
+- **One workspace:** the token reaches only the run's own workspace. A
+  worker that serves several repositories no longer gives every agent a
+  key for all of them.
+- **One attempt:** it works only while the run is claimed or running. A
+  report, a pause, a retry or a cancel ends it at once.
+- **Recorded as the run:** blackboard entries and audit records name
+  `run <id> (<runner> on <worker>)`.
+- **Redacted:** the token never appears in the run's log.
+- **A `skopos` server in your `mcp_config`** is replaced by the run's own
+  for these runs.
+- **A wrapper that mounts files into a container** has to mount the run's
+  directory, `<state_dir>/runs/<run>/` (`{rundir}` in the wrapper). Before,
+  the one file to mount was `<state_dir>/agent-mcp.json`.
+- **If the run's config can't be written** (a broken `mcp_config`, a full
+  disk), the run's agents get no skopos tools and the worker log says so.
+  The shared agent key is never used in a token's place.
 
-2. Put it in `skopos-worker.env` next to the worker key:
+See [Run tokens](../concepts/api-keys.md#run-tokens) for exactly what a
+token may do.
 
-   ```bash
-   SKOPOS_AGENT_KEY=sk_...
-   ```
+**A server from before run tokens** (before v0.33) sends none. For that
+case only, a worker can still hold an **agent key**: an MCP-only key shared
+by all its runs.
 
-At startup the worker checks the key with `whoami` and refuses to start
-when it could give an agent more than MCP: full access, the `rest`
-surface, the approver permission, or no `code` read. It writes the run MCP
-config to `<state_dir>/agent-mcp.json` (mode 0600): your `mcp_config`
-servers plus a `skopos` server with the agent key. Don't define a server
-named `skopos` in `mcp_config` yourself; the worker refuses that too.
+```sh
+skopos key create --name knot-1-agent --workspace github.com/you/repo --preset agent
+```
+
+```bash
+SKOPOS_AGENT_KEY=sk_...        # in skopos-worker.env
+```
+
+The worker checks an agent key with `whoami` at startup and refuses to
+start when it could give an agent more than MCP: full access, the `rest`
+surface, the approver or admin permission, or no `code` read. It writes
+`<state_dir>/agent-mcp.json` (mode 0600) and refuses an `mcp_config` that
+defines its own `skopos` server. Once the server issues run tokens, the
+worker says so in its log and the key is no longer used; remove it.
+
+**The worker's own key** is checked at startup, and by `skopos worker
+check`. A key that holds the admin permission is refused, because a worker
+must not be able to change the policy and configuration it runs under. The
+root key and an approver key still work, each with a warning at startup.
 
 What a run gets:
 
@@ -457,11 +575,9 @@ What a run gets:
   only the tools it may call, not the full skopos instructions. A capped key
   sends one request at a time (no JSON-RPC batches).
 - **Codex** runs get no skopos tools (their network is off).
-- The agent key never reaches the agent's environment: the scrub drops
-  every `*_KEY` variable.
-
-Without an agent key the worker logs a warning at startup, and runs get only
-your `mcp_config` servers.
+- Neither the run token nor an agent key reaches the agent's environment:
+  the token lives only in the run's MCP config, and the scrub drops every
+  `*_KEY` variable.
 
 ## Code indexing while idle
 
@@ -657,17 +773,37 @@ profile = "php"
 ```
 
 - **`wrapper`** is an argv prefix; the agent command is appended to it.
-  - Placeholders: `{dir}` (the run's working directory), `{run}`, `{stage}`,
-    `{workspace}`.
+  - Placeholders:
+
+    | Placeholder | Expands to |
+    |---|---|
+    | `{dir}` | the run's working directory (its worktree, or the clone for a branch checkout) |
+    | `{gitdir}` | the clone's git directory. A worktree's `.git` file points into it, and commits write there |
+    | `{login}` | the account's login directory: `login_dir` on the account, else `CLAUDE_CONFIG_DIR` (default `~/.claude`), `CODEX_HOME` (default `~/.codex`), opencode's data directory (`$XDG_DATA_HOME/opencode`, default `~/.local/share/opencode`), `~/.gemini` for Antigravity |
+    | `{rundir}` | the run's own directory, `<state_dir>/runs/<run>/`: its MCP file, its agent log, and the temporary config directories the runners create |
+    | `{cli}` | the directory the agent CLI's binary is in, symlinks resolved. A wrapper that uses it starts the agent by that resolved path, so the directory on `PATH` that only holds a link to it need not be inside |
+    | `{run}`, `{stage}`, `{workspace}` | the run id, the stage, the workspace id |
+
+  - A placeholder the wrapper uses and the worker has no value for fails
+    the run before the agent starts. A `command` runner has no login
+    directory unless its account sets `login_dir`. A `{name}` that is not
+    in this table is refused at startup.
+  - **Setup and checks run behind the wrapper too.** The worker's `setup`
+    and `checks` commands for an implement stage, and for the review of an
+    existing branch, execute the branch's code, so they run through the
+    stage's wrapper like the agent. The wrapper has to hold what they
+    need: the toolchain, caches, and anything `setup` reads from the
+    clone.
   - The wrapper process receives the scrubbed environment plus the stage's
     `env`, so forward what the agent needs (`-e NAME`).
-  - The image must contain the agent CLI.
-  - Session resumes need a persistent config dir (`CLAUDE_CONFIG_DIR`)
-    mounted into the container.
+  - A container image must contain the agent CLI.
+  - Session resumes need the login directory (`{login}`) inside the wrapper.
   - The agent needs network access to its model API.
 - **`settings`** is merged into a claude run's settings (skopos's deny list
-  always stays). `sandbox.enabled = true` counts as containment **for the
-  claude runner only**; other runners need a wrapper.
+  always stays). `sandbox.enabled = true` lets a stage grant capabilities
+  **on the claude runner only**; other runners need a wrapper. For a
+  runner policy it is its own executor, `sandbox:<hash>` (see
+  [Executors](#executors)).
 - **`tools`** are extra allowed tools for the stage, in Claude-style names
   (`Bash(cmd:*)`). They are translated for opencode.
   - `Agent` (`Task` on older Claude Code) lets a claude stage start
@@ -682,8 +818,126 @@ settings `allow` rules. An uncontained grant is a config error: the daemon
 won't start and `worker check` lists it. A tool like `Bash(php:*)` runs
 arbitrary code, so it only makes sense inside something that contains it.
 
-Every run records its `executor` (`local`, `wrapper:<hash>`, `sandbox:<hash>`),
-visible in the API and the dashboard's run list.
+### A worker inside a container
+
+When the worker's whole host is a container (a Knot space, a VM, a Docker
+container), say so:
+
+```toml
+[worker]
+contained_by = "knot"
+```
+
+- Stage profiles may then grant `tools`, `env` and settings `allow` rules
+  without a wrapper, and unverified runners (`antigravity`, `command`) run
+  without one.
+- It says the host is confined. It does not keep runs apart: inside the
+  container a run still sees every clone and login on the worker. A
+  [policy rule](../concepts/runner-policy.md#containment) that asks for
+  `isolated` is not met by it; one that asks for `contained` is.
+- A wrapper that only sets variables (`wrapper = ["env", "NAME=value"]`)
+  counts the same way: nothing goes around the run, so it is the host's
+  containment (`host:<name>`, the name from `SKOPOS_CONTAINED_BY=<name>`).
+  `skopos worker runner list` and the worker's startup log point it out;
+  `contained_by` replaces it. An `env` wrapper that runs a command of its
+  own (`["env", "A=b", "bwrap", …]`) is that command's wrapper.
+
+### Executors
+
+Every run records its **executor**: what contained the agent.
+
+| Executor | What it is |
+|---|---|
+| `wrapper:<name>:<hash>` | the stage's wrapper, around the agent and the worker's setup and check commands. `<name>` is the profile's name (`repo` for a repo's own `stages` block); the hash covers the wrapper's argv |
+| `runner:<kind>` | a runner whose own lockdown is a sandbox: `runner:codex` on macOS, where that lockdown is verified (read-only, confined to the worktree, no network from the shell). Not for the review of an existing branch, whose setup and checks the worker runs outside it |
+| `host:<name>` | the worker's host is a container (`contained_by`) |
+| `sandbox:<hash>` | Claude Code's sandbox, turned on by the stage's `settings`; the hash covers the sandbox settings |
+| `local` | nothing but the agent CLI's own lockdown |
+
+When several apply, the first in that order is the run's executor.
+
+- The worker reports the executor a run would get, per workspace, stage and
+  runner, with every claim. A workspace's
+  [runner policy](../concepts/runner-policy.md#containment) can require one:
+  `isolated` is met by a wrapper or a runner sandbox, `contained` also by a
+  host container, and a sandbox by its name (`sandbox:*`).
+  `skopos worker runner list` shows them (`runs in:`), and so does the
+  dashboard's Workers view.
+- A run comes with the executor the server matched its policy on. A worker
+  that would run it in something else fails the run before anything starts.
+- What a stage profile gives a run (`tools`, `env` names, and every setting
+  besides the sandbox block) is recorded apart, as the run's `grants`
+  hash. Changing it doesn't change the executor.
+- The runners create their temporary config directories under the run's own
+  directory, not in the shared `/tmp`, and they are removed with the run.
+- The worker never writes through a link in a run's directory: a file it
+  writes there replaces whatever a run left under that name.
+
+### A bwrap profile
+
+[bubblewrap](https://github.com/containers/bubblewrap) runs the agent in
+its own mount namespace on Linux, with only the paths you bind. This
+profile gives a run its worktree, the clone's git directory, its account's
+login and its own run directory, and nothing else of the worker: no other
+clone, no state directory, no env file, no other account's login, no home
+directory.
+
+<!-- bwrap-profile:begin -->
+```toml
+[worker.profiles.bwrap.implement]
+wrapper = ["bwrap", "--unshare-all", "--share-net", "--die-with-parent",
+  "--ro-bind", "/usr", "/usr",
+  "--symlink", "usr/bin", "/bin", "--symlink", "usr/sbin", "/sbin",
+  "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
+  "--ro-bind-try", "/etc/ssl", "/etc/ssl",
+  "--ro-bind-try", "/etc/ca-certificates", "/etc/ca-certificates",
+  "--ro-bind-try", "/etc/resolv.conf", "/etc/resolv.conf",
+  "--ro-bind-try", "/etc/hosts", "/etc/hosts",
+  "--ro-bind-try", "/etc/passwd", "/etc/passwd",
+  "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
+  "--ro-bind", "{cli}", "{cli}",
+  "--bind", "{dir}", "{dir}",
+  "--bind", "{gitdir}", "{gitdir}",
+  "--ro-bind-try", "{gitdir}/config", "{gitdir}/config",
+  "--ro-bind-try", "{gitdir}/hooks", "{gitdir}/hooks",
+  "--bind", "{login}", "{login}",
+  "--bind", "{rundir}", "{rundir}",
+  "--chdir", "{dir}"]
+```
+<!-- bwrap-profile:end -->
+
+- **`/etc` is not bound whole.** A worker env file may live there.
+- **The network stays open:** the agent has to reach its model API, and
+  bwrap can't limit it by host. Services listening on the host's loopback
+  are reachable too.
+- **`{gitdir}` is the whole git directory of the clone,** so a run can read
+  and write every branch of its own repository. Its `config` and `hooks`
+  are read-only: the worker runs git in that clone afterwards. It can't
+  reach another repository.
+- **Commits need an identity in the clone's own config**
+  (`git -C <clone> config user.name …`): a `~/.gitconfig` is not inside.
+- **The login directory.** With Claude Code's default `~/.claude`, the file
+  `~/.claude.json` sits beside it, outside `{login}`. Give the account its
+  own `CLAUDE_CONFIG_DIR`, which holds both.
+- **The agent CLI.** `{cli}` holds a self-contained binary. A CLI that is
+  a script (an npm install) also needs its runtime and its package
+  directory bound.
+- **Tools the stage needs** (a language toolchain outside `/usr`, a package
+  cache) need their own binds. The worker's setup and checks run behind
+  the same wrapper.
+- **The host needs unprivileged user namespaces.** Inside a container that
+  usually means the container allows them.
+- **What is checked.** `TestBwrapProfileFromDocs` runs this profile, read
+  from this page, around a stand-in agent on Linux
+  (`go test ./internal/worker -run TestBwrapProfileFromDocs`; it skips
+  where bwrap can't create namespaces, and it is not part of CI). The run
+  can read and write its worktree, commit, use its login and its run
+  directory. It can't see another clone, the clone's own working tree, the
+  state directory, the env file, another account's login, another run's
+  directory or the home directory, and it can't change the clone's git
+  config or hooks. A check command run through the wrapper is confined the
+  same way. It is not a test of a particular agent CLI under bwrap: try a
+  run on a test workspace before a policy rule depends on the profile.
 
 ## Repo knowledge (AGENTS.md, skills, verification)
 
@@ -762,6 +1016,57 @@ setup_timeout = "30m"
   removed. A setup failure is the environment's problem, so the run is
   retried (see [Self-healing](#self-healing)); the item blocks only once the
   retries are spent. The preview shows each command's output.
+
+## Config from the server
+
+A workspace can have its shared settings on the server
+([Workspace config on the server](../concepts/workspace-config.md)). For
+such a workspace the worker takes branches, timeouts, push settings and the
+MCP lists from there, and with `server_commands = true` its `setup`,
+`checks` and `preflight` commands too.
+
+```toml
+[worker]
+id = "worker-knot-claude-1"
+server_commands = true
+
+[worker.repos."github.com/fortix/freedom3"]
+path = "/srv/clones/freedom3"
+push.token_env = "FF3_PUSH_TOKEN"
+```
+
+- **What stays in this file:** the clone's `path`, `setup_env`,
+  `push.token_env`, the accounts, stage profiles and `mcp_config`.
+- **A push block with only `token_env`** is enough here: the kind, the URL
+  and the pull-request setting come from the server. While the server
+  holds no config for the workspace, such a block keeps the workspace out
+  of this worker's claims (unhealthy, with the reason) instead of running
+  work it would never push.
+- **The same fields in this file are ignored** for a managed workspace. The
+  worker logs once which ones; a field the server leaves out has its
+  default, not this file's value.
+- **Without `server_commands`** the three command fields stay this file's
+  and the rest still comes from the server. The worker logs that the
+  server sets commands it does not take.
+- **Each run names its config.** The claim carries the revision; the worker
+  fetches exactly that one before the stage starts and writes it at the
+  top of the run log. A run whose revision cannot be fetched goes back to
+  the queue and is retried.
+- **A command change is logged** when the worker applies it, with the
+  commands.
+- **A config this host cannot use** — it pushes, and the repo has no
+  `push.token_env` here — keeps the workspace out of this worker's claims,
+  shown as unhealthy with the reason, like a failing preflight.
+- **Plan and implement timeouts and `mcp_servers`** are the workspace's
+  for a managed workspace; the `[worker]` values serve the others. A
+  `mcp_deny` this file sets stays in force everywhere: for a managed
+  workspace it is added to the workspace's list.
+- **`skopos worker check`** fetches the definitions and each workspace's
+  config and checks the merged result.
+- **A server that cannot be reached at start:** the worker waits and
+  retries before it takes work.
+- **A worker older than this feature** is given no runs of a managed
+  workspace, and shows as unhealthy for it until it upgrades.
 
 ## Self-healing
 
@@ -944,7 +1249,7 @@ What a run log holds:
   credentials and env-file values with `[redacted]` before a line leaves it.
 
 The raw agent output still lands in `<state_dir>/runs/<run>/<stage>.log`.
-Reading a log takes `runs:read`, so agent keys can't.
+Reading a log takes `runs:read`, so run tokens and agent keys can't.
 
 ## Secrets
 
@@ -955,7 +1260,7 @@ No secrets live in the service definition or the TOML. The daemon loads
   `export KEY=` forms.
 - **Precedence everywhere:** flags > real environment > env file > `[client]`
   in the TOML.
-- **What goes there:** `SKOPOS_API_KEY`, `SKOPOS_AGENT_KEY`, each repo's
+- **What goes there:** `SKOPOS_API_KEY`, each repo's
   `push.token_env` value, any `${VAR}` your accounts reference, and the log
   output settings (`LOG_OUTPUT_URL`, `LOG_OUTPUT_HEADER`).
 - **SRV records:** `SKOPOS_SERVER_URL`, `LOG_OUTPUT_URL` and

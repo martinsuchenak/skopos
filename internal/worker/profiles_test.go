@@ -67,10 +67,8 @@ func TestProfileValidation(t *testing.T) {
 	checkConfigCases(t, cases)
 }
 
-// Repo stages override the named profile per stage; the executor id is
-// "local" without a profile and a stable, kind-prefixed hash otherwise that
-// covers env NAMES, never values.
-func TestStageProfileResolutionAndExecutor(t *testing.T) {
+// Repo stages override the named profile per stage.
+func TestStageProfileResolution(t *testing.T) {
 	prof := &StageProfile{Wrapper: []string{"docker", "run"}, Tools: []string{"Bash(php:*)"}}
 	override := &StageProfile{Settings: `{"sandbox":{"enabled":true}}`}
 	cfg := &Config{
@@ -85,22 +83,6 @@ func TestStageProfileResolutionAndExecutor(t *testing.T) {
 	}
 	if got := cfg.StageProfile("bare", "implement"); got != nil {
 		t.Fatal("no profile = nil")
-	}
-	var nilProf *StageProfile
-	if nilProf.Executor() != "local" {
-		t.Fatalf("nil profile executor: %q", nilProf.Executor())
-	}
-	ex := prof.Executor()
-	if !strings.HasPrefix(ex, "wrapper:") || len(ex) != len("wrapper:")+12 || ex != prof.Executor() {
-		t.Fatalf("wrapper executor id: %q", ex)
-	}
-	if !strings.HasPrefix(override.Executor(), "sandbox:") {
-		t.Fatalf("sandbox executor id: %q", override.Executor())
-	}
-	a := &StageProfile{Wrapper: []string{"w"}, Env: map[string]string{"KEY": "one"}}
-	b := &StageProfile{Wrapper: []string{"w"}, Env: map[string]string{"KEY": "two"}}
-	if a.Executor() != b.Executor() {
-		t.Fatal("env VALUES (secrets) must not feed the executor id")
 	}
 }
 
@@ -172,8 +154,9 @@ func TestAgentRunAppliesProfile(t *testing.T) {
 		sessions:  map[string]string{},
 		accounts:  map[string]string{},
 		executors: map[string]string{},
+		grants:    map[string]string{},
 	}
-	run := &Run{ID: "r1", WorkspaceID: "ws"}
+	run := &Run{ID: "r1", WorkspaceID: "ws", Stage: "implement"}
 	acct := &Account{Name: "a", Model: "sonnet", Env: map[string]string{"ANTHROPIC_API_KEY": "k"}}
 	ar := w.agentRun("/wt/x", "p", "", []string{"Read"}, 0, acct, run, "implement")
 	if ar.Runner != "claude" || ar.Model != "sonnet" {
@@ -194,10 +177,11 @@ func TestAgentRunAppliesProfile(t *testing.T) {
 	if strings.Join(ar.Wrapper, " ") != "docker run -v /wt/x:/wt/x --label implement/r1/ws" {
 		t.Fatalf("wrapper: %v", ar.Wrapper)
 	}
-	if ar.MCPConfig != "/m.json" || w.executors["r1"] != prof.Executor() {
+	if ar.MCPConfig != "/m.json" || !strings.HasPrefix(w.executors["r1"], "wrapper:repo:") || w.grants["r1"] != prof.Grants() || prof.Grants() == "" {
 		t.Fatalf("mcp %q executor %q", ar.MCPConfig, w.executors["r1"])
 	}
 	// A stage without a profile runs plain and records "local".
+	run.Stage = "plan"
 	ar = w.agentRun("/wt/x", "p", "", []string{"Read"}, 0, acct, run, "plan")
 	if len(ar.Wrapper) != 0 || strings.Join(ar.AllowedTools, ",") != "Read" || w.executors["r1"] != "local" {
 		t.Fatalf("plain stage: %+v executor %q", ar, w.executors["r1"])

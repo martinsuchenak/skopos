@@ -20,8 +20,14 @@ import (
 
 func whoamiServer(t *testing.T, body string) string {
 	t.Helper()
+	return whoamiServerKey(t, "sk_agent", body)
+}
+
+// whoamiServerKey answers GET /api/whoami for one key with body.
+func whoamiServerKey(t *testing.T, key, body string) string {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/whoami" || r.Header.Get("Authorization") != "Bearer sk_agent" {
+		if r.URL.Path != "/api/whoami" || r.Header.Get("Authorization") != "Bearer "+key {
 			http.Error(w, "unexpected", http.StatusTeapot)
 			return
 		}

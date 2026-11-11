@@ -16,6 +16,8 @@ import (
 
 	"github.com/martinsuchenak/skopos/build"
 	"github.com/martinsuchenak/skopos/internal/logship"
+	"github.com/martinsuchenak/skopos/internal/policy"
+	"github.com/martinsuchenak/skopos/internal/wsconfig"
 )
 
 // Client is the worker's REST client against skopos (claim/heartbeat/report,
@@ -36,7 +38,22 @@ type Client struct {
 	indexEnabled, indexDefault []string
 	// paused: the last claim answer's Skopos-Paused ("" = not paused).
 	paused string
+	// factsUsed: the last claim sent runner facts to a server that reads
+	// them — every run it hands back then names its runner.
+	factsUsed bool
+	// executors: what contains the worker's runs, sent with every claim.
+	executors map[string][]policy.ExecutorFact
+	// serverCommands, heldFleet: sent with every claim (the worker takes
+	// commands from the server; the runner definitions it holds).
+	// configDigest, fleetRev: the last claim answer's Skopos-Config-Rev
+	// and Skopos-Fleet-Rev.
+	serverCommands         bool
+	heldFleet              string
+	configDigest, fleetRev string
 }
+
+// Base is the server URL the client talks to.
+func (c *Client) Base() string { return c.base }
 
 func NewClient(base, key string) *Client {
 	return &Client{base: base, key: key, http: &http.Client{Timeout: 60 * time.Second}, leases: map[string]string{}}
@@ -131,10 +148,25 @@ func (c *Client) execHeaders(req *http.Request, out any, hdr *http.Header) error
 }
 
 // Claim polls the queue. (nil, nil) = nothing to do.
-func (c *Client) Claim(ctx context.Context, workerID string, runners, workspaces []string, unhealthy map[string]string, indexable []string) (*Run, error) {
+func (c *Client) Claim(ctx context.Context, workerID string, runners, workspaces []string, unhealthy map[string]string, indexable []string, facts []policy.Facts) (*Run, error) {
 	var run Run
 	req := map[string]any{"worker_id": workerID, "runners": runners, "workspaces": workspaces,
 		"version": build.Version, "poll_ms": c.pollMS}
+	if len(facts) > 0 {
+		req["runner_facts"] = facts
+		c.mu.Lock()
+		executors := c.executors
+		c.mu.Unlock()
+		if len(executors) > 0 {
+			req["executors"] = executors
+		}
+	}
+	c.mu.Lock()
+	req["server_commands"] = c.serverCommands
+	if c.heldFleet != "" {
+		req["fleet_rev"] = c.heldFleet
+	}
+	c.mu.Unlock()
 	if len(unhealthy) > 0 {
 		req["unhealthy"] = unhealthy
 	}
@@ -149,6 +181,8 @@ func (c *Client) Claim(ctx context.Context, workerID string, runners, workspaces
 	c.mu.Lock()
 	c.indexEnabled, c.indexDefault = splitList(hdr.Get("Skopos-Index-Enabled")), splitList(hdr.Get("Skopos-Index-Default"))
 	c.paused = hdr.Get("Skopos-Paused")
+	c.factsUsed = len(facts) > 0 && hdr.Get("Skopos-Runner-Facts") != ""
+	c.configDigest, c.fleetRev = hdr.Get("Skopos-Config-Rev"), hdr.Get("Skopos-Fleet-Rev")
 	c.mu.Unlock()
 	if run.ID == "" {
 		return nil, nil
@@ -159,6 +193,88 @@ func (c *Client) Claim(ctx context.Context, workerID string, runners, workspaces
 		c.mu.Unlock()
 	}
 	return &run, nil
+}
+
+// SetExecutors sets what the worker reports with every claim about what
+// contains its runs: per workspace, by stage and runner (config.go
+// ExecutorFacts). Sent alongside the runner facts.
+func (c *Client) SetExecutors(executors map[string][]policy.ExecutorFact) {
+	c.mu.Lock()
+	c.executors = executors
+	c.mu.Unlock()
+}
+
+// SetServerCommands tells the server, with every claim, whether this worker
+// takes commands from it (worker.server_commands).
+func (c *Client) SetServerCommands(on bool) {
+	c.mu.Lock()
+	c.serverCommands = on
+	c.mu.Unlock()
+}
+
+// SetFleetHeld records the runner definitions the worker holds, reported
+// with every claim.
+func (c *Client) SetFleetHeld(rev string) {
+	c.mu.Lock()
+	c.heldFleet = rev
+	c.mu.Unlock()
+}
+
+// ConfigDigest is the last claim answer's Skopos-Config-Rev: one value for
+// the config of every workspace the claim offered ("" = none is managed,
+// or a server from before workspace config).
+func (c *Client) ConfigDigest() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.configDigest
+}
+
+// FleetRev is the last claim answer's Skopos-Fleet-Rev: the runner
+// definitions in force ("" = none).
+func (c *Client) FleetRev() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.fleetRev
+}
+
+// notFound reports a 404 from the server (exec's error text).
+func notFound(err error) bool { return err != nil && strings.Contains(err.Error(), ": 404 ") }
+
+// EffectiveConfig fetches what applies to a workspace now. (nil, nil) when
+// the server has no such endpoint (a server from before workspace config)
+// or does not know the workspace: the worker's file applies.
+func (c *Client) EffectiveConfig(ctx context.Context, workspace string) (*wsconfig.Effective, error) {
+	var eff wsconfig.Effective
+	if err := c.do(ctx, http.MethodGet, "/api/workspaces/"+url.PathEscape(workspace)+"/config/effective", nil, &eff); err != nil {
+		if notFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &eff, nil
+}
+
+// ConfigAt fetches the config a revision id names for a workspace — what a
+// run claimed with it executes under.
+func (c *Client) ConfigAt(ctx context.Context, workspace, rev string) (*wsconfig.Effective, error) {
+	var eff wsconfig.Effective
+	if err := c.do(ctx, http.MethodGet, "/api/workspaces/"+url.PathEscape(workspace)+"/config/"+url.PathEscape(rev), nil, &eff); err != nil {
+		return nil, err
+	}
+	return &eff, nil
+}
+
+// FleetConfig fetches the runner definitions. (nil, nil) for a server
+// without them.
+func (c *Client) FleetConfig(ctx context.Context) (*wsconfig.Fleet, error) {
+	var f wsconfig.Fleet
+	if err := c.do(ctx, http.MethodGet, "/api/fleet/config", nil, &f); err != nil {
+		if notFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &f, nil
 }
 
 func (c *Client) leaseHeader(runID string) string {
@@ -260,6 +376,14 @@ func (c *Client) ServerVersion() string {
 // SetPollInterval: reported with every poll, so the server knows when a
 // silent worker counts as offline.
 func (c *Client) SetPollInterval(d time.Duration) { c.pollMS = d.Milliseconds() }
+
+// FactsUsed reports whether the server reads the runner facts this worker
+// sends (it then names the runner of every run it hands out).
+func (c *Client) FactsUsed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.factsUsed
+}
 
 // Paused is what the last claim answer said about a pause: "" (none),
 // "resume" (until someone resumes the worker) or when it ends (RFC 3339).
@@ -604,20 +728,29 @@ func (c *Client) Transition(ctx context.Context, itemID, to, reason string) erro
 // --- wire types (kept lean; the server's openapi is the contract) ---
 
 type Run struct {
-	ID          string `json:"id"`
-	LeaseToken  string `json:"lease_token,omitempty"` // fencing token (claim response only)
+	ID         string `json:"id"`
+	LeaseToken string `json:"lease_token,omitempty"` // fencing token (claim response only)
+	// AgentToken: the run's own credential for skopos over MCP (claim
+	// response only; a server before run tokens sends none).
+	AgentToken  string `json:"agent_token,omitempty"`
 	WorkspaceID string `json:"workspace_id"`
 	ItemID      string `json:"item_id"`
 	PlanRevID   string `json:"plan_rev_id"`
 	Stage       string `json:"stage"`
 	Runner      string `json:"runner"`
-	WorkerID    string `json:"worker_id"`
-	Status      string `json:"status"`
-	ResumeKind  string `json:"resume_kind"`
-	Attempt     int    `json:"attempt"`
-	Branch      string `json:"branch"`
-	BaseSHA     string `json:"base_sha"`
-	HeadSHA     string `json:"head_sha"`
+	// Facts: what the claim decided with — the runner's facts and the
+	// executor the server matched the policy on (refuseExecutor).
+	Facts json.RawMessage `json:"facts,omitempty"`
+	// ConfigRev: the workspace's config the claim named ("" = the server
+	// does not manage the workspace: the worker's file applies).
+	ConfigRev  string `json:"config_rev,omitempty"`
+	WorkerID   string `json:"worker_id"`
+	Status     string `json:"status"`
+	ResumeKind string `json:"resume_kind"`
+	Attempt    int    `json:"attempt"`
+	Branch     string `json:"branch"`
+	BaseSHA    string `json:"base_sha"`
+	HeadSHA    string `json:"head_sha"`
 	// GroupID: set when the run is one member of a multi-agent stage;
 	// Focus: the member's brief (.skopos/focus/<name>.md at the base).
 	GroupID   string    `json:"group_id"`

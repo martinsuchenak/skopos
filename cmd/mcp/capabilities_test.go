@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/martinsuchenak/skopos/internal/auth"
+	"github.com/martinsuchenak/skopos/internal/worker"
 	mcplib "github.com/paularlott/mcp"
 )
 
@@ -175,5 +177,141 @@ func TestCappedKeyBatchRefused(t *testing.T) {
 	h.ServeHTTP(w, req)
 	if !strings.Contains(w.Body.String(), "batch requests are not accepted") {
 		t.Fatalf("batch: %s", w.Body.String())
+	}
+}
+
+func runPrincipal(stage string) *auth.Principal {
+	p := agentPrincipal()
+	p.KeyID, p.Name = "run:r1", "run r1"
+	p.Run = &auth.RunIdentity{ID: "r1", WorkspaceID: "ws-a", ItemID: "i1", PlanID: "p1", Stage: stage, Runner: "claude", WorkerID: "w1"}
+	return p
+}
+
+// A run's agent token sees and may call only its stage's tools: what the
+// run preset's capabilities would also allow (creating or archiving plans,
+// reading the inbox) is hidden and refused, and only an implement run may
+// mark plan steps.
+func TestRunPrincipalTools(t *testing.T) {
+	h := toolsE2E(t)
+	for _, stage := range []string{"plan", "implement", "review"} {
+		got := map[string]bool{}
+		for _, n := range listedTools(t, h, runPrincipal(stage)) {
+			got[n] = true
+		}
+		for name := range runTools {
+			if !got[name] {
+				t.Errorf("%s run must see %s", stage, name)
+			}
+		}
+		if got["plan_update_item"] != (stage == "implement") {
+			t.Errorf("%s run: plan_update_item listed = %v", stage, got["plan_update_item"])
+		}
+		for _, hidden := range []string{"plan_create", "plan_add_item", "plan_archive", "inbox_list", "inbox_read", "inbox_questions", "blackboard_delete", "report_status"} {
+			if got[hidden] {
+				t.Errorf("%s run must not see %s", stage, hidden)
+			}
+		}
+	}
+	call := func(p *auth.Principal, tool string, args map[string]any) string {
+		out := mcpPost(t, h, p, map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": tool, "arguments": args}})
+		raw, _ := json.Marshal(out)
+		return string(raw)
+	}
+	if raw := call(runPrincipal("implement"), "plan_create", map[string]any{"workspace_id": "ws-a", "name": "x", "author_agent_id": "a"}); !strings.Contains(raw, "do not allow plan_create") {
+		t.Fatalf("plan_create must be refused for a run: %s", raw)
+	}
+	if raw := call(runPrincipal("review"), "plan_update_item", map[string]any{"plan_id": "p1", "item_id": "x", "status": "done"}); !strings.Contains(raw, "do not allow plan_update_item") {
+		t.Fatalf("a review run must not mark plan steps: %s", raw)
+	}
+	if raw := call(runPrincipal("review"), "blackboard_write", map[string]any{"workspace_id": "ws-a", "scope": "project", "entry_type": "finding", "title": "t", "content": "c", "author_agent_id": "a"}); strings.Contains(raw, `"isError":true`) || strings.Contains(raw, `"error"`) {
+		t.Fatalf("a run records findings in its workspace: %s", raw)
+	}
+	for tool, args := range map[string]map[string]any{
+		"blackboard_read": {"workspace_id": "ws-b"},
+		"code_search":     {"workspace_id": "ws-b", "q": "x"},
+		"skopos_context":  {"workspace_id": "ws-b"},
+	} {
+		if raw := call(runPrincipal("review"), tool, args); !strings.Contains(raw, "out of scope") {
+			t.Fatalf("%s on another workspace must be out of scope: %s", tool, raw)
+		}
+	}
+	// In lean mode the same refusal holds through execute_tool.
+	SetLeanToolset(true)
+	defer SetLeanToolset(false)
+	lean := toolsE2E(t)
+	out := mcpPost(t, lean, runPrincipal("implement"), map[string]any{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": map[string]any{
+		"name": "execute_tool", "arguments": map[string]any{"name": "plan_archive", "parameters": map[string]any{"plan_id": "p1"}},
+	}})
+	if raw, _ := json.Marshal(out); !strings.Contains(string(raw), "do not allow plan_archive") {
+		t.Fatalf("execute_tool plan_archive must be refused for a run: %s", raw)
+	}
+}
+
+// The tools a run's token may call are exactly the ones the worker
+// allowlists for the agent CLI, per stage.
+func TestRunToolsMatchWorker(t *testing.T) {
+	for _, stage := range []string{"plan", "implement", "review"} {
+		want := map[string]bool{}
+		for _, n := range worker.AgentToolNames(stage) {
+			want[n] = true
+		}
+		got := map[string]bool{}
+		for n := range runTools {
+			got[n] = true
+		}
+		if stage == "implement" {
+			for n := range runImplementTools {
+				got[n] = true
+			}
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: server allows %v, the worker allowlists %v", stage, got, want)
+		}
+		for n := range got {
+			if _, ok := toolNeeds[n]; !ok {
+				t.Errorf("run tool %s has no toolNeeds entry", n)
+			}
+		}
+	}
+}
+
+// A request whose params don't parse must not slip past the filter: a run
+// (or any capped key) still gets only its own tools from tools/list, the
+// capped instructions from initialize, and a refusal for a tools/call it
+// cannot classify. A body that is no JSON-RPC object is refused.
+func TestCappedKeyMalformedEnvelope(t *testing.T) {
+	h := toolsE2E(t)
+	post := func(body string) string {
+		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		req = req.WithContext(auth.WithPrincipal(req.Context(), runPrincipal("review")))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w.Body.String()
+	}
+	for _, body := range []string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"name":5}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":"x"}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"arguments":7}}`,
+	} {
+		out := post(body)
+		for _, hidden := range []string{"plan_create", "plan_archive", "inbox_list", "report_status", "blackboard_delete"} {
+			if strings.Contains(out, `"`+hidden+`"`) {
+				t.Errorf("%s leaked %s: %.200s", body, hidden, out)
+			}
+		}
+	}
+	init := post(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"name":5,"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}`)
+	if strings.Contains(init, "inbox_claim") || strings.Contains(init, "plan_create") || !strings.Contains(init, "limited to the tools listed") {
+		t.Errorf("initialize with odd params must still answer the capped instructions: %.300s", init)
+	}
+	if out := post(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":5}}`); !strings.Contains(out, "must name the tool") {
+		t.Errorf("an unclassifiable tools/call must be refused: %.200s", out)
+	}
+	for _, body := range []string{`"tools/list"`, `7`, `{not json`} {
+		if out := post(body); !strings.Contains(out, "not a JSON-RPC object") {
+			t.Errorf("%s must be refused: %.200s", body, out)
+		}
 	}
 }

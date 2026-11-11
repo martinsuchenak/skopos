@@ -1,7 +1,9 @@
 package runs
 
 import (
+	"encoding/json"
 	"errors"
+	"github.com/martinsuchenak/skopos/internal/policy"
 	"time"
 )
 
@@ -116,12 +118,36 @@ type Run struct {
 	ItemID      string `json:"item_id"`
 	PlanRevID   string `json:"plan_rev_id,omitempty"`
 	Stage       string `json:"stage"`
-	Runner      string `json:"runner,omitempty"`    // resolved preference at queue time
-	WorkerID    string `json:"worker_id,omitempty"` // affinity owner
+	// Runner: the runner the run is for. Set at queue time from the stage
+	// preference (or named outright: a panel member, a second opinion); the
+	// claim then resolves the one runner the worker runs, checks it against
+	// the workspace's policy and writes it here (policy.go).
+	Runner string `json:"runner,omitempty"`
+	// RunnerPicked: the server chose the runner of a run nothing pinned (a
+	// requeue clears the choice). PolicyRev: the effective policy the claim
+	// decided with ("" = none applied). Facts: what the claiming worker
+	// reported about the runner, the policy revisions matched and the rule
+	// in each that allowed it.
+	RunnerPicked bool            `json:"runner_picked,omitempty"`
+	PolicyRev    string          `json:"policy_rev,omitempty"`
+	Facts        json.RawMessage `json:"facts,omitempty"`
+	// ConfigRev: the workspace's effective config the claim named
+	// (internal/wsconfig; "" = the workspace is not managed, the worker
+	// uses its own file). The worker fetches exactly this revision and runs
+	// under it.
+	ConfigRev string `json:"config_rev,omitempty"`
+	// Stranded: why no worker may take this queued run under the policy
+	// ("" = not stranded).
+	Stranded string `json:"stranded,omitempty"`
+	WorkerID string `json:"worker_id,omitempty"` // affinity owner
 	// LeaseToken is the fencing token (M5): set ONLY in the claim
 	// response, never stored or listed. LeaseTokenHash/ClaimedKeyID are
 	// the stored forms.
-	LeaseToken     string    `json:"lease_token,omitempty"`
+	LeaseToken string `json:"lease_token,omitempty"`
+	// AgentToken is the run's own credential for skopos over MCP
+	// (tokens.go): set ONLY in the claim response, valid while this
+	// attempt is being executed, scoped to the run's workspace.
+	AgentToken     string    `json:"agent_token,omitempty"`
 	LeaseTokenHash string    `json:"-"`
 	ClaimedKeyID   string    `json:"-"`
 	Status         Status    `json:"status"`
@@ -141,9 +167,13 @@ type Run struct {
 	Checks        []Check   `json:"checks,omitempty"`
 	LogRef        string    `json:"log_ref,omitempty"`
 	FailReason    string    `json:"fail_reason,omitempty"`
-	// Executor is how the worker ran the agent stage: "local", or the stage
-	// profile's "wrapper:<hash>" / "sandbox:<hash>" (capability profiles §2).
+	// Executor is what contained the agent on the worker: "local",
+	// "host:<name>", "wrapper:<name>:<hash>", "sandbox:<hash>" or
+	// "runner:<kind>" (policy/executor.go). Grants: a hash of the
+	// capabilities the stage profile gave the run (extra tools, env names,
+	// settings allow rules), "" when none.
 	Executor string `json:"executor,omitempty"`
+	Grants   string `json:"grants,omitempty"`
 	// GroupID is set when the run is one member of a stage group (several
 	// agents on one stage); Focus names the member's brief
 	// (.skopos/focus/<name>.md, read at the approved base). Both empty for
@@ -266,6 +296,24 @@ type ClaimInput struct {
 	// Indexable: offered workspaces whose repo the worker can fetch and
 	// index (tmp/agent-mcp-and-indexing — design.md §3).
 	Indexable []string `json:"indexable,omitempty"`
+	// RunnerFacts: what the worker says about every runner it has
+	// configured — kind, model, provider, endpoint, the stages it can run
+	// (tmp/central-config — design.md, phase 1a). In the worker's order of
+	// preference: the server picks the first that fits for a run nothing
+	// pinned. A worker from before runner facts sends none; it then gets
+	// runs only from workspaces without a policy.
+	RunnerFacts []policy.Facts `json:"runner_facts,omitempty"`
+	// Executors: what contains a run on this worker, per offered workspace
+	// and then by stage and runner (policy.ExecutorFact; phase 1c). A rule
+	// with `executor` matches on it. A worker that sends none gets no run
+	// whose rule needs one.
+	Executors map[string][]policy.ExecutorFact `json:"executors,omitempty"`
+	// ServerCommands: the worker takes a managed workspace's setup, check
+	// and preflight commands from the server (worker.server_commands; nil =
+	// a worker that does not say). FleetRev: the runner definitions it
+	// holds.
+	ServerCommands *bool  `json:"server_commands,omitempty"`
+	FleetRev       string `json:"fleet_rev,omitempty"`
 }
 
 // IndexDuty is what a worker should index while idle: Enabled are its
@@ -301,8 +349,10 @@ type ReportInput struct {
 	// stage records the branch it will use; implement records the pushed head).
 	Branch  string `json:"branch"`
 	BaseSHA string `json:"base_sha"`
-	// Executor: the stage profile that ran the agent (see Run.Executor).
+	// Executor: what contained the agent (see Run.Executor). Grants: the
+	// capabilities the stage profile gave it (see Run.Grants).
 	Executor string `json:"executor"`
+	Grants   string `json:"grants,omitempty"`
 	// CostUSD: the agent run's cost when the runner reports one.
 	CostUSD *float64 `json:"cost_usd,omitempty"`
 	// Findings: review/QA structured findings (severity + text).
@@ -341,6 +391,9 @@ type WorkspacePrefs struct {
 	AgentsDefault string `json:"agents_default,omitempty"`
 	// CodeIndex: idle workers keep the workspace's code index fresh.
 	CodeIndex bool `json:"code_index,omitempty"`
+	// Policy: which runners may work on the workspace (internal/policy);
+	// nil or no layers = no policy.
+	Policy *policy.Effective `json:"-"`
 }
 
 // CodeIndexOn reports whether idle workers index the workspace (nil prefs =

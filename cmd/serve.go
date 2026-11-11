@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -25,8 +26,10 @@ import (
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/cleanup"
 	"github.com/martinsuchenak/skopos/internal/codeindex"
+	"github.com/martinsuchenak/skopos/internal/confrev"
 	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/events"
+	"github.com/martinsuchenak/skopos/internal/fleetfile"
 	"github.com/martinsuchenak/skopos/internal/health"
 	"github.com/martinsuchenak/skopos/internal/idempotency"
 	"github.com/martinsuchenak/skopos/internal/inbox"
@@ -36,11 +39,13 @@ import (
 	"github.com/martinsuchenak/skopos/internal/notify"
 	"github.com/martinsuchenak/skopos/internal/pipeline"
 	"github.com/martinsuchenak/skopos/internal/plans"
+	"github.com/martinsuchenak/skopos/internal/policy"
 	"github.com/martinsuchenak/skopos/internal/qa"
 	"github.com/martinsuchenak/skopos/internal/rest"
 	"github.com/martinsuchenak/skopos/internal/runs"
 	"github.com/martinsuchenak/skopos/internal/status"
 	"github.com/martinsuchenak/skopos/internal/workspaces"
+	"github.com/martinsuchenak/skopos/internal/wsconfig"
 	appweb "github.com/martinsuchenak/skopos/web"
 	// go-scaffolder:serve-imports
 )
@@ -105,6 +110,12 @@ func serveCmd() *cli.Command {
 				Usage:      "OpenAI-compatible /v1 embeddings endpoint for semantic code search (empty disables; local Ollama e.g. http://localhost:11434/v1)",
 				ConfigPath: []string{"codeindex.embeddings.url"},
 				EnvVars:    []string{"SKOPOS_EMBEDDINGS_URL"},
+			},
+			&cli.StringFlag{
+				Name:       "embeddings-provider",
+				Usage:      "Who runs the embeddings endpoint, for workspace runner policies (default: derived from the URL; a model on another machine on your network is \"local\")",
+				ConfigPath: []string{"codeindex.embeddings.provider"},
+				EnvVars:    []string{"SKOPOS_EMBEDDINGS_PROVIDER"},
 			},
 			&cli.StringFlag{
 				Name:       "embeddings-model",
@@ -250,6 +261,8 @@ func serveCmd() *cli.Command {
 			// authorized() re-authenticates with it (defense in depth behind
 			// the router middleware) and must resolve DB keys, not just root.
 			authn := auth.NewAuthenticator(apiKey, apikeys.NewStorage(sqlDB))
+			// A run's agent token authenticates as that run (run tokens).
+			authn.SetRunLookup(runs.NewStorage(sqlDB))
 
 			statusService := status.NewService(status.NewStorage(sqlDB))
 			statusHandler := status.NewHandler(statusService, authn)
@@ -344,6 +357,11 @@ func serveCmd() *cli.Command {
 				codeIndexService.SetVectorStore(qd)
 				log.Info("vector store: qdrant", "url", cmd.GetString("qdrant-url"))
 			}
+			var (
+				embeddingsFacts  *policy.Facts
+				embeddingManager *codeindex.EmbeddingManager
+				embeddingsPolicy atomic.Pointer[func(context.Context, string) (*policy.Effective, error)]
+			)
 			if embURL := cmd.GetString("embeddings-url"); embURL != "" && cmd.GetString("embeddings-model") != "" {
 				embedder := &codeindex.OpenAIEmbedder{
 					BaseURL:   embURL,
@@ -352,6 +370,27 @@ func serveCmd() *cli.Command {
 				}
 				embedmgr := codeindex.NewEmbeddingManager(codeIndexService, embedder)
 				codeIndexHandler.SetEmbeddingManager(embedmgr)
+				// The embeddings endpoint receives symbol names, signatures,
+				// doc summaries and every semantic query: a workspace's
+				// runner policy covers it like a runner (stage "embeddings").
+				// Until the policy is wired below, nothing is sent.
+				facts, err := embeddingsFactsFor(embURL, embedder.ModelName, cmd.GetString("embeddings-provider"))
+				if err != nil {
+					return err
+				}
+				embeddingsFacts = facts
+				embeddingManager = embedmgr
+				codeIndexService.SetEmbeddingsGate(func(ctx context.Context, ws string) (bool, bool) {
+					lookup := embeddingsPolicy.Load()
+					if lookup == nil {
+						return false, false
+					}
+					eff, err := (*lookup)(ctx, ws)
+					if err != nil {
+						return false, false
+					}
+					return eff.Allows(*embeddingsFacts, policy.StageEmbeddings).Allowed, true
+				})
 				mcp.SetSemanticSearcher(embedder)
 				codeIndexHandler.Embeddings().SetErrorHandler(func(ws string, err error) {
 					log.Warn("background embedding pass failed", "workspace", ws, "error", err)
@@ -439,6 +478,7 @@ func serveCmd() *cli.Command {
 			// (docs/design/api-keys.md).
 			apiKeysStorage := apikeys.NewStorage(sqlDB)
 			apiKeysService := apikeys.NewService(apiKeysStorage)
+			apiKeysService.SetAuditRecorder(auditService)
 			apiKeysHandler := apikeys.NewHandler(apiKeysService, workspacesService)
 
 			// Service-layer event publishing: the mutating service knows the
@@ -476,9 +516,23 @@ func serveCmd() *cli.Command {
 			// database, per workspace or group, edited in the dashboard; the
 			// queue reads them at every queue. The old --run-stage /
 			// --stage-policy / --agents-default flags are imported once.
-			pipelineService := pipeline.NewService(pipeline.NewStorage(sqlDB))
+			pipelineStorage := pipeline.NewStorage(sqlDB)
+			pipelineService := pipeline.NewService(pipelineStorage)
 			pipelineService.SetAuditSink(auditService)
 			pipelineService.SetPublisher(hub)
+			// Runner policies are stored as revisions.
+			revisions := confrev.NewStore(sqlDB)
+			pipelineService.SetRevisions(revisions)
+			// Workspace config and runner definitions live on the server
+			// too (internal/wsconfig): the claim names the config a run
+			// executes under, and every claim answer says which runner
+			// definitions are current.
+			configService := wsconfig.NewService(sqlDB, revisions, pipelineStorage)
+			configService.SetAuditSink(auditService)
+			configService.SetPublisher(hub)
+			runsService.SetConfigSource(configService.Rev, configService.Digest)
+			runsService.SetFleetRev(configService.FleetRev)
+			pipelineService.SetRunnerDefs(configService.RunnerFacts)
 			if err := pipelineService.DropOrphans(ctx); err != nil {
 				log.Warn("pipeline settings: " + err.Error())
 			}
@@ -495,14 +549,31 @@ func serveCmd() *cli.Command {
 				log.Warn("--run-stage, --stage-policy and --agents-default are deprecated: pipeline settings now live in the dashboard (Workspaces → Pipeline); the flags are imported once and will be removed in the next release")
 			}
 			// Unregistering a workspace drops its pipeline settings at once.
-			workspacesService.SetDeleteNotifier(func(string) {
+			workspacesService.SetDeleteNotifier(func(ws string) {
 				if err := pipelineService.DropOrphans(context.Background()); err != nil {
 					log.Warn("pipeline settings: " + err.Error())
 				}
+				configService.DropWorkspace(context.Background(), ws)
 			})
 			// Second opinions: a plain request uses the workspace's default
 			// runner from the pipeline settings.
 			inboxService.SetSecondOpinionDefault(pipelineService.SecondOpinionRunner)
+			inboxService.SetRunnerPolicy(pipelineService.RunnerAllowed)
+			// The embeddings endpoint under the policy (see the gate above).
+			if embeddingsFacts != nil {
+				facts := *embeddingsFacts
+				lookup := pipelineService.EffectivePolicy
+				embeddingsPolicy.Store(&lookup)
+				pipelineService.SetEmbeddingsCheck(func(ctx context.Context, ws string) (bool, policy.Facts) {
+					return codeIndexService.Embedded(ctx, ws), facts
+				})
+				pipelineService.SetPolicyChanged(func(workspaces []string) {
+					for _, ws := range workspaces {
+						embeddingManager.Enqueue(ws)
+					}
+				})
+				log.Info("embeddings endpoint", "provider", facts.Provider, "endpoint", facts.Endpoint)
+			}
 			runsService.SetPrefsSource(func(ctx context.Context, ws string) *runs.WorkspacePrefs {
 				return pipelineService.Prefs(ctx, ws)
 			})
@@ -671,6 +742,9 @@ func serveCmd() *cli.Command {
 			apiMux := http.NewServeMux()
 			routes.RegisterRoutes(webMux, apiMux, statusHandler, blackboardHandler, plansHandler, inboxHandler, workspacesHandler, codeIndexHandler, apiKeysHandler, runsHandler)
 			routes.RegisterPipelineRoutes(apiMux, pipeline.NewHandler(pipelineService, authn))
+			fleetService := fleetfile.NewService(apiKeysService, workspacesService, pipelineService, configService)
+			fleetService.SetAuditSink(auditService)
+			routes.RegisterConfigRoutes(apiMux, wsconfig.NewHandler(configService, authn), fleetfile.NewHandler(fleetService, authn))
 			routes.MountIntegrations(apiMux, integrations.NewHandler(integrationsService))
 			mux := http.NewServeMux()
 			// Longest-pattern wins: the exact SSE route below overrides /api/.
@@ -971,4 +1045,21 @@ func (a runsListerAdapter) ListRuns(ctx context.Context, itemID string) ([]inbox
 		out = append(out, inbox.RunSummary{ID: r.ID, Stage: r.Stage, Status: r.Status, Runner: r.Runner, Branch: r.Branch, HeadSHA: r.HeadSHA})
 	}
 	return out, nil
+}
+
+// embeddingsFactsFor is what a workspace's runner policy sees of the
+// embeddings endpoint: its host and who runs it — declared
+// (codeindex.embeddings.provider) or derived from the URL. A declaration
+// the URL contradicts is refused: "local" on a URL that has since been
+// pointed at a cloud API is exactly what the policy gate is there to catch.
+func embeddingsFactsFor(embURL, model, declared string) (*policy.Facts, error) {
+	f := &policy.Facts{Name: "embeddings", Kind: "embeddings", Model: model,
+		Endpoint: policy.Host(embURL), Provider: policy.ProviderForEndpoint(embURL)}
+	if p := strings.ToLower(strings.TrimSpace(declared)); p != "" {
+		if policy.Contradicts(p, f.Provider) {
+			return nil, fmt.Errorf("codeindex.embeddings.provider is %q, but the embeddings URL %s is %s: fix the declaration or the URL", p, f.Endpoint, f.Provider)
+		}
+		f.Provider = p
+	}
+	return f, nil
 }

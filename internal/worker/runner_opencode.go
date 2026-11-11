@@ -89,7 +89,7 @@ func (o opencodeRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 }
 
 func (o opencodeRunner) invoke(ctx context.Context, r AgentRun, prompt, session string, resume bool) AgentResult {
-	cfgDir, err := os.MkdirTemp("", "skopos-oc-cfg-")
+	cfgDir, err := os.MkdirTemp(r.TempDir, "skopos-oc-cfg-")
 	if err != nil {
 		return AgentResult{Outcome: OutcomeError, Detail: err.Error()}
 	}

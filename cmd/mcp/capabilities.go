@@ -74,12 +74,32 @@ var toolNeeds = map[string][]need{
 	"workspace_pipeline": {{auth.AreaWorkspaces, false}},
 }
 
+// runTools are the tools a run's agent token may call: what a pipeline
+// stage needs and nothing more (the worker allowlists the same names for
+// the agent CLI — internal/worker/agentmcp.go; TestRunToolsMatchWorker
+// keeps the two in step). The run preset's capabilities alone would also
+// allow plan_create, plan_archive and the inbox reads.
+var runTools = map[string]bool{
+	"skopos_context": true, "blackboard_read": true, "blackboard_write": true, "plan_read": true,
+	"code_search": true, "code_find": true, "code_symbol": true, "code_outline": true,
+	"code_callers": true, "code_callees": true, "code_call_tree": true, "code_impact": true,
+	"code_dependencies": true, "code_branch_diff": true, "code_index_status": true,
+}
+
+// runImplementTools are added for an implement run: it marks its plan's
+// steps (the plans service narrows that to the run's own plan).
+var runImplementTools = map[string]bool{"plan_update_item": true}
+
 // toolAllowed reports whether the caller may use tool. Uncapped callers
-// (root, internal, keys without capabilities) may use every tool.
+// (root, internal, keys without capabilities) may use every tool; a run
+// principal only its stage's tools.
 func toolAllowed(ctx context.Context, tool string) bool {
 	p := auth.PrincipalFromContext(ctx)
 	if !p.Capped() {
 		return true
+	}
+	if p.Run != nil && !runTools[tool] && (p.Run.Stage != "implement" || !runImplementTools[tool]) {
+		return false
 	}
 	needs, ok := toolNeeds[tool]
 	if !ok {
@@ -127,27 +147,38 @@ func filterToolsList(next http.Handler) http.Handler {
 			writeRPCError(w, nil, -32600, "batch requests are not accepted for a key with capabilities; send one request at a time")
 			return
 		}
+		// The method is read on its own, whatever shape params has: a
+		// request whose params don't parse (a number where a name belongs)
+		// used to skip every check below and get the unfiltered tool list
+		// or the full instructions. A body that is not a JSON-RPC object at
+		// all is refused: a capped key gets nothing this can't classify.
 		var envelope struct {
-			ID     any    `json:"id"`
-			Method string `json:"method"`
-			Params struct {
-				Name      string `json:"name"`
-				Arguments struct {
-					Name string `json:"name"`
-				} `json:"arguments"`
-			} `json:"params"`
+			ID     any             `json:"id"`
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
 		}
 		if json.Unmarshal(body, &envelope) != nil {
-			next.ServeHTTP(w, r)
+			writeRPCError(w, nil, -32700, "the request is not a JSON-RPC object")
 			return
 		}
+		var params struct {
+			Name      string `json:"name"`
+			Arguments struct {
+				Name string `json:"name"`
+			} `json:"arguments"`
+		}
+		paramsOK := len(envelope.Params) == 0 || json.Unmarshal(envelope.Params, &params) == nil
 		if envelope.Method == "tools/call" {
-			name := envelope.Params.Name
+			if !paramsOK {
+				writeRPCError(w, envelope.ID, -32602, "tools/call params must name the tool")
+				return
+			}
+			name := params.Name
 			// execute_tool's target too: the library validates its
 			// arguments before guardTool runs, and those errors would
 			// describe a tool the key may not use.
 			if name == mcplib.ExecuteToolName {
-				name = envelope.Params.Arguments.Name
+				name = params.Arguments.Name
 			}
 			if name != mcplib.ToolSearchName && name != mcplib.ExecuteToolName && !toolAllowed(r.Context(), name) {
 				writeRPCError(w, envelope.ID, -32602, "this key's capabilities do not allow "+name)

@@ -162,7 +162,7 @@ func (a antigravityRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 		args = append(args, "--effort", r.Effort)
 	}
 	if r.Schema != "" {
-		tmp, err := os.MkdirTemp("", "skopos-agy-")
+		tmp, err := os.MkdirTemp(r.TempDir, "skopos-agy-")
 		if err != nil {
 			return AgentResult{Outcome: OutcomeError, Detail: err.Error()}
 		}

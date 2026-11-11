@@ -47,6 +47,7 @@ type createRequest struct {
 	Groups     []string `json:"groups"`     // group names or ids
 	Approver   bool     `json:"approver"`
 	Delegate   bool     `json:"delegate"`
+	Admin      bool     `json:"admin"`
 	// Capabilities and/or a preset limit the key; neither = full access.
 	Capabilities []string `json:"capabilities"`
 	Preset       string   `json:"preset"`
@@ -61,12 +62,13 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	result, err := h.service.Create(r.Context(), CreateInput{
+	result, err := h.service.Create(WithVia(r.Context(), rest.Via(r)), CreateInput{
 		Name:         req.Name,
 		Workspaces:   req.Workspaces,
 		Groups:       req.Groups,
 		Approver:     req.Approver,
 		Delegate:     req.Delegate,
+		Admin:        req.Admin,
 		Capabilities: req.Capabilities,
 		Preset:       req.Preset,
 	})
@@ -105,6 +107,7 @@ type updateRequest struct {
 	Groups     *[]string `json:"groups"`
 	Approver   *bool     `json:"approver"`
 	Delegate   *bool     `json:"delegate"`
+	Admin      *bool     `json:"admin"`
 	// Capabilities: absent = unchanged, [] = full access. Preset joins it.
 	Capabilities *[]string `json:"capabilities"`
 	Preset       string    `json:"preset"`
@@ -120,14 +123,14 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	input := UpdateInput{Name: req.Name, Approver: req.Approver, Delegate: req.Delegate, Capabilities: req.Capabilities, Preset: req.Preset}
+	input := UpdateInput{Name: req.Name, Approver: req.Approver, Delegate: req.Delegate, Admin: req.Admin, Capabilities: req.Capabilities, Preset: req.Preset}
 	if req.Workspaces != nil {
 		input.Workspaces = *req.Workspaces
 	}
 	if req.Groups != nil {
 		input.Groups = *req.Groups
 	}
-	key, err := h.service.Update(r.Context(), r.PathValue("id"), input)
+	key, err := h.service.Update(WithVia(r.Context(), rest.Via(r)), r.PathValue("id"), input)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidInput):
@@ -149,7 +152,7 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 	// ?hard=true removes the key row entirely (old/revoked-key cleanup);
 	// the default is a soft revoke that keeps the audit trail.
 	if r.URL.Query().Get("hard") == "true" {
-		if err := h.service.Delete(r.Context(), r.PathValue("id")); err != nil {
+		if err := h.service.Delete(WithVia(r.Context(), rest.Via(r)), r.PathValue("id")); err != nil {
 			switch {
 			case errors.Is(err, ErrNotFound):
 				rest.RespondError(w, http.StatusNotFound, err.Error())
@@ -166,7 +169,7 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if err := h.service.Revoke(r.Context(), r.PathValue("id")); err != nil {
+	if err := h.service.Revoke(WithVia(r.Context(), rest.Via(r)), r.PathValue("id")); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			rest.RespondError(w, http.StatusNotFound, err.Error())
 			return
@@ -200,7 +203,7 @@ func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var resolution *ScopeResolution
-	if !p.IsRoot() && p.KeyID != "" {
+	if p.Kind() == auth.KindKey {
 		res, err := h.service.ResolveScope(r.Context(), p.KeyID)
 		switch {
 		case err == nil:
@@ -240,8 +243,17 @@ func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 			"all_workspaces": p.AllWorkspaces,
 			"approver":       p.Approver,
 			"delegate":       p.Delegate,
+			"admin":          p.Admin,
 			"workspaces":     p.WorkspaceList(),
 			"capabilities":   p.CapabilityList(), // null = full access
+		}
+		// A run's agent token: which run it is (its "key" above is the
+		// run's synthetic identity, scoped to the run's workspace).
+		if run := p.Run; run != nil {
+			resp["run"] = map[string]any{
+				"id": run.ID, "workspace_id": run.WorkspaceID, "item_id": run.ItemID,
+				"stage": run.Stage, "runner": run.Runner, "worker_id": run.WorkerID,
+			}
 		}
 		if resolution != nil {
 			resp["groups"] = resolution.Groups
@@ -290,7 +302,7 @@ func (h *Handler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	g, err := h.service.CreateGroup(r.Context(), GroupInput{
+	g, err := h.service.CreateGroup(WithVia(r.Context(), rest.Via(r)), GroupInput{
 		Name:        req.Name,
 		Description: deref(req.Description),
 		Members:     req.Members,
@@ -361,7 +373,7 @@ func (h *Handler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
 	if req.Patterns != nil {
 		input.Patterns = req.Patterns
 	}
-	g, err := h.service.UpdateGroup(r.Context(), r.PathValue("id"), input)
+	g, err := h.service.UpdateGroup(WithVia(r.Context(), rest.Via(r)), r.PathValue("id"), input)
 	if err != nil {
 		h.respondGroupError(w, err)
 		return
@@ -377,7 +389,7 @@ func (h *Handler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 	if h.requireRoot(w, r) == nil {
 		return
 	}
-	if err := h.service.DeleteGroup(r.Context(), r.PathValue("id")); err != nil {
+	if err := h.service.DeleteGroup(WithVia(r.Context(), rest.Via(r)), r.PathValue("id")); err != nil {
 		h.respondGroupError(w, err)
 		return
 	}

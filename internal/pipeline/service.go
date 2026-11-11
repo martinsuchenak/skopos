@@ -11,7 +11,9 @@ import (
 
 	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
+	"github.com/martinsuchenak/skopos/internal/confrev"
 	"github.com/martinsuchenak/skopos/internal/events"
+	"github.com/martinsuchenak/skopos/internal/policy"
 	"github.com/martinsuchenak/skopos/internal/runs"
 )
 
@@ -45,6 +47,15 @@ type Service struct {
 
 	mu    sync.Mutex
 	cache map[string]cached
+
+	// revs: the revision store runner policies live in (policy.go); nil =
+	// no policy applies. embeddings: the code index's embeddings lookup.
+	revs           *confrev.Store
+	embeddings     EmbeddingsCheck
+	onPolicyChange func(workspaces []string)
+	// runnerDefs: the runners the server defines, with the facts a policy
+	// can be asked about before any worker reports (defined.go).
+	runnerDefs func(ctx context.Context) (map[string]policy.Facts, error)
 }
 
 func NewService(storage *Storage) *Service {
@@ -71,7 +82,13 @@ func (s *Service) Prefs(ctx context.Context, ws string) *runs.WorkspacePrefs {
 	r, err := s.resolve(ctx, ws)
 	if err != nil {
 		slog.Warn("pipeline: resolving routing failed; using the last known", "workspace", ws, "err", err)
-		return c.prefs
+		if c.prefs != nil {
+			return c.prefs
+		}
+		// Nothing known yet (a restart, or a change just dropped the
+		// cache): no routing, and a policy nothing passes — never "no
+		// policy". The claim holds off until it can be read.
+		return &runs.WorkspacePrefs{Stages: map[string]string{}, Policy: policy.DenyAll("the policy could not be read")}
 	}
 	stages := make(map[string]StageSetting, len(r.effective))
 	for stage, e := range r.effective {
@@ -79,6 +96,18 @@ func (s *Service) Prefs(ctx context.Context, ws string) *runs.WorkspacePrefs {
 	}
 	p := ToPrefs(stages, r.agents)
 	p.CodeIndex = r.own.CodeIndex != nil && *r.own.CodeIndex
+	// The runner policy travels with the routing: the claim applies both.
+	// A policy that cannot be read must not silently become "no policy":
+	// keep the last known routing and policy instead.
+	eff, err := s.EffectivePolicy(ctx, ws)
+	if err != nil {
+		slog.Warn("pipeline: resolving the runner policy failed; using the last known", "workspace", ws, "err", err)
+		if c.prefs != nil {
+			return c.prefs
+		}
+		eff = policy.DenyAll("the policy could not be read")
+	}
+	p.Policy = eff
 	s.mu.Lock()
 	s.cache[ws] = cached{prefs: p, at: s.now()}
 	s.mu.Unlock()
@@ -189,6 +218,19 @@ func (s *Service) Get(ctx context.Context, kind, id string) (*View, error) {
 	if able, err := s.storage.Indexable(ctx, id, s.now().Add(-indexableWindow).UnixMilli()); err == nil {
 		v.IndexableBy = able
 	}
+	if eff, err := s.EffectivePolicy(ctx, id); err == nil {
+		v.Policy = &EffectivePolicyView{WorkspaceID: id, AllowAll: eff.AllowAll(), Rev: eff.Rev(), Layers: eff.Layers}
+		if v.Policy.Layers == nil {
+			v.Policy.Layers = []policy.Layer{}
+		}
+		if stranded, err := s.strandedUnder(ctx, id, eff); err == nil {
+			for _, st := range stranded {
+				if st.key != "embeddings" {
+					v.PolicyRefused = append(v.PolicyRefused, st.text)
+				}
+			}
+		}
+	}
 	if offered, err := s.storage.RunnersServing(ctx, id); err == nil {
 		unknown := map[string]bool{}
 		for _, e := range r.effective {
@@ -244,47 +286,77 @@ func (s *Service) authorizeRead(ctx context.Context, kind, id string) (string, s
 // covers it (it decides which models check the work). Groups: root only.
 // Every change is audit-logged with what changed.
 func (s *Service) Put(ctx context.Context, kind, id string, in Settings, via string) (*View, error) {
+	v, _, err := s.put(ctx, kind, id, in, via, false)
+	return v, err
+}
+
+// PlanPut checks a save as Put would — permission, validation, group
+// conflicts, the runner policy — and returns what it would change ("" =
+// nothing), writing nothing.
+func (s *Service) PlanPut(ctx context.Context, kind, id string, in Settings) (string, error) {
+	_, changes, err := s.put(ctx, kind, id, in, "", true)
+	return changes, err
+}
+
+// Own returns an owner's stored settings, for an export. Root (and
+// internal callers) only.
+func (s *Service) Own(ctx context.Context, kind, id string) (Settings, error) {
+	if err := auth.RequireRoot(ctx); err != nil {
+		return Settings{}, err
+	}
+	return s.storage.Get(ctx, kind, id)
+}
+
+func (s *Service) put(ctx context.Context, kind, id string, in Settings, via string, dry bool) (*View, string, error) {
 	if kind == KindWorkspace {
 		if err := auth.RequireWorkspace(ctx, strings.TrimSpace(id)); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		if err := auth.RequireApprover(ctx); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 	}
 	kind, id, err := s.authorizeRead(ctx, kind, id)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	next, err := Normalize(in)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if kind == KindGroup {
 		if next.CodeIndex != nil {
-			return nil, fmt.Errorf("%w: code_index is set per workspace, not per group", ErrInvalidInput)
+			return nil, "", fmt.Errorf("%w: code_index is set per workspace, not per group", ErrInvalidInput)
 		}
 		if err := s.checkGroupConflicts(ctx, id, next); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 	}
 	before, err := s.storage.Get(ctx, kind, id)
 	if err != nil {
-		return nil, err
+		return nil, "", err
+	}
+	if err := s.checkDefinedRunners(ctx, kind, id, before, next); err != nil {
+		return nil, "", err
+	}
+	changes := diff(before, next)
+	if dry {
+		return nil, changes, nil
 	}
 	by := ""
 	if p := auth.PrincipalFromContext(ctx); p != nil {
 		by = p.KeyID
 	}
 	if err := s.storage.Replace(ctx, kind, id, next, by, s.now().UTC()); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	s.invalidate()
-	if changes := diff(before, next); changes != "" {
+	if changes != "" {
 		s.record(ctx, kind, id, "pipeline.update", via, changes)
 	}
 	s.publish(kind, id)
-	return s.Get(ctx, kind, id)
+	v, err := s.Get(ctx, kind, id)
+	return v, changes, err
 }
 
 // checkGroupConflicts refuses a group setting a stage that another group
@@ -495,6 +567,9 @@ func (s *Service) SecondOpinionRunner(ctx context.Context, ws string) string {
 
 // DropOrphans removes settings of deleted workspaces and groups (startup).
 func (s *Service) DropOrphans(ctx context.Context) error {
+	if err := s.dropOrphanPolicies(ctx); err != nil {
+		return err
+	}
 	err := s.storage.DropOrphans(ctx)
 	s.invalidate()
 	return err

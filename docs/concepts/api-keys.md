@@ -1,6 +1,6 @@
 # API keys
 
-skopos supports two kinds of credential:
+skopos supports three kinds of credential:
 
 - **Root key** — the server's configured key (`SKOPOS_API_KEY` /
   `[server] api_key`). Full access to every workspace, plus exclusive
@@ -10,6 +10,8 @@ skopos supports two kinds of credential:
 - **Scoped API keys** — minted via the API, CLI, or dashboard; each key is
   scoped to `*` (all workspaces) or an explicit list of workspace ids.
   Every read and write is checked against the key's scope.
+- **Run tokens** — minted by the server for one pipeline run, for that
+  run's agent. Nobody creates or manages them; see [Run tokens](#run-tokens).
 
 ## Semantics
 
@@ -61,11 +63,12 @@ How they apply:
   `tools/call` and lean mode's `execute_tool` alike.
 - Workspace scope and the approver permission still apply to a capped key.
 
-**Presets** name common sets. `agent` is what workers hand their agent runs
-(`SKOPOS_AGENT_KEY`, see [the worker reference](../deployment/worker.md#skopos-tools-for-agent-runs)):
-`mcp`, `code:read`, `blackboard:write`, `plans:write`, `status:read` and
+**Presets** name common sets. `agent` is what an agent gets: `mcp`,
+`code:read`, `blackboard:write`, `plans:write`, `status:read` and
 `inbox:read`. It has no REST at all, so an agent can't move items, touch
-runs or manage keys.
+runs or manage keys. A [run token](#run-tokens) carries it, and so does an
+agent key for a worker on a server from before run tokens
+(`SKOPOS_AGENT_KEY`, see [the worker reference](../deployment/worker.md#skopos-tools-for-agent-runs)).
 
 ```sh
 skopos key create --name knot-1-agent --workspace github.com/me/app --preset agent
@@ -77,6 +80,57 @@ skopos key whoami                                   # shows the key's capabiliti
 
 The dashboard's key list shows a capped key's capabilities, and its key
 dialog offers full access or the agent preset.
+
+## Permissions
+
+Three flags sit beside scope and capabilities. Only the root key grants
+them, each on `key create` and `key edit` (`--approver` / `--no-approver`
+and so on). Key listings and the dashboard's Keys view show them.
+
+| Flag | Lets the key | Give it to |
+|---|---|---|
+| `--approver` | take the pipeline's human actions: queue, approve, request changes, reject, mark done | a person, or the relay acting for one |
+| `--delegate` | name the person it acts for (`X-Skopos-On-Behalf-Of`) | an integration recording people's decisions |
+| `--admin` | change policy and configuration within its scope | whoever runs the pipeline's configuration |
+
+**Admin** is scoped like everything else:
+
+- a key with one workspace in scope administers that workspace;
+- a group's settings need a key that reaches every workspace in the group;
+- fleet-wide settings need a key that reaches all workspaces (`--all-workspaces`).
+
+The root key passes every level. Agent and worker keys must never hold
+approver or admin: a worker refuses to start with a key that holds admin,
+and refuses an agent key that holds either.
+
+```sh
+skopos key create --name ops --group fortix --admin
+skopos key edit <id> --no-admin
+```
+
+## Run tokens
+
+When a worker claims a pipeline run, the server mints a token for that
+attempt and returns it in the claim answer (`agent_token`, `skr_…`). The
+worker gives it to the run's agent as its skopos MCP credential. Compared
+with one agent key shared by every run on a worker:
+
+- **Scope:** only the run's own workspace, whatever else the worker's key
+  reaches.
+- **Lifetime:** valid only while the attempt is claimed or running with a
+  live lease. A report, a pause, a requeue, a cancel or an expired lease
+  ends it at once. A resumed or re-claimed run gets a new one.
+- **Reach:** MCP only, and only the tools a pipeline stage uses: the
+  blackboard, `skopos_context`, `plan_read` and the `code_*` tools. An
+  implement run may also mark the steps of its own item's plan
+  (`plan_update_item`), never another plan's.
+- **Identity:** what it writes is recorded as
+  `run <id> (<runner> on <worker>)`, not as a shared key.
+- **Storage:** only a hash is kept (`run_tokens`).
+
+`GET /api/whoami` with a run token names the run. On a server without
+authentication, where every other caller is root, a run token is still a
+run.
 
 ## Managing keys
 
@@ -96,7 +150,12 @@ skopos key generate-root [--quiet]
 
 Editing takes effect on the key's next request (lookups are not cached);
 revoked keys are frozen — mint a new one instead of editing one back to
-life. Hard-deleting an *active* key is refused unless `--force` is passed,
+life. Creating, editing, revoking and deleting a key are audit events
+(`key.create`, `key.update`, `key.revoke`, `key.delete`): who did it, and
+what the key may do afterwards. So are changes to a workspace group
+(`group.create`, `group.update`, `group.delete`), because a group's members
+and patterns are part of the scope of every key that holds it. The secret
+is never recorded. Hard-deleting an *active* key is refused unless `--force` is passed,
 because revoking first terminates the key's open SSE streams.
 
 REST: `POST/GET /api/keys`, `PATCH /api/keys/{id}`,

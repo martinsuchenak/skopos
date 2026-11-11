@@ -4,6 +4,228 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Each pipeline run gets its own skopos credential.** The server mints a
+  token when a worker claims a run, and the worker hands it to that run's
+  agent for the skopos MCP tools. It reaches only the run's own workspace,
+  works only while that attempt is claimed or running, and is recorded as
+  `run <id> (<runner> on <worker>)`. A report, a pause, a retry or a
+  cancel ends it at once. Before, every agent run on a worker shared one
+  agent key, so a run on one repository could read the code index and
+  blackboard of every repository the key covered. Nothing to configure:
+  `SKOPOS_AGENT_KEY` stays only as the fallback for a server older than
+  this release, and the worker says in its log when it is no longer used.
+  See `docs/concepts/api-keys.md`.
+- **Runner policy: which runners may work on which workspaces.** A policy
+  is a list of allow rules by provider (who receives the code), model,
+  agent CLI and stage, set on a workspace, a group, as a fleet default, or
+  as a fleet ceiling nothing may go beyond
+  (`skopos policy set --group fortix --allow provider=anthropic`). A runner
+  must be allowed at every level that applies. Without a policy nothing
+  changes. See `docs/concepts/runner-policy.md`.
+  - **Checked at every claim, with what the worker reports.** Workers now
+    send the CLI, model, endpoint and provider of each runner; the server
+    resolves the one runner of each run, checks it and records the runner,
+    the policy revision and those facts on the run. opencode with a local
+    model and opencode with GLM are told apart by where they send code.
+  - **Second opinions** from a runner the policy refuses are turned down
+    (403, reason `policy`).
+  - **A queued run no worker may take** is marked stranded, with the
+    reason, on the item and in the audit trail.
+  - **Saving a policy that would strand configured runners** is refused
+    and lists them; `--force` saves it anyway.
+  - **Embeddings are covered too.** A workspace whose policy doesn't allow
+    the embeddings endpoint's provider isn't embedded, and its vectors are
+    dropped. `codeindex.embeddings.provider` declares the provider when it
+    can't be derived from the URL (`local` for a model on another machine
+    on your network): set it before the first policy.
+  - **Containment as a rule.** `executor=isolated` allows a runner only
+    where something confines the run itself: a stage wrapper, or a runner
+    whose own lockdown is a sandbox (codex on macOS). `executor=contained`
+    also accepts a worker whose host is a container. Claude Code's sandbox
+    settings meet neither; a rule names them (`executor=sandbox:*`).
+    `--allow provider=zai,executor=isolated` lets GLM work only on workers
+    that wrap it. Workers report what contains a run per workspace, stage
+    and runner; the claim matches on it and records it, and the worker
+    compares again before it starts the run. When a run reports another
+    executor than the claim matched and the policy doesn't allow it, the
+    run is recorded as failed and the difference is audited
+    (`run.executor_mismatch`).
+  - **Policies are stored as revisions** that are never changed, and every
+    change is an audit event with who, the old and new revision, and the
+    rules. A change in what a worker reports is audited as well.
+- **An admin permission for keys** (`skopos key create --admin`,
+  `key edit --admin|--no-admin`). It gates policy changes, at three
+  levels: a workspace (the key has it in scope), a group (the key reaches
+  every workspace in it) and the fleet (the key reaches all workspaces).
+  The root key passes every level.
+- **The dashboard shows where each runner sends code and what contains
+  each worker's runs** (Workers view), the policy that applies to a
+  workspace (Pipeline dialog), and runs waiting for an allowed runner.
+- **`worker.contained_by`** names the container a worker's whole host is
+  (a Knot space, a VM). Stage profiles may then grant tools and env
+  without a wrapper, and unverified runners run without one.
+- **Wrapper placeholders `{gitdir}`, `{login}`, `{rundir}` and `{cli}`:**
+  the clone's git directory, the account's login directory (`login_dir`
+  on the account, else the directory its CLI uses), the run's own
+  directory and the directory of the agent CLI. A wrapper that uses one
+  the worker has no value for fails the run before the agent starts.
+- **A bwrap stage profile** in `docs/deployment/worker.md`, with a test
+  that runs it on Linux: the run keeps its worktree, its commits, its
+  login and its run directory, sees no other clone, no state directory,
+  no env file and no other account, and can't change the clone's git
+  config or hooks.
+- **`skopos worker runner list` shows what contains each runner's runs**
+  per workspace (`runs in:`).
+- **Workspace config on the server.** A workspace's shared settings —
+  branches, `setup`, `checks`, `preflight`, timeouts, push settings,
+  `mcp_deny` and `mcp_servers` — can be held on the server instead of in
+  each worker's file: `skopos workspace config show|set|clear`, or the
+  Pipeline dialog. A workspace with a config of its own is managed: every
+  worker takes those fields from the server and ignores the same fields in
+  its file. A workspace without one works as before. See
+  `docs/concepts/workspace-config.md`.
+  - **Group defaults:** `skopos group config set` gives a group's managed
+    workspaces defaults, field by field. A group never makes a workspace
+    managed on its own, and two groups may not set the same field for a
+    workspace both contain.
+  - **Each run names its config.** The claim records the revision in force
+    as the run's `config_rev`; the worker fetches exactly that revision
+    and runs under it, and
+    `GET /api/workspaces/{id}/config/{rev}` returns it unchanged later. A
+    run whose config cannot be fetched is retried, not run with other
+    settings.
+  - **Commands are opt-in per worker.** `setup`, `checks` and `preflight`
+    come from the server only on a worker with
+    `worker.server_commands = true` (`skopos worker init` sets it for a new
+    worker). Every change to them is recorded in full, and the worker logs
+    each one it applies.
+  - **Admin permission:** saving a workspace's config needs an admin key
+    with the workspace in scope; a group's, one that reaches every
+    workspace in it. Recorded as `config.update` / `config.delete` with
+    the old and new revision and the fields changed.
+  - **A config a worker cannot use** (it pushes, and the worker's file
+    names no `push.token_env` for the repo) keeps the workspace out of that
+    worker's claims, with the reason.
+  - **A worker older than this release gets no runs of a managed
+    workspace** (it would run them from its own file) and shows as
+    unhealthy for it until it upgrades.
+  - **A `mcp_deny` in a worker's file stays in force** for a managed
+    workspace, added to the workspace's list.
+- **Runner definitions.** `skopos runner set claude-opus --kind claude
+  --model opus --effort high --provider anthropic` defines a runner once
+  for every worker. A worker account can then name only its CLI
+  (`kind = "claude"`, with optional `models = ["zai-coding-plan/*"]`) and
+  feeds every defined runner of that kind. An account that names a runner
+  keeps working, and takes the definition's model and effort when the
+  server defines that name. A worker whose endpoint contradicts the
+  declared provider does not offer the runner. The dashboard's pipeline
+  dialog suggests defined runners before any worker offers them.
+- **The run configuration as one file.** `skopos config export` writes
+  runner definitions, groups, policies, pipelines and workspace config as
+  one TOML file; `skopos config apply <file>` makes the server match it
+  and `--plan` lists what would change. A workspace or group in the file
+  gets exactly what the file gives it; what the file does not list is left
+  alone. Every change is checked against the server before anything is
+  written, and the apply is recorded as `config.apply` with the file's
+  sha256 and git commit.
+- **`skopos workspace config import --from <worker config>`** proposes the
+  server config a worker's file describes (and, with `--runners`, its
+  runner definitions), shows the difference and applies it with `--yes`.
+  Two files that disagree about a workspace are a conflict, shown and not
+  imported.
+- **`skopos worker check` asks the server** for the runner definitions and
+  each workspace's config and checks the merged result.
+- **The workers view shows** whether a worker takes commands from the
+  server and which runner definitions it holds.
+- **Key and group changes are audit events:** `key.create`, `key.update`,
+  `key.revoke` and `key.delete`, with who did it and what the key may do
+  afterwards, and `group.create`, `group.update` and `group.delete`, since
+  a group is part of the scope of every key that holds it. A secret is
+  never recorded.
+
+### Changed
+
+- **The server names the runner of every run.** For a stage with no
+  preference it picks the first runner in the worker's order that can run
+  the stage (and that the policy allows): `claude` first, then the order
+  of `worker.runners`. Before, the worker chose. A run also follows the
+  workspace's current preference: one queued before a preference change
+  used to run the old runner.
+- **A worker refuses to start when what it would report about a runner is
+  untrue:** a proxy variable in an account's `env`; a stage profile's `env`
+  that sets a proxy or an endpoint variable (`ANTHROPIC_BASE_URL`,
+  `OPENAI_BASE_URL`, `CLAUDE_CODE_USE_*`, `OPENCODE_CONFIG`); two accounts
+  of one runner that differ in model, provider or endpoint (this was a
+  warning: give each its own runner name); a declared provider that
+  contradicts the endpoint. `skopos worker check` reports the same.
+- **A run that comes back naming another runner starts again on that
+  runner's account.** The worker used to keep the account and session the
+  run started with.
+- **The server refuses to start** when `codeindex.embeddings.provider`
+  contradicts the embeddings URL.
+- **A worker from before this release gets no runs from a workspace that
+  has a policy.** Update the workers before setting one.
+- **A run's agent may call only its stage's skopos tools:** the blackboard,
+  `skopos_context`, `plan_read` and the `code_*` tools, plus
+  `plan_update_item` for an implement run, on its own item's plan only.
+  An agent key could also create and archive plans, read the inbox, and
+  mark steps of any plan in its scope.
+- **A worker refuses to start with a key that holds the admin permission,**
+  and refuses an agent key that holds it; `skopos worker check` reports it
+  too. A worker running with the root key or an approver key gets a
+  warning at startup.
+- **A wrapper that mounts the agent's MCP config into a container** now has
+  to mount the run's directory, `<state_dir>/runs/<run>/`: each run's
+  config is written there, not in `<state_dir>/agent-mcp.json`.
+- **A run's `executor` says what contained it, by class:** `local`,
+  `host:<name>`, `wrapper:<name>:<hash>`, `sandbox:<hash>` or
+  `runner:<kind>`. A wrapper's id now carries its profile's name and its
+  hash covers the wrapper's argv only; the tools, env names and settings
+  (besides the sandbox block) a stage profile gives a run are recorded
+  apart as the run's `grants`. A codex run on macOS records
+  `runner:codex`. A wrapper that only sets variables
+  (`["env", "NAME=value"]`) records `host:<name>`: it still lets a stage
+  grant capabilities, and `worker.contained_by` says the same directly.
+- **A stage wrapper now goes around the worker's setup and check commands
+  as well as the agent,** for an implement stage and for the review of an
+  existing branch. Those commands execute the branch's code. A wrapper
+  (a container image, a bwrap profile) has to hold what they need. A
+  wrapper that only sets variables changes nothing here.
+- **A wrapper that uses `{cli}` starts the agent by its resolved path.**
+- **A `{name}` in a wrapper that is not a placeholder** is refused at
+  startup.
+- **Runners create their temporary config directories under the run's own
+  directory** (`<state_dir>/runs/<run>/tmp`), not in the shared `/tmp`,
+  and the worker removes them with the run.
+- **Files the worker writes into a run's directory replace a link left
+  there** instead of writing through it.
+- **`worker check` accepts an unverified runner without a wrapper** on a
+  worker that sets `contained_by`.
+- `GET /api/whoami` reports `admin`, and for a run token the run it
+  belongs to.
+- **A pipeline save can be refused by the runner policy.** Once the server
+  defines a runner with its provider, a save that newly names it for a
+  stage the workspace's policy never allows answers 409. Before, it was
+  saved with a warning and its runs waited. A runner without a definition
+  is still only warned about.
+- **A worker repo's push block may name only `token_env`,** for a
+  workspace whose push settings the server holds. Before, a push block
+  without `kind` was refused at startup; one with `remote_url` and no
+  `kind` still is.
+- **Every worker now has a `worker.facts` audit event** at its first claim
+  after the upgrade: it reports whether it takes commands from the server.
+
+### Fixed
+
+- **A key limited by capabilities could list tools it may not call.** An
+  MCP `tools/list` or `initialize` request with malformed parameters was
+  answered with the full tool list and the full instructions. Calling
+  those tools was still refused.
+
 ## [0.32.3] — 2026-11-11
 
 ### Security
