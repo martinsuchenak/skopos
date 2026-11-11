@@ -4,6 +4,37 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Security
+
+- **A Codex agent's shell no longer gets the account's credentials.** An
+  account that set `CODEX_ACCESS_TOKEN` or `CODEX_API_KEY` in its `env`
+  had that value readable by the agent's shell commands. Codex runs now
+  keep every account env key (except `PATH` and `HOME`) and any variable
+  named like a credential out of the shell. Accounts using a login
+  directory were not affected: the shell can't read it. Checked against
+  codex-cli 0.163.0 with an access-token login.
+- **opencode runs can no longer read outside the worktree through the
+  shell.** opencode's own check covered its file tools and `cat`, but an
+  implement run's `head`, `tail`, `grep`, `find`, `wc` and `ls` read any
+  path, a review run's `git diff --no-index` printed any file, and `$VAR`
+  in an allowed command printed the account's env. The shell's allowed
+  commands are now refused when they hold `$` or backtick expansion, `~`,
+  an absolute path, `..`, an output redirect, `find -exec` and similar,
+  `rg --pre` or `git diff --no-index`, and the edit tool can't write
+  `.git` (a `.git/config` line could make git run a command). Checked
+  against opencode 1.19.5; the live test now tries each of these.
+- **Allowed commands can no longer read, write or run past the
+  allowlist through their options.** On Claude runs (and opencode's):
+  `git commit -F <file>` and `--pathspec-from-file=<file>` printed a file
+  outside the worktree; `git log`, `show` or `diff --output=<file>` wrote
+  any file, including `.git/config` (a line there can make git run a
+  command), in review runs too; and `rg --pre` ran a script the agent had
+  written. Commits are now allowed only as `git commit -m …`, and these
+  options are refused for every runner. Checked against Claude Code
+  2.1.318 and opencode 1.19.5; both live tests now try each of these.
+
 ## [0.32.2] — 2026-11-10
 
 ### Fixed

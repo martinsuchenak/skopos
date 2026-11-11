@@ -31,14 +31,26 @@ const implSchema = `{"type":"object","properties":{"status":{"type":"string","en
 
 // guardSettings: deny rules that apply to every agent run (git push/remote/
 // config, forge CLIs, network fetch tools, destructive commands). Deny
-// beats any allow.
-var guardSettings = `{"permissions":{"deny":["Bash(git push:*)","Bash(git remote:*)","Bash(git config:*)","Bash(git branch:*)","Bash(git checkout:*)","Bash(git switch:*)","Bash(git reset --hard:*)","Bash(git rebase:*)","Bash(git worktree:*)","Bash(gh:*)","Bash(tea:*)","Bash(curl:*)","Bash(wget:*)","Bash(ssh:*)","Bash(scp:*)","Bash(rm -rf:*)","Bash(sudo:*)"]}}`
+// beats any allow. The last four close options of allowed commands that
+// reach past the allowlist (found live on Claude Code 2.1.318, whose own
+// path checks cover cat/head/grep/find but not these): `git log|show|diff
+// --output=<file>` writes any file — with --format, a core.fsmonitor line
+// into .git/config, which runs a command at the next `git status`;
+// `--pathspec-from-file=<file>` echoes a file outside the worktree in its
+// error; `rg --pre <cmd>` runs a command (a script the agent wrote), and
+// `rg --hostname-bin` one more. git rejects abbreviated long options here
+// (`--outpu=` is an error), so the full names are enough.
+var guardSettings = `{"permissions":{"deny":["Bash(git push:*)","Bash(git remote:*)","Bash(git config:*)","Bash(git branch:*)","Bash(git checkout:*)","Bash(git switch:*)","Bash(git reset --hard:*)","Bash(git rebase:*)","Bash(git worktree:*)","Bash(gh:*)","Bash(tea:*)","Bash(curl:*)","Bash(wget:*)","Bash(ssh:*)","Bash(scp:*)","Bash(rm -rf:*)","Bash(sudo:*)","Bash(git *--output*)","Bash(git *--pathspec-from-file*)","Bash(rg *--pre*)","Bash(rg *--hostname-bin*)"]}}`
 
 var basePlanTools = []string{"Read", "Glob", "Grep"}
 var planTools = basePlanTools
 
+// baseImplTools: commits only as `git commit -m …` (the form the prompts
+// give) — with -m, git refuses -F/--file/-c/-C, so a commit cannot take its
+// message from a file outside the worktree (`git commit -F <file>` printed
+// the worker's env file back, found live).
 var baseImplTools = []string{"Read", "Edit", "Write", "MultiEdit", "Glob", "Grep", "TodoWrite",
-	"Bash(git add:*)", "Bash(git commit:*)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)",
+	"Bash(git add:*)", "Bash(git commit -m:*)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)",
 	"Bash(git show:*)", "Bash(git restore:*)", "Bash(pwd)", "Bash(ls:*)", "Bash(find:*)", "Bash(grep:*)", "Bash(rg:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(mkdir:*)"}
 var implTools = baseImplTools
 

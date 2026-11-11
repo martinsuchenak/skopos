@@ -54,16 +54,44 @@ func TestExtractStructured(t *testing.T) {
 	}
 }
 
+// The guard denies close options of allowed commands that reach past the
+// allowlist (found live): git --output writes a file, --pathspec-from-file
+// echoes one, rg --pre runs a command; commits only take -m.
+func TestGuardSettingsDenies(t *testing.T) {
+	s := settingsJSON(nil, "")
+	for _, d := range []string{"Bash(git *--output*)", "Bash(git *--pathspec-from-file*)", "Bash(rg *--pre*)", "Bash(rg *--hostname-bin*)"} {
+		if !strings.Contains(s, `"`+d+`"`) {
+			t.Errorf("guard deny %s missing: %s", d, s)
+		}
+	}
+	for _, a := range baseImplTools {
+		if strings.HasPrefix(a, "Bash(git commit") && a != "Bash(git commit -m:*)" {
+			t.Errorf("commits must be allowed only with -m (git then refuses -F/--file): %s", a)
+		}
+	}
+}
+
 // The opencode permission config: deny-all first, the stage's allows, then
 // the hard denies — in that exact order (opencode applies the LAST match).
 func TestOpencodePermission(t *testing.T) {
 	got := opencodePermission(
-		[]string{"Read", "Glob", "Grep", "Edit", "Write", "Bash(git add:*)", "Bash(git commit:*)", "mcp__skopos"},
-		[]string{"Bash(git push:*)", "Bash(curl:*)", "mcp__llmrouter__execute_tool", "Read(//etc/**)"},
+		[]string{"Read", "Glob", "Grep", "Edit", "Write", "Bash(git add:*)", "Bash(git commit -m:*)", "mcp__skopos"},
+		[]string{"Bash(git push:*)", "Bash(curl:*)", "Bash(git *--output*)", "mcp__llmrouter__execute_tool", "Read(//etc/**)"},
 	)
-	want := `{"*":"deny","read":"allow","list":"allow","glob":"allow","grep":"allow","edit":"allow","skopos*":"allow",` +
-		`"bash":{"*":"deny","git add":"allow","git add *":"allow","git commit":"allow","git commit *":"allow","git push":"deny","git push *":"deny","curl":"deny","curl *":"deny"},` +
+	escapes := ""
+	for _, p := range opencodeBashEscapes {
+		q, _ := json.Marshal(p)
+		escapes += "," + string(q) + `:"deny"`
+	}
+	want := `{"*":"deny","read":"allow","list":"allow","glob":"allow","grep":"allow",` +
+		`"edit":{"*":"allow",".git":"deny",".git/*":"deny","*/.git":"deny","*/.git/*":"deny"},"skopos*":"allow",` +
+		`"bash":{"*":"deny","git add":"allow","git add *":"allow","git commit -m":"allow","git commit -m *":"allow","git push":"deny","git push *":"deny","curl":"deny","curl *":"deny","git *--output*":"deny"` + escapes + `},` +
 		`"llmrouter_execute_tool":"deny","external_directory":"deny","webfetch":"deny","websearch":"deny"}`
+	for _, must := range []string{"*$*", "* /*", "*../*", "* -exec*", "*--no-index*", "*>*", "* ~*"} {
+		if q, _ := json.Marshal(must); !strings.Contains(got, string(q)+`:"deny"`) {
+			t.Errorf("bash escape %q must be denied", must)
+		}
+	}
 	if got != want {
 		t.Fatalf("permission JSON:\n got %s\nwant %s", got, want)
 	}

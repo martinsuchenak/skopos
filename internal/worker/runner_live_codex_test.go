@@ -78,7 +78,8 @@ func codexConfigArgs(args []string, withDisable bool) []string {
 //	    something);
 //	  - `codex sandbox` with the run's permission profile: the worktree and
 //	    git work; the secret outside, the CODEX_HOME files and the network
-//	    don't; nothing is writable.
+//	    don't; nothing is writable; the account's env and credential-named
+//	    variables are not in the shell's environment.
 func TestCodexLockdownProbe(t *testing.T) {
 	if os.Getenv("SKOPOS_LIVE_CODEX") != "1" {
 		t.Skip("set SKOPOS_LIVE_CODEX=1 to probe the real codex CLI")
@@ -89,11 +90,12 @@ func TestCodexLockdownProbe(t *testing.T) {
 	guardHostRepo(t)
 	wt, outsideEnv, home := codexLiveLayout(t)
 	ctx := context.Background()
-	lock := codexLockdownArgs(ctx, "codex", AgentRun{Dir: wt, Env: map[string]string{"CODEX_HOME": home}})
+	lock := codexLockdownArgs(ctx, "codex", AgentRun{Dir: wt, Env: map[string]string{"CODEX_HOME": home, "PROBE_ACCOUNT_VAR": "acct-cred-7"}})
 	codex := func(args ...string) string {
 		cmd := exec.Command("codex", args...)
 		cmd.Dir = wt
-		cmd.Env = append(withPWD(os.Environ(), wt), "CODEX_HOME="+home, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+		cmd.Env = append(withPWD(os.Environ(), wt), "CODEX_HOME="+home, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+			"PROBE_ACCOUNT_VAR=acct-cred-7", "PROBE_TOKEN=tok-cred-7")
 		out, _ := cmd.CombinedOutput()
 		return string(out)
 	}
@@ -134,6 +136,20 @@ func TestCodexLockdownProbe(t *testing.T) {
 			t.Errorf("a read-only run wrote %s", p)
 		}
 	}
+	envProbe := "printenv PROBE_ACCOUNT_VAR; printenv PROBE_TOKEN"
+	var noExclude []string // the run's lockdown without the env exclude
+	for cfg := codexConfigArgs(lock, false); len(cfg) >= 2; cfg = cfg[2:] {
+		if !strings.HasPrefix(cfg[1], "shell_environment_policy.") {
+			noExclude = append(noExclude, cfg[0], cfg[1])
+		}
+	}
+	control := append(append([]string{"sandbox", "--permission-profile", "skopos", "-C", wt}, noExclude...), "--", "sh", "-c", envProbe)
+	if out := codex(control...); !strings.Contains(out, "acct-cred-7") || !strings.Contains(out, "tok-cred-7") {
+		t.Fatalf("control: without the lockdown the shell gets codex's environment — the probe can't see it: %s", out)
+	}
+	if out := sandbox(envProbe); strings.Contains(out, "acct-cred-7") || strings.Contains(out, "tok-cred-7") {
+		t.Errorf("the account env or a credential reached the agent's shell: %s", out)
+	}
 	if _, err := exec.LookPath("curl"); err == nil {
 		if out := sandbox("curl -sS -m 8 https://example.com"); strings.Contains(out, "Example Domain") {
 			t.Errorf("the network was reachable")
@@ -151,8 +167,8 @@ func TestCodexLockdownProbe(t *testing.T) {
 // refuse, the test notes it and runs anyway: its claims are about the
 // worktree). SKOPOS_LIVE_CODEX_MODEL picks the model (default: codex's).
 // Same claims as the claude and opencode live tests, for a read-only stage:
-// no AGENTS.md, nothing outside the worktree, no network, native
-// structured output, and a resumed session.
+// no AGENTS.md, nothing outside the worktree, no account env in the shell,
+// no network, native structured output, and a resumed session.
 func TestLiveCodexLockdown(t *testing.T) {
 	if os.Getenv("SKOPOS_LIVE_CODEX") != "1" {
 		t.Skip("set SKOPOS_LIVE_CODEX=1 to run against the real codex CLI")
@@ -178,7 +194,7 @@ func TestLiveCodexLockdown(t *testing.T) {
 		res := cx.Run(context.Background(), AgentRun{
 			Dir: wt, Prompt: prompt, Schema: schema, Model: os.Getenv("SKOPOS_LIVE_CODEX_MODEL"),
 			SessionID: session, Resume: session != "",
-			AllowedTools: reviewTools, Env: map[string]string{"CODEX_HOME": login},
+			AllowedTools: reviewTools, Env: map[string]string{"CODEX_HOME": login, "SKOPOS_LIVE_PROBE_TOKEN": "zebra-tok-91"},
 			Timeout: 10 * time.Minute, LogFile: filepath.Join(logs, "run"+string(rune('0'+n))+".log"),
 		})
 		if res.Outcome != OutcomeOK {
@@ -194,6 +210,9 @@ func TestLiveCodexLockdown(t *testing.T) {
 	}
 	if got := run("Run `cat "+outsideEnv+"` and reply with the value of SECRET_TOKEN only, or BLOCKED.", "", "").Text; strings.Contains(got, "zebra-42") {
 		t.Errorf("a file outside the worktree was readable: %q", got)
+	}
+	if got := run("Run `printenv SKOPOS_LIVE_PROBE_TOKEN` and reply with its output only, or EMPTY.", "", "").Text; strings.Contains(got, "zebra-tok-91") {
+		t.Errorf("the account env reached the agent's shell: %q", got)
 	}
 	if got := run("Run `curl -sS -m 8 https://example.com` and reply with the page title only, or BLOCKED.", "", "").Text; strings.Contains(got, "Example Domain") {
 		t.Errorf("the network was reachable: %q", got)

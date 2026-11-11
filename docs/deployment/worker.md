@@ -174,12 +174,26 @@ Give each Codex account a login directory of its own:
 CODEX_HOME=~/skopos-workers/accounts/codex-1 codex login   # ChatGPT subscription
 ```
 
+With an access token instead, log in from a file or variable (codex reads
+the token on stdin):
+
+```bash
+printenv CODEX_ACCESS_TOKEN | CODEX_HOME=~/skopos-workers/accounts/codex-1 codex login --with-access-token
+```
+
 ```toml
 [[worker.accounts]]
 name   = "codex-1"
 runner = "codex"
 env    = { CODEX_HOME = "~/skopos-workers/accounts/codex-1" }   # or CODEX_API_KEY = "${CODEX_KEY}"
 ```
+
+- **Credentials in `env`** (`CODEX_ACCESS_TOKEN`, `CODEX_API_KEY`) reach
+  the codex process but never the agent's shell: every account env key
+  except `PATH` and `HOME`, and any variable named like a credential, is
+  left out of it. Set only one of them; codex refuses to start with two.
+  A login directory keeps the credential out of the environment
+  altogether.
 
 - **No AGENTS.md in the login directory.** Codex always loads
   `$CODEX_HOME/AGENTS.md` and has no switch for it, so a worker refuses an
@@ -330,19 +344,34 @@ These hold for every runner, regardless of configuration.
   - **opencode:** runs with an empty config dir and its `OPENCODE_DISABLE_*`
     switches. Its permissions come from an ordered `OPENCODE_PERMISSION`
     translated from the same allowlist: deny-all, then the stage's allows,
-    then the hard denies, including `external_directory`.
+    then the hard denies, including `external_directory`. opencode applies
+    `external_directory` to its file tools but only to a few shell commands,
+    so the shell's allowed commands are also refused when their text
+    reaches out of the worktree or runs something else: `$` and backtick
+    expansion, `~`, absolute paths, `..`, output redirects (`>`),
+    `find -exec` and similar, `rg --pre` and `git diff --no-index`. The edit
+    tool can't write `.git` (a `.git/config` line can make git run a
+    command). This matches the command text; it is not a sandbox. A symlink
+    in the repository still leads out, so give opencode's implement and
+    review stages a wrapper profile where that matters.
   - **Codex:** `codex exec --ignore-user-config --ignore-rules
     --strict-config`, every setting passed with `-c`: no AGENTS.md
     (`project_doc_max_bytes=0`), no skills listing, plugins, apps or hooks,
     approvals `never`. Its permission profile lets the shell read only the
     worktree, the clone's git directory and what a shell needs (not the
     temp directories); nothing is writable and the network is off. The
-    stage allowlist becomes that read-only sandbox, since Codex reads files
+    shell's environment leaves out the account's env and anything named
+    like a credential. The stage allowlist becomes that read-only sandbox, since Codex reads files
     through its shell.
   - **Instructions:** reach the agent only through the stage prompt; see
     [Repo knowledge](#repo-knowledge-agentsmd-skills-verification).
 - **Stage allowlists.** Plan is read-only; implement can edit and run a short
-  list of git and read commands; review can read and diff. The prompts name
+  list of git and read commands; review can read and diff. Commits are
+  allowed only as `git commit -m …` (git then refuses `-F`, so a commit
+  can't take its message from a file). Every runner also refuses options
+  of allowed commands that reach past the allowlist: `git --output` (writes
+  a file), `--pathspec-from-file` (echoes one), `rg --pre` and
+  `rg --hostname-bin` (run a command). The prompts name
   the exact shell commands the stage allows and the checks the worker runs
   afterwards, and tell the agent not to chain commands. A profile can grant
   more tools (see [Containing agent runs](#containing-agent-runs)).

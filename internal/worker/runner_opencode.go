@@ -13,7 +13,7 @@ import (
 )
 
 // opencodeRunner is opencode (`opencode run --format json`). Lockdown,
-// verified live against opencode 1.18.27 (TestLiveOpencodeLockdown):
+// verified live against opencode 1.19.5 (TestLiveOpencodeLockdown):
 //   - an EMPTY config dir (OPENCODE_CONFIG_DIR) plus
 //     OPENCODE_DISABLE_PROJECT_CONFIG / _CLAUDE_CODE / _EXTERNAL_SKILLS: the
 //     worker user's ~/.config/opencode (AGENTS.md, agents, MCP, plugins) and
@@ -21,8 +21,10 @@ import (
 //   - OPENCODE_PERMISSION: deny-all first, then the stage's allows, then
 //     the hard denies — opencode applies the LAST matching rule, and tools
 //     with no allow are removed from the model's tool set;
-//     external_directory is denied, so files outside the worktree are
-//     unreadable by the read tool and by bash;
+//     external_directory is denied, which opencode enforces for its file
+//     tools (read, grep, glob, list, edit) and only a few bash commands, so
+//     the bash allow list is followed by opencodeBashEscapes; edits to git's
+//     own files are denied (opencodeEdit);
 //   - the operator's base config (providers/models) via OPENCODE_CONFIG,
 //     MCP servers translated from worker.mcp_config via
 //     OPENCODE_CONFIG_CONTENT.
@@ -220,7 +222,7 @@ func opencodePermission(allowed, denied []string) string {
 	top := orderedJSON{{"*", "deny"}}
 	var bash orderedJSON
 	bashAll := false
-	add := func(k, v string) {
+	add := func(k string, v any) {
 		for i := range top {
 			if top[i].k == k {
 				top[i].v = v
@@ -241,7 +243,7 @@ func opencodePermission(allowed, denied []string) string {
 		case name == "Grep":
 			add("grep", "allow")
 		case name == "Edit" || name == "Write" || name == "MultiEdit":
-			add("edit", "allow")
+			add("edit", opencodeEdit)
 		case name == "TodoWrite":
 			add("todowrite", "allow")
 			add("todoread", "allow")
@@ -263,9 +265,18 @@ func opencodePermission(allowed, denied []string) string {
 		b = append(b, bash...)
 		for _, d := range denied {
 			if n, p, ok := strings.Cut(d, "("); ok && n == "Bash" {
-				prefix := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(p, ")"), ":*"), "*")
-				b = append(b, kv{prefix, "deny"}, kv{prefix + " *", "deny"})
+				p = strings.TrimSuffix(p, ")")
+				if prefix, legacy := strings.CutSuffix(p, ":*"); legacy || !strings.Contains(p, "*") {
+					b = append(b, kv{prefix, "deny"}, kv{prefix + " *", "deny"})
+				} else {
+					// A wildcard pattern (`git *--output*`) means the
+					// same in opencode: kept as written.
+					b = append(b, kv{p, "deny"})
+				}
 			}
+		}
+		for _, p := range opencodeBashEscapes {
+			b = append(b, kv{p, "deny"})
 		}
 		top = append(top, kv{"bash", b})
 	}
@@ -276,6 +287,43 @@ func opencodePermission(allowed, denied []string) string {
 	}
 	top = append(top, kv{"external_directory", "deny"}, kv{"webfetch", "deny"}, kv{"websearch", "deny"})
 	return top.String()
+}
+
+// opencodeEdit: edits anywhere in the worktree except git's own files. With
+// checkout = "branch" the run dir is the clone, and its .git/config is
+// otherwise editable (found live on 1.19.5): a core.fsmonitor or pager line
+// there runs any command at the next allowed `git status`. A linked
+// worktree's .git file is denied too (it could point git at a directory the
+// agent wrote). Both the relative and the absolute form are matched.
+var opencodeEdit = orderedJSON{{"*", "allow"}, {".git", "deny"}, {".git/*", "deny"}, {"*/.git", "deny"}, {"*/.git/*", "deny"}}
+
+// opencodeBashEscapes are denied after every bash allow (the last matching
+// rule wins). opencode checks external_directory only for its file tools
+// and a few commands (cat yes, head/tail/grep/find/wc/ls no — found live on
+// 1.19.5), and an allowed prefix says nothing about the arguments; so these
+// refuse, by the command text, what reaches outside the worktree or runs
+// something else:
+//   - expansion: $VAR, $(…), `…` (the account env, the worker's env) and ~;
+//   - absolute paths: a / that starts a word — after a space, =, quote,
+//     redirect, bracket, brace, comma, colon, backslash or a short option
+//     (-f/x) — and parent traversal (..);
+//   - commands that run other commands or read arbitrary files: find
+//     -exec/-execdir/-ok/-okdir (and -delete/-fprint/-fls), rg --pre, git
+//     diff --no-index;
+//   - output redirection (>): files are written with the edit tool, and
+//     `cat x > .git/config` would get round opencodeEdit.
+//
+// Text matching is not a sandbox (a symlink committed in the repo still
+// points out): a wrapper profile is what confines the shell.
+var opencodeBashEscapes = []string{
+	"*$*", "*`*",
+	"* ~*", "*=~*", "*:~*",
+	"* /*", "*\t/*", "*=/*", "*'/*", `*"/*`, "*</*", "*[/*", "*{/*", "*,/*", "*:/*", `*\/*`, "* -?/*",
+	"*../*", "*/..", "*/.. *", "* ..", "* .. *",
+	"* -exec*", "* -ok *", "* -okdir*", "* -delete*", "* -fprint*", "* -fls*",
+	"* --pre *", "*--pre=*",
+	"*--no-index*",
+	"*>*",
 }
 
 // opencodeMCPName: Claude's mcp__server__tool is opencode's server_tool.

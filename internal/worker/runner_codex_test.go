@@ -182,6 +182,13 @@ echo '{"type":"turn.completed","usage":{}}'`)
 	if !strings.Contains(a, `permissions.skopos.filesystem={":minimal"="read", ":tmpdir"="none", ":slash_tmp"="none", ":workspace_roots"="read"`) || strings.Contains(a, `"write"`) {
 		t.Errorf("read-only confined profile:\n%s", a)
 	}
+	// The account env (its credentials) never reaches the agent's shell.
+	if !strings.Contains(a, `shell_environment_policy.exclude=["*TOKEN*", "*SECRET*", "*PASSWORD*", "*API_KEY*", "*ACCESS_KEY*", "CODEX_HOME"]`+"\n") {
+		t.Errorf("shell env exclude:\n%s", a)
+	}
+	if got := codexShellExclude(map[string]string{"CODEX_ACCESS_TOKEN": "x", "PATH": "/p", "HOME": "/h", "MY_VAR": "y"}); got != `["*TOKEN*", "*SECRET*", "*PASSWORD*", "*API_KEY*", "*ACCESS_KEY*", "CODEX_ACCESS_TOKEN", "MY_VAR"]` {
+		t.Errorf("account keys except PATH/HOME: %s", got)
+	}
 	if in, _ := os.ReadFile(filepath.Join(logDir, "stdin")); string(in) != "review this, secret-in-prompt" {
 		t.Errorf("stdin: %q", in)
 	}

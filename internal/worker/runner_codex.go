@@ -38,6 +38,9 @@ import (
 //     and codex's own install; no writes; network off; approval_policy never (no escalation). Files
 //     outside the worktree — the worker's env file, the account's auth —
 //     are unreadable by the agent's shell;
+//   - shell_environment_policy.exclude (codexShellExclude): codex hands its
+//     own environment to the shell, so the account's env (CODEX_ACCESS_TOKEN,
+//     CODEX_API_KEY) and anything credential-named is kept out of it;
 //   - --output-schema: native structured output (strict: codexStrictSchema).
 //
 // Read-only stages only (plan, review, second opinion, compare): codex
@@ -258,11 +261,36 @@ func codexLockdownArgs(ctx context.Context, bin string, r AgentRun) []string {
 		"-c", `default_permissions="skopos"`,
 		"-c", "permissions.skopos.filesystem=" + codexFilesystem(codexReadRoots(ctx, bin, r)),
 		"-c", "permissions.skopos.network.enabled=false",
+		"-c", "shell_environment_policy.exclude=" + codexShellExclude(r.Env),
 	}
 	for _, f := range codexFeaturesOff {
 		args = append(args, "--disable", f)
 	}
 	return args
+}
+
+// codexShellExclude: the variables the agent's shell never gets. Codex
+// passes its own environment to every command it runs, and that holds the
+// account's credentials (CODEX_ACCESS_TOKEN or CODEX_API_KEY in the account
+// env) — so every account env key except PATH and HOME, plus anything
+// credential-named. Not *_KEY: git needs GIT_CONFIG_KEY_0 (scrubEnv's
+// credential.helper reset). Patterns are case-insensitive globs.
+func codexShellExclude(env map[string]string) string {
+	out := []string{"*TOKEN*", "*SECRET*", "*PASSWORD*", "*API_KEY*", "*ACCESS_KEY*"}
+	var keys []string
+	for k := range env {
+		if k != "PATH" && k != "HOME" {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	out = append(out, keys...)
+	parts := make([]string, len(out))
+	for i, p := range out {
+		q, _ := json.Marshal(p) // a JSON string is a TOML basic string
+		parts[i] = string(q)
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 // codexFilesystem renders the profile's filesystem table: the shell's

@@ -56,7 +56,7 @@ func TestAntigravityPermissions(t *testing.T) {
 		t.Fatalf("plan reads only: %v", allow)
 	}
 	allow, _ = antigravityPermissions("/w/t", baseImplTools, nil)
-	if allow[0] != "write_file(/w/t)" || !strings.Contains(strings.Join(allow, ","), "command(git commit)") {
+	if allow[0] != "write_file(/w/t)" || !strings.Contains(strings.Join(allow, ","), "command(git commit -m)") {
 		t.Fatalf("implement: %v", allow)
 	}
 }
