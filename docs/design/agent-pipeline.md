@@ -1,12 +1,12 @@
 # Skopos agent pipeline — design
 
-Oct 1, 2026 · @Martin Suchenak
+Oct 1, 2026
 
 > **Frozen 2026-10-01**, on branch `agent-pipeline-1a`, as the source of truth for the build (Phase 1a first). The five review rounds live in `agent-pipeline-review.md`. Changes after the freeze go through a new decision-log entry and a dated revision of this document.
 
 ## Summary
 
-The goal is parallel agent work across several machines, agents and projects: Skopos inbox items become implemented, verified feature branches, with Martin approving each plan before any code is written and reviewing the result before it's merged. Agent output quality on freedom3 is already proven, so the design is about orchestration, safety and verification. This document is the single source of truth, consolidated on 2026-09-30; history lives in the decision log at the end.
+The goal is parallel agent work across several machines, agents and projects: Skopos inbox items become implemented, verified feature branches, with the maintainer approving each plan before any code is written and reviewing the result before it's merged. Agent output quality on the main repository is already proven, so the design is about orchestration, safety and verification. This document is the single source of truth, consolidated on 2026-09-30; history lives in the decision log at the end.
 
 - **Track A: trial (running).** `agent-trial`, a small Go tool on this Mac. It turns Skopos items into plans with Claude, takes approvals from Slack, implements in worktrees, and pushes branches and opens PRs on the local Gitea only.
 - **Track B: full build.** Skopos becomes the control plane: item workflow, approvals tied to a plan revision and base commit, a run queue, tag-based routing, workspace groups for keys, and Slack. Phantom workers on always-on Linux VMs and knot spaces become the execution plane, running any CLI agent (claude, kiro-cli, opencode).
@@ -17,30 +17,30 @@ Agents only ever push to their workspace's allowed branch pattern, never to `PRO
 
 | # | Requirement | Where it's enforced |
 | --- | --- | --- |
-| R1 | Martin chooses which items agents work on | Trial: the `ready` tag or `new:` in Slack. Track B: the `inbox_queue` action |
-| R2 | Agents research and write a plan in Skopos, then notify Martin | Planner run and a Slack message |
-| R3 | No code is written until Martin approves that exact plan revision, including its base commit | Approval tied to a plan revision and its `base_sha`; the revision is locked |
+| R1 | The maintainer chooses which items agents work on | Trial: the `ready` tag or `new:` in Slack. Track B: the `inbox_queue` action |
+| R2 | Agents research and write a plan in Skopos, then notify the maintainer | Planner run and a Slack message |
+| R3 | No code is written until the maintainer approves that exact plan revision, including its base commit | Approval tied to a plan revision and its `base_sha`; the revision is locked |
 | R4 | If the plan must change mid-run, the run **pauses** until the amendment is approved | Amendment creates a new revision and goes back to `awaiting_approval` |
-| R5 | Work happens on a new branch in the repo given by the item's `workspace_id`, in a dedicated agent clone or space, never Martin's working checkout | Worker plus a workspace-to-repo map, or a knot space |
-| R6 | Pushes go only to the workspace's allowed branch pattern (`agent/*`, or freedom3's `WR{n}-{slug}`), never to `PROD`, `main`, `master`, `develop`, `release/*` or `hotfix/*` | Server side (layer 0) is the only real enforcement; worker validation and client guards catch mistakes earlier |
+| R5 | Work happens on a new branch in the repo given by the item's `workspace_id`, in a dedicated agent clone or space, never the maintainer's working checkout | Worker plus a workspace-to-repo map, or a knot space |
+| R6 | Pushes go only to the workspace's allowed branch pattern (`agent/*`, or a workspace's own, such as `JOB{n}-{slug}`), never to `PROD`, `main`, `master`, `develop`, `release/*` or `hotfix/*` | Server side (layer 0) is the only real enforcement; worker validation and client guards catch mistakes earlier |
 | R7 | **Trial:** agents never touch GitHub; branches and PRs go to the local Gitea only. **Track B:** agents push allowed branches and open draft PRs on GitHub (for Copilot review) and never merge | Trial: Gitea only, no GitHub credentials anywhere. Track B: GitHub App plus org ruleset, required before any GitHub push |
 | R8 | Everything runs on the local network; Skopos can't be reached from the internet | Slack Socket Mode (outbound only) |
 | R9 | Any repo, several machines and agents | Runner templates, tag-based routing, pull-based workers |
 | R10 | An approval-policy hook exists from day one; every gate is required at first | `approval_policy` per workspace |
 | R11 | When an agent's allowance runs out, work pauses and resumes after the reset with nothing lost | Quota detection, pausing that runner, session resume |
-| R12 | Agents can use MCP tools (a must). Each deployment has its own MCP config, with full Skopos access. A per-deployment deny list blocks, by default, Fortix production writes (llmrouter `create_work_request`, `reply_to_work_request`, `create_client_from_email`, `request_file_upload`) and the llmrouter scriptling stores (`set_prompt`, `set_skill`, `qdrant_upsert`) | `--mcp-config <file> --strict-mcp-config` plus deny rules. Workflow integrity comes from the server-side `approver` permission, which agent keys never get. Trial exception: until `agent-trial` uses the 1a APIs, it also denies Skopos `execute_tool`, because its workflow state is plain tags |
+| R12 | Agents can use MCP tools (a must). Each deployment has its own MCP config, with full Skopos access. A per-deployment deny list blocks the tools that write to production systems and to shared prompt and skill stores | `--mcp-config <file> --strict-mcp-config` plus deny rules. Workflow integrity comes from the server-side `approver` permission, which agent keys never get. Trial exception: until `agent-trial` uses the 1a APIs, it also denies Skopos `execute_tool`, because its workflow state is plain tags |
 
 **Out of scope:** merging, auto-deploys, and agents acting on items nobody queued.
 
 ## Track A: the trial (as built)
 
-`agent-trial` lives in `~/Development/personal/agent-trial`. launchd runs it every minute through a small launcher that holds macOS's Local Network permission. Each tick handles Slack and finishes items marked done in a few seconds. Plans and implementations run in a separate background worker (`agent-trial work`), so replies are picked up even during long runs. It covers freedom3 only, in a separate clone (`~/Development/tmp/freedom3`) whose only remote is the local Gitea. Skopos and phantom are unchanged, and the Cowork quick-note job keeps running.
+`agent-trial` is a separate tool. launchd runs it every minute through a small launcher that holds macOS's Local Network permission. Each tick handles Slack and finishes items marked done in a few seconds. Plans and implementations run in a separate background worker (`agent-trial work`), so replies are picked up even during long runs. It covers one repository only, in a separate clone whose only remote is the local Gitea. Skopos and phantom are unchanged, and the Cowork quick-note job keeps running.
 
 ### State (tags on the inbox item)
 
 ```mermaid
 stateDiagram-v2
-    [*] --> ready: Martin tags or sends new:
+    [*] --> ready: the maintainer tags or sends new:
     ready --> agent_planning: claim
     agent_planning --> plan_review: plan written
     plan_review --> approved: approve
@@ -55,13 +55,13 @@ stateDiagram-v2
     branch_ready --> [*]: done
 ```
 
-The item stays claimed (`in_progress`) until Martin marks it `done`, so its tags stay editable throughout. `inbox_convert` runs only at `done`, because a converted item can't be changed. Completing the final "Review and push (Martin)" step then completes the plan and the item.
+The item stays claimed (`in_progress`) until the maintainer marks it `done`, so its tags stay editable throughout. `inbox_convert` runs only at `done`, because a converted item can't be changed. Completing the final "Review and push (the maintainer)" step then completes the plan and the item.
 
-Martin's `revise:` and `changes:` replies first set an intermediate tag (`revise`, `changes-requested`), which the worker picks up on its next pass. The diagram folds these into the arrows labelled "revise + notes" and "changes + notes".
+The maintainer's `revise:` and `changes:` replies first set an intermediate tag (`revise`, `changes-requested`), which the worker picks up on its next pass. The diagram folds these into the arrows labelled "revise + notes" and "changes + notes".
 
 ### How it works
 
-- **Slack is the interface.** Each item has one Slack thread. A `new: <what to do>` DM creates the item, with that message as its thread root; otherwise the first bot message starts the thread. Replies accepted only from Martin's user id: `approve`, `approve: <answers>`, `revise: <notes>`, `changes: <notes>`, `done`, `retry: <answer>`, `reject`, `help`. Messages are short (summary, step titles, numbered questions, one-line review verdict) and capped below Slack's split limit; full detail lives in Skopos and the PR. A reply about an item that's mid-run is applied once the run finishes.
+- **Slack is the interface.** Each item has one Slack thread. A `new: <what to do>` DM creates the item, with that message as its thread root; otherwise the first bot message starts the thread. Replies accepted only from the maintainer's user id: `approve`, `approve: <answers>`, `revise: <notes>`, `changes: <notes>`, `done`, `retry: <answer>`, `reject`, `help`. Messages are short (summary, step titles, numbered questions, one-line review verdict) and capped below Slack's split limit; full detail lives in Skopos and the PR. A reply about an item that's mid-run is applied once the run finishes.
 - **Planning** runs `claude -p` in the agent clone, returns a structured plan (title, summary, size, steps, risks, questions), writes it to Skopos as a plan with one item per step plus a final review step, and appends an Enrichment section to the inbox item.
 - **Implementation** creates a worktree on `agent/<item>-<slug>` from `origin/PROD` with no upstream. Each worktree gets its own `vendor` as an APFS copy-on-write clone (a symlink breaks PHPStan). The agent commits one step at a time. It stops with an amendment if the plan is wrong, or stops blocked with one direct question. `retry: <answer>` resumes the same session.
 - **Finishing:** the tool runs `php -l` and PHPStan on the changed files and a Claude review pass. It then pushes (see push transport below), opens or updates the Gitea PR, and posts the result to the item's thread.
@@ -70,7 +70,7 @@ Martin's `revise:` and `changes:` replies first set an intermediate tag (`revise
 
 ### Push transport
 
-The tool fetches over SSH with Martin's key. It pushes over **HTTPS with the `agent-bot` token**, passed through git's environment so it never appears in command arguments. The agent process never has SSH access or tokens. Its environment has no SSH agent, and SSH git is disabled with `GIT_SSH_COMMAND=/usr/bin/false`.
+The tool fetches over SSH with the maintainer's key. It pushes over **HTTPS with the `agent-bot` token**, passed through git's environment so it never appears in command arguments. The agent process never has SSH access or tokens. Its environment has no SSH agent, and SSH git is disabled with `GIT_SSH_COMMAND=/usr/bin/false`.
 
 ### When an allowance runs out
 
@@ -81,8 +81,8 @@ The tool detects usage-limit errors, pauses all Claude runs until the reset (or 
 | Metric | Keep going if |
 | --- | --- |
 | Plans approved without changes | About half or more |
-| Branches Martin would push as-is, or after one `changes:` round | About half or more |
-| Martin's review time per item vs doing it himself | Clearly lower |
+| Branches the maintainer would push as-is, or after one `changes:` round | About half or more |
+| The maintainer's review time per item vs doing it himself | Clearly lower |
 | Runs that fail, time out or block (sleep interruptions excluded) | About a quarter or fewer |
 | Guardrail incidents (push outside the pattern, edits outside the worktree) | Zero |
 
@@ -94,7 +94,7 @@ Skopos holds all state and decisions; workers do all the execution. They talk on
 
 ```mermaid
 flowchart LR
-    M[Martin<br/>Slack + dashboard] -- queue / approve --> S[Skopos<br/>items, approvals, runs, routing]
+    M[the maintainer<br/>Slack + dashboard] -- queue / approve --> S[Skopos<br/>items, approvals, runs, routing]
     S -- Socket Mode --> SL[Slack bot]
     SL --> M
     S -- run.queued --> W1[Linux VM workers<br/>claude, kiro-cli, opencode]
@@ -107,18 +107,18 @@ flowchart LR
     W2 -- push allowed branch --> GH
 ```
 
-Only Martin's actions open a gate. Workers never talk to Slack, and agents never hold git credentials.
+Only the maintainer's actions open a gate. Workers never talk to Slack, and agents never hold git credentials.
 
 ### End-to-end flow
 
-1. Martin queues an item from the dashboard, Slack (`new:`) or a quick-note shortcut, optionally with tags such as `#claims`.
+1. The maintainer queues an item from the dashboard, Slack (`new:`) or a quick-note shortcut, optionally with tags such as `#claims`.
 2. Skopos queues a `plan` run, which always goes to Claude.
 3. A worker runs the planner, which returns steps, size, suggested required tags and risks. The worker stores them as plan revision 1, recording the `base_sha` the planner read.
 4. The item moves to `awaiting_approval`. The Slack message includes a routing preview: required tags, the worker kind and runner, the matching rule, and the WR number.
-5. Martin approves (`approve`, `approve: <answers>`, or with overrides such as `tags=insurance runner=kiro-cli wr=108900`). The approval is recorded against that revision and base commit, and the revision is locked.
+5. The maintainer approves (`approve`, `approve: <answers>`, or with overrides such as `tags=insurance runner=kiro-cli job=108900`). The approval is recorded against that revision and base commit, and the revision is locked.
 6. Routing queues an `implement` run. A matching worker takes it, or knot creates a space from a matching template. The branch starts from the revision's `base_sha` and is named from the workspace's branch template.
 7. The pipeline runs: checks, tests, Copilot review, up to 2 automatic fix rounds, then `sync-base` if the base has moved in a conflicting way.
-8. The item moves to `in_review`. Martin reviews the branch, and the review approval is tied to its head commit. He merges and marks the item done; the worker cleans up.
+8. The item moves to `in_review`. The maintainer reviews the branch, and the review approval is tied to its head commit. He merges and marks the item done; the worker cleans up.
 
 ## Skopos changes
 
@@ -129,21 +129,21 @@ The inbox item holds the workflow state. Every approval is recorded against some
 ```mermaid
 stateDiagram-v2
     [*] --> open
-    open --> queued: Queue (Martin)
+    open --> queued: Queue (the maintainer)
     queued --> planning
     planning --> awaiting_approval
-    awaiting_approval --> approved: Approve (Martin)
-    awaiting_approval --> planning: Request changes (Martin)
-    awaiting_approval --> discarded: Reject (Martin)
+    awaiting_approval --> approved: Approve (the maintainer)
+    awaiting_approval --> planning: Request changes (the maintainer)
+    awaiting_approval --> discarded: Reject (the maintainer)
     approved --> implementing
     implementing --> awaiting_approval: amendment, run paused
     implementing --> in_review
     implementing --> blocked: question or failure
-    blocked --> implementing: Retry + answer (Martin)
-    blocked --> discarded: Reject (Martin)
-    in_review --> implementing: Request changes (Martin)
-    in_review --> discarded: Reject (Martin)
-    in_review --> done: Mark done (Martin)
+    blocked --> implementing: Retry + answer (the maintainer)
+    blocked --> discarded: Reject (the maintainer)
+    in_review --> implementing: Request changes (the maintainer)
+    in_review --> discarded: Reject (the maintainer)
+    in_review --> done: Mark done (the maintainer)
 ```
 
 - Any agent phase can go to `blocked` or `failed` with a reason. Both return to their phase with Retry (with an answer) or go to `discarded` with Reject; the diagram shows `blocked`, and `failed` has the same edges. Reject also works from `in_review`, and it closes the PR and deletes the branch.
@@ -171,13 +171,13 @@ stateDiagram-v2
 ### 2. Approver permission and threat model
 
 - `approver` is a new per-action permission on top of today's root and scoped keys. Agent and worker keys never get it.
-- **Slack principal:** the Slack module (phase 2) acts as Martin after checking his Slack user id. The gate therefore rests on Martin's Slack account not being compromised. Blast radius if it is:
+- **Slack principal:** the Slack module (phase 2) acts as the maintainer after checking his Slack user id. The gate therefore rests on the maintainer's Slack account not being compromised. Blast radius if it is:
   - branches matching the allowed patterns and draft PRs, never protected branches (server rules still apply)
-  - WR creation through the Fortix MCP (`create-wr`), the only write to a production system outside git hosting
+  - Job creation through the job system's MCP tools (`create-job`), the only write to a production system outside git hosting
   - usage spent on approved runs
 
-  Every approval is audit-logged with `via: slack`, and `create-wr` can be limited to the dashboard if needed.
-- **Interim approver key (1a only):** while `agent-trial` still relays Slack approvals, it holds a dedicated key with `approver`. That key is Martin-equivalent, used only by the Slack command handler, never passed to an agent session, and revoked when the Slack module lands in phase 2. It's the one documented exception to "agent and worker keys never get approver".
+  Every approval is audit-logged with `via: slack`, and `create-job` can be limited to the dashboard if needed.
+- **Interim approver key (1a only):** while `agent-trial` still relays Slack approvals, it holds a dedicated key with `approver`. That key is maintainer-equivalent, used only by the Slack command handler, never passed to an agent session, and revoked when the Slack module lands in phase 2. It's the one documented exception to "agent and worker keys never get approver".
 
 ### 3. Workspace groups for API keys
 
@@ -186,7 +186,7 @@ Keys get workspace groups such as `work` and `personal`, so adding a workspace t
 ```sql
 workspace_groups          (id, name UNIQUE, description, created_at)
 workspace_group_members   (group_id, workspace_id)   -- explicit members
-workspace_group_patterns  (group_id, pattern)        -- optional auto-membership, e.g. github.com/fortix/*
+workspace_group_patterns  (group_id, pattern)        -- optional auto-membership, e.g. github.com/acme/*
 api_key_groups            (api_key_id, group_id)
 ```
 
@@ -204,7 +204,7 @@ api_key_groups            (api_key_id, group_id)
 - `plan_revisions`: an immutable snapshot of a plan's steps, a content hash and the `base_sha` the planner read. Plans created in interactive sessions keep working unchanged, with no revisions and no gate.
 - An approved revision is **locked**. A running agent can change step status but can't add, remove or rewrite steps. A deviation becomes an amendment: a new revision that pauses the run.
 - `approvals`: `{item_id, gate: plan|review, subject: plan_rev_id+base_sha | head_sha, decision, actor, via, notes, at}`. A new commit after a review approval makes that review stale.
-- **An old base triggers a warning:** if the base is older than 3 days (configurable) when Martin approves, the message warns and suggests `revise` to re-plan on a fresh base.
+- **An old base triggers a warning:** if the base is older than 3 days (configurable) when the maintainer approves, the message warns and suggests `revise` to re-plan on a fresh base.
 
 ### 5. Runs and leases
 
@@ -223,11 +223,11 @@ run = {id, item_id, plan_rev_id, stage, runner, worker_id, required_tags[],
 
 ### 6. Routing
 
-- **Tags, not config parsing.** Martin tags knot templates, instances and nodes, for example `freedom3-futeng` → `generic-quoting`, `freedom3-lgm` → `claims`, `freedom3-gsa` → `insurance`. An item's required tags come from Martin's note (`#claims`) or from the planner, which picks from the registered tags. A worker takes a run only if it has every required tag.
+- **Tags, not config parsing.** the maintainer tags knot templates, instances and nodes, for example `app-client-a` → `quoting`, `app-client-b` → `claims`, `app-client-c` → `insurance`. An item's required tags come from the maintainer's note (`#claims`) or from the planner, which picks from the registered tags. A worker takes a run only if it has every required tag.
 - **Rules per workspace and stage, first match wins:**
 
 ```yaml
-github.com/fortix/freedom3:
+github.com/acme/shop:
   approval_policy: {plan_gate: required, review_gate: required}   # later: auto_if_small
   rules:
     - when: {tags: [claims]}
@@ -244,13 +244,13 @@ github.com/martinsuchenak/skopos:
       implement: {runner: [opencode-glm, claude]}
 ```
 
-- A list of runners is an order of preference: when the first can't run, the next one does. An explicit override from Martin wins.
+- A list of runners is an order of preference: when the first can't run, the next one does. An explicit override from the maintainer wins.
 - **The routing preview is always shown at approval,** including required tags, so a wrong pick by the planner is visible at the gate.
 
 ### 7. Branch templates and WR numbers
 
-- Branch and commit templates are set per workspace. freedom3 uses `WR{n}-{slug}`, with commits starting `[#{n}]`. Other workspaces use `agent/{id}-{slug}`.
-- **No WR, no implementation (freedom3):** the plan message asks for a WR number. Martin replies `approve: wr=108900`, or `approve: create-wr` to have the tool create the WR through the Fortix MCP and use its number.
+- Branch and commit templates are set per workspace. The main repository uses `JOB{n}-{slug}`, with commits starting `[#{n}]`. Other workspaces use `agent/{id}-{slug}`.
+- **No job, no implementation (one workspace):** the plan message asks for a job number. The maintainer replies `approve: job=108900`, or `approve: create-job` to have the tool create the job through the job system's MCP tools and use its number.
 - The worker's push check and the GitHub ruleset are both generated from the same template, for example `^refs/heads/WR\d+-[a-z0-9-]+$`.
 
 ### 8. Events
@@ -271,7 +271,7 @@ github.com/martinsuchenak/skopos:
 | Quota pause | Which runner, and until when | None |
 
 - **`new:` with several workspaces:** `new <alias>: <what to do>`, where each workspace has a short alias (for example `ff3`, `skopos`). Plain `new:` uses the Slack user's default workspace. If it's ambiguous, the bot asks in the thread and offers the options.
-- **Every action is checked against Martin's user id** and recorded with `via: slack`. Messages carry the essentials, because dashboard links only open on the home network.
+- **Every action is checked against the maintainer's user id** and recorded with `via: slack`. Messages carry the essentials, because dashboard links only open on the home network.
 
 ### 10. Dashboard
 
@@ -288,7 +288,7 @@ There's also a workers page (registered workers, their tags, runners, capacity a
 **Watching and taking over a run are two different features:**
 
 - **Transcript view (phase 2):** the run's forwarded event stream (see Runs and leases) shown live in the dashboard, and replayable afterwards. It's read-only: a replay, not a resume.
-- **Takeover:** Claude sessions only exist on the worker that ran them, so resuming happens there. The run page shows a copyable command, `ssh <worker> -t 'cd <worktree> && claude --resume <session>'`. Martin's machine needs SSH access to the worker VMs. Takeover is only offered for paused or blocked runs. On a running run, the button first issues `run_pause`, and the worker stops the agent process cleanly before the command is shown, so there are never two writers on one session. The lease stays paused until Martin hands the run back or marks the item done.
+- **Takeover:** Claude sessions only exist on the worker that ran them, so resuming happens there. The run page shows a copyable command, `ssh <worker> -t 'cd <worktree> && claude --resume <session>'`. The maintainer's machine needs SSH access to the worker VMs. Takeover is only offered for paused or blocked runs. On a running run, the button first issues `run_pause`, and the worker stops the agent process cleanly before the command is shown, so there are never two writers on one session. The lease stays paused until the maintainer hands the run back or marks the item done.
 
 ## Workers and runners
 
@@ -313,7 +313,7 @@ Phantom already provides isolation (overlays that share `vendor/` and `node_modu
 | P3 | Clean environment for agents: no `SSH_AUTH_SOCK`, tokens or credential helpers, and SSH git disabled | The agent can't act as anyone |
 | P4 | Agents can't push: `--push`, `commit --push` and `auto_push_on_stop` are refused; overlays get the pre-push guard, `push.default=current` and a disabled push URL | Client-side guard (layer 2) |
 | P5 | The only push path: App token, explicit refspec, destination checked against the workspace's branch pattern, upstream reset | Layer 1 |
-| P6 | Per-project agent-base clone with dependencies installed; branches start from the approved `base_sha` | Exact base; never Martin's checkout |
+| P6 | Per-project agent-base clone with dependencies installed; branches start from the approved `base_sha` | Exact base; never the maintainer's checkout |
 | P7 | `run --format json`: branch, base and head, commits, diff stats, per-hook results, exit code | Facts, not the agent's summary |
 | P8 | Resume from a pushed branch in a fresh overlay | `resume_kind: branch` |
 | P9 | Per-deployment MCP config and deny list (see below) | R12 |
@@ -331,9 +331,9 @@ zcode has no CLI and is covered by opencode with other models. Every runner gets
 
 ### MCP per deployed agent
 
-- **Each deployment has its own MCP config file,** so servers configured elsewhere on the VM can't leak in. For example, VM A has Skopos with a `work` key plus llmrouter; VM B has Skopos with a `personal` key only.
+- **Each deployment has its own MCP config file,** so servers configured elsewhere on the VM can't leak in. For example, VM A has Skopos with a `work` key plus a tool router; VM B has Skopos with a `personal` key only.
 - **Skopos access is full, `execute_tool` included.** The key's groups decide which repos an agent sees, and the server's `approver` permission protects the workflow.
-- **The deny list is per deployment,** with the R12 default (Fortix production writes and the llmrouter scriptling stores).
+- **The deny list is per deployment,** with the R12 default (production writes and the shared prompt and skill stores).
 
 ### knot provisioning and logins
 
@@ -341,15 +341,15 @@ When a run needs tags that no idle worker has, a provisioner next to Skopos asks
 
 ## Pipeline and verification
 
-`plan → implement → checks → tests → copilot-review → fix (max 2 rounds) → sync-base (if needed) → Martin`. Each stage is routed separately.
+`plan → implement → checks → tests → copilot-review → fix (max 2 rounds) → sync-base (if needed) → the maintainer`. Each stage is routed separately.
 
 - **checks:** fast static checks on any worker, for example `php -l` and PHPStan on the changed files.
-- **tests:** a per-project `verify` command on a worker with the matching tags. For freedom3: a disposable instance plus the relevant Codeception suites and a Playwright smoke test. This harness is worth building whatever orchestrator runs it.
+- **tests:** a per-project `verify` command on a worker with the matching tags. For the main repository: a disposable instance plus the relevant Codeception suites and a Playwright smoke test. This harness is worth building whatever orchestrator runs it.
 - **copilot-review:** push the branch and open a draft PR on GitHub. The existing `PROD` ruleset already requests Copilot review.
 - **fix:** feed Copilot's comments back into the same agent session, push, and ask for another review. Stop after 2 rounds or when a round finds nothing new, then summarize what was fixed and what's still open.
 - **sync-base:** check that the branch merges cleanly into the current `base_ref`.
   - If it's clean, the review message just says how far behind it is.
-  - If it conflicts, `base_ref` is **merged into the branch** and the conflicts resolved. That's a normal new commit, with no rebase and no force push, and Martin reviews the merged head.
+  - If it conflicts, `base_ref` is **merged into the branch** and the conflicts resolved. That's a normal new commit, with no rebase and no force push, and the maintainer reviews the merged head.
   - Until this stage exists (between 1b and phase 3), a conflicted handover goes to `blocked`, listing the conflicting files.
 - **Cleanup:** worktrees and knot spaces are removed on `done` or `reject`; branches are deleted on `reject` and after merge. A weekly `git worktree prune` and a sweep catch stale spaces and worktrees. Stored run event streams are kept for 30 days (configurable) and then deleted by Skopos's existing cleanup package; run summaries and the audit log are kept.
 
@@ -357,26 +357,26 @@ When a run needs tags that no idle worker has, a provisioner next to Skopos asks
 
 Nothing an agent does should be able to reach a protected branch, even with misconfigured tracking. That's what happened with Kiro, when a feature branch tracked `main` and every push went there. The server (layer 0) is the only real enforcement; the other layers catch mistakes earlier and more visibly.
 
-### What freedom3 allows today (checked 2026-09-24)
+### What the main repository allows today (checked 2026-09-24)
 
-- The default branch is `PROD`. Its protection limits pushes to the `freedom3` team, which includes Martin. It requires no PR or status checks, and admins aren't held to it.
+- The default branch is `PROD`. Its protection limits pushes to the repository's team, which includes the maintainer. It requires no PR or status checks, and admins aren't held to it.
 - The "Copilot review for default branch" ruleset only blocks deleting and force-pushing, and requests Copilot review.
-- **Result:** any process holding Martin's SSH key can push straight to `PROD`.
+- **Result:** any process holding the maintainer's SSH key can push straight to `PROD`.
 
 ### Layers
 
 | Layer | Control | Stops |
 | --- | --- | --- |
-| 0: server | **The only real enforcement against a capable agent.** Track B: a GitHub App outside the `freedom3` team. **A per-repo ruleset is generated from each workspace's branch template**: create, update and delete are allowed only on that pattern (delete is needed to clean up on reject), with no force pushes and the App not on the bypass list. An **org-wide baseline ruleset** blocks the App from protected names (`PROD`, `main`, `master`, `develop`, `release/*`, `hotfix/*`) in every repo, including repos without a generated ruleset. Fortix's org plan already supports rulesets on private repos. Trial: Gitea branch protection plus the `agent-bot` user | Any push outside the allowed patterns |
+| 0: server | **The only real enforcement against a capable agent.** Track B: a GitHub App outside the repository's team. **A per-repo ruleset is generated from each workspace's branch template**: create, update and delete are allowed only on that pattern (delete is needed to clean up on reject), with no force pushes and the App not on the bypass list. An **org-wide baseline ruleset** blocks the App from protected names (`PROD`, `main`, `master`, `develop`, `release/*`, `hotfix/*`) in every repo, including repos without a generated ruleset. The organisation's plan supports rulesets on private repos. Trial: Gitea branch protection plus the `agent-bot` user | Any push outside the allowed patterns |
 | 1: worker | Only the worker pushes, with a short-lived token and an explicit refspec `refs/heads/B:refs/heads/B`. The destination is checked against the workspace's branch pattern and the protected list, generated from the same config as the ruleset. It never force-pushes, never uses mirror, all or tags, only deletes the run's own branch on reject, and resets any stray upstream | Tracking misconfiguration (the Kiro failure mode) and bad refspecs |
 | 2: git in the workspace | Pre-push hook checking the real destination refs, `push.default=current`, and a disabled push URL. Advisory, because the agent can write to these | Accidental pushes that bypass the worker |
 | 3: agent process | No credentials (no SSH agent, no tokens, SSH git disabled) plus deny rules for push, remote, upstream and config changes. With no credentials, there's nothing to authenticate a push with | The agent attempting any of the above |
 
 ### Trial: Gitea as the only remote
 
-- The agent clone's only remote is `gitea.adinko.me/fortix/freedom3`, converted from a pull mirror to a normal repo on 2026-09-25 for this proof of concept. No GitHub remote or credentials exist on the agent side, so even if layers 1–3 all failed, nothing could reach GitHub.
+- The agent clone's only remote is `gitea.example.com/org/repo`, converted from a pull mirror to a normal repo on 2026-09-25 for this proof of concept. No GitHub remote or credentials exist on the agent side, so even if layers 1–3 all failed, nothing could reach GitHub.
 - **Gitea branch protection** covers `PROD`, `main`, `master`, `develop`, `release/**` and `hotfix/**`, with push disabled. The bot can push only `agent/*` branches and open PRs. Verified with test pushes on 2026-09-25.
-- **No sync from GitHub:** `PROD` stays at `d2ce73dfdd1`. Martin reviews PRs in Gitea and pushes to GitHub himself.
+- **No sync from GitHub:** `PROD` stays at `d2ce73dfdd1`. The maintainer reviews PRs in Gitea and pushes to GitHub himself.
 
 ### Recommended outside this project
 
@@ -392,7 +392,7 @@ Each phase ends in something usable.
 | 1a | Workflow statuses, approver permission, workspace groups, audit log (plan `01a0bf7c`), plan revisions with `base_sha` and locking, approvals | `agent-trial` switches from tags to these APIs (one-time migration by the tag-to-status table), with the interim approver key | — | The workflow lives in Skopos while the proven executor keeps running |
 | 1b | Runs with leases, `resume_kind` and capacity-aware claims, run event forwarding, worker registry, tag routing and preview, quota fallback, branch templates, event ids | `phantom worker`, runner templates, per-deployment MCP config, push guards; conflicts go to `blocked` | GitHub App, generated per-repo rulesets plus the org baseline (required before any GitHub push) | Several workers and agents share one queue; `agent-trial` retires |
 | 2 | Slack module (full message set, `new <alias>:`), dashboard item view, transcript view, takeover command; interim approver key revoked | — | — | Approve from the dashboard or phone |
-| 3 | Pipeline: checks, tests, Copilot review, fix loop, `sync-base` | Per-project `verify` (freedom3: disposable instance, Codeception, Playwright) | — | Verified branches, review comments already addressed |
+| 3 | Pipeline: checks, tests, Copilot review, fix loop, `sync-base` | Per-project `verify` (the main repository: disposable instance, Codeception, Playwright) | — | Verified branches, review comments already addressed |
 | 4 | Provider interface, knot provisioner | Workers in knot spaces and on Linux VMs | Tagged templates, per-worker minted logins | Fresh client instances on demand, in parallel |
 | 5 | `auto_if_small` policy, plan DAGs | `run-pipeline` with a different agent per step | — | Faster flow for trusted repos; multi-agent plans |
 
@@ -423,7 +423,7 @@ Sources: [awesome-agent-orchestrators](https://github.com/andyrewlee/awesome-age
 
 ### Open questions
 
-- [ ] Martin prepares more knot templates beyond the generic one, tagged for example `generic-quoting`, `claims`, `insurance`.
+- [ ] the maintainer prepares more knot templates beyond the generic one, tagged for example `generic-quoting`, `claims`, `insurance`.
 - [ ] Knot API or MCP endpoint, and how spaces receive per-space agent logins.
 - [ ] Confirm kiro-cli and opencode can be restricted to a safe tool set (deny push, remote and config changes).
 - [ ] Require a PR into `PROD` on GitHub now (recommended), independently of this project?
@@ -443,20 +443,20 @@ Sources: [awesome-agent-orchestrators](https://github.com/andyrewlee/awesome-age
 | 2026-09-30 | Phase 1 split: 1a moves the workflow into Skopos with the trial running on its APIs; 1b adds runs, leases, workers and routing |
 | 2026-09-30 | Runs record `resume_kind` (`session` or `branch`); leases lost to sleep count as `interrupted`, not failures |
 | 2026-09-30 | Production workers run on always-on Linux VMs (systemd); this Mac is for development and testing only |
-| 2026-09-30 | Agents can use MCP tools: a per-deployment MCP config with full Skopos access; the default deny list covers Fortix production writes and the llmrouter scriptling stores; workflow integrity comes from the server-side `approver` permission |
+| 2026-09-30 | Agents can use MCP tools: a per-deployment MCP config with full Skopos access; the default deny list covers production writes and the shared prompt and skill stores; workflow integrity comes from the server-side `approver` permission |
 | 2026-09-30 | Workspace groups for API keys, with `path.Match` patterns, resolved inside `LookupKey`, shipped in 1a with the approver permission |
 | 2026-09-30 | A dedicated interim approver key for `agent-trial`'s Slack relay during 1a, revoked in phase 2 |
 | 2026-09-30 | Agent logins on workers and knot spaces are minted or rotated per worker, not baked into templates |
-| 2026-09-29 | Goal: parallel work across machines, agents and projects; agent output quality on freedom3 is already proven |
+| 2026-09-29 | Goal: parallel work across machines, agents and projects; agent output quality on the main repository is already proven |
 | 2026-09-29 | Build it in Skopos and phantom (Sortie rejected); agents stay swappable CLI tools, with no custom agent runtime or chat UI |
-| 2026-09-29 | Routing by tags that Martin sets on templates, instances and nodes, not by parsing instance configs |
+| 2026-09-29 | Routing by tags that the maintainer sets on templates, instances and nodes, not by parsing instance configs |
 | 2026-09-29 | Instance-specific jobs run in fresh knot spaces created from tagged templates; database changes are fine |
 | 2026-09-29 | Runners: claude, kiro-cli, and opencode with various models; zcode dropped (no CLI) |
 | 2026-09-29 | Verification includes Copilot review through a GitHub draft PR, then up to 2 automatic fix rounds |
-| 2026-09-29 | Per-workspace branch templates (freedom3: `WR{n}-{slug}`, commits `[#{n}]`) |
-| 2026-09-29 | No WR, no implementation: Martin gives the WR when approving, or asks the tool to create one through the Fortix MCP |
+| 2026-09-29 | Per-workspace branch templates (the main repository: `JOB{n}-{slug}`, commits `[#{n}]`) |
+| 2026-09-29 | No job, no implementation: the maintainer gives the job number when approving, or asks the tool to create one through the job system's MCP tools |
 | 2026-09-28 | Trial: one Slack thread per item, short messages, `new:` to create items from Slack, 1-minute ticks with a background worker |
-| 2026-09-25 | The trial covers freedom3 only, in a separate clone whose only remote is the local Gitea; PRs are allowed there; no GitHub sync |
+| 2026-09-25 | The trial covers one repository only, in a separate clone whose only remote is the local Gitea; PRs are allowed there; no GitHub sync |
 | 2026-09-25 | When an allowance runs out, runs pause and resume the same session after the reset |
 | 2026-09-25 | A GitHub bot identity, when needed, is a GitHub App |
 | 2026-09-25 | Protected branches: `PROD`, `main`, `master`, `develop`, `release/*`, `hotfix/*` in every workspace |
@@ -467,7 +467,7 @@ Sources: [awesome-agent-orchestrators](https://github.com/andyrewlee/awesome-age
 | 2026-09-24 | Skopos is the control plane and phantom the execution plane |
 | 2026-09-24 | Slack runs over Socket Mode, because Skopos can't be reached from the internet |
 | 2026-09-24 | Planning always runs on Claude; implementation is routed |
-| 2026-10-13 | Branch templates (`WR{n}-{slug}` per workspace, "no WR no implementation") DEFERRED — lean 1b ships a configurable branch prefix and prefix-enforced pushes; the WR template + ruleset generator lands with the GitHub-origin repos |
+| 2026-10-13 | Branch templates (`JOB{n}-{slug}` per workspace, "no job no implementation") DEFERRED — lean 1b ships a configurable branch prefix and prefix-enforced pushes; the WR template + ruleset generator lands with the GitHub-origin repos |
 | 2026-10-13 | Lean 1b round 2: amendments are one atomic server op (POST /api/plans/{id}/amend — append steps + snapshot past the lock, guard: item implementing or awaiting_approval); human actions authorize and matrix-validate BEFORE any run is queued, with targeted cancel-by-id on failure; quota pauses self-resume after the reset (paused runs are never claimable); interrupted runs age into branch-resumable on every sweep after a 30-minute grace; Resume re-arms as an immediately claimable interrupted run; the worker refuses runs whose item left the phase |
 | 2026-10-13 | Lean 1b (code review 2): routing is one axis — per-workspace stage runner preference, no tag engine; capacity deferred (one run per worker); Slack pulled into 1b as a provider interface (transport done, command relay open); P10 run-event forwarding and the routing preview deferred; stages are plan/implement/review/qa (LLM review replaces Copilot) |
 | 2026-10-13 | Lean 1b review fixes: the item enters its phase on run CLAIM (failures block from valid edges); paused runs are never auto-reclaimed (the amendment gate was bypassable); interrupted runs become branch-resumable after a 30-minute grace (affinity's escape hatch); request-changes and retry queue their stage; the implement run carries the approved revision + base_sha and branches from it; re-plans reuse the linked plan; scrubbed agent env drops every *TOKEN*/*SECRET*/*_KEY plus configured push-token vars |

@@ -17,7 +17,7 @@ func (s stubLookup) LookupKey(_ context.Context, hash string) (*KeyInfo, error) 
 // silently recorded as the key alone.
 func TestOnBehalfOf(t *testing.T) {
 	lookup := stubLookup{
-		HashKey("sk_fortix"): {ID: "k1", Name: "fortix", Approver: true, Delegate: true, Workspaces: []string{"ws"}},
+		HashKey("sk_globex"): {ID: "k1", Name: "globex", Approver: true, Delegate: true, Workspaces: []string{"ws"}},
 		HashKey("sk_plain"):  {ID: "k2", Name: "plain", Approver: true, Workspaces: []string{"ws"}},
 	}
 	a := NewAuthenticator("root-key", lookup)
@@ -38,20 +38,20 @@ func TestOnBehalfOf(t *testing.T) {
 		return w.Code
 	}
 
-	if code := call("sk_fortix", "martin@fortix.example", true); code != http.StatusOK || actor != "martin@fortix.example (key fortix)" || keyID != "k1" || person != "martin@fortix.example" {
+	if code := call("sk_globex", "alex@globex.example", true); code != http.StatusOK || actor != "alex@globex.example (key globex)" || keyID != "k1" || person != "alex@globex.example" {
 		t.Fatalf("delegate: %d %q %q %q", code, actor, keyID, person)
 	}
-	if code := call("sk_fortix", "", false); code != http.StatusOK || actor != "key fortix" || person != "" {
+	if code := call("sk_globex", "", false); code != http.StatusOK || actor != "key globex" || person != "" {
 		t.Fatalf("delegate without header: %d %q", code, actor)
 	}
-	if code := call("root-key", "martin", true); code != http.StatusOK || actor != "martin (root)" {
+	if code := call("root-key", "alex", true); code != http.StatusOK || actor != "alex (root)" {
 		t.Fatalf("root: %d %q", code, actor)
 	}
-	if code := call("sk_plain", "martin", true); code != http.StatusBadRequest || actor != "" {
+	if code := call("sk_plain", "alex", true); code != http.StatusBadRequest || actor != "" {
 		t.Fatalf("non-delegate: %d %q", code, actor)
 	}
 	for _, bad := range []string{"", "   ", strings.Repeat("x", 201), "a\nb"} {
-		if code := call("sk_fortix", bad, true); code != http.StatusBadRequest {
+		if code := call("sk_globex", bad, true); code != http.StatusBadRequest {
 			t.Errorf("header %q: %d", bad, code)
 		}
 	}

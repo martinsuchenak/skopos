@@ -12,7 +12,7 @@ import (
 )
 
 func TestBranchNames(t *testing.T) {
-	item := &Item{ID: "01a1ae4e-1b41-78a5-9fbb-73e2bd7e5358", Title: "Some feature!", Ref: "WR203345"}
+	item := &Item{ID: "01a1ae4e-1b41-78a5-9fbb-73e2bd7e5358", Title: "Some feature!", Ref: "JOB203345"}
 	cases := []struct {
 		name   string
 		repo   Repo
@@ -21,8 +21,8 @@ func TestBranchNames(t *testing.T) {
 		err    string
 	}{
 		{"default template", Repo{BranchPrefix: "agent/"}, "", "agent/9fbb-73e2bd7e5358-some-feature", ""},
-		{"ref template", Repo{BranchPrefix: "WR", BranchTemplate: "{ref}-{slug}"}, "", "WR203345-some-feature", ""},
-		{"own branch wins", Repo{BranchPrefix: "WR", BranchTemplate: "{ref}-{slug}"}, "WR203345-api", "WR203345-api", ""},
+		{"ref template", Repo{BranchPrefix: "JOB", BranchTemplate: "{ref}-{slug}"}, "", "JOB203345-some-feature", ""},
+		{"own branch wins", Repo{BranchPrefix: "JOB", BranchTemplate: "{ref}-{slug}"}, "JOB203345-api", "JOB203345-api", ""},
 		{"no prefix", Repo{BranchPrefix: "agent/"}, "feature/x", "", "does not start with"},
 		{"protected", Repo{BranchPrefix: "", Protected: []string{"PROD"}}, "PROD", "", "protected"},
 		{"unsafe", Repo{BranchPrefix: ""}, "a..b", "", "not a usable branch name"},
@@ -49,10 +49,10 @@ func TestBranchNames(t *testing.T) {
 	}
 	noRef := *item
 	noRef.Ref = ""
-	if _, err := branchFor(&noRef, &Repo{BranchPrefix: "WR", BranchTemplate: "{ref}-{slug}"}); err == nil || !strings.Contains(err.Error(), "reference") {
+	if _, err := branchFor(&noRef, &Repo{BranchPrefix: "JOB", BranchTemplate: "{ref}-{slug}"}); err == nil || !strings.Contains(err.Error(), "reference") {
 		t.Fatalf("template with {ref} and no ref: %v", err)
 	}
-	if got := branchStem(item, &Repo{BranchPrefix: "WR", BranchTemplate: "{ref}-{slug}"}); got != "WR203345-" {
+	if got := branchStem(item, &Repo{BranchPrefix: "JOB", BranchTemplate: "{ref}-{slug}"}); got != "JOB203345-" {
 		t.Fatalf("stem: %q", got)
 	}
 	for _, bad := range []string{"{prefix}{slug}", "{ref}-{title}"} {
@@ -65,7 +65,7 @@ func TestBranchNames(t *testing.T) {
 			t.Errorf("template %q: %v", ok, err)
 		}
 	}
-	for _, ok := range []string{"WR203345-x", "agent/abc-def", "feature/a.b_c"} {
+	for _, ok := range []string{"JOB203345-x", "agent/abc-def", "feature/a.b_c"} {
 		if !validBranch(ok) {
 			t.Errorf("validBranch(%q) = false", ok)
 		}
@@ -135,31 +135,31 @@ func (o *originClone) devBranch(name string) string {
 // reference without an exact match are a question; none is a new branch.
 func TestResolveBranch(t *testing.T) {
 	o := newOriginClone(t)
-	repo := &Repo{Path: o.clone, DefaultBranch: "main", BranchPrefix: "WR", BranchTemplate: "{ref}-{slug}"}
-	item := &Item{ID: "01a1-0000-7000-8000-000000000001", Title: "Some feature", Ref: "WR1"}
+	repo := &Repo{Path: o.clone, DefaultBranch: "main", BranchPrefix: "JOB", BranchTemplate: "{ref}-{slug}"}
+	item := &Item{ID: "01a1-0000-7000-8000-000000000001", Title: "Some feature", Ref: "JOB1"}
 	ctx := t.Context()
 
 	got, err := resolveBranch(ctx, repo, item)
-	if err != nil || got.Name != "WR1-some-feature" || got.Exists || got.Question != "" {
+	if err != nil || got.Name != "JOB1-some-feature" || got.Exists || got.Question != "" {
 		t.Fatalf("no branches: %+v %v", got, err)
 	}
-	o.devBranch("WR1-api")
-	o.devBranch("WR1-ui")
-	o.devBranch("WR10-other") // another reference with a longer number
+	o.devBranch("JOB1-api")
+	o.devBranch("JOB1-ui")
+	o.devBranch("JOB10-other") // another reference with a longer number
 	got, err = resolveBranch(ctx, repo, item)
-	if err != nil || got.Exists || !strings.Contains(got.Question, "`WR1-api`, `WR1-ui`") || strings.Contains(got.Question, "WR10") {
+	if err != nil || got.Exists || !strings.Contains(got.Question, "`JOB1-api`, `JOB1-ui`") || strings.Contains(got.Question, "JOB10") {
 		t.Fatalf("several candidates: %+v %v", got, err)
 	}
-	o.devBranch("WR1-some-feature")
+	o.devBranch("JOB1-some-feature")
 	got, err = resolveBranch(ctx, repo, item)
-	if err != nil || !got.Exists || got.Name != "WR1-some-feature" || got.Question != "" {
+	if err != nil || !got.Exists || got.Name != "JOB1-some-feature" || got.Question != "" {
 		t.Fatalf("exact match: %+v %v", got, err)
 	}
 	// Naming the branch skips the question.
 	named := *item
-	named.Branch = "WR1-ui"
+	named.Branch = "JOB1-ui"
 	got, err = resolveBranch(ctx, repo, &named)
-	if err != nil || !got.Exists || got.Name != "WR1-ui" {
+	if err != nil || !got.Exists || got.Name != "JOB1-ui" {
 		t.Fatalf("named branch: %+v %v", got, err)
 	}
 }
@@ -170,31 +170,31 @@ func TestResolveBranch(t *testing.T) {
 func TestImplementStartOnExistingBranch(t *testing.T) {
 	o := newOriginClone(t)
 	ctx := t.Context()
-	head := o.devBranch("WR2-x")
+	head := o.devBranch("JOB2-x")
 
 	// Planned against head: implement starts from origin's branch.
-	local, ref, merge, err := implementStart(ctx, o.clone, "WR2-x", head)
+	local, ref, merge, err := implementStart(ctx, o.clone, "JOB2-x", head)
 	if err != nil || local || ref != head || merge != "" {
 		t.Fatalf("from origin: local=%v ref=%q %v", local, ref, err)
 	}
 	// A local copy left by an earlier round, behind origin's: fast-forwarded.
-	o.run(o.clone, "branch", "WR2-x", head)
-	o.run(o.w, "checkout", "-q", "WR2-x")
+	o.run(o.clone, "branch", "JOB2-x", head)
+	o.run(o.w, "checkout", "-q", "JOB2-x")
 	newer := o.commit("more.txt", "more", "more work")
-	o.run(o.w, "push", "-q", "origin", "WR2-x")
-	local, ref, merge, err = implementStart(ctx, o.clone, "WR2-x", head)
-	if err != nil || !local || ref != "WR2-x" || merge != "" {
+	o.run(o.w, "push", "-q", "origin", "JOB2-x")
+	local, ref, merge, err = implementStart(ctx, o.clone, "JOB2-x", head)
+	if err != nil || !local || ref != "JOB2-x" || merge != "" {
 		t.Fatalf("stale local: local=%v ref=%q %v", local, ref, err)
 	}
-	if got := gitOut(t, o.clone, "rev-parse", "refs/heads/WR2-x"); got != newer {
+	if got := gitOut(t, o.clone, "rev-parse", "refs/heads/JOB2-x"); got != newer {
 		t.Fatalf("local branch not fast-forwarded: %s want %s", got, newer)
 	}
 	// Rewritten: the approved base is no longer in the branch's history.
 	o.run(o.w, "reset", "-q", "--hard", "main")
 	o.commit("other.txt", "other", "rewritten")
-	o.run(o.w, "push", "-q", "--force", "origin", "WR2-x")
-	o.run(o.clone, "branch", "-D", "WR2-x")
-	if _, _, _, err := implementStart(ctx, o.clone, "WR2-x", head); err == nil || !strings.Contains(err.Error(), "rewritten") {
+	o.run(o.w, "push", "-q", "--force", "origin", "JOB2-x")
+	o.run(o.clone, "branch", "-D", "JOB2-x")
+	if _, _, _, err := implementStart(ctx, o.clone, "JOB2-x", head); err == nil || !strings.Contains(err.Error(), "rewritten") {
 		t.Fatalf("rewritten branch: %v", err)
 	}
 }
@@ -268,17 +268,17 @@ func TestImplementStartPullsADivergedBranch(t *testing.T) {
 func TestHandoverContext(t *testing.T) {
 	o := newOriginClone(t)
 	ctx := t.Context()
-	head := o.devBranch("WR3-x")
+	head := o.devBranch("JOB3-x")
 	repo := &Repo{Path: o.clone, DefaultBranch: "main"}
-	if _, err := fetchBranch(ctx, o.clone, "WR3-x"); err != nil {
+	if _, err := fetchBranch(ctx, o.clone, "JOB3-x"); err != nil {
 		t.Fatal(err)
 	}
 	main := gitOut(t, o.clone, "rev-parse", "origin/main")
-	h, err := handoverContext(ctx, repo, "WR3-x", head)
+	h, err := handoverContext(ctx, repo, "JOB3-x", head)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if h.ForkPoint != main || !strings.Contains(h.Commits, "start WR3-x") || !strings.Contains(h.Diff, "+work on WR3-x") || h.Truncated {
+	if h.ForkPoint != main || !strings.Contains(h.Commits, "start JOB3-x") || !strings.Contains(h.Diff, "+work on JOB3-x") || h.Truncated {
 		t.Fatalf("handover: %+v", h)
 	}
 	if knowledgeBase(ctx, repo, head) != main || knowledgeBase(ctx, repo, main) != main {
@@ -295,22 +295,22 @@ func TestHandoverContext(t *testing.T) {
 func TestCheckHeadLeavesTheCloneClean(t *testing.T) {
 	o := newOriginClone(t)
 	ctx := t.Context()
-	head := o.devBranch("WR4-x")
-	if _, err := fetchBranch(ctx, o.clone, "WR4-x"); err != nil {
+	head := o.devBranch("JOB4-x")
+	if _, err := fetchBranch(ctx, o.clone, "JOB4-x"); err != nil {
 		t.Fatal(err)
 	}
 	marker := filepath.Join(t.TempDir(), "setup-ran")
 	repo := &Repo{
 		Path: o.clone, DefaultBranch: "main", Checkout: checkoutBranch,
 		Setup:  []string{"sh -c 'echo x >> " + marker + "'"},
-		Checks: []string{"sh -c 'echo junk > untracked.txt; echo changed > README.md; test -f WR4-x.txt'"},
+		Checks: []string{"sh -c 'echo junk > untracked.txt; echo changed > README.md; test -f JOB4-x.txt'"},
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("{}")) }))
 	defer srv.Close()
 	w := New(&Config{StateDir: t.TempDir(), Repos: map[string]*Repo{"ws": repo}}, NewClient(srv.URL, "k"), slog.New(slog.DiscardHandler))
 	run := &Run{ID: "01a1-0000-7000-8000-0000000000aa", ItemID: "item", WorkspaceID: "ws"}
 	for round := 1; round <= 2; round++ {
-		checks, setup, err := w.checkHead(ctx, run, repo, "WR4-x", head, w.log)
+		checks, setup, err := w.checkHead(ctx, run, repo, "JOB4-x", head, w.log)
 		if err != nil {
 			t.Fatalf("round %d: %v", round, err)
 		}
@@ -343,14 +343,14 @@ func TestCheckHeadLeavesTheCloneClean(t *testing.T) {
 func TestHandoverPrompts(t *testing.T) {
 	plan, err := renderPrompt("plan.md", map[string]any{
 		"Workspace": "ws", "Base": "PROD", "Title": "t", "Content": "BRIEF",
-		"Handover":   &handover{Branch: "WR1-x", ForkPoint: "f00d", Commits: "abc start", Diffstat: "1 file", Diff: "+DIFFLINE", Truncated: true},
+		"Handover":   &handover{Branch: "JOB1-x", ForkPoint: "f00d", Commits: "abc start", Diffstat: "1 file", Diff: "+DIFFLINE", Truncated: true},
 		"Changes":    "CHANGE-REQUEST",
 		"LastReview": "## review — claude-1\n\nREVIEW-VERDICT",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"on the existing branch `WR1-x`", "# Work already on the branch (handover)", "abc start", "+DIFFLINE", "cut short", "plan only the rest", "REVIEW-VERDICT", "CHANGE-REQUEST"} {
+	for _, want := range []string{"on the existing branch `JOB1-x`", "# Work already on the branch (handover)", "abc start", "+DIFFLINE", "cut short", "plan only the rest", "REVIEW-VERDICT", "CHANGE-REQUEST"} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("plan prompt missing %q", want)
 		}
@@ -379,8 +379,8 @@ func TestKnowledgeBaseWithStaleDefault(t *testing.T) {
 	ctx := t.Context()
 	newer := o.commit("AGENTS.md", "new instructions", "main moves on")
 	o.run(o.w, "push", "-q", "origin", "main")
-	head := o.devBranch("WR5-x") // built on newer
-	if _, err := fetchBranch(ctx, o.clone, "WR5-x"); err != nil {
+	head := o.devBranch("JOB5-x") // built on newer
+	if _, err := fetchBranch(ctx, o.clone, "JOB5-x"); err != nil {
 		t.Fatal(err)
 	}
 	repo := &Repo{Path: o.clone, DefaultBranch: "main"}
@@ -401,8 +401,8 @@ func TestKnowledgeBaseWithStaleDefault(t *testing.T) {
 func TestReadyCloneAfterKilledChecks(t *testing.T) {
 	o := newOriginClone(t)
 	ctx := t.Context()
-	head := o.devBranch("WR6-x")
-	if _, err := fetchBranch(ctx, o.clone, "WR6-x"); err != nil {
+	head := o.devBranch("JOB6-x")
+	if _, err := fetchBranch(ctx, o.clone, "JOB6-x"); err != nil {
 		t.Fatal(err)
 	}
 	repo := &Repo{Path: o.clone, DefaultBranch: "main", Checkout: checkoutBranch}

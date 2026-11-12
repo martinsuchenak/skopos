@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// QuestionsInput is what a run asks Martin (POST /api/runs/{id}/questions):
+// QuestionsInput is what a run asks the approver (POST /api/runs/{id}/questions):
 // the planner's or the implementer's questions, what they are about, and
 // whether the item waits on them.
 type QuestionsInput struct {

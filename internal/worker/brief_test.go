@@ -72,7 +72,7 @@ CHANGES: add the header row.
 func TestSplitItem(t *testing.T) {
 	brief, secs := splitItem(roundsItem)
 	if !strings.HasPrefix(brief, "Add CSV export") || !strings.Contains(brief, "## Context") || !strings.Contains(brief, "Finance wants it monthly.") {
-		t.Fatalf("Martin's text, his own headings included: %q", brief)
+		t.Fatalf("The author's text, their own headings included: %q", brief)
 	}
 	if strings.Contains(brief, "Enrichment") || strings.Contains(brief, "Questions") {
 		t.Fatalf("the brief must stop at the first pipeline section: %q", brief)
@@ -113,7 +113,7 @@ func TestPreviousPlans(t *testing.T) {
 	}
 }
 
-// The prompts carry Martin's text and the current sections only.
+// The prompts carry the author's text and the current sections only.
 func TestPromptsGetTheBriefNotTheHistory(t *testing.T) {
 	brief, secs := splitItem(roundsItem)
 	plan, err := renderPrompt("plan.md", map[string]any{
@@ -123,7 +123,7 @@ func TestPromptsGetTheBriefNotTheHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Finance wants it monthly.", "Same as the screen.", "# The previous plan (Martin asked for changes", "OLD-PLAN-TWO", "NOTES-TWO"} {
+	for _, want := range []string{"Finance wants it monthly.", "Same as the screen.", "# The previous plan (changes were asked for", "OLD-PLAN-TWO", "NOTES-TWO"} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("plan prompt missing %q", want)
 		}
@@ -160,7 +160,7 @@ func TestPromptsGetTheBriefNotTheHistory(t *testing.T) {
 }
 
 // Every heading the code appends to an item must be a pipeline heading, or
-// its section would leak into Martin's text in every later prompt. Literal
+// its section would leak into the author's text in every later prompt. Literal
 // headings are found in the source; the dynamic review heading
 // (run.Stage + " — " + account) is covered by "## review — " / "## qa — ".
 func TestPipelineHeadingsCoverWriters(t *testing.T) {
@@ -206,7 +206,7 @@ func TestPipelineHeadingsCoverWriters(t *testing.T) {
 	}
 }
 
-// Questions of a round Martin moved past without answering stay out of the
+// Questions of a round the approver moved past without answering stay out of the
 // prompts; answered ones, approved ones and the round his newest notes are
 // about stay in.
 func TestQuestionsAndAnswersDropsSuperseded(t *testing.T) {
@@ -223,5 +223,27 @@ func TestQuestionsAndAnswersDropsSuperseded(t *testing.T) {
 	_, secs = splitItem(approved)
 	if qa := questionsAndAnswers(secs); !strings.Contains(qa, "APPROVED?") {
 		t.Fatalf("the approved round's questions go to the implementer: %q", qa)
+	}
+}
+
+// The review step a plan ends with is never an agent's: recognised by its
+// phase, by its title, and by the title an earlier release wrote (with a
+// name in brackets after it), so a plan made before an upgrade still reads
+// the same.
+func TestIsReviewStep(t *testing.T) {
+	for _, c := range []struct {
+		title, phase string
+		want         bool
+	}{
+		{"Review and push", "review", true},
+		{"Review and push", "", true},
+		{"Review and push (Someone)", "", true},
+		{"anything", "review", true},
+		{"Add the review endpoint", "implement", false},
+		{"Review the error handling", "", false},
+	} {
+		if got := isReviewStep(c.title, c.phase); got != c.want {
+			t.Errorf("isReviewStep(%q, %q) = %v, want %v", c.title, c.phase, got, c.want)
+		}
 	}
 }

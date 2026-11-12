@@ -1,5 +1,5 @@
 // Package qa keeps the record of questions and answers: what the planner
-// and the implementer asked about an item, and what Martin answered,
+// and the implementer asked about an item, and what the approver answered,
 // through which surface, with which action (tmp/questions-and-answers —
 // design.md). Rows are append-only; the item's "## Questions — …" and
 // "## Answers" sections are renderings of them.

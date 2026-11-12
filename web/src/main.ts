@@ -29,7 +29,7 @@ type ItemForm = { title: string; description: string; phase: string; depends_on:
 type InboxPlanSummary = { id: string; name: string; status: string };
 type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; agents?: string; branch?: string; ref?: string; external_url?: string; flow?: string; created_at: string; updated_at: string; excerpt?: string };
 // The detail view's content, cut server-side (internal/inbox/parts.go):
-// Martin's text, then the pipeline's sections in rounds.
+// The author's text, then the pipeline's sections in rounds.
 type ItemQuestion = { text: string; options?: string[] };
 type ContentSection = { heading: string; html: string; questions?: ItemQuestion[]; label?: string };
 type ContentRound = { kind: string; title: string; n: number; closed: boolean; sections: ContentSection[] };
@@ -768,8 +768,8 @@ const appState = () => ({
   // truncation eats the org/repo tail, which is the part that actually
   // distinguishes workspaces. Registry names (when set) bypass this entirely.
   // Unless another known workspace has the same tail: then the host is what
-  // tells them apart (github.com/fortix/freedom3 and a gitea mirror's
-  // gitea.example.com:2223/fortix/freedom3 both read fortix/freedom3, and a
+  // tells them apart (github.com/acme/shop and a gitea mirror's
+  // gitea.example.com:2223/acme/shop both read acme/shop, and a
   // key got scoped to the wrong one), so both keep their full id.
   compactWorkspace(id: string): string {
     const tail = workspaceTail(id);
@@ -1223,7 +1223,7 @@ const appState = () => ({
     this.previewRunsOpen = false;
   },
   // CSP: the same imperative injection as the expansion rows — the
-  // sanitized HTML goes into data-attribute nodes: Martin's text into
+  // sanitized HTML goes into data-attribute nodes: the author's text into
   // [data-md-preview], each section into its [data-sec-html] (rendered by
   // the rounds x-for, hence the tick).
   injectPreviewContent() {
@@ -1240,7 +1240,7 @@ const appState = () => ({
   },
   sectionKey(itemId: string, round: number, section: number): string { return itemId + '|' + round + '|' + section; },
   // The description's rounds (a plan and its questions, a review, each with
-  // Martin's notes on it): the newest open, older ones folded unless the
+  // The approver's notes on it): the newest open, older ones folded unless the
   // user opened them. A repeated kind is numbered ("Plan · round 2 of 3").
   previewRounds(): RoundView[] {
     const item = this.previewItem;
@@ -1270,7 +1270,7 @@ const appState = () => ({
     if (open === newest) delete next[key]; else next[key] = open;
     this.previewRoundOpen = next;
   },
-  // The questions waiting for Martin, from the record: the open questions
+  // The questions waiting for the approver, from the record: the open questions
   // of the open sets, while the item awaits approval or is blocked. Keyed
   // by question id; answers go back by id.
   openQuestionGroups(): QuestionGroup[] {
@@ -2468,7 +2468,7 @@ const appState = () => ({
     if (s === 'busy' && w.paused) return 'busy · pausing';
     return w.unhealthy.length && s !== 'offline' ? s + ' · unhealthy' : s;
   },
-  // "Paused until 16:30 by key martin: working on it by hand".
+  // "Paused until 16:30 by key alex: working on it by hand".
   workerPauseText(w: WorkerRow): string {
     const p = w.paused;
     if (!p) return '';

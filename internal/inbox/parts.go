@@ -2,10 +2,10 @@ package inbox
 
 import "github.com/martinsuchenak/skopos/internal/itemtext"
 
-// ContentParts is an item's content as the detail view shows it: Martin's
+// ContentParts is an item's content as the detail view shows it: the approver's
 // text (everything before the first pipeline heading), then the sections
 // the pipeline appended, grouped into rounds (itemtext.Rounds) — a plan and
-// its questions, a review, each closed by Martin's notes on it.
+// its questions, a review, each closed by the approver's notes on it.
 type ContentParts struct {
 	BriefHTML string         `json:"brief_html"`
 	Rounds    []ContentRound `json:"rounds"`
@@ -17,7 +17,7 @@ type ContentRound struct {
 	Kind     string           `json:"kind"`
 	Title    string           `json:"title"`
 	N        int              `json:"n"`
-	Closed   bool             `json:"closed"` // Martin's notes ended it: it asks nothing open
+	Closed   bool             `json:"closed"` // the approver's notes ended it: it asks nothing open
 	Sections []ContentSection `json:"sections"`
 }
 

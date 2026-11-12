@@ -15,9 +15,9 @@ import (
 func TestIntegrationPipelineSettingsAndPresence(t *testing.T) {
 	sqlDB, baseURL := workerStack(t)
 	root := workerClient{base: baseURL, key: "root-secret"}
-	const ws = "github.com/fortix/api"
+	const ws = "github.com/globex/api"
 	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`"}`), 201)
-	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"martin","workspaces":["`+ws+`"],"approver":true}`)}
+	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"alex","workspaces":["`+ws+`"],"approver":true}`)}
 	plain := workerClient{base: baseURL, key: mint(t, root, `{"name":"agent","workspaces":["`+ws+`"]}`)}
 	leases := map[string]string{}
 	worker := workerClient{base: baseURL, key: mint(t, root, `{"name":"worker-1","workspaces":["`+ws+`"]}`), lease: leases}
@@ -42,7 +42,7 @@ func TestIntegrationPipelineSettingsAndPresence(t *testing.T) {
 
 	// The next queued stage follows the stored routing: plan pinned to
 	// opencode-glm, so a worker offering only claude gets nothing.
-	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"routed item","author_agent_id":"martin"}`), 201).(map[string]any)
+	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"routed item","author_agent_id":"alex"}`), 201).(map[string]any)
 	mustDo(t, approver.req("POST", "/api/inbox/"+item["id"].(string)+"/queue", ""), 200)
 	mustDo(t, worker.req("POST", "/api/runs/claim", `{"worker_id":"w1","runners":["claude"],"workspaces":["`+ws+`"]}`), 204)
 	run := claim(t, worker, `{"worker_id":"w1","runners":["opencode-glm"],"workspaces":["`+ws+`"]}`)
@@ -54,11 +54,11 @@ func TestIntegrationPipelineSettingsAndPresence(t *testing.T) {
 	}
 
 	// A group default reaches the workspace by pattern (root only).
-	mustDo(t, root.req("POST", "/api/groups", `{"name":"fortix","patterns":["github.com/fortix/*"]}`), 201)
-	mustDo(t, approver.req("PUT", "/api/groups/fortix/pipeline", `{"stages":{"qa":{"members":[{"runner":"claude"}]}}}`), 403)
-	mustDo(t, root.req("PUT", "/api/groups/fortix/pipeline", `{"stages":{"qa":{"members":[{"runner":"claude"}]}}}`), 200)
+	mustDo(t, root.req("POST", "/api/groups", `{"name":"globex","patterns":["github.com/globex/*"]}`), 201)
+	mustDo(t, approver.req("PUT", "/api/groups/globex/pipeline", `{"stages":{"qa":{"members":[{"runner":"claude"}]}}}`), 403)
+	mustDo(t, root.req("PUT", "/api/groups/globex/pipeline", `{"stages":{"qa":{"members":[{"runner":"claude"}]}}}`), 200)
 	eff := mustJSON(t, approver.req("GET", "/api/workspaces/"+escapeWS(ws)+"/pipeline", ""), 200).(map[string]any)["effective"].(map[string]any)
-	if eff["qa"].(map[string]any)["source"] != "group:fortix" || eff["plan"].(map[string]any)["source"] != "workspace" {
+	if eff["qa"].(map[string]any)["source"] != "group:globex" || eff["plan"].(map[string]any)["source"] != "workspace" {
 		t.Fatalf("group default + workspace override: %v", eff)
 	}
 
@@ -68,7 +68,7 @@ func TestIntegrationPipelineSettingsAndPresence(t *testing.T) {
 	mustDo(t, plain.req("POST", "/api/workers/w1/pause", `{"for":"1h"}`), 403)
 	mustDo(t, approver.req("POST", "/api/workers/w1/pause", `{"for":"soon"}`), 400)
 	p := mustJSON(t, approver.req("POST", "/api/workers/w1/pause", `{"for":"1h","reason":"hands-on"}`), 200).(map[string]any)
-	if p["reason"] != "hands-on" || p["by"] != "key martin" || p["until"] == nil {
+	if p["reason"] != "hands-on" || p["by"] != "key alex" || p["until"] == nil {
 		t.Fatalf("pause: %v", p)
 	}
 	wc := wk.NewClient(baseURL, worker.key)
@@ -92,7 +92,7 @@ func TestIntegrationPipelineSettingsAndPresence(t *testing.T) {
 	if err := sqlDB.QueryRow(`SELECT group_concat(action || ' ' || actor || ' ' || COALESCE(via, ''), '; ') FROM (SELECT * FROM audit_log WHERE entity_type = 'worker' AND entity_id = 'w1' ORDER BY id)`).Scan(&audited); err != nil {
 		t.Fatal(err)
 	}
-	if audited != "worker.pause key martin api; worker.pause key worker-1 api; worker.resume key worker-1 cli" {
+	if audited != "worker.pause key alex api; worker.pause key worker-1 api; worker.resume key worker-1 cli" {
 		t.Fatalf("audit: %s", audited)
 	}
 

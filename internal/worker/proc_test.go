@@ -25,7 +25,7 @@ func alive(t *testing.T, pidFile string) bool {
 	return syscall.Kill(pid, 0) == nil
 }
 
-// The fortix-php hang: a setup command whose child outlives the timeout and
+// A hang seen live: a setup command whose child outlives the timeout and
 // keeps the output pipe open. The timeout now stops the whole tree and the
 // worker gets its error back.
 func TestSetupTimeoutStopsTheProcessTree(t *testing.T) {

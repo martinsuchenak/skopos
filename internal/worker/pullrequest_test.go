@@ -23,8 +23,8 @@ func TestNewPRClientDerivesAPI(t *testing.T) {
 	}{
 		{"github", "https://github.com/martinsuchenak/skopos-sandbox.git", "https://api.github.com", "martinsuchenak", "skopos-sandbox"},
 		{"github", "https://ghe.example.com/org/app", "https://ghe.example.com/api/v3", "org", "app"},
-		{"gitea", "https://gitea.example.com/fortix/freedom3.git", "https://gitea.example.com/api/v1", "fortix", "freedom3"},
-		{"gitea", "https://example.com/git/fortix/freedom3.git", "https://example.com/git/api/v1", "fortix", "freedom3"},
+		{"gitea", "https://gitea.example.com/globex/shop.git", "https://gitea.example.com/api/v1", "globex", "shop"},
+		{"gitea", "https://example.com/git/globex/shop.git", "https://example.com/git/api/v1", "globex", "shop"},
 	}
 	for _, tc := range cases {
 		c, err := newPRClient(tc.kind, tc.remote, "")

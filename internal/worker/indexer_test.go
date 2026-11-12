@@ -218,7 +218,7 @@ func TestStopIndexing(t *testing.T) {
 // Two clones with the same directory name get separate indexing worktrees.
 func TestIndexCheckoutIsPerClone(t *testing.T) {
 	w := New(&Config{StateDir: "/state"}, nil, slog.New(slog.DiscardHandler))
-	a, b := w.indexCheckout(&Repo{Path: "/src/fortix/app"}), w.indexCheckout(&Repo{Path: "/src/rylex/app"})
+	a, b := w.indexCheckout(&Repo{Path: "/src/globex/app"}), w.indexCheckout(&Repo{Path: "/src/initech/app"})
 	if a == b || !strings.HasPrefix(filepath.Base(a), "app-") {
 		t.Fatalf("index checkouts %q and %q", a, b)
 	}

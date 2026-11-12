@@ -16,23 +16,23 @@ import (
 // reached from the internet.
 type Provider interface {
 	Name() string
-	// Start connects and begins delivering Martin's replies to the relay
+	// Start connects and begins delivering the approver's replies to the relay
 	// until the context is cancelled. Reconnects internally.
 	Start(ctx context.Context, relay Relay) error
 	// Send posts a message (thread-per-item; parent identifies the thread).
 	Send(ctx context.Context, parent string, text string) (ts string, err error)
 }
 
-// Relay receives Martin's commands from a provider and applies them to the
-// workflow. The provider authenticates Martin its own way (user id check,
+// Relay receives the approver's commands from a provider and applies them to the
+// workflow. The provider authenticates the approver its own way (user id check,
 // allow-listed chat); the relay records via = provider name.
 type Relay interface {
 	// Apply maps a reply onto the item's workflow actions. Returns true
 	// when the command was handled (so the provider may ack the message).
 	Apply(ctx context.Context, itemID, text string) bool
-	// TopLevel handles a threadless DM from Martin (capture commands like
+	// TopLevel handles a threadless DM from the approver (capture commands like
 	// "new: ..."). ts is the message's own timestamp — capture binds the
-	// item's thread to Martin's message itself. Returns true when handled.
+	// item's thread to the approver's message itself. Returns true when handled.
 	TopLevel(ctx context.Context, text, ts string) bool
 	// ItemForThread resolves which item a thread belongs to.
 	ItemForThread(parent string) string

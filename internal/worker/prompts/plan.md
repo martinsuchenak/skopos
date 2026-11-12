@@ -7,15 +7,15 @@ Repository: {{.Workspace}} (checked out in the current directory, {{if .Handover
 
 {{.Content}}
 {{if .QA}}
-# Questions asked about this item and Martin's answers (they hold)
+# Questions asked about this item and the approver's answers (they hold)
 
 {{.QA}}
 {{end}}{{if .Previous}}
-# The previous plan{{if .Notes}} (Martin asked for changes: revise it, keeping what he did not object to){{end}}
+# The previous plan{{if .Notes}} (changes were asked for: revise it, keeping what was not objected to){{end}}
 
 {{.Previous}}
 {{end}}{{if .Notes}}
-# Review notes from Martin on the previous plan (address every point)
+# Review notes from the approver on the previous plan (address every point)
 
 {{.Notes}}
 {{end}}{{if .Handover}}
@@ -42,24 +42,24 @@ commits since it branched from {{.Base}} (at `{{.Handover.ForkPoint}}`), newest 
 Work out what is done, what is missing and what is wrong, and plan only the rest. Keep the
 developer's approach unless the item says otherwise; do not redo finished work.
 {{end}}{{if .Changes}}
-# The review of this branch and Martin's change requests (address every request)
+# The review of this branch and the approver's change requests (address every request)
 
 {{if .LastReview}}{{.LastReview}}
 
-{{end}}Martin's change requests:
+{{end}}The approver's change requests:
 
 {{.Changes}}
 {{end}}{{if .Seed}}
 # Start from this plan
 
-Martin asked for changes to this candidate plan (one of several written for this item). Revise
+The approver asked for changes to this candidate plan (one of several written for this item). Revise
 it to address his review notes above; keep what he did not object to.
 
 {{range $i, $st := .Seed}}{{inc $i}}. {{$st.Title}}{{if $st.Description}} — {{$st.Description}}{{end}}
 {{end}}{{end}}{{if .Focus}}
 # Your focus: {{.Focus.Name}}
 
-Several planners are writing independent plans for this item; Martin will compare them. Plan
+Several planners are writing independent plans for this item; the approver will compare them. Plan
 with this brief in mind, but the plan must still cover the whole item.
 
 {{.Focus.Body}}
@@ -71,39 +71,39 @@ with this brief in mind, but the plan must still cover the whole item.
 # Skills available in this repository
 
 Playbooks from `.skopos/skills/`. If one clearly applies to this item, put its name in `skills`
-in your result: the implementation and review agents then receive its full text, and Martin
-sees the selection when he approves the plan. Do not select skills that do not apply.
+in your result: the implementation and review agents then receive its full text, and the approver
+sees the selection when approving the plan. Do not select skills that do not apply.
 {{range .SkillIndex}}- `{{.Name}}`{{if .Description}}: {{.Description}}{{end}}
 {{end}}{{if .Requested}}
-Martin tagged the item with these skills; they are always included: {{range $i, $n := .Requested}}{{if $i}}, {{end}}`{{$n}}`{{end}}.
+The item is tagged with these skills; they are always included: {{range $i, $n := .Requested}}{{if $i}}, {{end}}`{{$n}}`{{end}}.
 {{end}}{{end}}
 {{with .Skopos}}{{template "skopos" .}}{{end}}# What to do
 
 1. Research the codebase before planning: read the relevant files{{with .Skopos}}{{if .IndexBranch}}, and use the skopos
-   code tools{{if .Semantic}} (`code_find` to locate code by what it does){{end}} for symbols, callers and impact{{end}}{{end}}. For work-request (WR) items, use the llmrouter
-   Fortix tools for the WR facts. Only state what you verified.
+   code tools{{if .Semantic}} (`code_find` to locate code by what it does){{end}} for symbols, callers and impact{{end}}{{end}}.
+   Only state what you verified.
 2. Write a plan of 1–8 concrete steps. Each step: a short imperative title, a description with the
    exact files/classes to change and how to verify the step. Steps must be small enough to commit
    individually.
 3. Estimate size: "s" (under ~50 changed lines, one area), "m", or "l".
-4. List risks (what could break, what you could not verify) and open questions for Martin.
+4. List risks (what could break, what you could not verify) and open questions for the approver.
 5. If the item is too ambiguous to plan responsibly, set needs_clarification to true, return no
    steps, and put the questions in questions.
 
 Keep the plan within what the item asks. Do not add refactors, cleanups or extra features.
 
-# Writing the result (Martin reads it on his phone; keep it short, not vague)
+# Writing the result (it is read on a phone; keep it short, not vague)
 
 - title: a short item title, at most 60 characters, sentence case, no trailing period.
 - summary: at most 2 sentences: what changes and why.
 - step titles: imperative, at most 70 characters. Put the detail (files, classes, how to verify)
   in the step description, not the title.
 - risks: only the ones that matter for approving the plan, at most 3, one sentence each.
-- questions: only decisions Martin must make, one entry each: `question` is one sentence, and
+- questions: only decisions the approver must make, one entry each: `question` is one sentence, and
   when there is a choice `options` lists the choices, one short phrase each, without letters (the
   dashboard letters them a, b, c…; leave `options` empty for an open question). They are numbered
   in the order you return them; a step that depends on an answer says so in its description
-  ("depends on question 2"). Martin answers them when he approves the plan or asks for changes.
+  ("depends on question 2"). The approver answers them when approving the plan or asking for changes.
   Do not ask again what the answers above already decided.
 The implementation agent cannot push, change remotes, or run anything against production.
 {{if .ImplCommands}}The only shell commands it can run are: {{range $i, $c := .ImplCommands}}{{if $i}}, {{end}}`{{$c}}`{{end}}.

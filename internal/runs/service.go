@@ -157,7 +157,7 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 	switch in.Stage {
 	case StagePlan, StageImplement, StageReview, StageQA, StageCompare, StageSynthesize:
 	case StageSecondOpinion:
-		// Advisory and explicit: the runner Martin picked and the head it
+		// Advisory and explicit: the runner the approver picked and the head it
 		// reviews, never routed through pipeline settings.
 		if strings.TrimSpace(in.Runner) == "" || strings.TrimSpace(in.HeadSHA) == "" {
 			return nil, fmt.Errorf("%w: a second opinion needs a runner and the head it reviews", ErrInvalidInput)
@@ -551,7 +551,7 @@ func (s *Service) Report(ctx context.Context, id string, in ReportInput, leaseTo
 
 // retry sends a retryably failed run back to the queue while it has
 // retries left (requeued = true): the item stays where it is and nobody is
-// told — the worker's problem is not Martin's. Spent retries fall through
+// told — the worker's problem is not the approver's. Spent retries fall through
 // to the ordinary failure (Report + chain → blocked).
 func (s *Service) retry(ctx context.Context, id string, in ReportInput, leaseToken string) (run *Run, requeued bool, err error) {
 	cur, err := s.storage.Get(ctx, id)
@@ -627,13 +627,13 @@ func (s *Service) chain(ctx context.Context, run *Run, in ReportInput) {
 		case StageImplement, StageReview, StageQA:
 			s.advance(ctx, run, "worker:"+run.WorkerID)
 		case StageBranchReview:
-			// The verdict is the deliverable: pass or fail, Martin decides.
+			// The verdict is the deliverable: pass or fail, the approver decides.
 			s.toReview(ctx, run.ItemID, "worker:"+run.WorkerID)
 		}
 	}
 }
 
-// toReview hands a review-only item to Martin (implementing → in_review;
+// toReview hands a review-only item to the approver (implementing → in_review;
 // the claim normally made the first move already).
 func (s *Service) toReview(ctx context.Context, itemID, agent string) {
 	_ = s.itemTransition(ctx, itemID, "implementing", "", agent)
@@ -644,11 +644,11 @@ func (s *Service) toReview(ctx context.Context, itemID, agent string) {
 
 // advance continues after a successful implement/review/qa stage (a single
 // run, or a group's passing decision): queue the next configured stage, or
-// hand the item to Martin at in_review.
+// hand the item to the approver at in_review.
 func (s *Service) advance(ctx context.Context, run *Run, agentID string) {
 	next := s.nextStage(run.WorkspaceID, run.Stage)
 	// Review/QA run only when the workspace configures them (one runner or
-	// a group); otherwise the sequence ends and Martin reviews.
+	// a group); otherwise the sequence ends and the approver reviews.
 	if next != "" && s.prefsOf(ctx, run.WorkspaceID).Configured(next) {
 		if _, err := s.Queue(ctx, QueueInput{
 			WorkspaceID: run.WorkspaceID, ItemID: run.ItemID, PlanRevID: run.PlanRevID,

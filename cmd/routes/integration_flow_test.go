@@ -42,42 +42,42 @@ func hReq(t *testing.T, base, key, method, path, body string, headers map[string
 func TestIntegrationExternalSystemFlow(t *testing.T) {
 	sqlDB, base := workerStack(t)
 	root := workerClient{base: base, key: "root-secret"}
-	const ws = "github.com/fortix/freedom3"
-	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`","name":"freedom3"}`), 201)
-	fortix := mint(t, root, `{"name":"fortix","workspaces":["`+ws+`"],"preset":"integration","approver":true,"delegate":true}`)
+	const ws = "github.com/globex/shop"
+	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`","name":"shop"}`), 201)
+	globex := mint(t, root, `{"name":"globex","workspaces":["`+ws+`"],"preset":"integration","approver":true,"delegate":true}`)
 	workerKey := mint(t, root, `{"name":"worker-1","workspaces":["`+ws+`"]}`)
 	leases := map[string]string{}
 	worker := workerClient{base: base, key: workerKey, lease: leases}
 
-	create := `{"workspace_id":"` + ws + `","title":"WR110375 AI configurations","content":"the job","author_agent_id":"fortix",` +
-		`"ref":"WR110375","external_url":"https://fortix.example/wr/110375","start":"queue"}`
+	create := `{"workspace_id":"` + ws + `","title":"JOB110375 AI configurations","content":"the job","author_agent_id":"globex",` +
+		`"ref":"JOB110375","external_url":"https://jobs.example.com/job/110375","start":"queue"}`
 	idem := map[string]string{"Idempotency-Key": "wr-110375-create"}
-	code, body, h := hReq(t, base, fortix, "POST", "/api/inbox", create, idem)
+	code, body, h := hReq(t, base, globex, "POST", "/api/inbox", create, idem)
 	if code != 201 || h.Get("Idempotent-Replayed") != "" {
 		t.Fatalf("create: %d %s", code, body)
 	}
 	item := jsonMap(t, body)
 	itemID := item["id"].(string)
-	if item["status"] != "queued" || item["external_url"] != "https://fortix.example/wr/110375" {
+	if item["status"] != "queued" || item["external_url"] != "https://jobs.example.com/job/110375" {
 		t.Fatalf("created: %v", item)
 	}
-	code, body, h = hReq(t, base, fortix, "POST", "/api/inbox", create, idem)
+	code, body, h = hReq(t, base, globex, "POST", "/api/inbox", create, idem)
 	if code != 201 || h.Get("Idempotent-Replayed") != "true" || jsonMap(t, body)["id"] != itemID {
 		t.Fatalf("retry: %d %v %s", code, h, body)
 	}
-	code, _, _ = hReq(t, base, fortix, "POST", "/api/inbox", strings.Replace(create, "the job", "another job", 1), idem)
+	code, _, _ = hReq(t, base, globex, "POST", "/api/inbox", strings.Replace(create, "the job", "another job", 1), idem)
 	if code != http.StatusUnprocessableEntity {
 		t.Fatalf("reused key, other body: %d", code)
 	}
 
 	// Found by ref: exactly the one item.
-	code, body, _ = hReq(t, base, fortix, "GET", "/api/inbox?ref=WR110375", "", nil)
+	code, body, _ = hReq(t, base, globex, "GET", "/api/inbox?ref=JOB110375", "", nil)
 	if code != 200 || strings.Count(body, `"id":`) != 1 || !strings.Contains(body, itemID) {
 		t.Fatalf("by ref: %d %s", code, body)
 	}
 
 	// The agent's turn: only reject is open to a person.
-	st := mustJSON(t, workerClient{base: base, key: fortix}.req("GET", "/api/inbox/"+itemID+"/state", ""), 200).(map[string]any)
+	st := mustJSON(t, workerClient{base: base, key: globex}.req("GET", "/api/inbox/"+itemID+"/state", ""), 200).(map[string]any)
 	if st["turn"] != "agent" || st["brief"] != "the job" || strings.Join(toStrings(st["actions"]), ",") != "reject" {
 		t.Fatalf("queued state: %v", st)
 	}
@@ -93,7 +93,7 @@ func TestIntegrationExternalSystemFlow(t *testing.T) {
 	mustDo(t, worker.reqH("POST", "/api/runs/"+runID+"/report", `{"worker_id":"w1","status":"succeeded","summary":"plan ready","branch":"agent/x"}`, leases[runID]), 200)
 
 	// At the gate: the plan to approve, with its hash, and the actions.
-	st = mustJSON(t, workerClient{base: base, key: fortix}.req("GET", "/api/inbox/"+itemID+"/state", ""), 200).(map[string]any)
+	st = mustJSON(t, workerClient{base: base, key: globex}.req("GET", "/api/inbox/"+itemID+"/state", ""), 200).(map[string]any)
 	if st["turn"] != "person" || st["gate"] != "plan_approval" {
 		t.Fatalf("gate state: %v", st)
 	}
@@ -108,24 +108,24 @@ func TestIntegrationExternalSystemFlow(t *testing.T) {
 	}
 
 	// Approved on behalf of a person: the audit and the approval name them.
-	person := map[string]string{"X-Skopos-On-Behalf-Of": "martin@fortix.example", "Idempotency-Key": "wr-110375-approve-1"}
+	person := map[string]string{"X-Skopos-On-Behalf-Of": "alex@globex.example", "Idempotency-Key": "wr-110375-approve-1"}
 	approve := `{"revision_id":"` + rev["revision_id"].(string) + `","content_hash":"` + rev["content_hash"].(string) + `"}`
-	if code, body, _ := hReq(t, base, fortix, "POST", "/api/inbox/"+itemID+"/approve", approve, person); code != 200 {
+	if code, body, _ := hReq(t, base, globex, "POST", "/api/inbox/"+itemID+"/approve", approve, person); code != 200 {
 		t.Fatalf("approve: %d %s", code, body)
 	}
 	var actor, onBehalf, via string
 	if err := sqlDB.QueryRow(`SELECT actor, on_behalf_of, via FROM audit_log WHERE entity_id = ? AND action = 'inbox.approve'`, itemID).Scan(&actor, &onBehalf, &via); err != nil {
 		t.Fatal(err)
 	}
-	if actor != "martin@fortix.example (key fortix)" || onBehalf != "martin@fortix.example" || via != "api" {
+	if actor != "alex@globex.example (key globex)" || onBehalf != "alex@globex.example" || via != "api" {
 		t.Fatalf("audit: %q %q %q", actor, onBehalf, via)
 	}
-	if got := approvalActor(t, sqlDB, itemID); got != "martin@fortix.example (key fortix)" {
+	if got := approvalActor(t, sqlDB, itemID); got != "alex@globex.example (key globex)" {
 		t.Fatalf("approval actor: %q", got)
 	}
 
 	// The event feed told the story, in order, to the integration's key.
-	code, body, _ = hReq(t, base, fortix, "GET", "/api/events?after=0", "", nil)
+	code, body, _ = hReq(t, base, globex, "GET", "/api/events?after=0", "", nil)
 	if code != 200 {
 		t.Fatalf("feed: %d %s", code, body)
 	}
@@ -142,7 +142,7 @@ func TestIntegrationExternalSystemFlow(t *testing.T) {
 	var types []string
 	for _, e := range feed.Events {
 		types = append(types, e.Type)
-		if e.Data["item_id"] != itemID || e.Data["ref"] != "WR110375" {
+		if e.Data["item_id"] != itemID || e.Data["ref"] != "JOB110375" {
 			t.Fatalf("event data: %v", e.Data)
 		}
 	}
@@ -157,15 +157,15 @@ func TestIntegrationExternalSystemFlow(t *testing.T) {
 	}
 
 	// The preset keeps the key to the inbox, plans and runs reads.
-	if code, _, _ := hReq(t, base, fortix, "GET", "/api/runs?item_id="+itemID, "", nil); code != 200 {
+	if code, _, _ := hReq(t, base, globex, "GET", "/api/runs?item_id="+itemID, "", nil); code != 200 {
 		t.Fatalf("runs read: %d", code)
 	}
-	if code, _, _ := hReq(t, base, fortix, "POST", "/api/plans", `{"workspace_id":"`+ws+`","name":"x","author_agent_id":"fortix"}`, nil); code != http.StatusForbidden {
+	if code, _, _ := hReq(t, base, globex, "POST", "/api/plans", `{"workspace_id":"`+ws+`","name":"x","author_agent_id":"globex"}`, nil); code != http.StatusForbidden {
 		t.Fatalf("plans write: %d", code)
 	}
 	// A key without the delegate permission can't name a person.
 	plain := mint(t, root, `{"name":"plain","workspaces":["`+ws+`"],"approver":true}`)
-	if code, _, _ := hReq(t, base, plain, "GET", "/api/inbox/"+itemID+"/state", "", map[string]string{"X-Skopos-On-Behalf-Of": "martin"}); code != http.StatusBadRequest {
+	if code, _, _ := hReq(t, base, plain, "GET", "/api/inbox/"+itemID+"/state", "", map[string]string{"X-Skopos-On-Behalf-Of": "alex"}); code != http.StatusBadRequest {
 		t.Fatalf("non-delegate on-behalf-of: %d", code)
 	}
 	// Granting the permission by a key edit (with a scope change, in one
@@ -177,7 +177,7 @@ func TestIntegrationExternalSystemFlow(t *testing.T) {
 		}
 	}
 	mustDo(t, root.req("PATCH", "/api/keys/"+plainID, `{"delegate":true,"workspaces":["`+ws+`"]}`), 200)
-	if code, _, _ := hReq(t, base, plain, "GET", "/api/inbox/"+itemID+"/state", "", map[string]string{"X-Skopos-On-Behalf-Of": "martin"}); code != http.StatusOK {
+	if code, _, _ := hReq(t, base, plain, "GET", "/api/inbox/"+itemID+"/state", "", map[string]string{"X-Skopos-On-Behalf-Of": "alex"}); code != http.StatusOK {
 		t.Fatalf("after granting delegate: %d", code)
 	}
 	// A non-approver key sees the state but no actions.

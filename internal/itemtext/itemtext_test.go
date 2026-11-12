@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-const threeRounds = `Martin's brief.
+const threeRounds = `The author's brief.
 
 ## Context
 
@@ -45,7 +45,7 @@ PLAN-3
 1. Which cache?
 `
 
-func TestSplitKeepsMartinsHeadings(t *testing.T) {
+func TestSplitKeepsTheAuthorsHeadings(t *testing.T) {
 	brief, secs := Split(threeRounds)
 	if !strings.Contains(brief, "## Context") || strings.Contains(brief, "PLAN-1") {
 		t.Fatalf("brief: %q", brief)
@@ -55,8 +55,8 @@ func TestSplitKeepsMartinsHeadings(t *testing.T) {
 	}
 }
 
-// Martin's notes close a round; the next agent output opens the next one.
-func TestRoundsCloseOnMartinsNotes(t *testing.T) {
+// The approver's notes close a round; the next agent output opens the next one.
+func TestRoundsCloseOnTheApproversNotes(t *testing.T) {
 	_, secs := Split(threeRounds)
 	rounds := Rounds(secs)
 	type got struct {
@@ -145,7 +145,7 @@ func TestCurrentQuestions(t *testing.T) {
 	}
 	answered := threeRounds + "\n## Review notes\n\nredo\n"
 	if got := CurrentQuestions(answered); len(got) != 0 {
-		t.Fatalf("a round Martin answered asks nothing: %+v", got)
+		t.Fatalf("a round the approver answered asks nothing: %+v", got)
 	}
 	group := "x\n\n## Candidate — a@claude\n\nA\n\n## Questions — planner a@claude\n\n1. one?\n\n## Candidate — b@codex\n\nB\n\n## Questions — planner b@codex\n\n1. two?\n   - (a) p\n"
 	got = CurrentQuestions(group)

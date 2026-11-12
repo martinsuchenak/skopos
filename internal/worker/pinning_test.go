@@ -13,7 +13,7 @@ import (
 
 func pinnedConfig(now time.Time) *Config {
 	glm := &Account{Name: "glm", Runner: "opencode-glm", Model: "zai-coding-plan/glm-5.3"}
-	qwen := &Account{Name: "qwen", Runner: "opencode-qwen", Model: "llmrouter/qwen/qwen3.8-27b"}
+	qwen := &Account{Name: "qwen", Runner: "opencode-qwen", Model: "router/qwen/qwen3.8-27b"}
 	qwen2 := &Account{Name: "qwen-2", Runner: "opencode-qwen", Priority: 2}
 	qwen.exhaustedUntil = now.Add(2 * time.Hour)
 	qwen2.exhaustedUntil = now.Add(40 * time.Minute)

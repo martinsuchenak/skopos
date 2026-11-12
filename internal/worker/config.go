@@ -40,9 +40,8 @@ type Config struct {
 	Bin         string        `toml:"claude_bin"`
 	PlanTimeout time.Duration `toml:"plan_timeout"`
 	ImplTimeout time.Duration `toml:"impl_timeout"`
-	// MCPDeny is the per-deployment deny list (R12 default: Fortix
-	// production writes + scriptling stores). Applied on top of the
-	// hard-coded git/network denials.
+	// MCPDeny is the per-deployment deny list (none by default), applied
+	// on top of the hard-coded git/network denials.
 	MCPDeny []string `toml:"mcp_deny"`
 	// MCPServers are allowlisted server prefixes for agent runs (the plan
 	// prompt references the skopos MCP tools; without these the allowlist
@@ -378,19 +377,6 @@ func (c *Config) Default(home string) error {
 	}
 	if c.ImplTimeout == 0 {
 		c.ImplTimeout = 90 * time.Minute
-	}
-	if len(c.MCPDeny) == 0 {
-		// R12 default: Fortix production writes + scriptling stores.
-		c.MCPDeny = []string{
-			"mcp__llmrouter__execute_tool",
-			"mcp__llmrouter__fortix__create_work_request",
-			"mcp__llmrouter__fortix__reply_to_work_request",
-			"mcp__llmrouter__fortix__create_client_from_email",
-			"mcp__llmrouter__fortix__request_file_upload",
-			"mcp__llmrouter__scriptling__qdrant_upsert",
-			"mcp__llmrouter__scriptling__set_prompt",
-			"mcp__llmrouter__scriptling__set_skill",
-		}
 	}
 	// runners defaults to every runner the accounts feed: adding a runner
 	// is adding an account (an explicit list still restricts what claims

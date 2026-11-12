@@ -142,19 +142,19 @@ func TestAppendEnvVar(t *testing.T) {
 func TestOpencodeProviderExtraction(t *testing.T) {
 	dir := t.TempDir()
 	user := filepath.Join(dir, "opencode.json")
-	if err := os.WriteFile(user, []byte(`{"provider":{"llmrouter":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://r/v1","apiKey":"sk-secret"},"models":{"glm-5":{}}},"envd":{"options":{"apiKey":"{env:ENVD_KEY}"}}}}`), 0o600); err != nil {
+	if err := os.WriteFile(user, []byte(`{"provider":{"router":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://r/v1","apiKey":"sk-secret"},"models":{"glm-5":{}}},"envd":{"options":{"apiKey":"{env:ENVD_KEY}"}}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	block, keyVar, keyVal, ok := customOpencodeProvider(user, "llmrouter")
-	if !ok || keyVar != "LLMROUTER_API_KEY" || keyVal != "sk-secret" {
+	block, keyVar, keyVal, ok := customOpencodeProvider(user, "router")
+	if !ok || keyVar != "ROUTER_API_KEY" || keyVal != "sk-secret" {
 		t.Fatalf("literal key: %v %q %q", ok, keyVar, keyVal)
 	}
 	base := filepath.Join(dir, "providers.json")
-	if err := mergeOpencodeProvider(base, "llmrouter", block, "llmrouter/qwen/qwen3.8-27b", keyVar); err != nil {
+	if err := mergeOpencodeProvider(base, "router", block, "router/qwen/qwen3.8-27b", keyVar); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ := os.ReadFile(base)
-	if strings.Contains(string(raw), "sk-secret") || !strings.Contains(string(raw), "{env:LLMROUTER_API_KEY}") || !strings.Contains(string(raw), "qwen/qwen3.8-27b") {
+	if strings.Contains(string(raw), "sk-secret") || !strings.Contains(string(raw), "{env:ROUTER_API_KEY}") || !strings.Contains(string(raw), "qwen/qwen3.8-27b") {
 		t.Fatalf("providers file must reference the key, never hold it, and list the model:\n%s", raw)
 	}
 	if _, kv, val, ok := customOpencodeProvider(user, "envd"); !ok || kv != "ENVD_KEY" || val != "" {
@@ -180,7 +180,7 @@ func TestRunnerWizardOpencodeCustomProvider(t *testing.T) {
 	bin := t.TempDir()
 	fakeBin(t, bin, "opencode", `case "$1" in
   --version) echo 1.18.27;;
-  models) printf 'zai-coding-plan/glm-5.3\nllmrouter/qwen/qwen3.8-27b\n';;
+  models) printf 'zai-coding-plan/glm-5.3\nrouter/qwen/qwen3.8-27b\n';;
   run) echo '--format --session --model';;
 esac`)
 	fakeBin(t, bin, "claude", `echo "2.1.300 (Claude Code)"`)
@@ -192,13 +192,13 @@ esac`)
 		t.Fatal(err)
 	}
 	userCfg := filepath.Join(dir, "user-opencode.json")
-	if err := os.WriteFile(userCfg, []byte(`{"provider":{"llmrouter":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://r/v1","apiKey":"sk-secret"}}}}`), 0o600); err != nil {
+	if err := os.WriteFile(userCfg, []byte(`{"provider":{"router":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://r/v1","apiKey":"sk-secret"}}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	envPath := filepath.Join(dir, "skopos-worker.env")
 	answers := strings.Join([]string{
 		"2",    // kind: opencode
-		"2",    // model #2: llmrouter/qwen/qwen3.8-27b
+		"2",    // model #2: router/qwen/qwen3.8-27b
 		"",     // effort: none
 		"",     // runner name: suggested opencode-qwen3-8-27b
 		"",     // write the provider config: yes
@@ -213,7 +213,7 @@ esac`)
 		t.Fatalf("wizard: %v\n%s", err, out.String())
 	}
 	transcript := out.String()
-	for _, want := range []string{"✓ opencode", "✓ claude", "llmrouter/qwen/qwen3.8-27b", "custom provider", "Written."} {
+	for _, want := range []string{"✓ opencode", "✓ claude", "router/qwen/qwen3.8-27b", "custom provider", "Written."} {
 		if !strings.Contains(transcript, want) {
 			t.Errorf("transcript missing %q:\n%s", want, transcript)
 		}
@@ -230,11 +230,11 @@ esac`)
 			acct = a
 		}
 	}
-	if acct == nil || acct.Model != "llmrouter/qwen/qwen3.8-27b" || acct.Env["LLMROUTER_API_KEY"] != "${LLMROUTER_API_KEY}" {
+	if acct == nil || acct.Model != "router/qwen/qwen3.8-27b" || acct.Env["ROUTER_API_KEY"] != "${ROUTER_API_KEY}" {
 		t.Fatalf("account: %+v", acct)
 	}
 	env, _ := os.ReadFile(envPath)
-	if !strings.Contains(string(env), "LLMROUTER_API_KEY=sk-secret") {
+	if !strings.Contains(string(env), "ROUTER_API_KEY=sk-secret") {
 		t.Fatalf("the key must land in the env file:\n%s", env)
 	}
 	prov, _ := os.ReadFile(filepath.Join(dir, "opencode-providers.json"))
@@ -246,7 +246,7 @@ esac`)
 	}
 	var list strings.Builder
 	printRunnerList(context.Background(), &list, w)
-	if !strings.Contains(list.String(), "opencode-qwen3-8-27b") || !strings.Contains(list.String(), "account:  qwen  model=llmrouter/qwen/qwen3.8-27b") {
+	if !strings.Contains(list.String(), "opencode-qwen3-8-27b") || !strings.Contains(list.String(), "account:  qwen  model=router/qwen/qwen3.8-27b") {
 		t.Fatalf("list:\n%s", list.String())
 	}
 }

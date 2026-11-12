@@ -69,7 +69,7 @@ const (
 	// a failure never blocks — the gate opens without them.
 	StageCompare    = "compare"
 	StageSynthesize = "synthesize"
-	// StageSecondOpinion is an advisory review Martin asks for on an item
+	// StageSecondOpinion is an advisory review the approver asks for on an item
 	// at in_review (or blocked by its review): one run, pinned to the
 	// runner he picked and to the head it reviews. Its result is appended
 	// to the item; it never moves or blocks it (tmp/second-opinion-review
@@ -78,7 +78,7 @@ const (
 	// StageBranchReview reviews a review-only item's existing branch: the
 	// repository's checks at its head, then a review (tmp/branch-handover
 	// — design.md §4). One run on the workspace's review runner; whatever
-	// the verdict, the item goes to Martin at in_review.
+	// the verdict, the item goes to the approver at in_review.
 	StageBranchReview = "branch_review"
 )
 

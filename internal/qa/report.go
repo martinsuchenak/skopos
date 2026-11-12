@@ -14,7 +14,7 @@ type Filter struct {
 	ItemID      string
 	State       string // a question state, or "free" for answers to no question
 	Asker       string
-	AnsweredBy  string // the answering actor (exact, "key martin", "root")
+	AnsweredBy  string // the answering actor (exact, "key alex", "root")
 	From, To    time.Time
 }
 

@@ -31,7 +31,7 @@ func questionFlags() []cli.Flag {
 		&cli.StringFlag{Name: "item", Usage: "Only this item"},
 		&cli.StringFlag{Name: "state", Usage: "open, answered, answered_free_text, skipped, superseded, or free (answers to no question)"},
 		&cli.StringFlag{Name: "asker", Usage: "planner, implementer or worker"},
-		&cli.StringFlag{Name: "answered-by", Usage: `Who answered, as recorded ("key martin", "root")`},
+		&cli.StringFlag{Name: "answered-by", Usage: `Who answered, as recorded ("key alex", "root")`},
 		&cli.StringFlag{Name: "from", Usage: "Asked from this local date (2026-11-01) or RFC 3339 time"},
 		&cli.StringFlag{Name: "to", Usage: "Asked up to the end of this local date, or before this RFC 3339 time"},
 	}

@@ -8,7 +8,7 @@ import (
 )
 
 // The provider interface stays honest: a fake provider + a recording relay,
-// verifying thread binding, Martin-only filtering, and ack-on-handled.
+// verifying thread binding, approver-only filtering, and ack-on-handled.
 type fakeRelay struct {
 	applied  []string
 	topLevel map[string]string
@@ -54,7 +54,7 @@ func TestSlackBindAndFilter(t *testing.T) {
 	if item != "item-1" {
 		t.Fatalf("bind: %q", item)
 	}
-	// handleEvent only relays Martin's messages in bound threads.
+	// handleEvent only relays the approver's messages in bound threads.
 	relay := &fakeRelay{}
 	s.handleEvent(context.Background(), []byte(`{"event":{"type":"message","user":"U999","text":"approve","thread_ts":"111.222","ts":"1","channel":"D1","channel_type":"im"}}`), relay, &seenSet{})
 	if len(relay.applied) != 0 {
@@ -70,13 +70,13 @@ func TestSlackBindAndFilter(t *testing.T) {
 	}
 }
 
-// The outbound channel defaults to Martin's user id (no restart gap) and is
+// The outbound channel defaults to the approver's user id (no restart gap) and is
 // learned only from HIS im events — another user's DM, or a channel the app
 // can see, must neither relay nor redirect where gate messages go (review H1).
 func TestSlackChannelNotHijackable(t *testing.T) {
 	s := NewSlack("bot", "app", "U123", nil)
 	if got := s.channel(); got != "U123" {
-		t.Fatalf("before any event, posts must go to Martin's user id: %q", got)
+		t.Fatalf("before any event, posts must go to the approver's user id: %q", got)
 	}
 	relay := &fakeRelay{topLevel: map[string]string{}}
 	for _, ev := range []string{
@@ -94,7 +94,7 @@ func TestSlackChannelNotHijackable(t *testing.T) {
 	}
 	s.handleEvent(context.Background(), []byte(`{"event":{"type":"message","user":"U123","text":"new: hi","ts":"4","channel":"D1","channel_type":"im"}}`), relay, &seenSet{})
 	if got := s.channel(); got != "D1" {
-		t.Fatalf("Martin's IM must be learned: %q", got)
+		t.Fatalf("The approver's IM must be learned: %q", got)
 	}
 }
 

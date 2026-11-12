@@ -1079,7 +1079,7 @@
                 </div>
                 <div>
                     <label class="lbl" for="group-patterns">Patterns (one per line, optional)</label>
-                    <textarea id="group-patterns" rows="3" x-model="groupForm.patterns" class="fld font-mono text-xs" placeholder="github.com/fortix/*"
+                    <textarea id="group-patterns" rows="3" x-model="groupForm.patterns" class="fld font-mono text-xs" placeholder="github.com/acme/*"
                         aria-describedby="group-patterns-help" :aria-invalid="(groupErrors.patterns || groupErrors.form) ? 'true' : 'false'"></textarea>
                     <p id="group-patterns-help" class="mt-1 text-xs text-zinc-400">path.Match — * matches one segment, never crosses /; no **. A group needs at least one member or pattern.</p>
                     <p x-show="groupErrors.patterns || groupErrors.form" class="field-error" role="alert" x-text="groupErrors.patterns || groupErrors.form"></p>
@@ -1281,7 +1281,7 @@
                     </section>
                     <details class="mt-3 rounded-lg border border-zinc-800" :open="previewDescOpen" @toggle="onPreviewDescToggle($event)">
                         <summary class="fold-summary cursor-pointer px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-500"><span class="fold-caret" aria-hidden="true">&#9656;</span> Item description</summary>
-                        <!-- Martin's text, always shown; then what the pipeline
+                        <!-- The author's text, always shown; then what the pipeline
                              appended, in rounds: the newest open, older ones
                              folded. Section HTML is injected by key. -->
                         <div class="md-body border-t border-zinc-800 bg-zinc-950/50 p-4" data-md-preview aria-live="polite"></div>
@@ -1416,7 +1416,7 @@
             <form @submit.prevent="submitWebhook()" class="space-y-4">
                 <div>
                     <label class="lbl" for="webhook-name">Name <span aria-hidden="true">*</span></label>
-                    <input id="webhook-name" type="text" x-model="hookForm.name" class="fld" placeholder="fortix, jobs, …" autocomplete="off" autofocus aria-required="true"
+                    <input id="webhook-name" type="text" x-model="hookForm.name" class="fld" placeholder="acme, jobs, …" autocomplete="off" autofocus aria-required="true"
                         :aria-invalid="hookErrors.name ? 'true' : 'false'" :aria-describedby="hookErrors.name ? 'webhook-name-err' : null" />
                     <p id="webhook-name-err" x-show="hookErrors.name" class="field-error" x-text="hookErrors.name"></p>
                 </div>
@@ -1645,12 +1645,12 @@
                     <div class="grid gap-3 sm:grid-cols-[1fr_14rem]">
                         <div>
                             <label class="lbl" for="ib-branch">Branch</label>
-                            <input id="ib-branch" type="text" x-model="inboxForm.branch" class="fld font-mono" placeholder="WR203345-some-feature" autocomplete="off" spellcheck="false" aria-describedby="ib-branch-help" />
+                            <input id="ib-branch" type="text" x-model="inboxForm.branch" class="fld font-mono" placeholder="JOB203345-some-feature" autocomplete="off" spellcheck="false" aria-describedby="ib-branch-help" />
                             <p id="ib-branch-help" class="mt-1 text-xs text-zinc-500">An existing branch is continued or reviewed; a new name is created. Empty: the worker names it.</p>
                         </div>
                         <div>
                             <label class="lbl" for="ib-ref">Reference</label>
-                            <input id="ib-ref" type="text" x-model="inboxForm.ref" class="fld font-mono" placeholder="WR203345" autocomplete="off" spellcheck="false" aria-describedby="ib-ref-help" />
+                            <input id="ib-ref" type="text" x-model="inboxForm.ref" class="fld font-mono" placeholder="JOB203345" autocomplete="off" spellcheck="false" aria-describedby="ib-ref-help" />
                             <p id="ib-ref-help" class="mt-1 text-xs text-zinc-500">For repositories whose branch names use it.</p>
                         </div>
                     </div>

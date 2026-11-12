@@ -174,7 +174,7 @@ func skillIndex(skills []Skill) []Skill {
 }
 
 // tagHints are the item tags that name an available skill — the
-// deterministic, Martin-chosen part of the selection.
+// deterministic, person-chosen part of the selection.
 func tagHints(available []Skill, tags []string) []string {
 	have := map[string]bool{}
 	for _, s := range available {

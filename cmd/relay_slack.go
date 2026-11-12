@@ -23,11 +23,11 @@ import (
 )
 
 // slackRelay is the Slack command relay, ported from the live-proven
-// agent-trial executor (agent.go applyCommand). It adapts Martin's replies
+// agent-trial executor (agent.go applyCommand). It adapts the approver's replies
 // onto the approver-gated inbox workflow actions and formats the outbound
 // gate notifications, one thread per item.
 //
-// Security model (design doc §2): the relay acts as Martin after the Slack
+// Security model (design doc §2): the relay acts as the approver after the Slack
 // provider has checked his user id — the gate rests on his Slack account.
 // Every action is audit-logged via=slack under the slack-relay principal.
 type slackRelay struct {
@@ -47,7 +47,7 @@ type slackRelay struct {
 	mu      sync.Mutex
 	pending map[string][]pendingReply // itemID -> replies waiting for an admissible status
 	// shown is the plan revision the latest plan-ready message showed per
-	// item. In memory: after a restart the relay cannot know what Martin
+	// item. In memory: after a restart the relay cannot know what the approver
 	// read, so an approve then re-posts the current plan (fail closed).
 	shown map[string][]shownRev
 }
@@ -147,7 +147,7 @@ const slackHelp = "*skopos commands* — reply in an item's thread:\n" +
 	"• `panel` / `solo` / `default` — the item's plan, review and QA stages use the repository's agent panel, one agent, or the repository default (from the next stage)\n" +
 	"Top-level: `new: <what to do>` creates and queues an item; add `#panel` or `#solo` to choose its agents."
 
-// TopLevel handles threadless DMs: capture and help. ts is Martin's own
+// TopLevel handles threadless DMs: capture and help. ts is the approver's own
 // message — a created item's thread binds to it, so his next reply in that
 // thread is already in the right place.
 func (r *slackRelay) TopLevel(ctx context.Context, text, ts string) bool {
@@ -241,7 +241,7 @@ func (r *slackRelay) Apply(ctx context.Context, itemID, text string) bool {
 		item.Status == inbox.StatusQueued || item.Status == inbox.StatusApproved {
 		// Approvals are never buffered: a buffered approve/done would apply
 		// the instant the gate is reached — approving a plan or a head
-		// commit Martin has not seen (review H2). They wait for the gate
+		// commit the approver has not seen (review H2). They wait for the gate
 		// message instead; the non-advancing replies still buffer.
 		// Answers name the questions open now: buffered, they would land
 		// on whatever the next round asks.

@@ -87,7 +87,7 @@ func TestReviewNormalise(t *testing.T) {
 	}
 }
 
-// Reviewers see Martin's decisions (answers, approval notes, change
+// Reviewers see the approver's decisions (answers, approval notes, change
 // requests) — each section alone, not everything after it.
 func TestReviewPromptCarriesDecisions(t *testing.T) {
 	content := "item\n\n## Answers\n\nU+FFFD is accepted.\n\n## Review summary — round 1\n\nnoise"
@@ -99,7 +99,7 @@ func TestReviewPromptCarriesDecisions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "# Martin's decisions") || !strings.Contains(out, "U+FFFD is accepted.") || strings.Contains(out, "noise") {
+	if !strings.Contains(out, "# The approver's decisions") || !strings.Contains(out, "U+FFFD is accepted.") || strings.Contains(out, "noise") {
 		t.Fatalf("review prompt decisions:\n%s", out)
 	}
 }

@@ -34,7 +34,7 @@ var ErrNotPlannable = errors.New("plan is not being planned")
 
 // ErrStaleRevision is returned when an approval names a revision that is no
 // longer the latest, or whose snapshot no longer matches the plan's current
-// steps — approving would bind Martin to content he did not see.
+// steps — approving would bind the approver to content they did not see.
 var ErrStaleRevision = errors.New("revision is stale: a newer revision exists or the plan changed since the snapshot")
 
 // RevisionStep is one step in the immutable snapshot. Status is deliberately
@@ -602,8 +602,8 @@ func (s *Storage) ReplaceTx(ctx context.Context, planID string, steps []Revision
 		pos++
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO plan_items (id, plan_id, title, description, phase, status, position, created_at, updated_at)
-			VALUES (?, ?, 'Review and push (Martin)', 'Martin reviews the branch and pushes it onward himself.', 'review', 'pending', ?, ?, ?)`,
-			ids.New(), planID, pos, formatTime(now), formatTime(now)); err != nil {
+			VALUES (?, ?, ?, ?, 'review', 'pending', ?, ?, ?)`,
+			ids.New(), planID, ReviewStepTitle, reviewStepDescription, pos, formatTime(now), formatTime(now)); err != nil {
 			return fmt.Errorf("inserting review step: %w", err)
 		}
 	}

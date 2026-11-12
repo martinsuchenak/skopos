@@ -84,6 +84,6 @@ ab-src/
 ```
 
 `targets.yaml` matters: without it agent-builder's built-in invocation defaults
-assume tools are dispatched through an `llmrouter` server, and skopos tools
-compile to wrong names (`mcp__llmrouter__skopos__…`) or to "not available"
+assume tools are dispatched through a `router` server, and skopos tools
+compile to wrong names (`mcp__router__skopos__…`) or to "not available"
 markers on targets that do have them.

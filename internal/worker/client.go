@@ -420,7 +420,7 @@ func (c *Client) AppendSection(ctx context.Context, id, heading, body string) er
 	return c.do(ctx, http.MethodPatch, "/api/inbox/"+id, map[string]string{"content": content}, nil)
 }
 
-// QuestionsPost is a run's questions for Martin (POST
+// QuestionsPost is a run's questions for the approver (POST
 // /api/runs/{id}/questions): who asks, about what, whether the item waits.
 type QuestionsPost struct {
 	WorkerID    string           `json:"worker_id"`
@@ -519,7 +519,7 @@ func (c *Client) Replan(ctx context.Context, planID, baseSHA string, steps []Ste
 }
 
 // CreateCandidate writes one planner's candidate in a multi-agent plan
-// round (the live plan is untouched until Martin approves one).
+// round (the live plan is untouched until the approver approves one).
 func (c *Client) CreateCandidate(ctx context.Context, planID, baseSHA string, steps []Step, skills []string, groupID, label string) (*Revision, error) {
 	var rev Revision
 	body := map[string]any{"base_sha": baseSHA, "steps": steps, "group_id": groupID, "label": label}
@@ -650,6 +650,14 @@ type PlanItem struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	Status      string `json:"status"`
+	Phase       string `json:"phase"`
+}
+
+// isReviewStep reports the review step every plan ends with: a person's,
+// never an agent's. The server marks it with the phase; its title is
+// matched too, in the wording of this release and of the ones before it.
+func isReviewStep(title, phase string) bool {
+	return phase == "review" || strings.HasPrefix(title, "Review and push")
 }
 
 type Revision struct {

@@ -400,7 +400,7 @@ func (s *Service) listAcrossScope(ctx context.Context, f ListFilter) ([]Item, er
 //   - once the plan gate has passed (approved and beyond, or any item with a
 //     recorded plan approval), title changes and content REWRITES require
 //     the approver permission — the implementer prompt reads them, so an
-//     agent key must not rewrite what Martin approved. Pure appends (the
+//     agent key must not rewrite what the approver approved. Pure appends (the
 //     existing content kept as a prefix) stay open: the worker records
 //     review verdicts, amendment reasons and re-plan enrichment that way
 //     with its executor key, and there is no executor role to tell it apart;

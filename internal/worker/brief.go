@@ -6,7 +6,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/itemtext"
 )
 
-// An item's content is Martin's own text followed by the sections the
+// An item's content is the author's own text followed by the sections the
 // pipeline appends: plans, questions and answers, review notes, approval
 // notes, change requests, review verdicts. The dashboard shows the whole
 // history; an agent gets his text plus only the sections that are current
@@ -17,7 +17,7 @@ import (
 
 type itemSection = itemtext.Section
 
-// splitItem returns Martin's text and the pipeline's sections, in order.
+// splitItem returns the author's text and the pipeline's sections, in order.
 func splitItem(content string) (string, []itemSection) { return itemtext.Split(content) }
 
 // isPipelineHeading reports whether line starts a section the pipeline
@@ -38,7 +38,7 @@ func newestBody(secs []itemSection, prefix string) string {
 	return ""
 }
 
-// questionsAndAnswers is the planner's questions and Martin's answers, in
+// questionsAndAnswers is the planner's questions and the approver's answers, in
 // order: decisions that hold for every later round. A round's questions
 // count when he answered them: the round has an Answers section, his
 // approval closed it (approval notes answer at the gate), or it is the
@@ -107,7 +107,7 @@ func lastReview(secs []itemSection) string {
 }
 
 // advisoryBrief is what the compare and synthesize stages read about the
-// item: Martin's text, the questions and answers, and his newest review
+// item: the author's text, the questions and answers, and their newest review
 // notes. The candidates themselves come from the plan revisions.
 func advisoryBrief(content string) string {
 	brief, secs := splitItem(content)

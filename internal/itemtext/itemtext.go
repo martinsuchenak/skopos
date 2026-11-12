@@ -1,4 +1,4 @@
-// Package itemtext reads an inbox item's content: Martin's own text followed
+// Package itemtext reads an inbox item's content: the author's own text followed
 // by the sections the agent pipeline appends (plans, the planner's
 // questions, review notes, answers, reviews). The worker cuts it into what a
 // stage's prompt needs; the dashboard groups it into rounds.
@@ -9,7 +9,7 @@ import "strings"
 // Headings are the headings the pipeline writes, as line prefixes: worker
 // sections (AppendSection), the server's notes (appendNotes) and run-group
 // and second-opinion summaries. The text before the first of them is
-// Martin's. The worker's TestPipelineHeadingsCoverWriters keeps the list in
+// The approver's. The worker's TestPipelineHeadingsCoverWriters keeps the list in
 // step with the code that appends sections.
 var Headings = []string{
 	"## Enrichment — skopos worker",
@@ -39,7 +39,7 @@ type Section struct {
 // Text is the section as it appears in the item.
 func (s Section) Text() string { return "## " + s.Heading + "\n\n" + s.Body }
 
-// Split returns Martin's text and the pipeline's sections, in order.
+// Split returns the author's text and the pipeline's sections, in order.
 // Headings of his own ("## Context") stay in his text.
 func Split(content string) (string, []Section) {
 	var brief []string
@@ -88,7 +88,7 @@ func HeadingIs(s Section, prefixes ...string) bool {
 	return false
 }
 
-// IsQuestions reports whether the section holds questions for Martin: the
+// IsQuestions reports whether the section holds questions for the approver: the
 // planner's, or the implementer's with an amendment or a block.
 func IsQuestions(s Section) bool {
 	return HeadingIs(s, "Questions — planner", "Questions — implementer")
@@ -104,24 +104,24 @@ func QuestionsLabel(s Section) string {
 	return strings.TrimSpace(strings.TrimPrefix(s.Heading, "Questions — planner"))
 }
 
-// humanNotes are the sections Martin writes: each one answers the agent
+// humanNotes are the sections the approver writes: each one answers the agent
 // output before it, closing a round.
 var humanNotes = []string{"Review notes", "Change requests", "Approval notes", "Answers"}
 
-// IsHumanNotes reports whether the section is one of Martin's notes.
+// IsHumanNotes reports whether the section is one of the approver's notes.
 func IsHumanNotes(s Section) bool { return HeadingIs(s, humanNotes...) }
 
 // Round is the agent output of one pass (a plan and its questions, a
-// group's candidates, a review) and Martin's notes on it.
+// group's candidates, a review) and the approver's notes on it.
 type Round struct {
 	Kind     string // plan, questions, amendment, review, qa, second_opinion, notes
 	Title    string // "Plan", "Review", …
 	N        int    // 1-based count among rounds of the same kind
 	Sections []Section
-	Closed   bool // Martin's notes ended it
+	Closed   bool // the approver's notes ended it
 }
 
-// Rounds groups the sections into rounds: Martin's notes close the round
+// Rounds groups the sections into rounds: the approver's notes close the round
 // they answer, so the next agent output starts a new one. Notes written
 // together (his answers, then his approval notes) stay in that round. A
 // round is named after its first section.

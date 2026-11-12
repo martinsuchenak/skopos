@@ -10,7 +10,7 @@ import (
 )
 
 // Branch names (tmp/branch-handover — design.md §2). An item works on the
-// branch Martin named (item.branch) or, without one, on the name the
+// branch the approver named (item.branch) or, without one, on the name the
 // repository's template gives it. Either may already exist on origin: the
 // item then takes it over (a handover, or a review-only item's subject).
 
@@ -114,7 +114,7 @@ func branchFor(item *Item, repo *Repo) (string, error) {
 }
 
 // branchStem is the part of the template's name before {slug}: other
-// branches of the same reference start with it (WR203345-). Empty when the
+// branches of the same reference start with it (JOB203345-). Empty when the
 // item names its branch, or the template has no {slug}.
 func branchStem(item *Item, repo *Repo) string {
 	t := repo.template()
@@ -128,7 +128,7 @@ func branchStem(item *Item, repo *Repo) string {
 type branchChoice struct {
 	Name     string
 	Exists   bool   // on origin: take it over
-	Question string // several candidates and no exact match: Martin picks
+	Question string // several candidates and no exact match: the approver picks
 }
 
 // resolveBranch picks the item's branch and whether it exists on origin

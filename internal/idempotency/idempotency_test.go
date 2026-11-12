@@ -92,7 +92,7 @@ func post(t *testing.T, url, key, body string) (*http.Response, string) {
 func TestIdempotencyKey(t *testing.T) {
 	sqlDB := testDB(t)
 	s := New(sqlDB)
-	srv, calls := server(t, s, &auth.Principal{KeyID: "k1", Name: "fortix"})
+	srv, calls := server(t, s, &auth.Principal{KeyID: "k1", Name: "globex"})
 
 	res, body := post(t, srv.URL+"/api/inbox", "job-1", `{"a":1}`)
 	if res.StatusCode != http.StatusCreated || body != `{"call":1}` || res.Header.Get(ReplayedHeader) != "" {

@@ -9,7 +9,7 @@ import (
 // left out), and the comparison renders scores by candidate name.
 func TestAdvisoryPromptsAndComparison(t *testing.T) {
 	cands := []Revision{
-		{Label: "claude", Steps: []RevStep{{Title: "patch", Phase: "implement"}, {Title: "Review and push (Martin)", Phase: "review"}}},
+		{Label: "claude", Steps: []RevStep{{Title: "patch", Phase: "implement"}, {Title: "Review and push", Phase: "review"}}},
 		{Label: "glm", Steps: []RevStep{{Title: "rewrite", Description: "module x", Phase: "implement"}}, Skills: []string{"go-tests"}},
 	}
 	views := candidateViews(cands)

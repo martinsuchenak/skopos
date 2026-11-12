@@ -202,7 +202,7 @@ func TestGroupPassAdvances(t *testing.T) {
 	f.report(t, a, "w1", true)
 	f.report(t, b, "w2", true)
 	if m := f.lastMove(); m != "in_review|" {
-		t.Fatalf("pass must hand the item to Martin: %q (%v)", m, f.moves)
+		t.Fatalf("pass must hand the item to the approver: %q (%v)", m, f.moves)
 	}
 }
 

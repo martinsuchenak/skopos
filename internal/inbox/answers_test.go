@@ -43,7 +43,7 @@ func TestAnswersAppendedBeforeNotes(t *testing.T) {
 	}
 }
 
-// The detail view's content: Martin's text rendered alone, the sections in
+// The detail view's content: the author's text rendered alone, the sections in
 // rounds, a questions section with its questions parsed.
 func TestContentParts(t *testing.T) {
 	svc, plansSvc, _ := fullStack(t)

@@ -76,7 +76,7 @@ func TestGuardSettingsDenies(t *testing.T) {
 func TestOpencodePermission(t *testing.T) {
 	got := opencodePermission(
 		[]string{"Read", "Glob", "Grep", "Edit", "Write", "Bash(git add:*)", "Bash(git commit -m:*)", "mcp__skopos"},
-		[]string{"Bash(git push:*)", "Bash(curl:*)", "Bash(git *--output*)", "mcp__llmrouter__execute_tool", "Read(//etc/**)"},
+		[]string{"Bash(git push:*)", "Bash(curl:*)", "Bash(git *--output*)", "mcp__router__execute_tool", "Read(//etc/**)"},
 	)
 	escapes := ""
 	for _, p := range opencodeBashEscapes {
@@ -86,7 +86,7 @@ func TestOpencodePermission(t *testing.T) {
 	want := `{"*":"deny","read":"allow","list":"allow","glob":"allow","grep":"allow",` +
 		`"edit":{"*":"allow",".git":"deny",".git/*":"deny","*/.git":"deny","*/.git/*":"deny"},"skopos*":"allow",` +
 		`"bash":{"*":"deny","git add":"allow","git add *":"allow","git commit -m":"allow","git commit -m *":"allow","git push":"deny","git push *":"deny","curl":"deny","curl *":"deny","git *--output*":"deny"` + escapes + `},` +
-		`"llmrouter_execute_tool":"deny","external_directory":"deny","webfetch":"deny","websearch":"deny"}`
+		`"router_execute_tool":"deny","external_directory":"deny","webfetch":"deny","websearch":"deny"}`
 	for _, must := range []string{"*$*", "* /*", "*../*", "* -exec*", "*--no-index*", "*>*", "* ~*"} {
 		if q, _ := json.Marshal(must); !strings.Contains(got, string(q)+`:"deny"`) {
 			t.Errorf("bash escape %q must be denied", must)

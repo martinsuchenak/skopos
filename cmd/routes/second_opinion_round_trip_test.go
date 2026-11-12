@@ -15,7 +15,7 @@ import (
 //   - the same runner on the same head needs force;
 //   - with no runner named, the workspace default from pipeline settings.
 func TestIntegrationSecondOpinionRoundTrip(t *testing.T) {
-	const ws = "github.com/fortix/freedom3"
+	const ws = "github.com/globex/shop"
 	_, baseURL := workerStackWith(t, func(r *runs.Service) {
 		r.SetPrefs(map[string]*runs.WorkspacePrefs{ws: {
 			Stages: map[string]string{},
@@ -24,14 +24,14 @@ func TestIntegrationSecondOpinionRoundTrip(t *testing.T) {
 	})
 	root := workerClient{base: baseURL, key: "root-secret"}
 	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`"}`), 201)
-	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"martin","workspaces":["`+ws+`"],"approver":true}`)}
+	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"alex","workspaces":["`+ws+`"],"approver":true}`)}
 	plain := workerClient{base: baseURL, key: mint(t, root, `{"name":"agent","workspaces":["`+ws+`"]}`)}
 	leases := map[string]string{}
 	worker := workerClient{base: baseURL, key: mint(t, root, `{"name":"worker-1","workspaces":["`+ws+`"]}`), lease: leases}
 
 	// Plan, approve, implement (head abc1234def), review group: security
 	// fails, tests (the newest member) passes -> blocked.
-	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"so item","author_agent_id":"martin"}`), 201).(map[string]any)
+	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"so item","author_agent_id":"alex"}`), 201).(map[string]any)
 	itemID := item["id"].(string)
 	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/queue", ""), 200)
 	run := claim(t, worker, `{"worker_id":"w1","runners":["claude"],"workspaces":["`+ws+`"]}`)

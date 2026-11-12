@@ -211,7 +211,7 @@ skopos worker install             # launchd (macOS) or systemd (Linux); starts o
 
 **Starting from an existing branch.** Fill in the item's **Branch** (or
 its **Reference**, when the repository's branch names use it, e.g.
-`WR203345`):
+`JOB203345`):
 - **Queue** it, and the agents continue the branch: the planner sees what is
   already on it and plans the rest (a *handover*).
 - **Review branch** instead, and nothing is planned or implemented: a worker

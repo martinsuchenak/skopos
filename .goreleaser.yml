@@ -25,6 +25,9 @@ builds:
     goarch:
       - amd64
       - arm64
+    # No build-machine paths in the binary.
+    flags:
+      - -trimpath
     ldflags:
       - -s -w
       - -X github.com/martinsuchenak/skopos/build.Version={{.Version}}
