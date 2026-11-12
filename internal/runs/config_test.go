@@ -214,7 +214,7 @@ func TestClaimCarriesTheRunsMCPServers(t *testing.T) {
 		if ws != "held" {
 			return nil, nil
 		}
-		return &RunMCP{Servers: map[string]json.RawMessage{"llmrouter": json.RawMessage(`{"type":"http","url":"https://x/mcp","headers":{"Authorization":"Bearer ` + secret + `"}}`)},
+		return &RunMCP{Servers: map[string]json.RawMessage{"router": json.RawMessage(`{"type":"http","url":"https://x/mcp","headers":{"Authorization":"Bearer ` + secret + `"}}`)},
 			Secrets: []string{secret}}, nil
 	}, func(_ context.Context, ws string) bool { return ws == "held" })
 	on := true

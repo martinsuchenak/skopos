@@ -62,9 +62,8 @@ type Config struct {
 	Bin         string        `toml:"claude_bin"`
 	PlanTimeout time.Duration `toml:"plan_timeout"`
 	ImplTimeout time.Duration `toml:"impl_timeout"`
-	// MCPDeny is the per-deployment deny list (R12 default: Fortix
-	// production writes + scriptling stores). Applied on top of the
-	// hard-coded git/network denials.
+	// MCPDeny is the per-deployment deny list (none by default), applied
+	// on top of the hard-coded git/network denials.
 	MCPDeny []string `toml:"mcp_deny"`
 	// MCPServers are allowlisted server prefixes for agent runs (the plan
 	// prompt references the skopos MCP tools; without these the allowlist
@@ -111,9 +110,8 @@ type Config struct {
 	wrapperInvalid  map[string]string
 	wrapperBad      map[string]string
 	runnersExplicit bool
-	// mcpDenyFile: the deny list the file itself sets (empty when it sets
-	// none and the default applies) — kept in force for a workspace the
-	// server manages. globalSet: the worker-wide fields the file sets that
+	// mcpDenyFile: the deny list the file itself sets — kept in force for
+	// a workspace the server manages. globalSet: the worker-wide fields the file sets that
 	// are per workspace on the server (managed.go).
 	mcpDenyFile []string
 	globalSet   []string
@@ -803,10 +801,6 @@ func (c *Config) Default(home string) error {
 	}
 	if c.ImplTimeout == 0 {
 		c.ImplTimeout = 90 * time.Minute
-	}
-	if len(c.MCPDeny) == 0 {
-		// R12 default: Fortix production writes + scriptling stores.
-		c.MCPDeny = slices.Clone(wsconfig.DefaultMCPDeny)
 	}
 	// runners defaults to every runner the accounts feed: adding a runner
 	// is adding an account (an explicit list still restricts what claims

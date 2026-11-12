@@ -84,7 +84,7 @@ walkthrough.
 | `worker.plan_timeout` / `worker.impl_timeout` | — | `10m` / `90m` | Agent run timeouts (review/qa use the plan timeout) |
 | `worker.mcp_config` | — | — | JSON file with the MCP servers pipeline runs get (Claude Code `mcpServers` shape); required when `mcp_servers` is set |
 | `worker.mcp_servers` | — | — | MCP tool prefixes allowed in plan/implement runs, e.g. `["mcp__skopos"]` |
-| `worker.mcp_deny` | — | Fortix production-write tools | MCP tools denied in every run (added to the built-in git/network denials) |
+| `worker.mcp_deny` | — | none | MCP tools denied in every run (added to the built-in git/network denials) |
 | `worker.profiles.<name>.<stage>` | — | — | Operator-supplied stage executor (`plan`/`implement`/`review`/`qa`): `wrapper` (placeholders `{dir}` `{gitdir}` `{login}` `{rundir}` `{cli}` `{run}` `{stage}` `{workspace}`), `settings`, `tools`, `env` — see [deployment/worker.md](deployment/worker.md#containing-agent-runs). For a workspace the server manages (with `server_commands`), `tools`, `env` and the settings besides `sandbox` come from the server instead |
 | — | `--env-file` / `SKOPOS_WORKER_ENV` | `<config-dir>/skopos-worker.env` when present | `KEY=VALUE` secrets loaded before the config (real environment wins) |
 
@@ -141,7 +141,7 @@ skopos workspace pipeline show --workspace github.com/you/repo
   account of its runner; it never falls back to another runner. The dialog
   and `show` warn about a runner no worker serving the workspace offers yet.
 - **Group defaults.** A workspace group (explicit members or patterns like
-  `github.com/fortix/*`) can carry the same settings. Per stage, a
+  `github.com/acme/*`) can carry the same settings. Per stage, a
   workspace's own setting wins, else its group's. Two groups may not set
   the same stage, or both set the agents default, for a shared workspace
   (the save is refused; if membership changes make it happen anyway, the

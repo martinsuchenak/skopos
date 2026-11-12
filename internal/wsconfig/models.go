@@ -127,18 +127,6 @@ func IsCommandField(name string) bool {
 	return slices.Contains(CommandFields, name)
 }
 
-// DefaultMCPDeny is the deny list a workspace gets when none is set.
-var DefaultMCPDeny = []string{
-	"mcp__llmrouter__execute_tool",
-	"mcp__llmrouter__fortix__create_work_request",
-	"mcp__llmrouter__fortix__reply_to_work_request",
-	"mcp__llmrouter__fortix__create_client_from_email",
-	"mcp__llmrouter__fortix__request_file_upload",
-	"mcp__llmrouter__scriptling__qdrant_upsert",
-	"mcp__llmrouter__scriptling__set_prompt",
-	"mcp__llmrouter__scriptling__set_skill",
-}
-
 // DefaultProtected are the branches no run pushes to when none are set.
 var DefaultProtected = []string{"PROD", "main", "master", "develop", "release/**", "hotfix/**"}
 
@@ -153,7 +141,7 @@ func Defaults() Config {
 		SetupTimeout: new(Duration(10 * time.Minute)), CheckTimeout: new(Duration(30 * time.Minute)),
 		QuietTimeout: new(Duration(0)), PlanTimeout: new(Duration(10 * time.Minute)), ImplTimeout: new(Duration(90 * time.Minute)),
 		Push:    &Push{Kind: new("none"), RemoteURL: new(""), PullRequest: new("none"), Steps: new(true)},
-		MCPDeny: new(append([]string{}, DefaultMCPDeny...)), MCPServers: new([]string{}),
+		MCPDeny: new([]string{}), MCPServers: new([]string{}),
 	}
 }
 

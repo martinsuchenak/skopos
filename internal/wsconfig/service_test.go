@@ -55,7 +55,7 @@ func exec(t *testing.T, sqlDB *sql.DB, q string, args ...any) {
 	}
 }
 
-// fixture: workspaces fx/api and fx/web (+ other/x), group "fortix" by the
+// fixture: workspaces fx/api and fx/web (+ other/x), group "globex" by the
 // pattern fx/*, group "web-team" holding fx/web explicitly.
 func fixture(t *testing.T) (*Service, *sql.DB, *recSink) {
 	t.Helper()
@@ -72,7 +72,7 @@ func fixture(t *testing.T) (*Service, *sql.DB, *recSink) {
 	for _, ws := range []string{"fx/api", "fx/web", "other/x"} {
 		exec(t, sqlDB, `INSERT INTO workspaces (id, created_at) VALUES (?, ?)`, ws, now)
 	}
-	exec(t, sqlDB, `INSERT INTO workspace_groups (id, name, created_at) VALUES ('g1', 'fortix', ?), ('g2', 'web-team', ?)`, now, now)
+	exec(t, sqlDB, `INSERT INTO workspace_groups (id, name, created_at) VALUES ('g1', 'globex', ?), ('g2', 'web-team', ?)`, now, now)
 	exec(t, sqlDB, `INSERT INTO workspace_group_patterns (group_id, pattern) VALUES ('g1', 'fx/*')`)
 	exec(t, sqlDB, `INSERT INTO workspace_group_members (group_id, workspace_id) VALUES ('g2', 'fx/web')`)
 	s := NewService(sqlDB, confrev.NewStore(sqlDB), pipeline.NewStorage(sqlDB))
@@ -106,7 +106,7 @@ func TestNormalize(t *testing.T) {
 		{Push: &Push{PullRequest: new("open")}},
 		{Push: &Push{RemoteURL: new("git@github.com:a/b.git")}},
 		{Push: &Push{RemoteURL: new("https://user:tok@github.com/a/b.git")}},
-		{MCPServers: list("llmrouter")},
+		{MCPServers: list("router")},
 		{Setup: list(strings.Repeat("x", 5000))},
 	}
 	for i, c := range bad {
@@ -145,7 +145,7 @@ func TestFieldsRoundTripAndDefaults(t *testing.T) {
 	}
 	full := Complete(c)
 	if *full.DefaultBranch != "main" || *full.Push.Kind != "github" || *full.Push.PullRequest != "none" || *full.Push.Steps ||
-		full.ImplTimeout.D() != 90*time.Minute || full.PlanTimeout.D() != 20*time.Minute || len(*full.MCPDeny) == 0 {
+		full.ImplTimeout.D() != 90*time.Minute || full.PlanTimeout.D() != 20*time.Minute || full.MCPDeny == nil || len(*full.MCPDeny) != 0 {
 		t.Fatalf("defaults under the set fields: %s", Canonical(full))
 	}
 	if ch := strings.Join(Changed(c, Config{Checks: list("make test"), Setup: list("npm ci")}), ","); ch != "plan_timeout,push.kind,push.steps,setup" {
@@ -157,7 +157,7 @@ func TestFieldsRoundTripAndDefaults(t *testing.T) {
 // defaults under it and never manage a workspace on their own.
 func TestManagedAndGroupDefaults(t *testing.T) {
 	s, _, _ := fixture(t)
-	if _, err := s.Set(root(), KindGroup, "fortix", Config{Checks: list("make lint"), DefaultBranch: new("develop")}, audit.ViaCLI, ""); err != nil {
+	if _, err := s.Set(root(), KindGroup, "globex", Config{Checks: list("make lint"), DefaultBranch: new("develop")}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
 	eff, err := s.Effective(root(), "fx/api")
@@ -178,7 +178,7 @@ func TestManagedAndGroupDefaults(t *testing.T) {
 	if (*e.Config.Checks)[0] != "go test ./..." || e.Sources["checks"] != "workspace" {
 		t.Fatalf("the workspace's own field wins: %+v", e)
 	}
-	if *e.Config.DefaultBranch != "develop" || e.Sources["default_branch"] != "group:fortix" {
+	if *e.Config.DefaultBranch != "develop" || e.Sources["default_branch"] != "group:globex" {
 		t.Fatalf("the group supplies what the workspace leaves out: %+v", e)
 	}
 	if e.Config.Setup != nil {
@@ -212,7 +212,7 @@ func TestRevNamesWhatApplied(t *testing.T) {
 		t.Fatalf("a save must change the revision at once: %q %q", first, second)
 	}
 	// A group change under the workspace changes it too.
-	if _, err := s.Set(root(), KindGroup, "fortix", Config{Setup: list("npm ci")}, audit.ViaCLI, ""); err != nil {
+	if _, err := s.Set(root(), KindGroup, "globex", Config{Setup: list("npm ci")}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
 	third := s.Rev(root(), "fx/api")
@@ -247,7 +247,7 @@ func TestRevNamesWhatApplied(t *testing.T) {
 
 func TestGroupConflictsAndEffectiveChecks(t *testing.T) {
 	s, sqlDB, _ := fixture(t)
-	if _, err := s.Set(root(), KindGroup, "fortix", Config{Checks: list("a")}, audit.ViaCLI, ""); err != nil {
+	if _, err := s.Set(root(), KindGroup, "globex", Config{Checks: list("a")}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
 	// fx/web is in both groups: the second may not set the same field.
@@ -284,7 +284,7 @@ func TestGroupSaveRefusedForAManagedMember(t *testing.T) {
 	if _, err := s.Set(root(), KindWorkspace, "fx/api", Config{}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
-	_, err := s.Set(root(), KindGroup, "fortix", Config{Push: &Push{PullRequest: new("draft")}}, audit.ViaCLI, "")
+	_, err := s.Set(root(), KindGroup, "globex", Config{Push: &Push{PullRequest: new("draft")}}, audit.ViaCLI, "")
 	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "fx/api") {
 		t.Fatalf("a pull request without a push on a managed member: %v", err)
 	}
@@ -306,10 +306,10 @@ func TestPermissions(t *testing.T) {
 		t.Fatalf("an admin in scope: %v", err)
 	}
 	// A group needs every member in scope.
-	if _, err := s.Set(key(true, false, "fx/api"), KindGroup, "fortix", c, audit.ViaCLI, ""); !errors.Is(err, auth.ErrAdminRequired) {
+	if _, err := s.Set(key(true, false, "fx/api"), KindGroup, "globex", c, audit.ViaCLI, ""); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("a group with a member out of scope: %v", err)
 	}
-	if _, err := s.Set(key(true, false, "fx/api", "fx/web"), KindGroup, "fortix", Config{Setup: list("x")}, audit.ViaCLI, ""); err != nil {
+	if _, err := s.Set(key(true, false, "fx/api", "fx/web"), KindGroup, "globex", Config{Setup: list("x")}, audit.ViaCLI, ""); err != nil {
 		t.Fatalf("a group with every member in scope: %v", err)
 	}
 	// Reading a workspace's config needs only the workspace in scope; a
@@ -323,7 +323,7 @@ func TestPermissions(t *testing.T) {
 	if _, err := s.EffectiveFor(key(false, false, "fx/api"), "fx/web"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("a foreign workspace's effective config: %v", err)
 	}
-	if _, err := s.Get(key(false, false, "fx/api"), KindGroup, "fortix"); !errors.Is(err, auth.ErrAdminRequired) {
+	if _, err := s.Get(key(false, false, "fx/api"), KindGroup, "globex"); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("a group's config is its admins': %v", err)
 	}
 	// A run never passes.
@@ -474,23 +474,23 @@ func TestNilListIsSetToNothing(t *testing.T) {
 // that relies on it must not be left with a config that cannot work.
 func TestGroupClearRefusedForADependentMember(t *testing.T) {
 	s, _, _ := fixture(t)
-	if _, err := s.Set(root(), KindGroup, "fortix", Config{Push: &Push{Kind: new("github"), RemoteURL: new("https://github.com/fx/x.git")}}, audit.ViaCLI, ""); err != nil {
+	if _, err := s.Set(root(), KindGroup, "globex", Config{Push: &Push{Kind: new("github"), RemoteURL: new("https://github.com/fx/x.git")}}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Set(root(), KindWorkspace, "fx/api", Config{Push: &Push{PullRequest: new("draft")}}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Clear(root(), KindGroup, "fortix", audit.ViaCLI); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "fx/api") {
+	if _, err := s.Clear(root(), KindGroup, "globex", audit.ViaCLI); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "fx/api") {
 		t.Fatalf("clearing the group would leave fx/api with a pull request and no push: %v", err)
 	}
-	if _, err := s.Plan(root(), KindGroup, "fortix", nil); !errors.Is(err, ErrInvalid) {
+	if _, err := s.Plan(root(), KindGroup, "globex", nil); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("a plan of the clear says the same: %v", err)
 	}
 	// Once the workspace no longer needs it, the clear goes through.
 	if _, err := s.Set(root(), KindWorkspace, "fx/api", Config{}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Clear(root(), KindGroup, "fortix", audit.ViaCLI); err != nil {
+	if _, err := s.Clear(root(), KindGroup, "globex", audit.ViaCLI); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -522,7 +522,7 @@ func TestSetIfRefusesALostRace(t *testing.T) {
 // surface label nobody knows is not kept with the revision.
 func TestEmptyBranchTemplateAndViaLabel(t *testing.T) {
 	s, _, _ := fixture(t)
-	if _, err := s.Set(root(), KindGroup, "fortix", Config{BranchTemplate: new("{prefix}{ref}")}, audit.ViaCLI, ""); err != nil {
+	if _, err := s.Set(root(), KindGroup, "globex", Config{BranchTemplate: new("{prefix}{ref}")}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
 	v, err := s.Set(root(), KindWorkspace, "fx/api", Config{BranchTemplate: new("")}, "made-up-surface", "")
@@ -541,11 +541,11 @@ func TestEmptyBranchTemplateAndViaLabel(t *testing.T) {
 // the groups its members are already in.
 func TestPlanNewGroupFindsConflicts(t *testing.T) {
 	s, _, _ := fixture(t)
-	if _, err := s.Set(root(), KindGroup, "fortix", Config{DefaultBranch: new("develop")}, audit.ViaCLI, ""); err != nil {
+	if _, err := s.Set(root(), KindGroup, "globex", Config{DefaultBranch: new("develop")}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.PlanNew(root(), KindGroup, "new-team", []string{"fx/api"}, Config{DefaultBranch: new("main")}); !errors.Is(err, ErrConflict) {
-		t.Fatalf("fortix already sets default_branch for fx/api: %v", err)
+		t.Fatalf("globex already sets default_branch for fx/api: %v", err)
 	}
 	fields, err := s.PlanNew(root(), KindGroup, "new-team", []string{"fx/api"}, Config{Checks: list("x")})
 	if err != nil || strings.Join(fields, ",") != "checks" {

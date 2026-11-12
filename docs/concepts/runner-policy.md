@@ -13,7 +13,7 @@ A policy is a list of **allow rules**. A runner may be used when at least
 one rule matches what its worker reports about it.
 
 ```sh
-skopos policy set --group fortix \
+skopos policy set --group acme \
   --allow provider=anthropic \
   --allow provider=openai,stages=second_opinion \
   --allow provider=local
@@ -137,10 +137,10 @@ narrow.
   and may allow more than it does (never more than the ceiling).
 
 ```sh
-skopos policy show --workspace github.com/fortix/freedom3   # everything that applies, with sources
-skopos policy show --group fortix
+skopos policy show --workspace github.com/acme/shop   # everything that applies, with sources
+skopos policy show --group acme
 skopos policy show --fleet ceiling
-skopos policy clear --workspace github.com/fortix/freedom3
+skopos policy clear --workspace github.com/acme/shop
 ```
 
 The dashboard's Pipeline dialog shows the policy that applies to a
@@ -298,7 +298,7 @@ provider = "local"        # a model on another machine on this network
 
 [worker.runner_config.opencode-router]
 kind = "opencode"
-provider = "llmrouter"    # a router: match it with provider=llmrouter,model=…
+provider = "router"    # a router: match it with provider=router,model=…
 ```
 
 A worker refuses to start when its facts would be untrue:

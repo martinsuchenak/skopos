@@ -104,7 +104,7 @@ approver or admin: a worker refuses to start with a key that holds admin,
 and refuses an agent key that holds either.
 
 ```sh
-skopos key create --name ops --group fortix --admin
+skopos key create --name ops --group acme --admin
 skopos key edit <id> --no-admin
 ```
 

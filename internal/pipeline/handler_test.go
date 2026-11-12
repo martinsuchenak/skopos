@@ -40,7 +40,7 @@ func TestHandlerStatusCodes(t *testing.T) {
 	if code, _ := do("GET", "/api/workspaces/nope/pipeline", "", true); code != http.StatusNotFound {
 		t.Fatalf("unknown workspace: %d", code)
 	}
-	if code, _ := do("PUT", "/api/groups/fortix/pipeline", `{"stages":{"qa":{"members":[{"runner":"claude"}]}}}`, true); code != http.StatusOK {
+	if code, _ := do("PUT", "/api/groups/globex/pipeline", `{"stages":{"qa":{"members":[{"runner":"claude"}]}}}`, true); code != http.StatusOK {
 		t.Fatalf("group put: %d", code)
 	}
 	if code, body := do("PUT", "/api/groups/web-team/pipeline", `{"stages":{"qa":{"members":[{"runner":"glm"}]}}}`, true); code != http.StatusConflict {

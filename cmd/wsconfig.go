@@ -118,7 +118,7 @@ the worker's [worker.vars].
 
 mcp names the MCP servers the runs get (skopos mcp-server set), and
 mcp_servers which of their tools a run may call:
-  --set 'mcp=["llmrouter"]' --set 'mcp_servers=["mcp__llmrouter"]'
+  --set 'mcp=["router"]' --set 'mcp_servers=["mcp__router"]'
 Once mcp is set — to [] too — the runs get exactly those servers and nothing
 from a worker's own mcp_config.`,
 			Flags: flags(

@@ -108,21 +108,21 @@ kind = "opencode"
 model = "zai-coding-plan/glm-5.3"
 provider = "zai"
 
-[groups.fortix]
-description = "Fortix repositories"
+[groups.globex]
+description = "Globex repositories"
 workspaces = ["fx/api"]
 patterns = ["fx/*"]
 
-[groups.fortix.policy]
+[groups.globex.policy]
 allow = [{ provider = "anthropic" }, { provider = "openai", stages = ["second_opinion"] }]
 
-[groups.fortix.config]
+[groups.globex.config]
 default_branch = "develop"
 check_timeout = "45m0s"
 
-[groups.fortix.pipeline]
+[groups.globex.pipeline]
 second_opinion_runner = "codex"
-[groups.fortix.pipeline.stages]
+[groups.globex.pipeline.stages]
 review = { members = "security@claude-opus,tests@claude-opus", policy = "any-blocks", timeout = "30m0s" }
 
 [workspaces."fx/api"]
@@ -174,12 +174,12 @@ func TestPlanApplyExportRoundTrip(t *testing.T) {
 	want := `create runner runner:claude-opus
 create runner runner:glm
 create workspace workspace:fx/api
-create group group:fortix
+create group group:globex
 update policy fleet:default
-create policy group:fortix
-create config group:fortix
+create policy group:globex
+create config group:globex
 create config workspace:fx/api
-create pipeline group:fortix
+create pipeline group:globex
 create pipeline workspace:fx/api`
 	if got := lines(plan); got != want || plan.Applied {
 		t.Fatalf("plan:\n%s\nwant:\n%s", got, want)
@@ -289,7 +289,7 @@ update pipeline workspace:fx/api`
 	if got := lines(plan); got != want {
 		t.Fatalf("plan:\n%s\nwant:\n%s", got, want)
 	}
-	if strings.Join(plan.Unlisted, ",") != "group:fortix" {
+	if strings.Join(plan.Unlisted, ",") != "group:globex" {
 		t.Fatalf("what the file does not list is named and left alone: %v", plan.Unlisted)
 	}
 	if _, err := f.svc.Apply(root(), Input{Document: next}); err != nil {
@@ -299,7 +299,7 @@ update pipeline workspace:fx/api`
 		t.Fatal("the workspace's config was left out: it is no longer managed")
 	}
 	// The group and the fleet default were not in the file: untouched.
-	if v, _ := f.pipe.GetPolicy(root(), pipeline.KindGroup, "fortix"); v.Policy == nil {
+	if v, _ := f.pipe.GetPolicy(root(), pipeline.KindGroup, "globex"); v.Policy == nil {
 		t.Fatal("an unlisted group keeps its policy")
 	}
 	if v, _ := f.pipe.GetPolicy(root(), pipeline.KindFleetDefault, ""); v.Policy == nil {
@@ -333,7 +333,7 @@ func TestApplyChecksEverythingFirst(t *testing.T) {
 	}
 	// A pipeline section that cannot be parsed.
 	doc = parse(t, sample)
-	doc.Groups["fortix"].Pipeline.Stages["review"] = StageDoc{Members: "bad member spec@@"}
+	doc.Groups["globex"].Pipeline.Stages["review"] = StageDoc{Members: "bad member spec@@"}
 	if _, err := f.svc.Apply(root(), Input{Document: doc, Plan: true}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("want ErrInvalid, got %v", err)
 	}
@@ -378,7 +378,7 @@ plan = { members = "claude-opus" }
 	if _, err := f.svc.Apply(scoped, Input{Document: runners, Plan: true}); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("runner definitions are the fleet admin's: %v", err)
 	}
-	group := parse(t, "[groups.fortix]\nworkspaces = [\"fx/api\", \"fx/web\"]\n")
+	group := parse(t, "[groups.globex]\nworkspaces = [\"fx/api\", \"fx/web\"]\n")
 	if _, err := f.svc.Apply(admin(true), Input{Document: group, Plan: true}); !errors.Is(err, auth.ErrRootRequired) {
 		t.Fatalf("a group's members are root's to change: %v", err)
 	}
@@ -404,7 +404,7 @@ func TestApplyRevealsNothingOutOfScope(t *testing.T) {
 		t.Fatalf("only the caller's own workspace is named: %s", got)
 	}
 	full, _ := f.svc.Apply(root(), Input{Plan: true})
-	if got := strings.Join(full.Unlisted, ","); got != "group:fortix,workspace:fx/api,workspace:secret/repo" {
+	if got := strings.Join(full.Unlisted, ","); got != "group:globex,workspace:fx/api,workspace:secret/repo" {
 		t.Fatalf("root sees everything unlisted: %s", got)
 	}
 	var messages []string
@@ -425,12 +425,12 @@ func TestApplyRevealsNothingOutOfScope(t *testing.T) {
 	// does not exist.
 	messages = nil
 	elsewhere := admin(false, "secret/repo")
-	for _, text := range []string{"[groups.fortix]\nworkspaces = [\"fx/api\"]\n", "[groups.nosuch]\nworkspaces = [\"fx/api\"]\n"} {
+	for _, text := range []string{"[groups.globex]\nworkspaces = [\"fx/api\"]\n", "[groups.nosuch]\nworkspaces = [\"fx/api\"]\n"} {
 		_, err := f.svc.Apply(elsewhere, Input{Document: parse(t, text), Plan: true})
 		if !errors.Is(err, auth.ErrAdminRequired) {
 			t.Fatalf("want ErrAdminRequired, got %v", err)
 		}
-		messages = append(messages, strings.NewReplacer("fortix", "X", "nosuch", "X").Replace(err.Error()))
+		messages = append(messages, strings.NewReplacer("globex", "X", "nosuch", "X").Replace(err.Error()))
 	}
 	if messages[0] != messages[1] {
 		t.Fatalf("a group out of reach and a missing one must read the same:\n%s\n%s", messages[0], messages[1])
@@ -487,7 +487,7 @@ func TestPlanSaysWhatItCouldNotCheck(t *testing.T) {
 	if _, err := f.svc.Apply(root(), Input{Document: parse(t, sample)}); err != nil {
 		t.Fatal(err)
 	}
-	// fortix already sets default_branch for fx/api.
+	// globex already sets default_branch for fx/api.
 	clash := parse(t, "[groups.second]\nworkspaces = [\"fx/api\"]\n[groups.second.config]\ndefault_branch = \"main\"\n")
 	if _, err := f.svc.Apply(root(), Input{Document: clash, Plan: true}); !errors.Is(err, wsconfig.ErrConflict) {
 		t.Fatalf("a new group's config is checked against its members' other groups: %v", err)
@@ -516,7 +516,7 @@ func TestPlanSaysWhatItCouldNotCheck(t *testing.T) {
 	if _, err := f.svc.Apply(root(), Input{Document: refused, Plan: true}); !errors.Is(err, pipeline.ErrPolicyRefuses) {
 		t.Fatalf("glm on plan under a policy without zai: %v", err)
 	}
-	// The fortix policy allows anthropic only; this file widens it and
+	// The globex policy allows anthropic only; this file widens it and
 	// uses glm in the same go.
 	together := parse(t, strings.Replace(sample, `allow = [{ provider = "anthropic" }, { provider = "openai", stages = ["second_opinion"] }]`,
 		`allow = [{ provider = "anthropic" }, { provider = "zai" }]`, 1)+`
@@ -637,20 +637,20 @@ func TestWrappersAndStageBlocksInTheFile(t *testing.T) {
 }
 
 const withMCP = `
-[mcp.llmrouter]
+[mcp.router]
 type = "http"
-url = "https://llmrouter.example.com/mcp"
+url = "https://router.example.com/mcp"
 workspaces = ["fx/*"]
-[mcp.llmrouter.headers]
+[mcp.router.headers]
 Authorization = "Bearer ${secret:token}"
 
-[mcp.scriptling]
+[mcp.scripts]
 type = "command"
-command = ["${TOOLS_DIR}/scriptling", "mcp"]
+command = ["${TOOLS_DIR}/scripts", "mcp"]
 
 [workspaces."fx/api".config]
-mcp = ["llmrouter", "scriptling"]
-mcp_servers = ["mcp__llmrouter", "mcp__scriptling__run"]
+mcp = ["router", "scripts"]
+mcp_servers = ["mcp__router", "mcp__scripts__run"]
 `
 
 // MCP servers travel in the file as definitions that name their secrets;
@@ -662,19 +662,19 @@ func TestMCPServersInTheFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "create mcp mcp:llmrouter\ncreate mcp mcp:scriptling\ncreate workspace workspace:fx/api\ncreate config workspace:fx/api"
+	want := "create mcp mcp:router\ncreate mcp mcp:scripts\ncreate workspace workspace:fx/api\ncreate config workspace:fx/api"
 	if got := lines(plan); got != want {
 		t.Fatalf("plan:\n%s\nwant:\n%s", got, want)
 	}
 	// The plan says which secret has no value yet: the file cannot carry it.
-	if w := plan.Changes[0].Warnings; len(w) != 1 || !strings.Contains(w[0], "secret token") || !strings.Contains(w[0], "set-secret llmrouter") {
+	if w := plan.Changes[0].Warnings; len(w) != 1 || !strings.Contains(w[0], "secret token") || !strings.Contains(w[0], "set-secret router") {
 		t.Fatalf("the plan names the secret to set: %v", w)
 	}
 	if _, err := f.svc.Apply(root(), Input{Document: parse(t, withMCP)}); err != nil {
 		t.Fatal(err)
 	}
 	const value = "tok-never-in-a-file"
-	if err := f.config.SetMCPSecret(root(), "llmrouter", "token", []byte(value), "cli"); err != nil {
+	if err := f.config.SetMCPSecret(root(), "router", "token", []byte(value), "cli"); err != nil {
 		t.Fatal(err)
 	}
 	// Applying the same file again changes nothing and keeps the value.
@@ -683,12 +683,12 @@ func TestMCPServersInTheFile(t *testing.T) {
 	}
 	// A changed definition that still names the secret, on the same host,
 	// keeps its value.
-	changed := strings.Replace(withMCP, "llmrouter.example.com/mcp", "llmrouter.example.com/mcp/v2", 1)
-	if res, err := f.svc.Apply(root(), Input{Document: parse(t, changed)}); err != nil || lines(res) != "update mcp mcp:llmrouter" || len(res.Changes[0].Warnings) != 0 {
+	changed := strings.Replace(withMCP, "router.example.com/mcp", "router.example.com/mcp/v2", 1)
+	if res, err := f.svc.Apply(root(), Input{Document: parse(t, changed)}); err != nil || lines(res) != "update mcp mcp:router" || len(res.Changes[0].Warnings) != 0 {
 		t.Fatalf("a changed definition: %v %s %v", err, lines(res), res.Changes)
 	}
 	mcp, err := f.config.RunMCP(root(), "fx/api", true)
-	if err != nil || len(mcp.Servers) != 2 || !strings.Contains(string(mcp.Servers["llmrouter"]), value) || !strings.Contains(string(mcp.Servers["llmrouter"]), "/mcp/v2") {
+	if err != nil || len(mcp.Servers) != 2 || !strings.Contains(string(mcp.Servers["router"]), value) || !strings.Contains(string(mcp.Servers["router"]), "/mcp/v2") {
 		t.Fatalf("the run's servers: %+v %v", mcp, err)
 	}
 	// A config for a workspace the server is not for is refused, also when
@@ -711,7 +711,7 @@ func TestMCPServersInTheFile(t *testing.T) {
 	if strings.Contains(buf.String(), value) || strings.Contains(string(asJSON), value) {
 		t.Fatalf("the export holds a secret's value:\n%s", buf.String())
 	}
-	if !strings.Contains(buf.String(), "${secret:token}") || !strings.Contains(buf.String(), "[mcp.scriptling]") {
+	if !strings.Contains(buf.String(), "${secret:token}") || !strings.Contains(buf.String(), "[mcp.scripts]") {
 		t.Fatalf("the export:\n%s", buf.String())
 	}
 	if round, err := f.svc.Apply(root(), Input{Document: parse(t, buf.String()), Plan: true}); err != nil || len(round.Changes) != 0 {
@@ -730,7 +730,7 @@ func TestMCPServersInTheFile(t *testing.T) {
 		t.Fatalf("a credential in the file: %v", err)
 	}
 	// Dropping a server a workspace outside the file still uses.
-	only := Document{MCP: map[string]wsconfig.MCPServerDef{"scriptling": exported.MCP["scriptling"]}}
+	only := Document{MCP: map[string]wsconfig.MCPServerDef{"scripts": exported.MCP["scripts"]}}
 	if _, err := f.svc.Apply(root(), Input{Document: only, Plan: true}); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "workspace:fx/api") {
 		t.Fatalf("dropping a server an unlisted workspace uses: %v", err)
 	}
@@ -738,10 +738,10 @@ func TestMCPServersInTheFile(t *testing.T) {
 	// stored secret goes with the definition.
 	without := parse(t, "[mcp]\n[workspaces.\"fx/api\".config]\nmcp = []\n")
 	res, err := f.svc.Apply(root(), Input{Document: without})
-	if err != nil || lines(res) != "update config workspace:fx/api\ndelete mcp mcp:llmrouter\ndelete mcp mcp:scriptling" {
+	if err != nil || lines(res) != "update config workspace:fx/api\ndelete mcp mcp:router\ndelete mcp mcp:scripts" {
 		t.Fatalf("apply: %v\n%s", err, lines(res))
 	}
-	if _, _, err := f.config.SetMCPServer(root(), exported.MCP["llmrouter"], "cli"); err != nil {
+	if _, _, err := f.config.SetMCPServer(root(), exported.MCP["router"], "cli"); err != nil {
 		t.Fatal(err)
 	}
 	if views, _ := f.config.MCPServers(root()); len(views) != 1 || views[0].Secrets[0].Set {

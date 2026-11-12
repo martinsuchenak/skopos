@@ -31,19 +31,19 @@ func delivered(servers map[string]string, secrets ...string) *RunMCP {
 func TestRunGetsTheServersItsClaimCarries(t *testing.T) {
 	state := t.TempDir()
 	op := filepath.Join(state, "op.json")
-	if err := os.WriteFile(op, []byte(`{"mcpServers":{"fortix":{"type":"http","url":"https://fortix.example/mcp","headers":{"Authorization":"Bearer operator-file-token"}}}}`), 0o600); err != nil {
+	if err := os.WriteFile(op, []byte(`{"mcpServers":{"globex":{"type":"http","url":"https://globex.example/mcp","headers":{"Authorization":"Bearer operator-file-token"}}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	const secret = "tok-for-this-workspace-only"
 	cfg := &Config{StateDir: state, MCPConfig: op, ServerCommands: true, Vars: map[string]string{"TOOLS_DIR": "/opt/tools"}}
 	w := New(cfg, NewClient("https://skopos.example", "sk_worker"), slog.New(slog.DiscardHandler))
 	run := &Run{ID: "run-1", WorkspaceID: "ws", AgentToken: "skr_this-run-only-token", MCP: delivered(map[string]string{
-		"llmrouter":  `{"type":"http","url":"https://llm.example/mcp","headers":{"Authorization":"Bearer ` + secret + `"}}`,
-		"scriptling": `{"command":"${TOOLS_DIR}/scriptling","args":["mcp","--data","${TOOLS_DIR}/data"],"env":{"DATA":"${TOOLS_DIR}/d"}}`,
-		"novar":      `{"command":"${NOT_DECLARED}/x","args":[]}`,
-		"skopos":     `{"type":"http","url":"https://elsewhere.example/mcp"}`,
-		"odd":        `{"type":"http","url":"https://x/mcp","hooks":{"x":1}}`,
-		"neither":    `{"type":"http"}`,
+		"router":  `{"type":"http","url":"https://llm.example/mcp","headers":{"Authorization":"Bearer ` + secret + `"}}`,
+		"scripts": `{"command":"${TOOLS_DIR}/scripts","args":["mcp","--data","${TOOLS_DIR}/data"],"env":{"DATA":"${TOOLS_DIR}/d"}}`,
+		"novar":   `{"command":"${NOT_DECLARED}/x","args":[]}`,
+		"skopos":  `{"type":"http","url":"https://elsewhere.example/mcp"}`,
+		"odd":     `{"type":"http","url":"https://x/mcp","hooks":{"x":1}}`,
+		"neither": `{"type":"http"}`,
 	}, secret)}
 	run.MCP.Notes = []string{"mcp server gone is no longer defined: left out"}
 	forget, err := w.prepareRunMCP(run)
@@ -72,22 +72,22 @@ func TestRunGetsTheServersItsClaimCarries(t *testing.T) {
 		names = append(names, n)
 	}
 	slices.Sort(names)
-	if strings.Join(names, ",") != "llmrouter,scriptling,skopos" {
+	if strings.Join(names, ",") != "router,scripts,skopos" {
 		t.Fatalf("servers in the run's file: %v", names)
 	}
 	// The operator's file is not used at all for this run.
-	if strings.Contains(string(raw), "fortix") || strings.Contains(string(raw), "operator-file-token") {
+	if strings.Contains(string(raw), "globex") || strings.Contains(string(raw), "operator-file-token") {
 		t.Fatalf("the worker's own mcp_config reached a run whose servers the server holds: %s", raw)
 	}
-	if file.MCPServers["llmrouter"].Headers["Authorization"] != "Bearer "+secret {
-		t.Fatalf("the delivered server: %+v", file.MCPServers["llmrouter"])
+	if file.MCPServers["router"].Headers["Authorization"] != "Bearer "+secret {
+		t.Fatalf("the delivered server: %+v", file.MCPServers["router"])
 	}
 	// skopos is the worker's own entry, with the run's token.
 	if sk := file.MCPServers["skopos"]; sk.URL != "https://skopos.example/mcp" || sk.Headers["Authorization"] != "Bearer skr_this-run-only-token" {
 		t.Fatalf("skopos: %+v", sk)
 	}
 	// A command server: this host's variables filled in.
-	if c := file.MCPServers["scriptling"]; c.Command != "/opt/tools/scriptling" || c.Args[2] != "/opt/tools/data" || c.Env["DATA"] != "/opt/tools/d" {
+	if c := file.MCPServers["scripts"]; c.Command != "/opt/tools/scripts" || c.Args[2] != "/opt/tools/data" || c.Env["DATA"] != "/opt/tools/d" {
 		t.Fatalf("command server: %+v", c)
 	}
 	notes := strings.Join(w.runMCPNotes, "\n")
@@ -96,7 +96,7 @@ func TestRunGetsTheServersItsClaimCarries(t *testing.T) {
 			t.Errorf("notes lack %q:\n%s", want, notes)
 		}
 	}
-	if strings.Join(w.runMCPNames, ",") != "llmrouter,scriptling" {
+	if strings.Join(w.runMCPNames, ",") != "router,scripts" {
 		t.Fatalf("the servers the run got: %v", w.runMCPNames)
 	}
 	// The credential and the token are redacted from the run's log.
@@ -132,7 +132,7 @@ func TestRunGetsTheServersItsClaimCarries(t *testing.T) {
 	}
 	defer forget()
 	raw, _ = os.ReadFile(filepath.Join(state, "runs", "run-2", "mcp.json"))
-	if !strings.Contains(string(raw), "fortix") || strings.Contains(string(raw), secret) {
+	if !strings.Contains(string(raw), "globex") || strings.Contains(string(raw), secret) {
 		t.Fatalf("a run of a workspace the server holds nothing for: %s", raw)
 	}
 }
@@ -143,7 +143,7 @@ func TestRunGetsTheServersItsClaimCarries(t *testing.T) {
 func TestServerHeldMCPFailsClosed(t *testing.T) {
 	state := t.TempDir()
 	op := filepath.Join(state, "op.json")
-	if err := os.WriteFile(op, []byte(`{"mcpServers":{"fortix":{"type":"http","url":"https://fortix.example/mcp"}}}`), 0o600); err != nil {
+	if err := os.WriteFile(op, []byte(`{"mcpServers":{"globex":{"type":"http","url":"https://globex.example/mcp"}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	w := New(&Config{StateDir: state, MCPConfig: op}, NewClient("https://skopos.example", "sk_worker"), slog.New(slog.DiscardHandler))
@@ -153,7 +153,7 @@ func TestServerHeldMCPFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw, _ := os.ReadFile(filepath.Join(state, "runs", "run-1", "mcp.json"))
-	if strings.Contains(string(raw), "/bin/tool") || strings.Contains(string(raw), "fortix") || !strings.Contains(strings.Join(w.runMCPNotes, " "), "server_commands is off") {
+	if strings.Contains(string(raw), "/bin/tool") || strings.Contains(string(raw), "globex") || !strings.Contains(strings.Join(w.runMCPNotes, " "), "server_commands is off") {
 		t.Fatalf("a command server without server_commands: %s / %v", raw, w.runMCPNotes)
 	}
 	forget()
@@ -252,7 +252,7 @@ func TestFailedMCPWriteGivesTheRunBack(t *testing.T) {
 	client.leases["r1"] = "lease-1"
 	w := New(c, client, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	run := &Run{ID: "r1", ItemID: "i1", WorkspaceID: "bare", Stage: "plan", Runner: "claude", Attempt: 1, AgentToken: "skr_a-token-for-this-run",
-		MCP: delivered(map[string]string{"llmrouter": `{"type":"http","url":"https://llm.example/mcp"}`})}
+		MCP: delivered(map[string]string{"router": `{"type":"http","url":"https://llm.example/mcp"}`})}
 	if _, err := w.prepareRunMCP(run); err == nil || len(w.runMCPNames) != 0 {
 		t.Fatalf("a failed write names the servers the run has: %v %v", err, w.runMCPNames)
 	}
@@ -313,7 +313,7 @@ func TestClaimWithoutServersUnderAConfigThatNamesThem(t *testing.T) {
 	var report map[string]any
 	c := executorConfig(t)
 	c.StateDir = t.TempDir()
-	eff := &wsconfig.Effective{Workspace: "bare", Managed: true, Rev: "r1", Config: wsconfig.Config{MCP: &[]string{"llmrouter"}}}
+	eff := &wsconfig.Effective{Workspace: "bare", Managed: true, Rev: "r1", Config: wsconfig.Config{MCP: &[]string{"router"}}}
 	cs := &configServer{effective: map[string]*wsconfig.Effective{"bare": eff}, revs: map[string]*wsconfig.Effective{"r1": eff}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/report") {

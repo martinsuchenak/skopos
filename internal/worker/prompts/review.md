@@ -1,7 +1,7 @@
 Review the changes on the current branch against {{.Base}}: run `git diff origin/{{.Base}}...HEAD`
 and read the surrounding code where needed.
 {{if .BranchReview}}
-Someone else wrote this branch; Martin asked for a review of it as it stands. Nobody planned it
+Someone else wrote this branch; A review of it as it stands was asked for. Nobody planned it
 here, so what it is for is the item below. Review every commit on it.
 
 # What the branch is for
@@ -26,7 +26,7 @@ all of them; say in a finding whose commits it concerns when that matters.
 {{.Body}}
 {{end}}
 {{if .Decisions}}
-# Martin's decisions (part of the spec)
+# The approver's decisions (part of the spec)
 
 These are his answers and notes for this item. Behaviour he explicitly accepted here is NOT a
 finding — do not block on it; you may mention a residual concern as a nit.
@@ -35,7 +35,7 @@ finding — do not block on it; you may mention a residual concern as a nit.
 {{end}}{{end}}{{if .SecondOpinion}}
 # You are giving a second opinion
 
-Martin asked for an independent second opinion on this branch, from a different model than its
+An independent second opinion on this branch was asked for, from a different model than its
 reviewer. Review it fresh and on its own merits: do not assume an earlier review got it right or
 wrong. Report what you would block on and what is only a nit, exactly as in a normal review.
 {{end}}{{if .Focus}}

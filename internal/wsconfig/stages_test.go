@@ -95,7 +95,7 @@ func TestStageFieldsRoundTrip(t *testing.T) {
 func TestWorkspaceStageBlockReplacesTheGroups(t *testing.T) {
 	s, _, _ := fixture(t)
 	ctx := root()
-	if _, err := s.Set(ctx, KindGroup, "fortix", stages(map[string]*StageCaps{
+	if _, err := s.Set(ctx, KindGroup, "globex", stages(map[string]*StageCaps{
 		"implement": {Tools: []string{"Bash(group:*)"}, Env: map[string]string{"G": "1"}},
 		"review":    {Tools: []string{"Bash(review:*)"}},
 	}), "cli", ""); err != nil {
@@ -115,7 +115,7 @@ func TestWorkspaceStageBlockReplacesTheGroups(t *testing.T) {
 	if review == nil || review.Tools[0] != "Bash(review:*)" {
 		t.Fatalf("review should be the group's: %+v", review)
 	}
-	if eff.Sources["stages.implement"] != "workspace" || eff.Sources["stages.review"] != "group:fortix" {
+	if eff.Sources["stages.implement"] != "workspace" || eff.Sources["stages.review"] != "group:globex" {
 		t.Fatalf("sources: %v", eff.Sources)
 	}
 	// An empty block undoes the group's for that stage.

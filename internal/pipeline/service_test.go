@@ -51,7 +51,7 @@ func exec(t *testing.T, sqlDB *sql.DB, q string, args ...any) {
 	}
 }
 
-// fixture: workspaces fx/api and fx/web (+ other/x), group "fortix" by the
+// fixture: workspaces fx/api and fx/web (+ other/x), group "globex" by the
 // pattern fx/*, group "web-team" holding fx/web explicitly.
 func fixture(t *testing.T) (*Service, *sql.DB, *recSink) {
 	t.Helper()
@@ -60,7 +60,7 @@ func fixture(t *testing.T) (*Service, *sql.DB, *recSink) {
 	for _, ws := range []string{"fx/api", "fx/web", "other/x"} {
 		exec(t, sqlDB, `INSERT INTO workspaces (id, created_at) VALUES (?, ?)`, ws, now)
 	}
-	exec(t, sqlDB, `INSERT INTO workspace_groups (id, name, created_at) VALUES ('g1', 'fortix', ?), ('g2', 'web-team', ?)`, now, now)
+	exec(t, sqlDB, `INSERT INTO workspace_groups (id, name, created_at) VALUES ('g1', 'globex', ?), ('g2', 'web-team', ?)`, now, now)
 	exec(t, sqlDB, `INSERT INTO workspace_group_patterns (group_id, pattern) VALUES ('g1', 'fx/*')`)
 	exec(t, sqlDB, `INSERT INTO workspace_group_members (group_id, workspace_id) VALUES ('g2', 'fx/web')`)
 	s := NewService(NewStorage(sqlDB))
@@ -124,7 +124,7 @@ func TestValidation(t *testing.T) {
 // pattern; sources say where each value comes from; Prefs feeds the queue.
 func TestResolutionAndSources(t *testing.T) {
 	s, _, _ := fixture(t)
-	if _, err := s.Put(root(), KindGroup, "fortix", Settings{
+	if _, err := s.Put(root(), KindGroup, "globex", Settings{
 		Stages: map[string]StageSetting{
 			"plan":   {Members: members(t, "claude,opencode-glm")},
 			"review": {Members: members(t, "security@claude,tests@opencode-glm"), Policy: "any-blocks", TimeoutMS: 45 * 60000},
@@ -140,7 +140,7 @@ func TestResolutionAndSources(t *testing.T) {
 	if v.Effective["plan"].Source != "workspace" || FormatMembers(v.Effective["plan"].Members) != "claude" {
 		t.Fatalf("workspace overrides plan: %+v", v.Effective["plan"])
 	}
-	if v.Effective["review"].Source != "group:fortix" || v.EffectiveAgentsDefault != "solo" || v.AgentsDefaultSource != "group:fortix" {
+	if v.Effective["review"].Source != "group:globex" || v.EffectiveAgentsDefault != "solo" || v.AgentsDefaultSource != "group:globex" {
 		t.Fatalf("group supplies review and the agents default: %+v", v)
 	}
 	if _, ok := v.Effective["qa"]; ok {
@@ -151,7 +151,7 @@ func TestResolutionAndSources(t *testing.T) {
 		t.Fatalf("plan single: %+v", p)
 	}
 	if g := p.GroupMembers("review"); len(g) != 2 || p.PolicyFor("review").Timeout != 45*time.Minute || p.AgentsDefault != "solo" {
-		t.Fatalf("review group from fortix: %+v", p)
+		t.Fatalf("review group from globex: %+v", p)
 	}
 	if other := s.Prefs(root(), "other/x"); other.Configured("review") {
 		t.Fatalf("a workspace outside the group gets nothing: %+v", other)
@@ -171,11 +171,11 @@ func TestResolutionAndSources(t *testing.T) {
 // first group by name wins.
 func TestGroupConflicts(t *testing.T) {
 	s, sqlDB, _ := fixture(t)
-	if _, err := s.Put(root(), KindGroup, "fortix", Settings{Stages: map[string]StageSetting{"review": {Members: members(t, "claude")}}}, ""); err != nil {
+	if _, err := s.Put(root(), KindGroup, "globex", Settings{Stages: map[string]StageSetting{"review": {Members: members(t, "claude")}}}, ""); err != nil {
 		t.Fatal(err)
 	}
 	_, err := s.Put(root(), KindGroup, "web-team", Settings{Stages: map[string]StageSetting{"review": {Members: members(t, "opencode-glm")}}}, "")
-	if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "fx/web is also in group fortix") {
+	if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "fx/web is also in group globex") {
 		t.Fatalf("shared workspace, same stage: %v", err)
 	}
 	if _, err := s.Put(root(), KindGroup, "web-team", Settings{Stages: map[string]StageSetting{"qa": {Members: members(t, "opencode-glm")}}}, ""); err != nil {
@@ -187,7 +187,7 @@ func TestGroupConflicts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(v.Conflicts) != 1 || v.Effective["review"].Source != "group:fortix" {
+	if len(v.Conflicts) != 1 || v.Effective["review"].Source != "group:globex" {
 		t.Fatalf("conflict reported, first group by name wins: %+v", v)
 	}
 }
@@ -198,10 +198,10 @@ func TestGroupConflicts(t *testing.T) {
 // value settles it.
 func TestAgentsDefaultConflicts(t *testing.T) {
 	s, sqlDB, _ := fixture(t)
-	if _, err := s.Put(root(), KindGroup, "fortix", Settings{AgentsDefault: "solo"}, ""); err != nil {
+	if _, err := s.Put(root(), KindGroup, "globex", Settings{AgentsDefault: "solo"}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Put(root(), KindGroup, "web-team", Settings{AgentsDefault: "panel"}, ""); !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "agents default: workspace fx/web is also in group fortix") {
+	if _, err := s.Put(root(), KindGroup, "web-team", Settings{AgentsDefault: "panel"}, ""); !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "agents default: workspace fx/web is also in group globex") {
 		t.Fatalf("second group setting the agents default: %v", err)
 	}
 	exec(t, sqlDB, `INSERT INTO pipeline_defaults (owner_kind, owner_id, agents_default, updated_ms, updated_by) VALUES ('group', 'g2', 'panel', 0, '')`)
@@ -209,8 +209,8 @@ func TestAgentsDefaultConflicts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(v.Conflicts) != 1 || !strings.Contains(v.Conflicts[0], "agents default") || v.EffectiveAgentsDefault != "solo" || v.AgentsDefaultSource != "group:fortix" {
-		t.Fatalf("agents-default conflict reported, fortix wins: %+v", v)
+	if len(v.Conflicts) != 1 || !strings.Contains(v.Conflicts[0], "agents default") || v.EffectiveAgentsDefault != "solo" || v.AgentsDefaultSource != "group:globex" {
+		t.Fatalf("agents-default conflict reported, globex wins: %+v", v)
 	}
 	v, err = s.Put(root(), KindWorkspace, "fx/web", Settings{AgentsDefault: "panel"}, "")
 	if err != nil || len(v.Conflicts) != 0 || v.AgentsDefaultSource != "workspace" {
@@ -230,10 +230,10 @@ func TestPermissions(t *testing.T) {
 	if _, err := s.Put(key("k3", true, "fx/api"), KindWorkspace, "fx/api", set, ""); err != nil {
 		t.Fatalf("approver in scope: %v", err)
 	}
-	if _, err := s.Put(key("k3", true, "fx/api"), KindGroup, "fortix", set, ""); !errors.Is(err, auth.ErrRootRequired) {
+	if _, err := s.Put(key("k3", true, "fx/api"), KindGroup, "globex", set, ""); !errors.Is(err, auth.ErrRootRequired) {
 		t.Fatalf("groups are root-only: %v", err)
 	}
-	if _, err := s.Get(key("k1", false, "fx/api"), KindGroup, "fortix"); err == nil {
+	if _, err := s.Get(key("k1", false, "fx/api"), KindGroup, "globex"); err == nil {
 		t.Fatal("group reads are root-only")
 	}
 	if _, err := s.Get(key("k1", false, "fx/web"), KindWorkspace, "fx/api"); !errors.Is(err, ErrNotFound) {
@@ -316,7 +316,7 @@ func TestImport(t *testing.T) {
 
 func TestDropOrphans(t *testing.T) {
 	s, sqlDB, _ := fixture(t)
-	if _, err := s.Put(root(), KindGroup, "fortix", Settings{Stages: map[string]StageSetting{"review": {Members: members(t, "claude")}}, AgentsDefault: "solo"}, ""); err != nil {
+	if _, err := s.Put(root(), KindGroup, "globex", Settings{Stages: map[string]StageSetting{"review": {Members: members(t, "claude")}}, AgentsDefault: "solo"}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Put(root(), KindWorkspace, "other/x", Settings{Stages: map[string]StageSetting{"plan": {Members: members(t, "claude")}}}, ""); err != nil {
@@ -338,7 +338,7 @@ func TestDropOrphans(t *testing.T) {
 // workspace beats group, two groups is a conflict, and it's validated.
 func TestSecondOpinionDefault(t *testing.T) {
 	s, _, sink := fixture(t)
-	if _, err := s.Put(root(), KindGroup, "fortix", Settings{SecondOpinionRunner: "codex"}, ""); err != nil {
+	if _, err := s.Put(root(), KindGroup, "globex", Settings{SecondOpinionRunner: "codex"}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.SecondOpinionRunner(root(), "fx/api"); got != "codex" {
@@ -376,7 +376,7 @@ func TestSecondOpinionDefault(t *testing.T) {
 func TestCodeIndexSwitch(t *testing.T) {
 	s, sqlDB, sink := fixture(t)
 	on := true
-	if _, err := s.Put(root(), KindGroup, "fortix", Settings{CodeIndex: &on}, ""); !errors.Is(err, ErrInvalidInput) {
+	if _, err := s.Put(root(), KindGroup, "globex", Settings{CodeIndex: &on}, ""); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("groups refuse code_index: %v", err)
 	}
 	now := time.Now().UTC()

@@ -507,7 +507,7 @@ CREATE TABLE IF NOT EXISTS pipeline_defaults (
 ) STRICT;
 
 -- Questions and answers (tmp/questions-and-answers — design.md): the record
--- of what the planner and the implementer asked and what Martin answered.
+-- of what the planner and the implementer asked and what the approver answered.
 -- Append-only: rows are never updated or deleted (answers.used_by_run is
 -- set once, phase 2). No foreign key to inbox_items: the record outlives a
 -- deleted item. A set is one asking (every question one result returned);

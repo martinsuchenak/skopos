@@ -1,6 +1,6 @@
 # skopos is a direct MCP server (wired under the name `skopos` by
 # `skopos install`), not a tool dispatched through a router — override
-# agent-builder's llmrouter-flavored defaults per target.
+# agent-builder's router-flavored defaults per target.
 invocation:
   claude:
     skopos: 'call `mcp__skopos__{tool}` with {params}'

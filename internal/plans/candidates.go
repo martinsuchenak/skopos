@@ -27,8 +27,13 @@ const (
 	CandidateSuperseded = "superseded"
 )
 
-const reviewStepTitle = "Review and push (Martin)"
-const reviewStepDescription = "Martin reviews the branch and pushes it onward himself."
+// The review step every plan ends with: owned by the server, never an
+// agent's, and marked by its phase ("review"). A plan written by an
+// earlier release has the title with a name in brackets after it.
+const (
+	ReviewStepTitle       = "Review and push"
+	reviewStepDescription = "A person reviews the branch and pushes it onward. Not a step for an agent."
+)
 
 // CreateCandidate snapshots a planner's steps as an open candidate of a
 // plan group. Like Replan it requires planning (the plannable guard) and an
@@ -149,7 +154,7 @@ func candidateSnapshot(steps []RevisionStep) []RevisionStep {
 		pos++
 		snap = append(snap, RevisionStep{ID: ids.New(), Title: strings.TrimSpace(st.Title), Description: st.Description, Phase: "implement", Position: pos})
 	}
-	snap = append(snap, RevisionStep{ID: ids.New(), Title: reviewStepTitle, Description: reviewStepDescription, Phase: "review", Position: pos + 1})
+	snap = append(snap, RevisionStep{ID: ids.New(), Title: ReviewStepTitle, Description: reviewStepDescription, Phase: "review", Position: pos + 1})
 	return snap
 }
 

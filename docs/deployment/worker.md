@@ -147,8 +147,8 @@ config = "~/.config/skopos/opencode-providers.json"   # providers/models only; ~
 [[worker.accounts]]
 name   = "qwen"
 runner = "opencode-qwen"
-model  = "llmrouter/qwen/qwen3.8-27b"
-env    = { LLMROUTER_API_KEY = "${LLMROUTER_API_KEY}" }  # the providers file says {env:LLMROUTER_API_KEY}
+model  = "router/qwen/qwen3.8-27b"
+env    = { ROUTER_API_KEY = "${ROUTER_API_KEY}" }  # the providers file says {env:ROUTER_API_KEY}
 
 [worker.runner_config.aider]                          # any other CLI: wrapper-only
 kind    = "command"
@@ -688,13 +688,13 @@ name the repo's template gives it:
 
 ```toml
 [worker.repos."github.com/you/repo"]
-branch_prefix   = "WR"              # the worker only pushes branches starting with this
+branch_prefix   = "JOB"             # the worker only pushes branches starting with this
 branch_template = "{ref}-{slug}"    # default "{prefix}{tail}-{slug}"
 ```
 
 - **Placeholders:** `{prefix}` (`branch_prefix`), `{tail}` (the item id's
   tail), `{slug}` (the title, lowercase with dashes, at most 30 characters)
-  and `{ref}` (the item's **Reference** field, e.g. `WR203345`). A template
+  and `{ref}` (the item's **Reference** field, e.g. `JOB203345`). A template
   needs `{tail}` or `{ref}`, so two items never share a branch.
 - **A template with `{ref}`** stops an item without a reference at planning
   with "set the item's reference".
@@ -713,7 +713,7 @@ branch_template = "{ref}-{slug}"    # default "{prefix}{tail}-{slug}"
   something nobody approved. The review covers the whole branch and is told
   which commits were already there.
 - **Other branches start with the template's text before `{slug}`**
-  (`WR203345-api`, `WR203345-ui`) and none matches exactly: the item stops
+  (`JOB203345-api`, `JOB203345-ui`) and none matches exactly: the item stops
   with a question listing them. Set its Branch field to the one to continue,
   or to a new name, and retry.
 - **Nothing matches:** a new branch, as before.
@@ -1046,8 +1046,8 @@ MCP lists from there, and with `server_commands = true` its `setup`,
 id = "worker-knot-claude-1"
 server_commands = true
 
-[worker.repos."github.com/fortix/freedom3"]
-path = "/srv/clones/freedom3"
+[worker.repos."github.com/acme/shop"]
+path = "/srv/clones/shop"
 push.token_env = "FF3_PUSH_TOKEN"
 ```
 
@@ -1136,8 +1136,8 @@ contained_by = "knot"
 [worker.vars]
 CACHE_DIR = "/var/cache/skopos"
 
-[worker.repos."github.com/fortix/freedom3"]
-path = "/srv/clones/freedom3"
+[worker.repos."github.com/acme/shop"]
+path = "/srv/clones/shop"
 push.token_env = "FF3_PUSH_TOKEN"
 
 [[worker.accounts]]

@@ -26,7 +26,7 @@ const (
 	OutcomeOK        Outcome = "ok"
 	OutcomeQuota     Outcome = "quota"     // allowance or rate limit: pause, resume later
 	OutcomeTransient Outcome = "transient" // overloaded / 5xx / network: retry
-	OutcomeAuth      Outcome = "auth"      // login problem: tell Martin
+	OutcomeAuth      Outcome = "auth"      // login problem: tell the operator
 	OutcomeTimeout   Outcome = "timeout"
 	OutcomeError     Outcome = "error"
 )

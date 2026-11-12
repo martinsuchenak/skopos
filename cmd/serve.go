@@ -715,21 +715,21 @@ func serveCmd() *cli.Command {
 			runsHandler := runs.NewHandler(runsService)
 
 			// Slack relay: Socket Mode when tokens are configured; absent =
-			// disabled. The relay acts as Martin (user-id checked by the
+			// disabled. The relay acts as the approver (user-id checked by the
 			// provider) with via=slack on every workflow action; outbound
 			// gate notifications hook the inbox transitions.
 			// SKOPOS_SLACK_DEFAULT_WORKSPACE additionally enables `new:`
 			// capture. The enabled/disabled state is ALWAYS logged at boot —
 			// a silent skip reads as "relay broken" from the outside.
-			botTok, appTok, martinID := os.Getenv("SKOPOS_SLACK_BOT_TOKEN"), os.Getenv("SKOPOS_SLACK_APP_TOKEN"), os.Getenv("SKOPOS_SLACK_USER_ID")
-			if missing := []string{}; botTok == "" || appTok == "" || martinID == "" {
+			botTok, appTok, userID := os.Getenv("SKOPOS_SLACK_BOT_TOKEN"), os.Getenv("SKOPOS_SLACK_APP_TOKEN"), os.Getenv("SKOPOS_SLACK_USER_ID")
+			if missing := []string{}; botTok == "" || appTok == "" || userID == "" {
 				if botTok == "" {
 					missing = append(missing, "SKOPOS_SLACK_BOT_TOKEN")
 				}
 				if appTok == "" {
 					missing = append(missing, "SKOPOS_SLACK_APP_TOKEN")
 				}
-				if martinID == "" {
+				if userID == "" {
 					missing = append(missing, "SKOPOS_SLACK_USER_ID")
 				}
 				log.Info("slack relay disabled", "missing", strings.Join(missing, ", "))
@@ -737,8 +737,8 @@ func serveCmd() *cli.Command {
 				captureWS := os.Getenv("SKOPOS_SLACK_DEFAULT_WORKSPACE")
 				log.Info("slack relay enabled", "capture_workspace", captureWS)
 				relay := &slackRelay{inbox: inboxService, runs: runsService, revisions: plansService, defaultWS: captureWS, log: log, resolveWS: func(selector string) (string, bool) {
-					// Exact id or a unique "/suffix" (mail-processor ->
-					// github.com/fortix/mail-processor); ambiguous or
+					// Exact id or a unique "/suffix" (mailer ->
+					// github.com/acme/mailer); ambiguous or
 					// unknown = not a selector.
 					wss, err := workspacesService.List(context.Background())
 					if err != nil {
@@ -755,7 +755,7 @@ func serveCmd() *cli.Command {
 					}
 					return match, match != ""
 				}}
-				notifySvc := notify.New(notify.NewSlack(botTok, appTok, martinID, log), relay)
+				notifySvc := notify.New(notify.NewSlack(botTok, appTok, userID, log), relay)
 				relay.SetNotifier(notifySvc)
 				// Async: a Slack post (and the buffered replies it drains)
 				// must never ride a request goroutine (review M3).

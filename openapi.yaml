@@ -1297,7 +1297,7 @@ paths:
   /api/plans/{id}/amend:
     post:
       summary: Atomic amendment — append amended steps and snapshot a new revision past the lock (executor path)
-      description: Guarded by the amendment guard (the linked item implementing or awaiting_approval); appends items and snapshots the new revision in one transaction. The worker then pauses its run; Martin's approve resumes it.
+      description: Guarded by the amendment guard (the linked item implementing or awaiting_approval); appends items and snapshots the new revision in one transaction. The worker then pauses its run; the approval resumes it.
       operationId: amendPlan
       security: [{ BearerAuth: [] }]
       parameters: [{ $ref: "#/components/parameters/PlanId" }]
@@ -2027,7 +2027,7 @@ paths:
                 author_agent_id: { type: string }
                 agents: { type: string, enum: [panel, solo], description: "Multi-agent stages for this item: the repository's agent panel or one agent; omit for the repository default (--agents-default)" }
                 branch: { type: string, description: "The branch to work on: an existing one is taken over (handover, review), a new one is created under this name. Omit to let the worker name it" }
-                ref: { type: string, description: "External reference (e.g. a work request number) for the repository's branch template ({ref}); GET /api/inbox?ref= finds the item by it" }
+                ref: { type: string, description: "External reference (e.g. a ticket or job number) for the repository's branch template ({ref}); GET /api/inbox?ref= finds the item by it" }
                 external_url: { type: string, description: "https link to the item's job in another system" }
                 start: { type: string, enum: [queue, review], description: "Start the item right after creating it: queue (the pipeline) or review (review-only; needs branch or ref). Needs the approver permission and workspace_id. A start that fails leaves the item open and sets start_error" }
       parameters:
@@ -2550,7 +2550,7 @@ paths:
         - { name: item_id, in: query, schema: { type: string } }
         - { name: state, in: query, schema: { type: string, enum: [open, answered, answered_free_text, skipped, superseded, free] } }
         - { name: asker, in: query, schema: { type: string, enum: [planner, implementer, worker] } }
-        - { name: answered_by, in: query, schema: { type: string }, description: 'The answering actor as recorded ("key martin", "root")' }
+        - { name: answered_by, in: query, schema: { type: string }, description: 'The answering actor as recorded ("key alex", "root")' }
         - { name: from, in: query, schema: { type: string }, description: "A UTC date (2026-11-01) or an RFC 3339 time with offset; asked at or after" }
         - { name: to, in: query, schema: { type: string }, description: "A UTC date (the whole day) or an RFC 3339 time with offset; asked before" }
         - { name: limit, in: query, schema: { type: integer, default: 200, maximum: 1000 } }

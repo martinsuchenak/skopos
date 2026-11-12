@@ -179,11 +179,11 @@ func TestGroupChangesAreAudited(t *testing.T) {
 	seedWorkspace(t, st, "ws-b")
 	ctx := WithVia(context.Background(), "dashboard")
 
-	g, err := svc.CreateGroup(ctx, GroupInput{Name: "fortix", Members: []string{"ws-a"}})
+	g, err := svc.CreateGroup(ctx, GroupInput{Name: "globex", Members: []string{"ws-a"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.UpdateGroup(ctx, g.ID, GroupUpdateInput{Members: []string{"ws-a", "ws-b"}, Patterns: []string{"github.com/fortix/*"}}); err != nil {
+	if _, err := svc.UpdateGroup(ctx, g.ID, GroupUpdateInput{Members: []string{"ws-a", "ws-b"}, Patterns: []string{"github.com/globex/*"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.DeleteGroup(ctx, g.ID); err != nil {
@@ -199,14 +199,14 @@ func TestGroupChangesAreAudited(t *testing.T) {
 	if got := strings.Join(actions, ","); got != "group.create,group.update,group.delete" {
 		t.Fatalf("actions: %s", got)
 	}
-	if n := rec.entries[0].Notes; n != "name=fortix members=ws-a patterns=" {
+	if n := rec.entries[0].Notes; n != "name=globex members=ws-a patterns=" {
 		t.Fatalf("create note: %q", n)
 	}
 	was, now, _ := strings.Cut(rec.entries[1].Notes, "; now: ")
-	if !strings.Contains(was, "members=ws-a patterns=") || !strings.Contains(now, "members=ws-a,ws-b patterns=github.com/fortix/*") {
+	if !strings.Contains(was, "members=ws-a patterns=") || !strings.Contains(now, "members=ws-a,ws-b patterns=github.com/globex/*") {
 		t.Fatalf("update note must show the widened scope: %q", rec.entries[1].Notes)
 	}
-	if n := rec.entries[2].Notes; !strings.Contains(n, "name=fortix") || !strings.Contains(n, "ws-b") {
+	if n := rec.entries[2].Notes; !strings.Contains(n, "name=globex") || !strings.Contains(n, "ws-b") {
 		t.Fatalf("delete note must say what the group was: %q", n)
 	}
 }

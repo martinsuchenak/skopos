@@ -29,7 +29,7 @@ remotes, branches or git config.
 If the failure can't be fixed within the plan (the plan is wrong), return status "amendment" with
 the reason and the full proposed list of remaining steps. If it can't be fixed for another reason
 (a broken environment, a check that fails regardless of the code), return status "blocked" with
-the reason in at most 2 sentences. Either way, put any decision Martin must make in `questions`
+the reason in at most 2 sentences. Either way, put any decision the approver must make in `questions`
 (one entry each: `question`, and `options` when there is a choice).
 
 When the fix is committed, return status "done", the plan's step numbers in steps_done, and a

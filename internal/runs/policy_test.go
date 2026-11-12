@@ -17,7 +17,7 @@ var (
 )
 
 func anthropicOnly() *policy.Effective {
-	return &policy.Effective{Layers: []policy.Layer{{Source: "group fortix", Rev: "rev-1",
+	return &policy.Effective{Layers: []policy.Layer{{Source: "group globex", Rev: "rev-1",
 		Policy: policy.Policy{Allow: []policy.Rule{{Provider: "anthropic"}, {Provider: "openai", Stages: []string{"second_opinion"}}}}}}}
 }
 
@@ -404,7 +404,7 @@ func TestSweepStranded(t *testing.T) {
 	now = now.Add(strandedAfter + time.Second)
 	s.SweepStranded(ctx)
 	s.SweepStranded(ctx) // again: recorded once
-	if got := stranded(refused.ID); !strings.Contains(got, "no worker offers an allowed runner for review") || !strings.Contains(got, "group fortix policy") {
+	if got := stranded(refused.ID); !strings.Contains(got, "no worker offers an allowed runner for review") || !strings.Contains(got, "group globex policy") {
 		t.Fatalf("the refused run must be marked with the reason: %q", got)
 	}
 	if got := stranded(unpinned.ID); !strings.Contains(got, "for implement") {
@@ -656,13 +656,13 @@ func TestSweepStrandedEdges(t *testing.T) {
 		}
 	}
 	s.SweepStranded(ctx)
-	if got := reason(first.ID); !strings.Contains(got, "refused by the group fortix policy") {
+	if got := reason(first.ID); !strings.Contains(got, "refused by the group globex policy") {
 		t.Fatalf("a run released for a takeover nobody may take is stranded: %q", got)
 	}
 	if got := reason(oldOnly.ID); !strings.Contains(got, "report no runner facts") || strings.Contains(got, "policy policy") {
 		t.Fatalf("workers without facts: %q", got)
 	}
-	if got := reason(stale.ID); !strings.Contains(got, "refused by the group fortix policy") {
+	if got := reason(stale.ID); !strings.Contains(got, "refused by the group globex policy") {
 		t.Fatalf("a worker gone for two days must not make the run look takeable: %q", got)
 	}
 	// Cancelled: the mark goes with the next sweep.

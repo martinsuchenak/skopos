@@ -63,7 +63,7 @@ func TestCheckAgentKey(t *testing.T) {
 func TestWriteAgentMCPConfig(t *testing.T) {
 	dir := t.TempDir()
 	op := filepath.Join(dir, "op.json")
-	_ = os.WriteFile(op, []byte(`{"mcpServers":{"llmrouter":{"type":"http","url":"https://llm.example/mcp"}}}`), 0o600)
+	_ = os.WriteFile(op, []byte(`{"mcpServers":{"router":{"type":"http","url":"https://llm.example/mcp"}}}`), 0o600)
 	path, err := WriteAgentMCPConfig(filepath.Join(dir, "state"), "https://skopos.example/", "sk_agent", op)
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestWriteAgentMCPConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	sk := cfg.MCPServers["skopos"]
-	if sk.URL != "https://skopos.example/mcp" || sk.Headers["Authorization"] != "Bearer sk_agent" || cfg.MCPServers["llmrouter"].URL == "" {
+	if sk.URL != "https://skopos.example/mcp" || sk.Headers["Authorization"] != "Bearer sk_agent" || cfg.MCPServers["router"].URL == "" {
 		t.Fatalf("config: %s", raw)
 	}
 	// opencode translates the same file (remote server with its header).

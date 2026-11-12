@@ -188,7 +188,7 @@ func TestReplanAtomic(t *testing.T) {
 	for _, pi := range after.Items {
 		titles = append(titles, pi.Title+"/"+pi.Phase)
 	}
-	want := []string{"step one/implement", "step two/implement", "Review and push (Martin)/review"}
+	want := []string{"step one/implement", "step two/implement", "Review and push/review"}
 	if len(titles) != len(want) {
 		t.Fatalf("replan items wrong: %v want %v", titles, want)
 	}
@@ -310,7 +310,7 @@ func TestReviewStepSurvivesAmendment(t *testing.T) {
 		t.Fatal(err)
 	}
 	lastStep := latest.Steps[len(latest.Steps)-1]
-	if lastStep.Phase != "review" || lastStep.Title != "Review and push (Martin)" {
+	if lastStep.Phase != "review" || lastStep.Title != "Review and push" {
 		t.Fatalf("revision snapshot must end with the review step: %+v", lastStep)
 	}
 }
@@ -327,7 +327,7 @@ func mustEndWithReviewStep(t *testing.T, plansSvc *plans.Service, planID string)
 		t.Fatal("plan has no steps")
 	}
 	last := after.Items[len(after.Items)-1]
-	if last.Phase != "review" || last.Title != "Review and push (Martin)" {
+	if last.Phase != "review" || last.Title != "Review and push" {
 		t.Fatalf("plan must end with the review step: %+v", last)
 	}
 	n := 0
@@ -366,7 +366,7 @@ func TestAmendReplaceSnapshotAndApprove(t *testing.T) {
 	}
 	pendingStep, _ := plansSvc.AddItem(root, plan.ID, plans.CreateItemInput{Title: "pending step", Phase: "implement"})
 	_ = pendingStep
-	reviewStep, _ := plansSvc.AddItem(root, plan.ID, plans.CreateItemInput{Title: "Review and push (Martin)", Phase: "review"})
+	reviewStep, _ := plansSvc.AddItem(root, plan.ID, plans.CreateItemInput{Title: "Review and push", Phase: "review"})
 	_ = reviewStep
 	if _, err := svc.LinkPlan(root, item.ID, plan.ID); err != nil {
 		t.Fatal(err)
@@ -405,7 +405,7 @@ func TestAmendReplaceSnapshotAndApprove(t *testing.T) {
 		titles = append(titles, pi.Title)
 	}
 	// done + amended (replacing the pending) + review, in that order.
-	want := []string{"done step", "amended one", "amended two", "Review and push (Martin)"}
+	want := []string{"done step", "amended one", "amended two", "Review and push"}
 	if len(titles) != len(want) {
 		t.Fatalf("amended items: %v want %v", titles, want)
 	}
@@ -424,7 +424,7 @@ func TestAmendReplaceSnapshotAndApprove(t *testing.T) {
 	}
 }
 
-// Approve binds to what Martin saw (review fix 3): a stale revision id or a
+// Approve binds to what the approver saw (review fix 3): a stale revision id or a
 // plan edited after the snapshot is a 409-class refusal, and an item with no
 // plan or no revision never approves.
 func TestApproveBindsToRevision(t *testing.T) {

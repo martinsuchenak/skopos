@@ -142,7 +142,7 @@ func TestCleanerOrphanPlans(t *testing.T) {
 	// The orphan: empty, unlinked, old, worker-created — dies.
 	mkPlan("orphan", "worker-mac", old)
 	// Identical but hand-made (no worker- prefix) — kept (round 7).
-	mkPlan("hand-made", "martin", old)
+	mkPlan("hand-made", "alex", old)
 	// Fresh but otherwise identical — kept (younger than the grace).
 	mkPlan("fresh-empty", "worker-mac", fresh)
 	// Old, empty and worker-made, but LINKED to an inbox item — kept.

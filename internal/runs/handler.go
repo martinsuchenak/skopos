@@ -191,7 +191,7 @@ func (h *Handler) AppendLog(w http.ResponseWriter, r *http.Request) {
 }
 
 // Questions handles POST /api/runs/{id}/questions: the run's questions for
-// Martin, from the worker holding it (X-Skopos-Lease). 201 with the set.
+// The approver, from the worker holding it (X-Skopos-Lease). 201 with the set.
 func (h *Handler) Questions(w http.ResponseWriter, r *http.Request) {
 	var in QuestionsInput
 	if err := rest.DecodeJSON(w, r, &in); err != nil {

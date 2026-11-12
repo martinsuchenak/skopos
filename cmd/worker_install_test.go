@@ -56,7 +56,7 @@ func TestSystemdUnit(t *testing.T) {
 	}{
 		{false, "default.target", [2]string{"", ""}, ""},
 		{true, "multi-user.target", [2]string{"", ""}, ""},
-		{true, "multi-user.target", [2]string{"martin", "staff"}, "User=martin\nGroup=staff\n"},
+		{true, "multi-user.target", [2]string{"alex", "staff"}, "User=alex\nGroup=staff\n"},
 	} {
 		u := systemdUnit("skopos-worker", "/opt/bin/skopos", "/home/some dir/skopos-config.toml", "", "/usr/bin:/bin:100%/x", tc.system, tc.userGroup)
 		unitPart, servicePart := splitUnitSections(u)

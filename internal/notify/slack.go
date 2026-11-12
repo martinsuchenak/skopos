@@ -14,17 +14,17 @@ import (
 )
 
 // Slack is the Socket Mode provider: an outbound websocket to Slack, so no
-// public URL is needed. Martin's replies in item threads come back over the
+// public URL is needed. The approver's replies in item threads come back over the
 // socket and flow into the relay; only his user id is honored.
 type Slack struct {
 	botToken string
 	appToken string
-	martinID string
+	userID   string
 	http     *http.Client
 	log      Logger
 	mu       sync.Mutex
 	threads  map[string]string // thread ts -> item id
-	// dm is the bot's IM channel with Martin. Until it is learned (from a
+	// dm is the bot's IM channel with the approver. Until it is learned (from a
 	// send's response or one of HIS im events) posts go to his user id —
 	// chat.postMessage resolves that to the same IM, so the first message
 	// after a restart is never dropped and no other sender can redirect it.
@@ -38,12 +38,12 @@ type Logger interface {
 	Warn(msg string, args ...any)
 }
 
-func NewSlack(botToken, appToken, martinUserID string, log Logger) *Slack {
+func NewSlack(botToken, appToken, userID string, log Logger) *Slack {
 	if log == nil {
 		log = nopLogger{}
 	}
 	return &Slack{
-		botToken: botToken, appToken: appToken, martinID: martinUserID,
+		botToken: botToken, appToken: appToken, userID: userID,
 		http:    &http.Client{Timeout: 30 * time.Second},
 		log:     log,
 		threads: map[string]string{},
@@ -97,12 +97,12 @@ func truncBody(b []byte) string {
 	return string(b)
 }
 
-// channel is where posts go: the learned IM channel, else Martin's user id.
+// channel is where posts go: the learned IM channel, else the approver's user id.
 func (s *Slack) channel() string {
 	if c := s.dm.Load(); c != "" {
 		return c
 	}
-	return s.martinID
+	return s.userID
 }
 
 type atomicString struct {
@@ -123,7 +123,7 @@ func (a *atomicString) Set(v string) {
 }
 
 // Start runs the Socket Mode loop: connect via the apps.connections.open
-// handshake, then read events. Messages from Martin in known item threads
+// handshake, then read events. Messages from the approver in known item threads
 // become relay commands; handled ones get a ✅ so they never replay.
 //
 // The websocket transport is abstracted behind wsConn so the provider is
@@ -313,8 +313,8 @@ func (s *Slack) handleEvent(ctx context.Context, body json.RawMessage, relay Rel
 		return
 	}
 	e := ev.Event
-	if e.Type != "message" || e.User != s.martinID || e.ChannelType != "im" {
-		// Only Martin's DMs count (bot echoes, other users and channels the
+	if e.Type != "message" || e.User != s.userID || e.ChannelType != "im" {
+		// Only the approver's DMs count (bot echoes, other users and channels the
 		// app can see are ignored) — and nothing from them may touch the
 		// outbound channel, or anyone could redirect the gate messages.
 		s.log.Info("slack event ignored", "type", e.Type, "user", e.User, "channel", e.Channel, "channel_type", e.ChannelType)

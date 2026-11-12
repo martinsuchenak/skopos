@@ -21,8 +21,8 @@ func TestCreateAndStart(t *testing.T) {
 	q := &stageQueuer{}
 	svc.SetRunQueuer(q)
 	in := func(start string) CreateInput {
-		return CreateInput{WorkspaceID: "ws-a", Title: "job", Content: "do it", AuthorAgentID: "fortix",
-			Ref: "WR110375", ExternalURL: "https://fortix.example/wr/110375", Start: start}
+		return CreateInput{WorkspaceID: "ws-a", Title: "job", Content: "do it", AuthorAgentID: "globex",
+			Ref: "JOB110375", ExternalURL: "https://jobs.example.com/job/110375", Start: start}
 	}
 
 	// Refused before the item exists.
@@ -37,14 +37,14 @@ func TestCreateAndStart(t *testing.T) {
 	if _, err := svc.CreateItem(approverCtx(), noRef); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("review without branch or ref: %v", err)
 	}
-	for _, bad := range []string{"http://fortix.example/x", "javascript:alert(1)", "https://", "https://u:p@host/x", "https://x/" + strings.Repeat("a", maxExternalURL)} {
+	for _, bad := range []string{"http://globex.example/x", "javascript:alert(1)", "https://", "https://u:p@host/x", "https://x/" + strings.Repeat("a", maxExternalURL)} {
 		b := in("")
 		b.ExternalURL = bad
 		if _, err := svc.CreateItem(approverCtx(), b); !errors.Is(err, ErrInvalidInput) {
 			t.Errorf("external_url %q: %v", bad, err)
 		}
 	}
-	if items, _ := svc.ListItemsFilter(context.Background(), ListFilter{Ref: "WR110375"}); len(items) != 0 {
+	if items, _ := svc.ListItemsFilter(context.Background(), ListFilter{Ref: "JOB110375"}); len(items) != 0 {
 		t.Fatalf("refused creates left %d items", len(items))
 	}
 
@@ -52,7 +52,7 @@ func TestCreateAndStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if queued.Status != StatusQueued || queued.StartError != "" || queued.ExternalURL != "https://fortix.example/wr/110375" {
+	if queued.Status != StatusQueued || queued.StartError != "" || queued.ExternalURL != "https://jobs.example.com/job/110375" {
 		t.Fatalf("queued: %+v", queued)
 	}
 	if q.last() == "" {
@@ -71,19 +71,19 @@ func TestCreateAndStart(t *testing.T) {
 	}
 
 	// Found by ref, in any status, within the caller's scope.
-	items, err := svc.ListItemsFilter(agentCtx(), ListFilter{Ref: "WR110375"})
+	items, err := svc.ListItemsFilter(agentCtx(), ListFilter{Ref: "JOB110375"})
 	if err != nil || len(items) != 3 {
 		t.Fatalf("by ref: %d %v", len(items), err)
 	}
-	if items, _ := svc.ListItemsFilter(agentCtx(), ListFilter{Ref: "WR1"}); len(items) != 0 {
+	if items, _ := svc.ListItemsFilter(agentCtx(), ListFilter{Ref: "JOB1"}); len(items) != 0 {
 		t.Fatalf("ref is an exact match: %d", len(items))
 	}
-	if items, _ := svc.ListItemsFilter(agentCtx(), ListFilter{Ref: "WR110375", Status: "queued"}); len(items) != 2 {
+	if items, _ := svc.ListItemsFilter(agentCtx(), ListFilter{Ref: "JOB110375", Status: "queued"}); len(items) != 2 {
 		t.Fatalf("by ref and status: %d", len(items))
 	}
 
 	// The link is editable, and clearable.
-	other := "https://fortix.example/wr/1"
+	other := "https://jobs.example.com/job/1"
 	if err := svc.UpdateItem(agentCtx(), open.ID, UpdateInput{ExternalURL: &other}); err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestCreateAndStart(t *testing.T) {
 func TestCreateStartFailureKeepsItem(t *testing.T) {
 	svc, _, _ := fullStack(t)
 	svc.SetRunQueuer(&failingQueuer{})
-	item, err := svc.CreateItem(approverCtx(), CreateInput{WorkspaceID: "ws-a", Title: "job", AuthorAgentID: "fortix", Start: StartQueue})
+	item, err := svc.CreateItem(approverCtx(), CreateInput{WorkspaceID: "ws-a", Title: "job", AuthorAgentID: "globex", Start: StartQueue})
 	if err != nil {
 		t.Fatal(err)
 	}

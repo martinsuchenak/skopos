@@ -54,9 +54,9 @@ func TestNormalizeMCPServer(t *testing.T) {
 	}
 	// What is not a credential stays writable as it is.
 	for name, d := range map[string]MCPServerDef{
-		"a tenant header":   {Name: "x", Type: MCPHTTP, URL: "https://x/v2/mcp?mode=readonly", Headers: map[string]string{"X-Tenant": "fortix", "Accept": "application/json"}},
+		"a tenant header":   {Name: "x", Type: MCPHTTP, URL: "https://x/v2/mcp?mode=readonly", Headers: map[string]string{"X-Tenant": "globex", "Accept": "application/json"}},
 		"a named package":   {Name: "x", Type: MCPCommand, Command: []string{"npx", "-y", "mcp-server-postgres15-readonly", "--port=8080"}},
-		"paths and options": {Name: "x", Type: MCPCommand, Command: []string{"${TOOLS_DIR}/scriptling", "mcp", "--data", "/opt/tools/scriptling/data/v2"}, Env: map[string]string{"DATA": "/var/lib/scriptling/data2", "NODE_ENV": "production"}},
+		"paths and options": {Name: "x", Type: MCPCommand, Command: []string{"${TOOLS_DIR}/scripts", "mcp", "--data", "/opt/tools/scripts/data/v2"}, Env: map[string]string{"DATA": "/var/lib/scripts/data2", "NODE_ENV": "production"}},
 	} {
 		if _, err := NormalizeMCPServer(d); err != nil {
 			t.Errorf("%s: refused (%v)", name, err)
@@ -67,16 +67,16 @@ func TestNormalizeMCPServer(t *testing.T) {
 			t.Errorf("%s: accepted (%v)", name, err)
 		}
 	}
-	http, err := NormalizeMCPServer(MCPServerDef{Name: "llmrouter", Type: " HTTP ", URL: " https://llmrouter.example.com/mcp?key=${secret:extra} ",
-		Headers: map[string]string{"Authorization": "Bearer ${secret:token}", "X-Tenant": "fortix", "X-Extra-Key": "${secret:extra}"}, Workspaces: []string{" fx/* ", "fx/*", ""}})
+	http, err := NormalizeMCPServer(MCPServerDef{Name: "router", Type: " HTTP ", URL: " https://router.example.com/mcp?key=${secret:extra} ",
+		Headers: map[string]string{"Authorization": "Bearer ${secret:token}", "X-Tenant": "globex", "X-Extra-Key": "${secret:extra}"}, Workspaces: []string{" fx/* ", "fx/*", ""}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if http.Type != MCPHTTP || http.URL != "https://llmrouter.example.com/mcp?key=${secret:extra}" || strings.Join(http.SecretNames(), ",") != "extra,token" || strings.Join(http.Workspaces, ",") != "fx/*" {
+	if http.Type != MCPHTTP || http.URL != "https://router.example.com/mcp?key=${secret:extra}" || strings.Join(http.SecretNames(), ",") != "extra,token" || strings.Join(http.Workspaces, ",") != "fx/*" {
 		t.Fatalf("http: %+v %v", http, http.SecretNames())
 	}
-	cmd, err := NormalizeMCPServer(MCPServerDef{Name: "scriptling", Type: MCPCommand, Command: []string{"${TOOLS_DIR}/scriptling", "mcp"},
-		Env: map[string]string{"SCRIPTLING_TOKEN": "${secret:token}", "DATA": "${DATA_DIR}/s"}, Workspaces: []string{"*"}})
+	cmd, err := NormalizeMCPServer(MCPServerDef{Name: "scripts", Type: MCPCommand, Command: []string{"${TOOLS_DIR}/scripts", "mcp"},
+		Env: map[string]string{"SCRIPTS_TOKEN": "${secret:token}", "DATA": "${DATA_DIR}/s"}, Workspaces: []string{"*"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func mcpConfig(servers ...string) Config {
 func TestMCPServersAndSecrets(t *testing.T) {
 	s, sink, _ := mcpFixture(t, "test key")
 	ctx := root()
-	router := MCPServerDef{Name: "llmrouter", Type: MCPHTTP, URL: "https://llmrouter.example.com/mcp", Headers: map[string]string{"Authorization": "Bearer ${secret:token}"},
+	router := MCPServerDef{Name: "router", Type: MCPHTTP, URL: "https://router.example.com/mcp", Headers: map[string]string{"Authorization": "Bearer ${secret:token}"},
 		Workspaces: []string{"fx/api"}}
 	// Fleet admins only.
 	if _, _, err := s.SetMCPServer(key(true, false, "fx/api"), router, "cli"); !errors.Is(err, auth.ErrAdminRequired) {
@@ -121,7 +121,7 @@ func TestMCPServersAndSecrets(t *testing.T) {
 		t.Fatalf("a key without the admin permission listed MCP servers: %v", err)
 	}
 	// A config cannot name a server that is not defined.
-	if _, err := s.Set(ctx, KindWorkspace, "fx/api", mcpConfig("llmrouter"), "cli", ""); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "not defined") {
+	if _, err := s.Set(ctx, KindWorkspace, "fx/api", mcpConfig("router"), "cli", ""); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "not defined") {
 		t.Fatalf("an undefined server: %v", err)
 	}
 	v, changed, err := s.SetMCPServer(key(true, true), router, "cli")
@@ -132,11 +132,11 @@ func TestMCPServersAndSecrets(t *testing.T) {
 		t.Fatalf("audit: %+v", e)
 	}
 	// A server the runs get needs an allow rule for its tools.
-	onlyAttached := []string{"llmrouter"}
-	if _, err := s.Set(ctx, KindWorkspace, "fx/api", Config{MCP: &onlyAttached}, "cli", ""); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "mcp__llmrouter") {
+	onlyAttached := []string{"router"}
+	if _, err := s.Set(ctx, KindWorkspace, "fx/api", Config{MCP: &onlyAttached}, "cli", ""); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "mcp__router") {
 		t.Fatalf("attached and not allowed: %v", err)
 	}
-	if _, err := s.Set(ctx, KindWorkspace, "fx/api", mcpConfig("llmrouter"), "cli", ""); err != nil {
+	if _, err := s.Set(ctx, KindWorkspace, "fx/api", mcpConfig("router"), "cli", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -146,19 +146,19 @@ func TestMCPServersAndSecrets(t *testing.T) {
 		t.Fatalf("without the secret: %+v %v", mcp, err)
 	}
 	const value = "tok-3f9a-very-secret"
-	if err := s.SetMCPSecret(key(true, false, "fx/api"), "llmrouter", "token", []byte(value), "cli"); !errors.Is(err, auth.ErrAdminRequired) {
+	if err := s.SetMCPSecret(key(true, false, "fx/api"), "router", "token", []byte(value), "cli"); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("a workspace admin set a secret: %v", err)
 	}
-	if err := s.SetMCPSecret(ctx, "llmrouter", "nope", []byte(value), "cli"); !errors.Is(err, ErrInvalid) {
+	if err := s.SetMCPSecret(ctx, "router", "nope", []byte(value), "cli"); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("a secret the definition does not name: %v", err)
 	}
-	if err := s.SetMCPSecret(ctx, "llmrouter", "token", []byte("short"), "cli"); !errors.Is(err, ErrInvalid) {
+	if err := s.SetMCPSecret(ctx, "router", "token", []byte("short"), "cli"); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("a value too short to keep out of logs: %v", err)
 	}
-	if err := s.SetMCPSecret(ctx, "llmrouter", "token", []byte("has ${VAR} in it"), "cli"); !errors.Is(err, ErrInvalid) {
+	if err := s.SetMCPSecret(ctx, "router", "token", []byte("has ${VAR} in it"), "cli"); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("a value with ${: %v", err)
 	}
-	if err := s.SetMCPSecret(ctx, "llmrouter", "token", []byte(value+"\n"), "cli"); err != nil {
+	if err := s.SetMCPSecret(ctx, "router", "token", []byte(value+"\n"), "cli"); err != nil {
 		t.Fatal(err)
 	}
 	if e := sink.last(); e.Action != "mcp_server.secret_set" || !strings.Contains(e.Notes, "secret token") || strings.Contains(e.Notes, value) {
@@ -172,8 +172,8 @@ func TestMCPServersAndSecrets(t *testing.T) {
 		Type, URL string
 		Headers   map[string]string
 	}
-	if err := json.Unmarshal(mcp.Servers["llmrouter"], &entry); err != nil || entry.Type != "http" || entry.Headers["Authorization"] != "Bearer "+value {
-		t.Fatalf("the delivered server: %s %v", mcp.Servers["llmrouter"], err)
+	if err := json.Unmarshal(mcp.Servers["router"], &entry); err != nil || entry.Type != "http" || entry.Headers["Authorization"] != "Bearer "+value {
+		t.Fatalf("the delivered server: %s %v", mcp.Servers["router"], err)
 	}
 	// Only for the workspace whose config names it.
 	if other, err := s.RunMCP(ctx, "fx/web", true); err != nil || other != nil {
@@ -206,11 +206,11 @@ func TestMCPServersAndSecrets(t *testing.T) {
 	}
 
 	// A command server goes only to a worker that takes commands.
-	tool := MCPServerDef{Name: "scriptling", Type: MCPCommand, Command: []string{"${TOOLS_DIR}/scriptling", "mcp"}, Env: map[string]string{"DATA": "${DATA_DIR}/s"}}
+	tool := MCPServerDef{Name: "scripts", Type: MCPCommand, Command: []string{"${TOOLS_DIR}/scripts", "mcp"}, Env: map[string]string{"DATA": "${DATA_DIR}/s"}}
 	if _, _, err := s.SetMCPServer(ctx, tool, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Set(ctx, KindWorkspace, "fx/api", mcpConfig("llmrouter", "scriptling"), "cli", ""); err != nil {
+	if _, err := s.Set(ctx, KindWorkspace, "fx/api", mcpConfig("router", "scripts"), "cli", ""); err != nil {
 		t.Fatal(err)
 	}
 	without, _ := s.RunMCP(ctx, "fx/api", false)
@@ -223,16 +223,16 @@ func TestMCPServersAndSecrets(t *testing.T) {
 		Args    []string
 		Env     map[string]string
 	}
-	if err := json.Unmarshal(with.Servers["scriptling"], &cmd); err != nil || cmd.Command != "${TOOLS_DIR}/scriptling" || cmd.Args[0] != "mcp" || cmd.Env["DATA"] != "${DATA_DIR}/s" {
-		t.Fatalf("the worker's variables are left for the worker: %s %v", with.Servers["scriptling"], err)
+	if err := json.Unmarshal(with.Servers["scripts"], &cmd); err != nil || cmd.Command != "${TOOLS_DIR}/scripts" || cmd.Args[0] != "mcp" || cmd.Env["DATA"] != "${DATA_DIR}/s" {
+		t.Fatalf("the worker's variables are left for the worker: %s %v", with.Servers["scripts"], err)
 	}
 
 	// The server is for fx/api only: no other workspace's admin can give it
 	// to its runs, and a group that reaches another workspace cannot either.
-	if _, err := s.Set(ctx, KindWorkspace, "fx/web", mcpConfig("llmrouter"), "cli", ""); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "may not be given to the runs of fx/web") {
+	if _, err := s.Set(ctx, KindWorkspace, "fx/web", mcpConfig("router"), "cli", ""); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "may not be given to the runs of fx/web") {
 		t.Fatalf("a server given to a workspace it is not for: %v", err)
 	}
-	if _, err := s.Set(ctx, KindGroup, "fortix", mcpConfig("llmrouter"), "cli", ""); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "fx/web") {
+	if _, err := s.Set(ctx, KindGroup, "globex", mcpConfig("router"), "cli", ""); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "fx/web") {
 		t.Fatalf("a group that reaches a workspace the server is not for: %v", err)
 	}
 	// The definition is narrowed after a config named it: the run goes
@@ -242,13 +242,13 @@ func TestMCPServersAndSecrets(t *testing.T) {
 	if _, _, err := s.SetMCPServer(ctx, elsewhere, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if mcp, _ := s.RunMCP(ctx, "fx/api", true); mcp.Servers["llmrouter"] != nil || !strings.Contains(strings.Join(mcp.Notes, " "), "may not be given to this workspace") {
+	if mcp, _ := s.RunMCP(ctx, "fx/api", true); mcp.Servers["router"] != nil || !strings.Contains(strings.Join(mcp.Notes, " "), "may not be given to this workspace") {
 		t.Fatalf("a server no longer for the workspace: %+v", mcp)
 	}
 	if _, _, err := s.SetMCPServer(ctx, router, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if mcp, _ := s.RunMCP(ctx, "fx/api", true); mcp.Servers["llmrouter"] == nil {
+	if mcp, _ := s.RunMCP(ctx, "fx/api", true); mcp.Servers["router"] == nil {
 		t.Fatalf("the workspaces a server is for do not touch its secrets: %+v", mcp)
 	}
 	// A secret is for the server it was set for: a definition that sends
@@ -261,13 +261,13 @@ func TestMCPServersAndSecrets(t *testing.T) {
 	if e := sink.last(); !strings.Contains(e.Notes, "address changed") || !strings.Contains(e.Notes, "token") {
 		t.Fatalf("audit: %+v", e)
 	}
-	if mcp, _ := s.RunMCP(ctx, "fx/api", true); mcp.Servers["llmrouter"] != nil || !strings.Contains(strings.Join(mcp.Notes, " "), "secret token is not set") {
+	if mcp, _ := s.RunMCP(ctx, "fx/api", true); mcp.Servers["router"] != nil || !strings.Contains(strings.Join(mcp.Notes, " "), "secret token is not set") {
 		t.Fatalf("the secret followed the server to another host: %+v", mcp)
 	}
 	if _, _, err := s.SetMCPServer(ctx, router, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetMCPSecret(ctx, "llmrouter", "token", []byte("  "+value+" \t"), "cli"); err != nil {
+	if err := s.SetMCPSecret(ctx, "router", "token", []byte("  "+value+" \t"), "cli"); err != nil {
 		t.Fatal(err)
 	}
 	if mcp, _ := s.RunMCP(ctx, "fx/api", true); len(mcp.Secrets) != 1 || mcp.Secrets[0] != value {
@@ -276,11 +276,11 @@ func TestMCPServersAndSecrets(t *testing.T) {
 
 	// Redefining without the secret deletes its value; deleting a server
 	// in use is refused.
-	if _, err := s.DeleteMCPServer(ctx, "llmrouter", "cli", false); !errors.Is(err, ErrConflict) {
+	if _, err := s.DeleteMCPServer(ctx, "router", "cli", false); !errors.Is(err, ErrConflict) {
 		t.Fatalf("deleting a server in use: %v", err)
 	}
 	plain := router
-	plain.Headers = map[string]string{"X-Tenant": "fortix"}
+	plain.Headers = map[string]string{"X-Tenant": "globex"}
 	if _, _, err := s.SetMCPServer(ctx, plain, "cli"); err != nil {
 		t.Fatal(err)
 	}
@@ -290,13 +290,13 @@ func TestMCPServersAndSecrets(t *testing.T) {
 	if _, _, err := s.SetMCPServer(ctx, router, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if mcp, _ := s.RunMCP(ctx, "fx/api", true); len(mcp.Servers["llmrouter"]) != 0 {
+	if mcp, _ := s.RunMCP(ctx, "fx/api", true); len(mcp.Servers["router"]) != 0 {
 		t.Fatal("a secret came back with the definition that names it again")
 	}
-	if err := s.UnsetMCPSecret(ctx, "llmrouter", "token", "cli"); !errors.Is(err, ErrNotFound) {
+	if err := s.UnsetMCPSecret(ctx, "router", "token", "cli"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unsetting a secret that is not set: %v", err)
 	}
-	if _, err := s.DeleteMCPServer(ctx, "llmrouter", "cli", true); err != nil {
+	if _, err := s.DeleteMCPServer(ctx, "router", "cli", true); err != nil {
 		t.Fatal(err)
 	}
 	if mcp, _ := s.RunMCP(ctx, "fx/api", true); len(mcp.Notes) == 0 || !strings.Contains(strings.Join(mcp.Notes, " "), "no longer defined") {
@@ -363,11 +363,11 @@ func TestMCPServerWorkspaces(t *testing.T) {
 		ws   string
 		want bool
 	}{
-		{with("*"), "github.com/fortix/freedom3", true},
-		{with("github.com/fortix/*"), "github.com/fortix/freedom3", true},
-		{with("github.com/fortix/*"), "github.com/martin/personal", false},
-		{with("github.com/fortix/*"), "github.com/fortix/a/b", false},
-		{with("github.com/fortix/freedom3", "github.com/martin/x"), "github.com/martin/x", true},
+		{with("*"), "github.com/globex/shop", true},
+		{with("github.com/globex/*"), "github.com/globex/shop", true},
+		{with("github.com/globex/*"), "github.com/alex/personal", false},
+		{with("github.com/globex/*"), "github.com/globex/a/b", false},
+		{with("github.com/globex/shop", "github.com/alex/x"), "github.com/alex/x", true},
 		// A server without secrets and without a list: any workspace.
 		{MCPServerDef{Name: "x", Type: MCPHTTP, URL: "https://x/mcp"}, "anything/at/all", true},
 		{MCPServerDef{Name: "x", Type: MCPHTTP, URL: "https://x/mcp", Workspaces: []string{"a/*"}}, "b/c", false},

@@ -8,7 +8,7 @@ import (
 
 // A review-only item's branch_review run goes to the workspace's review
 // runner, moves the item into implementing on claim, and hands it to
-// Martin at in_review whatever the verdict; a run that couldn't review
+// The approver at in_review whatever the verdict; a run that couldn't review
 // blocks it.
 func TestBranchReviewRun(t *testing.T) {
 	s := testService(t)
@@ -19,11 +19,11 @@ func TestBranchReviewRun(t *testing.T) {
 	s.SetItemTransition(func(_ context.Context, item, to, _, _ string) error { moves = append(moves, item+":"+to); return nil })
 	ctx := rootCtx()
 
-	r, err := s.Queue(ctx, QueueInput{WorkspaceID: "ws-a", ItemID: "item-1", Stage: StageBranchReview, Branch: "WR9-x"})
+	r, err := s.Queue(ctx, QueueInput{WorkspaceID: "ws-a", ItemID: "item-1", Stage: StageBranchReview, Branch: "JOB9-x"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Runner != "codex" || r.Branch != "WR9-x" {
+	if r.Runner != "codex" || r.Branch != "JOB9-x" {
 		t.Fatalf("queued: runner=%q branch=%q", r.Runner, r.Branch)
 	}
 	c, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Runners: []string{"codex"}, Workspaces: []string{"ws-a"}})
@@ -35,7 +35,7 @@ func TestBranchReviewRun(t *testing.T) {
 	}
 	moves = nil
 	// A failing verdict still succeeds the run: the findings are the verdict.
-	if _, err := s.Report(ctx, c.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded, HeadSHA: "abc1234def", Branch: "WR9-x",
+	if _, err := s.Report(ctx, c.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded, HeadSHA: "abc1234def", Branch: "JOB9-x",
 		Findings: []Finding{{Severity: SeverityBlocking, Text: "no header row"}}}, c.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestBranchReviewRun(t *testing.T) {
 		t.Fatalf("the reviewed head is the head sign-off approves: %q", got)
 	}
 
-	r2, err := s.Queue(ctx, QueueInput{WorkspaceID: "ws-a", ItemID: "item-2", Stage: StageBranchReview, Branch: "WR9-y"})
+	r2, err := s.Queue(ctx, QueueInput{WorkspaceID: "ws-a", ItemID: "item-2", Stage: StageBranchReview, Branch: "JOB9-y"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestBranchReviewRun(t *testing.T) {
 		t.Fatalf("claim 2: %+v", c)
 	}
 	moves = nil
-	if _, err := s.Report(ctx, c.ID, ReportInput{WorkerID: "w1", Status: StatusFailed, Reason: "branch WR9-y is not on origin"}, c.LeaseToken); err != nil {
+	if _, err := s.Report(ctx, c.ID, ReportInput{WorkerID: "w1", Status: StatusFailed, Reason: "branch JOB9-y is not on origin"}, c.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
 	if len(moves) != 1 || moves[0] != "item-2:blocked" {
@@ -89,7 +89,7 @@ func TestBranchReviewPanel(t *testing.T) {
 	})
 	ctx := rootCtx()
 
-	first, err := s.Queue(ctx, QueueInput{WorkspaceID: "ws-a", ItemID: "item-1", Stage: StageBranchReview, Branch: "WR9-x"})
+	first, err := s.Queue(ctx, QueueInput{WorkspaceID: "ws-a", ItemID: "item-1", Stage: StageBranchReview, Branch: "JOB9-x"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestBranchReviewPanel(t *testing.T) {
 		t.Fatalf("a failing panel verdict still goes to in_review: %v", moves)
 	}
 
-	solo, err := s.Queue(ctx, QueueInput{WorkspaceID: "ws-a", ItemID: "item-2", Stage: StageBranchReview, Branch: "WR9-y"})
+	solo, err := s.Queue(ctx, QueueInput{WorkspaceID: "ws-a", ItemID: "item-2", Stage: StageBranchReview, Branch: "JOB9-y"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestBranchReviewPanel(t *testing.T) {
 		t.Fatalf("solo: %+v", solo)
 	}
 	_ = s.CancelRun(ctx, solo.ID, "checked")
-	focused, err := s.Queue(ctx, QueueInput{WorkspaceID: "ws-b", ItemID: "item-3", Stage: StageBranchReview, Branch: "WR9-z"})
+	focused, err := s.Queue(ctx, QueueInput{WorkspaceID: "ws-b", ItemID: "item-3", Stage: StageBranchReview, Branch: "JOB9-z"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestBranchReviewPanel(t *testing.T) {
 	_ = s.CancelRun(ctx, focused.ID, "checked")
 
 	moves = nil
-	r4, err := s.Queue(ctx, QueueInput{WorkspaceID: "ws-a", ItemID: "item-4", Stage: StageBranchReview, Branch: "WR9-gone"})
+	r4, err := s.Queue(ctx, QueueInput{WorkspaceID: "ws-a", ItemID: "item-4", Stage: StageBranchReview, Branch: "JOB9-gone"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestBranchReviewPanel(t *testing.T) {
 		if c == nil || c.GroupID != r4.GroupID {
 			t.Fatalf("claim %s: %+v", runner, c)
 		}
-		if _, err := s.Report(ctx, c.ID, ReportInput{WorkerID: "w-" + runner, Status: StatusFailed, Reason: "branch WR9-gone is not on origin"}, c.LeaseToken); err != nil {
+		if _, err := s.Report(ctx, c.ID, ReportInput{WorkerID: "w-" + runner, Status: StatusFailed, Reason: "branch JOB9-gone is not on origin"}, c.LeaseToken); err != nil {
 			t.Fatal(err)
 		}
 	}

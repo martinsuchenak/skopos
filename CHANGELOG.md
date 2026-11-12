@@ -23,7 +23,7 @@ versions follow [Semantic Versioning](https://semver.org/).
   is a list of allow rules by provider (who receives the code), model,
   agent CLI and stage, set on a workspace, a group, as a fleet default, or
   as a fleet ceiling nothing may go beyond
-  (`skopos policy set --group fortix --allow provider=anthropic`). A runner
+  (`skopos policy set --group acme --allow provider=anthropic`). A runner
   must be allowed at every level that applies. Without a policy nothing
   changes. See `docs/concepts/runner-policy.md`.
   - **Checked at every claim, with what the worker reports.** Workers now
@@ -198,10 +198,10 @@ versions follow [Semantic Versioning](https://semver.org/).
   the Pipeline dialog, and the stages a worker cannot run in the Workers
   view.
 - **MCP servers for runs, defined on the server.** `skopos mcp-server set
-  llmrouter --url … --header 'Authorization=Bearer ${secret:token}'`
+  router --url … --header 'Authorization=Bearer ${secret:token}'`
   defines a server once (an http URL with headers, or a command the worker
   runs); a workspace's or group's config gives its runs servers by name
-  (`mcp = ["llmrouter"]`) and allows their tools (`mcp_servers`). See
+  (`mcp = ["router"]`) and allows their tools (`mcp_servers`). See
   `docs/concepts/workspace-config.md#mcp-servers`.
   - **Credentials are set apart and never shown.** A definition names its
     secrets (`${secret:NAME}`); `skopos mcp-server set-secret <server>
@@ -277,6 +277,23 @@ versions follow [Semantic Versioning](https://semver.org/).
   branch once its owner stays away.
 - **Webhook secrets created or rotated on this release cannot be opened by
   an earlier release:** they name the key that sealed them.
+- **Prompts, plans and the dashboard name no person.** The agents' prompts
+  speak of the approver, and the step every plan ends with is titled
+  "Review and push". Plans written by an earlier release keep the title
+  they have. A worker older than this release does not recognise the new
+  title and shows that step to the implementer, so update the workers with
+  the server.
+- **Builds carry no build-machine paths** (`-trimpath`).
+- **No MCP tool is denied by default.** `mcp_deny` used to start with
+  eight tools of one installation's own MCP servers; it now starts empty.
+  The built-in git and network denials are unchanged. A worker that
+  relied on the default has to list those tools in `worker.mcp_deny`
+  itself, before it is updated.
+- **The planner prompt no longer points at one installation's MCP tools**
+  for an item's facts. Say where such facts come from in the repository's
+  `AGENTS.md` or in a skill.
+- **Examples in the CLI help, the dashboard and the documentation use
+  placeholder names** (`github.com/acme/*`, `router`, `JOB203345`).
 - **A run's agent may call only its stage's skopos tools:** the blackboard,
   `skopos_context`, `plan_read` and the `code_*` tools, plus
   `plan_update_item` for an implement run, on its own item's plan only.
@@ -425,7 +442,7 @@ versions follow [Semantic Versioning](https://semver.org/).
   - `POST /api/inbox` takes `start` (`queue` or `review`) to start the item
     in the same call, and `external_url`, a link back to the job, shown on
     the item in the dashboard.
-  - `GET /api/inbox?ref=WR110375` finds a job's items by its reference.
+  - `GET /api/inbox?ref=JOB110375` finds a job's items by its reference.
   - `GET /api/inbox/{id}/state` returns, in one answer: whose turn it is and
     the gate, the brief, the plan to approve, open questions, the newest
     implementation with its checks and pull request, the latest reviews,
@@ -1006,7 +1023,7 @@ versions follow [Semantic Versioning](https://semver.org/).
     The item comes to you whatever the verdict; Request changes turns it
     into a handover.
 - **Branch templates** per repo: `branch_template = "{ref}-{slug}"` names
-  branches after the item's reference (`WR203345-some-feature`). When other
+  branches after the item's reference (`JOB203345-some-feature`). When other
   branches of the same reference exist and none matches, the item asks
   which one to continue. Branch names may now contain capitals.
 
@@ -1052,9 +1069,9 @@ versions follow [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - **Workspaces with the same repo path looked identical in the dashboard.**
-  Workspace names drop their host, so `github.com/fortix/freedom3` and a
-  mirror's `gitea.adinko.me:2223/fortix/freedom3` both read
-  `fortix/freedom3`. In the key editor, it was easy to scope a worker key to
+  Workspace names drop their host, so `github.com/acme/shop` and a
+  mirror's `gitea.example.com:2223/org/repo` both read
+  `acme/shop`. In the key editor, it was easy to scope a worker key to
   the wrong one, and its claims were then refused ("not found: workspace
   scope"). When two known workspaces share a path, both now show their full
   id, everywhere the dashboard names a workspace.
@@ -1457,7 +1474,7 @@ versions follow [Semantic Versioning](https://semver.org/).
   pipeline show|set|clear`, `GET`/`PUT /api/workspaces/{id}/pipeline`, and
   the read-only MCP tool `workspace_pipeline`.
   - **Group defaults:** a workspace group (members or patterns such as
-    `github.com/fortix/*`) carries the same settings, so many repositories
+    `github.com/acme/*`) carries the same settings, so many repositories
     are configured once (`skopos group pipeline …`,
     `/api/groups/{id}/pipeline`). Per stage, the workspace's own setting
     wins, else its group's; two groups setting the same stage (or both
@@ -1644,9 +1661,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   digits (`internal/dbtime`), so queue order, lease expiry and timelines
   follow time order. Existing rows are rewritten once at startup.
 
-- **Reviewers didn't see Martin's decisions.** The review prompt now
+- **Reviewers didn't see the approver's decisions.** The review prompt now
   includes the item's answers, approval notes and change requests. A live
-  multi-agent run caught a security reviewer blocking on behaviour Martin
+  multi-agent run caught a security reviewer blocking on behaviour the approver
   had explicitly accepted; with the decisions in the prompt it became a nit.
 
 - **Agent commands ran with the daemon's `$PWD`.** opencode trusts `$PWD` over
@@ -1894,8 +1911,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 - **Workspace selection from Slack** — `new <workspace>: <what to do>`
   files the item into a specific workspace: exact id or a unique suffix
-  match against the registered workspaces (`new mail-processor: …` →
-  `github.com/fortix/mail-processor`). Unknown prefixes stay part of the
+  match against the registered workspaces (`new mailer: …` →
+  `github.com/acme/mailer`). Unknown prefixes stay part of the
   title (so `new fix: the login` still captures literally); ambiguous
   suffixes are not selectors. `help` documents the form.
 
@@ -1969,7 +1986,7 @@ versions follow [Semantic Versioning](https://semver.org/).
   notifications post one thread per item (plan ready with the plan summary
   and questions, blocked with the reason, branch ready with branch/head/
   diffstat, done), persisted in `inbox_items.slack_thread_ts` so a restart
-  re-binds instead of stranding replies. Martin's replies — user-id checked
+  re-binds instead of stranding replies. The approver's replies — user-id checked
   by the Socket Mode provider — drive the approver-gated actions with
   `via: slack`: `approve[: notes]`, `revise:`, `changes:`, `done` (head
   taken from the item's latest successful implement run), `retry:`,
@@ -2144,7 +2161,7 @@ versions follow [Semantic Versioning](https://semver.org/).
   next; stickiness is the run's affinity (a session belongs to the account
   that created it). Placement is worker policy — skopos knows nothing of it.
 - **Notification module (scaffold)** — a provider interface with Slack
-  Socket Mode transport (outbound-only, TLS, Martin's user id only). The
+  Socket Mode transport (outbound-only, TLS, the approver's user id only). The
   sending path and reply filtering work; the command relay (replies driving
   approvals) is NOT wired yet — notifications go out, replies are not
   applied. The interim approver key stays with agent-trial until that
@@ -2269,7 +2286,7 @@ versions follow [Semantic Versioning](https://semver.org/).
   bypassed: manual complete/discard/convert refuse workflow items; a locked
   revision unlocks only through the amendment path (`amend-plan`: pause +
   superseding snapshot, inseparably), `DeletePlan` refuses while a linked
-  item is in flight; approve binds to the revision Martin saw
+  item is in flight; approve binds to the revision the approver saw
   (`revision_id`/`content_hash`, hash re-verified against the plan, 409 when
   stale) and refuses items without a linked plan or revision; mark-done
   requires `head_sha`. Planning can block (retry returns to the blocked-from
@@ -2446,8 +2463,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 - Workspace labels truncated the distinguishing part: badges and the
   header picker cut off from the right, leaving only the shared host
-  (`github.com/fortix…`). Labels now display host-stripped
-  (`fortix/freedom3`) across all views — kanban and list badges, the
+  (`github.com/acme…`). Labels now display host-stripped
+  (`acme/shop`) across all views — kanban and list badges, the
   header picker, write-modal selects, the Sessions view, and index
   groups. Display-only: full ids remain the values everywhere, on
   hover (title attributes), and searchable in the picker; registry

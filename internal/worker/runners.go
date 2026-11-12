@@ -67,7 +67,7 @@ type RunnerSpec struct {
 	Command []string `toml:"command"`
 	// Provider and Endpoint declare where the runner's requests go when the
 	// worker cannot tell (facts.go): a model on another machine on the
-	// local network (provider = "local"), a router (provider = "llmrouter"),
+	// local network (provider = "local"), a router (provider = "router"),
 	// any `command` runner. A workspace's policy matches on the provider.
 	Provider string `toml:"provider"`
 	Endpoint string `toml:"endpoint"`

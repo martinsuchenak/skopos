@@ -48,7 +48,7 @@ func TestStateAtSignOff(t *testing.T) {
 		{ID: "s0", Asker: qa.AskerPlanner, Open: false, Questions: []qa.Question{{ID: "q0", Text: "old", State: qa.StateAnswered}}},
 	}}
 	item := &inbox.Item{ID: "i1", WorkspaceID: "ws", Title: "t", Status: inbox.StatusInReview,
-		Content: "The brief.\n\n## Questions — planner\n\n1. old", Ref: "WR1"}
+		Content: "The brief.\n\n## Questions — planner\n\n1. old", Ref: "JOB1"}
 	svc := &Service{Items: fakeItems{item}, Runs: all, Questions: fakeQuestions{rec}}
 
 	st, err := svc.Get(context.Background(), "i1")
@@ -113,7 +113,7 @@ func TestStateBlockedAndActions(t *testing.T) {
 	if got := strings.Join(Actions(context.Background(), open, nil), ","); got != "queue" {
 		t.Fatalf("open: %s", got)
 	}
-	open.Ref = "WR1"
+	open.Ref = "JOB1"
 	if got := strings.Join(Actions(context.Background(), open, nil), ","); got != "queue,review" {
 		t.Fatalf("open with ref: %s", got)
 	}

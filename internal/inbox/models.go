@@ -17,14 +17,14 @@ import (
 //
 //	open              captured, unprocessed
 //	in_progress       claimed by an agent, being enriched
-//	queued            Martin queued it for agent work (human-only action)
+//	queued            the approver queued it for agent work (human-only action)
 //	planning          a planner run owns it (system transition)
-//	awaiting_approval the plan revision waits for Martin
+//	awaiting_approval the plan revision waits for the approver
 //	approved          the revision is approved and locked (system continues)
 //	implementing      a worker implements the approved revision
-//	in_review         branch pushed; Martin reviews the head commit
+//	in_review         branch pushed; the approver reviews the head commit
 //	converted         linked to a plan (plan_id set); completes with the plan
-//	done              the linked plan completed / Martin marked it done (terminal)
+//	done              the linked plan completed / the approver marked it done (terminal)
 //	discarded         rejected / won't do (terminal, retention-cleaned)
 //	failed, blocked   terminal-ish run outcomes with a reason; both return
 //	                  to their phase on retry or discard on reject
@@ -77,7 +77,7 @@ var workflowEdges = map[Status]map[Status]TransitionActor{
 	StatusAwaitingApproval: {StatusApproved: ActorHuman, StatusPlanning: ActorHuman, StatusDiscarded: ActorHuman},
 	StatusApproved:         {StatusImplementing: ActorSystem, StatusDiscarded: ActorHuman},
 	StatusImplementing:     {StatusAwaitingApproval: ActorSystem, StatusInReview: ActorSystem, StatusBlocked: ActorSystem, StatusFailed: ActorSystem, StatusDiscarded: ActorHuman},
-	// Retry (with an answer) is Martin's action — the answer feeds the next
+	// Retry (with an answer) is the approver's action — the answer feeds the next
 	// run's prompt. The target is the phase the item was blocked from:
 	// implementing when a revision is locked, planning otherwise (Retry).
 	StatusBlocked: {StatusImplementing: ActorHuman, StatusPlanning: ActorHuman, StatusDiscarded: ActorHuman},
@@ -130,11 +130,11 @@ type Item struct {
 	// (the repository's configured agents), "solo" (one agent), or empty
 	// (the repository default, --agents-default).
 	Agents string `json:"agents,omitempty"`
-	// Branch is the branch the item works on, named by Martin: an existing
+	// Branch is the branch the item works on, named by the approver: an existing
 	// one is taken over (handover, review), a new one is created under this
 	// name. Empty = the worker names it (branch_template).
 	Branch string `json:"branch,omitempty"`
-	// Ref is the item's external reference (a work request number), the
+	// Ref is the item's external reference (a ticket or job number), the
 	// {ref} of a repository's branch template.
 	Ref string `json:"ref,omitempty"`
 	// ExternalURL links the item back to the job it came from in another
@@ -153,7 +153,7 @@ type Item struct {
 	Excerpt     string       `json:"excerpt,omitempty"`
 	Plan        *PlanSummary `json:"plan,omitempty"`
 	// ContentParts is the content cut for the dashboard's detail view:
-	// Martin's text, then the pipeline's sections in rounds. Filled by
+	// The author's text, then the pipeline's sections in rounds. Filled by
 	// GET /api/inbox/{id}?parts=1 only.
 	ContentParts *ContentParts `json:"content_parts,omitempty"`
 	// AnswersMatched: on an action's response, what its answers were read
@@ -208,7 +208,7 @@ func NormalizeBranch(v string) (string, error) {
 	return v, nil
 }
 
-// NormalizeRef validates an external reference (WR203345): letters,
+// NormalizeRef validates an external reference (JOB203345): letters,
 // digits, '.', '_', '-', at most 40 characters. Empty = none.
 func NormalizeRef(v string) (string, error) {
 	v = strings.TrimSpace(v)
@@ -259,7 +259,7 @@ func NormalizeAgents(v string) (string, error) {
 var (
 	ErrInvalidInput = errors.New("invalid inbox input")
 	// ErrStaleRevision mirrors plans.ErrStaleRevision for the inbox surface
-	// (approve naming content that changed since Martin saw it) — handlers
+	// (approve naming content that changed since the approver saw it) — handlers
 	// map it to 409 so clients re-show the plan.
 	ErrStaleRevision    = errors.New("revision is stale: a newer revision exists or the plan changed since the snapshot")
 	ErrNotFound         = errors.New("not found")

@@ -66,7 +66,7 @@ type MCPServerDef struct {
 	Command []string          `json:"command,omitempty" toml:"command,omitempty"`
 	Env     map[string]string `json:"env,omitempty" toml:"env,omitempty"`
 	// Workspaces: the workspaces whose runs may be given the server, as
-	// globs on the workspace id ("github.com/fortix/*", "*" for all). A
+	// globs on the workspace id ("github.com/acme/*", "*" for all). A
 	// server that names secrets must say: its credentials go to every
 	// worker that runs a workspace it is given to. Empty on a server
 	// without secrets = any workspace.

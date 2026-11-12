@@ -258,11 +258,11 @@ func TestPostApprovalEditsRequireApprover(t *testing.T) {
 	}
 
 	// The approver may edit, and the edit is audited.
-	if err := svc.UpdateItem(approverCtx(), item.ID, UpdateInput{Content: "clarified by Martin", Via: audit.ViaDashboard}); err != nil {
+	if err := svc.UpdateItem(approverCtx(), item.ID, UpdateInput{Content: "clarified by the approver", Via: audit.ViaDashboard}); err != nil {
 		t.Fatalf("approver edit: %v", err)
 	}
 	got, _ := svc.GetItem(root, item.ID)
-	if got.Content != "clarified by Martin" {
+	if got.Content != "clarified by the approver" {
 		t.Fatalf("approver edit must land: %q", got.Content)
 	}
 	entries, err := svc.Timeline(root, item.ID)

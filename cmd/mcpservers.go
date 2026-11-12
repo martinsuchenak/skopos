@@ -112,12 +112,12 @@ func mcpServerCmd() *cli.Command {
 				Name:  "set",
 				Usage: "Define or redefine an MCP server (admin over every workspace)",
 				Description: `An http server:
-  skopos mcp-server set llmrouter --url https://llmrouter.example.com/mcp \
-      --header 'Authorization=Bearer ${secret:token}' --for 'github.com/fortix/*'
-  skopos mcp-server set-secret llmrouter token        # asks for the value
+  skopos mcp-server set router --url https://router.example.com/mcp \
+      --header 'Authorization=Bearer ${secret:token}' --for 'github.com/acme/*'
+  skopos mcp-server set-secret router token        # asks for the value
 
 A command the worker runs (only on workers with server_commands = true):
-  skopos mcp-server set scriptling --command '["scriptling","mcp"]' --env 'TOOLS=${TOOLS_DIR}/scriptling'
+  skopos mcp-server set scripts --command '["scripts","mcp"]' --env 'TOOLS=${TOOLS_DIR}/scripts'
 
 A credential is never part of the definition: name it as ${secret:NAME} and
 set its value with set-secret. ${NAME} in a command server's command and env
@@ -130,7 +130,7 @@ Changing an http server's host, or a command server's command, deletes its
 stored secrets: set them again.
 
 A workspace's runs get a server when its config names it and allows its tools:
-  skopos workspace config set --set 'mcp=["llmrouter"]' --set 'mcp_servers=["mcp__llmrouter"]'
+  skopos workspace config set --set 'mcp=["router"]' --set 'mcp_servers=["mcp__router"]'
 Once a workspace's config sets mcp, its runs get exactly those servers and
 nothing from a worker's own mcp_config.`,
 				Flags: append(keyClientFlags(),
@@ -211,9 +211,9 @@ nothing from a worker's own mcp_config.`,
 				Usage: "Store the value of a secret an MCP server's definition names (admin over every workspace). The value is never shown again",
 				Description: `The value is read from the terminal (not echoed), from standard input when
 it is piped, or from an environment variable:
-  skopos mcp-server set-secret llmrouter token
-  pass show fortix/llmrouter | skopos mcp-server set-secret llmrouter token
-  skopos mcp-server set-secret llmrouter token --from-env LLMROUTER_TOKEN
+  skopos mcp-server set-secret router token
+  pass show skopos/router | skopos mcp-server set-secret router token
+  skopos mcp-server set-secret router token --from-env ROUTER_TOKEN
 
 It is never taken from the command line, where it would stay in the shell's
 history. The server needs its secret key (integrations.secret_key).`,

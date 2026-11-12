@@ -35,17 +35,17 @@ func mcpCall(t *testing.T, base, bearer, tool string, args map[string]any) (int,
 func TestIntegrationRunToken(t *testing.T) {
 	_, baseURL := workerStack(t)
 	root := workerClient{base: baseURL, key: "root-secret"}
-	const wsA, wsB = "github.com/acme/app", "github.com/fortix/freedom3"
+	const wsA, wsB = "github.com/acme/app", "github.com/globex/shop"
 	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+wsA+`","name":"app"}`), 201)
-	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+wsB+`","name":"freedom3"}`), 201)
+	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+wsB+`","name":"shop"}`), 201)
 	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"relay","workspaces":["`+wsA+`"],"approver":true}`)}
 	// The worker serves both repositories: its key reaches both.
 	worker := workerClient{base: baseURL, key: mint(t, root, `{"name":"worker-1","workspaces":["`+wsA+`","`+wsB+`"]}`), lease: map[string]string{}}
 
 	// Something recorded about the other repository.
-	mustDo(t, root.req("POST", "/api/blackboard/entries", `{"workspace_id":"`+wsB+`","scope":"project","entry_type":"finding","title":"ff3 secret design","content":"only for ff3","author_agent_id":"martin"}`), 201)
+	mustDo(t, root.req("POST", "/api/blackboard/entries", `{"workspace_id":"`+wsB+`","scope":"project","entry_type":"finding","title":"ff3 secret design","content":"only for ff3","author_agent_id":"alex"}`), 201)
 
-	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+wsA+`","title":"an item","author_agent_id":"martin"}`), 201).(map[string]any)
+	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+wsA+`","title":"an item","author_agent_id":"alex"}`), 201).(map[string]any)
 	mustDo(t, approver.req("POST", "/api/inbox/"+item["id"].(string)+"/queue", ""), 200)
 	run := claim(t, worker, `{"worker_id":"w1","workspaces":["`+wsA+`","`+wsB+`"]}`)
 	runID := run["id"].(string)

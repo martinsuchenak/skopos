@@ -216,7 +216,7 @@ func TestRelayMidRunBuffer(t *testing.T) {
 		t.Fatal("mid-run reject must be accepted (buffered)")
 	}
 	if !strings.Contains(fake.last().text, "mid-run") {
-		t.Fatalf("buffering must tell Martin: %q", fake.last().text)
+		t.Fatalf("buffering must tell the operator: %q", fake.last().text)
 	}
 	got, _ := svc.GetItem(root, item.ID)
 	if got.Status != inbox.StatusImplementing {
@@ -306,7 +306,7 @@ func TestRelayChangesAfterApproval(t *testing.T) {
 	}
 }
 
-// new: capture — creates + queues the item and binds the thread to Martin's
+// new: capture — creates + queues the item and binds the thread to the approver's
 // own message; help and non-command text behave.
 func TestRelayCapture(t *testing.T) {
 	svc, _, _, fake, relay := relayStack(t)
@@ -321,7 +321,7 @@ func TestRelayCapture(t *testing.T) {
 		t.Fatalf("captured item must be queued: %s", items[0].Status)
 	}
 	if items[0].SlackThreadTS != "777.1" {
-		t.Fatalf("thread must bind to Martin's message: %q", items[0].SlackThreadTS)
+		t.Fatalf("thread must bind to the approver's message: %q", items[0].SlackThreadTS)
 	}
 	if !strings.Contains(fake.last().text, "Queued") {
 		t.Fatalf("capture confirmation: %v", fake.texts())
@@ -376,15 +376,15 @@ func recordRunWithHead(t *testing.T, runsSvc *runs.Service, itemID, head string)
 func TestRelayCaptureWorkspaceSelector(t *testing.T) {
 	svc, _, _, fake, relay := relayStack(t)
 	relay.resolveWS = func(sel string) (string, bool) {
-		if sel == "mail-processor" {
-			return "github.com/fortix/mail-processor", true
+		if sel == "mailer" {
+			return "github.com/globex/mailer", true
 		}
 		return "", false
 	}
-	if !relay.TopLevel(context.Background(), "new mail-processor: fix the attachment parser", "800.1") {
+	if !relay.TopLevel(context.Background(), "new mailer: fix the attachment parser", "800.1") {
 		t.Fatal("selector capture must be handled")
 	}
-	items, err := svc.ListItems(context.Background(), "github.com/fortix/mail-processor", "", "slack-new", "")
+	items, err := svc.ListItems(context.Background(), "github.com/globex/mailer", "", "slack-new", "")
 	if err != nil || len(items) != 1 {
 		t.Fatalf("item in the selected workspace: %v err %v", items, err)
 	}
@@ -409,7 +409,7 @@ func TestRelayCaptureWorkspaceSelector(t *testing.T) {
 }
 
 // An approval sent mid-run is refused, never buffered: buffered, it would
-// apply the instant the gate is reached — approving a plan Martin has not
+// apply the instant the gate is reached — approving a plan the approver has not
 // seen (review H2). Non-advancing replies (reject) still buffer.
 func TestRelayMidRunApprovalNotBuffered(t *testing.T) {
 	svc, _, _, fake, relay := relayStack(t)
@@ -559,7 +559,7 @@ func TestRelayAgentsSwitch(t *testing.T) {
 // M2: a Slack approve binds to the revision the plan-ready message showed.
 // The message lists that revision's steps; after a restart (nothing
 // recorded) or a newer revision, the relay re-posts the current plan
-// instead of approving something Martin did not read.
+// instead of approving something the approver did not read.
 func TestRelayApproveBindsShownRevision(t *testing.T) {
 	svc, _, plansSvc, fake, relay := relayStack(t)
 	root := context.Background()
@@ -630,7 +630,7 @@ func TestPlanReadyUsesNewestEnrichment(t *testing.T) {
 func TestRelayBlockedShowsGroupSummary(t *testing.T) {
 	inboxSvc, runsSvc, _, _, relay := relayStack(t)
 	ctx := context.Background()
-	item, err := inboxSvc.CreateItem(ctx, inbox.CreateInput{WorkspaceID: "ws-a", Title: "grouped", AuthorAgentID: "martin"})
+	item, err := inboxSvc.CreateItem(ctx, inbox.CreateInput{WorkspaceID: "ws-a", Title: "grouped", AuthorAgentID: "alex"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -671,7 +671,7 @@ func TestRelayBlockedShowsGroupSummary(t *testing.T) {
 func TestRelayBlockedQuotesFailReason(t *testing.T) {
 	inboxSvc, runsSvc, _, _, relay := relayStack(t)
 	ctx := context.Background()
-	item, err := inboxSvc.CreateItem(ctx, inbox.CreateInput{WorkspaceID: "ws-a", Title: "slugify", AuthorAgentID: "martin"})
+	item, err := inboxSvc.CreateItem(ctx, inbox.CreateInput{WorkspaceID: "ws-a", Title: "slugify", AuthorAgentID: "alex"})
 	if err != nil {
 		t.Fatal(err)
 	}

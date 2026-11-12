@@ -25,22 +25,22 @@ const (
 func TestIntegrationRunnerPolicy(t *testing.T) {
 	sqlDB, baseURL := workerStack(t)
 	root := workerClient{base: baseURL, key: "root-secret"}
-	const ws = "github.com/fortix/freedom3"
+	const ws = "github.com/globex/shop"
 	wsPath := "/api/workspaces/" + url.PathEscape(ws)
-	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`","name":"freedom3"}`), 201)
-	mustDo(t, root.req("POST", "/api/groups", `{"name":"fortix","members":["`+ws+`"]}`), 201)
-	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"martin","workspaces":["`+ws+`"],"approver":true}`)}
-	ops := workerClient{base: baseURL, key: mint(t, root, `{"name":"ops","groups":["fortix"],"admin":true}`)}
+	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`","name":"shop"}`), 201)
+	mustDo(t, root.req("POST", "/api/groups", `{"name":"globex","members":["`+ws+`"]}`), 201)
+	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"alex","workspaces":["`+ws+`"],"approver":true}`)}
+	ops := workerClient{base: baseURL, key: mint(t, root, `{"name":"ops","groups":["globex"],"admin":true}`)}
 	leases := map[string]string{}
 	worker := workerClient{base: baseURL, key: mint(t, root, `{"name":"worker-1","workspaces":["`+ws+`"]}`), lease: leases}
 
 	// Who may set it.
 	policyBody := `{"allow":[{"provider":"anthropic"},{"provider":"openai","stages":["second_opinion"]}],"via":"cli"}`
-	mustDo(t, approver.req("PUT", "/api/groups/fortix/policy", policyBody), 403, "an approver is not an admin")
+	mustDo(t, approver.req("PUT", "/api/groups/globex/policy", policyBody), 403, "an approver is not an admin")
 	mustDo(t, worker.req("PUT", wsPath+"/policy", policyBody), 403, "a plain key")
 	mustDo(t, ops.req("PUT", "/api/policy/fleet/ceiling", policyBody), 403, "a group admin does not reach the fleet")
-	mustDo(t, ops.req("PUT", "/api/groups/fortix/policy", `{"allow":[{"stages":["deploy"]}]}`), 400, "an unknown stage")
-	set := mustJSON(t, ops.req("PUT", "/api/groups/fortix/policy", policyBody), 200).(map[string]any)
+	mustDo(t, ops.req("PUT", "/api/groups/globex/policy", `{"allow":[{"stages":["deploy"]}]}`), 400, "an unknown stage")
+	set := mustJSON(t, ops.req("PUT", "/api/groups/globex/policy", policyBody), 200).(map[string]any)
 	rev, _ := set["rev"].(string)
 	if rev == "" || set["updated_by"] != "key ops" {
 		t.Fatalf("the saved policy names its revision and who set it: %v", set)
@@ -48,7 +48,7 @@ func TestIntegrationRunnerPolicy(t *testing.T) {
 	// Everyone in scope can see what binds the workspace.
 	eff := mustJSON(t, worker.req("GET", wsPath+"/policy/effective", ""), 200).(map[string]any)
 	layers, _ := eff["layers"].([]any)
-	if eff["allow_all"] != false || len(layers) != 1 || layers[0].(map[string]any)["source"] != "group fortix" || layers[0].(map[string]any)["rev"] != rev {
+	if eff["allow_all"] != false || len(layers) != 1 || layers[0].(map[string]any)["source"] != "group globex" || layers[0].(map[string]any)["rev"] != rev {
 		t.Fatalf("effective policy: %v", eff)
 	}
 	// The pipeline view shows it too.
@@ -58,7 +58,7 @@ func TestIntegrationRunnerPolicy(t *testing.T) {
 	}
 
 	// An item's plan run: nothing pins it.
-	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"policy item","author_agent_id":"martin"}`), 201).(map[string]any)
+	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"policy item","author_agent_id":"alex"}`), 201).(map[string]any)
 	itemID := item["id"].(string)
 	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/queue", ""), 200)
 	claimBody := func(workerID string, runners string, facts ...string) string {
@@ -114,7 +114,7 @@ func TestIntegrationRunnerPolicy(t *testing.T) {
 	// A second opinion from GLM is refused by the policy; from codex it is
 	// queued (the group allows OpenAI for second opinions).
 	refused := approver.req("POST", "/api/inbox/"+itemID+"/second-opinion", `{"runner":"opencode-glm"}`)
-	if refused.code != 403 || !strings.Contains(refused.body, `"reason":"policy"`) || !strings.Contains(refused.body, "group fortix policy does not allow runner opencode-glm") {
+	if refused.code != 403 || !strings.Contains(refused.body, `"reason":"policy"`) || !strings.Contains(refused.body, "group globex policy does not allow runner opencode-glm") {
 		t.Fatalf("a second opinion from a refused runner: %d %s", refused.code, refused.body)
 	}
 	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/second-opinion", `{"runner":"codex"}`), 202, "codex second opinion")
@@ -146,7 +146,7 @@ func TestIntegrationRunnerPolicy(t *testing.T) {
 	}
 
 	// Clearing the policy opens the workspace again, GLM included.
-	mustDo(t, ops.req("DELETE", "/api/groups/fortix/policy", ""), 200)
+	mustDo(t, ops.req("DELETE", "/api/groups/globex/policy", ""), 200)
 	if again := mustJSON(t, worker.req("GET", wsPath+"/policy/effective", ""), 200).(map[string]any); again["allow_all"] != true {
 		t.Fatalf("no policy after the clear: %v", again)
 	}
@@ -164,10 +164,10 @@ func TestIntegrationWorkerSendsRunnerFacts(t *testing.T) {
 	root := workerClient{base: baseURL, key: "root-secret"}
 	const ws = "github.com/acme/app"
 	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`","name":"app"}`), 201)
-	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"martin","workspaces":["`+ws+`"],"approver":true}`)}
+	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"alex","workspaces":["`+ws+`"],"approver":true}`)}
 	workerKey := mint(t, root, `{"name":"worker-1","workspaces":["`+ws+`"]}`)
 	mustDo(t, root.req("PUT", "/api/workspaces/"+url.PathEscape(ws)+"/policy", `{"allow":[{"provider":"anthropic"}]}`), 200)
-	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"facts item","author_agent_id":"martin"}`), 201).(map[string]any)
+	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"facts item","author_agent_id":"alex"}`), 201).(map[string]any)
 	mustDo(t, approver.req("POST", "/api/inbox/"+item["id"].(string)+"/queue", ""), 200)
 
 	glm := &wk.Config{Runners: []string{"opencode-glm"}, RunnerSpecs: map[string]*wk.RunnerSpec{"opencode-glm": {Kind: "opencode"}},
@@ -217,7 +217,7 @@ func TestIntegrationExecutorRule(t *testing.T) {
 	const ws, other = "github.com/acme/app", "github.com/acme/other"
 	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`","name":"app"}`), 201)
 	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+other+`","name":"other"}`), 201)
-	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"martin","workspaces":["`+ws+`"],"approver":true}`)}
+	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"alex","workspaces":["`+ws+`"],"approver":true}`)}
 	workerKey := mint(t, root, `{"name":"worker-1","workspaces":["`+ws+`","`+other+`"]}`)
 	wsPath := "/api/workspaces/" + url.PathEscape(ws)
 	mustDo(t, root.req("PUT", wsPath+"/policy", `{"allow":[{"provider":"anthropic"},{"provider":"zai","executor":"sometimes"}]}`), 400)
@@ -226,7 +226,7 @@ func TestIntegrationExecutorRule(t *testing.T) {
 		t.Fatalf("the rule keeps its executor: %v", view)
 	}
 	mustDo(t, approver.req("PUT", wsPath+"/pipeline", `{"stages":{"plan":{"members":[{"runner":"opencode-glm"}]}}}`), 200)
-	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"contained item","author_agent_id":"martin"}`), 201).(map[string]any)
+	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"contained item","author_agent_id":"alex"}`), 201).(map[string]any)
 	mustDo(t, approver.req("POST", "/api/inbox/"+item["id"].(string)+"/queue", ""), 200)
 
 	config := func(wrapper []string) *wk.Config {

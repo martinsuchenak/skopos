@@ -133,9 +133,9 @@ type Asked struct {
 }
 
 // CurrentQuestions is what the newest round asked (Rounds): the questions
-// waiting for Martin's answer at the gate, one entry per planner that asked.
+// waiting for the approver's answer at the gate, one entry per planner that asked.
 // Questions of earlier rounds were answered or superseded by the newer plan,
-// and a round Martin's notes closed asks nothing new.
+// and a round the approver's notes closed asks nothing new.
 func CurrentQuestions(content string) []Asked {
 	_, secs := Split(content)
 	rounds := Rounds(secs)

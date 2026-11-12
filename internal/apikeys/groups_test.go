@@ -67,15 +67,15 @@ func TestLookupKeyGroupResolution(t *testing.T) {
 	s := testStorage(t)
 	ctx := context.Background()
 
-	seedWorkspace(t, s, "github.com/fortix/freedom3")
-	seedWorkspace(t, s, "github.com/fortix/portal")
+	seedWorkspace(t, s, "github.com/globex/shop")
+	seedWorkspace(t, s, "github.com/globex/portal")
 	seedWorkspace(t, s, "github.com/other/repo")
 	// Registered later to prove pattern picks up new workspaces on the next
 	// lookup (unregistered ids never match).
-	seedGroup(t, s, "g1", "work", []string{"github.com/other/repo"}, []string{"github.com/fortix/*"})
-	seedKey(t, s, "k-explicit", "h1", false, []string{"github.com/fortix/portal"}, nil)
+	seedGroup(t, s, "g1", "work", []string{"github.com/other/repo"}, []string{"github.com/globex/*"})
+	seedKey(t, s, "k-explicit", "h1", false, []string{"github.com/globex/portal"}, nil)
 	seedKey(t, s, "k-groups", "h2", false, nil, []string{"g1"})
-	seedKey(t, s, "k-both", "h3", false, []string{"github.com/fortix/portal"}, []string{"g1"})
+	seedKey(t, s, "k-both", "h3", false, []string{"github.com/globex/portal"}, []string{"g1"})
 	seedKey(t, s, "k-all", "h4", true, nil, []string{"g1"})
 	seedKey(t, s, "k-revoked", "h5", false, nil, []string{"g1"})
 	if _, err := s.db.ExecContext(ctx, `UPDATE api_keys SET revoked_at = ? WHERE id = 'k-revoked'`, formatTime(timeNowUTC())); err != nil {
@@ -87,14 +87,14 @@ func TestLookupKeyGroupResolution(t *testing.T) {
 	if err != nil || info == nil {
 		t.Fatalf("explicit lookup failed: %v %v", info, err)
 	}
-	if len(info.Workspaces) != 1 || info.Workspaces[0] != "github.com/fortix/portal" {
+	if len(info.Workspaces) != 1 || info.Workspaces[0] != "github.com/globex/portal" {
 		t.Fatalf("explicit scope: got %v", info.Workspaces)
 	}
 
 	// Group members + pattern matches over registered workspaces.
 	info, _ = s.LookupKey(ctx, "h2")
 	got := strings.Join(info.Workspaces, ",")
-	want := "github.com/fortix/freedom3,github.com/fortix/portal,github.com/other/repo"
+	want := "github.com/globex/portal,github.com/globex/shop,github.com/other/repo"
 	if got != want {
 		t.Fatalf("group scope: got %q want %q", got, want)
 	}
@@ -118,11 +118,11 @@ func TestLookupKeyGroupResolution(t *testing.T) {
 
 	// A newly registered workspace matching the pattern joins the scope on
 	// the next lookup — no cache to clear.
-	seedWorkspace(t, s, "github.com/fortix/newrepo")
+	seedWorkspace(t, s, "github.com/globex/newrepo")
 	info, _ = s.LookupKey(ctx, "h2")
 	found := false
 	for _, w := range info.Workspaces {
-		if w == "github.com/fortix/newrepo" {
+		if w == "github.com/globex/newrepo" {
 			found = true
 		}
 	}
@@ -135,16 +135,16 @@ func TestPatternSegmentSemantics(t *testing.T) {
 	s := testStorage(t)
 	ctx := context.Background()
 	// `*` never crosses `/`: a repo two levels deep must not match.
-	seedWorkspace(t, s, "github.com/fortix/freedom3")
-	seedWorkspace(t, s, "github.com/fortix/team/sub/repo")
-	seedGroup(t, s, "g1", "seg", nil, []string{"github.com/fortix/*"})
+	seedWorkspace(t, s, "github.com/globex/shop")
+	seedWorkspace(t, s, "github.com/globex/team/sub/repo")
+	seedGroup(t, s, "g1", "seg", nil, []string{"github.com/globex/*"})
 	seedKey(t, s, "k1", "h1", false, nil, []string{"g1"})
 
 	info, err := s.LookupKey(ctx, "h1")
 	if err != nil || info == nil {
 		t.Fatalf("lookup failed: %v %v", info, err)
 	}
-	if len(info.Workspaces) != 1 || info.Workspaces[0] != "github.com/fortix/freedom3" {
+	if len(info.Workspaces) != 1 || info.Workspaces[0] != "github.com/globex/shop" {
 		t.Fatalf("pattern must match one segment only: %v", info.Workspaces)
 	}
 }
@@ -274,12 +274,12 @@ func TestScopeNotifierTriggers(t *testing.T) {
 	st := testStorage(t)
 	svc := NewService(st)
 	ctx := context.Background()
-	seedWorkspace(t, st, "github.com/fortix/freedom3")
+	seedWorkspace(t, st, "github.com/globex/shop")
 
 	var dropped []string
 	svc.SetScopeNotifier(func(keyIDs []string) { dropped = append(dropped, keyIDs...) })
 
-	group, err := svc.CreateGroup(ctx, GroupInput{Name: "work", Patterns: []string{"github.com/fortix/*"}})
+	group, err := svc.CreateGroup(ctx, GroupInput{Name: "work", Patterns: []string{"github.com/globex/*"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestScopeNotifierTriggers(t *testing.T) {
 
 	// A group membership change re-scopes every key holding the group.
 	dropped = nil
-	if _, err := svc.UpdateGroup(ctx, group.ID, GroupUpdateInput{Members: []string{"github.com/fortix/freedom3"}}); err != nil {
+	if _, err := svc.UpdateGroup(ctx, group.ID, GroupUpdateInput{Members: []string{"github.com/globex/shop"}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(dropped) != 1 || dropped[0] != result.Key.ID {
@@ -299,7 +299,7 @@ func TestScopeNotifierTriggers(t *testing.T) {
 
 	// A key scope edit drops that key.
 	dropped = nil
-	if _, err := svc.Update(ctx, result.Key.ID, UpdateInput{Workspaces: []string{"github.com/fortix/freedom3"}}); err != nil {
+	if _, err := svc.Update(ctx, result.Key.ID, UpdateInput{Workspaces: []string{"github.com/globex/shop"}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(dropped) != 1 || dropped[0] != result.Key.ID {
@@ -318,7 +318,7 @@ func TestScopeNotifierTriggers(t *testing.T) {
 
 	// A newly registered workspace matching a pattern drops holding keys.
 	dropped = nil
-	svc.OnWorkspaceRegistered(ctx, "github.com/fortix/portal")
+	svc.OnWorkspaceRegistered(ctx, "github.com/globex/portal")
 	if len(dropped) != 1 || dropped[0] != result.Key.ID {
 		t.Fatalf("workspace registration must drop pattern-matched keys, got %v", dropped)
 	}
@@ -442,7 +442,7 @@ func TestHandlerGroupLifecycleAndWhoCan(t *testing.T) {
 	h := testHandler(t)
 
 	w := groupCall(t, h, "POST", "/api/groups",
-		`{"name":"work","patterns":["github.com/fortix/*"]}`, rootPrin)
+		`{"name":"work","patterns":["github.com/globex/*"]}`, rootPrin)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create group: %d %s", w.Code, w.Body.String())
 	}
@@ -466,11 +466,11 @@ func TestHandlerGroupLifecycleAndWhoCan(t *testing.T) {
 		t.Fatalf("create key with groups: %d %s", w.Code, w.Body.String())
 	}
 
-	whoCan := groupCall(t, h, "GET", "/api/keys/who-can?workspace=github.com/fortix/freedom3", "", rootPrin)
+	whoCan := groupCall(t, h, "GET", "/api/keys/who-can?workspace=github.com/globex/shop", "", rootPrin)
 	if whoCan.Code != http.StatusOK {
 		t.Fatalf("who-can: %d %s", whoCan.Code, whoCan.Body.String())
 	}
-	if !strings.Contains(whoCan.Body.String(), "pattern:work:github.com/fortix/*") {
+	if !strings.Contains(whoCan.Body.String(), "pattern:work:github.com/globex/*") {
 		t.Fatalf("who-can must explain pattern reach: %s", whoCan.Body.String())
 	}
 
@@ -553,7 +553,7 @@ func TestWorkspaceRegistrationTriggersScopeDrop(t *testing.T) {
 	var dropped []string
 	svc.SetScopeNotifier(func(keyIDs []string) { dropped = append(dropped, keyIDs...) })
 
-	if _, err := svc.CreateGroup(ctx, GroupInput{Name: "work", Patterns: []string{"github.com/fortix/*"}}); err != nil {
+	if _, err := svc.CreateGroup(ctx, GroupInput{Name: "work", Patterns: []string{"github.com/globex/*"}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.Create(ctx, CreateInput{Name: "k", Groups: []string{"work"}}); err != nil {
@@ -562,7 +562,7 @@ func TestWorkspaceRegistrationTriggersScopeDrop(t *testing.T) {
 
 	registry := workspaces.NewService(workspaces.NewStorage(st.db))
 	registry.SetCreateNotifier(func(wsID string) { svc.OnWorkspaceRegistered(context.Background(), wsID) })
-	if _, _, err := registry.Create(ctx, workspaces.CreateInput{ID: "github.com/fortix/portal"}); err != nil {
+	if _, _, err := registry.Create(ctx, workspaces.CreateInput{ID: "github.com/globex/portal"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(dropped) == 0 {
@@ -571,7 +571,7 @@ func TestWorkspaceRegistrationTriggersScopeDrop(t *testing.T) {
 
 	// Idempotent registration (upsert) must not re-drop.
 	dropped = nil
-	if _, _, err := registry.Create(ctx, workspaces.CreateInput{ID: "github.com/fortix/portal"}); err != nil {
+	if _, _, err := registry.Create(ctx, workspaces.CreateInput{ID: "github.com/globex/portal"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(dropped) != 0 {

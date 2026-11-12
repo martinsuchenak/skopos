@@ -300,11 +300,11 @@ func (s *Service) noLockedPlan(ctx context.Context, item *Item) bool {
 	return item.Flow == FlowReview && rev == ""
 }
 
-// ApproveInput binds an approval to exactly what Martin saw (review fix 3):
+// ApproveInput binds an approval to exactly what the approver saw (review fix 3):
 // the revision id his client rendered, and optionally its content hash.
 type ApproveInput struct {
 	Notes string
-	// Answers are Martin's answers to the open questions (by question id,
+	// Answers are the approver's answers to the open questions (by question id,
 	// or free text read against them — internal/qa), recorded and appended
 	// as their own "## Answers" section ahead of the notes.
 	Answers     qa.AnswersInput
@@ -316,7 +316,7 @@ type ApproveInput struct {
 	approvalID string       // the approval record the answers go with
 }
 
-// Approve records Martin's plan approval (awaiting_approval → approved),
+// Approve records the approver's plan approval (awaiting_approval → approved),
 // bound to the plan revision he actually saw. The item must link a plan with
 // a revision (no silent ungated approvals — R3); the named revision must
 // still be the latest, and its snapshot must still match the plan's current
@@ -508,7 +508,7 @@ func (s *Service) prepareAnswers(ctx context.Context, item *Item, action string,
 }
 
 // Answer records answers without moving the item, while it waits for
-// Martin (awaiting approval, blocked or failed): they reach the next run's
+// The approver (awaiting approval, blocked or failed): they reach the next run's
 // prompt, and a correction (by question id, naming the answer it replaces)
 // fixes an answer already given. The "## Answers" section is appended.
 func (s *Service) Answer(ctx context.Context, itemID string, answers qa.AnswersInput, via string) (*Item, error) {
@@ -609,7 +609,7 @@ func chainMutations(ms ...func(tx Store, cur *Item) error) func(tx Store, cur *I
 	}
 }
 
-// RequestChanges sends the item back one phase with Martin's notes. The
+// RequestChanges sends the item back one phase with the approver's notes. The
 // target is picked from the current status inside the matrix (review fix 6):
 // awaiting_approval → planning, in_review → implementing. The notes are
 // passed into the next run's prompt.
@@ -618,7 +618,7 @@ func (s *Service) RequestChanges(ctx context.Context, itemID, notes, via string)
 }
 
 // RequestChangesOn is RequestChanges with an optional plan candidate to
-// revise: at a multi-agent gate, reviseRevisionID names the candidate Martin
+// revise: at a multi-agent gate, reviseRevisionID names the candidate the approver
 // wants reworked — one planner (that candidate's runner) re-plans from it
 // with the notes. Empty re-runs every planner (a new round). Either way the
 // open candidates of the current round are superseded first.
@@ -626,7 +626,7 @@ func (s *Service) RequestChangesOn(ctx context.Context, itemID, notes, via, revi
 	return s.RequestChangesWith(ctx, itemID, ChangesInput{Notes: notes, Via: via, RevisionID: reviseRevisionID})
 }
 
-// ChangesInput is a change request: the notes, Martin's answers to the
+// ChangesInput is a change request: the notes, the approver's answers to the
 // planner's questions (their own "## Answers" section, ahead of the notes),
 // and optionally the plan candidate to revise.
 type ChangesInput struct {
@@ -852,7 +852,7 @@ func (s *Service) Reject(ctx context.Context, itemID, notes, via string) (*Item,
 
 // MarkDone completes the reviewed item (in_review → done). headSHA is
 // REQUIRED (review fix 4): the review approval names exactly the commit
-// Martin looked at, and any later commit would not match it (stale by
+// The approver looked at, and any later commit would not match it (stale by
 // comparison). The executor always knows the head it pushed.
 func (s *Service) MarkDone(ctx context.Context, itemID, headSHA, via string) (*Item, error) {
 	headSHA = strings.TrimSpace(headSHA)

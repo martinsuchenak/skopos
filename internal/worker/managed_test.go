@@ -70,8 +70,8 @@ func TestMergeManagedReplacesTheFilesSharedFields(t *testing.T) {
 	if r.Path != "/clones/ws" || r.SetupEnv["TOKEN"] != "x" || r.Push.TokenEnv != "PUSH_TOKEN" {
 		t.Fatalf("the machine's own fields stay the file's: %+v", r)
 	}
-	// The deny list: the default (the server sets none) plus the file's own.
-	if m.planTimeout != 20*time.Minute || !slices.Equal(m.mcpServers, []string{"mcp__server"}) || !slices.Equal(m.mcpDeny, append(slices.Clone(wsconfig.DefaultMCPDeny), "mcp__local__deny")) {
+	// The deny list: the server sets none, so it is the file's own.
+	if m.planTimeout != 20*time.Minute || !slices.Equal(m.mcpServers, []string{"mcp__server"}) || !slices.Equal(m.mcpDeny, []string{"mcp__local__deny"}) {
 		t.Fatalf("worker-wide settings become the workspace's: %+v", m)
 	}
 	// The file's repo is not touched.

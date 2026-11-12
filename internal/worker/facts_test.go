@@ -27,7 +27,7 @@ func TestRunnerFactsPerKind(t *testing.T) {
 	}
 	dir := t.TempDir()
 	oc := filepath.Join(dir, "opencode.json")
-	if err := os.WriteFile(oc, []byte(`{"provider":{"ollama":{"options":{"baseURL":"http://localhost:11434/v1"}},"llmrouter":{"options":{"baseURL":"https://llm.lan/v1"}}}}`), 0o600); err != nil {
+	if err := os.WriteFile(oc, []byte(`{"provider":{"ollama":{"options":{"baseURL":"http://localhost:11434/v1"}},"router":{"options":{"baseURL":"https://llm.lan/v1"}}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	c := &Config{
@@ -35,7 +35,7 @@ func TestRunnerFactsPerKind(t *testing.T) {
 		RunnerSpecs: map[string]*RunnerSpec{
 			"opencode-glm":    {Kind: "opencode"},
 			"opencode-local":  {Kind: "opencode", Config: oc},
-			"opencode-router": {Kind: "opencode", Config: oc, Provider: "llmrouter"},
+			"opencode-router": {Kind: "opencode", Config: oc, Provider: "router"},
 			"claude-bedrock":  {Kind: "claude"},
 			"claude-proxy":    {Kind: "claude"},
 			"my-cli":          {Kind: "command", Command: []string{"mycli", "{prompt}"}},
@@ -44,7 +44,7 @@ func TestRunnerFactsPerKind(t *testing.T) {
 		Accounts: []*Account{
 			{Name: "glm", Runner: "opencode-glm", Model: "zai-coding-plan/glm-5.3"},
 			{Name: "local", Runner: "opencode-local", Model: "ollama/qwen3"},
-			{Name: "router", Runner: "opencode-router", Model: "llmrouter/qwen3-coder"},
+			{Name: "router", Runner: "opencode-router", Model: "router/qwen3-coder"},
 			{Name: "c1", Runner: "claude", Model: "opus", Effort: "high"},
 			{Name: "bedrock", Runner: "claude-bedrock", Env: map[string]string{"CLAUDE_CODE_USE_BEDROCK": "1"}},
 			{Name: "proxy", Runner: "claude-proxy", Env: map[string]string{"ANTHROPIC_BASE_URL": "https://gateway.example/anthropic"}},
@@ -61,7 +61,7 @@ func TestRunnerFactsPerKind(t *testing.T) {
 		"codex":           {Kind: "codex", Provider: "openai", Endpoint: "api.openai.com"},
 		"opencode-glm":    {Kind: "opencode", Model: "zai-coding-plan/glm-5.3", Provider: "zai", Endpoint: "opencode:zai-coding-plan"},
 		"opencode-local":  {Kind: "opencode", Model: "ollama/qwen3", Provider: "local", Endpoint: "localhost"},
-		"opencode-router": {Kind: "opencode", Model: "llmrouter/qwen3-coder", Provider: "llmrouter", Endpoint: "llm.lan"},
+		"opencode-router": {Kind: "opencode", Model: "router/qwen3-coder", Provider: "router", Endpoint: "llm.lan"},
 		"my-cli":          {Kind: "command", Provider: "unknown:command"},
 		"lan-llm":         {Kind: "command", Provider: "local", Endpoint: "10.0.0.5"},
 	} {

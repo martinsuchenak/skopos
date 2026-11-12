@@ -15,13 +15,13 @@ var (
 	glm       = Facts{Name: "opencode-glm", Kind: "opencode", Model: "zai-coding-plan/glm-5.3", Provider: "zai", Endpoint: "opencode:zai-coding-plan"}
 	localLLM  = Facts{Name: "opencode-local", Kind: "opencode", Model: "ollama/qwen3", Provider: "local", Endpoint: "localhost"}
 	codex     = Facts{Name: "codex", Kind: "codex", Model: "gpt-5.2", Provider: "openai", Endpoint: "api.openai.com", Stages: []string{"plan", "review", "compare", "second_opinion"}}
-	viaRouter = Facts{Name: "opencode-qwen", Kind: "opencode", Model: "llmrouter/qwen3-coder", Provider: "unknown:llm.lan", Endpoint: "llm.lan"}
+	viaRouter = Facts{Name: "opencode-qwen", Kind: "opencode", Model: "router/qwen3-coder", Provider: "unknown:llm.lan", Endpoint: "llm.lan"}
 )
 
-// The design's example: the fortix group allows Anthropic, a local model,
+// The design's example: the globex group allows Anthropic, a local model,
 // and OpenAI for second opinions only — never GLM, whatever CLI runs it.
 func TestRuleMatching(t *testing.T) {
-	fortix := &Effective{Layers: []Layer{layer("group fortix", "r1",
+	globex := &Effective{Layers: []Layer{layer("group globex", "r1",
 		Rule{Provider: "anthropic"},
 		Rule{Provider: "openai", Stages: []string{"second_opinion"}},
 		Rule{Provider: "local"},
@@ -41,16 +41,16 @@ func TestRuleMatching(t *testing.T) {
 		{"a router nobody declared", viaRouter, "review", false},
 	}
 	for _, c := range cases {
-		if got := fortix.Allows(c.facts, c.stage); got.Allowed != c.want {
+		if got := globex.Allows(c.facts, c.stage); got.Allowed != c.want {
 			t.Errorf("%s: allowed = %v, want %v (%+v)", c.name, got.Allowed, c.want, got)
 		}
 	}
 	// The decision names the rule that allowed it, and the layer that
 	// refused.
-	if d := fortix.Allows(codex, "second_opinion"); !reflect.DeepEqual(d.Rules, []int{1}) {
+	if d := globex.Allows(codex, "second_opinion"); !reflect.DeepEqual(d.Rules, []int{1}) {
 		t.Fatalf("matched rule: %+v", d)
 	}
-	if d := fortix.Allows(glm, "review"); d.Refused != "group fortix" {
+	if d := globex.Allows(glm, "review"); d.Refused != "group globex" {
 		t.Fatalf("refusing layer: %+v", d)
 	}
 }
@@ -70,8 +70,8 @@ func TestRuleFields(t *testing.T) {
 		{Rule{Kind: "opencode"}, claude, false},
 		{Rule{Runner: "opencode-*"}, glm, true},
 		{Rule{Runner: "CLAUDE"}, claude, true}, // case does not matter
-		{Rule{Provider: "llmrouter", Model: "llmrouter/qwen*"}, Facts{Provider: "llmrouter", Model: "llmrouter/qwen3-coder"}, true},
-		{Rule{Provider: "llmrouter", Model: "llmrouter/qwen*"}, Facts{Provider: "llmrouter", Model: "llmrouter/gpt-5"}, false},
+		{Rule{Provider: "router", Model: "router/qwen*"}, Facts{Provider: "router", Model: "router/qwen3-coder"}, true},
+		{Rule{Provider: "router", Model: "router/qwen*"}, Facts{Provider: "router", Model: "router/gpt-5"}, false},
 		// No provider set: any provider, an unknown one included.
 		{Rule{Kind: "opencode"}, viaRouter, true},
 		{Rule{Provider: "unknown:llm.lan"}, viaRouter, true},
@@ -225,7 +225,7 @@ func TestProviderForOpencode(t *testing.T) {
 		// A provider whose endpoint the operator chooses needs its baseURL.
 		{"ollama/qwen3", "", "unknown:ollama", "opencode:ollama"},
 		{"ollama/qwen3", "http://localhost:11434/v1", "local", "localhost"},
-		{"llmrouter/qwen3-coder", "https://llm.lan/v1", "unknown:llm.lan", "llm.lan"},
+		{"router/qwen3-coder", "https://llm.lan/v1", "unknown:llm.lan", "llm.lan"},
 		// A baseURL wins over the id: zai's name pointed elsewhere is elsewhere.
 		{"zai/glm-5.3", "https://proxy.example/v1", "unknown:proxy.example", "proxy.example"},
 		{"", "", "unknown:none", ""},
@@ -246,7 +246,7 @@ func TestContradicts(t *testing.T) {
 		{"anthropic", "local", true},
 		{"local", "local", false},
 		{"Local", "LOCAL", false},
-		{"llmrouter", "unknown:llm.lan", false}, // declaring what cannot be derived
+		{"router", "unknown:llm.lan", false}, // declaring what cannot be derived
 		{"local", "unknown:10.0.0.5", false},
 		{"", "zai", false},
 	} {

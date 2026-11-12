@@ -81,7 +81,7 @@ steps = false
 const importWorkerA = `[worker]
 id = "worker-a"
 plan_timeout = "15m"
-mcp_servers = ["mcp__llmrouter"]
+mcp_servers = ["mcp__router"]
 mcp_config = "/etc/mcp.json"
 
 [worker.runner_config.glm]

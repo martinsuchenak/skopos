@@ -99,10 +99,10 @@ func TestEffectivePolicyLayers(t *testing.T) {
 	}
 	// A group policy replaces the default for its workspaces — here it is
 	// wider than the default, which a default does not prevent.
-	if _, err := s.SetPolicy(ctx, KindGroup, "fortix", allow("provider=anthropic", "provider=zai"), false, "cli"); err != nil {
+	if _, err := s.SetPolicy(ctx, KindGroup, "globex", allow("provider=anthropic", "provider=zai"), false, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if got := sources(eff("fx/api")); got != "group fortix" {
+	if got := sources(eff("fx/api")); got != "group globex" {
 		t.Fatalf("group replaces the default: %s", got)
 	}
 	if got := sources(eff("other/x")); got != "fleet default" {
@@ -118,7 +118,7 @@ func TestEffectivePolicyLayers(t *testing.T) {
 	if _, err := s.SetPolicy(ctx, KindGroup, "web-team", allow("any"), false, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if got := sources(eff("fx/web")); got != "group fortix > group web-team > workspace" {
+	if got := sources(eff("fx/web")); got != "group globex > group web-team > workspace" {
 		t.Fatalf("groups then the workspace: %s", got)
 	}
 	if eff("fx/web").Allows(wGLM, "review").Allowed || !eff("fx/web").Allows(wClaude, "review").Allowed {
@@ -128,7 +128,7 @@ func TestEffectivePolicyLayers(t *testing.T) {
 	if _, err := s.SetPolicy(ctx, KindFleetCeiling, "", allow("provider=anthropic", "provider=local"), false, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if got := sources(eff("fx/api")); got != "fleet ceiling > group fortix" {
+	if got := sources(eff("fx/api")); got != "fleet ceiling > group globex" {
 		t.Fatalf("ceiling first: %s", got)
 	}
 	if eff("fx/api").Allows(wGLM, "review").Allowed {
@@ -142,7 +142,7 @@ func TestEffectivePolicyLayers(t *testing.T) {
 	if _, err := s.ClearPolicy(ctx, KindFleetCeiling, "", false, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if got := sources(eff("fx/api")); got != "group fortix" {
+	if got := sources(eff("fx/api")); got != "group globex" {
 		t.Fatalf("after clearing the ceiling: %s", got)
 	}
 	if p := s.Prefs(ctx, "fx/api"); p.Policy.Rev() != eff("fx/api").Rev() {
@@ -170,8 +170,8 @@ func TestPolicyNeedsAdminAtTheLevel(t *testing.T) {
 		"plain key, workspace":                {key("k", false, "fx/api"), KindWorkspace, "fx/api", false},
 		"admin of the workspace":              {admin(false, "fx/api"), KindWorkspace, "fx/api", true},
 		"admin of another workspace":          {admin(false, "fx/web"), KindWorkspace, "fx/api", false},
-		"admin of one workspace, its group":   {admin(false, "fx/api"), KindGroup, "fortix", false},
-		"admin of every workspace in a group": {admin(false, "fx/api", "fx/web"), KindGroup, "fortix", true},
+		"admin of one workspace, its group":   {admin(false, "fx/api"), KindGroup, "globex", false},
+		"admin of every workspace in a group": {admin(false, "fx/api", "fx/web"), KindGroup, "globex", true},
 		"admin of a group, the fleet":         {admin(false, "fx/api", "fx/web"), KindFleetDefault, "", false},
 		"admin of all workspaces, the fleet":  {admin(true), KindFleetDefault, "", true},
 	} {
@@ -194,7 +194,7 @@ func TestPolicyNeedsAdminAtTheLevel(t *testing.T) {
 	if _, err := s.GetPolicy(key("k", false, "fx/api"), KindFleetCeiling, ""); err != nil {
 		t.Fatalf("the fleet policy binds everyone, so everyone reads it: %v", err)
 	}
-	if _, err := s.GetPolicy(key("k", false, "fx/api"), KindGroup, "fortix"); !errors.Is(err, auth.ErrAdminRequired) {
+	if _, err := s.GetPolicy(key("k", false, "fx/api"), KindGroup, "globex"); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("a group's policy by a plain key: %v", err)
 	}
 	if _, err := s.EffectivePolicyView(key("k", false, "fx/api"), "fx/api"); err != nil {
@@ -211,21 +211,21 @@ func TestPolicyNeedsAdminAtTheLevel(t *testing.T) {
 func TestPolicyRevisionsAndAudit(t *testing.T) {
 	s, sqlDB, sink := policyFixture(t)
 	ctx := admin(true)
-	first, err := s.SetPolicy(ctx, KindGroup, "fortix", allow("provider=anthropic"), false, "cli")
+	first, err := s.SetPolicy(ctx, KindGroup, "globex", allow("provider=anthropic"), false, "cli")
 	if err != nil || first.Rev == "" || first.Policy == nil || first.UpdatedBy != "key ops" {
 		t.Fatalf("first: %+v %v", first, err)
 	}
 	if again, err := s.SetPolicy(ctx, KindGroup, "g1", allow("provider=anthropic"), false, "cli"); err != nil || again.Rev != first.Rev {
 		t.Fatalf("the same policy is not a change (and a group answers to its id too): %+v %v", again, err)
 	}
-	second, err := s.SetPolicy(ctx, KindGroup, "fortix", allow("provider=anthropic", "provider=openai,stages=second_opinion"), false, "dashboard")
+	second, err := s.SetPolicy(ctx, KindGroup, "globex", allow("provider=anthropic", "provider=openai,stages=second_opinion"), false, "dashboard")
 	if err != nil || second.Rev == first.Rev {
 		t.Fatalf("second: %+v %v", second, err)
 	}
-	if _, err := s.ClearPolicy(ctx, KindGroup, "fortix", false, "cli"); err != nil {
+	if _, err := s.ClearPolicy(ctx, KindGroup, "globex", false, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if v, err := s.GetPolicy(ctx, KindGroup, "fortix"); err != nil || v.Policy != nil || v.Rev != "" {
+	if v, err := s.GetPolicy(ctx, KindGroup, "globex"); err != nil || v.Policy != nil || v.Rev != "" {
 		t.Fatalf("cleared: %+v %v", v, err)
 	}
 	var n int
@@ -291,23 +291,23 @@ func TestPolicySaveThatStrands(t *testing.T) {
 	}
 	worker(t, sqlDB, "w1", []string{"fx/api", "fx/web"}, wClaude, wGLM)
 
-	_, err := s.SetPolicy(ctx, KindGroup, "fortix", allow("provider=anthropic"), false, "cli")
+	_, err := s.SetPolicy(ctx, KindGroup, "globex", allow("provider=anthropic"), false, "cli")
 	if !errors.Is(err, ErrStrands) {
 		t.Fatalf("want ErrStrands, got %v", err)
 	}
 	if msg := err.Error(); !strings.Contains(msg, "fx/api: review uses runner opencode-glm (provider zai, model zai-coding-plan/glm-5.3)") ||
-		!strings.Contains(msg, "the group fortix policy does not allow") || strings.Contains(msg, "claude") || strings.Contains(msg, "gemini") {
+		!strings.Contains(msg, "the group globex policy does not allow") || strings.Contains(msg, "claude") || strings.Contains(msg, "gemini") {
 		t.Fatalf("the refusal names exactly what is stranded: %s", msg)
 	}
-	if v, _ := s.GetPolicy(ctx, KindGroup, "fortix"); v.Policy != nil {
+	if v, _ := s.GetPolicy(ctx, KindGroup, "globex"); v.Policy != nil {
 		t.Fatal("a refused save must not be stored")
 	}
 	// A policy that keeps GLM is fine.
-	if _, err := s.SetPolicy(ctx, KindGroup, "fortix", allow("provider=anthropic", "provider=zai"), false, "cli"); err != nil {
+	if _, err := s.SetPolicy(ctx, KindGroup, "globex", allow("provider=anthropic", "provider=zai"), false, "cli"); err != nil {
 		t.Fatalf("nothing stranded: %v", err)
 	}
 	// Forced: saved, with the warning returned and the event marked.
-	v, err := s.SetPolicy(ctx, KindGroup, "fortix", allow("provider=anthropic"), true, "cli")
+	v, err := s.SetPolicy(ctx, KindGroup, "globex", allow("provider=anthropic"), true, "cli")
 	if err != nil || len(v.Warnings) != 1 || !strings.Contains(v.Warnings[0], "opencode-glm") {
 		t.Fatalf("forced save: %+v %v", v, err)
 	}
@@ -340,7 +340,7 @@ func TestRunnerAllowed(t *testing.T) {
 	if ok, known, _, err := s.RunnerAllowed(ctx, "fx/api", "second_opinion", "anything"); err != nil || !ok || !known {
 		t.Fatalf("no policy: everything is allowed: %v %v %v", ok, known, err)
 	}
-	if _, err := s.SetPolicy(ctx, KindGroup, "fortix", allow("provider=anthropic", "provider=openai,stages=second_opinion"), false, "cli"); err != nil {
+	if _, err := s.SetPolicy(ctx, KindGroup, "globex", allow("provider=anthropic", "provider=openai,stages=second_opinion"), false, "cli"); err != nil {
 		t.Fatal(err)
 	}
 	codex := policy.Facts{Name: "codex", Kind: "codex", Provider: "openai"}
@@ -358,7 +358,7 @@ func TestRunnerAllowed(t *testing.T) {
 		if err != nil || ok != c.ok || known != c.known {
 			t.Errorf("%s on %s: allowed=%v known=%v (%v), want %v %v", c.runner, c.stage, ok, known, err, c.ok, c.known)
 		}
-		if !ok && known && refused != "group fortix" {
+		if !ok && known && refused != "group globex" {
 			t.Errorf("%s on %s: refused by %q", c.runner, c.stage, refused)
 		}
 	}
@@ -444,11 +444,11 @@ func TestPolicyRefusalsLeakNothingAndOrphansAreAudited(t *testing.T) {
 		},
 		"set on a missing group": func() error { _, err := s.SetPolicy(plain, KindGroup, "nope", allow("any"), false, "cli"); return err },
 		"set on a real group": func() error {
-			_, err := s.SetPolicy(plain, KindGroup, "fortix", allow("any"), false, "cli")
+			_, err := s.SetPolicy(plain, KindGroup, "globex", allow("any"), false, "cli")
 			return err
 		},
 		"get a missing group": func() error { _, err := s.GetPolicy(plain, KindGroup, "nope"); return err },
-		"get a real group":    func() error { _, err := s.GetPolicy(plain, KindGroup, "fortix"); return err },
+		"get a real group":    func() error { _, err := s.GetPolicy(plain, KindGroup, "globex"); return err },
 	} {
 		if err := call(); !errors.Is(err, auth.ErrAdminRequired) || errors.Is(err, ErrNotFound) {
 			t.Errorf("%s: a non-admin gets the same refusal either way, got %v", name, err)
@@ -456,7 +456,7 @@ func TestPolicyRefusalsLeakNothingAndOrphansAreAudited(t *testing.T) {
 	}
 	// An admin of one workspace in a group is refused without the name of
 	// the workspace it lacks.
-	_, err := s.SetPolicy(admin(false, "fx/api"), KindGroup, "fortix", allow("any"), false, "cli")
+	_, err := s.SetPolicy(admin(false, "fx/api"), KindGroup, "globex", allow("any"), false, "cli")
 	if !errors.Is(err, auth.ErrAdminRequired) || strings.Contains(err.Error(), "fx/web") {
 		t.Fatalf("the refusal must not name the group's other members: %v", err)
 	}
@@ -576,7 +576,7 @@ func TestPipelineSaveRefusesADefinedRunnerThePolicyForbids(t *testing.T) {
 	if err := put(KindWorkspace, "fx/api", map[string]string{"review": "glm"}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.SetPolicy(root(), KindGroup, "fortix", allow("provider=anthropic", "provider=openai,stages=second_opinion", "provider=zai,executor=isolated,stages=qa"), true, "cli"); err != nil {
+	if _, err := s.SetPolicy(root(), KindGroup, "globex", allow("provider=anthropic", "provider=openai,stages=second_opinion", "provider=zai,executor=isolated,stages=qa"), true, "cli"); err != nil {
 		t.Fatal(err)
 	}
 	// The setting that was already there does not block an unrelated edit.
@@ -608,10 +608,10 @@ func TestPipelineSaveRefusesADefinedRunnerThePolicyForbids(t *testing.T) {
 	if err := put(KindWorkspace, "fx/api", map[string]string{"plan": "claude-opus"}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := put(KindGroup, "fortix", map[string]string{"plan": "glm"}, ""); err != nil {
+	if err := put(KindGroup, "globex", map[string]string{"plan": "glm"}, ""); err != nil {
 		t.Fatalf("every member sets plan itself: %v", err)
 	}
-	if err := put(KindGroup, "fortix", map[string]string{"plan": "glm", "review": "glm"}, ""); !errors.Is(err, ErrPolicyRefuses) {
+	if err := put(KindGroup, "globex", map[string]string{"plan": "glm", "review": "glm"}, ""); !errors.Is(err, ErrPolicyRefuses) {
 		t.Fatalf("the members take review from the group: %v", err)
 	}
 }

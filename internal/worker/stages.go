@@ -32,7 +32,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	}
 
 	// The planner reads the clone's working tree at the base branch; the
-	// recorded base binds Martin's approval to exactly what was read.
+	// recorded base binds the approver's approval to exactly what was read.
 	done := runLogFrom(ctx).stepf("fetching origin/%s", repo.DefaultBranch)
 	if _, err := git(ctx, repo.Path, "fetch", "--quiet", "origin", repo.DefaultBranch); err != nil {
 		return retryable(err)
@@ -44,7 +44,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	baseSHA, _ := git(ctx, repo.Path, "rev-parse", "origin/"+repo.DefaultBranch)
 
 	// The item's branch, and whether someone already started it. Several
-	// candidates and no exact match: Martin picks (the worker never guesses
+	// candidates and no exact match: the approver picks (the worker never guesses
 	// whose branch to continue). A branch that exists is a handover: the
 	// plan is made against its head, and the approval names that head.
 	choice, err := resolveBranch(ctx, repo, item)
@@ -127,14 +127,14 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 
 	// Knowledge at the base the planner reads (never a worktree head).
 	skills := repoSkills(ctx, repo.Path, kbase)
-	// Martin's text plus the sections current for this round: his answers,
+	// The author's text plus the sections current for this round: their answers,
 	// the plan(s) his newest notes are about, and those notes (brief.go).
 	brief, secs := splitItem(item.Content)
 	previous := ""
 	if seed == nil {
 		previous = previousPlans(secs)
 	}
-	// A reviewed branch that nobody planned (a review-only item Martin
+	// A reviewed branch that nobody planned (a review-only item the approver
 	// asked changes for): his change requests and the review they answer.
 	changes, review := "", ""
 	if item.PlanID == "" {
@@ -222,7 +222,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	})
 }
 
-// decisions is the questions and Martin's answers a prompt carries: from the
+// decisions is the questions and the approver's answers a prompt carries: from the
 // server's record (which marks those answers as used by this run), or,
 // from a server without it, read from the item's sections.
 func (w *Worker) decisions(ctx context.Context, run *Run, secs []itemSection) string {
@@ -301,7 +301,7 @@ func candidateLabel(run *Run, account *Account) string {
 
 // submitCandidate writes a plan group member's result as a candidate
 // revision. The server created and linked the plan when the first member
-// was claimed; the live steps stay untouched until Martin approves one.
+// was claimed; the live steps stay untouched until the approver approves one.
 func (w *Worker) submitCandidate(ctx context.Context, run *Run, item *Item, pr planResult, skills []Skill, baseSHA, branch, label string, res AgentResult, log *slog.Logger) error {
 	planID := item.PlanID
 	if planID == "" {
@@ -378,7 +378,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	steps := []Step{}
 	if perr == nil {
 		for _, pi := range planDetail.Items {
-			if pi.Title == "Review and push (Martin)" {
+			if isReviewStep(pi.Title, pi.Phase) {
 				continue
 			}
 			steps = append(steps, Step{Title: pi.Title, Description: pi.Description, ID: pi.ID, Done: pi.Status == "done"})
@@ -522,7 +522,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			rl.notef("an earlier run left %d uncommitted change(s); the implementer decides what to keep", len(leftover))
 		}
 		instructions, skillBodies := w.runKnowledge(ctx, repo, run, item.PlanID, baseRef)
-		// Martin's text and the current decisions, never the earlier plans:
+		// The author's text and the current decisions, never the earlier plans:
 		// the approved steps come from the plan revision (brief.go).
 		brief, secs := splitItem(item.Content)
 		notes := newestBody(secs, "Change requests")
@@ -865,7 +865,7 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 	brief := ""
 	if br != nil {
 		// Nobody planned this branch: what it is for is the item's text and
-		// Martin's answers.
+		// The approver's answers.
 		b, secs := splitItem(br.Item.Content)
 		brief = b
 		if qa := w.decisions(ctx, run, secs); qa != "" {
@@ -873,7 +873,7 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 		}
 		instructions = repoInstructions(ctx, repo.Path, base)
 	} else if item, ierr := w.client.GetItem(ctx, run.ItemID); ierr == nil && item.PlanID != "" {
-		// Martin's decisions (answers to the planner's questions, approval
+		// The approver's decisions (answers to the planner's questions, approval
 		// notes, change requests) are part of the spec: a reviewer that
 		// cannot see them blocks on behaviour he explicitly accepted (found
 		// in the live multi-agent run).
@@ -884,7 +884,7 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 		}
 		if plan, perr := w.client.GetPlan(ctx, item.PlanID); perr == nil {
 			for _, pi := range plan.Items {
-				if pi.Title == "Review and push (Martin)" {
+				if isReviewStep(pi.Title, pi.Phase) {
 					continue
 				}
 				steps = append(steps, Step{Title: pi.Title, Description: pi.Description})
@@ -940,7 +940,7 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 		})
 	}
 	if br != nil {
-		// The verdict is what Martin asked for: written into the item, and
+		// The verdict is what the approver asked for: written into the item, and
 		// the run succeeds whatever it says (he decides at in_review).
 		heading := "review — " + account.Name
 		if run.Focus != "" {
@@ -997,7 +997,7 @@ func shortID(id string) string {
 // proposeAmendment is the amendment gate (1b round-2 N2): the item returns
 // to awaiting_approval with the amended steps snapshotted over the locked
 // revision in ONE server transaction, and the run STAYS PAUSED — never
-// auto-reclaimed. Martin's approve resumes it. The amendment names the
+// auto-reclaimed. The approver's approve resumes it. The amendment names the
 // RUN's base, not the default branch tip.
 func (w *Worker) proposeAmendment(ctx context.Context, run *Run, item *Item, ir implResult) error {
 	if ir.Reason == "" {
@@ -1076,7 +1076,7 @@ type implResult struct {
 	Reason       string `json:"reason"`
 	Summary      string `json:"summary"`
 	AmendedSteps []Step `json:"amended_steps"`
-	// Questions for Martin with an amendment or a block; Question is the
+	// Questions for the approver with an amendment or a block; Question is the
 	// single-string shape the schema had before.
 	Questions []itemtext.Question `json:"questions"`
 	Question  string              `json:"question"`
@@ -1160,7 +1160,7 @@ type branchReview struct {
 // (tmp/branch-handover — design.md §4): the repository's setup and checks at
 // the branch head, read-only — no fix rounds, nothing committed or pushed —
 // then the review, which gets the check results. Failed checks don't stop
-// it: they are findings. The run succeeds whatever the verdict; Martin
+// it: they are findings. The run succeeds whatever the verdict; the approver
 // decides at in_review.
 func (w *Worker) stageBranchReview(ctx context.Context, run *Run, log *slog.Logger) error {
 	repo := w.repo(run.WorkspaceID)

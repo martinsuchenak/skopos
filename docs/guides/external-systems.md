@@ -9,7 +9,7 @@ pipeline and follow it over REST:
 4. post people's decisions back: approve the plan, answer questions,
    request changes, sign off.
 
-This guide uses a job system with work requests numbered like `WR110375`.
+This guide uses a job system with jobs numbered like `JOB110375`.
 The endpoints and event types are in [openapi.yaml](../../openapi.yaml)
 (`webhooks:` lists the events).
 
@@ -40,11 +40,11 @@ Idempotency-Key: wr-110375-create
 
 {
   "workspace_id": "github.com/acme/app",
-  "title": "WR110375 AI configurations",
+  "title": "JOB110375 AI configurations",
   "content": "What the job asks for…",
   "author_agent_id": "jobs",
-  "ref": "WR110375",
-  "external_url": "https://jobs.example/wr/110375",
+  "ref": "JOB110375",
+  "external_url": "https://jobs.example.com/job/110375",
   "start": "queue"
 }
 ```
@@ -54,7 +54,7 @@ Idempotency-Key: wr-110375-create
   `ref` through the repository's branch template. Without `start` the item
   stays open.
 - `ref` is the job's number. The worker's branch template can use it
-  (`{ref}`), and `GET /api/inbox?ref=WR110375` finds the job's items.
+  (`{ref}`), and `GET /api/inbox?ref=JOB110375` finds the job's items.
 - `external_url` links the item back to the job; the dashboard shows it on
   the item.
 - The answer is `201` with the item. If it was created but couldn't start,
@@ -117,7 +117,7 @@ content-type: application/json
 
 {"id": "msg_01a1…", "type": "item.needs_you", "timestamp": "2026-11-09T09:00:00.000Z",
  "data": {"seq": 812, "item_id": "01a1…", "workspace_id": "github.com/acme/app",
-          "ref": "WR110375", "external_url": "https://jobs.example/wr/110375",
+          "ref": "JOB110375", "external_url": "https://jobs.example.com/job/110375",
           "status": "awaiting_approval", "gate": "plan_approval",
           "links": {"api": "https://skopos.example.com/api/inbox/01a1…/state",
                     "dashboard": "https://skopos.example.com/?item=01a1…"}}}
@@ -231,14 +231,14 @@ A key with the delegate permission names the person deciding:
 ```http
 POST /api/inbox/{id}/approve
 Authorization: Bearer sk_…
-X-Skopos-On-Behalf-Of: martin@acme.example
+X-Skopos-On-Behalf-Of: alex@acme.example
 Idempotency-Key: wr-110375-approve-01a1…
 
 {"revision_id": "01a1…", "content_hash": "9f2c…"}
 ```
 
 - The audit log, the approval and any answers record
-  `martin@acme.example (key jobs)`; the audit entry also has
+  `alex@acme.example (key jobs)`; the audit entry also has
   `on_behalf_of`.
 - A key without the delegate permission gets `400` for this header.
 - `revision_id` and `content_hash` come from `plan.revisions` in the state:

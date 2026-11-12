@@ -37,12 +37,12 @@ func knotWorker(t *testing.T, ws string, vars map[string]string) *wk.Config {
 func TestIntegrationStageCapsAndWrappers(t *testing.T) {
 	sqlDB, baseURL := workerStack(t)
 	root := workerClient{base: baseURL, key: "root-secret"}
-	const ws = "github.com/fortix/freedom3"
+	const ws = "github.com/globex/shop"
 	wsPath := "/api/workspaces/" + url.PathEscape(ws)
-	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`","name":"freedom3"}`), 201)
-	mustDo(t, root.req("POST", "/api/groups", `{"name":"fortix","members":["`+ws+`"]}`), 201)
-	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"martin","workspaces":["`+ws+`"],"approver":true}`)}
-	ops := workerClient{base: baseURL, key: mint(t, root, `{"name":"ops","groups":["fortix"],"admin":true}`)}
+	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`","name":"shop"}`), 201)
+	mustDo(t, root.req("POST", "/api/groups", `{"name":"globex","members":["`+ws+`"]}`), 201)
+	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"alex","workspaces":["`+ws+`"],"approver":true}`)}
+	ops := workerClient{base: baseURL, key: mint(t, root, `{"name":"ops","groups":["globex"],"admin":true}`)}
 	workerKey := mint(t, root, `{"name":"worker-1","workspaces":["`+ws+`"]}`)
 	wc := wk.NewClient(baseURL, workerKey)
 	wc.SetServerCommands(true)
@@ -104,7 +104,7 @@ func TestIntegrationStageCapsAndWrappers(t *testing.T) {
 
 	// The claim: the plan is for opencode-glm, which this worker cannot
 	// run there.
-	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"wrapped plan","author_agent_id":"martin"}`), 201).(map[string]any)
+	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"wrapped plan","author_agent_id":"alex"}`), 201).(map[string]any)
 	mustDo(t, approver.req("POST", "/api/inbox/"+item["id"].(string)+"/queue", ""), 200)
 	runners := []string{"claude", "opencode-glm"}
 	wc.SetExecutors(cfg.ExecutorFacts())

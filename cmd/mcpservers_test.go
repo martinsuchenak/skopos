@@ -6,8 +6,8 @@ import (
 )
 
 func TestKeyValues(t *testing.T) {
-	m, err := keyValues("header", []string{"Authorization=Bearer ${secret:token}", " X-Tenant =fortix", "Empty="})
-	if err != nil || m["Authorization"] != "Bearer ${secret:token}" || m["X-Tenant"] != "fortix" || m["Empty"] != "" {
+	m, err := keyValues("header", []string{"Authorization=Bearer ${secret:token}", " X-Tenant =globex", "Empty="})
+	if err != nil || m["Authorization"] != "Bearer ${secret:token}" || m["X-Tenant"] != "globex" || m["Empty"] != "" {
 		t.Fatalf("%v %v", m, err)
 	}
 	if _, err := keyValues("env", []string{"novalue"}); err == nil || !strings.Contains(err.Error(), "NAME=value") {

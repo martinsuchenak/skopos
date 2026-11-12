@@ -21,12 +21,12 @@ import (
 func TestIntegrationWorkspaceConfig(t *testing.T) {
 	sqlDB, baseURL := workerStack(t)
 	root := workerClient{base: baseURL, key: "root-secret"}
-	const ws = "github.com/fortix/freedom3"
+	const ws = "github.com/globex/shop"
 	wsPath := "/api/workspaces/" + url.PathEscape(ws)
-	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`","name":"freedom3"}`), 201)
-	mustDo(t, root.req("POST", "/api/groups", `{"name":"fortix","members":["`+ws+`"]}`), 201)
-	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"martin","workspaces":["`+ws+`"],"approver":true}`)}
-	ops := workerClient{base: baseURL, key: mint(t, root, `{"name":"ops","groups":["fortix"],"admin":true}`)}
+	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`","name":"shop"}`), 201)
+	mustDo(t, root.req("POST", "/api/groups", `{"name":"globex","members":["`+ws+`"]}`), 201)
+	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"alex","workspaces":["`+ws+`"],"approver":true}`)}
+	ops := workerClient{base: baseURL, key: mint(t, root, `{"name":"ops","groups":["globex"],"admin":true}`)}
 	workerKey := mint(t, root, `{"name":"worker-1","workspaces":["`+ws+`"]}`)
 	worker := workerClient{base: baseURL, key: workerKey}
 	wc := wk.NewClient(baseURL, workerKey)
@@ -39,7 +39,7 @@ func TestIntegrationWorkspaceConfig(t *testing.T) {
 	}
 
 	// Who may save it.
-	body := `{"config":{"default_branch":"develop","setup":["npm ci"],"checks":["npm test"],"plan_timeout":"20m","push":{"kind":"github","remote_url":"https://github.com/fortix/freedom3.git","pull_request":"draft"}}}`
+	body := `{"config":{"default_branch":"develop","setup":["npm ci"],"checks":["npm test"],"plan_timeout":"20m","push":{"kind":"github","remote_url":"https://github.com/globex/shop.git","pull_request":"draft"}}}`
 	mustDo(t, approver.req("PUT", wsPath+"/config", body), 403, "an approver is not an admin")
 	mustDo(t, worker.req("PUT", wsPath+"/config", body), 403, "the worker's key")
 	mustDo(t, ops.req("PUT", wsPath+"/config", `{"config":{"checkout":"copy"}}`), 400, "an unknown checkout")
@@ -59,20 +59,20 @@ func TestIntegrationWorkspaceConfig(t *testing.T) {
 		t.Fatalf("the saved config names its revision and who saved it: %v", saved)
 	}
 	// A group's values are defaults under it.
-	mustDo(t, ops.req("PUT", "/api/groups/fortix/config", `{"config":{"check_timeout":"45m","checks":["group check"]}}`), 200)
-	mustDo(t, approver.req("GET", "/api/groups/fortix/config", ""), 403, "a group's config is its admins'")
+	mustDo(t, ops.req("PUT", "/api/groups/globex/config", `{"config":{"check_timeout":"45m","checks":["group check"]}}`), 200)
+	mustDo(t, approver.req("GET", "/api/groups/globex/config", ""), 403, "a group's config is its admins'")
 
 	eff, err = wc.EffectiveConfig(ctx, ws)
 	if err != nil || !eff.Managed || eff.Rev == "" {
 		t.Fatalf("managed: %+v %v", eff, err)
 	}
 	first := eff.Rev
-	if (*eff.Config.Checks)[0] != "npm test" || eff.Sources["checks"] != "workspace" || eff.Config.CheckTimeout.D() != 45*time.Minute || eff.Sources["check_timeout"] != "group:fortix" {
+	if (*eff.Config.Checks)[0] != "npm test" || eff.Sources["checks"] != "workspace" || eff.Config.CheckTimeout.D() != 45*time.Minute || eff.Sources["check_timeout"] != "group:globex" {
 		t.Fatalf("the workspace's own field wins, the group fills in: %+v", eff)
 	}
 
 	// The claim names the revision; the worker fetches exactly that one.
-	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"config item","author_agent_id":"martin"}`), 201).(map[string]any)
+	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"config item","author_agent_id":"alex"}`), 201).(map[string]any)
 	mustDo(t, approver.req("POST", "/api/inbox/"+item["id"].(string)+"/queue", ""), 200)
 	run, err := wc.Claim(ctx, "w1", []string{"claude"}, []string{ws}, nil, nil, nil)
 	if err != nil || run == nil {
@@ -134,7 +134,7 @@ func TestIntegrationWorkspaceConfig(t *testing.T) {
 
 	// A pipeline save that newly names a defined runner the policy never
 	// allows is refused; one it allows is saved.
-	mustDo(t, ops.req("PUT", "/api/groups/fortix/policy", `{"allow":[{"provider":"anthropic"}],"force":true}`), 200)
+	mustDo(t, ops.req("PUT", "/api/groups/globex/policy", `{"allow":[{"provider":"anthropic"}],"force":true}`), 200)
 	refused := mustDo(t, approver.req("PUT", wsPath+"/pipeline", `{"stages":{"review":{"members":[{"runner":"glm"}]}}}`), 409)
 	if !strings.Contains(refused.body, "glm") || !strings.Contains(refused.body, "policy") {
 		t.Fatalf("the refusal names the runner: %s", refused.body)
@@ -145,7 +145,7 @@ func TestIntegrationWorkspaceConfig(t *testing.T) {
 	mustDo(t, ops.req("GET", "/api/config/export", ""), 403, "an export lists every workspace")
 	exported := root.req("GET", "/api/config/export", "")
 	mustDo(t, exported, 200)
-	for _, want := range []string{`"glm"`, `"fortix"`, ws, `"npm run ci"`, `"claude-opus"`} {
+	for _, want := range []string{`"glm"`, `"globex"`, ws, `"npm run ci"`, `"claude-opus"`} {
 		if !strings.Contains(exported.body, want) {
 			t.Fatalf("the export lacks %s: %s", want, exported.body)
 		}

@@ -94,7 +94,7 @@ func CleanVia(via string) string {
 // sanitizeVia validates and rights the label: unknown labels drop to empty
 // (never trusted), migration is stripped from caller-supplied values, and
 // slack requires an approver principal — the threat model's "via: slack"
-// means Martin himself.
+// means the operator.
 func sanitizeVia(via string, p *auth.Principal) string {
 	via = strings.TrimSpace(via)
 	if via == ViaMigration {

@@ -94,8 +94,8 @@ func TestIntegrationWorkflowRoundTrip(t *testing.T) {
 	root := bearerClient{ts, "root-secret"}
 
 	// Registry + group + keys.
-	mustStatus(t, root.do("POST", "/api/workspaces", `{"id":"github.com/fortix/freedom3","name":"freedom3"}`), 201, "register workspace")
-	mustStatus(t, root.do("POST", "/api/groups", `{"name":"work","patterns":["github.com/fortix/*"]}`), 201, "create group")
+	mustStatus(t, root.do("POST", "/api/workspaces", `{"id":"github.com/globex/shop","name":"shop"}`), 201, "register workspace")
+	mustStatus(t, root.do("POST", "/api/groups", `{"name":"work","patterns":["github.com/globex/*"]}`), 201, "create group")
 
 	approverSecret := mintKey(t, root, `{"name":"relay","workspaces":[],"groups":["work"],"approver":true}`)
 	workerSecret := mintKey(t, root, `{"name":"worker","workspaces":[],"groups":["work"]}`)
@@ -112,7 +112,7 @@ func TestIntegrationWorkflowRoundTrip(t *testing.T) {
 	mustStatus(t, approver.do("POST", "/api/inbox/"+itemID+"/queue", ""), 200, "queue")
 
 	// Planner: worker creates the plan, links it, snapshots revision 1.
-	planBody := `{"workspace_id":"github.com/fortix/freedom3","name":"ship it","author_agent_id":"planner"}`
+	planBody := `{"workspace_id":"github.com/globex/shop","name":"ship it","author_agent_id":"planner"}`
 	planResp := mustStatus(t, worker.do("POST", "/api/plans", planBody), 201, "create plan")
 	var plan struct {
 		ID string `json:"id"`
@@ -162,7 +162,7 @@ func TestIntegrationWorkflowRoundTrip(t *testing.T) {
 
 func createItem(t *testing.T, c bearerClient) string {
 	t.Helper()
-	resp := mustStatus(t, c.do("POST", "/api/inbox", `{"workspace_id":"github.com/fortix/freedom3","title":"pipeline item","author_agent_id":"martin"}`), 201, "create item")
+	resp := mustStatus(t, c.do("POST", "/api/inbox", `{"workspace_id":"github.com/globex/shop","title":"pipeline item","author_agent_id":"alex"}`), 201, "create item")
 	var item struct {
 		ID string `json:"id"`
 	}

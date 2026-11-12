@@ -108,7 +108,7 @@ group; a repository overrides only the stages it needs.
   the implementer reviewing itself.
 - **Limit which models may see a repository.** A runner policy allows
   runners by provider, model and stage, per workspace, group or fleet:
-  `skopos policy set --group fortix --allow provider=anthropic`. See
+  `skopos policy set --group acme --allow provider=anthropic`. See
   [Runner policy](../concepts/runner-policy.md).
 - **Keep a repository's checks in one place.** With several workers, hold
   its setup and check commands, branches and push settings on the server
@@ -225,7 +225,7 @@ skopos worker install             # launchd (macOS) or systemd (Linux); starts o
 
 **Starting from an existing branch.** Fill in the item's **Branch** (or
 its **Reference**, when the repository's branch names use it, e.g.
-`WR203345`):
+`JOB203345`):
 - **Queue** it, and the agents continue the branch: the planner sees what is
   already on it and plans the rest (a *handover*).
 - **Review branch** instead, and nothing is planned or implemented: a worker

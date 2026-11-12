@@ -21,7 +21,7 @@ func TestRunTokenMCPConfig(t *testing.T) {
 	op := filepath.Join(state, "op.json")
 	// The operator's file may even define "skopos" (a setup from before
 	// agent keys): the run's own token replaces it.
-	if err := os.WriteFile(op, []byte(`{"mcpServers":{"llmrouter":{"type":"http","url":"https://llm.example/mcp"},"skopos":{"type":"http","url":"https://old.example/mcp","headers":{"Authorization":"Bearer sk_shared"}}}}`), 0o600); err != nil {
+	if err := os.WriteFile(op, []byte(`{"mcpServers":{"router":{"type":"http","url":"https://llm.example/mcp"},"skopos":{"type":"http","url":"https://old.example/mcp","headers":{"Authorization":"Bearer sk_shared"}}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	w := New(&Config{StateDir: state, MCPConfig: op}, NewClient("https://skopos.example", "sk_worker"), slog.New(slog.DiscardHandler))
@@ -55,7 +55,7 @@ func TestRunTokenMCPConfig(t *testing.T) {
 	if sk.URL != "https://skopos.example/mcp" || sk.Headers["Authorization"] != "Bearer skr_this-run-only-token" {
 		t.Fatalf("skopos server: %+v", sk)
 	}
-	if cfg.MCPServers["llmrouter"].URL != "https://llm.example/mcp" || strings.Contains(string(raw), "sk_shared") || strings.Contains(string(raw), "sk_worker") {
+	if cfg.MCPServers["router"].URL != "https://llm.example/mcp" || strings.Contains(string(raw), "sk_shared") || strings.Contains(string(raw), "sk_worker") {
 		t.Fatalf("operator servers kept, the shared key and the worker key never in it: %s", raw)
 	}
 	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {

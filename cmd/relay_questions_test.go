@@ -46,7 +46,7 @@ func TestPlanReadyListsCurrentQuestions(t *testing.T) {
 func TestRelayBlockedListsQuestions(t *testing.T) {
 	svc, runsSvc, _, _, relay := relayStack(t)
 	ctx := context.Background()
-	item, err := svc.CreateItem(ctx, inbox.CreateInput{WorkspaceID: "ws-a", Title: "vague", AuthorAgentID: "martin"})
+	item, err := svc.CreateItem(ctx, inbox.CreateInput{WorkspaceID: "ws-a", Title: "vague", AuthorAgentID: "alex"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestRelayBlockedListsQuestions(t *testing.T) {
 func TestRelayBlockedByImplementerListsQuestions(t *testing.T) {
 	svc, runsSvc, _, _, relay := relayStack(t)
 	ctx := context.Background()
-	item, err := svc.CreateItem(ctx, inbox.CreateInput{WorkspaceID: "ws-a", Title: "stock api", AuthorAgentID: "martin"})
+	item, err := svc.CreateItem(ctx, inbox.CreateInput{WorkspaceID: "ws-a", Title: "stock api", AuthorAgentID: "alex"})
 	if err != nil {
 		t.Fatal(err)
 	}

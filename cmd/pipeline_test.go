@@ -27,7 +27,7 @@ func TestPipelineCLI(t *testing.T) {
 	if err := db.RunMigrations(sqlDB); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sqlDB.Exec(`INSERT INTO workspaces (id, created_at) VALUES ('fx/api', ''); INSERT INTO workspace_groups (id, name, created_at) VALUES ('g1', 'fortix', '')`); err != nil {
+	if _, err := sqlDB.Exec(`INSERT INTO workspaces (id, created_at) VALUES ('fx/api', ''); INSERT INTO workspace_groups (id, name, created_at) VALUES ('g1', 'globex', '')`); err != nil {
 		t.Fatal(err)
 	}
 	svc := pipeline.NewService(pipeline.NewStorage(sqlDB))
@@ -79,13 +79,13 @@ func TestPipelineCLI(t *testing.T) {
 		t.Fatal("set with nothing to set must fail")
 	}
 	must(append(ws, "show", "--workspace", "fx/api")...)
-	must("group", "pipeline", "set", "--group", "fortix", "--stage", "qa", "--runners", "claude")
-	g, err := svc.Get(context.Background(), pipeline.KindGroup, "fortix")
+	must("group", "pipeline", "set", "--group", "globex", "--stage", "qa", "--runners", "claude")
+	g, err := svc.Get(context.Background(), pipeline.KindGroup, "globex")
 	if err != nil || pipeline.FormatMembers(g.Own.Stages["qa"].Members) != "claude" {
 		t.Fatalf("group pipeline set: %+v %v", g, err)
 	}
-	must("group", "pipeline", "clear", "--group", "fortix", "--all")
-	if g, _ = svc.Get(context.Background(), pipeline.KindGroup, "fortix"); len(g.Own.Stages) != 0 {
+	must("group", "pipeline", "clear", "--group", "globex", "--all")
+	if g, _ = svc.Get(context.Background(), pipeline.KindGroup, "globex"); len(g.Own.Stages) != 0 {
 		t.Fatalf("clear --all: %+v", g.Own)
 	}
 }

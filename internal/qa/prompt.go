@@ -91,7 +91,7 @@ func PromptText(rec *Record) string {
 			}
 		}
 		for _, g := range st.General {
-			lines = append(lines, "Martin's answer to these questions: "+g.Text)
+			lines = append(lines, "The approver's answer to these questions: "+g.Text)
 		}
 		blocks = append(blocks, strings.Join(lines, "\n"))
 	}
@@ -100,7 +100,7 @@ func PromptText(rec *Record) string {
 		if a.Action != ActionImported {
 			with = " with " + strings.ReplaceAll(a.Action, "_", " ")
 		}
-		blocks = append(blocks, "Martin's answer"+with+" (no question open): "+a.Text)
+		blocks = append(blocks, "The approver's answer"+with+" (no question open): "+a.Text)
 	}
 	return strings.Join(blocks, "\n\n")
 }

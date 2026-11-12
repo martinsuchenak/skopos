@@ -73,37 +73,37 @@ func holdsText(t *testing.T, sqlDB *sql.DB, text string) []string {
 func TestIntegrationMCPServersForRuns(t *testing.T) {
 	sqlDB, baseURL := workerStack(t)
 	root := workerClient{base: baseURL, key: "root-secret"}
-	const ws, other = "github.com/fortix/freedom3", "github.com/martin/personal"
+	const ws, other = "github.com/globex/shop", "github.com/alex/personal"
 	wsPath := "/api/workspaces/" + url.PathEscape(ws)
 	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`"}`), 201)
 	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+other+`"}`), 201)
-	mustDo(t, root.req("POST", "/api/groups", `{"name":"fortix","members":["`+ws+`"]}`), 201)
-	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"martin","workspaces":["`+ws+`","`+other+`"],"approver":true}`)}
-	ops := workerClient{base: baseURL, key: mint(t, root, `{"name":"ops","groups":["fortix"],"admin":true}`)}
+	mustDo(t, root.req("POST", "/api/groups", `{"name":"globex","members":["`+ws+`"]}`), 201)
+	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"alex","workspaces":["`+ws+`","`+other+`"],"approver":true}`)}
+	ops := workerClient{base: baseURL, key: mint(t, root, `{"name":"ops","groups":["globex"],"admin":true}`)}
 	workerKey := mint(t, root, `{"name":"worker-1","workspaces":["`+ws+`","`+other+`"]}`)
 	worker := workerClient{base: baseURL, key: workerKey}
 	wc := wk.NewClient(baseURL, workerKey)
 	wc.SetServerCommands(true)
 	ctx := t.Context()
-	const secret = "fx-llmrouter-token-9f3a7c21"
+	const secret = "fx-router-token-9f3a7c21"
 
 	// Definitions: the fleet's.
-	def := `{"type":"http","url":"https://llmrouter.fortix.example/mcp","headers":{"Authorization":"Bearer ${secret:token}"},"workspaces":["github.com/fortix/*"]}`
-	mustDo(t, ops.req("PUT", "/api/fleet/mcp-servers/llmrouter", def), 403, "a group admin does not define MCP servers")
-	mustDo(t, root.req("PUT", "/api/fleet/mcp-servers/llmrouter", `{"type":"http","url":"https://x/mcp","headers":{"Authorization":"Bearer `+secret+`"}}`), 400, "a credential written into the definition")
-	mustDo(t, root.req("PUT", "/api/fleet/mcp-servers/llmrouter", `{"type":"http","urls":"https://x/mcp"}`), 400, "a misspelt field")
+	def := `{"type":"http","url":"https://router.example.com/mcp","headers":{"Authorization":"Bearer ${secret:token}"},"workspaces":["github.com/globex/*"]}`
+	mustDo(t, ops.req("PUT", "/api/fleet/mcp-servers/router", def), 403, "a group admin does not define MCP servers")
+	mustDo(t, root.req("PUT", "/api/fleet/mcp-servers/router", `{"type":"http","url":"https://x/mcp","headers":{"Authorization":"Bearer `+secret+`"}}`), 400, "a credential written into the definition")
+	mustDo(t, root.req("PUT", "/api/fleet/mcp-servers/router", `{"type":"http","urls":"https://x/mcp"}`), 400, "a misspelt field")
 	mustDo(t, root.req("PUT", "/api/fleet/mcp-servers/skopos", `{"type":"http","url":"https://x/mcp"}`), 400, "the worker's own name")
-	mustDo(t, root.req("PUT", "/api/fleet/mcp-servers/llmrouter", `{"type":"http","url":"https://x/mcp?api_key=`+secret+`"}`), 400, "a credential in the URL")
-	mustDo(t, root.req("PUT", "/api/fleet/mcp-servers/llmrouter", `{"type":"http","url":"https://x/mcp","headers":{"Authorization":"Bearer ${secret:token}"}}`), 400, "secrets without the workspaces they are for")
-	mustDo(t, ops.req("PUT", wsPath+"/config", `{"config":{"mcp":["llmrouter"],"mcp_servers":["mcp__llmrouter"]}}`), 400, "a server that is not defined")
-	mustDo(t, root.req("PUT", "/api/fleet/mcp-servers/llmrouter", def), 200)
-	mustDo(t, root.req("PUT", "/api/fleet/mcp-servers/scriptling", `{"type":"command","command":["${TOOLS_DIR}/scriptling","mcp"]}`), 200)
+	mustDo(t, root.req("PUT", "/api/fleet/mcp-servers/router", `{"type":"http","url":"https://x/mcp?api_key=`+secret+`"}`), 400, "a credential in the URL")
+	mustDo(t, root.req("PUT", "/api/fleet/mcp-servers/router", `{"type":"http","url":"https://x/mcp","headers":{"Authorization":"Bearer ${secret:token}"}}`), 400, "secrets without the workspaces they are for")
+	mustDo(t, ops.req("PUT", wsPath+"/config", `{"config":{"mcp":["router"],"mcp_servers":["mcp__router"]}}`), 400, "a server that is not defined")
+	mustDo(t, root.req("PUT", "/api/fleet/mcp-servers/router", def), 200)
+	mustDo(t, root.req("PUT", "/api/fleet/mcp-servers/scripts", `{"type":"command","command":["${TOOLS_DIR}/scripts","mcp"]}`), 200)
 
 	// The secret: set by a fleet admin, never read back by anyone.
-	secretPath := "/api/fleet/mcp-servers/llmrouter/secrets/token"
+	secretPath := "/api/fleet/mcp-servers/router/secrets/token"
 	mustDo(t, ops.req("PUT", secretPath, `{"value":"`+secret+`"}`), 403, "a group admin does not set secrets")
 	mustDo(t, worker.req("PUT", secretPath, `{"value":"`+secret+`"}`), 403, "the worker's key")
-	mustDo(t, root.req("PUT", "/api/fleet/mcp-servers/llmrouter/secrets/nope", `{"value":"`+secret+`"}`), 400, "a secret the definition does not name")
+	mustDo(t, root.req("PUT", "/api/fleet/mcp-servers/router/secrets/nope", `{"value":"`+secret+`"}`), 400, "a secret the definition does not name")
 	mustDo(t, root.req("PUT", secretPath, `{"valu":"`+secret+`"}`), 400, "a misspelt body")
 	mustDo(t, root.req("PUT", secretPath, `{"value":"`+secret+`"}`), 204)
 	mustDo(t, worker.req("GET", "/api/fleet/mcp-servers", ""), 403, "a worker's key does not list MCP servers")
@@ -114,24 +114,24 @@ func TestIntegrationMCPServersForRuns(t *testing.T) {
 	}
 
 	// The workspace's runs get the servers; its tools have to be allowed.
-	mustDo(t, ops.req("PUT", wsPath+"/config", `{"config":{"mcp":["llmrouter","scriptling"],"mcp_servers":["mcp__scriptling"]}}`), 400, "a server whose tools are not allowed")
-	mustDo(t, ops.req("PUT", wsPath+"/config", `{"config":{"mcp":["llmrouter","scriptling"],"mcp_servers":["mcp__llmrouter","mcp__scriptling"]}}`), 200)
+	mustDo(t, ops.req("PUT", wsPath+"/config", `{"config":{"mcp":["router","scripts"],"mcp_servers":["mcp__scripts"]}}`), 400, "a server whose tools are not allowed")
+	mustDo(t, ops.req("PUT", wsPath+"/config", `{"config":{"mcp":["router","scripts"],"mcp_servers":["mcp__router","mcp__scripts"]}}`), 200)
 	// The other workspace is managed too, without any MCP setting. Its own
-	// admin cannot pull the Fortix server — and its credentials — into it:
+	// admin cannot pull the Globex server — and its credentials — into it:
 	// the server's definition says which workspaces it is for.
 	mustDo(t, root.req("PUT", "/api/workspaces/"+url.PathEscape(other)+"/config", `{"config":{"checks":["true"]}}`), 200)
 	personal := workerClient{base: baseURL, key: mint(t, root, `{"name":"personal-admin","workspaces":["`+other+`"],"admin":true}`)}
-	refused := personal.req("PUT", "/api/workspaces/"+url.PathEscape(other)+"/config", `{"config":{"mcp":["llmrouter"],"mcp_servers":["mcp__llmrouter"]}}`)
+	refused := personal.req("PUT", "/api/workspaces/"+url.PathEscape(other)+"/config", `{"config":{"mcp":["router"],"mcp_servers":["mcp__router"]}}`)
 	if mustDo(t, refused, 400, "another workspace's admin attaching the server"); !strings.Contains(refused.body, "may not be given to the runs of") {
 		t.Fatalf("the refusal: %s", refused.body)
 	}
 
 	queue := func(workspace, title string) {
 		t.Helper()
-		item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+workspace+`","title":"`+title+`","author_agent_id":"martin"}`), 201).(map[string]any)
+		item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+workspace+`","title":"`+title+`","author_agent_id":"alex"}`), 201).(map[string]any)
 		mustDo(t, approver.req("POST", "/api/inbox/"+item["id"].(string)+"/queue", ""), 200)
 	}
-	queue(ws, "needs the fortix tools")
+	queue(ws, "needs the globex tools")
 
 	// A worker from before this feature: the raw claim, without it.
 	old := worker.req("POST", "/api/runs/claim", `{"worker_id":"w-old","runners":["claude"],"workspaces":["`+ws+`"],"server_commands":true}`)
@@ -153,8 +153,8 @@ func TestIntegrationMCPServersForRuns(t *testing.T) {
 		URL     string            `json:"url"`
 		Headers map[string]string `json:"headers"`
 	}
-	if err := json.Unmarshal(run.MCP.Servers["llmrouter"], &entry); err != nil || entry.Headers["Authorization"] != "Bearer "+secret {
-		t.Fatalf("the delivered server: %s %v", run.MCP.Servers["llmrouter"], err)
+	if err := json.Unmarshal(run.MCP.Servers["router"], &entry); err != nil || entry.Headers["Authorization"] != "Bearer "+secret {
+		t.Fatalf("the delivered server: %s %v", run.MCP.Servers["router"], err)
 	}
 	// Reading the run afterwards — by anyone — shows none of it.
 	for _, c := range []workerClient{root, worker, approver} {
@@ -173,10 +173,10 @@ func TestIntegrationMCPServersForRuns(t *testing.T) {
 	}
 
 	// A worker that does not take commands gets the http server only.
-	queue(ws, "another fortix item")
+	queue(ws, "another globex item")
 	noCommands := wk.NewClient(baseURL, workerKey)
 	third, err := noCommands.Claim(ctx, "w3", []string{"claude"}, []string{ws}, nil, nil, nil)
-	if err != nil || third == nil || third.MCP == nil || len(third.MCP.Servers) != 1 || third.MCP.Servers["llmrouter"] == nil ||
+	if err != nil || third == nil || third.MCP == nil || len(third.MCP.Servers) != 1 || third.MCP.Servers["router"] == nil ||
 		len(third.MCP.Notes) != 1 || !strings.Contains(third.MCP.Notes[0], "server_commands") {
 		t.Fatalf("without server_commands: %+v %v", third, err)
 	}
@@ -195,7 +195,7 @@ func TestIntegrationMCPServersForRuns(t *testing.T) {
 		t.Fatalf("export then apply changes nothing: %v", plan)
 	}
 	var actions string
-	if err := sqlDB.QueryRow(`SELECT group_concat(action, ' ') FROM (SELECT action FROM audit_log WHERE entity_type = 'mcp_server' AND entity_id = 'llmrouter' ORDER BY id)`).Scan(&actions); err != nil || actions != "mcp_server.create mcp_server.secret_set" {
+	if err := sqlDB.QueryRow(`SELECT group_concat(action, ' ') FROM (SELECT action FROM audit_log WHERE entity_type = 'mcp_server' AND entity_id = 'router' ORDER BY id)`).Scan(&actions); err != nil || actions != "mcp_server.create mcp_server.secret_set" {
 		t.Fatalf("audit: %q %v", actions, err)
 	}
 
@@ -217,9 +217,9 @@ func TestIntegrationMCPServersForRuns(t *testing.T) {
 	mustDo(t, root.req("DELETE", secretPath, ""), 404)
 	queue(ws, "after the secret was unset")
 	fourth, err := wc.Claim(ctx, "w4", []string{"claude"}, []string{ws}, nil, nil, nil)
-	if err != nil || fourth == nil || fourth.MCP == nil || fourth.MCP.Servers["llmrouter"] != nil || !strings.Contains(strings.Join(fourth.MCP.Notes, " "), "secret token is not set") {
+	if err != nil || fourth == nil || fourth.MCP == nil || fourth.MCP.Servers["router"] != nil || !strings.Contains(strings.Join(fourth.MCP.Notes, " "), "secret token is not set") {
 		t.Fatalf("after unsetting the secret: %+v %v", fourth, err)
 	}
-	mustDo(t, root.req("DELETE", "/api/fleet/mcp-servers/llmrouter", ""), 409, "a server a config still names")
-	mustDo(t, root.req("DELETE", "/api/fleet/mcp-servers/llmrouter?force=1", ""), 204)
+	mustDo(t, root.req("DELETE", "/api/fleet/mcp-servers/router", ""), 409, "a server a config still names")
+	mustDo(t, root.req("DELETE", "/api/fleet/mcp-servers/router?force=1", ""), 204)
 }

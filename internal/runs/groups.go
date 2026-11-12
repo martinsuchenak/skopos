@@ -264,7 +264,7 @@ func (s *Service) applyGroupDecision(ctx context.Context, g *Group, members []Ru
 	}
 	agent := "skopos:group"
 	if g.Stage == StageBranchReview {
-		// The summary is the verdict, pass or fail: Martin decides. Only a
+		// The summary is the verdict, pass or fail: the approver decides. Only a
 		// panel where no member managed to review blocks the item.
 		for _, m := range members {
 			if m.Status == StatusSucceeded {

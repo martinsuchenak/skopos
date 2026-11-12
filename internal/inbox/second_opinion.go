@@ -13,7 +13,7 @@ import (
 
 // Second opinion (tmp/second-opinion-review — design.md): one extra,
 // advisory review of the exact head an item at in_review is waiting on, by
-// a runner Martin picks. It never moves or blocks the item; the run queue
+// a runner the approver picks. It never moves or blocks the item; the run queue
 // appends the result as a section.
 
 // SecondOpinionQueuer is the run-queue hook (runs.Service satisfies it).

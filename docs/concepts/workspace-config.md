@@ -59,9 +59,9 @@ skopos workspace config set --workspace github.com/you/repo \
 
 ### Groups
 
-A group can hold a config too: `skopos group config set --group fortix …`.
-`skopos group config show --group fortix` prints it, and
-`skopos group config clear --group fortix` removes it.
+A group can hold a config too: `skopos group config set --group acme …`.
+`skopos group config show --group acme` prints it, and
+`skopos group config clear --group acme` removes it.
 
 - **A group's values are defaults for its managed workspaces,** field by
   field. The workspace's own value wins.
@@ -270,20 +270,20 @@ workspaces by name.
 
 ```sh
 # define the server; its credential is named, not written
-skopos mcp-server set llmrouter --url https://llmrouter.example.com/mcp \
-    --header 'Authorization=Bearer ${secret:token}' --for 'github.com/fortix/*'
+skopos mcp-server set router --url https://router.example.com/mcp \
+    --header 'Authorization=Bearer ${secret:token}' --for 'github.com/acme/*'
 
 # store the credential (asked for at the terminal, or piped, or --from-env)
-skopos mcp-server set-secret llmrouter token
+skopos mcp-server set-secret router token
 
 # give it to a group's runs, and allow its tools
-skopos group config set --group fortix \
-    --set 'mcp=["llmrouter"]' --set 'mcp_servers=["mcp__llmrouter"]'
+skopos group config set --group acme \
+    --set 'mcp=["router"]' --set 'mcp_servers=["mcp__router"]'
 ```
 
 - **Two kinds of server:** `http` (a URL and headers) and `command` (a
   command the worker runs, with env):
-  `skopos mcp-server set scriptling --command '["scriptling","mcp"]'`.
+  `skopos mcp-server set scripts --command '["scripts","mcp"]'`.
   `${NAME}` in a command server's command and env is filled in on each
   worker from its `[worker.vars]`.
 - **A credential is never part of a definition.** It is named
@@ -306,8 +306,8 @@ skopos group config set --group fortix \
   variable (`--from-env`); never from the command line. It is at least 8
   characters. No command, endpoint, export or audit note returns it.
 - **`mcp` says which servers a workspace's runs get;** `mcp_servers` says
-  which of their tools a run may call (`mcp__llmrouter` for all of them,
-  `mcp__llmrouter__search` for one), and `mcp_deny` which it may not. A
+  which of their tools a run may call (`mcp__router` for all of them,
+  `mcp__router__search` for one), and `mcp_deny` which it may not. A
   server in `mcp` without an entry in `mcp_servers` that allows its tools
   is refused.
 - **Once a workspace's config sets `mcp`, the server holds its runs' MCP
@@ -512,28 +512,28 @@ provider = "anthropic"
 argv = ["bwrap", "--ro-bind", "/", "/", "--bind", "{dir}", "{dir}"]
 check = ["bwrap", "--ro-bind", "/", "/", "true"]
 
-[mcp.llmrouter]
+[mcp.router]
 type = "http"
-url = "https://llmrouter.example.com/mcp"
+url = "https://router.example.com/mcp"
 headers = { Authorization = "Bearer ${secret:token}" }
-workspaces = ["github.com/fortix/*"]
+workspaces = ["github.com/acme/*"]
 
-[groups.fortix]
-workspaces = ["github.com/fortix/freedom3"]
-patterns = ["github.com/fortix/*"]
+[groups.acme]
+workspaces = ["github.com/acme/shop"]
+patterns = ["github.com/acme/*"]
 
-[groups.fortix.policy]
+[groups.acme.policy]
 allow = [{ provider = "anthropic" }, { provider = "openai", stages = ["second_opinion"] }]
 
-[workspaces."github.com/fortix/freedom3".config]
+[workspaces."github.com/acme/shop".config]
 setup = ["./cli_tools/dothis setup"]
 checks = ["./cli_tools/dothis check"]
 
-[workspaces."github.com/fortix/freedom3".config.stages.implement]
+[workspaces."github.com/acme/shop".config.stages.implement]
 tools = ["Bash(./cli_tools/dothis:*)", "Bash(mago:*)"]
 env = { CODECEPTION_ENV = "local" }
 
-[workspaces."github.com/fortix/freedom3".pipeline.stages]
+[workspaces."github.com/acme/shop".pipeline.stages]
 review = { members = "security@claude-opus,tests@claude-opus", policy = "any-blocks" }
 ```
 

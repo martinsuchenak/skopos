@@ -46,20 +46,20 @@ func TestIntegrationStubWorkerRoundTrip(t *testing.T) {
 	root := workerClient{base: baseURL, key: "root-secret"}
 
 	// Workspace + approver + worker keys.
-	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"github.com/fortix/freedom3","name":"freedom3"}`), 201)
-	approverKey := mint(t, root, `{"name":"relay","workspaces":["github.com/fortix/freedom3"],"approver":true}`)
-	workerKey := mint(t, root, `{"name":"worker-1","workspaces":["github.com/fortix/freedom3"]}`)
+	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"github.com/globex/shop","name":"shop"}`), 201)
+	approverKey := mint(t, root, `{"name":"relay","workspaces":["github.com/globex/shop"],"approver":true}`)
+	workerKey := mint(t, root, `{"name":"worker-1","workspaces":["github.com/globex/shop"]}`)
 	approver := workerClient{base: baseURL, key: approverKey}
 	leases := map[string]string{}
 	worker := workerClient{base: baseURL, key: workerKey, lease: leases}
 
 	// The item enters the workflow.
-	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"github.com/fortix/freedom3","title":"stub item","author_agent_id":"martin"}`), 201).(map[string]any)
+	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"github.com/globex/shop","title":"stub item","author_agent_id":"alex"}`), 201).(map[string]any)
 	itemID := item["id"].(string)
 	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/queue", ""), 200)
 
 	// The plan run was queued by the hook.
-	run := claim(t, worker, `{"worker_id":"w1","workspaces":["github.com/fortix/freedom3"]}`)
+	run := claim(t, worker, `{"worker_id":"w1","workspaces":["github.com/globex/shop"]}`)
 	if run["stage"] != "plan" {
 		t.Fatalf("first claim should be plan, got %v", run["stage"])
 	}
@@ -67,7 +67,7 @@ func TestIntegrationStubWorkerRoundTrip(t *testing.T) {
 
 	// The worker plans: create the plan + revision + link (the real worker
 	// does this from the agent's output).
-	plan := mustJSON(t, worker.req("POST", "/api/plans", `{"workspace_id":"github.com/fortix/freedom3","name":"stub plan","author_agent_id":"worker-1"}`), 201).(map[string]any)
+	plan := mustJSON(t, worker.req("POST", "/api/plans", `{"workspace_id":"github.com/globex/shop","name":"stub plan","author_agent_id":"worker-1"}`), 201).(map[string]any)
 	planID := plan["id"].(string)
 	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/items", `{"title":"do the thing"}`), 201)
 	mustDo(t, worker.req("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+planID+`"}`), 200)
@@ -86,7 +86,7 @@ func TestIntegrationStubWorkerRoundTrip(t *testing.T) {
 	// name the revision reviewed (M2): a bare approve is refused.
 	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/approve", `{}`), 400)
 	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/approve", `{"revision_id":"`+revID+`"}`), 200)
-	run = claim(t, worker, `{"worker_id":"w1","workspaces":["github.com/fortix/freedom3"]}`)
+	run = claim(t, worker, `{"worker_id":"w1","workspaces":["github.com/globex/shop"]}`)
 	if run["stage"] != "implement" {
 		t.Fatalf("second claim should be implement, got %v", run["stage"])
 	}
@@ -345,20 +345,20 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 func TestIntegrationReplanSkillsAndExecutor(t *testing.T) {
 	_, baseURL := workerStack(t)
 	root := workerClient{base: baseURL, key: "root-secret"}
-	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"github.com/fortix/freedom3","name":"freedom3"}`), 201)
-	approverKey := mint(t, root, `{"name":"relay","workspaces":["github.com/fortix/freedom3"],"approver":true}`)
-	workerKey := mint(t, root, `{"name":"worker-1","workspaces":["github.com/fortix/freedom3"]}`)
+	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"github.com/globex/shop","name":"shop"}`), 201)
+	approverKey := mint(t, root, `{"name":"relay","workspaces":["github.com/globex/shop"],"approver":true}`)
+	workerKey := mint(t, root, `{"name":"worker-1","workspaces":["github.com/globex/shop"]}`)
 	approver := workerClient{base: baseURL, key: approverKey}
 	leases := map[string]string{}
 	worker := workerClient{base: baseURL, key: workerKey, lease: leases}
 
-	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"github.com/fortix/freedom3","title":"skills item","author_agent_id":"martin"}`), 201).(map[string]any)
+	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"github.com/globex/shop","title":"skills item","author_agent_id":"alex"}`), 201).(map[string]any)
 	itemID := item["id"].(string)
 	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/queue", ""), 200)
-	run := claim(t, worker, `{"worker_id":"w1","workspaces":["github.com/fortix/freedom3"]}`)
+	run := claim(t, worker, `{"worker_id":"w1","workspaces":["github.com/globex/shop"]}`)
 	runID := run["id"].(string)
 
-	plan := mustJSON(t, worker.req("POST", "/api/plans", `{"workspace_id":"github.com/fortix/freedom3","name":"p","author_agent_id":"worker-1"}`), 201).(map[string]any)
+	plan := mustJSON(t, worker.req("POST", "/api/plans", `{"workspace_id":"github.com/globex/shop","name":"p","author_agent_id":"worker-1"}`), 201).(map[string]any)
 	planID := plan["id"].(string)
 	mustDo(t, worker.req("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+planID+`"}`), 200)
 	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/replan", `{"base_sha":"d2ce73d","steps":[{"title":"one"}],"skills":["../etc"]}`), 400)
@@ -384,7 +384,7 @@ func TestIntegrationReplanSkillsAndExecutor(t *testing.T) {
 // report structured findings and cost; the group decides once, blocks the
 // item with one merged summary, and the groups endpoint shows it all.
 func TestIntegrationReviewGroupRoundTrip(t *testing.T) {
-	const ws = "github.com/fortix/freedom3"
+	const ws = "github.com/globex/shop"
 	_, baseURL := workerStackWith(t, func(r *runs.Service) {
 		r.SetPrefs(map[string]*runs.WorkspacePrefs{ws: {
 			Stages: map[string]string{},
@@ -392,12 +392,12 @@ func TestIntegrationReviewGroupRoundTrip(t *testing.T) {
 		}})
 	})
 	root := workerClient{base: baseURL, key: "root-secret"}
-	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`","name":"freedom3"}`), 201)
+	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`","name":"shop"}`), 201)
 	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"relay","workspaces":["`+ws+`"],"approver":true}`)}
 	leases := map[string]string{}
 	worker := workerClient{base: baseURL, key: mint(t, root, `{"name":"worker-1","workspaces":["`+ws+`"]}`), lease: leases}
 
-	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"group item","author_agent_id":"martin"}`), 201).(map[string]any)
+	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"group item","author_agent_id":"alex"}`), 201).(map[string]any)
 	itemID := item["id"].(string)
 	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/queue", ""), 200)
 	run := claim(t, worker, `{"worker_id":"w1","runners":["claude"],"workspaces":["`+ws+`"]}`)
@@ -455,7 +455,7 @@ func TestIntegrationReviewGroupRoundTrip(t *testing.T) {
 // approval binds the candidate itself), supersedes candidate 1, and the
 // implement run is bound to candidate 2 and its base.
 func TestIntegrationPlanCandidatesRoundTrip(t *testing.T) {
-	const ws = "github.com/fortix/freedom3"
+	const ws = "github.com/globex/shop"
 	_, baseURL := workerStackWith(t, func(r *runs.Service) {
 		r.SetPrefs(map[string]*runs.WorkspacePrefs{ws: {
 			Stages: map[string]string{"implement": "claude"},
@@ -463,12 +463,12 @@ func TestIntegrationPlanCandidatesRoundTrip(t *testing.T) {
 		}})
 	})
 	root := workerClient{base: baseURL, key: "root-secret"}
-	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`","name":"freedom3"}`), 201)
+	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`","name":"shop"}`), 201)
 	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"relay","workspaces":["`+ws+`"],"approver":true}`)}
 	leases := map[string]string{}
 	worker := workerClient{base: baseURL, key: mint(t, root, `{"name":"worker-1","workspaces":["`+ws+`"]}`), lease: leases}
 
-	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"three ways","author_agent_id":"martin"}`), 201).(map[string]any)
+	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"three ways","author_agent_id":"alex"}`), 201).(map[string]any)
 	itemID := item["id"].(string)
 	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/queue", ""), 200)
 
@@ -540,7 +540,7 @@ func TestIntegrationPlanCandidatesRoundTrip(t *testing.T) {
 // round's open candidates are superseded, so an old candidate can't be
 // approved later.
 func TestIntegrationPlanCandidatesRequestChanges(t *testing.T) {
-	const ws = "github.com/fortix/freedom3"
+	const ws = "github.com/globex/shop"
 	_, baseURL := workerStackWith(t, func(r *runs.Service) {
 		r.SetPrefs(map[string]*runs.WorkspacePrefs{ws: {
 			Stages: map[string]string{},
@@ -548,7 +548,7 @@ func TestIntegrationPlanCandidatesRequestChanges(t *testing.T) {
 		}})
 	})
 	root := workerClient{base: baseURL, key: "root-secret"}
-	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`","name":"freedom3"}`), 201)
+	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`","name":"shop"}`), 201)
 	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"relay","workspaces":["`+ws+`"],"approver":true}`)}
 	leases := map[string]string{}
 	worker := workerClient{base: baseURL, key: mint(t, root, `{"name":"worker-1","workspaces":["`+ws+`"]}`), lease: leases}
@@ -567,7 +567,7 @@ func TestIntegrationPlanCandidatesRequestChanges(t *testing.T) {
 		}
 		return planID, cands
 	}
-	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"pick one","author_agent_id":"martin"}`), 201).(map[string]any)
+	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"pick one","author_agent_id":"alex"}`), 201).(map[string]any)
 	itemID := item["id"].(string)
 	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/queue", ""), 200)
 	_, cands := round(itemID)
@@ -592,7 +592,7 @@ func TestIntegrationPlanCandidatesRequestChanges(t *testing.T) {
 	}
 
 	// Re-plan everything on a second item: round 2 opens with both members.
-	item2 := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"again","author_agent_id":"martin"}`), 201).(map[string]any)
+	item2 := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"again","author_agent_id":"alex"}`), 201).(map[string]any)
 	item2ID := item2["id"].(string)
 	mustDo(t, approver.req("POST", "/api/inbox/"+item2ID+"/queue", ""), 200)
 	_, c2 := round(item2ID)

@@ -46,7 +46,7 @@ func mustCreateOnBranch(t *testing.T, svc *Service, title, branch, ref string) *
 }
 
 func TestBranchAndRefValidation(t *testing.T) {
-	for _, ok := range []string{"", "WR203345-some-feature", "feature/x.y_z", "agent/7614a51fea45-csv"} {
+	for _, ok := range []string{"", "JOB203345-some-feature", "feature/x.y_z", "agent/7614a51fea45-csv"} {
 		if _, err := NormalizeBranch(ok); err != nil {
 			t.Errorf("NormalizeBranch(%q): %v", ok, err)
 		}
@@ -56,7 +56,7 @@ func TestBranchAndRefValidation(t *testing.T) {
 			t.Errorf("NormalizeBranch(%q) = %v, want invalid", bad, err)
 		}
 	}
-	for _, ok := range []string{"", "WR203345", "JIRA-12", "v1.2"} {
+	for _, ok := range []string{"", "JOB203345", "JIRA-12", "v1.2"} {
 		if _, err := NormalizeRef(ok); err != nil {
 			t.Errorf("NormalizeRef(%q): %v", ok, err)
 		}
@@ -74,7 +74,7 @@ func TestBranchEditRules(t *testing.T) {
 	svc, _, _ := fullStack(t)
 	root := context.Background()
 	item := mustCreate(t, svc, root, "edit branch")
-	b, r := "WR1-x", "WR1"
+	b, r := "JOB1-x", "JOB1"
 	if err := svc.UpdateItem(agentCtx(), item.ID, UpdateInput{Branch: &b, Ref: &r}); err != nil {
 		t.Fatalf("open item: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestBranchEditRules(t *testing.T) {
 	if _, err := svc.Queue(approverCtx(), item.ID, ""); err != nil {
 		t.Fatal(err)
 	}
-	other := "WR1-y"
+	other := "JOB1-y"
 	if err := svc.UpdateItem(agentCtx(), item.ID, UpdateInput{Branch: &other}); !errors.Is(err, auth.ErrApproverRequired) {
 		t.Fatalf("agent key on a workflow item: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestReviewOnlyFlow(t *testing.T) {
 	if _, err := svc.ReviewBranch(approverCtx(), none.ID, ""); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("review without branch or ref: %v", err)
 	}
-	item := mustCreateOnBranch(t, svc, "review me", "WR9-feature", "")
+	item := mustCreateOnBranch(t, svc, "review me", "JOB9-feature", "")
 	if _, err := svc.ReviewBranch(agentCtx(), item.ID, ""); !errors.Is(err, auth.ErrApproverRequired) {
 		t.Fatalf("agent key: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestReviewOnlyFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != StatusQueued || got.Flow != FlowReview || q.last() != StageBranchReview+"@WR9-feature" {
+	if got.Status != StatusQueued || got.Flow != FlowReview || q.last() != StageBranchReview+"@JOB9-feature" {
 		t.Fatalf("after review: %s flow=%q queued=%q", got.Status, got.Flow, q.last())
 	}
 	if _, err := svc.SystemTransition(root, item.ID, StatusImplementing, "run claimed", "worker:w", ""); err != nil {
@@ -141,7 +141,7 @@ func TestReviewOnlyFlow(t *testing.T) {
 	if got, err = svc.Retry(approverCtx(), item.ID, "pushed it again", ""); err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != StatusImplementing || q.last() != StageBranchReview+"@WR9-feature" {
+	if got.Status != StatusImplementing || q.last() != StageBranchReview+"@JOB9-feature" {
 		t.Fatalf("retry: %s queued=%q", got.Status, q.last())
 	}
 	if _, err := svc.SystemTransition(root, item.ID, StatusInReview, "", "worker:w", ""); err != nil {
@@ -193,7 +193,7 @@ func TestReviewOnlyEdgesClosedToOtherItems(t *testing.T) {
 		t.Fatalf("implemented item went to %s", got.Status)
 	}
 	// Queue starts a restored review-only item over as an ordinary one.
-	ro := mustCreateOnBranch(t, svc, "was review only", "WR3-x", "")
+	ro := mustCreateOnBranch(t, svc, "was review only", "JOB3-x", "")
 	if _, err := svc.ReviewBranch(approverCtx(), ro.ID, ""); err != nil {
 		t.Fatal(err)
 	}
