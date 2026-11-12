@@ -111,7 +111,7 @@ func (d *Dispatcher) Run(ctx context.Context) {
 
 // RunOnce fans new events out and makes the attempts that are due.
 func (d *Dispatcher) RunOnce(ctx context.Context) error {
-	if d.svc.key == nil {
+	if !d.svc.ring.Enabled() {
 		return nil
 	}
 	if err := d.fanOut(ctx); err != nil {

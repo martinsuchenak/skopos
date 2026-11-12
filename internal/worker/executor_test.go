@@ -63,15 +63,25 @@ func TestExecutorForOrder(t *testing.T) {
 			t.Errorf("%s runs with the review profile: %q", stage, got)
 		}
 	}
-	if got := c.ExecutorFor("ws", "review", "opencode-glm"); got != "local" {
-		t.Errorf("opencode does not honour the settings — nothing contains it: %q", got)
+	// The review profile gives the stage tools, and its sandbox settings
+	// contain only a runner that honours them: the worker does not offer
+	// the stage for the others (a run would be refused before it starts).
+	for _, r := range []string{"opencode-glm", "codex"} {
+		for _, stage := range []string{"review", "branch_review"} {
+			if got := c.ExecutorFor("ws", stage, r); got != policy.NoExecutor(policy.NoneUncontained) {
+				t.Errorf("%s %s: a granted stage nothing contains: %q", stage, r, got)
+			}
+		}
 	}
-	if got := c.ExecutorFor("ws", "review", "codex"); got != "runner:codex" {
+	if got := c.ExecutorFor("bare", "review", "opencode-glm"); got != "local" {
+		t.Errorf("opencode without a profile: %q", got)
+	}
+	if got := c.ExecutorFor("bare", "review", "codex"); got != "runner:codex" {
 		t.Errorf("codex's own lockdown is a sandbox: %q", got)
 	}
 	// A branch review runs the repo's setup and checks on the worker,
 	// outside codex's sandbox: only a wrapper would go around those.
-	if got := c.ExecutorFor("ws", "branch_review", "codex"); got != "local" {
+	if got := c.ExecutorFor("bare", "branch_review", "codex"); got != "local" {
 		t.Errorf("codex on a stage whose checks the worker runs itself: %q", got)
 	}
 	if got := c.ExecutorFor("bare", "plan", "claude"); got != "local" {

@@ -26,20 +26,13 @@ import (
 // every stage but implement.
 var readOnlyStages = []string{"branch_review", "compare", "plan", "qa", "review", "second_opinion", "synthesize"}
 
-// proxyEnv are the variables that send an agent CLI's requests through
-// another host: not allowed in an account's or a profile's env, where they
-// would make the endpoint the worker reports untrue.
-var proxyEnv = map[string]bool{"HTTPS_PROXY": true, "HTTP_PROXY": true, "ALL_PROXY": true}
-
-// endpointEnv are the variables that change where an agent CLI sends its
-// requests. An account's env may set them (the facts are derived from
-// them); a stage profile's env may not, because facts are reported per
-// runner, not per workspace and stage.
-var endpointEnv = map[string]bool{
-	"ANTHROPIC_BASE_URL": true, "ANTHROPIC_BEDROCK_BASE_URL": true, "ANTHROPIC_VERTEX_BASE_URL": true, "ANTHROPIC_FOUNDRY_BASE_URL": true,
-	"CLAUDE_CODE_USE_BEDROCK": true, "CLAUDE_CODE_USE_VERTEX": true, "CLAUDE_CODE_USE_FOUNDRY": true,
-	"OPENAI_BASE_URL": true, "OPENCODE_CONFIG": true, "OPENCODE_CONFIG_CONTENT": true,
-}
+// proxyEnv and endpointEnv: the variables that change where an agent
+// CLI's requests go (internal/policy/env.go — the server checks a stage's
+// env against the same lists).
+var (
+	proxyEnv    = policy.ProxyEnv
+	endpointEnv = policy.EndpointEnv
+)
 
 // SetEnvFileKeys names the variables the worker's env file provided: the
 // scrub keeps them from every agent run, so they say nothing about where

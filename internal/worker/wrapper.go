@@ -2,12 +2,15 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/martinsuchenak/skopos/internal/wsconfig"
 )
 
 // Wrapper placeholders (tmp/central-config — design.md, phase 1c). A
@@ -22,7 +25,7 @@ import (
 //	             its log and the runners' temporary config directories
 //	{cli}        the directory the agent CLI's binary is in
 //	{run} {stage} {workspace}
-var wrapperPlaceholders = []string{"{dir}", "{gitdir}", "{login}", "{rundir}", "{cli}", "{run}", "{stage}", "{workspace}"}
+var wrapperPlaceholders = wsconfig.WrapperPlaceholders
 
 // loginDir is the directory an account's agent CLI keeps its login in:
 // login_dir on the account, else what its kind uses — CLAUDE_CONFIG_DIR
@@ -234,7 +237,12 @@ func shellWrapFrom(ctx context.Context) shellWrap {
 // commands execute the branch's code — code the implementer wrote — so a
 // wrapper that confines the agent has to confine them too.
 func (w *Worker) stageShellWrap(run *Run, account *Account, phase string) shellWrap {
-	prof := w.cfg.StageProfile(run.WorkspaceID, phase)
+	prof, problem := w.cfg.stageProfileFor(run.WorkspaceID, phase, accountRunner(account))
+	if problem != "" {
+		// The wrapper the stage needs cannot be used here: its commands
+		// fail, they never run bare.
+		return func(string) ([]string, error) { return nil, errors.New(problem) }
+	}
 	if !prof.wraps() {
 		return nil
 	}

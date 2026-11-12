@@ -1,11 +1,17 @@
 package integrations
 
 import (
+	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/martinsuchenak/skopos/internal/secretbox"
 	"io"
 	"net"
 	"net/http"
@@ -618,5 +624,71 @@ func TestUpdateAuditsOnlyChanges(t *testing.T) {
 	rec.mu.Unlock()
 	if last.Action != "webhook.update" || last.Notes != "name" {
 		t.Fatalf("audit: %+v", last)
+	}
+}
+
+// Webhook secrets across a change of the server's secret key: a secret
+// sealed by an earlier release (no key named) keeps signing once the old
+// key is the previous one, a key rotation seals it under the new key, and
+// a webhook's own secret rotation keeps the old secret readable.
+func TestWebhookSecretsSurviveAKeyRotation(t *testing.T) {
+	st := newStack(t)
+	created, err := st.svc.Create(root(), Input{Name: ptr("jobs"), URL: ptr(st.url), Workspaces: ptr([]string{"ws"})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := mustSecret(t, created.Secret)
+	// As an earlier release stored it: nonce and ciphertext only.
+	raw := sha256.Sum256([]byte("test-integrations-key"))
+	block, _ := aes.NewCipher(raw[:])
+	gcm, _ := cipher.NewGCM(block)
+	nonce := make([]byte, gcm.NonceSize())
+	_, _ = rand.Read(nonce)
+	legacy := gcm.Seal(nonce, nonce, secret, nil)
+	if _, err := st.db.Exec(`UPDATE webhooks SET secret_enc = ? WHERE id = ?`, legacy, created.Webhook.ID); err != nil {
+		t.Fatal(err)
+	}
+	stored := func(col string) []byte {
+		t.Helper()
+		var b []byte
+		if err := st.db.QueryRow(`SELECT `+col+` FROM webhooks WHERE id = ?`, created.Webhook.ID).Scan(&b); err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	// The server gets a new key and holds the old one as the previous.
+	ring := secretbox.New("a-new-key", "test-integrations-key")
+	st.svc.SetKeyRing(ring)
+	if got, err := st.svc.open(stored("secret_enc")); err != nil || !bytes.Equal(got, secret) {
+		t.Fatalf("a secret of an earlier release under the previous key: %v", err)
+	}
+	if _, err := secretbox.NewRotator(st.db, ring).Rotate(root(), "cli"); err != nil {
+		t.Fatal(err)
+	}
+	if secretbox.SealedBy(stored("secret_enc")) != ring.Current() {
+		t.Fatal("the rotation left the webhook secret under the old key")
+	}
+	// The old key is dropped: the secret still opens, and still signs.
+	st.svc.SetKeyRing(secretbox.New("a-new-key"))
+	if got, err := st.svc.open(stored("secret_enc")); err != nil || !bytes.Equal(got, secret) {
+		t.Fatalf("after dropping the old key: %v", err)
+	}
+	// The webhook's own rotation moves the secret it had to the old slot as
+	// it is stored, so it stays under the key that sealed it.
+	before := stored("secret_enc")
+	rotated, err := st.svc.Rotate(root(), created.Webhook.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stored("old_secret_enc"), before) {
+		t.Fatal("the old secret is not the secret the webhook had")
+	}
+	if got, err := st.svc.open(stored("secret_enc")); err != nil || !bytes.Equal(got, mustSecret(t, rotated.Secret)) {
+		t.Fatalf("the new secret: %v", err)
+	}
+	st.emit(t, Event{Type: TypeItemCreated, WorkspaceID: "ws", ItemID: "i1"})
+	st.run(t)
+	if st.rcv.count() == 0 || strings.Count(st.rcv.got[len(st.rcv.got)-1].Header.Get("webhook-signature"), "v1,") != 2 {
+		t.Fatalf("a delivery after both rotations is signed with the new and the old secret: %d requests", st.rcv.count())
 	}
 }

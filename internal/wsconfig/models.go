@@ -82,6 +82,16 @@ type Config struct {
 
 	MCPDeny    *[]string `json:"mcp_deny,omitempty" toml:"mcp_deny,omitempty"`
 	MCPServers *[]string `json:"mcp_servers,omitempty" toml:"mcp_servers,omitempty"`
+	// MCP names the MCP server definitions the workspace's runs get
+	// (mcp.go). Set — to an empty list too — the server holds the runs' MCP
+	// servers and a worker's own mcp_config is not used for the workspace;
+	// not set at any level, each worker's mcp_config applies.
+	MCP *[]string `json:"mcp,omitempty" toml:"mcp,omitempty"`
+
+	// Stages: what each stage's agent is given and which wrapper goes
+	// around it (stages.go). A stage with a block is set — an empty block
+	// sets it to nothing; a stage without one is not set at this level.
+	Stages map[string]*StageCaps `json:"stages,omitempty" toml:"stages,omitempty"`
 }
 
 // Limits both the server (at save) and the worker (at load) enforce.
@@ -100,12 +110,19 @@ const (
 	MaxContentBytes = 64 << 10
 )
 
-// CommandFields are the fields whose values a worker executes on its host.
-// A worker takes them from the server only with worker.server_commands.
-var CommandFields = []string{"setup", "checks", "preflight"}
+// ShellFields are the fields that hold shell commands the worker itself
+// runs.
+var ShellFields = []string{"setup", "checks", "preflight"}
 
-// IsCommandField reports whether a field (as Fields names it) holds
-// commands.
+// CommandFields are the fields whose values decide what executes on a
+// worker's host: the shell commands the worker runs, and each stage's block
+// — the tools and env its agent is given and the wrapper it starts behind
+// are commands under another name. A worker takes them from the server only
+// with worker.server_commands.
+var CommandFields = append(slices.Clone(ShellFields), StageFields()...)
+
+// IsCommandField reports whether a field (as Fields names it) decides what
+// executes on a worker's host.
 func IsCommandField(name string) bool {
 	return slices.Contains(CommandFields, name)
 }
@@ -149,19 +166,31 @@ func (c Config) Fields() map[string]json.RawMessage {
 	_ = json.Unmarshal(buf, &top)
 	out := make(map[string]json.RawMessage, len(top)+3)
 	for k, v := range top {
-		if k != "push" {
+		switch k {
+		case "push":
+			var push map[string]json.RawMessage
+			_ = json.Unmarshal(v, &push)
+			for pk, pv := range push {
+				out["push."+pk] = pv
+			}
+		case "stages":
+			// One field per stage, holding its whole block: a workspace's
+			// block replaces its group's, it is never merged into it.
+			var stages map[string]json.RawMessage
+			_ = json.Unmarshal(v, &stages)
+			for stage, block := range stages {
+				if string(block) == "null" {
+					block = json.RawMessage("{}") // set, to nothing
+				}
+				out[stageField(stage)] = block
+			}
+		default:
 			// A list set to a nil slice is set to nothing, not unset: it
 			// must never read back as a missing field.
 			if string(v) == "null" {
 				v = json.RawMessage("[]")
 			}
 			out[k] = v
-			continue
-		}
-		var push map[string]json.RawMessage
-		_ = json.Unmarshal(v, &push)
-		for pk, pv := range push {
-			out["push."+pk] = pv
 		}
 	}
 	return out
@@ -171,9 +200,12 @@ func (c Config) Fields() map[string]json.RawMessage {
 func FromFields(fields map[string]json.RawMessage) (Config, error) {
 	top := map[string]json.RawMessage{}
 	push := map[string]json.RawMessage{}
+	stages := map[string]json.RawMessage{}
 	for k, v := range fields {
 		if name, ok := strings.CutPrefix(k, "push."); ok {
 			push[name] = v
+		} else if name, ok := strings.CutPrefix(k, "stages."); ok {
+			stages[name] = v
 		} else {
 			top[k] = v
 		}
@@ -181,6 +213,10 @@ func FromFields(fields map[string]json.RawMessage) (Config, error) {
 	if len(push) > 0 {
 		buf, _ := json.Marshal(push)
 		top["push"] = buf
+	}
+	if len(stages) > 0 {
+		buf, _ := json.Marshal(stages)
+		top["stages"] = buf
 	}
 	buf, _ := json.Marshal(top)
 	var c Config
@@ -314,6 +350,7 @@ func Normalize(in Config) (Config, error) {
 	}{
 		{"protected_branches", &c.ProtectedBranches, false}, {"setup", &c.Setup, true}, {"checks", &c.Checks, true},
 		{"preflight", &c.Preflight, true}, {"mcp_deny", &c.MCPDeny, false}, {"mcp_servers", &c.MCPServers, false},
+		{"mcp", &c.MCP, false},
 	}
 	for _, l := range lists {
 		if *l.p == nil {
@@ -343,6 +380,21 @@ func Normalize(in Config) (Config, error) {
 				return bad("mcp_servers: %q is not an MCP tool prefix (mcp__<server>…)", e)
 			}
 		}
+	}
+	if c.MCP != nil {
+		names := make([]string, 0, len(*c.MCP))
+		for _, e := range *c.MCP {
+			if !reMCPName.MatchString(e) || e == ReservedMCPName {
+				return bad("mcp: %q is not the name of an MCP server definition", e)
+			}
+			if !slices.Contains(names, e) {
+				names = append(names, e)
+			}
+		}
+		if len(names) > 20 {
+			return bad("mcp names %d servers (at most 20)", len(names))
+		}
+		c.MCP = &names
 	}
 	if c.CheckFixRounds != nil && (*c.CheckFixRounds < 0 || *c.CheckFixRounds > MaxCheckFixRounds) {
 		return bad("check_fix_rounds %d is not between 0 and %d", *c.CheckFixRounds, MaxCheckFixRounds)
@@ -404,11 +456,40 @@ func Normalize(in Config) (Config, error) {
 			c.Push = &p
 		}
 	}
+	if c.Stages != nil {
+		stages := make(map[string]*StageCaps, len(c.Stages))
+		for stage, block := range c.Stages {
+			norm, err := NormalizeStage(strings.ToLower(strings.TrimSpace(stage)), block)
+			if err != nil {
+				return Config{}, err
+			}
+			stages[strings.ToLower(strings.TrimSpace(stage))] = norm
+		}
+		c.Stages = stages
+		if len(stages) == 0 {
+			c.Stages = nil
+		}
+	}
 	buf, _ := json.Marshal(c)
 	if len(buf) > MaxContentBytes {
 		return bad("the config is %d bytes (at most %d)", len(buf), MaxContentBytes)
 	}
 	return c, nil
+}
+
+// Wrappers lists the wrapper definitions a config's stage blocks name,
+// sorted.
+func (c Config) Wrappers() []string {
+	var out []string
+	for _, block := range c.Stages {
+		for _, w := range block.Wrappers() {
+			if !slices.Contains(out, w) {
+				out = append(out, w)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // CheckEffective checks what holds only for a workspace's merged config
@@ -422,7 +503,27 @@ func CheckEffective(c Config) error {
 	if pr := *full.Push.PullRequest; pr != "none" && *full.Push.Kind == "none" {
 		return fmt.Errorf("%w: push.pull_request needs a push (push.kind github or gitea)", ErrInvalid)
 	}
+	// A server the runs get and may call no tool of is a mistake: the tool
+	// allowlist is apart from which servers are there.
+	if full.MCP != nil {
+		for _, name := range *full.MCP {
+			if !AllowsMCPServer(*full.MCPServers, name) {
+				return fmt.Errorf("%w: mcp gives the runs server %s, and mcp_servers allows none of its tools: add %q (or the tools to allow, %q…)", ErrInvalid, name, "mcp__"+name, "mcp__"+name+"__")
+			}
+		}
+	}
 	return nil
+}
+
+// AllowsMCPServer reports whether a tool allowlist (mcp_servers) lets a run
+// call at least one tool of the named server.
+func AllowsMCPServer(allow []string, name string) bool {
+	for _, e := range allow {
+		if e == "mcp__"+name || strings.HasPrefix(e, "mcp__"+name+"__") {
+			return true
+		}
+	}
+	return false
 }
 
 // Canonical is the bytes a config is stored and hashed as.

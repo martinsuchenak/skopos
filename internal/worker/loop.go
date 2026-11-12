@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"cmp"
 	"context"
 	"embed"
 	"encoding/json"
@@ -165,11 +166,23 @@ type Worker struct {
 	factsMu  sync.Mutex
 	// fleetLoaded: the server's runner definitions were fetched at least
 	// once (defs.go).
-	fleetLoaded   bool
-	tokenRun      string
-	runMCP        string
-	runSecrets    []string
-	runTokensSeen bool
+	fleetLoaded bool
+	// wrapperChecked: when each server-defined wrapper's check last ran
+	// here (stagecaps.go). execProblems: what the worker last said it
+	// cannot run under the server's config, to log only changes.
+	wrapperChecked map[string]time.Time
+	execProblems   []string
+	tokenRun       string
+	runMCP         string
+	// runOwned: the server holds the MCP servers of the run being executed
+	// (its claim answer carried them); runSkopos: the run's MCP file holds
+	// the skopos entry; runMCPNames / runMCPNotes: the servers it got from
+	// the server, and the ones left out with why (agentmcp.go).
+	runOwned, runSkopos bool
+	runMCPNames         []string
+	runMCPNotes         []string
+	runSecrets          []string
+	runTokensSeen       bool
 	// index: idle-time code indexing (indexer.go).
 	index indexer
 	// logOutput: the log output (--log-output-url) run logs also go to;
@@ -198,6 +211,7 @@ func New(cfg *Config, client *Client, log *slog.Logger) *Worker {
 // Loop runs until the context is cancelled: claim, execute, report; pause on
 // quota (affinity keeps the run); idle polls at cfg.PollEvery.
 func (w *Worker) Loop(ctx context.Context) error {
+	w.sweepRunMCP()
 	w.loadServerConfig(ctx)
 	for {
 		if ctx.Err() != nil {
@@ -206,6 +220,9 @@ func (w *Worker) Loop(ctx context.Context) error {
 		// Between runs, never during one: a worker that always finds work
 		// would otherwise keep the runner definitions it started with.
 		w.maybeRefreshFleet(ctx)
+		// A wrapper the workspaces' config names has to start on this
+		// host: checked before the claim says what the worker can run.
+		w.checkWrappers(ctx, false)
 		run, err := w.client.Claim(ctx, w.cfg.ID, w.cfg.AvailableRunners(time.Now()), w.cfg.Workspaces, w.checkHealth(ctx), w.indexable(), w.runnerFacts())
 		if err != nil {
 			w.log.Error("claim failed", "err", err)
@@ -307,8 +324,23 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 			_ = os.RemoveAll(filepath.Join(w.cfg.runDir(run.ID), "tmp"))
 		}
 	}()
+	if err != nil && run.MCP != nil {
+		// The server holds the workspace's MCP servers and this run's file
+		// could not be written: given back, not run without them.
+		log.Error("not running the run", "reason", "the run's MCP config could not be written", "err", err)
+		_ = w.report(ctx, run, false, map[string]any{"reason": "mcp: the run's MCP config could not be written on the worker: " + err.Error(), "retryable": true})
+		return
+	}
 	if err != nil {
 		log.Warn("the run's MCP config could not be written: its agents get no skopos tools (the shared agent key is not used in its place)", "err", err)
+	}
+	// The server holds the workspace's MCP servers and could not resolve
+	// them for this run: given back, not run without them or with this
+	// file's.
+	if run.MCP != nil && run.MCP.Unreadable {
+		log.Error("not running the run", "reason", "the server could not read the run's MCP servers")
+		_ = w.report(ctx, run, false, map[string]any{"reason": "mcp: the server could not read the run's MCP servers", "retryable": true})
+		return
 	}
 	// The run log streams from here to the end (runlog.go); its last lines
 	// go after the report — skopos takes them under the claim's lease.
@@ -316,6 +348,14 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 	defer rl.close()
 	ctx = withRunLog(ctx, rl)
 	rl.notef("%s run, attempt %d, on %s", run.Stage, run.Attempt, w.cfg.ID)
+	if run.MCP != nil {
+		// Which MCP servers the run has, and which it should have had.
+		rl.notef("MCP servers from the server: %s", cmp.Or(strings.Join(w.runMCPNames, ", "), "none"))
+		for _, n := range w.runMCPNotes {
+			log.Warn("mcp: " + n)
+			rl.notef("%s", n)
+		}
+	}
 	if w.agentMCPRefresh != nil {
 		if err := w.agentMCPRefresh(); err != nil {
 			log.Warn("agent mcp config not refreshed; runs keep the last one", "err", err)
@@ -357,11 +397,7 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 	// policy with what this worker reported. A run it could not have
 	// checked — no runner, or one this worker does not have — is not run
 	// on whatever account happens to be free.
-	why := w.refuseRunner(run)
-	if why == "" {
-		why = w.refuseExecutor(run)
-	}
-	if why != "" {
+	if why := w.refuseRunner(run); why != "" {
 		log.Error("not running the run", "reason", why)
 		rl.notef("not run: %s", why)
 		_ = w.report(ctx, run, false, map[string]any{"reason": why})
@@ -373,6 +409,27 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 		log.Error("not running the run", "reason", err)
 		rl.notef("not run: %s", err)
 		_ = w.report(ctx, run, false, map[string]any{"reason": "config: " + err.Error(), "retryable": true})
+		return
+	}
+	// The config the run executes under says the server holds the
+	// workspace's MCP servers, and the claim carried none: the run would
+	// fall back to this file's mcp_config, which that config rules out.
+	if m := w.managedFor(run.WorkspaceID); m != nil && m.mcpOwned && run.MCP == nil {
+		why := "the workspace's config names its MCP servers, and the claim carried none"
+		log.Error("not running the run", "reason", why)
+		rl.notef("not run: %s", why)
+		_ = w.report(ctx, run, false, map[string]any{"reason": "mcp: " + why, "retryable": true})
+		return
+	}
+	// What contains the run depends on that config (its stage blocks and
+	// the wrappers they name), so it is compared with what the claim
+	// matched only now. A difference gives the run back: the next claim
+	// reports what this worker would really run it in.
+	w.checkWrappers(ctx, false)
+	if why := w.refuseExecutor(run); why != "" {
+		log.Error("not running the run", "reason", why)
+		rl.notef("not run: %s", why)
+		_ = w.report(ctx, run, false, map[string]any{"reason": why, "retryable": true})
 		return
 	}
 	if run.ConfigRev != "" {
@@ -631,18 +688,17 @@ func (w *Worker) agentRun(dir, prompt, schema string, tools []string, timeout ti
 	w.rememberAccount(run, account)
 	sessionKey := run.ID + ":" + phase
 	sess := w.sessions[sessionKey]
-	prof := w.cfg.StageProfile(run.WorkspaceID, phase)
 	runner := account.Runner
 	if runner == "" {
 		runner = "claude"
 	}
+	prof, problem := w.cfg.stageProfileFor(run.WorkspaceID, phase, runner)
 	// What contains this run and what it was given, for the report: the
 	// server compares the executor with the one the claim matched on.
 	w.executors[run.ID] = w.cfg.ExecutorFor(run.WorkspaceID, run.Stage, runner)
 	w.grants[run.ID] = prof.Grants()
-	mcpConfig := w.cfg.MCPConfig
-	if skopos := w.mcpFor(run); skopos != "" && w.cfg.runnerHasSkopos(runner) {
-		mcpConfig = skopos
+	mcpConfig, withSkopos := w.mcpConfigFor(run, runner)
+	if withSkopos {
 		tools = append(slices.Clone(tools), skoposTools(phase)...)
 	}
 	ar := AgentRun{
@@ -660,6 +716,11 @@ func (w *Worker) agentRun(dir, prompt, schema string, tools []string, timeout ti
 		TempDir:       w.cfg.runTempDir(run.ID),
 		HostContained: w.cfg.hostContainer(prof) != "",
 	}
+	if problem != "" {
+		// The stage's wrapper cannot be used here: never run it bare.
+		ar.StartErr = problem
+		return ar
+	}
 	if prof == nil {
 		return ar
 	}
@@ -667,7 +728,7 @@ func (w *Worker) agentRun(dir, prompt, schema string, tools []string, timeout ti
 	// capabilities extend the run, the wrapper contains it. runAgent
 	// re-checks containment per runner (sandbox settings only contain
 	// runners that honor them).
-	ar.Granted = len(prof.Tools) > 0 || len(prof.Env) > 0 || prof.grantsAllow()
+	ar.Granted = prof.grants()
 	ar.Sandboxed = prof.sandboxed()
 	ar.AllowedTools = append(append([]string{}, tools...), prof.Tools...)
 	ar.Settings = settingsJSON(w.mcpDeny(run.WorkspaceID), prof.Settings)
@@ -677,6 +738,12 @@ func (w *Worker) agentRun(dir, prompt, schema string, tools []string, timeout ti
 			env[k] = v
 		}
 		for k, v := range prof.Env {
+			// What the server gives a stage never replaces a variable of
+			// the account: that is the login and the endpoint the runner's
+			// facts were derived from.
+			if _, own := account.Env[k]; own && prof.server {
+				continue
+			}
 			env[k] = v
 		}
 		ar.Env = env
@@ -882,6 +949,15 @@ func (w *Worker) runnerFacts() []policy.Facts {
 		if w.client != nil {
 			w.client.SetExecutors(w.cfg.ExecutorFacts())
 		}
+		// What the worker cannot run under the server's config, said once
+		// per change (it reports those cases as executor none:…).
+		problems := w.cfg.ExecutorProblems()
+		for _, p := range problems {
+			if !slices.Contains(w.execProblems, p) {
+				w.log.Warn("stages: " + p)
+			}
+		}
+		w.execProblems = problems
 	}
 	return w.facts
 }
@@ -893,6 +969,17 @@ func (w *Worker) runnerFacts() []policy.Facts {
 // claim, or the server read the report differently — the policy check does
 // not cover what would run, so nothing is started.
 func (w *Worker) refuseExecutor(run *Run) string {
+	if run.Runner != "" {
+		// Whatever the claim matched: a case this worker reports it cannot
+		// run is not run.
+		if here := w.cfg.ExecutorFor(run.WorkspaceID, run.Stage, run.Runner); policy.Unavailable(here) {
+			why := policy.UnavailableReason(here)
+			if _, problem := w.cfg.stageProfileFor(run.WorkspaceID, stagePhase(run.Stage), run.Runner); problem != "" {
+				why = problem
+			}
+			return fmt.Sprintf("this worker cannot run %s on %s here: %s", run.Stage, run.Runner, why)
+		}
+	}
 	if len(run.Facts) == 0 || run.Runner == "" {
 		return ""
 	}

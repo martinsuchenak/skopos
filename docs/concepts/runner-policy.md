@@ -76,6 +76,13 @@ repository.
   the one for the run's workspace, stage and runner.
 - **A wrapper goes around everything that runs the branch's code:** the
   agent, and the setup and check commands the worker runs for that stage.
+- **A wrapper can come from the server.** A wrapper defined once
+  (`skopos wrapper set`) is attached to a stage's runs by a rule in the
+  workspace's or group's config, by runner kind, provider, model or name.
+  Its executor is `wrapper:<name>:<hash>`, the same on every worker, so a
+  rule can name it: `executor=wrapper:opencode-bwrap:*`. See
+  [Wrappers](workspace-config.md#wrappers). The config attaches a wrapper;
+  only a policy rule with `executor` requires one.
 - **A host container is not isolation.** `contained_by` says the worker
   can't reach beyond its container. Inside it a run still sees every clone
   and login on that worker, so it meets `contained` and not `isolated`.
@@ -97,7 +104,14 @@ repository.
   gets no run whose rule needs one.
 - **The worker checks again before it starts.** A run comes with the
   executor the server matched. A worker that would run it in something
-  else doesn't start it and fails the run with that reason.
+  else doesn't start it and gives the run back with that reason; its next
+  claim reports what it would run it in.
+- **A worker can say it cannot run a stage with a runner at all:**
+  `none:wrapper` (the wrapper the workspace's config asks for does not
+  start there), `none:uncontained` (the stage is given tools or env and
+  nothing contains it there) or `none:config` (the workspace's stage blocks
+  cannot be used there). The server hands that worker no such run, with or
+  without a policy, and the worker refuses one itself.
 - **skopos doesn't verify a wrapper.** `isolated` means the operator put a
   wrapper around the run; what that wrapper lets through is the
   operator's. The [bwrap profile](../deployment/worker.md#a-bwrap-profile)
@@ -236,6 +250,10 @@ for …" on the item. It is recorded as `run.stranded` when the mark is set,
 and again if the reason changes. The mark goes when a worker that may take
 it appears or the run stops waiting. Workers not seen for a day don't
 count.
+
+A run is stranded the same way when the only workers that have its runner
+report that they cannot run the stage with it (`none:…`): "Waiting: no
+worker can run …", with what stands in the way.
 
 A run waiting for a runner nobody offers at all is not stranded by the
 policy; the Pipeline dialog already says no worker offers that runner.

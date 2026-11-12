@@ -48,6 +48,8 @@ func respondError(w http.ResponseWriter, err error) {
 		rest.RespondError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, auth.ErrAdminRequired):
 		rest.RespondError(w, http.StatusForbidden, err.Error())
+	case errors.Is(err, ErrNoSecretKey):
+		rest.RespondError(w, http.StatusConflict, err.Error())
 	default:
 		rest.InternalError(w, err)
 	}
@@ -152,8 +154,8 @@ func (h *Handler) At(w http.ResponseWriter, r *http.Request) {
 	rest.RespondJSON(w, http.StatusOK, eff)
 }
 
-// FleetConfig handles GET /api/fleet/config: the runner definitions and
-// the revision that names them.
+// FleetConfig handles GET /api/fleet/config: the runner and wrapper
+// definitions and the revision that names them.
 func (h *Handler) FleetConfig(w http.ResponseWriter, r *http.Request) {
 	if !h.authorized(w, r) {
 		return
@@ -204,6 +206,140 @@ func (h *Handler) DeleteRunner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := h.service.DeleteRunner(r.Context(), r.PathValue("name"), rest.Via(r)); err != nil {
+		respondError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListWrappers handles GET /api/fleet/wrappers.
+func (h *Handler) ListWrappers(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(w, r) {
+		return
+	}
+	out, err := h.service.Wrappers(r.Context())
+	if err != nil {
+		respondError(w, err)
+		return
+	}
+	// Who names each wrapper is shown to callers that could change it.
+	if auth.RequireFleetAdmin(r.Context()) == nil {
+		if users, err := h.service.WrapperUsers(r.Context()); err == nil {
+			for i := range out {
+				out[i].UsedBy = users[out[i].Name]
+			}
+		}
+	}
+	rest.RespondJSON(w, http.StatusOK, map[string]any{"wrappers": out})
+}
+
+// PutWrapper handles PUT /api/fleet/wrappers/{name}.
+func (h *Handler) PutWrapper(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(w, r) {
+		return
+	}
+	var in WrapperDef
+	if err := rest.DecodeJSONStrict(w, r, &in); err != nil {
+		rest.RespondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	in.Name = r.PathValue("name")
+	v, _, err := h.service.SetWrapper(r.Context(), in, rest.Via(r))
+	if err != nil {
+		respondError(w, err)
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, v)
+}
+
+// DeleteWrapper handles DELETE /api/fleet/wrappers/{name} (?force=1 while
+// stage blocks still name it).
+func (h *Handler) DeleteWrapper(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(w, r) {
+		return
+	}
+	force := r.URL.Query().Get("force") == "1" || r.URL.Query().Get("force") == "true"
+	if _, err := h.service.DeleteWrapper(r.Context(), r.PathValue("name"), rest.Via(r), force); err != nil {
+		respondError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListMCPServers handles GET /api/fleet/mcp-servers: the definitions and
+// which of their secrets are set. Never a value.
+func (h *Handler) ListMCPServers(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(w, r) {
+		return
+	}
+	out, err := h.service.MCPServers(r.Context())
+	if err != nil {
+		respondError(w, err)
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, map[string]any{"mcp_servers": out})
+}
+
+// PutMCPServer handles PUT /api/fleet/mcp-servers/{name}.
+func (h *Handler) PutMCPServer(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(w, r) {
+		return
+	}
+	var in MCPServerDef
+	if err := rest.DecodeJSONStrict(w, r, &in); err != nil {
+		rest.RespondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	in.Name = r.PathValue("name")
+	v, _, err := h.service.SetMCPServer(r.Context(), in, rest.Via(r))
+	if err != nil {
+		respondError(w, err)
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, v)
+}
+
+// DeleteMCPServer handles DELETE /api/fleet/mcp-servers/{name} (?force=1
+// while a config still gives its runs the server).
+func (h *Handler) DeleteMCPServer(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(w, r) {
+		return
+	}
+	force := r.URL.Query().Get("force") == "1" || r.URL.Query().Get("force") == "true"
+	if _, err := h.service.DeleteMCPServer(r.Context(), r.PathValue("name"), rest.Via(r), force); err != nil {
+		respondError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// PutMCPSecret handles PUT /api/fleet/mcp-servers/{name}/secrets/{secret}:
+// the body carries the value, the answer never does.
+func (h *Handler) PutMCPSecret(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(w, r) {
+		return
+	}
+	var in struct {
+		Value string `json:"value"`
+	}
+	if err := rest.DecodeJSONStrict(w, r, &in); err != nil {
+		// Not the decoder's message: it can quote the body.
+		rest.RespondError(w, http.StatusBadRequest, `invalid request body: send {"value": "…"}`)
+		return
+	}
+	if err := h.service.SetMCPSecret(r.Context(), r.PathValue("name"), r.PathValue("secret"), []byte(in.Value), rest.Via(r)); err != nil {
+		respondError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// DeleteMCPSecret handles DELETE /api/fleet/mcp-servers/{name}/secrets/{secret}.
+func (h *Handler) DeleteMCPSecret(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(w, r) {
+		return
+	}
+	if err := h.service.UnsetMCPSecret(r.Context(), r.PathValue("name"), r.PathValue("secret"), rest.Via(r)); err != nil {
 		respondError(w, err)
 		return
 	}

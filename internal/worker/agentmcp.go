@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/srvurl"
+	"github.com/martinsuchenak/skopos/internal/wsconfig"
 )
 
 // Pipeline agents reach skopos over MCP: the code index, the blackboard and
@@ -158,15 +160,22 @@ func CheckWorkerKey(ctx context.Context, base, key string) (warnings []string, e
 	return nil, nil
 }
 
-// mcpConfigJSON builds the MCP config a run gets: the operator's mcp_config
-// servers plus the skopos server with bearer as its credential. strict
-// refuses an operator file that defines a server named skopos (the agent
-// key path, where the worker has always provided it); otherwise the
-// worker's entry replaces it — a run's own token is the narrower
-// credential.
-func mcpConfigJSON(base, bearer, operatorConfig string, strict bool) ([]byte, error) {
+// mcpConfigJSON builds the MCP config a run gets: its other servers plus,
+// when bearer is set, the skopos server with bearer as its credential. The
+// other servers are delivered (the ones the server sent with the claim)
+// when the server holds the run's MCP servers (owned), else the operator's
+// mcp_config file. strict refuses an operator file that defines a server
+// named skopos (the agent key path, where the worker has always provided
+// it); otherwise the worker's entry replaces it — a run's own token is the
+// narrower credential.
+func mcpConfigJSON(base, bearer, operatorConfig string, delivered map[string]json.RawMessage, owned, strict bool) ([]byte, error) {
 	servers := map[string]any{}
-	if operatorConfig != "" {
+	switch {
+	case owned:
+		for name, s := range delivered {
+			servers[name] = s
+		}
+	case operatorConfig != "":
 		raw, err := os.ReadFile(operatorConfig)
 		if err != nil {
 			return nil, fmt.Errorf("mcp_config: %w", err)
@@ -184,18 +193,90 @@ func mcpConfigJSON(base, bearer, operatorConfig string, strict bool) ([]byte, er
 			servers[name] = s
 		}
 	}
-	// Agents can't look SRV up: a srv+ server URL is resolved now (the
-	// file is written per run, or rewritten before each run).
-	mcpURL, err := srvurl.Resolve(context.Background(), strings.TrimRight(base, "/")+"/mcp")
-	if err != nil {
-		return nil, fmt.Errorf("agent mcp config: %w", err)
-	}
-	servers[agentMCPServer] = map[string]any{
-		"type":    "http",
-		"url":     mcpURL,
-		"headers": map[string]string{"Authorization": "Bearer " + bearer},
+	delete(servers, agentMCPServer)
+	if bearer != "" {
+		// Agents can't look SRV up: a srv+ server URL is resolved now (the
+		// file is written per run, or rewritten before each run).
+		mcpURL, err := srvurl.Resolve(context.Background(), strings.TrimRight(base, "/")+"/mcp")
+		if err != nil {
+			return nil, fmt.Errorf("agent mcp config: %w", err)
+		}
+		servers[agentMCPServer] = map[string]any{
+			"type":    "http",
+			"url":     mcpURL,
+			"headers": map[string]string{"Authorization": "Bearer " + bearer},
+		}
 	}
 	return json.MarshalIndent(map[string]any{"mcpServers": servers}, "", "  ")
+}
+
+// deliveredMCP checks the MCP servers a claim answer carries for use on
+// this host and fills in the host's variables. A server this worker will
+// not run is left out, with a note: a command server on a worker that does
+// not take commands from the server, one whose command or env names a
+// variable the worker does not declare, one under the worker's own name.
+func (c *Config) deliveredMCP(in *RunMCP) (servers map[string]json.RawMessage, notes []string) {
+	servers = map[string]json.RawMessage{}
+	if in == nil {
+		return servers, nil
+	}
+	names := make([]string, 0, len(in.Servers))
+	for name := range in.Servers {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		var entry struct {
+			Type    string            `json:"type,omitempty"`
+			URL     string            `json:"url,omitempty"`
+			Headers map[string]string `json:"headers,omitempty"`
+			Command string            `json:"command,omitempty"`
+			Args    []string          `json:"args,omitempty"`
+			Env     map[string]string `json:"env,omitempty"`
+		}
+		dec := json.NewDecoder(bytes.NewReader(in.Servers[name]))
+		dec.DisallowUnknownFields()
+		switch {
+		case name == agentMCPServer || !plainRunID(name):
+			notes = append(notes, fmt.Sprintf("mcp server %q: not a name this worker takes from the server: left out", name))
+			continue
+		case dec.Decode(&entry) != nil:
+			// The decoder's message could quote a credential: not repeated.
+			notes = append(notes, fmt.Sprintf("mcp server %s: its definition is not one this worker reads: left out", name))
+			continue
+		case (entry.URL == "") == (entry.Command == ""):
+			notes = append(notes, fmt.Sprintf("mcp server %s: neither an http server nor a command: left out", name))
+			continue
+		}
+		if entry.Command != "" {
+			if !c.ServerCommands {
+				notes = append(notes, fmt.Sprintf("mcp server %s runs a command on this host, and worker.server_commands is off: left out", name))
+				continue
+			}
+			var err error
+			fill := func(v string) string {
+				out, e := wsconfig.Expand(v, c.Vars)
+				if e != nil && err == nil {
+					err = e
+				}
+				return out
+			}
+			entry.Command = fill(entry.Command)
+			for i := range entry.Args {
+				entry.Args[i] = fill(entry.Args[i])
+			}
+			for k, v := range entry.Env {
+				entry.Env[k] = fill(v)
+			}
+			if err != nil {
+				notes = append(notes, fmt.Sprintf("mcp server %s: %v: left out", name, err))
+				continue
+			}
+		}
+		buf, _ := json.Marshal(entry)
+		servers[name] = buf
+	}
+	return servers, notes
 }
 
 // writeFile0600 replaces path atomically with mode 0600; a failed write
@@ -218,7 +299,7 @@ func writeFile0600(path string, b []byte) error {
 // operator's mcp_config servers plus the skopos server with the agent key.
 // It returns the file's path.
 func WriteAgentMCPConfig(stateDir, base, key, operatorConfig string) (string, error) {
-	b, err := mcpConfigJSON(base, key, operatorConfig, true)
+	b, err := mcpConfigJSON(base, key, operatorConfig, nil, false, true)
 	if err != nil {
 		return "", err
 	}
@@ -229,23 +310,38 @@ func WriteAgentMCPConfig(stateDir, base, key, operatorConfig string) (string, er
 	return path, writeFile0600(path, b)
 }
 
-// prepareRunMCP gives a run that came with an agent token its own MCP
-// config: <state_dir>/runs/<run>/mcp.json (the directory 0700, the file
-// 0600), holding the operator's servers plus skopos with the run's token.
-// The token joins the redacted values for the run. The returned func
-// removes the file and forgets the token; it is never nil.
+// prepareRunMCP gives a run its own MCP config:
+// <state_dir>/runs/<run>/mcp.json (the directory 0700, the file 0600). It
+// holds skopos with the run's token, when the claim came with one, and the
+// run's other servers: the ones the claim answer carries when the server
+// holds the workspace's MCP servers (run.MCP — then the operator's
+// mcp_config is not used for the run at all), else the operator's. The
+// token and the servers' credentials join the redacted values for the run.
+// The returned func removes the file and forgets them; it is never nil.
 //
 // A run that came with a token never uses the shared agent key: when its
-// own config cannot be written, its agents get no skopos tools (mcpFor).
-// Without a token (a server from before run tokens) nothing is written,
-// and the run falls back to the agent-key config, if the worker has one.
+// own config cannot be written, its agents get no skopos tools (mcpFor)
+// and, where the server holds its MCP servers, no MCP server at all.
+// Without a token or servers (a server from before run tokens) nothing is
+// written, and the run falls back to the agent-key config, if the worker
+// has one.
 func (w *Worker) prepareRunMCP(run *Run) (func(), error) {
-	if run.AgentToken == "" {
+	if run.AgentToken == "" && run.MCP == nil {
 		return func() {}, nil
 	}
-	w.tokenRun, w.runMCP, w.runSecrets = run.ID, "", []string{run.AgentToken}
-	forget := func() { w.tokenRun, w.runMCP, w.runSecrets = "", "", nil }
-	if !w.runTokensSeen {
+	w.tokenRun, w.runMCP, w.runSecrets = run.ID, "", nil
+	w.runOwned, w.runSkopos, w.runMCPNotes, w.runMCPNames = run.MCP != nil, run.AgentToken != "", nil, nil
+	if run.AgentToken != "" {
+		w.runSecrets = append(w.runSecrets, run.AgentToken)
+	}
+	if run.MCP != nil {
+		w.runSecrets = append(w.runSecrets, run.MCP.Secrets...)
+	}
+	forget := func() {
+		w.tokenRun, w.runMCP, w.runSecrets = "", "", nil
+		w.runOwned, w.runSkopos, w.runMCPNotes, w.runMCPNames = false, false, nil, nil
+	}
+	if run.AgentToken != "" && !w.runTokensSeen {
 		w.runTokensSeen = true
 		if w.agentMCP != "" {
 			w.log.Info("this server issues run tokens: agent runs use them, and SKOPOS_AGENT_KEY is no longer needed")
@@ -256,7 +352,20 @@ func (w *Worker) prepareRunMCP(run *Run) (func(), error) {
 	if !plainRunID(run.ID) {
 		return forget, fmt.Errorf("run id %q is not usable as a directory name", run.ID)
 	}
-	b, err := mcpConfigJSON(w.client.Base(), run.AgentToken, w.cfg.MCPConfig, false)
+	delivered, notes := w.cfg.deliveredMCP(run.MCP)
+	if run.MCP != nil {
+		w.runMCPNotes = append(slices.Clone(run.MCP.Notes), notes...)
+		names := make([]string, 0, len(delivered))
+		for name := range delivered {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		w.runMCPNames = names
+	}
+	// Until the file is written the run has none of them.
+	gave := w.runMCPNames
+	w.runMCPNames = nil
+	b, err := mcpConfigJSON(w.client.Base(), run.AgentToken, w.cfg.MCPConfig, delivered, run.MCP != nil, false)
 	if err != nil {
 		return forget, err
 	}
@@ -273,23 +382,66 @@ func (w *Worker) prepareRunMCP(run *Run) (func(), error) {
 	if err := writeFile0600(path, b); err != nil {
 		return forget, err
 	}
-	w.runMCP = path
+	w.runMCP, w.runMCPNames = path, gave
 	return func() {
 		forget()
 		_ = os.Remove(path)
 	}, nil
 }
 
+// sweepRunMCP removes the MCP files earlier runs left in the state
+// directory: a run's file is removed when it ends, but not when the worker
+// was killed in the middle of one — and it holds that workspace's
+// credentials. Called at start, before any run.
+func (w *Worker) sweepRunMCP() {
+	if w.cfg.StateDir == "" {
+		return
+	}
+	left, _ := filepath.Glob(filepath.Join(w.cfg.StateDir, "runs", "*", "mcp.json*"))
+	for _, path := range left {
+		if err := os.Remove(path); err == nil {
+			w.log.Info("removed a run's MCP config a stopped worker left behind", "file", path)
+		}
+	}
+}
+
 // mcpFor is the MCP config a run's agent gets its skopos tools from. A run
 // that came with a token uses its own config and nothing else — "" when
 // that could not be written. Only a run without a token (a server from
 // before run tokens) uses the agent-key config, when the worker has one.
-// "" = no skopos tools; the operator's mcp_config still applies.
+// "" = no skopos tools.
 func (w *Worker) mcpFor(run *Run) string {
 	if w.tokenRun != "" && w.tokenRun == run.ID {
+		if !w.runSkopos {
+			return ""
+		}
 		return w.runMCP
 	}
 	return w.agentMCP
+}
+
+// mcpConfigFor is the MCP config file an agent of the run gets on a
+// runner, and whether it carries the skopos tools.
+//
+//   - The server holds the run's MCP servers: the run's own file, for a
+//     runner that takes one (claude, opencode), or nothing. Never the
+//     operator's mcp_config — also when the run's file could not be
+//     written.
+//   - Otherwise: the run's own file (skopos plus the operator's servers),
+//     else the agent-key file, else the operator's mcp_config.
+func (w *Worker) mcpConfigFor(run *Run, runner string) (path string, skopos bool) {
+	own := w.tokenRun != "" && w.tokenRun == run.ID
+	takes := w.cfg.runnerHasSkopos(runner)
+	if own && w.runOwned {
+		if w.runMCP == "" || !takes {
+			return "", false
+		}
+		return w.runMCP, w.runSkopos
+	}
+	if f := w.mcpFor(run); f != "" && takes {
+		return f, true
+	}
+	return w.cfg.MCPConfig, false
 }
 
 // EnableAgentMCP gives every run of a claude or opencode agent that came

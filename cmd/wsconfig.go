@@ -26,6 +26,7 @@ import (
 func init() {
 	Register(serverConfigCmd())
 	Register(runnerDefCmd())
+	Register(wrapperDefCmd())
 }
 
 func configCall(ctx context.Context, cmd *cli.Command, via, method, path string, body, out any) error {
@@ -92,7 +93,7 @@ func configCmd(kind string) *cli.Command {
 			Description: `Fields: default_branch, branch_prefix, branch_template, checkout, protected_branches,
 setup, checks, check_fix_rounds, preflight, preflight_interval, setup_timeout,
 check_timeout, quiet_timeout, plan_timeout, impl_timeout, push.kind, push.remote_url,
-push.pull_request, push.steps, mcp_deny, mcp_servers.
+push.pull_request, push.steps, mcp_deny, mcp_servers, mcp, stages.<stage>.
 
 --file replaces the whole config with a TOML file's. --set and --unset change
 single fields of the stored one:
@@ -103,7 +104,23 @@ single fields of the stored one:
 
 setup, checks and preflight run on every worker serving the workspace that has
 worker.server_commands on. Their values are recorded in full: keep secrets out
-of them (use ${VAR} from the worker's environment).`,
+of them (use ${VAR} from the worker's environment).
+
+stages.plan, stages.implement, stages.review and stages.qa say what a stage's
+agent is given — tools, env, settings — and which wrapper its runs start
+behind, each as one block:
+  --set 'stages.implement={"tools":["Bash(npm run:*)"],"env":{"NODE_ENV":"test"}}'
+  --set 'stages.review={"wrap":[{"kind":"opencode","wrapper":"opencode-bwrap"}]}'
+A workspace's block for a stage replaces its group's. Workers take the blocks
+only with worker.server_commands on, and give a stage what its block says only
+where something contains the run. ${NAME} in an env value is filled in from
+the worker's [worker.vars].
+
+mcp names the MCP servers the runs get (skopos mcp-server set), and
+mcp_servers which of their tools a run may call:
+  --set 'mcp=["llmrouter"]' --set 'mcp_servers=["mcp__llmrouter"]'
+Once mcp is set — to [] too — the runs get exactly those servers and nothing
+from a worker's own mcp_config.`,
 			Flags: flags(
 				&cli.StringFlag{Name: "file", Usage: "A TOML file with the config's fields (replaces the stored config)"},
 				&cli.StringSliceFlag{Name: "set", Usage: "field=value (a JSON value, or plain text); repeat for each field"},
@@ -193,6 +210,13 @@ func editConfig(c wsconfig.Config, set, unset []string) (wsconfig.Config, error)
 	}
 	fields := c.Fields()
 	known := wsconfig.Defaults().Fields()
+	// A stage's block has no default: stages.implement='{"tools":[…]}'.
+	for _, f := range wsconfig.StageFields() {
+		known[f] = json.RawMessage(`{}`)
+	}
+	// The MCP servers the runs get: not set by default (each worker's own
+	// mcp_config then applies).
+	known["mcp"] = json.RawMessage(`[]`)
 	for _, kv := range set {
 		name, value, ok := strings.Cut(kv, "=")
 		name = strings.TrimSpace(name)
@@ -215,6 +239,18 @@ func editConfig(c wsconfig.Config, set, unset []string) (wsconfig.Config, error)
 		delete(fields, strings.TrimSpace(name))
 	}
 	// Unknown names and wrong types are refused here, not dropped.
+	for name, raw := range fields {
+		// Inside a stage's block too: a misspelt key would otherwise save
+		// an empty block, or a wrap rule that matches every runner.
+		if strings.HasPrefix(name, "stages.") {
+			dec := json.NewDecoder(bytes.NewReader(raw))
+			dec.DisallowUnknownFields()
+			var block wsconfig.StageCaps
+			if err := dec.Decode(&block); err != nil {
+				return c, fmt.Errorf("%s: %s (a block holds tools, env, settings and wrap; a wrap rule kind, provider, model, runner and wrapper)", name, strings.TrimPrefix(err.Error(), "json: "))
+			}
+		}
+	}
 	for name := range fields {
 		if _, ok := known[name]; !ok {
 			names := make([]string, 0, len(known))
@@ -318,7 +354,7 @@ func serverConfigCmd() *cli.Command {
 				Usage: "Make the server match a configuration file (admin permission for each change); --plan only lists the changes",
 				Flags: append(keyClientFlags(),
 					&cli.BoolFlag{Name: "plan", Usage: "List what would change and change nothing"},
-					&cli.BoolFlag{Name: "force", Usage: "Save policies even though they strand configured runners"},
+					&cli.BoolFlag{Name: "force", Usage: "Save policies even though they strand configured runners, and drop wrappers that stage blocks outside the file still name"},
 					&cli.StringFlag{Name: "commit", Usage: "The git commit the file comes from (default: read from the file's checkout)"},
 				),
 				Arguments: []cli.Argument{&cli.StringArg{Name: "file", Usage: "The configuration file", Required: true}},
@@ -484,4 +520,119 @@ func optField(name, value string) string {
 		return ""
 	}
 	return "  " + name + "=" + value
+}
+
+// wrapperDefCmd is `skopos wrapper …`: wrapper definitions on the server
+// (phase 2d).
+func wrapperDefCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "wrapper",
+		Usage: "Wrapper definitions on the server: a command a stage's runs start behind, attached by a stage block's wrap rules",
+		Commands: []*cli.Command{
+			{
+				Name:  "list",
+				Usage: "List the wrapper definitions",
+				Flags: keyClientFlags(),
+				Run: func(ctx context.Context, cmd *cli.Command) error {
+					var out struct {
+						Wrappers []wsconfig.WrapperView `json:"wrappers"`
+					}
+					if err := configCall(ctx, cmd, audit.ViaCLI, http.MethodGet, "/api/fleet/wrappers", nil, &out); err != nil {
+						return err
+					}
+					if len(out.Wrappers) == 0 {
+						fmt.Println("no wrapper definitions")
+						return nil
+					}
+					for _, w := range out.Wrappers {
+						fmt.Printf("%s  (executor %s)\n", w.Name, w.Executor)
+						fmt.Printf("  argv  %s\n", jsonLine(w.Argv))
+						if len(w.Check) > 0 {
+							fmt.Printf("  check %s\n", jsonLine(w.Check))
+						}
+						if len(w.UsedBy) > 0 {
+							fmt.Printf("  named by %s\n", strings.Join(w.UsedBy, ", "))
+						}
+					}
+					return nil
+				},
+			},
+			{
+				Name:  "set",
+				Usage: "Define or redefine a wrapper (admin over every workspace)",
+				Description: `A wrapper is the argv prefix a run starts behind: the agent, and the worker's
+setup and check commands of the stage. A stage block attaches it by rule:
+
+  skopos workspace config set --set 'stages.review={"wrap":[{"kind":"opencode","wrapper":"opencode-bwrap"}]}'
+
+The worker fills in {dir} {gitdir} {login} {rundir} {cli} {run} {stage}
+{workspace} for each run, and ${NAME} from its own [worker.vars]. Only a worker
+with server_commands = true runs a wrapper from the server.
+
+--check is a command that shows the wrapper can start on a host. A worker
+where it fails takes no run the wrapper is for. It does not show that the
+wrapper isolates anything.`,
+				Flags: append(keyClientFlags(),
+					&cli.StringFlag{Name: "argv", Usage: `The wrapper's argv as a JSON array: '["bwrap","--ro-bind","/","/","--bind","{dir}","{dir}"]'`},
+					&cli.StringFlag{Name: "check", Usage: `A command that shows the wrapper starts, as a JSON array: '["bwrap","--ro-bind","/","/","true"]'`},
+					&cli.StringFlag{Name: "file", Usage: "A TOML file with argv and check, instead of the flags"},
+				),
+				Arguments: []cli.Argument{&cli.StringArg{Name: "name", Usage: "Wrapper name", Required: true}},
+				Run: func(ctx context.Context, cmd *cli.Command) error {
+					name := cmd.GetStringArg("name")
+					var def wsconfig.WrapperDef
+					if file := cmd.GetString("file"); file != "" {
+						if cmd.GetString("argv") != "" || cmd.GetString("check") != "" {
+							return fmt.Errorf("--file replaces --argv and --check: use one or the other")
+						}
+						md, err := toml.DecodeFile(file, &def)
+						if err != nil {
+							return fmt.Errorf("reading %s: %w", file, err)
+						}
+						if extra := md.Undecoded(); len(extra) > 0 {
+							return fmt.Errorf("%s: %s is not a wrapper field (argv, check)", file, extra[0])
+						}
+					} else {
+						for flag, dst := range map[string]*[]string{"argv": &def.Argv, "check": &def.Check} {
+							if v := strings.TrimSpace(cmd.GetString(flag)); v != "" {
+								if err := json.Unmarshal([]byte(v), dst); err != nil {
+									return fmt.Errorf("--%s: a JSON array of strings (%v)", flag, err)
+								}
+							}
+						}
+					}
+					var v wsconfig.WrapperView
+					if err := configCall(ctx, cmd, audit.ViaCLI, http.MethodPut, "/api/fleet/wrappers/"+url.PathEscape(name), def, &v); err != nil {
+						return err
+					}
+					fmt.Printf("saved %s (revision %s): runs inside it record executor %s\n", v.Name, v.Rev, v.Executor)
+					return nil
+				},
+			},
+			{
+				Name:  "delete",
+				Usage: "Remove a wrapper definition (admin over every workspace)",
+				Flags: append(keyClientFlags(),
+					&cli.BoolFlag{Name: "force", Usage: "Delete it although stage blocks still name it: runs their rules match stop until the rule goes"}),
+				Arguments: []cli.Argument{&cli.StringArg{Name: "name", Usage: "Wrapper name", Required: true}},
+				Run: func(ctx context.Context, cmd *cli.Command) error {
+					name := cmd.GetStringArg("name")
+					path := "/api/fleet/wrappers/" + url.PathEscape(name)
+					if cmd.GetBool("force") {
+						path += "?force=1"
+					}
+					if err := configCall(ctx, cmd, audit.ViaCLI, http.MethodDelete, path, nil, nil); err != nil {
+						return err
+					}
+					fmt.Println("deleted " + name)
+					return nil
+				},
+			},
+		},
+	}
+}
+
+func jsonLine(v any) string {
+	buf, _ := json.Marshal(v)
+	return string(buf)
 }

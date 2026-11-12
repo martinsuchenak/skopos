@@ -43,6 +43,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/qa"
 	"github.com/martinsuchenak/skopos/internal/rest"
 	"github.com/martinsuchenak/skopos/internal/runs"
+	"github.com/martinsuchenak/skopos/internal/secretbox"
 	"github.com/martinsuchenak/skopos/internal/status"
 	"github.com/martinsuchenak/skopos/internal/workspaces"
 	"github.com/martinsuchenak/skopos/internal/wsconfig"
@@ -182,9 +183,15 @@ func serveCmd() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:       "integrations-key",
-				Usage:      "Key that encrypts webhook secrets; without it webhooks are off (the event feed still works). Keep it: changing it makes stored secrets unreadable",
+				Usage:      "The server's secret key: it encrypts the secrets skopos stores (webhook secrets, MCP server credentials). Without it webhooks are off and no secret can be stored. Change it only by rotating (see --integrations-previous-key)",
 				ConfigPath: []string{"integrations.secret_key"},
 				EnvVars:    []string{"SKOPOS_INTEGRATIONS_KEY"},
+			},
+			&cli.StringFlag{
+				Name:       "integrations-previous-key",
+				Usage:      "The secret key the server had before: set it while changing --integrations-key, run `skopos secret-key rotate`, then remove it",
+				ConfigPath: []string{"integrations.previous_secret_key"},
+				EnvVars:    []string{"SKOPOS_INTEGRATIONS_PREVIOUS_KEY"},
 			},
 			&cli.StringFlag{
 				Name:       "public-url",
@@ -532,6 +539,16 @@ func serveCmd() *cli.Command {
 			configService.SetPublisher(hub)
 			runsService.SetConfigSource(configService.Rev, configService.Digest)
 			runsService.SetFleetRev(configService.FleetRev)
+			// The server's secret key, and the one before it while a
+			// rotation is under way (internal/secretbox): MCP server
+			// credentials and webhook secrets are sealed under it.
+			keyRing := secretbox.New(cmd.GetString("integrations-key"), cmd.GetString("integrations-previous-key"))
+			configService.SetSecrets(secretbox.NewStore(sqlDB, keyRing))
+			keyRotator := secretbox.NewRotator(sqlDB, keyRing)
+			keyRotator.SetAuditSink(auditService)
+			// A run's MCP servers travel in its claim answer, and nowhere
+			// else (tmp/central-config — design.md, phase 2b).
+			runsService.SetMCPSource(configService.RunMCP, configService.MCPManaged)
 			pipelineService.SetRunnerDefs(configService.RunnerFacts)
 			if err := pipelineService.DropOrphans(ctx); err != nil {
 				log.Warn("pipeline settings: " + err.Error())
@@ -650,6 +667,7 @@ func serveCmd() *cli.Command {
 			qaService.SetEventEmitter(emitter)
 			integrationsService := integrations.NewService(sqlDB, emitter, cmd.GetString("integrations-key"),
 				integrations.URLPolicy{AllowHTTP: allowHTTP, AllowPrivate: allowPrivate})
+			integrationsService.SetKeyRing(keyRing)
 			integrationsService.PublicURL = strings.TrimRight(strings.TrimSpace(cmd.GetString("public-url")), "/")
 			integrationsService.SetAuditRecorder(auditService)
 			integrationsService.GroupExists = func(ctx context.Context, ref string) string {
@@ -665,8 +683,29 @@ func serveCmd() *cli.Command {
 			}
 			if cmd.GetString("integrations-key") == "" {
 				log.Info("webhooks off: no integrations key (integrations.secret_key / SKOPOS_INTEGRATIONS_KEY); the event feed still works")
+				if cmd.GetString("integrations-previous-key") != "" {
+					log.Error("integrations.previous_secret_key is set without integrations.secret_key: no stored secret can be opened")
+				}
 			} else {
 				go integrations.NewDispatcher(integrationsService, log).Run(ctx)
+			}
+			// What the stored secrets are sealed under, said once at
+			// start: a key that changed without a rotation shows here, not
+			// at the first run that needs a secret.
+			if st, err := keyRotator.Status(ctx); err != nil {
+				log.Error("reading the stored secrets' keys", "err", err)
+			} else {
+				switch {
+				case st.Current == "" && len(st.Sealed) > 0:
+					log.Error("the database holds stored secrets and the server has no secret key: set integrations.secret_key (SKOPOS_INTEGRATIONS_KEY) to the key that sealed them")
+				case st.Unreadable > 0:
+					log.Error("stored secrets are sealed under a secret key this server does not hold: set the key that sealed them as integrations.previous_secret_key and run `skopos secret-key rotate`",
+						"unreadable", st.Unreadable, "current_key", st.Current)
+				case st.Pending > 0:
+					log.Warn("stored secrets are not sealed under the current secret key yet: run `skopos secret-key rotate`", "pending", st.Pending, "current_key", st.Current)
+				case len(st.Previous) > 0:
+					log.Info("every stored secret is sealed under the current secret key: integrations.previous_secret_key can be removed", "current_key", st.Current)
+				}
 			}
 			// GET /api/inbox/{id}/state: the item's state for other
 			// systems (tmp/integrations — design.md §4).
@@ -744,7 +783,7 @@ func serveCmd() *cli.Command {
 			routes.RegisterPipelineRoutes(apiMux, pipeline.NewHandler(pipelineService, authn))
 			fleetService := fleetfile.NewService(apiKeysService, workspacesService, pipelineService, configService)
 			fleetService.SetAuditSink(auditService)
-			routes.RegisterConfigRoutes(apiMux, wsconfig.NewHandler(configService, authn), fleetfile.NewHandler(fleetService, authn))
+			routes.RegisterConfigRoutes(apiMux, wsconfig.NewHandler(configService, authn), fleetfile.NewHandler(fleetService, authn), secretbox.NewHandler(keyRotator, authn))
 			routes.MountIntegrations(apiMux, integrations.NewHandler(integrationsService))
 			mux := http.NewServeMux()
 			// Longest-pattern wins: the exact SSE route below overrides /api/.

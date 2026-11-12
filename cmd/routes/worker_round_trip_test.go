@@ -29,6 +29,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/rest"
 	"github.com/martinsuchenak/skopos/internal/runs"
+	"github.com/martinsuchenak/skopos/internal/secretbox"
 	"github.com/martinsuchenak/skopos/internal/status"
 	"github.com/martinsuchenak/skopos/internal/workspaces"
 	"github.com/martinsuchenak/skopos/internal/wsconfig"
@@ -284,6 +285,11 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	configService.SetAuditSink(auditService)
 	runsService.SetConfigSource(configService.Rev, configService.Digest)
 	runsService.SetFleetRev(configService.FleetRev)
+	keyRing := secretbox.New("test-key")
+	configService.SetSecrets(secretbox.NewStore(sqlDB, keyRing))
+	keyRotator := secretbox.NewRotator(sqlDB, keyRing)
+	keyRotator.SetAuditSink(auditService)
+	runsService.SetMCPSource(configService.RunMCP, configService.MCPManaged)
 	pipelineService.SetRunnerDefs(configService.RunnerFacts)
 	runsService.SetPrefsSource(func(ctx context.Context, ws string) *runs.WorkspacePrefs {
 		return pipelineService.Prefs(ctx, ws)
@@ -314,7 +320,7 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	RegisterPipelineRoutes(apiMux, pipeline.NewHandler(pipelineService, authn))
 	fleetService := fleetfile.NewService(apikeys.NewService(apikeys.NewStorage(sqlDB)), workspaces.NewService(workspaces.NewStorage(sqlDB)), pipelineService, configService)
 	fleetService.SetAuditSink(auditService)
-	RegisterConfigRoutes(apiMux, wsconfig.NewHandler(configService, authn), fleetfile.NewHandler(fleetService, authn))
+	RegisterConfigRoutes(apiMux, wsconfig.NewHandler(configService, authn), fleetfile.NewHandler(fleetService, authn), secretbox.NewHandler(keyRotator, authn))
 	MountIntegrations(apiMux, integrations.NewHandler(integrationsService))
 	root := http.NewServeMux()
 	root.Handle("/api/", authn.Middleware(idempotency.New(sqlDB).Middleware("/api/inbox")(apiMux)))

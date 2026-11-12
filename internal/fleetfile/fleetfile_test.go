@@ -19,6 +19,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/pipeline"
 	"github.com/martinsuchenak/skopos/internal/policy"
+	"github.com/martinsuchenak/skopos/internal/secretbox"
 	"github.com/martinsuchenak/skopos/internal/workspaces"
 	"github.com/martinsuchenak/skopos/internal/wsconfig"
 
@@ -75,6 +76,7 @@ func fixture(t *testing.T) *fixtureT {
 	pipe.SetAuditSink(sink)
 	cfg := wsconfig.NewService(sqlDB, revs, storage)
 	cfg.SetAuditSink(sink)
+	cfg.SetSecrets(secretbox.NewStore(sqlDB, secretbox.New("test key")))
 	pipe.SetRunnerDefs(cfg.RunnerFacts)
 	svc := NewService(apikeys.NewService(apikeys.NewStorage(sqlDB)), workspaces.NewService(workspaces.NewStorage(sqlDB)), pipe, cfg)
 	svc.SetAuditSink(sink)
@@ -535,5 +537,218 @@ qa = { members = "glm" }
 	}
 	if _, err := f.svc.Apply(root(), Input{Document: together, Force: true}); err != nil {
 		t.Fatalf("and the apply, in order, goes through: %v", err)
+	}
+}
+
+const wrapped = `
+[wrappers.opencode-bwrap]
+argv = ["bwrap", "--bind", "{dir}", "{dir}"]
+check = ["bwrap", "--version"]
+
+[workspaces."fx/api".config]
+default_branch = "main"
+[workspaces."fx/api".config.stages.implement]
+tools = ["Bash(npm run:*)"]
+env = { NODE_ENV = "test" }
+[[workspaces."fx/api".config.stages.review.wrap]]
+kind = "opencode"
+wrapper = "opencode-bwrap"
+`
+
+// Wrappers and the stage blocks that name them travel in the file: a
+// wrapper the file defines is there before the config that names it, one
+// it drops goes after, and a drop that would leave a stage block naming
+// nothing is refused.
+func TestWrappersAndStageBlocksInTheFile(t *testing.T) {
+	f := fixture(t)
+	plan, err := f.svc.Apply(root(), Input{Document: parse(t, wrapped), Plan: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "create wrapper wrapper:opencode-bwrap\ncreate workspace workspace:fx/api\ncreate config workspace:fx/api"
+	if got := lines(plan); got != want {
+		t.Fatalf("plan:\n%s\nwant:\n%s", got, want)
+	}
+	if _, err := f.svc.Apply(root(), Input{Document: parse(t, wrapped)}); err != nil {
+		t.Fatal(err)
+	}
+	eff, err := f.config.Effective(root(), "fx/api")
+	if err != nil || eff.Config.Stages["implement"].Env["NODE_ENV"] != "test" || eff.Config.Stages["review"].Wrap[0].Wrapper != "opencode-bwrap" {
+		t.Fatalf("the stage blocks: %+v %v", eff, err)
+	}
+	if got := f.sink.by("wrapper.create"); len(got) != 1 || got[0].Via != audit.ViaApply {
+		t.Fatalf("the wrapper is recorded by its own service, via apply: %+v", got)
+	}
+
+	// Export reads back as the same document.
+	exported, err := f.svc.Export(root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(exported); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "[wrappers.opencode-bwrap]") || !strings.Contains(buf.String(), "stages") {
+		t.Fatalf("the export:\n%s", buf.String())
+	}
+	if round, err := f.svc.Apply(root(), Input{Document: parse(t, buf.String()), Plan: true}); err != nil || len(round.Changes) != 0 {
+		t.Fatalf("export then apply must change nothing: %v\n%s\n--- exported ---\n%s", err, lines(round), buf.String())
+	}
+
+	// A file that drops the wrapper and keeps the rule that names it.
+	dropped := strings.Replace(wrapped, "[wrappers.opencode-bwrap]\nargv = [\"bwrap\", \"--bind\", \"{dir}\", \"{dir}\"]\ncheck = [\"bwrap\", \"--version\"]", "[wrappers]", 1)
+	doc := parse(t, dropped)
+	if doc.Wrappers == nil || len(doc.Wrappers) != 0 {
+		t.Fatalf("an empty [wrappers] section states the full set: %+v", doc.Wrappers)
+	}
+	if _, err := f.svc.Apply(root(), Input{Document: doc, Plan: true}); !errors.Is(err, wsconfig.ErrInvalid) || !strings.Contains(err.Error(), "not defined") {
+		t.Fatalf("a listed config naming a dropped wrapper: %v", err)
+	}
+	// The same drop, with the workspace that names it not in the file.
+	only := Document{Wrappers: map[string]wsconfig.WrapperDef{}}
+	if _, err := f.svc.Apply(root(), Input{Document: only, Plan: true}); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "workspace:fx/api") {
+		t.Fatalf("dropping a wrapper an unlisted workspace names: %v", err)
+	}
+	forced, err := f.svc.Apply(root(), Input{Document: only, Plan: true, Force: true})
+	if err != nil || lines(forced) != "delete wrapper wrapper:opencode-bwrap" || len(forced.Changes[0].Warnings) == 0 {
+		t.Fatalf("forced: %v %s", err, lines(forced))
+	}
+	// Dropping the rule and the wrapper together: the config changes first.
+	without := parse(t, "[wrappers]\n[workspaces.\"fx/api\".config]\ndefault_branch = \"main\"\n")
+	res, err := f.svc.Apply(root(), Input{Document: without})
+	if err != nil || lines(res) != "update config workspace:fx/api\ndelete wrapper wrapper:opencode-bwrap" {
+		t.Fatalf("apply: %v\n%s", err, lines(res))
+	}
+	if fleet, _ := f.config.Fleet(root()); len(fleet.Wrappers) != 0 {
+		t.Fatalf("the wrapper is still defined: %+v", fleet)
+	}
+	// A file without a [wrappers] section leaves the definitions alone.
+	if _, err := f.svc.Apply(root(), Input{Document: parse(t, wrapped)}); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := f.svc.Apply(root(), Input{Document: parse(t, "[workspaces.\"fx/api\".config]\ndefault_branch = \"main\"\n"), Plan: true}); err != nil || lines(res) != "update config workspace:fx/api" {
+		t.Fatalf("no [wrappers] section: %v\n%s", err, lines(res))
+	}
+	// Only a fleet admin defines wrappers.
+	if _, err := f.svc.Apply(admin(false, "fx/api"), Input{Document: parse(t, wrapped), Plan: true}); !errors.Is(err, auth.ErrAdminRequired) {
+		t.Fatalf("a workspace admin changed a wrapper: %v", err)
+	}
+}
+
+const withMCP = `
+[mcp.llmrouter]
+type = "http"
+url = "https://llmrouter.example.com/mcp"
+workspaces = ["fx/*"]
+[mcp.llmrouter.headers]
+Authorization = "Bearer ${secret:token}"
+
+[mcp.scriptling]
+type = "command"
+command = ["${TOOLS_DIR}/scriptling", "mcp"]
+
+[workspaces."fx/api".config]
+mcp = ["llmrouter", "scriptling"]
+mcp_servers = ["mcp__llmrouter", "mcp__scriptling__run"]
+`
+
+// MCP servers travel in the file as definitions that name their secrets;
+// a value is never in it. Applying a definition keeps the stored value of
+// a secret it still names, and the export shows none.
+func TestMCPServersInTheFile(t *testing.T) {
+	f := fixture(t)
+	plan, err := f.svc.Apply(root(), Input{Document: parse(t, withMCP), Plan: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "create mcp mcp:llmrouter\ncreate mcp mcp:scriptling\ncreate workspace workspace:fx/api\ncreate config workspace:fx/api"
+	if got := lines(plan); got != want {
+		t.Fatalf("plan:\n%s\nwant:\n%s", got, want)
+	}
+	// The plan says which secret has no value yet: the file cannot carry it.
+	if w := plan.Changes[0].Warnings; len(w) != 1 || !strings.Contains(w[0], "secret token") || !strings.Contains(w[0], "set-secret llmrouter") {
+		t.Fatalf("the plan names the secret to set: %v", w)
+	}
+	if _, err := f.svc.Apply(root(), Input{Document: parse(t, withMCP)}); err != nil {
+		t.Fatal(err)
+	}
+	const value = "tok-never-in-a-file"
+	if err := f.config.SetMCPSecret(root(), "llmrouter", "token", []byte(value), "cli"); err != nil {
+		t.Fatal(err)
+	}
+	// Applying the same file again changes nothing and keeps the value.
+	if again, err := f.svc.Apply(root(), Input{Document: parse(t, withMCP)}); err != nil || len(again.Changes) != 0 {
+		t.Fatalf("a second apply: %v %s", err, lines(again))
+	}
+	// A changed definition that still names the secret, on the same host,
+	// keeps its value.
+	changed := strings.Replace(withMCP, "llmrouter.example.com/mcp", "llmrouter.example.com/mcp/v2", 1)
+	if res, err := f.svc.Apply(root(), Input{Document: parse(t, changed)}); err != nil || lines(res) != "update mcp mcp:llmrouter" || len(res.Changes[0].Warnings) != 0 {
+		t.Fatalf("a changed definition: %v %s %v", err, lines(res), res.Changes)
+	}
+	mcp, err := f.config.RunMCP(root(), "fx/api", true)
+	if err != nil || len(mcp.Servers) != 2 || !strings.Contains(string(mcp.Servers["llmrouter"]), value) || !strings.Contains(string(mcp.Servers["llmrouter"]), "/mcp/v2") {
+		t.Fatalf("the run's servers: %+v %v", mcp, err)
+	}
+	// A config for a workspace the server is not for is refused, also when
+	// the same file narrows the server.
+	narrowed := strings.Replace(changed, `workspaces = ["fx/*"]`, `workspaces = ["other/*"]`, 1)
+	if _, err := f.svc.Apply(root(), Input{Document: parse(t, narrowed), Plan: true}); !errors.Is(err, wsconfig.ErrInvalid) || !strings.Contains(err.Error(), "may not be given to the runs of fx/api") {
+		t.Fatalf("a file that gives a workspace a server it narrows away from it: %v", err)
+	}
+
+	// The export: definitions and secret names, never the value.
+	exported, err := f.svc.Export(root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(exported); err != nil {
+		t.Fatal(err)
+	}
+	asJSON, _ := json.Marshal(exported)
+	if strings.Contains(buf.String(), value) || strings.Contains(string(asJSON), value) {
+		t.Fatalf("the export holds a secret's value:\n%s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "${secret:token}") || !strings.Contains(buf.String(), "[mcp.scriptling]") {
+		t.Fatalf("the export:\n%s", buf.String())
+	}
+	if round, err := f.svc.Apply(root(), Input{Document: parse(t, buf.String()), Plan: true}); err != nil || len(round.Changes) != 0 {
+		t.Fatalf("export then apply must change nothing: %v\n%s", err, lines(round))
+	}
+	// No audit note holds it either.
+	for _, e := range f.sink.entries {
+		if strings.Contains(e.Notes, value) {
+			t.Fatalf("an audit note holds the value: %+v", e)
+		}
+	}
+
+	// A file with a credential written into it is refused.
+	inline := strings.Replace(withMCP, "Bearer ${secret:token}", "Bearer abc123def456", 1)
+	if _, err := f.svc.Apply(root(), Input{Document: parse(t, inline), Plan: true}); !errors.Is(err, wsconfig.ErrInvalid) || !strings.Contains(err.Error(), "looks like a credential") {
+		t.Fatalf("a credential in the file: %v", err)
+	}
+	// Dropping a server a workspace outside the file still uses.
+	only := Document{MCP: map[string]wsconfig.MCPServerDef{"scriptling": exported.MCP["scriptling"]}}
+	if _, err := f.svc.Apply(root(), Input{Document: only, Plan: true}); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "workspace:fx/api") {
+		t.Fatalf("dropping a server an unlisted workspace uses: %v", err)
+	}
+	// Dropping it together with its use: the config changes first, and the
+	// stored secret goes with the definition.
+	without := parse(t, "[mcp]\n[workspaces.\"fx/api\".config]\nmcp = []\n")
+	res, err := f.svc.Apply(root(), Input{Document: without})
+	if err != nil || lines(res) != "update config workspace:fx/api\ndelete mcp mcp:llmrouter\ndelete mcp mcp:scriptling" {
+		t.Fatalf("apply: %v\n%s", err, lines(res))
+	}
+	if _, _, err := f.config.SetMCPServer(root(), exported.MCP["llmrouter"], "cli"); err != nil {
+		t.Fatal(err)
+	}
+	if views, _ := f.config.MCPServers(root()); len(views) != 1 || views[0].Secrets[0].Set {
+		t.Fatalf("a deleted server's secret came back with a new definition: %+v", views)
+	}
+	// Only a fleet admin defines MCP servers.
+	if _, err := f.svc.Apply(admin(false, "fx/api"), Input{Document: parse(t, withMCP), Plan: true}); !errors.Is(err, auth.ErrAdminRequired) {
+		t.Fatalf("a workspace admin changed an MCP server: %v", err)
 	}
 }

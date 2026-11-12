@@ -141,6 +141,107 @@ versions follow [Semantic Versioning](https://semver.org/).
   each workspace's config and checks the merged result.
 - **The workers view shows** whether a worker takes commands from the
   server and which runner definitions it holds.
+- **Stage capabilities on the server.** A workspace's or group's config can
+  say what each stage's agent is given: `stages.plan`, `stages.implement`,
+  `stages.review` and `stages.qa`, each one block of `tools`, `env` and
+  `settings`
+  (`skopos workspace config set --set 'stages.implement={"tools":["Bash(npm run:*)"]}'`).
+  A managed workspace's stages come from there instead of from each
+  worker's profiles. See `docs/concepts/workspace-config.md#stages`.
+  - **One block per stage:** a workspace's block replaces its group's for
+    that stage whole.
+  - **What contains a stage stays the worker's.** `contained_by`, and a
+    `wrapper`, sandbox settings and `permissions.deny` rules in the
+    worker's file, are kept; only the tools, env and other settings of the
+    file's profiles are no longer used.
+  - **Given only where something contains the run.** A worker where
+    nothing contains a stage the server gives tools or env takes no run of
+    that stage, and says so.
+  - **A block a worker cannot use** (a `${NAME}` it does not declare) keeps
+    the workspace's runs away from that worker, with the reason.
+  - **Opt-in per worker, like commands:** stage blocks are taken only with
+    `worker.server_commands = true`, and every change is recorded in full.
+  - **`[worker.vars]`** holds a host's values for `${NAME}` in a stage's
+    env and a wrapper's argv. Nothing else is filled in.
+  - **A stage's env is for the repository's tools.** It may not set proxy
+    or endpoint variables, variables that configure the agent CLI or its
+    provider, the variables that select an agent's login, credential-like
+    names or loader variables, and a variable of the runner's account wins
+    over it. Its settings may hold `permissions` and `sandbox` only.
+- **Wrappers defined on the server.** `skopos wrapper set opencode-bwrap
+  --argv '[…]' --check '[…]'` defines a wrapper once; a stage block attaches
+  it by rule, by the runner's kind, provider, model or name
+  (`"wrap":[{"kind":"opencode","wrapper":"opencode-bwrap"}]`). It goes
+  around the agent and the stage's setup and check commands, and its runs
+  record executor `wrapper:<name>:<hash>`, the same on every worker.
+  - **`check`** is a command that shows the wrapper can start on a host.
+    A worker runs it before it offers the wrapper, and takes no run the
+    wrapper is for while it fails. Nothing runs unwrapped instead.
+  - **Fleet admins only,** recorded as `wrapper.create`, `wrapper.update`
+    and `wrapper.delete` with the argv. Only a worker with
+    `server_commands` runs one. A wrapper a worker's own file sets for the
+    stage stays in place of it.
+  - **In the config file:** `[wrappers.<name>]`, and `stages` in a
+    workspace's or group's config.
+- **A worker can report that it cannot run a stage with a runner**
+  (executor `none:wrapper`, `none:uncontained`, `none:config`). The server
+  hands it no such run, and a run no worker can take is marked stranded
+  with the reason. This covers a worker's own profile too: a stage it gives
+  tools whose only containment is sandbox settings is no longer offered for
+  a runner that does not honour them (such a run failed at its start).
+- **`skopos workspace config import` carries stage blocks:** the tools, env
+  and settings a worker file's profiles give each stage. A profile's
+  wrapper and sandbox settings stay in the file.
+- **`skopos worker check` says** whether each wrapper the workspaces' stages
+  name starts on the worker, and which stages the worker cannot run.
+- **The dashboard shows** stage blocks and the wrappers a stage can name in
+  the Pipeline dialog, and the stages a worker cannot run in the Workers
+  view.
+- **MCP servers for runs, defined on the server.** `skopos mcp-server set
+  llmrouter --url … --header 'Authorization=Bearer ${secret:token}'`
+  defines a server once (an http URL with headers, or a command the worker
+  runs); a workspace's or group's config gives its runs servers by name
+  (`mcp = ["llmrouter"]`) and allows their tools (`mcp_servers`). See
+  `docs/concepts/workspace-config.md#mcp-servers`.
+  - **Credentials are set apart and never shown.** A definition names its
+    secrets (`${secret:NAME}`); `skopos mcp-server set-secret <server>
+    <name>` stores a value, read from the terminal, piped input or an
+    environment variable. No command, endpoint, export or audit note
+    returns it, and a credential written into a definition is refused.
+  - **A run gets its servers with its claim,** for its own workspace only:
+    the worker writes them into the run's MCP file, keeps the credentials
+    out of the run's log and removes the file when the run ends. They are
+    not part of the config a worker fetches.
+  - **Once a workspace's config sets `mcp`,** its runs get exactly those
+    servers and nothing from a worker's own `mcp_config`; without it the
+    worker's `mcp_config` applies as before.
+  - **A server that cannot be delivered is left out,** and the run's log
+    says why: a secret that is not set, a `command` server for a worker
+    without `server_commands`, a variable the worker does not declare.
+  - **A server says which workspaces it is for** (`--for
+    'github.com/you/*'`), and has to when it names secrets. A config can
+    only name a server that is for its workspace, and the claim checks it
+    again, so a workspace's admin cannot pull another team's server and
+    its credentials into their runs.
+  - **What looks like a credential in a definition is refused** unless it
+    is a secret: in a header, a variable, a URL's query or path, or a
+    command argument.
+  - **A secret is for the server it was set for:** changing a server's
+    host or command deletes its stored secrets.
+  - **Fleet admins** define servers and set secrets
+    (`mcp_server.create|update|delete`, `mcp_server.secret_set|secret_unset`
+    in the audit log, names only). In the config file: `[mcp.<name>]`.
+  - **A worker older than this release gets no runs of a workspace whose
+    config sets `mcp`.**
+- **Secret-key rotation.** `skopos secret-key rotate` seals every stored
+  secret (MCP server credentials, webhook signing secrets) again under the
+  server's current key, all of them or none, and is recorded as
+  `secret_key.rotate`. To change the key, set the new one as
+  `integrations.secret_key` and the old one as
+  `integrations.previous_secret_key`, restart, rotate, then remove the
+  previous key. `skopos secret-key status` shows which key sealed what; the
+  server says at start when stored secrets are under a key it does not
+  hold.
 - **Key and group changes are audit events:** `key.create`, `key.update`,
   `key.revoke` and `key.delete`, with who did it and what the key may do
   afterwards, and `group.create`, `group.update` and `group.delete`, since
@@ -169,6 +270,13 @@ versions follow [Semantic Versioning](https://semver.org/).
   contradicts the embeddings URL.
 - **A worker from before this release gets no runs from a workspace that
   has a policy.** Update the workers before setting one.
+- **A worker's interrupted run is handed back only to a key that has the
+  run's workspace in scope.** A second key polling under the same worker id
+  (a worker config copied to another host) used to receive the run and its
+  credentials. It now gets nothing, and the run is taken over from its
+  branch once its owner stays away.
+- **Webhook secrets created or rotated on this release cannot be opened by
+  an earlier release:** they name the key that sealed them.
 - **A run's agent may call only its stage's skopos tools:** the blackboard,
   `skopos_context`, `plan_read` and the `code_*` tools, plus
   `plan_update_item` for an implement run, on its own item's plan only.

@@ -2,6 +2,10 @@ package runs
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"github.com/martinsuchenak/skopos/internal/auth"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -188,5 +192,144 @@ func TestOldWorkerGetsNoManagedWorkspace(t *testing.T) {
 	run, err = s.ClaimNext(rootCtx(), ClaimInput{WorkerID: "w-new", Workspaces: []string{"managed"}, Runners: []string{"claude"}, ServerCommands: &on})
 	if err != nil || run == nil || run.ID != managed || run.ConfigRev != "rev-1" {
 		t.Fatalf("a worker that reads server config takes it: %+v %v", run, err)
+	}
+}
+
+// A claimed run's MCP servers travel in the claim answer, for the run's own
+// workspace: resolved for the claiming worker (whether it takes commands),
+// never stored, never in a later read of the run. A worker that cannot
+// take them is kept away from the workspaces that need it, and servers
+// that cannot be resolved are said so instead of left out silently.
+func TestClaimCarriesTheRunsMCPServers(t *testing.T) {
+	s := testService(t)
+	ctx := rootCtx()
+	const secret = "tok-very-secret-value"
+	var asked []string
+	fail := false
+	s.SetMCPSource(func(_ context.Context, ws string, commands bool) (*RunMCP, error) {
+		asked = append(asked, fmt.Sprintf("%s commands=%v", ws, commands))
+		if fail {
+			return nil, errors.New("database is locked")
+		}
+		if ws != "held" {
+			return nil, nil
+		}
+		return &RunMCP{Servers: map[string]json.RawMessage{"llmrouter": json.RawMessage(`{"type":"http","url":"https://x/mcp","headers":{"Authorization":"Bearer ` + secret + `"}}`)},
+			Secrets: []string{secret}}, nil
+	}, func(_ context.Context, ws string) bool { return ws == "held" })
+	on := true
+	claim := func(worker, ws string, features ...string) *Run {
+		t.Helper()
+		run, err := s.ClaimNext(ctx, ClaimInput{WorkerID: worker, Workspaces: []string{ws}, Runners: []string{"claude"},
+			RunnerFacts: []policy.Facts{fClaude}, ServerCommands: &on, Features: features})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return run
+	}
+	queued := mustQueue(t, s, ctx, "held", "item-1", StagePlan)
+	// A worker whose release cannot take the servers from the claim gets
+	// none of the workspace's runs, and shows why.
+	if run := claim("w-old", "held"); run != nil {
+		t.Fatalf("a worker without the feature got the run: %+v", run)
+	}
+	if got := s.storage.WorkerUnhealthy(ctx, "w-old")["held"]; !strings.Contains(got, "MCP servers") {
+		t.Fatalf("unhealthy reason: %q", got)
+	}
+	run := claim("w-new", "held", FeatureRunMCP)
+	if run == nil || run.ID != queued.ID || run.MCP == nil || len(run.MCP.Servers) != 1 || run.MCP.Secrets[0] != secret {
+		t.Fatalf("the claim answer: %+v", run)
+	}
+	if asked[len(asked)-1] != "held commands=true" {
+		t.Fatalf("resolved for the run's workspace and this worker: %v", asked)
+	}
+	// Only the claim answer: reading the run later shows none of it, and
+	// nothing was stored.
+	got, err := s.Get(ctx, run.ID)
+	if err != nil || got.MCP != nil {
+		t.Fatalf("a later read of the run: %+v %v", got.MCP, err)
+	}
+	buf, _ := json.Marshal(got)
+	if strings.Contains(string(buf), secret) {
+		t.Fatalf("the run as read back holds the secret: %s", buf)
+	}
+	var stored int
+	if err := s.storage.db.QueryRow(`SELECT COUNT(*) FROM runs WHERE CAST(facts AS TEXT) LIKE ? OR result_summary LIKE ? OR fail_reason LIKE ?`,
+		"%"+secret+"%", "%"+secret+"%", "%"+secret+"%").Scan(&stored); err != nil || stored != 0 {
+		t.Fatalf("the secret reached the runs table: %d %v", stored, err)
+	}
+	// A workspace the server holds no MCP servers for: nothing in the
+	// answer, and a worker without the feature is welcome.
+	mustQueue(t, s, ctx, "free", "item-2", StagePlan)
+	if run := claim("w-old", "free"); run == nil || run.MCP != nil {
+		t.Fatalf("a workspace with the worker's own MCP config: %+v", run)
+	}
+	// Servers that cannot be resolved: the worker is told, so it gives the
+	// run back instead of running without them.
+	fail = true
+	mustQueue(t, s, ctx, "held", "item-3", StagePlan)
+	if run := claim("w-other", "held", FeatureRunMCP); run == nil || run.MCP == nil || !run.MCP.Unreadable || len(run.MCP.Servers) != 0 {
+		t.Fatalf("unresolvable servers: %+v", run)
+	}
+}
+
+// A worker id is the caller's word. A second key polling under another
+// worker's id — a worker config copied to a second host — is never handed
+// that worker's interrupted run of a workspace outside its own scope, nor
+// the run's agent token, nor the workspace's MCP credentials.
+func TestOwnRunIsNotHandedToAnotherKeysScope(t *testing.T) {
+	s := testService(t)
+	now := time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	const secret = "tok-of-the-held-workspace"
+	s.SetMCPSource(func(_ context.Context, ws string, _ bool) (*RunMCP, error) {
+		if ws != "held" {
+			return nil, nil
+		}
+		return &RunMCP{Servers: map[string]json.RawMessage{"x": json.RawMessage(`{"type":"http","url":"https://x"}`)}, Secrets: []string{secret}}, nil
+	}, func(_ context.Context, ws string) bool { return ws == "held" })
+	key := func(id string, ws ...string) context.Context {
+		set := map[string]struct{}{}
+		for _, w := range ws {
+			set[w] = struct{}{}
+		}
+		return auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: id, Name: id, Workspaces: set})
+	}
+	k1, k2 := key("k1", "held"), key("k2", "other")
+	on := true
+	claim := func(ctx context.Context, ws string, features ...string) *Run {
+		t.Helper()
+		run, err := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{ws}, Runners: []string{"claude"},
+			RunnerFacts: []policy.Facts{fClaude}, ServerCommands: &on, Features: features})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return run
+	}
+	queued := mustQueue(t, s, rootCtx(), "held", "item-1", StagePlan)
+	first := claim(k1, "held", FeatureRunMCP)
+	if first == nil || first.MCP == nil {
+		t.Fatalf("the owner's claim: %+v", first)
+	}
+	if err := s.Pause(k1, first.ID, "w1", "quota", now.Add(-time.Second), first.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	// Another key, the same worker id, another scope.
+	if run := claim(k2, "other", FeatureRunMCP); run != nil {
+		t.Fatalf("a key without the workspace was handed its run: workspace %s, MCP %v, agent token %v", run.WorkspaceID, run.MCP != nil, run.AgentToken != "")
+	}
+	if got, _ := s.Get(rootCtx(), queued.ID); got.Status != StatusPaused || got.WorkerID != "w1" {
+		t.Fatalf("the run was touched: %+v", got)
+	}
+	// The same worker and key, on a release that cannot take MCP servers
+	// from a claim, offering another workspace: its own run stays put too.
+	k1other := key("k1", "held", "other")
+	if run := claim(k1other, "other"); run != nil {
+		t.Fatalf("a worker that cannot take the servers got the run back: %+v", run)
+	}
+	// The owner, able, gets it back with its servers.
+	back := claim(k1other, "other", FeatureRunMCP)
+	if back == nil || back.ID != queued.ID || back.MCP == nil || back.MCP.Secrets[0] != secret {
+		t.Fatalf("the owner's own run, from a claim that offers another workspace: %+v", back)
 	}
 }

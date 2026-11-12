@@ -20,6 +20,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/events"
 	"github.com/martinsuchenak/skopos/internal/pipeline"
 	"github.com/martinsuchenak/skopos/internal/runs"
+	"github.com/martinsuchenak/skopos/internal/secretbox"
 )
 
 // Revision kinds this package stores.
@@ -134,6 +135,8 @@ type Service struct {
 	onChange func(workspaces []string)
 	// onRunners is told when a runner definition changed (runners.go).
 	onRunners func()
+	// secrets: where the values of MCP servers' secrets live (mcp.go).
+	secrets *secretbox.Store
 }
 
 func NewService(db *sql.DB, revs *confrev.Store, lookup Lookup) *Service {
@@ -359,6 +362,16 @@ func (s *Service) change(ctx context.Context, kind, id string, next *Config, via
 		}
 		next = &norm
 		content = Canonical(norm)
+		if err := s.checkWrappers(ctx, next); err != nil {
+			return nil, err
+		}
+		reach := members
+		if kind == KindWorkspace {
+			reach = []string{id}
+		}
+		if err := s.checkMCP(ctx, next, reach); err != nil {
+			return nil, err
+		}
 	}
 	// A clear is checked too: taking a group's config away can leave a
 	// managed member without something its own config needs.
@@ -436,6 +449,16 @@ func (s *Service) GroupMembers(ctx context.Context, ref string) ([]string, bool,
 func (s *Service) PlanNew(ctx context.Context, kind, id string, members []string, next Config) ([]string, error) {
 	norm, err := Normalize(next)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.checkWrappers(ctx, &norm); err != nil {
+		return nil, err
+	}
+	reach := members
+	if kind == KindWorkspace {
+		reach = []string{id}
+	}
+	if err := s.checkMCP(ctx, &norm, reach); err != nil {
 		return nil, err
 	}
 	if kind == KindWorkspace {

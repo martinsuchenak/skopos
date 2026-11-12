@@ -619,7 +619,7 @@ paths:
 
   /api/fleet/config:
     get:
-      summary: The runner definitions and the revision that names them (any key)
+      summary: The runner and wrapper definitions and the revision that names them (any key)
       description: What a worker fetches before it offers runners. Claim answers carry the revision as `Skopos-Fleet-Rev`.
       operationId: getFleetConfig
       security: [{ BearerAuth: [] }]
@@ -633,7 +633,265 @@ paths:
                 properties:
                   rev: { type: string }
                   runners: { type: array, items: { $ref: "#/components/schemas/RunnerDef" } }
+                  wrappers: { type: array, items: { $ref: "#/components/schemas/WrapperDef" } }
         "401": { description: Unauthorized }
+
+  /api/fleet/mcp-servers:
+    get:
+      summary: List the MCP server definitions and which of their secrets are set (root or an admin key)
+      description: Never a secret's value.
+      operationId: listMCPServers
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: The definitions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mcp_servers:
+                    type: array
+                    items:
+                      allOf:
+                        - { $ref: "#/components/schemas/MCPServerDef" }
+                        - type: object
+                          properties:
+                            rev: { type: string }
+                            updated_at: { type: string, format: date-time }
+                            updated_by: { type: string }
+                            secrets:
+                              type: array
+                              description: The secrets the definition names, and whether each has a stored value
+                              items:
+                                type: object
+                                properties:
+                                  name: { type: string }
+                                  set: { type: boolean }
+                                  updated_at: { type: string, format: date-time }
+                                  updated_by: { type: string }
+                            used_by: { type: array, items: { type: string }, description: "The owners (workspace:<id>, group:<id>) whose config gives their runs the server. Only for an admin key that reaches every workspace" }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission }
+
+  /api/fleet/mcp-servers/{name}:
+    put:
+      summary: Define or redefine an MCP server for runs (admin key that reaches every workspace)
+      description: >-
+        Where the server is — an http URL with headers, or a command the
+        worker runs with env — and the secrets it needs, by name. A credential
+        is never part of the definition: it is named `${secret:NAME}` in the
+        URL, a header or an env value, and its value is set apart
+        (`PUT …/secrets/{secret}`). A header, variable or URL query parameter
+        whose name looks like a credential (Authorization, a token, a key, a
+        password, a session) must name a secret, and so must anything that
+        reads as a generated token (in a URL path too); a credential may not
+        be passed as a command argument. `workspaces` says which workspaces'
+        runs may be given the server and is required when it names secrets.
+        Changing an http server's host or a command server's command deletes
+        its stored secrets. `${NAME}` in a command server's command and env is filled in
+        on each worker from its `worker.vars`. A workspace's runs get the
+        server when its config names it (`mcp`) and allows its tools
+        (`mcp_servers`). Secrets a new definition no longer names are deleted.
+        Audited as `mcp_server.create` / `mcp_server.update`.
+      operationId: putMCPServer
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string }, description: "Lower-case letters, digits, '_' and '-', at most 40; not skopos. Runs see its tools as mcp__<name>__…" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MCPServerDef" }
+      responses:
+        "200":
+          description: Saved, with the state of its secrets
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MCPServerDef" }
+        "400": { description: "Invalid definition: no URL or command, a credential written into it, an unknown field" }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission over every workspace }
+    delete:
+      summary: Remove an MCP server definition and its stored secrets (admin key that reaches every workspace)
+      description: Refused with 409 while a stored config gives its runs the server, unless `force=1`. Audited as `mcp_server.delete`.
+      operationId: deleteMCPServer
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+        - { name: force, in: query, required: false, schema: { type: string, enum: ["1", "true"] } }
+      responses:
+        "204": { description: Removed }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission over every workspace }
+        "404": { description: Not defined }
+        "409": { description: A stored config gives its runs the server }
+
+  /api/fleet/mcp-servers/{name}/secrets/{secret}:
+    put:
+      summary: Store the value of a secret an MCP server's definition names (admin key that reaches every workspace)
+      description: >-
+        The value is sealed under the server's secret key
+        (`integrations.secret_key`) and never returned by any endpoint: it
+        leaves the server only inside the answer to a claim, for a run of a
+        workspace whose config names the server. At least 8 characters, one
+        line. Audited as `mcp_server.secret_set`, with the secret's name only.
+      operationId: setMCPSecret
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+        - { name: secret, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value: { type: string }
+      responses:
+        "204": { description: Stored }
+        "400": { description: The definition names no such secret, or the value is too short }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission over every workspace }
+        "404": { description: The server is not defined }
+        "409": { description: The server has no secret key }
+    delete:
+      summary: Delete a stored secret (admin key that reaches every workspace)
+      description: Runs go without the server until the secret is set again. Audited as `mcp_server.secret_unset`.
+      operationId: unsetMCPSecret
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+        - { name: secret, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Deleted }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission over every workspace }
+        "404": { description: The server is not defined, or the secret is not set }
+
+  /api/fleet/secret-key:
+    get:
+      summary: Which key sealed the stored secrets (root key)
+      description: Key ids are fingerprints; they say nothing about a key.
+      operationId: getSecretKeyStatus
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: The keys the server holds and what each sealed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  current: { type: string, description: The id of the key new values are sealed under; empty when the server has no secret key }
+                  previous: { type: array, items: { type: string }, description: The ids of the other keys the server holds (integrations.previous_secret_key) }
+                  sealed: { type: object, additionalProperties: { type: integer }, description: "Stored values by the key that sealed them; unnamed = from before keys were named" }
+                  pending: { type: integer, description: How many values a rotation would seal again }
+                  unreadable: { type: integer, description: Values under a key the server does not hold }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the root key }
+
+  /api/fleet/secret-key/rotate:
+    post:
+      summary: Seal every stored secret again under the server's current key (root key)
+      description: >-
+        MCP server credentials and webhook signing secrets, all of them or
+        none. To change the secret key: set the new key as
+        `integrations.secret_key` and the old one as
+        `integrations.previous_secret_key`, restart, call this, then remove
+        the previous key. The keys themselves are never sent. Audited as
+        `secret_key.rotate`.
+      operationId: rotateSecretKey
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: Done
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  current: { type: string }
+                  resealed: { type: integer }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the root key }
+        "409": { description: The server has no secret key, or a stored value is under a key it does not hold (nothing was changed) }
+
+  /api/fleet/wrappers:
+    get:
+      summary: List the wrapper definitions (any key)
+      operationId: listWrapperDefs
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: The definitions with their revisions and the executor id their runs record
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  wrappers:
+                    type: array
+                    items:
+                      allOf:
+                        - { $ref: "#/components/schemas/WrapperDef" }
+                        - type: object
+                          properties:
+                            executor: { type: string, description: "wrapper:<name>:<hash of the argv>" }
+                            rev: { type: string }
+                            updated_at: { type: string, format: date-time }
+                            updated_by: { type: string }
+                            used_by: { type: array, items: { type: string }, description: "The owners (workspace:<id>, group:<id>) whose stage blocks name it. Only for an admin key that reaches every workspace" }
+        "401": { description: Unauthorized }
+
+  /api/fleet/wrappers/{name}:
+    put:
+      summary: Define or redefine a wrapper (admin key that reaches every workspace)
+      description: >-
+        A wrapper is the argv prefix a run starts behind: the agent, and the
+        worker's setup and check commands of the stage. A stage block of a
+        workspace's or group's config attaches it by rule (`stages.<stage>.wrap`).
+        The worker fills in `{dir}`, `{gitdir}`, `{login}`, `{rundir}`,
+        `{cli}`, `{run}`, `{stage}`, `{workspace}` for each run and `${NAME}`
+        from its own `worker.vars`. Only a worker with `server_commands` runs
+        it. `check` is a command that shows the wrapper can start on a host: a
+        worker where it fails takes no run the wrapper is for. An argv that
+        only sets variables (`env K=V`) is refused. Audited as
+        `wrapper.create` / `wrapper.update`, with the argv.
+      operationId: putWrapperDef
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string }, description: "Lower-case letters, digits, '.', '_' and '-', at most 40" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WrapperDef" }
+      responses:
+        "200":
+          description: Saved, with the executor id its runs record
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WrapperDef" }
+        "400": { description: "Invalid definition: no argv, an unknown placeholder, an argv that only sets variables, an unknown field" }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission over every workspace }
+    delete:
+      summary: Remove a wrapper definition (admin key that reaches every workspace)
+      description: Refused with 409 while a stored stage block names the wrapper, unless `force=1`. A run whose rule names a wrapper that is not defined is not started. Audited as `wrapper.delete`.
+      operationId: deleteWrapperDef
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+        - { name: force, in: query, required: false, schema: { type: string, enum: ["1", "true"] } }
+      responses:
+        "204": { description: Removed }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission over every workspace }
+        "404": { description: Not defined }
+        "409": { description: A stored stage block names the wrapper }
 
   /api/fleet/runners:
     get:
@@ -2787,6 +3045,7 @@ paths:
                   description: "What contains a run on the worker: per offered workspace, the executor by stage and runner. A policy rule with executor is matched on the one for the run's workspace, stage and runner. A worker that sends none gets no run whose rule needs an executor. A change is audited as worker.facts."
                 server_commands: { type: boolean, description: "The worker takes a managed workspace's setup, check and preflight commands from the server (worker.server_commands). A change is audited as worker.facts." }
                 fleet_rev: { type: string, description: "The runner definitions the worker holds (GET /api/fleet/config rev). A change is audited as worker.config_applied." }
+                features: { type: array, items: { type: string }, description: "What the worker's release can do: run_mcp = it takes a run's MCP servers from the claim answer. A worker without it gets no run of a workspace whose config sets mcp" }
       responses:
         "200":
           description: "The claimed run (lease started). Every response carries a Skopos-Version header (the server's release; idle workers upgrade to it), and — when set — Skopos-Index-Enabled (offered workspaces with the code_index switch on) and Skopos-Index-Default (those whose default branch this worker indexes), comma-separated."
@@ -3640,6 +3899,64 @@ components:
             steps: { type: boolean, description: Push the implementer's commits as they are made }
         mcp_deny: { type: array, items: { type: string }, description: MCP tools runs may not use }
         mcp_servers: { type: array, items: { type: string }, description: "MCP tool prefixes runs may use (mcp__<server>…)" }
+        mcp: { type: array, items: { type: string }, description: "The MCP server definitions the workspace's runs get. Set (an empty list too), the server holds the runs' MCP servers: each run gets exactly these with its claim, and a worker's own mcp_config is not used for the workspace. Each needs an entry in mcp_servers that allows its tools. Left out at every level: each worker's mcp_config applies" }
+        stages:
+          type: object
+          description: "What each stage's agent is given and which wrapper its runs start behind, by stage (plan, implement, review, qa; a second opinion and a branch review run as a review). Each stage's block is one field (stages.implement): a workspace's block replaces its group's whole. Command fields: a worker takes them only with server_commands, and gives a stage what its block says only where something contains the run"
+          additionalProperties: { $ref: "#/components/schemas/StageCaps" }
+    StageCaps:
+      type: object
+      description: One stage's block. An empty block sets the stage to nothing
+      properties:
+        tools: { type: array, items: { type: string }, description: "Extra allowed tools, e.g. Bash(npm run:*)" }
+        env:
+          type: object
+          additionalProperties: { type: string }
+          description: "Extra variables for the repository's tools. ${NAME} is filled in from the worker's worker.vars. Refused: proxy and endpoint variables, variables that configure the agent CLI or its provider (ANTHROPIC_, CLAUDE_, OPENAI_, OPENCODE_, CODEX_, GEMINI_, GOOGLE_, VERTEX_, AWS_, AZURE_), the login variables (HOME, CLAUDE_CONFIG_DIR, CODEX_HOME, XDG_*_HOME), credential-looking names (TOKEN, SECRET, PASSWORD, _KEY) and loader variables (LD_*, DYLD_*, NODE_OPTIONS, …). A variable of the runner's account on the worker wins over it"
+        settings:
+          description: "Merged into the agent's settings: permissions (allow, deny, additionalDirectories) and sandbox, nothing else. An object, or a string holding that JSON; answers carry the object"
+          oneOf:
+            - { type: object }
+            - { type: string }
+        wrap:
+          type: array
+          description: Which wrapper goes around the stage's runs. The first rule that matches the runner decides
+          items:
+            type: object
+            required: [wrapper]
+            properties:
+              kind: { type: string, description: "The runner's kind (claude, opencode, codex, …)" }
+              provider: { type: string, description: A glob on the runner's provider }
+              model: { type: string, description: A glob on the runner's model }
+              runner: { type: string, description: A glob on the runner's name }
+              wrapper: { type: string, description: "A wrapper definition's name, or none to leave the matched runs unwrapped" }
+    MCPServerDef:
+      type: object
+      required: [type]
+      properties:
+        name: { type: string }
+        type: { type: string, enum: [http, command] }
+        url: { type: string, description: "http: the server's URL. ${secret:NAME} names a secret" }
+        headers: { type: object, additionalProperties: { type: string }, description: "http: request headers. A credential is ${secret:NAME}" }
+        command: { type: array, items: { type: string }, description: "command: the argv the worker runs (only on workers with server_commands). ${NAME} is filled in from the worker's worker.vars; no secrets" }
+        env: { type: object, additionalProperties: { type: string }, description: "command: the server's environment. A credential is ${secret:NAME}; ${NAME} is the worker's" }
+        workspaces: { type: array, items: { type: string }, description: "The workspaces whose runs may be given the server, as patterns on the workspace id (a * stops at a slash; \"*\" alone is every workspace). Required when the definition names secrets; left out on a server without secrets = any workspace. Checked when a config names the server and again when a run is claimed" }
+    RunMCP:
+      type: object
+      description: "Only in the claim answer: the MCP servers of the run's agent, for the run's workspace, with their credentials. Never stored or returned by another endpoint"
+      properties:
+        servers: { type: object, additionalProperties: { type: object }, description: "By name, in the mcpServers shape agent CLIs read, the secrets filled in" }
+        secrets: { type: array, items: { type: string }, description: The secret values inside servers, for the worker to keep out of the run's log }
+        notes: { type: array, items: { type: string }, description: "Servers the workspace's config names and this run does not get, with why (a secret that is not set, a command server for a worker without server_commands)" }
+        unreadable: { type: boolean, description: The servers could not be resolved; the worker gives the run back }
+    WrapperDef:
+      type: object
+      required: [argv]
+      properties:
+        name: { type: string }
+        argv: { type: array, items: { type: string }, description: "The command a run starts behind, with {dir} {gitdir} {login} {rundir} {cli} {run} {stage} {workspace} and ${NAME} from the worker's worker.vars" }
+        check: { type: array, items: { type: string }, description: "A command that shows the wrapper can start on a host (no run placeholders). It does not show that the wrapper isolates" }
+        executor: { type: string, readOnly: true, description: "wrapper:<name>:<hash of the argv>: what runs inside it record" }
     ConfigInput:
       type: object
       required: [config]
@@ -3703,6 +4020,16 @@ components:
           nullable: true
           description: When present (an object, even empty), the full set of runner definitions by name; null or left out leaves the server's
           additionalProperties: { $ref: "#/components/schemas/RunnerDef" }
+        mcp:
+          type: object
+          nullable: true
+          description: When present (an object, even empty), the full set of MCP server definitions by name; null or left out leaves the server's. Definitions name their secrets and never hold a value; stored values are kept for the secrets a definition still names
+          additionalProperties: { $ref: "#/components/schemas/MCPServerDef" }
+        wrappers:
+          type: object
+          nullable: true
+          description: When present (an object, even empty), the full set of wrapper definitions by name; null or left out leaves the server's. A wrapper the document drops while a stage block outside the document still names it is refused unless the apply is forced
+          additionalProperties: { $ref: "#/components/schemas/WrapperDef" }
         groups:
           type: object
           additionalProperties:
@@ -3804,7 +4131,7 @@ components:
       properties:
         stage: { type: string }
         runner: { type: string }
-        executor: { type: string, description: "local, host:<name>, wrapper:<name>:<hash>, sandbox:<hash> or runner:<kind>" }
+        executor: { type: string, description: "local, host:<name>, wrapper:<name>:<hash>, sandbox:<hash> or runner:<kind>; none:wrapper, none:uncontained or none:config where the worker cannot run the stage with the runner (no such run is handed to it)" }
     Error:
       type: object
       properties:
@@ -4160,6 +4487,7 @@ components:
         resume_after: { type: string, format: date-time, description: Quota reset — a paused run past it is reclaimable by its owner via any claim }
         attempt: { type: integer }
         lease_token: { type: string, description: "Only in the claim answer: the fencing token the worker presents (X-Skopos-Lease) on every later call for this attempt" }
+        mcp: { $ref: "#/components/schemas/RunMCP" }
         agent_token: { type: string, description: "Only in the claim answer: the run's own credential for skopos over MCP (skr_…). Valid while this attempt is claimed or running with a live lease; a report, pause, requeue or cancel ends it. Scoped to the run's workspace, MCP only, the stage's tools only" }
         branch: { type: string }
         base_sha: { type: string }

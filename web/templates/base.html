@@ -1048,6 +1048,20 @@
                 <ul class="mt-2 space-y-0.5 font-mono text-xs text-zinc-300">
                     <template x-for="l in pipeConfig.lines" :key="l + '|' + pipeConfig.rev"><li class="break-all" x-text="l"></li></template>
                 </ul>
+                <!-- The MCP servers a config's mcp field can name. -->
+                <div x-show="pipeConfig.mcp.length" class="mt-2 text-xs text-zinc-400">
+                    <p>MCP servers the runs can be given:</p>
+                    <ul class="mt-0.5 space-y-0.5 font-mono text-zinc-300">
+                        <template x-for="l in pipeConfig.mcp" :key="l"><li class="break-all" x-text="l"></li></template>
+                    </ul>
+                </div>
+                <!-- The wrappers a stage block's wrap rules can name. -->
+                <div x-show="pipeConfig.wrappers.length" class="mt-2 text-xs text-zinc-400">
+                    <p>Wrappers a stage can name:</p>
+                    <ul class="mt-0.5 space-y-0.5 font-mono text-zinc-300">
+                        <template x-for="l in pipeConfig.wrappers" :key="l"><li class="break-all" x-text="l"></li></template>
+                    </ul>
+                </div>
                 <div class="mt-3" x-show="pipeConfig.canEdit">
                     <label class="lbl" for="pipe-config-text">Stored config</label>
                     <textarea id="pipe-config-text" x-model="pipeConfig.text" rows="8" class="fld font-mono text-xs" spellcheck="false" aria-describedby="pipe-config-hint" placeholder='{"default_branch": "main", "checks": ["go test ./..."]}'></textarea>

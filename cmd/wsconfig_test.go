@@ -216,3 +216,125 @@ func TestFileCommit(t *testing.T) {
 		t.Fatalf("an edited file is marked: %q", got)
 	}
 }
+
+// A stage's block is one field: --set takes it as JSON, --unset drops it,
+// and it round-trips through the TOML `show --toml` prints.
+func TestEditConfigStageBlocks(t *testing.T) {
+	c, err := editConfig(wsconfig.Config{}, []string{
+		`stages.implement={"tools":["Bash(npm run:*)"],"env":{"NODE_ENV":"test"}}`,
+		`stages.review={"wrap":[{"kind":"opencode","wrapper":"opencode-bwrap"}]}`,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Stages["implement"].Env["NODE_ENV"] != "test" || c.Stages["review"].Wrap[0].Wrapper != "opencode-bwrap" {
+		t.Fatalf("set: %s", wsconfig.Canonical(c))
+	}
+	if _, err := editConfig(c, []string{"stages.implement=npm"}, nil); err == nil {
+		t.Fatal("a stage block given plain text must be refused")
+	}
+	if _, err := editConfig(c, []string{`stages.deploy={}`}, nil); err == nil || !strings.Contains(err.Error(), "not a config field") {
+		t.Fatalf("an unknown stage: %v", err)
+	}
+	norm, err := wsconfig.Normalize(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(norm); err != nil {
+		t.Fatal(err)
+	}
+	var back wsconfig.Config
+	if md, err := toml.Decode(buf.String(), &back); err != nil || len(md.Undecoded()) > 0 {
+		t.Fatalf("decode: %v %v\n%s", err, md.Undecoded(), buf.String())
+	}
+	if string(wsconfig.Canonical(back)) != string(wsconfig.Canonical(norm)) {
+		t.Fatalf("round trip:\n%s\n%s\n--- toml ---\n%s", wsconfig.Canonical(back), wsconfig.Canonical(norm), buf.String())
+	}
+	c, err = editConfig(c, nil, []string{"stages.review"})
+	if err != nil || c.Stages["review"] != nil || c.Stages["implement"] == nil {
+		t.Fatalf("unset: %s %v", wsconfig.Canonical(c), err)
+	}
+}
+
+// The import carries what a worker file's profile gives each stage — tools,
+// env, settings — and leaves what contains the stage (a wrapper, the
+// sandbox block) in the file.
+func TestProposeImportStageBlocks(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "worker.toml")
+	text := `[worker]
+id = "worker-knot"
+
+[worker.profiles.ff3.implement]
+wrapper = ["env", "SKOPOS_CONTAINED_BY=knot"]
+tools = ["Bash(./cli_tools/dothis:*)", "Bash(mago:*)"]
+env = { CODECEPTION_ENV = "local", CACHE = "${CACHE_DIR}/ff3" }
+
+[worker.profiles.ff3.review]
+settings = '{"sandbox":{"enabled":true},"permissions":{"allow":["Bash(mago:*)"]}}'
+
+[worker.profiles.ff3.plan]
+settings = '{"sandbox":{"enabled":true}}'
+
+[worker.repos."fx/ff3"]
+path = "/srv/clones/ff3"
+profile = "ff3"
+
+[worker.repos."fx/ff3".stages.qa]
+tools = ["Bash(npm run:*)"]
+wrapper = ["bwrap", "{dir}"]
+
+[[worker.accounts]]
+name = "c1"
+runner = "claude"
+`
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prop, err := proposeImport([]string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, ok := prop.workspaces["fx/ff3"]
+	if !ok {
+		t.Fatalf("the workspace was not proposed: %+v", prop)
+	}
+	impl, review, qa := c.Stages["implement"], c.Stages["review"], c.Stages["qa"]
+	if impl == nil || len(impl.Tools) != 2 || impl.Env["CODECEPTION_ENV"] != "local" || impl.Env["CACHE"] != "${CACHE_DIR}/ff3" {
+		t.Fatalf("implement: %+v", impl)
+	}
+	// The sandbox block stays the worker's; the allow rule moves.
+	if review == nil || review.Settings != `{"permissions":{"allow":["Bash(mago:*)"]}}` {
+		t.Fatalf("review: %+v", review)
+	}
+	// The repo's own stage block wins over its profile's, and its wrapper
+	// stays in the file.
+	if qa == nil || len(qa.Tools) != 1 || len(qa.Wrap) != 0 {
+		t.Fatalf("qa: %+v", qa)
+	}
+	// A stage whose profile only contains it gives nothing to import.
+	if _, ok := c.Stages["plan"]; ok {
+		t.Fatalf("plan has nothing to import: %+v", c.Stages["plan"])
+	}
+}
+
+// A misspelt key inside a stage's block is refused, not dropped: dropped,
+// it would save an empty block or a wrap rule that matches every runner.
+func TestEditConfigRefusesUnknownKeysInAStageBlock(t *testing.T) {
+	for _, set := range []string{
+		`stages.implement={"tool":["Bash(npm run:*)"]}`,
+		`stages.review={"wrap":[{"knd":"opencode","wrapper":"box"}]}`,
+		`stages.review={"wrap":[{"knd":"claude","wrapper":"none"},{"wrapper":"box"}]}`,
+		`stages.plan={"env":{"A":"1"},"enviroment":{}}`,
+	} {
+		if _, err := editConfig(wsconfig.Config{}, []string{set}, nil); err == nil || !strings.Contains(err.Error(), "unknown field") {
+			t.Errorf("%s: %v", set, err)
+		}
+	}
+	// Settings as an object, the way one writes them.
+	c, err := editConfig(wsconfig.Config{}, []string{`stages.review={"settings":{"permissions":{"allow":["Bash(mago:*)"]}}}`}, nil)
+	if err != nil || c.Stages["review"].Settings != `{"permissions":{"allow":["Bash(mago:*)"]}}` {
+		t.Fatalf("settings as an object: %+v %v", c.Stages["review"], err)
+	}
+}

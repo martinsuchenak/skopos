@@ -71,6 +71,10 @@ type Service struct {
 	configDigest func(ctx context.Context, workspaces []string) string
 	// fleetRev: the runner definitions' revision (SetFleetRev).
 	fleetRev func(ctx context.Context) string
+	// runMCP / mcpManaged: the MCP servers a run's claim answer carries,
+	// and whether the server holds a workspace's (SetMCPSource).
+	runMCP     func(ctx context.Context, workspaceID string, serverCommands bool) (*RunMCP, error)
+	mcpManaged func(ctx context.Context, workspaceID string) bool
 }
 
 // UnreadableConfigRev is the revision a claim names when the workspace's
@@ -88,6 +92,13 @@ func (s *Service) SetConfigSource(rev func(ctx context.Context, workspaceID stri
 // SetFleetRev wires the revision of the runner definitions every claim
 // answer carries (Skopos-Fleet-Rev).
 func (s *Service) SetFleetRev(fn func(ctx context.Context) string) { s.fleetRev = fn }
+
+// SetMCPSource wires where a claimed run's MCP servers come from: run
+// resolves them (with their credentials) for the run's workspace, managed
+// says whether the server holds a workspace's MCP servers at all.
+func (s *Service) SetMCPSource(run func(ctx context.Context, workspaceID string, serverCommands bool) (*RunMCP, error), managed func(ctx context.Context, workspaceID string) bool) {
+	s.runMCP, s.mcpManaged = run, managed
+}
 
 // FleetRev is the runner definitions' revision ("" = none defined).
 func (s *Service) FleetRev(ctx context.Context) string {
@@ -391,6 +402,9 @@ func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 	if len(in.FleetRev) > 64 {
 		in.FleetRev = in.FleetRev[:64]
 	}
+	if len(in.Features) > 16 {
+		in.Features = in.Features[:16]
+	}
 	in.RunnerFacts = sanitizeFacts(in.RunnerFacts)
 	in.Executors = sanitizeExecutors(in.Executors, offered)
 	if s.audit != nil {
@@ -427,6 +441,37 @@ func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 			in.Unhealthy[ws] = "this worker's release cannot read the workspace's config from the server: upgrade it"
 		}
 	}
+	// The same for a workspace whose MCP servers the server holds: a
+	// worker that cannot take them from the claim answer would give its
+	// runs whatever its own mcp_config names.
+	takesMCP := slices.Contains(in.Features, FeatureRunMCP)
+	if s.mcpManaged != nil && !takesMCP {
+		for _, ws := range in.Workspaces {
+			if _, set := in.Unhealthy[ws]; set || !s.mcpManaged(ctx, ws) {
+				continue
+			}
+			if in.Unhealthy == nil {
+				in.Unhealthy = map[string]string{}
+			}
+			in.Unhealthy[ws] = "this worker's release cannot take the workspace's MCP servers from the server: upgrade it"
+		}
+	}
+	// The worker's own interrupted runs may sit in a workspace this claim
+	// does not offer. The same checks apply there as for an offered one:
+	// the workspace is in this key's scope (the worker id is only the
+	// caller's word), and the worker's release can do what it needs.
+	in.mayTake = func(ws string) bool {
+		if offered[ws] {
+			return true // checked above; a refusal is in in.Unhealthy
+		}
+		if auth.RequireWorkspaceQuiet(ctx, ws) != nil {
+			return false
+		}
+		if in.ServerCommands == nil && s.configRev != nil && s.configRev(ctx, ws) != "" {
+			return false
+		}
+		return takesMCP || s.mcpManaged == nil || !s.mcpManaged(ctx, ws)
+	}
 	// Routing of the offered workspaces, resolved once per claim.
 	prefs := make(map[string]*WorkspacePrefs, len(in.Workspaces))
 	for _, ws := range in.Workspaces {
@@ -460,6 +505,37 @@ func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 			rev = UnreadableConfigRev
 		}
 		run.ConfigRev = rev
+	}
+	// The run's MCP servers, with their credentials: in this answer only,
+	// for this run's workspace only, never stored. When they cannot be
+	// resolved the worker is told so and gives the run back — it does not
+	// run without them, nor with its own.
+	if s.runMCP != nil {
+		// Credentials are resolved only for a workspace in the claiming
+		// key's scope — the claim scans keep to that; this is the last
+		// check before a secret leaves the server.
+		if auth.RequireWorkspaceQuiet(ctx, run.WorkspaceID) != nil {
+			slog.Error("runs: a run was claimed for a workspace outside the claiming key's scope; it is released and nothing is handed out", "run", run.ID, "workspace", run.WorkspaceID)
+			if err := s.storage.ReleaseClaim(context.WithoutCancel(ctx), run.ID, run.Attempt, s.now().UTC()); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		}
+		mcp, err := s.runMCP(context.WithoutCancel(ctx), run.WorkspaceID, in.ServerCommands != nil && *in.ServerCommands)
+		if err != nil {
+			slog.Warn("runs: the run's MCP servers could not be resolved; the worker is told to give the run back", "run", run.ID, "err", err)
+			mcp = &RunMCP{Unreadable: true}
+		}
+		// The workspace's config came to name MCP servers between the
+		// check above and now, and this worker's release cannot take them
+		// from the answer: the run goes to a worker that can.
+		if mcp != nil && !takesMCP {
+			if err := s.storage.ReleaseClaim(context.WithoutCancel(ctx), run.ID, run.Attempt, s.now().UTC()); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		}
+		run.MCP = mcp
 	}
 	// The claim has committed: what follows must not depend on the worker
 	// still waiting for the response (a client timeout used to leave the item

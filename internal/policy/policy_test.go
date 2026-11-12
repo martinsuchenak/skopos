@@ -373,3 +373,34 @@ func TestResolveExecutor(t *testing.T) {
 		t.Fatalf("nothing reported: %q", got)
 	}
 }
+
+// An executor a worker cannot offer (none:…) is a known id that meets no
+// requirement, not even the empty one, and a runner with it cannot run.
+func TestUnavailableExecutor(t *testing.T) {
+	for _, why := range []string{NoneWrapper, NoneUncontained} {
+		e := NoExecutor(why)
+		if !KnownExecutor(e) || !Unavailable(e) || Isolated(e) || Contained(e) {
+			t.Errorf("%s: known %v unavailable %v", e, KnownExecutor(e), Unavailable(e))
+		}
+		for _, req := range []string{"", ExecutorIsolated, ExecutorContained, "none:*", "*"} {
+			if ExecutorSatisfies(req, e) {
+				t.Errorf("%s satisfies %q", e, req)
+			}
+		}
+		if (Facts{Name: "claude", Executor: e}).CanRun("plan") {
+			t.Errorf("%s: the runner can still run", e)
+		}
+		if UnavailableReason(e) == "" {
+			t.Errorf("%s has no reason", e)
+		}
+	}
+	if Unavailable("local") || Unavailable("") || KnownExecutor("none:") {
+		t.Fatal("what counts as unavailable")
+	}
+	if !(Facts{Name: "claude", Executor: "local"}).CanRun("plan") {
+		t.Fatal("a local executor can run")
+	}
+	if !RoutesRequests("https_proxy") || !RoutesRequests("ANTHROPIC_BASE_URL") || RoutesRequests("NODE_ENV") {
+		t.Fatal("which variables route requests")
+	}
+}

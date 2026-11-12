@@ -287,6 +287,15 @@ func (w *Worker) redactor() *strings.Replacer {
 		if len(v) >= 8 && !seen[v] {
 			seen[v] = true
 			vals = append(vals, v)
+			// The same value as it stands inside JSON (a quote, a
+			// backslash, <, > or & in it are escaped there): agent CLIs
+			// print their config and their events as JSON.
+			if b, err := json.Marshal(v); err == nil {
+				if esc := string(b[1 : len(b)-1]); esc != v && !seen[esc] {
+					seen[esc] = true
+					vals = append(vals, esc)
+				}
+			}
 		}
 	}
 	for _, v := range w.extraSecrets {

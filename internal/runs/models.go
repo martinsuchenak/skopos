@@ -147,7 +147,11 @@ type Run struct {
 	// AgentToken is the run's own credential for skopos over MCP
 	// (tokens.go): set ONLY in the claim response, valid while this
 	// attempt is being executed, scoped to the run's workspace.
-	AgentToken     string    `json:"agent_token,omitempty"`
+	AgentToken string `json:"agent_token,omitempty"`
+	// MCP is the MCP servers the run's agent gets, with their credentials:
+	// set ONLY in the claim response, for the run's workspace, never
+	// stored. nil = the server does not hold the workspace's MCP servers.
+	MCP            *RunMCP   `json:"mcp,omitempty"`
 	LeaseTokenHash string    `json:"-"`
 	ClaimedKeyID   string    `json:"-"`
 	Status         Status    `json:"status"`
@@ -314,6 +318,16 @@ type ClaimInput struct {
 	// holds.
 	ServerCommands *bool  `json:"server_commands,omitempty"`
 	FleetRev       string `json:"fleet_rev,omitempty"`
+	// Features: what the worker's release can do that an older one cannot
+	// (FeatureRunMCP). A workspace that needs a feature gives a worker
+	// without it none of its runs.
+	Features []string `json:"features,omitempty"`
+
+	// mayTake says whether this caller may be handed a run of a workspace
+	// it did not offer — its own interrupted run there (ClaimNext sets it):
+	// the workspace is in the key's scope, and the worker's release can do
+	// what the workspace needs. nil = any.
+	mayTake func(workspaceID string) bool
 }
 
 // IndexDuty is what a worker should index while idle: Enabled are its
@@ -495,3 +509,26 @@ type QueueInput struct {
 	// HeadSHA pins a second opinion to the commit it reviews.
 	HeadSHA string
 }
+
+// RunMCP is the MCP servers of one run, as its claim answer carries them
+// (tmp/central-config — design.md, phase 2b). It holds credentials: it is
+// never stored, logged or returned by anything but the claim.
+type RunMCP struct {
+	// Servers: by name, in the mcpServers shape agent CLIs read ({"type":
+	// "http","url":…,"headers":…} or {"command":…,"args":…,"env":…}), the
+	// secrets filled in.
+	Servers map[string]json.RawMessage `json:"servers"`
+	// Secrets: the secret values inside Servers, for the worker to redact
+	// from the run's log.
+	Secrets []string `json:"secrets,omitempty"`
+	// Notes: servers the workspace's config names and this run does not
+	// get, with why.
+	Notes []string `json:"notes,omitempty"`
+	// Unreadable: the servers could not be resolved. The worker gives the
+	// run back instead of running it without them.
+	Unreadable bool `json:"unreadable,omitempty"`
+}
+
+// FeatureRunMCP is the claim feature of a worker that takes a run's MCP
+// servers from the claim answer.
+const FeatureRunMCP = "run_mcp"

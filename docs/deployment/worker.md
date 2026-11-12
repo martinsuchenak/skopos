@@ -468,7 +468,9 @@ These hold for every runner, regardless of configuration.
   key: see [Skopos tools for agent runs](#skopos-tools-for-agent-runs)). Put
   the servers runs may use in a JSON file (`{"mcpServers": {...}}`, Claude
   Code's shape; opencode gets it translated), point `worker.mcp_config` at
-  it, and allowlist their tool prefixes in `mcp_servers`.
+  it, and allowlist their tool prefixes in `mcp_servers`. A workspace whose
+  config on the server names its MCP servers gets those instead, with each
+  run: see [MCP servers from the server](#mcp-servers-from-the-server).
 - **Scrubbed environment.** Agent runs, checks and `setup` commands get no
   push tokens, no skopos key, no SSH agent and nothing from the env file:
   - an account's `env` (with `${VAR}` references) passes credentials to the
@@ -818,6 +820,10 @@ settings `allow` rules. An uncontained grant is a config error: the daemon
 won't start and `worker check` lists it. A tool like `Bash(php:*)` runs
 arbitrary code, so it only makes sense inside something that contains it.
 
+**A workspace the server manages** takes each stage's `tools`, `env` and
+`settings` from the server, and this file keeps what contains the stage:
+see [Stages and wrappers from the server](#stages-and-wrappers-from-the-server).
+
 ### A worker inside a container
 
 When the worker's whole host is a container (a Knot space, a VM, a Docker
@@ -848,13 +854,22 @@ Every run records its **executor**: what contained the agent.
 
 | Executor | What it is |
 |---|---|
-| `wrapper:<name>:<hash>` | the stage's wrapper, around the agent and the worker's setup and check commands. `<name>` is the profile's name (`repo` for a repo's own `stages` block); the hash covers the wrapper's argv |
+| `wrapper:<name>:<hash>` | the stage's wrapper, around the agent and the worker's setup and check commands. `<name>` is the profile's name (`repo` for a repo's own `stages` block), or the name of a wrapper the server defines; the hash covers the wrapper's argv |
 | `runner:<kind>` | a runner whose own lockdown is a sandbox: `runner:codex` on macOS, where that lockdown is verified (read-only, confined to the worktree, no network from the shell). Not for the review of an existing branch, whose setup and checks the worker runs outside it |
 | `host:<name>` | the worker's host is a container (`contained_by`) |
 | `sandbox:<hash>` | Claude Code's sandbox, turned on by the stage's `settings`; the hash covers the sandbox settings |
 | `local` | nothing but the agent CLI's own lockdown |
 
 When several apply, the first in that order is the run's executor.
+
+Two more are not executors a run records: they say the worker cannot run a
+stage with a runner, and the server hands it no such run.
+
+| Reported | When |
+|---|---|
+| `none:wrapper` | the workspace's config on the server wraps that runner's runs of the stage in a wrapper this worker cannot use: its check fails here, it needs a `${NAME}` the worker does not declare, or it is no longer defined |
+| `none:uncontained` | the stage is given tools, env or settings — by the workspace's config on the server, or by a profile in this file — and nothing contains a run of it with that runner here. Sandbox settings contain only a runner that honours them (claude) |
+| `none:config` | the workspace's stage blocks on the server cannot be used on this worker (a `${NAME}` it does not declare, or something it refuses): the worker takes none of the workspace's runs |
 
 - The worker reports the executor a run would get, per workspace, stage and
   runner, with every claim. A workspace's
@@ -864,7 +879,8 @@ When several apply, the first in that order is the run's executor.
   `skopos worker runner list` shows them (`runs in:`), and so does the
   dashboard's Workers view.
 - A run comes with the executor the server matched its policy on. A worker
-  that would run it in something else fails the run before anything starts.
+  that would run it in something else starts nothing and gives the run
+  back; its next claim reports what it would run it in.
 - What a stage profile gives a run (`tools`, `env` names, and every setting
   besides the sandbox block) is recorded apart, as the run's `grants`
   hash. Changing it doesn't change the executor.
@@ -1036,7 +1052,9 @@ push.token_env = "FF3_PUSH_TOKEN"
 ```
 
 - **What stays in this file:** the clone's `path`, `setup_env`,
-  `push.token_env`, the accounts, stage profiles and `mcp_config`.
+  `push.token_env`, the accounts, `mcp_config` (for workspaces whose config
+  names no MCP servers), and what contains a stage
+  (`contained_by`, a profile's `wrapper` and sandbox settings).
 - **A push block with only `token_env`** is enough here: the kind, the URL
   and the pull-request setting come from the server. While the server
   holds no config for the workspace, such a block keeps the workspace out
@@ -1045,9 +1063,10 @@ push.token_env = "FF3_PUSH_TOKEN"
 - **The same fields in this file are ignored** for a managed workspace. The
   worker logs once which ones; a field the server leaves out has its
   default, not this file's value.
-- **Without `server_commands`** the three command fields stay this file's
-  and the rest still comes from the server. The worker logs that the
-  server sets commands it does not take.
+- **Without `server_commands`** the command fields — `setup`, `checks`,
+  `preflight` and the stage blocks — stay this file's and the rest still
+  comes from the server. The worker logs that the server sets commands it
+  does not take.
 - **Each run names its config.** The claim carries the revision; the worker
   fetches exactly that one before the stage starts and writes it at the
   top of the run log. A run whose revision cannot be fetched goes back to
@@ -1067,6 +1086,99 @@ push.token_env = "FF3_PUSH_TOKEN"
   retries before it takes work.
 - **A worker older than this feature** is given no runs of a managed
   workspace, and shows as unhealthy for it until it upgrades.
+
+### MCP servers from the server
+
+A workspace's config on the server can name the
+[MCP servers](../concepts/workspace-config.md#mcp-servers) its runs get.
+For such a workspace:
+
+- **Each run gets its servers with its claim,** credentials included, and
+  the worker writes them into the run's own MCP file,
+  `<state_dir>/runs/<run>/mcp.json`, next to skopos itself. The file is
+  removed when the run ends.
+- **`mcp_config` in this file is not used for the workspace,** also when a
+  server could not be delivered or the list is empty. It still serves the
+  workspaces whose config names no MCP servers.
+- **A run that cannot get its file is given back.** When the run's MCP
+  file cannot be written, or its claim carried no servers although the
+  workspace's config names them, the worker starts nothing and the run is
+  retried.
+- **Files a killed worker left behind are removed at the next start:** a
+  run's MCP file holds that workspace's credentials.
+- **An opencode runner's own `config` file should not define MCP
+  servers:** opencode merges it with the run's, and only the tool allowlist
+  then stands between such a server and a run.
+- **The credentials are kept out of the run's log.**
+- **A `command` server runs on this host,** so it is only taken with
+  `server_commands = true`, and its binary has to be installed here.
+  `${NAME}` in its command and env comes from `[worker.vars]`.
+- **What the run did not get is in its log:** the server and why (a secret
+  that is not set, `server_commands` off, a `${NAME}` this worker does not
+  declare).
+- **`skopos worker check`** names the workspaces that take their MCP
+  servers from the server.
+
+### Stages and wrappers from the server
+
+A managed workspace's [stage blocks](../concepts/workspace-config.md#stages)
+say what each stage's agent is given. On a worker with
+`server_commands = true` they replace what this file's profiles give the
+workspace:
+
+```toml
+[worker]
+id = "worker-knot-claude-1"
+state_dir = "/var/lib/skopos"
+server_commands = true
+contained_by = "knot"
+
+[worker.vars]
+CACHE_DIR = "/var/cache/skopos"
+
+[worker.repos."github.com/fortix/freedom3"]
+path = "/srv/clones/freedom3"
+push.token_env = "FF3_PUSH_TOKEN"
+
+[[worker.accounts]]
+name = "claude-1"
+kind = "claude"
+env = { CLAUDE_CONFIG_DIR = "/var/lib/skopos/accounts/claude-1" }
+```
+
+- **`tools`, `env` and `settings` come from the server,** per stage. A
+  stage the server gives nothing gets nothing: what a profile in this file
+  gives the workspace is not used. `skopos worker check` and the worker's
+  log name the stages concerned.
+- **What contains a stage is still this file's:** `contained_by`, a
+  profile's `wrapper`, and the `sandbox` block and `permissions.deny` rules
+  of a profile's `settings`. A profile that only does that can stay; one
+  that only gave tools and env can go.
+- **An account's own variables win** over a stage's env from the server.
+- **`[worker.vars]`** holds this host's values for `${NAME}` in a stage's
+  env and in a wrapper's argv. Nothing else is filled in, the worker's
+  environment included. A name a stage's env uses and this table lacks
+  makes the workspace unhealthy on this worker, with the name; this file's
+  profiles do not apply instead.
+- **The worker checks what it is handed.** A stage block or a wrapper
+  definition the worker itself would refuse (an env variable a stage may
+  not set, an argv that only sets variables, an unknown placeholder) is not
+  used, whatever the server saved.
+- **Nothing contains the stage here:** the worker takes no run of that
+  stage and reports `none:uncontained` for it. `contained_by`, a wrapper or
+  sandbox settings for the stage fixes it.
+- **A wrapper the server attaches** ([Wrappers](../concepts/workspace-config.md#wrappers))
+  goes around the agent and the stage's setup and check commands, like a
+  profile's. Its placeholders are filled in the same way. The worker runs
+  the wrapper's `check` when it first needs it, when the definition changes
+  and every five minutes; while the check fails the worker reports
+  `none:wrapper` and takes no run the wrapper is for.
+- **A wrapper this file sets for the stage wins.** The server's rule is
+  then not used.
+- **bwrap inside a container** needs unprivileged user namespaces. Docker's
+  default seccomp profile blocks them, and bwrap fails with "No permissions
+  to create new namespace". A wrapper's `check` shows that at the claim,
+  before any run.
 
 ## Self-healing
 

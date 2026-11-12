@@ -74,6 +74,9 @@ type decision struct {
 	refused string
 	noFacts bool
 	hold    bool
+	// unavailable: the worker has the runner and reports that it cannot
+	// run this stage with it in the workspace (executor none:…).
+	unavailable string
 }
 
 // policyStage is the stage a policy rule sees: a review-only item's
@@ -134,15 +137,22 @@ func decideFor(r *Run, name string, prefs *WorkspacePrefs, c *claimFacts, needOf
 		// has: none for this name means it does not have the runner (a
 		// renamed one, for a run it is asked to resume).
 		if !has || (needOffered && !c.offered[name]) || !f.CanRun(r.Stage) {
-			return decision{}
+			d := decision{}
+			if has && policy.Unavailable(f.Executor) {
+				d.unavailable = f.Executor
+			}
+			return d
 		}
 		d := pol.Allows(f, stage)
 		return decision{ok: d.Allowed, runner: name, facts: &f, rules: d.Rules, refused: d.Refused}
 	}
-	refused := ""
+	refused, unavailable := "", ""
 	for _, n := range c.order {
 		f, _ := c.at(r, n)
 		if (needOffered && !c.offered[n]) || !f.CanRun(r.Stage) {
+			if policy.Unavailable(f.Executor) {
+				unavailable = f.Executor
+			}
 			continue
 		}
 		d := pol.Allows(f, stage)
@@ -151,7 +161,7 @@ func decideFor(r *Run, name string, prefs *WorkspacePrefs, c *claimFacts, needOf
 		}
 		refused = d.Refused
 	}
-	return decision{refused: refused}
+	return decision{refused: refused, unavailable: unavailable}
 }
 
 // factsRecord is what a run keeps about the decision (runs.facts).
@@ -517,7 +527,7 @@ func (s *Service) SweepStranded(ctx context.Context) {
 			continue
 		}
 		if changed && reason != "" {
-			slog.Warn("run stranded by the runner policy", "run", r.ID, "item", r.ItemID, "stage", r.Stage, "reason", reason)
+			slog.Warn("run stranded: no worker may take it", "run", r.ID, "item", r.ItemID, "stage", r.Stage, "reason", reason)
 			if s.audit != nil {
 				_ = s.audit.Record(ctx, audit.RecordInput{WorkspaceID: r.WorkspaceID, EntityType: "run", EntityID: r.ID,
 					Action: "run.stranded", Via: audit.ViaSystem, Notes: reason})
@@ -535,7 +545,7 @@ type workerOffer struct {
 // strandedReason says why no worker may take a waiting run under the
 // policy, or "" when one may, or when policy is not what stands in the way.
 func strandedReason(r *Run, prefs *WorkspacePrefs, workers []workerOffer) string {
-	refused, noFacts := "", false
+	refused, noFacts, unavailable := "", false, ""
 	for _, w := range workers {
 		if !w.workspaces[r.WorkspaceID] {
 			continue
@@ -547,11 +557,18 @@ func strandedReason(r *Run, prefs *WorkspacePrefs, workers []workerOffer) string
 		if d.refused != "" {
 			refused = d.refused
 		}
+		if d.unavailable != "" {
+			unavailable = d.unavailable
+		}
 		noFacts = noFacts || d.noFacts
 	}
 	switch {
 	case refused != "":
 		return fmt.Sprintf("no worker offers an allowed runner for %s: refused by the %s policy", r.Stage, refused)
+	case unavailable != "":
+		// Not the policy: a worker has the runner and cannot run the stage
+		// with it under the workspace's config.
+		return fmt.Sprintf("no worker can run %s: on a worker that has the runner, %s", r.Stage, policy.UnavailableReason(unavailable))
 	case noFacts:
 		return fmt.Sprintf("no worker may take %s: the workspace has a runner policy, and the workers serving it report no runner facts (update them)", r.Stage)
 	}

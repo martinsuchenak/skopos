@@ -60,6 +60,8 @@ type ConfigView = { owner_kind: string; owner_id: string; config: Record<string,
 type RunnerDef = { name: string; kind: string; model?: string; effort?: string; provider?: string };
 type PolicyRule = { provider?: string; model?: string; kind?: string; runner?: string; stages?: string[]; executor?: string };
 type ExecutorFact = { stage?: string; runner?: string; executor: string };
+type WrapperDef = { name: string; argv: string[]; check?: string[]; executor?: string };
+type MCPServerDef = { name: string; type: string; url?: string; command?: string[]; secrets?: { name: string; set: boolean }[] };
 type PolicyLayer = { source: string; rev: string; policy: { allow: PolicyRule[] | null } };
 // Pipeline settings (which agents run each stage, per workspace or group).
 type PipeMember = { runner: string; focus?: string };
@@ -275,7 +277,7 @@ const appState = () => ({
   pipe: { open: false, kind: 'workspace', id: '', label: '', saving: false, readOnly: false, rev: 0, rows: [] as PipeRow[], agentsDefault: '', agentsInherited: '', agentsInheritedFrom: '', secondOpinion: '', secondInherited: '', codeIndex: false, codeIndexWas: false, indexableBy: [] as string[], notes: [] as { key: string; tone: string; text: string }[], runnerOptions: [] as string[], policyBound: false },
   // The workspace's (or group's) config on the server, in the pipeline
   // dialog: what applies, and for an admin the stored config as JSON.
-  pipeConfig: { shown: false, status: '', lines: [] as string[], text: '', was: '', stored: false, saving: false, canEdit: false, rev: 0 },
+  pipeConfig: { shown: false, status: '', lines: [] as string[], wrappers: [] as string[], mcp: [] as string[], text: '', was: '', stored: false, saving: false, canEdit: false, rev: 0 },
   groupModalMode: 'create' as 'create' | 'edit',
   groupSaving: false,
   groupErrors: {} as Record<string, string>,
@@ -2514,7 +2516,34 @@ const appState = () => ({
     // A group's config is its admins' to read; a server from before
     // workspace config has no such route.
     if (!res.ok) return;
+    // The wrappers stage blocks can name (a server from before them has no
+    // such route).
+    c.wrappers = [];
+    try {
+      const wres = await this.authFetch('/api/fleet/wrappers');
+      if (wres.ok) c.wrappers = (((await wres.json()) as { wrappers?: WrapperDef[] }).wrappers || []).map((w: WrapperDef) => this.wrapperLine(w));
+    } catch { /* the list is extra */ }
+    // The MCP servers a config can name (admins only; older servers have
+    // no such route). Never a secret's value: only whether it is set.
+    c.mcp = [];
+    try {
+      const mres = await this.authFetch('/api/fleet/mcp-servers');
+      if (mres.ok) c.mcp = (((await mres.json()) as { mcp_servers?: MCPServerDef[] }).mcp_servers || []).map((m: MCPServerDef) => this.mcpServerLine(m));
+    } catch { /* the list is extra */ }
     this.showPipeConfig(kind, (await res.json()) as ConfigView);
+  },
+  // An MCP server definition on one line, with which secrets still lack a
+  // value (a run goes without the server until they are set).
+  mcpServerLine(m: MCPServerDef): string {
+    const where = m.type === 'command' ? 'command ' + (m.command || []).join(' ') : m.url || '';
+    const unset = (m.secrets || []).filter((s: { name: string; set: boolean }) => !s.set).map((s: { name: string; set: boolean }) => s.name);
+    const secrets = (m.secrets || []).length === 0 ? '' : unset.length ? '   (secret not set: ' + unset.join(', ') + ')' : '   (secrets set)';
+    return m.name + ': ' + where + secrets;
+  },
+  // A wrapper definition on one line. Its check shows that it starts on a
+  // worker, never that it isolates.
+  wrapperLine(w: WrapperDef): string {
+    return w.name + ': ' + (w.argv || []).join(' ') + (w.check && w.check.length ? '   (starts: workers run ' + w.check.join(' ') + ')' : '   (no check)');
   },
   showPipeConfig(kind: string, v: ConfigView) {
     const c = this.pipeConfig;
@@ -2543,8 +2572,9 @@ const appState = () => ({
     const out: [string, string][] = [];
     for (const k of Object.keys(cfg)) {
       const val = cfg[k];
-      if (k === 'push' && val && typeof val === 'object') {
-        for (const pk of Object.keys(val as Record<string, unknown>)) out.push(['push.' + pk, JSON.stringify((val as Record<string, unknown>)[pk])]);
+      if ((k === 'push' || k === 'stages') && val && typeof val === 'object') {
+        // push.kind, and one line per stage: stages.implement = {tools, env, …}.
+        for (const pk of Object.keys(val as Record<string, unknown>)) out.push([k + '.' + pk, JSON.stringify((val as Record<string, unknown>)[pk])]);
       } else out.push([k, JSON.stringify(val)]);
     }
     return out.sort((a, b) => (a[0] < b[0] ? -1 : 1));
@@ -2553,7 +2583,7 @@ const appState = () => ({
     if (!this.pipeConfig.canEdit) return 'Changing it needs the admin permission (skopos workspace config set).';
     return this.pipe.kind === 'group'
       ? 'JSON: the fields this group sets for its managed workspaces. Empty and saved removes it.'
-      : 'JSON: the fields this workspace sets; {} manages it with every default. setup, checks and preflight run on its workers. Empty and saved hands it back to the workers\u2019 files.';
+      : 'JSON: the fields this workspace sets; {} manages it with every default. setup, checks and preflight run on its workers, stages says what each stage\u2019s agent is given there, and mcp names the MCP servers its runs get (with mcp_servers allowing their tools). Empty and saved hands it back to the workers\u2019 files.';
   },
   pipeConfigDirty(): boolean { return this.pipeConfig.text.trim() !== this.pipeConfig.was.trim(); },
   pipeConfigSaveLabel(): string {
@@ -2597,12 +2627,20 @@ const appState = () => ({
   // stages and runners that differ.
   executorsLine(ws: string, facts: ExecutorFact[]): string {
     const parts = (facts || []).map((f: ExecutorFact) => {
-      if (f.stage && f.runner) return f.stage + '/' + f.runner + ': ' + f.executor;
-      if (f.stage) return f.stage + ': ' + f.executor;
-      if (f.runner) return f.runner + ': ' + f.executor;
-      return f.executor;
+      const e = this.executorText(f.executor);
+      if (f.stage && f.runner) return f.stage + '/' + f.runner + ': ' + e;
+      if (f.stage) return f.stage + ': ' + e;
+      if (f.runner) return f.runner + ': ' + e;
+      return e;
     });
     return ws + ': ' + parts.join(' \u00b7 ');
+  },
+  // An executor id as shown: none:… is a case the worker cannot run.
+  executorText(e: string): string {
+    if (e === 'none:wrapper') return 'cannot run (the wrapper its config asks for is not usable on this worker)';
+    if (e === 'none:uncontained') return 'cannot run (the stage is given tools or env and nothing contains it on this worker)';
+    if (e.startsWith('none:')) return 'cannot run (' + e + ')';
+    return e;
   },
   // A policy rule the way the CLI writes it.
   policyRuleText(r: PolicyRule): string {

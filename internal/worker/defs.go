@@ -112,9 +112,14 @@ func (c *Config) splitAccounts() error {
 // should know about the result. Call it only while no run is executing.
 func (c *Config) ApplyRunnerDefs(f *wsconfig.Fleet) []string {
 	c.defs, c.defsRev = nil, ""
+	var wrappers []wsconfig.WrapperDef
 	if f != nil {
 		c.defs, c.defsRev = slices.Clone(f.Runners), f.Rev
+		wrappers = f.Wrappers
 	}
+	// The wrapper definitions come with the runner definitions, under the
+	// same revision (stagecaps.go).
+	c.setWrappers(wrappers)
 	var out []*Account
 	var notes []string
 	for _, a := range c.fileAccounts {
@@ -246,9 +251,9 @@ func (w *Worker) refreshFleet(ctx context.Context) bool {
 	for _, n := range notes {
 		w.log.Warn("runner definitions: " + n)
 	}
-	w.factsMu.Lock()
-	w.facts, w.factsSet = nil, false
-	w.factsMu.Unlock()
+	w.resetFacts()
+	// A wrapper that changed is checked again before the next claim.
+	w.checkWrappers(ctx, true)
 	w.client.SetFleetHeld(rev)
 	if rev != "" || len(notes) > 0 {
 		w.log.Info("runner definitions applied", "rev", rev, "runners", strings.Join(w.cfg.UsedRunners(), ","))

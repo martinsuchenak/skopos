@@ -1,7 +1,9 @@
 package worker
 
 import (
+	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -38,6 +40,18 @@ type managedWS struct {
 	local []string
 	// commands: the command fields as applied, for the change log.
 	commands map[string]string
+	// stages: the workspace's stage blocks from the server, ready for this
+	// host (stagecaps.go); nil = the profiles of the worker's file apply
+	// (worker.server_commands is off).
+	stages map[string]*wsconfig.StageCaps
+	// stagesBad: why the server's stage blocks cannot be used here ("" =
+	// they can). The file's profiles do not apply instead.
+	stagesBad string
+	// mcpOwned: the server holds the workspace's MCP servers (mcp names
+	// them): each run gets them with its claim, and the file's mcp_config
+	// is not used for the workspace.
+	mcpOwned bool
+	mcp      []string
 }
 
 // sharedRepoFields names the repo fields of the file a managed workspace
@@ -80,6 +94,11 @@ func (c *Config) ignoredFor(ws string) []string {
 	}
 	if !c.ServerCommands {
 		out = slices.DeleteFunc(out, wsconfig.IsCommandField)
+	} else {
+		// What the file's profile gives the workspace's stages: the
+		// server's stage blocks say that now. A wrapper or sandbox the
+		// file sets stays.
+		out = append(out, c.fileGrants(ws)...)
 	}
 	return append(out, c.globalSet...)
 }
@@ -107,6 +126,8 @@ func (c *Config) mergeManaged(ws string, eff *wsconfig.Effective) (*managedWS, e
 		// nothing here, not left for the default.
 		setup, checks, preflight := append([]string{}, local.Setup...), append([]string{}, local.Checks...), append([]string{}, local.Preflight...)
 		set.Setup, set.Checks, set.Preflight = &setup, &checks, &preflight
+		// The stage blocks too: the file's profiles keep applying.
+		set.Stages = nil
 	}
 	full := wsconfig.Complete(set)
 	r := *local
@@ -132,7 +153,24 @@ func (c *Config) mergeManaged(ws string, eff *wsconfig.Effective) (*managedWS, e
 			m.mcpDeny = append(m.mcpDeny, d)
 		}
 	}
+	if set.MCP != nil {
+		m.mcpOwned, m.mcp = true, slices.Clone(*set.MCP)
+	}
 	m.commands["setup"], m.commands["checks"], m.commands["preflight"] = strings.Join(r.Setup, "\n"), strings.Join(r.Checks, "\n"), strings.Join(r.Preflight, "\n")
+	if c.ServerCommands {
+		// The server says what each stage is given — nothing, for a stage
+		// without a block.
+		stages, err := c.prepareStages(set.Stages)
+		if err != nil {
+			m.stagesBad = err.Error()
+			return m, err
+		}
+		m.stages = stages
+		for stage, block := range stages {
+			buf, _ := json.Marshal(block)
+			m.commands["stages."+stage] = string(buf)
+		}
+	}
 
 	// What the server cannot know about this host.
 	if r.Checkout == checkoutBranch && !branchCheckoutSupported {
@@ -252,6 +290,10 @@ func (w *Worker) applyConfig(ws string, eff *wsconfig.Effective) {
 		}
 		delete(w.managed, ws)
 		delete(w.configProblems, ws)
+		if w.cfg.stagesFromServer(ws) || w.cfg.stagesBroken[ws] != "" {
+			w.cfg.setStages(ws, nil)
+			w.resetFacts()
+		}
 		return
 	}
 	if prev != nil && prev.rev == eff.Rev {
@@ -277,6 +319,9 @@ func (w *Worker) applyConfig(ws string, eff *wsconfig.Effective) {
 	} else {
 		w.log.Info("config: applied a new revision", "workspace", ws, "rev", eff.Rev, "was", prev.rev)
 	}
+	if m.mcpOwned && (prev == nil || !prev.mcpOwned || !slices.Equal(prev.mcp, m.mcp)) {
+		w.log.Info("config: the workspace's MCP servers come from the server with each run; this worker's mcp_config is not used for it", "workspace", ws, "servers", strings.Join(m.mcp, ","))
+	}
 	if len(m.local) > 0 && (prev == nil || !slices.Equal(prev.local, m.local)) {
 		w.log.Warn("config: the server sets commands for the workspace, and this worker keeps its own (set worker.server_commands = true to take them)", "workspace", ws, "fields", strings.Join(m.local, ","))
 	}
@@ -287,6 +332,8 @@ func (w *Worker) applyConfig(ws string, eff *wsconfig.Effective) {
 			was := ""
 			if prev != nil {
 				was = prev.commands[f]
+			} else if stage, ok := strings.CutPrefix(f, "stages."); ok {
+				was = w.cfg.fileStage(ws, stage)
 			} else if local := w.cfg.Repos[ws]; local != nil {
 				was = strings.Join(map[string][]string{"setup": local.Setup, "checks": local.Checks, "preflight": local.Preflight}[f], "\n")
 			}
@@ -296,6 +343,14 @@ func (w *Worker) applyConfig(ws string, eff *wsconfig.Effective) {
 		}
 	}
 	w.managed[ws] = m
+	// What the stages are given, and so what contains them, may have
+	// changed: the next claim reports the executors again.
+	if m.stagesBad != "" {
+		w.cfg.breakStages(ws, "the workspace's stage blocks on the server cannot be used on this worker: "+m.stagesBad)
+	} else {
+		w.cfg.setStages(ws, m.stages)
+	}
+	w.resetFacts()
 	// A preflight that changed runs again at once.
 	delete(w.health, ws)
 }
@@ -449,6 +504,7 @@ func CheckServerConfig(ctx context.Context, cfg *Config, client *Client) (proble
 			problems = append(problems, fmt.Sprintf("workspace %s: %v", ws, err))
 			continue
 		}
+		cfg.setStages(ws, m.stages)
 		line := fmt.Sprintf("workspace %s is managed by the server (revision %s)", ws, eff.Rev)
 		if len(m.local) > 0 {
 			line += "; " + strings.Join(m.local, ", ") + " stay this file's (worker.server_commands is off)"
@@ -456,7 +512,29 @@ func CheckServerConfig(ctx context.Context, cfg *Config, client *Client) (proble
 		if ignored := cfg.ignoredFor(ws); len(ignored) > 0 {
 			line += "; ignored in this file: " + strings.Join(ignored, ", ")
 		}
+		if m.mcpOwned {
+			line += "; its MCP servers come from the server with each run (" + cmp.Or(strings.Join(m.mcp, ", "), "none") + ")"
+			if cfg.MCPConfig != "" {
+				line += ", so this file's mcp_config is not used for it"
+			}
+		}
 		notes = append(notes, line)
 	}
+	// The wrappers the workspaces' stage blocks name have to start here.
+	if used := cfg.usedWrappers(); len(used) > 0 {
+		_, checkNotes := cfg.CheckWrappers(ctx, map[string]time.Time{}, true, scrubEnv(nil, cfg.TokenEnvs(), cfg.envFileKeys))
+		notes = append(notes, checkNotes...)
+		for _, name := range used {
+			def, held := cfg.wrappers[name]
+			switch {
+			case !held || cfg.wrapperBad[name] != "":
+			case len(def.Check) == 0:
+				notes = append(notes, fmt.Sprintf("wrapper %s is defined without a check: nothing shows whether it starts on this worker", name))
+			default:
+				notes = append(notes, fmt.Sprintf("wrapper %s starts on this worker (its check passes; that does not show it isolates)", name))
+			}
+		}
+	}
+	notes = append(notes, cfg.ExecutorProblems()...)
 	return problems, notes
 }

@@ -44,11 +44,12 @@ type RunnerView struct {
 	UpdatedBy string    `json:"updated_by,omitempty"`
 }
 
-// Fleet is what every worker fetches before it claims: the runner
-// definitions, named by one revision.
+// Fleet is what every worker fetches before it claims: the runner and
+// wrapper definitions, named by one revision.
 type Fleet struct {
-	Rev     string      `json:"rev"`
-	Runners []RunnerDef `json:"runners"`
+	Rev      string       `json:"rev"`
+	Runners  []RunnerDef  `json:"runners"`
+	Wrappers []WrapperDef `json:"wrappers,omitempty"`
 }
 
 // Kinds a runner definition may name. A `command` runner's argv is a
@@ -169,8 +170,8 @@ func (s *Service) Runners(ctx context.Context) ([]RunnerView, error) {
 	return out, nil
 }
 
-// Fleet returns the definitions with the revision that names them all
-// ("" when there are none).
+// Fleet returns the runner and wrapper definitions with the revision that
+// names them all ("" when there are none).
 func (s *Service) Fleet(ctx context.Context) (*Fleet, error) {
 	views, err := s.Runners(ctx)
 	if err != nil {
@@ -182,7 +183,15 @@ func (s *Service) Fleet(ctx context.Context) (*Fleet, error) {
 		f.Runners[i] = v.RunnerDef
 		h.Write([]byte(v.Name + "=" + v.Rev + "\n"))
 	}
-	if len(views) > 0 {
+	wrappers, err := s.Wrappers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, w := range wrappers {
+		f.Wrappers = append(f.Wrappers, w.WrapperDef)
+		h.Write([]byte("wrapper:" + w.Name + "=" + w.Rev + "\n"))
+	}
+	if len(views) > 0 || len(wrappers) > 0 {
 		f.Rev = hex.EncodeToString(h.Sum(nil))[:16]
 	}
 	return f, nil

@@ -411,3 +411,102 @@ func TestExecutorCheckForPanelAndSecondOpinion(t *testing.T) {
 		t.Fatalf("both differences recorded: %d", n)
 	}
 }
+
+// A worker that reports it cannot run a stage with a runner (executor
+// none:…) gets no such run — with or without a policy, for a pinned runner
+// and for one the server would pick — and a worker that can still does. A
+// run only such workers could take is marked stranded with the reason.
+func TestUnavailableExecutorIsNeverHandedOut(t *testing.T) {
+	s := testService(t)
+	spy := &auditSpy{}
+	s.SetAuditRecorder(spy)
+	now := time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	s.SetPrefs(map[string]*WorkspacePrefs{"ws": {Stages: map[string]string{"review": "opencode-glm"}}})
+	pinned := mustQueue(t, s, rootCtx(), "ws", "item-1", StageReview)
+	noWrapper := []policy.ExecutorFact{{Executor: "local"}, {Stage: "review", Runner: "opencode-glm", Executor: policy.NoExecutor(policy.NoneWrapper)}}
+	if run := claimExec(t, s, "w-broken", "ws", noWrapper, fGLM); run != nil {
+		t.Fatalf("a worker that cannot run the stage got it: %+v", run)
+	}
+	// Nobody else serves the workspace: the run is stranded, and says why.
+	now = now.Add(strandedAfter + time.Second)
+	s.SweepStranded(rootCtx())
+	if r, _ := s.Get(rootCtx(), pinned.ID); !strings.Contains(r.Stranded, "no worker can run review") || !strings.Contains(r.Stranded, "wrapper") {
+		t.Fatalf("stranded reason: %q", r.Stranded)
+	}
+	recorded := false
+	for _, e := range spy.got {
+		recorded = recorded || (e.Action == "run.stranded" && e.EntityID == pinned.ID)
+	}
+	if !recorded {
+		t.Fatal("no run.stranded event")
+	}
+	// A worker where the wrapper starts takes it.
+	run := claimExec(t, s, "w-ok", "ws", []policy.ExecutorFact{{Executor: "local"}, {Stage: "review", Runner: "opencode-glm", Executor: "wrapper:box:0123456789ab"}}, fGLM)
+	if run == nil || run.ID != pinned.ID {
+		t.Fatalf("the able worker: %+v", run)
+	}
+
+	// An unpinned stage: the server picks among the runners the worker can
+	// run there, skipping the one it cannot.
+	s.SetPrefs(map[string]*WorkspacePrefs{"free": {}})
+	mustQueue(t, s, rootCtx(), "free", "item-2", StagePlan)
+	facts := []policy.ExecutorFact{{Executor: "host:knot"}, {Stage: "plan", Runner: "claude", Executor: policy.NoExecutor(policy.NoneUncontained)}}
+	in := ClaimInput{WorkerID: "w-two", Workspaces: []string{"free"}, Runners: []string{"claude", "opencode-glm"}, RunnerFacts: []policy.Facts{fClaude, fGLM},
+		Executors: map[string][]policy.ExecutorFact{"free": facts}}
+	picked, err := s.ClaimNext(rootCtx(), in)
+	if err != nil || picked == nil || picked.Runner != "opencode-glm" {
+		t.Fatalf("the server should pick the runner the worker can run: %+v %v", picked, err)
+	}
+}
+
+// The unavailable executor in the other scans, with no policy at all: an
+// owner that can no longer run its paused run does not get it back (it is
+// released for a takeover), a takeover passes over a worker that cannot run
+// it, and a queued round does not wait for a preferred worker that cannot.
+func TestUnavailableExecutorInEveryScan(t *testing.T) {
+	s := testService(t)
+	now := time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	ctx := rootCtx()
+	ok := []policy.ExecutorFact{{Executor: "local"}, {Stage: "review", Executor: "wrapper:box:0123456789ab"}}
+	broken := []policy.ExecutorFact{{Executor: "local"}, {Stage: "review", Runner: "opencode-glm", Executor: policy.NoExecutor(policy.NoneWrapper)}}
+	s.SetPrefs(map[string]*WorkspacePrefs{"ws": {Stages: map[string]string{"review": "opencode-glm"}}})
+
+	mustQueue(t, s, ctx, "ws", "item-1", StageReview)
+	first := claimExec(t, s, "w-a", "ws", ok, fGLM)
+	if first == nil {
+		t.Fatal("claimed")
+	}
+	if err := s.Pause(ctx, first.ID, "w-a", "quota", now.Add(-time.Second), first.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	// The owner's wrapper stops starting.
+	if run := claimExec(t, s, "w-a", "ws", broken, fGLM); run != nil {
+		t.Fatalf("the owner got back a run it cannot run: %+v", run)
+	}
+	if got, _ := s.Get(ctx, first.ID); got.Status != StatusInterrupted || got.ResumeKind != ResumeBranch {
+		t.Fatalf("released for a takeover: %+v", got)
+	}
+	if run := claimExec(t, s, "w-b", "ws", broken, fGLM); run != nil {
+		t.Fatalf("a takeover by a worker that cannot run it: %+v", run)
+	}
+	taken := claimExec(t, s, "w-c", "ws", ok, fGLM)
+	if taken == nil || taken.ID != first.ID {
+		t.Fatalf("an able worker takes it over: %+v", taken)
+	}
+	if _, err := s.Report(ctx, taken.ID, ReportInput{WorkerID: "w-c", Status: StatusSucceeded, Summary: "ok", Executor: "wrapper:box:0123456789ab"}, taken.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	// The next round prefers w-c; once w-c cannot run it, others need not wait.
+	if run := claimExec(t, s, "w-c", "ws", broken, fGLM); run != nil {
+		t.Fatal("nothing queued")
+	}
+	if run := claimExec(t, s, "w-d", "ws", ok, fGLM); run != nil {
+		t.Fatal("nothing queued")
+	}
+	again := mustQueue(t, s, ctx, "ws", "item-1", StageReview)
+	if run := claimExec(t, s, "w-d", "ws", ok, fGLM); run == nil || run.ID != again.ID {
+		t.Fatalf("the run waits for a preferred worker that cannot run it (prefer %q): %+v", again.PreferWorker, run)
+	}
+}

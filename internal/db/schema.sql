@@ -441,6 +441,22 @@ CREATE TABLE IF NOT EXISTS config_effective (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS idx_config_effective_ws ON config_effective(workspace_id, created_ms);
 
+-- Stored secrets (tmp/central-config — design.md, phase 2b): the values of
+-- the secrets a definition names (an MCP server's credentials), sealed
+-- under the server's secret key and kept apart from the definition, which
+-- holds names only. owner is what the secret belongs to
+-- ("mcp_server:<name>"); key_id names the key that sealed the value
+-- (internal/secretbox). Never read except to hand a run its servers.
+CREATE TABLE IF NOT EXISTS secrets (
+    owner       TEXT    NOT NULL,
+    name        TEXT    NOT NULL,
+    sealed      BLOB    NOT NULL,
+    key_id      TEXT    NOT NULL,
+    updated_ms  INTEGER NOT NULL,
+    updated_by  TEXT    NOT NULL DEFAULT '',
+    PRIMARY KEY (owner, name)
+) STRICT;
+
 -- Per-attempt run tokens (tmp/central-config — design.md, phase 0): the
 -- hash of each token a claim mints. kind 'agent' is the credential the
 -- run's agent reaches skopos with over MCP. A token is valid only while

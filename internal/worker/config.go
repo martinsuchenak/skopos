@@ -33,6 +33,11 @@ type Config struct {
 	// the host is confined — not that runs are kept apart from each other:
 	// inside it a run still sees every clone on the worker.
 	ContainedBy string `toml:"contained_by"`
+	// Vars are this host's values for ${NAME} in what the server supplies
+	// (a stage's env, a wrapper's argv): host paths, mostly. Only these
+	// are ever filled in — never the worker's environment, which holds its
+	// credentials.
+	Vars map[string]string `toml:"vars"`
 	// ServerCommands: take a managed workspace's setup, check and preflight
 	// commands from the server. Off, those fields stay this file's even for
 	// a workspace the server manages (its other fields still come from the
@@ -89,9 +94,22 @@ type Config struct {
 	// accounts as the file has them; Accounts is rebuilt from them and
 	// defs. runnersExplicit: the file lists runners itself, which then
 	// restricts what the worker offers.
-	fileAccounts    []*Account
-	defs            []wsconfig.RunnerDef
-	defsRev         string
+	fileAccounts []*Account
+	defs         []wsconfig.RunnerDef
+	defsRev      string
+	// What the server holds about stages (stagecaps.go). srvStages: per
+	// workspace whose stage blocks come from the server, the blocks by
+	// stage with this host's variables filled in. stagesBroken: workspaces
+	// whose stage blocks on the server cannot be used here, with why.
+	// wrappers: the server's wrapper definitions this worker accepts, by
+	// name; wrapperInvalid: the ones it refuses (never cleared by a
+	// check); wrapperBad: wrappers whose check fails. Changed only between
+	// runs, by the worker's loop.
+	srvStages       map[string]map[string]*wsconfig.StageCaps
+	stagesBroken    map[string]string
+	wrappers        map[string]wsconfig.WrapperDef
+	wrapperInvalid  map[string]string
+	wrapperBad      map[string]string
 	runnersExplicit bool
 	// mcpDenyFile: the deny list the file itself sets (empty when it sets
 	// none and the default applies) — kept in force for a workspace the
@@ -125,9 +143,16 @@ type StageProfile struct {
 	Tools    []string          `toml:"tools"`    // extra --allowedTools entries
 	Env      map[string]string `toml:"env"`      // extra agent env; ${VAR} expands from the environment
 
-	// name: the profile's name ("repo" for a repo's own stage block), the
-	// part of a wrapper's executor id a policy rule can match on.
+	// name: the profile's name ("repo" for a repo's own stage block, the
+	// wrapper's name for one the server defines), the part of a wrapper's
+	// executor id a policy rule can match on.
 	name string
+	// hash: the id of the wrapper's argv in the executor id, for a wrapper
+	// the server defines (its argv as defined, before this host's
+	// variables are filled in); "" = the hash of Wrapper.
+	hash string
+	// server: what the stage is given came from the server's config.
+	server bool
 }
 
 // hostWrapper recognises a wrapper that only sets variables — `env K=V …`,
@@ -141,30 +166,17 @@ type StageProfile struct {
 // (`env A=b bwrap …`). Options (-i, -u NAME, -C DIR, --) run nothing, and
 // -S hides what it runs: both count as the host, never as a wrapper.
 func (p *StageProfile) hostWrapper() (string, bool) {
-	if p == nil || len(p.Wrapper) == 0 || filepath.Base(p.Wrapper[0]) != "env" {
+	if p == nil {
 		return "", false
 	}
-	name := "env"
-	args := p.Wrapper[1:]
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "-u" || a == "--unset" || a == "-C" || a == "--chdir":
-			i++ // the option's value
-		case strings.HasPrefix(a, "-S") || strings.HasPrefix(a, "--split-string"):
-			return name, true
-		case strings.HasPrefix(a, "-"):
-		default:
-			k, v, ok := strings.Cut(a, "=")
-			if !ok || k == "" {
-				return "", false // a command: env runs a wrapper
-			}
-			if k == "SKOPOS_CONTAINED_BY" && v != "" {
-				name = executorName(v)
-			}
-		}
+	by, ok := wsconfig.EnvOnlyWrapper(p.Wrapper)
+	if !ok {
+		return "", false
 	}
-	return name, true
+	if by == "" {
+		return "env", true
+	}
+	return executorName(by), true
 }
 
 // executorName makes a profile or container name safe inside an executor
@@ -187,9 +199,6 @@ func executorName(s string) string {
 	}
 	return b.String()
 }
-
-// wrapperPlaceholder finds {name} placeholders in a wrapper argument.
-var wrapperPlaceholder = regexp.MustCompile(`\{[a-z]+\}`)
 
 // wraps reports whether the profile puts a real wrapper around the run.
 func (p *StageProfile) wraps() bool {
@@ -230,10 +239,13 @@ func (p *StageProfile) grantsAllow() bool {
 	var s struct {
 		Permissions struct {
 			Allow []string `json:"allow"`
+			Dirs  []string `json:"additionalDirectories"`
 		} `json:"permissions"`
 	}
 	_ = json.Unmarshal([]byte(p.Settings), &s)
-	return len(s.Permissions.Allow) > 0
+	// Directories a stage block from the server adds are a grant like an
+	// allow rule.
+	return len(s.Permissions.Allow) > 0 || (p.server && len(s.Permissions.Dirs) > 0)
 }
 
 // validate checks one stage profile: parseable settings, and the fail-closed
@@ -248,12 +260,8 @@ func (p *StageProfile) validate(where string, hostContained bool) error {
 			return fmt.Errorf("%s: settings is not valid JSON: %v", where, err)
 		}
 	}
-	for _, a := range p.Wrapper {
-		for _, ph := range wrapperPlaceholder.FindAllString(a, -1) {
-			if !slices.Contains(wrapperPlaceholders, ph) {
-				return fmt.Errorf("%s: the wrapper uses %s, which is not a placeholder (%s)", where, ph, strings.Join(wrapperPlaceholders, " "))
-			}
-		}
+	if ph := wsconfig.UnknownPlaceholder(p.Wrapper); ph != "" {
+		return fmt.Errorf("%s: the wrapper uses %s, which is not a placeholder (%s)", where, ph, strings.Join(wrapperPlaceholders, " "))
 	}
 	if (len(p.Tools) > 0 || len(p.Env) > 0 || p.grantsAllow()) && !p.Contained() && !hostContained {
 		return fmt.Errorf("%s: grants capabilities (tools/env/settings allow) but is not contained — set a wrapper, settings with sandbox.enabled = true, or worker.contained_by when the whole host is a container (skopos only grants capabilities to stages the operator contains)", where)
@@ -349,13 +357,38 @@ var executorStages = []string{"plan", "implement", "review", "qa", "compare", "s
 // The first that applies is the run's executor. What the profile grants is
 // recorded apart (Grants).
 func (c *Config) ExecutorFor(workspace, stage, runner string) string {
-	prof := c.StageProfile(workspace, stagePhase(stage))
+	if c.stagesBroken[workspace] != "" {
+		// The server holds the workspace's stages and this worker cannot
+		// use them.
+		return policy.NoExecutor(policy.NoneConfig)
+	}
+	prof, problem := c.stageProfileFor(workspace, stagePhase(stage), runner)
+	if problem != "" {
+		// The workspace's config wraps this runner's runs of the stage in
+		// a wrapper this worker cannot use: nothing runs unwrapped instead.
+		return policy.NoExecutor(policy.NoneWrapper)
+	}
+	if prof.grants() && !c.contained(prof, runner) {
+		// What a stage is given takes effect only where something contains
+		// the run. runAgent refuses such a run; said here, the server does
+		// not hand it out in the first place (sandbox settings contain
+		// only a runner that honours them).
+		return policy.NoExecutor(policy.NoneUncontained)
+	}
+	return c.executorOf(prof, stage, runner)
+}
+
+// executorOf is ExecutorFor for a resolved stage profile.
+func (c *Config) executorOf(prof *StageProfile, stage, runner string) string {
 	if prof.wraps() {
-		name := prof.name
+		name, hash := prof.name, prof.hash
 		if name == "" {
 			name = "repo"
 		}
-		return policy.WrapperExecutor(executorName(name), shortHash(prof.Wrapper))
+		if hash == "" {
+			hash = shortHash(prof.Wrapper)
+		}
+		return policy.WrapperExecutor(executorName(name), hash)
 	}
 	r, rerr := c.RunnerFor(runner)
 	if rerr == nil && !runsRepoCommands(stage) {
@@ -371,6 +404,31 @@ func (c *Config) ExecutorFor(workspace, stage, runner string) string {
 		return policy.SandboxExecutor(shortHash(prof.sandboxSettings()))
 	}
 	return policy.ExecutorLocal
+}
+
+// grants reports whether the profile gives its stage anything: tools, env
+// or settings allow rules.
+func (p *StageProfile) grants() bool {
+	return p != nil && (len(p.Tools) > 0 || len(p.Env) > 0 || p.grantsAllow())
+}
+
+// contained reports whether a run of the profile on runner is inside
+// something — the rule runAgent enforces before it starts an agent that
+// was granted capabilities: a wrapper, a host that is a container, or the
+// runner's sandbox settings where the runner honours them.
+func (c *Config) contained(prof *StageProfile, runner string) bool {
+	if prof != nil && len(prof.Wrapper) > 0 {
+		return true
+	}
+	if c.hostContainer(prof) != "" {
+		return true
+	}
+	if prof.sandboxed() {
+		if r, err := c.RunnerFor(runner); err == nil && r.HonorsSettings() {
+			return true
+		}
+	}
+	return false
 }
 
 // DescribeExecutors renders a workspace's executor facts as one line: the
@@ -490,9 +548,12 @@ func (c *Config) ExecutorFacts() map[string][]policy.ExecutorFact {
 	return out
 }
 
-// StageProfile resolves a workspace's profile for a stage: the repo's own
-// stages override its named profile, per stage. Nil = plain local run.
-func (c *Config) StageProfile(workspace, stage string) *StageProfile {
+// fileProfile resolves a workspace's profile for a stage from the worker's
+// own file: the repo's own stages override its named profile, per stage.
+// Nil = none. What a run really gets is StageProfile / stageProfileFor
+// (stagecaps.go): for a workspace whose stages the server holds, the file
+// keeps only what contains the run.
+func (c *Config) fileProfile(workspace, stage string) *StageProfile {
 	r := c.Repos[workspace]
 	if r == nil {
 		return nil
@@ -699,6 +760,12 @@ func (a *Account) MarkExhausted(until time.Time, defaultBackoff time.Duration, n
 func (c *Config) Default(home string) error {
 	if cb := strings.TrimSpace(c.ContainedBy); cb != "" && cb != executorName(cb) {
 		return fmt.Errorf("contained_by %q: a short name of letters, digits, dot, dash and underscore (at most 40 characters)", cb)
+	}
+	for name, v := range c.Vars {
+		if _, err := wsconfig.VarRefs("${" + name + "}"); err != nil || strings.ContainsAny(v, "\x00\n\r") {
+			return fmt.Errorf("vars: %q must be a variable name with a one-line value", name)
+		}
+		c.Vars[name] = expandHome(v, home)
 	}
 	if c.ID == "" {
 		h, _ := os.Hostname()

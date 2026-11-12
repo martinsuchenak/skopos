@@ -522,6 +522,34 @@ func TestExecutorRulesInSavesAndRunnerAllowed(t *testing.T) {
 	}
 }
 
+// A worker that reports it cannot run a stage with a runner (executor
+// none:…) says nothing about the policy: it does not make a policy save
+// look as if it stranded the runner, and a second opinion on that runner is
+// not refused "by the policy" because of it.
+func TestUnavailableExecutorIsNotAPolicyRefusal(t *testing.T) {
+	s, sqlDB, _ := policyFixture(t)
+	ctx := root()
+	if _, err := s.Put(ctx, KindWorkspace, "fx/api", Settings{Stages: map[string]StageSetting{"review": {Members: []runs.Member{{Runner: "opencode-glm"}}}}}, "cli"); err != nil {
+		t.Fatal(err)
+	}
+	// The only worker with GLM cannot run its reviews (its wrapper does
+	// not start), and can run the rest.
+	workerExec(t, sqlDB, "w1", map[string][]policy.ExecutorFact{"fx/api": {{Executor: "host:knot"},
+		{Stage: "review", Runner: "opencode-glm", Executor: policy.NoExecutor(policy.NoneWrapper)},
+		{Stage: "second_opinion", Runner: "opencode-glm", Executor: policy.NoExecutor(policy.NoneWrapper)}}}, wClaude, wGLM)
+	// A policy that allows GLM anywhere: the save strands nothing.
+	if _, err := s.SetPolicy(ctx, KindWorkspace, "fx/api", allow("provider=anthropic", "provider=zai"), false, "cli"); err != nil {
+		t.Fatalf("a worker that cannot run the stage is not a policy refusal: %v", err)
+	}
+	ok, known, refused, err := s.RunnerAllowed(ctx, "fx/api", "second_opinion", "opencode-glm")
+	if err != nil || ok || known || refused != "" {
+		t.Fatalf("no worker can run it, and the policy refused nothing: allowed=%v known=%v refused=%q %v", ok, known, refused, err)
+	}
+	if ok, known, _, err := s.RunnerAllowed(ctx, "fx/api", "qa", "opencode-glm"); err != nil || !ok || !known {
+		t.Fatalf("a stage the worker can run: allowed=%v known=%v %v", ok, known, err)
+	}
+}
+
 // Once the server defines a runner, a pipeline save that newly names it is
 // refused when the workspace's policy can never allow it — the answer does
 // not depend on any worker. A runner the server does not define, one

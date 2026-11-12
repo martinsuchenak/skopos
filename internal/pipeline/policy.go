@@ -570,6 +570,11 @@ func (s *Service) strandedUnder(ctx context.Context, ws string, eff *policy.Effe
 		}
 		allowed, refused := false, ""
 		for _, f := range known {
+			// A worker that reports it cannot run the stage with the
+			// runner (executor none:…) is not what the policy refuses.
+			if !f.CanRun(u.stage) {
+				continue
+			}
 			d := eff.Allows(f, u.stage)
 			if d.Allowed {
 				allowed = true
@@ -577,7 +582,7 @@ func (s *Service) strandedUnder(ctx context.Context, ws string, eff *policy.Effe
 			}
 			refused = d.Refused
 		}
-		if !allowed {
+		if !allowed && refused != "" {
 			out = append(out, strandedItem{
 				key:  u.stage + "\x00" + u.runner,
 				text: fmt.Sprintf("%s: %s uses runner %s (%s), which the %s policy does not allow on any worker", ws, u.stage, u.runner, describeFacts(known[0]), refused),
@@ -593,12 +598,13 @@ func (s *Service) strandedUnder(ctx context.Context, ws string, eff *policy.Effe
 			if e, ok := r.effective[stage]; ok && len(e.Members) > 0 {
 				continue
 			}
-			able, refused, factless := false, "", 0
+			able, refused, factless, facts := false, "", 0, 0
 			for _, w := range workers {
 				if len(w.runners) == 0 {
 					factless++
 					continue
 				}
+				facts++
 				for _, f := range w.at(stage) {
 					if !f.CanRun(stage) {
 						continue
@@ -615,6 +621,11 @@ func (s *Service) strandedUnder(ctx context.Context, ws string, eff *policy.Effe
 				continue
 			}
 			why := "no worker serving it has a runner the " + refused + " policy allows"
+			if refused == "" && facts > 0 && factless == 0 {
+				// Workers report facts and none has a runner that can run
+				// the stage there: not a matter of the policy.
+				continue
+			}
 			if refused == "" {
 				why = "the workers serving it report no runner facts, so none passes a policy (update them)"
 			} else if factless > 0 {
@@ -671,6 +682,11 @@ func (s *Service) RunnerAllowed(ctx context.Context, ws, stage, runner string) (
 		return false, false, "", err
 	}
 	for _, f := range byRunner(workers, stage)[runner] {
+		// A worker that cannot run the stage with the runner says nothing
+		// about what the policy allows.
+		if !f.CanRun(stage) {
+			continue
+		}
 		d := eff.Allows(f, stage)
 		if d.Allowed {
 			return true, true, "", nil

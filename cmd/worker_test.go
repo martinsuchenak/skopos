@@ -139,6 +139,9 @@ mcp_deny = ["mcp__x__w"]
 mcp_servers = ["mcp__skopos"]
 mcp_config = "/etc/mcp.json"
 
+[worker.vars]
+CLONES = "/srv/clones"
+
 [worker.runner_config.oc]
 kind = "opencode"
 

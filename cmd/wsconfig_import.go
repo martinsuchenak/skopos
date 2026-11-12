@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -293,5 +294,43 @@ func configFromWorker(w *worker.Config, r *worker.Repo) wsconfig.Config {
 	}
 	list(&c.MCPDeny, w.MCPDeny)
 	list(&c.MCPServers, w.MCPServers)
+	// What the file's profile gives each stage. What contains a stage (a
+	// wrapper, the sandbox block) is the host's and stays in the file.
+	for _, stage := range wsconfig.StageNames {
+		p := r.Stages[stage]
+		if p == nil && r.Profile != "" {
+			p = w.Profiles[r.Profile][stage]
+		}
+		if p == nil {
+			continue
+		}
+		block := &wsconfig.StageCaps{Tools: p.Tools, Env: p.Env, Settings: wsconfig.Settings(settingsWithoutSandbox(p.Settings))}
+		if len(block.Tools) == 0 && len(block.Env) == 0 && block.Settings == "" {
+			continue
+		}
+		if c.Stages == nil {
+			c.Stages = map[string]*wsconfig.StageCaps{}
+		}
+		c.Stages[stage] = block
+	}
 	return c
+}
+
+// settingsWithoutSandbox is a profile's settings without the sandbox block
+// ("" when nothing else is in them, or they are not JSON — the server then
+// says what is wrong with them).
+func settingsWithoutSandbox(settings string) string {
+	if strings.TrimSpace(settings) == "" {
+		return ""
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(settings), &top); err != nil {
+		return settings
+	}
+	delete(top, "sandbox")
+	if len(top) == 0 {
+		return ""
+	}
+	buf, _ := json.Marshal(top)
+	return string(buf)
 }

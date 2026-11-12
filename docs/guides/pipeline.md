@@ -115,6 +115,11 @@ group; a repository overrides only the stages it needs.
   instead of in each worker's file, and define each runner's model once:
   `skopos workspace config set`, `skopos runner set`. See
   [Workspace config on the server](../concepts/workspace-config.md).
+- **Give a stage the repository's own tools once.** The extra commands a
+  stage's agent may run (`Bash(npm run:*)`), its env, and a wrapper for
+  some runners go in the workspace's or group's config as a stage block,
+  instead of in each worker's profiles. See
+  [Stages](../concepts/workspace-config.md#stages).
 - **Names must match.** Runner names here must match the worker's runners
   (step 5); the dialog suggests the runners your workers offer and warns
   about one no worker offers yet. A run pinned to a runner waits for that

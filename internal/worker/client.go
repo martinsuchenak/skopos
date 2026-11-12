@@ -161,6 +161,10 @@ func (c *Client) Claim(ctx context.Context, workerID string, runners, workspaces
 			req["executors"] = executors
 		}
 	}
+	// What this release can take from a claim answer (the run's MCP
+	// servers): a server gives a worker that does not say so none of the
+	// runs that need it.
+	req["features"] = []string{FeatureRunMCP}
 	c.mu.Lock()
 	req["server_commands"] = c.serverCommands
 	if c.heldFleet != "" {
@@ -732,12 +736,16 @@ type Run struct {
 	LeaseToken string `json:"lease_token,omitempty"` // fencing token (claim response only)
 	// AgentToken: the run's own credential for skopos over MCP (claim
 	// response only; a server before run tokens sends none).
-	AgentToken  string `json:"agent_token,omitempty"`
-	WorkspaceID string `json:"workspace_id"`
-	ItemID      string `json:"item_id"`
-	PlanRevID   string `json:"plan_rev_id"`
-	Stage       string `json:"stage"`
-	Runner      string `json:"runner"`
+	AgentToken string `json:"agent_token,omitempty"`
+	// MCP: the MCP servers the run's agent gets, with their credentials
+	// (claim response only). nil = the server does not hold the
+	// workspace's MCP servers: the worker's own mcp_config applies.
+	MCP         *RunMCP `json:"mcp,omitempty"`
+	WorkspaceID string  `json:"workspace_id"`
+	ItemID      string  `json:"item_id"`
+	PlanRevID   string  `json:"plan_rev_id"`
+	Stage       string  `json:"stage"`
+	Runner      string  `json:"runner"`
 	// Facts: what the claim decided with — the runner's facts and the
 	// executor the server matched the policy on (refuseExecutor).
 	Facts json.RawMessage `json:"facts,omitempty"`
@@ -810,3 +818,19 @@ type RevStep struct {
 type RunCancelledError struct{ Reason string }
 
 func (e *RunCancelledError) Error() string { return "run cancelled: " + e.Reason }
+
+// FeatureRunMCP: this worker takes a run's MCP servers from the claim
+// answer.
+const FeatureRunMCP = "run_mcp"
+
+// RunMCP is the MCP servers of one run as the claim answer carries them
+// (tmp/central-config — design.md, phase 2b): by name, in the mcpServers
+// shape, with their secrets filled in. Secrets are those values, for the
+// redactor. Notes say which servers the workspace's config names and this
+// run does not get. Unreadable: the server could not resolve them.
+type RunMCP struct {
+	Servers    map[string]json.RawMessage `json:"servers"`
+	Secrets    []string                   `json:"secrets,omitempty"`
+	Notes      []string                   `json:"notes,omitempty"`
+	Unreadable bool                       `json:"unreadable,omitempty"`
+}

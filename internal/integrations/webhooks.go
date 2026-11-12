@@ -2,8 +2,6 @@ package integrations
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -12,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/martinsuchenak/skopos/internal/secretbox"
 	"net"
 	"net/url"
 	"path"
@@ -116,7 +115,7 @@ type AuditRecorder interface {
 // Service manages subscriptions and serves the feed.
 type Service struct {
 	db      *sql.DB
-	key     []byte // AES-256 key from the integrations key; nil = no webhooks
+	ring    *secretbox.Ring // the keys webhook secrets are sealed with; disabled = no webhooks
 	audit   AuditRecorder
 	emitter *Emitter
 	policy  URLPolicy
@@ -141,13 +140,12 @@ func (s *Service) SetDisableNotifier(fn func(ctx context.Context, w Webhook, rea
 // NewService: secretKey is the server's integrations key ("" = webhooks
 // off; the feed still works).
 func NewService(db *sql.DB, emitter *Emitter, secretKey string, policy URLPolicy) *Service {
-	s := &Service{db: db, emitter: emitter, policy: policy, now: time.Now}
-	if secretKey != "" {
-		sum := sha256.Sum256([]byte(secretKey))
-		s.key = sum[:]
-	}
-	return s
+	return &Service{db: db, emitter: emitter, policy: policy, now: time.Now, ring: secretbox.New(secretKey)}
 }
+
+// SetKeyRing replaces the keys webhook secrets are sealed with: the current
+// one and, during a rotation, the previous one (cmd/serve.go).
+func (s *Service) SetKeyRing(ring *secretbox.Ring) { s.ring = ring }
 
 func (s *Service) SetAuditRecorder(a AuditRecorder) { s.audit = a }
 
@@ -162,42 +160,23 @@ func newSecret() ([]byte, string, error) {
 }
 
 func (s *Service) seal(plain []byte) ([]byte, error) {
-	block, err := aes.NewCipher(s.key)
-	if err != nil {
-		return nil, err
+	out, err := s.ring.Seal(plain)
+	if errors.Is(err, secretbox.ErrNoKey) {
+		return nil, ErrNoKey
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, err
-	}
-	return gcm.Seal(nonce, nonce, plain, nil), nil
+	return out, err
 }
 
 func (s *Service) open(sealed []byte) ([]byte, error) {
 	if len(sealed) == 0 {
 		return nil, nil
 	}
-	if s.key == nil {
+	plain, err := s.ring.Open(sealed)
+	switch {
+	case errors.Is(err, secretbox.ErrNoKey):
 		return nil, ErrNoKey
-	}
-	block, err := aes.NewCipher(s.key)
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	if len(sealed) < gcm.NonceSize() {
-		return nil, errors.New("webhook secret: corrupt")
-	}
-	plain, err := gcm.Open(nil, sealed[:gcm.NonceSize()], sealed[gcm.NonceSize():], nil)
-	if err != nil {
-		return nil, errors.New("webhook secret: cannot decrypt (was the integrations key changed?)")
+	case err != nil:
+		return nil, fmt.Errorf("webhook secret: %w", err)
 	}
 	return plain, nil
 }
@@ -337,7 +316,7 @@ func mayManage(ctx context.Context, workspaces, groups []string) error {
 
 // Create adds a subscription and returns its secret, once.
 func (s *Service) Create(ctx context.Context, in Input) (*WithSecret, error) {
-	if s.key == nil {
+	if !s.ring.Enabled() {
 		return nil, ErrNoKey
 	}
 	w := Webhook{Enabled: true}
@@ -528,13 +507,12 @@ func (s *Service) Rotate(ctx context.Context, id, via string) (*WithSecret, erro
 	if err != nil {
 		return nil, err
 	}
-	var old []byte
-	if err := s.db.QueryRowContext(ctx, `SELECT secret_enc FROM webhooks WHERE id = ?`, id).Scan(&old); err != nil {
-		return nil, err
-	}
 	now := s.now().UTC()
-	if _, err := s.db.ExecContext(ctx, `UPDATE webhooks SET secret_enc = ?, old_secret_enc = ?, old_until_ms = ?, updated_ms = ? WHERE id = ?`,
-		sealed, old, now.Add(rotateGrace).UnixMilli(), now.UnixMilli(), id); err != nil {
+	// The old secret moves in the statement itself: read first and written
+	// back, a secret-key rotation in between would leave it under the key
+	// that rotation just retired.
+	if _, err := s.db.ExecContext(ctx, `UPDATE webhooks SET old_secret_enc = secret_enc, secret_enc = ?, old_until_ms = ?, updated_ms = ? WHERE id = ?`,
+		sealed, now.Add(rotateGrace).UnixMilli(), now.UnixMilli(), id); err != nil {
 		return nil, fmt.Errorf("rotating webhook secret: %w", err)
 	}
 	s.record(ctx, w, "webhook.rotate", via, "the old secret also signs until "+now.Add(rotateGrace).Format(time.RFC3339))

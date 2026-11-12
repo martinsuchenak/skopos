@@ -16,6 +16,13 @@ import (
 //	wrapper:<name>:<hash>    a wrapper around the run (the hash covers its argv)
 //	sandbox:<hash>           Claude Code's own sandbox, on through stage settings
 //	runner:<kind>            a runner whose verified lockdown is a sandbox (codex)
+//	none:<why>               the worker cannot run this stage with this runner:
+//	                         the wrapper the workspace's config asks for is not
+//	                         usable on it (none:wrapper), or the stage is given
+//	                         capabilities and nothing contains it there
+//	                         (none:uncontained), or the workspace's stage
+//	                         blocks cannot be used on it (none:config). No
+//	                         run is handed out for it.
 //
 // A rule asks for one of two properties, or names an executor:
 //
@@ -47,7 +54,43 @@ const (
 	prefixWrapper   = "wrapper:"
 	prefixSandbox   = "sandbox:"
 	prefixRunnerBox = "runner:"
+	prefixNone      = "none:"
 )
+
+// Reasons a worker gives for an executor it cannot offer.
+const (
+	// NoneWrapper: the workspace's config wraps this runner's runs of the
+	// stage in a wrapper the worker cannot use (not defined, its check
+	// fails there, or it needs a variable the worker does not declare).
+	NoneWrapper = "wrapper"
+	// NoneUncontained: the stage is given capabilities (tools, env,
+	// settings) and nothing contains its runs on the worker.
+	NoneUncontained = "uncontained"
+	// NoneConfig: the workspace's stage blocks on the server cannot be
+	// used on the worker at all (they name a variable it does not declare,
+	// or hold something it refuses).
+	NoneConfig = "config"
+)
+
+// NoExecutor is what a worker reports where it cannot run a stage with a
+// runner at all; why is one of the None reasons.
+func NoExecutor(why string) string { return prefixNone + why }
+
+// Unavailable reports an executor id that says the worker cannot run there.
+func Unavailable(executor string) bool { return strings.HasPrefix(executor, prefixNone) }
+
+// UnavailableReason says in words why an unavailable executor is one.
+func UnavailableReason(executor string) string {
+	switch strings.TrimPrefix(executor, prefixNone) {
+	case NoneWrapper:
+		return "the wrapper the workspace's config asks for is not usable there"
+	case NoneUncontained:
+		return "the stage is given capabilities and nothing contains its runs there"
+	case NoneConfig:
+		return "the workspace's stage blocks cannot be used there"
+	}
+	return "it reports that it cannot run there (" + executor + ")"
+}
 
 // HostExecutor is the executor of a run on a host the worker declares to
 // be a container.
@@ -78,8 +121,12 @@ func Contained(executor string) bool {
 
 // ExecutorSatisfies reports whether an executor meets a rule's requirement.
 // An empty requirement accepts any executor, local and unreported included;
-// any other requirement is not met by an unreported executor ("").
+// any other requirement is not met by an unreported executor (""). An
+// executor the worker cannot offer (none:…) meets nothing.
 func ExecutorSatisfies(requirement, executor string) bool {
+	if Unavailable(executor) {
+		return false
+	}
 	switch requirement {
 	case "":
 		return true
@@ -97,7 +144,7 @@ func KnownExecutor(id string) bool {
 	if id == ExecutorLocal {
 		return true
 	}
-	for _, p := range []string{prefixHost, prefixWrapper, prefixSandbox, prefixRunnerBox} {
+	for _, p := range []string{prefixHost, prefixWrapper, prefixSandbox, prefixRunnerBox, prefixNone} {
 		if strings.HasPrefix(id, p) && len(id) > len(p) {
 			return true
 		}

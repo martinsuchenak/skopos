@@ -1,7 +1,7 @@
 // Package fleetfile is the one-file form of everything the server holds
 // about how runs are configured (tmp/central-config — design.md, phase 2c):
-// runner definitions, groups, runner policies, pipeline settings and
-// workspace config. `skopos config export` writes it, `skopos config apply`
+// runner and wrapper definitions, groups, runner policies, pipeline
+// settings and workspace config (each stage's capabilities among it). `skopos config export` writes it, `skopos config apply`
 // makes the server match it, and `--plan` lists what an apply would change —
 // what the reviewer of the pull request reads.
 //
@@ -9,13 +9,22 @@
 //   - a workspace or group in the file gets exactly the policy, pipeline and
 //     config the file gives it; a section left out is cleared;
 //   - `[fleet]`, when present, states the ceiling and the default policy;
-//   - `[runners]`, when present, is the full set of runner definitions.
+//   - `[runners]`, when present, is the full set of runner definitions;
+//   - `[wrappers]`, when present, is the full set of wrapper definitions;
+//   - `[mcp]`, when present, is the full set of MCP server definitions.
 //
-// A workspace or group the file does not list, and a `[fleet]` or
-// `[runners]` section it does not have, are left as they are.
+// A workspace or group the file does not list, and a `[fleet]`,
+// `[runners]`, `[wrappers]` or `[mcp]` section it does not have, are left
+// as they are.
+//
+// The file never holds a secret: an MCP server's definition names its
+// secrets (${secret:NAME}), and their values are set apart (`skopos
+// mcp-server set-secret`). Applying a definition keeps the values stored
+// for the secrets it still names.
 package fleetfile
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -44,9 +53,15 @@ type Document struct {
 	Fleet *FleetDoc `json:"fleet,omitempty" toml:"fleet,omitempty"`
 	// Runners: nil = the file has no [runners] section (the server's
 	// definitions stay); otherwise the full set.
-	Runners    map[string]wsconfig.RunnerDef `json:"runners" toml:"runners,omitempty"`
-	Groups     map[string]*GroupDoc          `json:"groups,omitempty" toml:"groups,omitempty"`
-	Workspaces map[string]*OwnerDoc          `json:"workspaces,omitempty" toml:"workspaces,omitempty"`
+	Runners map[string]wsconfig.RunnerDef `json:"runners" toml:"runners,omitempty"`
+	// Wrappers: nil = the file has no [wrappers] section (the server's
+	// definitions stay); otherwise the full set.
+	Wrappers map[string]wsconfig.WrapperDef `json:"wrappers" toml:"wrappers,omitempty"`
+	// MCP: nil = the file has no [mcp] section (the server's definitions
+	// stay); otherwise the full set of MCP server definitions.
+	MCP        map[string]wsconfig.MCPServerDef `json:"mcp" toml:"mcp,omitempty"`
+	Groups     map[string]*GroupDoc             `json:"groups,omitempty" toml:"groups,omitempty"`
+	Workspaces map[string]*OwnerDoc             `json:"workspaces,omitempty" toml:"workspaces,omitempty"`
 }
 
 // FleetDoc states the fleet's two policies; one left out is cleared.
@@ -210,13 +225,29 @@ func (s *Service) Export(ctx context.Context) (*Document, error) {
 		return nil, err
 	}
 	sys := system(ctx)
-	doc := &Document{Runners: map[string]wsconfig.RunnerDef{}, Fleet: &FleetDoc{}}
+	doc := &Document{Runners: map[string]wsconfig.RunnerDef{}, Wrappers: map[string]wsconfig.WrapperDef{}, Fleet: &FleetDoc{}}
 	runners, err := s.config.Runners(sys)
 	if err != nil {
 		return nil, err
 	}
 	for _, r := range runners {
 		doc.Runners[r.Name] = r.RunnerDef
+	}
+	wrappers, err := s.config.Wrappers(sys)
+	if err != nil {
+		return nil, err
+	}
+	for _, w := range wrappers {
+		doc.Wrappers[w.Name] = w.WrapperDef
+	}
+	// The definitions only: which secrets each names, never a value.
+	doc.MCP = map[string]wsconfig.MCPServerDef{}
+	servers, err := s.config.MCPServers(sys)
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range servers {
+		doc.MCP[m.Name] = m.MCPServerDef
 	}
 	for kind, dst := range map[string]**policy.Policy{pipeline.KindFleetCeiling: &doc.Fleet.Ceiling, pipeline.KindFleetDefault: &doc.Fleet.Default} {
 		v, err := s.pipeline.GetPolicy(sys, kind, "")
@@ -309,6 +340,14 @@ func (s *Service) Apply(ctx context.Context, in Input) (*Result, error) {
 	}
 	if len(in.FileHash) > 128 || len(in.Commit) > 128 {
 		return nil, fmt.Errorf("%w: file_hash and commit are at most 128 characters", ErrInvalid)
+	}
+	if in.Document.Wrappers != nil {
+		// The file states the full set of wrappers: every config in it is
+		// checked against the set it leaves behind, not the stored one.
+		ctx = wsconfig.WithWrapperSet(ctx, sortedKeys(in.Document.Wrappers))
+	}
+	if in.Document.MCP != nil {
+		ctx = wsconfig.WithMCPSet(ctx, in.Document.MCP)
 	}
 	steps, unlisted, err := s.steps(ctx, in)
 	if err != nil {
@@ -457,6 +496,89 @@ func (s *Service) steps(ctx context.Context, in Input) ([]step, []string, error)
 					_, err := s.config.DeleteRunner(ctx, r.Name, audit.ViaApply)
 					return "", err
 				}})
+		}
+	}
+
+	// Wrappers the file defines come before the configs that name them;
+	// the ones it drops go last, after those configs have changed.
+	var dropWrappers []wsconfig.WrapperView
+	if doc.Wrappers != nil {
+		have, err := s.config.Wrappers(sys)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, name := range sortedKeys(doc.Wrappers) {
+			def := doc.Wrappers[name]
+			def.Name = name
+			out = append(out, step{kind: "wrapper", owner: "wrapper:" + name,
+				plan: func(ctx context.Context) (string, string, []string, error) {
+					action, err := s.config.PlanWrapper(ctx, def)
+					return action, describeWrapper(def), nil, err
+				},
+				run: func(ctx context.Context) (string, error) {
+					v, _, err := s.config.SetWrapper(ctx, def, audit.ViaApply)
+					if err != nil {
+						return "", err
+					}
+					return v.Rev, nil
+				}})
+		}
+		for _, w := range have {
+			if _, keep := doc.Wrappers[w.Name]; !keep {
+				dropWrappers = append(dropWrappers, w)
+			}
+		}
+	}
+
+	// MCP servers, like wrappers: defined before the configs that name
+	// them, dropped after.
+	var dropMCP []wsconfig.MCPServerView
+	if doc.MCP != nil {
+		have, err := s.config.MCPServers(sys)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, name := range sortedKeys(doc.MCP) {
+			def := doc.MCP[name]
+			def.Name = name
+			out = append(out, step{kind: "mcp", owner: "mcp:" + name,
+				plan: func(ctx context.Context) (string, string, []string, error) {
+					action, err := s.config.PlanMCPServer(ctx, def)
+					if err != nil || action == "" {
+						return action, "", nil, err
+					}
+					// A secret the definition names and the server has no
+					// value for: said in the plan, since the file cannot
+					// carry it.
+					var warnings []string
+					unset := def.SecretNames()
+					for _, m := range have {
+						if m.Name != name {
+							continue
+						}
+						for _, st := range m.Secrets {
+							if st.Set {
+								unset = slices.DeleteFunc(unset, func(n string) bool { return n == st.Name })
+							}
+						}
+					}
+					if len(unset) > 0 {
+						warnings = []string{"no value is stored for secret " + strings.Join(unset, ", ") + ": set it with `skopos mcp-server set-secret " + name + " <secret>`; until then runs go without this server"}
+					}
+					return action, describeMCP(def), warnings, nil
+				},
+				run: func(ctx context.Context) (string, error) {
+					v, _, err := s.config.SetMCPServer(ctx, def, audit.ViaApply)
+					if err != nil {
+						return "", err
+					}
+					return v.Rev, nil
+				}})
+		}
+		for _, m := range have {
+			if _, keep := doc.MCP[m.Name]; !keep {
+				dropMCP = append(dropMCP, m)
+			}
 		}
 	}
 
@@ -664,6 +786,99 @@ func (s *Service) steps(ctx context.Context, in Input) ([]step, []string, error)
 			}})
 	}
 
+	// Wrappers the file drops. The configs the file lists were checked
+	// against the file's own set; what still names a dropped wrapper is a
+	// workspace or group the file does not list.
+	if len(dropWrappers) > 0 {
+		users, err := s.config.WrapperUsers(sys)
+		if err != nil {
+			return nil, nil, err
+		}
+		listed := map[string]bool{}
+		for _, id := range sortedKeys(doc.Workspaces) {
+			listed["workspace:"+id] = true
+		}
+		groupName := map[string]string{}
+		for _, g := range groups {
+			groupName["group:"+g.ID] = "group:" + g.Name
+			if _, ok := doc.Groups[g.Name]; ok {
+				listed["group:"+g.ID] = true
+			}
+		}
+		for _, w := range dropWrappers {
+			var still []string
+			for _, owner := range users[w.Name] {
+				if !listed[owner] {
+					still = append(still, cmp.Or(groupName[owner], owner))
+				}
+			}
+			out = append(out, step{kind: "wrapper", owner: "wrapper:" + w.Name,
+				plan: func(ctx context.Context) (string, string, []string, error) {
+					if err := auth.RequireFleetAdmin(ctx); err != nil {
+						return "", "", nil, err
+					}
+					if len(still) > 0 && !in.Force {
+						return "", "", nil, fmt.Errorf("%w: the file drops wrapper %s, and the stage blocks of %s (not in the file) name it: runs their rules match would stop. Keep the wrapper, change those, or force the apply (--force)", ErrInvalid, w.Name, strings.Join(still, ", "))
+					}
+					var warnings []string
+					if len(still) > 0 {
+						warnings = []string{"still named by " + strings.Join(still, ", ") + ": runs their rules match stop until the rule goes"}
+					}
+					return "delete", "", warnings, nil
+				},
+				run: func(ctx context.Context) (string, error) {
+					_, err := s.config.DeleteWrapper(ctx, w.Name, audit.ViaApply, true)
+					return "", err
+				}})
+		}
+	}
+
+	// MCP servers the file drops, the same way: what still gives its runs
+	// a dropped server is a workspace or group the file does not list.
+	if len(dropMCP) > 0 {
+		users, err := s.config.MCPUsers(sys)
+		if err != nil {
+			return nil, nil, err
+		}
+		listed := map[string]bool{}
+		for _, id := range sortedKeys(doc.Workspaces) {
+			listed["workspace:"+id] = true
+		}
+		groupName := map[string]string{}
+		for _, g := range groups {
+			groupName["group:"+g.ID] = "group:" + g.Name
+			if _, ok := doc.Groups[g.Name]; ok {
+				listed["group:"+g.ID] = true
+			}
+		}
+		for _, m := range dropMCP {
+			var still []string
+			for _, owner := range users[m.Name] {
+				if !listed[owner] {
+					still = append(still, cmp.Or(groupName[owner], owner))
+				}
+			}
+			out = append(out, step{kind: "mcp", owner: "mcp:" + m.Name,
+				plan: func(ctx context.Context) (string, string, []string, error) {
+					if err := auth.RequireFleetAdmin(ctx); err != nil {
+						return "", "", nil, err
+					}
+					if len(still) > 0 && !in.Force {
+						return "", "", nil, fmt.Errorf("%w: the file drops MCP server %s, and the config of %s (not in the file) gives its runs that server. Keep it, change those, or force the apply (--force)", ErrInvalid, m.Name, strings.Join(still, ", "))
+					}
+					warnings := []string{"its stored secrets are deleted with it"}
+					if len(still) > 0 {
+						warnings = append(warnings, "still given to the runs of "+strings.Join(still, ", ")+": they go without it")
+					}
+					return "delete", "", warnings, nil
+				},
+				run: func(ctx context.Context) (string, error) {
+					_, err := s.config.DeleteMCPServer(ctx, m.Name, audit.ViaApply, true)
+					return "", err
+				}})
+		}
+	}
+
 	// What has settings on the server and is not in the file.
 	// Only what the caller may know of: groups for a key that administers
 	// the fleet, workspaces in the key's scope.
@@ -717,6 +932,33 @@ func configCleared(kind string) string {
 		return "the workspace is no longer managed"
 	}
 	return ""
+}
+
+// describeMCP renders an MCP server definition for a plan line: it holds
+// secret names, never values.
+func describeMCP(d wsconfig.MCPServerDef) string {
+	s := d.Type + " " + d.URL
+	if d.Type == wsconfig.MCPCommand {
+		s = "command " + strings.Join(d.Command, " ")
+	}
+	if names := d.SecretNames(); len(names) > 0 {
+		s += "; secrets " + strings.Join(names, ", ")
+	}
+	if len(s) > 600 {
+		s = s[:600] + "…"
+	}
+	return s
+}
+
+func describeWrapper(d wsconfig.WrapperDef) string {
+	s := "argv " + strings.Join(d.Argv, " ")
+	if len(d.Check) > 0 {
+		s += "; check " + strings.Join(d.Check, " ")
+	}
+	if len(s) > 600 {
+		s = s[:600] + "…"
+	}
+	return s
 }
 
 func describeRunner(d wsconfig.RunnerDef) string {

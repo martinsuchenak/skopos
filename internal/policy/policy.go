@@ -70,8 +70,12 @@ type Facts struct {
 }
 
 // CanRun reports whether the runner can run stage at all (a read-only
-// runner cannot implement).
+// runner cannot implement), and — when the executor for the case at hand is
+// filled in — whether the worker can run it there (executor none:…).
 func (f Facts) CanRun(stage string) bool {
+	if Unavailable(f.Executor) {
+		return false
+	}
 	if len(f.Stages) == 0 {
 		return true
 	}

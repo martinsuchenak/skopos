@@ -606,6 +606,16 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs func(workspace
 			return nil, err
 		}
 		for _, r := range own {
+			// A run is handed back to "its" worker only when this caller
+			// may have it: the worker id is the caller's word, so a second
+			// key polling under the same id (a copied worker config) must
+			// not receive a run — and its credentials — of a workspace
+			// outside its own scope, nor may a worker whose release cannot
+			// take what the workspace needs. Such a run is left alone: it
+			// ages into a takeover like any run whose owner is gone.
+			if in.mayTake != nil && !in.mayTake(r.WorkspaceID) {
+				continue
+			}
 			d := decideResume(r, prefs(r.WorkspaceID), offer)
 			if d.ok {
 				cand, chosen = r, d
@@ -779,6 +789,18 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs func(workspace
 // the policy: it becomes a branch takeover any allowed worker can claim. A
 // runner the server had picked is forgotten, so the next worker's own is
 // picked. A no-op for a run already released.
+// ReleaseClaim gives a run this claim just took back to the queue of
+// takeovers, before anything was handed to the worker: what the run needs
+// turned out to be something the claiming worker cannot do.
+func (s *Storage) ReleaseClaim(ctx context.Context, id string, attempt int, now time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE runs SET status = ?, resume_kind = ?, resume_after = '', lease_token_hash = '',
+			runner = CASE WHEN runner_picked = 1 THEN '' ELSE runner END, runner_picked = 0, updated_at = ?
+		WHERE id = ? AND attempt = ? AND status = ?`,
+		string(StatusInterrupted), ResumeBranch, formatTime(now), id, attempt, string(StatusClaimed))
+	return err
+}
+
 func releaseForTakeover(ctx context.Context, tx *sql.Tx, id string, now time.Time) error {
 	_, err := tx.ExecContext(ctx, `
 		UPDATE runs SET status = ?, resume_kind = ?, resume_after = '',
