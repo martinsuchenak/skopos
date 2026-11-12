@@ -10,7 +10,7 @@ Two layers: MCP (rich voluntary reporting) + hooks (automatic lifecycle reportin
 
 > **Quick install:** `skopos install --agent claude-code [--url ...] [--api-key "$SKOPOS_API_KEY"]` does Steps 1–2 for you: it merges the MCP entry into `~/.claude.json` (user scope; `--scope project` writes `.mcp.json` instead — Claude Code does not read `mcpServers` from `settings.json`), installs the hook suite into `~/.claude/hooks/` and registers it in `~/.claude/settings.json`, writes the `/skopos` (code exploration) and `/skopos-report` commands, and manages the behavioral block in `~/.claude/CLAUDE.md` between `<!-- skopos:begin -->` / `<!-- skopos:end -->` markers. Idempotent; backs up existing config. The manual steps below are the fallback.
 
-> **Scoped keys:** prefer minting a per-machine key with `skopos key create --workspace <id>` over sharing the root key — see [concepts/api-keys.md](../concepts/api-keys.md).
+> **Scoped keys:** prefer minting a per-machine key with `skopos key create --workspace <id>` over sharing the root key — see [concepts/api-keys.md](../../concepts/api-keys.md).
 
 
 ## Step 1: Apply MCP + hooks config
