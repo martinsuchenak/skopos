@@ -277,23 +277,6 @@ versions follow [Semantic Versioning](https://semver.org/).
   branch once its owner stays away.
 - **Webhook secrets created or rotated on this release cannot be opened by
   an earlier release:** they name the key that sealed them.
-- **Prompts, plans and the dashboard name no person.** The agents' prompts
-  speak of the approver, and the step every plan ends with is titled
-  "Review and push". Plans written by an earlier release keep the title
-  they have. A worker older than this release does not recognise the new
-  title and shows that step to the implementer, so update the workers with
-  the server.
-- **Builds carry no build-machine paths** (`-trimpath`).
-- **No MCP tool is denied by default.** `mcp_deny` used to start with
-  eight tools of one installation's own MCP servers; it now starts empty.
-  The built-in git and network denials are unchanged. A worker that
-  relied on the default has to list those tools in `worker.mcp_deny`
-  itself, before it is updated.
-- **The planner prompt no longer points at one installation's MCP tools**
-  for an item's facts. Say where such facts come from in the repository's
-  `AGENTS.md` or in a skill.
-- **Examples in the CLI help, the dashboard and the documentation use
-  placeholder names** (`github.com/acme/*`, `router`, `JOB203345`).
 - **A run's agent may call only its stage's skopos tools:** the blackboard,
   `skopos_context`, `plan_read` and the `code_*` tools, plus
   `plan_update_item` for an implement run, on its own item's plan only.
@@ -350,6 +333,34 @@ versions follow [Semantic Versioning](https://semver.org/).
   MCP `tools/list` or `initialize` request with malformed parameters was
   answered with the full tool list and the full instructions. Calling
   those tools was still refused.
+
+## [0.32.4] — 2026-11-12
+
+### Security
+
+- **Built with Go 1.27.4** (was 1.27.3), for builds, CI, the Docker image
+  and releases. It fixes a `net/http` vulnerability (GO-2026-6859) that
+  govulncheck found reachable; govulncheck now reports none.
+
+### Changed
+
+- **Prompts, plans and the dashboard name no person.** The agents' prompts
+  speak of the approver, and the step every plan ends with is titled
+  "Review and push". Plans written by an earlier release keep the title
+  they have. A worker older than this release does not recognise the new
+  title and shows that step to the implementer, so update the workers with
+  the server.
+- **No MCP tool is denied by default.** `worker.mcp_deny` used to start
+  with eight tools of one installation's own MCP servers; it now starts
+  empty. The built-in git and network denials are unchanged. A worker that
+  relied on the default has to list those tools in `worker.mcp_deny`
+  itself, before it is updated.
+- **The planner prompt no longer points at one installation's MCP tools**
+  for an item's facts. Say where such facts come from in the repository's
+  `AGENTS.md` or in a skill.
+- **Examples in the CLI help, the dashboard and the documentation use
+  placeholder names** (`github.com/acme/*`, `JOB203345`).
+- **Builds carry no build-machine paths** (`-trimpath`).
 
 ## [0.32.3] — 2026-11-11
 

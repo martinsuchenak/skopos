@@ -2,7 +2,7 @@ version: '3'
 
 env:
   # The Go CI, the Dockerfile and releases build with (go.mod's go line).
-  GOTOOLCHAIN: go1.27.3
+  GOTOOLCHAIN: go1.27.4
 
 vars:
   APP_NAME: skopos
