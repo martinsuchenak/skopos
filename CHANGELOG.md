@@ -6,6 +6,12 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [0.32.4] — 2026-11-12
 
+### Security
+
+- **Built with Go 1.27.4** (was 1.27.3), for builds, CI, the Docker image
+  and releases. It fixes a `net/http` vulnerability (GO-2026-6859) that
+  govulncheck found reachable; govulncheck now reports none.
+
 ### Changed
 
 - **Prompts, plans and the dashboard name no person.** The agents' prompts
