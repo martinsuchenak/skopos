@@ -27,7 +27,7 @@ func TestPipelineCLI(t *testing.T) {
 	if err := db.RunMigrations(sqlDB); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sqlDB.Exec(`INSERT INTO workspaces (id, created_at) VALUES ('fx/api', ''); INSERT INTO workspace_groups (id, name, created_at) VALUES ('g1', 'globex', '')`); err != nil {
+	if _, err := sqlDB.Exec(`INSERT INTO workspaces (id, created_at) VALUES ('fabrikam/api', ''); INSERT INTO workspace_groups (id, name, created_at) VALUES ('g1', 'globex', '')`); err != nil {
 		t.Fatal(err)
 	}
 	svc := pipeline.NewService(pipeline.NewStorage(sqlDB))
@@ -55,10 +55,10 @@ func TestPipelineCLI(t *testing.T) {
 			t.Fatalf("%v: %v", args, err)
 		}
 	}
-	must(append(ws, "set", "--workspace", "fx/api", "--stage", "review", "--runners", "security@claude,tests@opencode-glm", "--policy", "majority", "--timeout", "45m")...)
-	must(append(ws, "set", "--workspace", "fx/api", "--stage", "plan", "--runners", "claude")...)
-	must(append(ws, "set", "--workspace", "fx/api", "--agents-default", "solo")...)
-	v, err := svc.Get(context.Background(), pipeline.KindWorkspace, "fx/api")
+	must(append(ws, "set", "--workspace", "fabrikam/api", "--stage", "review", "--runners", "security@claude,tests@opencode-glm", "--policy", "majority", "--timeout", "45m")...)
+	must(append(ws, "set", "--workspace", "fabrikam/api", "--stage", "plan", "--runners", "claude")...)
+	must(append(ws, "set", "--workspace", "fabrikam/api", "--agents-default", "solo")...)
+	v, err := svc.Get(context.Background(), pipeline.KindWorkspace, "fabrikam/api")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,8 +67,8 @@ func TestPipelineCLI(t *testing.T) {
 		pipeline.FormatMembers(v.Own.Stages["plan"].Members) != "claude" || v.Own.AgentsDefault != "solo" {
 		t.Fatalf("set merges one stage at a time: %+v", v.Own)
 	}
-	must(append(ws, "clear", "--workspace", "fx/api", "--stage", "review")...)
-	v, _ = svc.Get(context.Background(), pipeline.KindWorkspace, "fx/api")
+	must(append(ws, "clear", "--workspace", "fabrikam/api", "--stage", "review")...)
+	v, _ = svc.Get(context.Background(), pipeline.KindWorkspace, "fabrikam/api")
 	if _, ok := v.Own.Stages["review"]; ok || len(v.Own.Stages) != 1 || v.Own.AgentsDefault != "solo" {
 		t.Fatalf("clear removes only that stage: %+v", v.Own)
 	}
@@ -77,33 +77,33 @@ func TestPipelineCLI(t *testing.T) {
 	// every save sends the whole document, the switch included.
 	indexOn := func() bool {
 		t.Helper()
-		v, err := svc.Get(context.Background(), pipeline.KindWorkspace, "fx/api")
+		v, err := svc.Get(context.Background(), pipeline.KindWorkspace, "fabrikam/api")
 		if err != nil {
 			t.Fatal(err)
 		}
 		return v.Own.CodeIndex != nil && *v.Own.CodeIndex
 	}
-	must(append(ws, "set", "--workspace", "fx/api", "--code-index", "on")...)
+	must(append(ws, "set", "--workspace", "fabrikam/api", "--code-index", "on")...)
 	if !indexOn() {
 		t.Fatal("--code-index on must turn the index on")
 	}
-	must(append(ws, "set", "--workspace", "fx/api", "--stage", "compare", "--runners", "codex")...)
-	must(append(ws, "set", "--workspace", "fx/api", "--second-opinion", "codex")...)
-	must(append(ws, "clear", "--workspace", "fx/api", "--stage", "compare")...)
+	must(append(ws, "set", "--workspace", "fabrikam/api", "--stage", "compare", "--runners", "codex")...)
+	must(append(ws, "set", "--workspace", "fabrikam/api", "--second-opinion", "codex")...)
+	must(append(ws, "clear", "--workspace", "fabrikam/api", "--stage", "compare")...)
 	if !indexOn() {
 		t.Fatal("saving another setting must not turn the code index off")
 	}
-	must(append(ws, "set", "--workspace", "fx/api", "--code-index", "off")...)
+	must(append(ws, "set", "--workspace", "fabrikam/api", "--code-index", "off")...)
 	if indexOn() {
 		t.Fatal("--code-index off must turn the index off")
 	}
-	if err := run(append(ws, "set", "--workspace", "fx/api", "--stage", "implement", "--runners", "a,b")...); err == nil {
+	if err := run(append(ws, "set", "--workspace", "fabrikam/api", "--stage", "implement", "--runners", "a,b")...); err == nil {
 		t.Fatal("a list on implement must be refused by the server")
 	}
-	if err := run(append(ws, "set", "--workspace", "fx/api")...); err == nil {
+	if err := run(append(ws, "set", "--workspace", "fabrikam/api")...); err == nil {
 		t.Fatal("set with nothing to set must fail")
 	}
-	must(append(ws, "show", "--workspace", "fx/api")...)
+	must(append(ws, "show", "--workspace", "fabrikam/api")...)
 	must("group", "pipeline", "set", "--group", "globex", "--stage", "qa", "--runners", "claude")
 	g, err := svc.Get(context.Background(), pipeline.KindGroup, "globex")
 	if err != nil || pipeline.FormatMembers(g.Own.Stages["qa"].Members) != "claude" {

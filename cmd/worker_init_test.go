@@ -160,7 +160,7 @@ func TestWorkerInitKeepsExistingEnvFile(t *testing.T) {
 // branch, sets up the GitHub push with a draft PR, and puts the worker key
 // and the token in the env file, never in the TOML.
 func TestWorkerInitAsksAndFillsIn(t *testing.T) {
-	// A clone whose origin's default branch is PROD (like FF3).
+	// A clone whose origin's default branch is PROD, not main.
 	src := t.TempDir()
 	for _, args := range [][]string{
 		{"init", "-q", "-b", "PROD"},

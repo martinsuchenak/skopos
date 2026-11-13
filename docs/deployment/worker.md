@@ -1048,7 +1048,7 @@ server_commands = true
 
 [worker.repos."github.com/acme/shop"]
 path = "/srv/clones/shop"
-push.token_env = "FF3_PUSH_TOKEN"
+push.token_env = "REPO_PUSH_TOKEN"
 ```
 
 - **What stays in this file:** the clone's `path`, `setup_env`,
@@ -1138,7 +1138,7 @@ CACHE_DIR = "/var/cache/skopos"
 
 [worker.repos."github.com/acme/shop"]
 path = "/srv/clones/shop"
-push.token_env = "FF3_PUSH_TOKEN"
+push.token_env = "REPO_PUSH_TOKEN"
 
 [[worker.accounts]]
 name = "claude-1"

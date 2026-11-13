@@ -57,7 +57,7 @@ func TestIntegrationStageCapsAndWrappers(t *testing.T) {
 
 	// A stage block cannot name a wrapper before it exists.
 	stages := `{"config":{"stages":{
-		"plan":{"tools":["Bash(mago:*)"],"env":{"CACHE":"${CACHE_DIR}/ff3"},"wrap":[{"kind":"opencode","wrapper":"opencode-bwrap"}]},
+		"plan":{"tools":["Bash(mago:*)"],"env":{"CACHE":"${CACHE_DIR}/shop"},"wrap":[{"kind":"opencode","wrapper":"opencode-bwrap"}]},
 		"implement":{"tools":["Bash(./cli_tools/dothis:*)"],"env":{"CODECEPTION_ENV":"local"}}}}}`
 	mustDo(t, ops.req("PUT", wsPath+"/config", stages), 400, "an undefined wrapper")
 	first := mustJSON(t, root.req("PUT", "/api/fleet/wrappers/opencode-bwrap", failing), 200).(map[string]any)
@@ -98,7 +98,7 @@ func TestIntegrationStageCapsAndWrappers(t *testing.T) {
 	if got := cfg.ExecutorFor(ws, "plan", "claude"); got != "host:knot" {
 		t.Fatalf("claude: %s", got)
 	}
-	if p := cfg.StageProfile(ws, "plan"); p == nil || p.Env["CACHE"] != "/var/cache/ff3" || p.Tools[0] != "Bash(mago:*)" {
+	if p := cfg.StageProfile(ws, "plan"); p == nil || p.Env["CACHE"] != "/var/cache/shop" || p.Tools[0] != "Bash(mago:*)" {
 		t.Fatalf("the plan stage on this worker: %+v", p)
 	}
 

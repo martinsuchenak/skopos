@@ -85,7 +85,7 @@ func TestIntegrationMCPServersForRuns(t *testing.T) {
 	wc := wk.NewClient(baseURL, workerKey)
 	wc.SetServerCommands(true)
 	ctx := t.Context()
-	const secret = "fx-router-token-9f3a7c21"
+	const secret = "fabrikam-router-token-9f3a7c21"
 
 	// Definitions: the fleet's.
 	def := `{"type":"http","url":"https://router.example.com/mcp","headers":{"Authorization":"Bearer ${secret:token}"},"workspaces":["github.com/globex/*"]}`

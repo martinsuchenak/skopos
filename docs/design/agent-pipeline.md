@@ -270,7 +270,7 @@ github.com/martinsuchenak/skopos:
 | `blocked` or `failed` | Reason and the one question to answer | Retry (with an answer form) · Reject |
 | Quota pause | Which runner, and until when | None |
 
-- **`new:` with several workspaces:** `new <alias>: <what to do>`, where each workspace has a short alias (for example `ff3`, `skopos`). Plain `new:` uses the Slack user's default workspace. If it's ambiguous, the bot asks in the thread and offers the options.
+- **`new:` with several workspaces:** `new <alias>: <what to do>`, where each workspace has a short alias (for example `shop`, `skopos`). Plain `new:` uses the Slack user's default workspace. If it's ambiguous, the bot asks in the thread and offers the options.
 - **Every action is checked against the maintainer's user id** and recorded with `via: slack`. Messages carry the essentials, because dashboard links only open on the home network.
 
 ### 10. Dashboard

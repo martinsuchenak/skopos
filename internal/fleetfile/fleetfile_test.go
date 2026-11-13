@@ -110,8 +110,8 @@ provider = "zai"
 
 [groups.globex]
 description = "Globex repositories"
-workspaces = ["fx/api"]
-patterns = ["fx/*"]
+workspaces = ["fabrikam/api"]
+patterns = ["fabrikam/*"]
 
 [groups.globex.policy]
 allow = [{ provider = "anthropic" }, { provider = "openai", stages = ["second_opinion"] }]
@@ -125,17 +125,17 @@ second_opinion_runner = "codex"
 [groups.globex.pipeline.stages]
 review = { members = "security@claude-opus,tests@claude-opus", policy = "any-blocks", timeout = "30m0s" }
 
-[workspaces."fx/api"]
-[workspaces."fx/api".config]
+[workspaces."fabrikam/api"]
+[workspaces."fabrikam/api".config]
 setup = ["npm ci"]
 checks = ["npm test"]
-[workspaces."fx/api".config.push]
+[workspaces."fabrikam/api".config.push]
 kind = "github"
-remote_url = "https://github.com/fx/api.git"
+remote_url = "https://github.com/fabrikam/api.git"
 pull_request = "draft"
-[workspaces."fx/api".pipeline]
+[workspaces."fabrikam/api".pipeline]
 code_index = true
-[workspaces."fx/api".pipeline.stages]
+[workspaces."fabrikam/api".pipeline.stages]
 plan = { members = "claude-opus" }
 `
 
@@ -173,21 +173,21 @@ func TestPlanApplyExportRoundTrip(t *testing.T) {
 	}
 	want := `create runner runner:claude-opus
 create runner runner:glm
-create workspace workspace:fx/api
+create workspace workspace:fabrikam/api
 create group group:globex
 update policy fleet:default
 create policy group:globex
 create config group:globex
-create config workspace:fx/api
+create config workspace:fabrikam/api
 create pipeline group:globex
-create pipeline workspace:fx/api`
+create pipeline workspace:fabrikam/api`
 	if got := lines(plan); got != want || plan.Applied {
 		t.Fatalf("plan:\n%s\nwant:\n%s", got, want)
 	}
 	if n := len(f.sink.entries); n != 0 {
 		t.Fatalf("a plan writes nothing: %d audit events", n)
 	}
-	if eff, _ := f.config.Effective(root(), "fx/api"); eff.Managed {
+	if eff, _ := f.config.Effective(root(), "fabrikam/api"); eff.Managed {
 		t.Fatal("a plan must not manage the workspace")
 	}
 
@@ -221,7 +221,7 @@ create pipeline workspace:fx/api`
 			}
 		}
 	}
-	eff, err := f.config.Effective(root(), "fx/api")
+	eff, err := f.config.Effective(root(), "fabrikam/api")
 	if err != nil || !eff.Managed || *eff.Config.DefaultBranch != "develop" || (*eff.Config.Checks)[0] != "npm test" || eff.Config.CheckTimeout.D().Minutes() != 45 {
 		t.Fatalf("the workspace's config, with the group's under it: %+v %v", eff, err)
 	}
@@ -274,8 +274,8 @@ model = "opus"
 effort = "max"
 provider = "anthropic"
 
-[workspaces."fx/api"]
-[workspaces."fx/api".pipeline.stages]
+[workspaces."fabrikam/api"]
+[workspaces."fabrikam/api".pipeline.stages]
 plan = { members = "claude-opus" }
 `)
 	plan, err := f.svc.Apply(root(), Input{Document: next, Plan: true})
@@ -284,8 +284,8 @@ plan = { members = "claude-opus" }
 	}
 	want := `update runner runner:claude-opus
 delete runner runner:glm
-clear config workspace:fx/api
-update pipeline workspace:fx/api`
+clear config workspace:fabrikam/api
+update pipeline workspace:fabrikam/api`
 	if got := lines(plan); got != want {
 		t.Fatalf("plan:\n%s\nwant:\n%s", got, want)
 	}
@@ -295,7 +295,7 @@ update pipeline workspace:fx/api`
 	if _, err := f.svc.Apply(root(), Input{Document: next}); err != nil {
 		t.Fatal(err)
 	}
-	if eff, _ := f.config.Effective(root(), "fx/api"); eff.Managed {
+	if eff, _ := f.config.Effective(root(), "fabrikam/api"); eff.Managed {
 		t.Fatal("the workspace's config was left out: it is no longer managed")
 	}
 	// The group and the fleet default were not in the file: untouched.
@@ -321,8 +321,8 @@ func TestApplyChecksEverythingFirst(t *testing.T) {
 	f := fixture(t)
 	doc := parse(t, sample)
 	bad := "open"
-	doc.Workspaces["fx/api"].Config.Push.PullRequest = &bad
-	if _, err := f.svc.Apply(root(), Input{Document: doc}); !errors.Is(err, wsconfig.ErrInvalid) || !strings.Contains(err.Error(), "config workspace:fx/api") {
+	doc.Workspaces["fabrikam/api"].Config.Push.PullRequest = &bad
+	if _, err := f.svc.Apply(root(), Input{Document: doc}); !errors.Is(err, wsconfig.ErrInvalid) || !strings.Contains(err.Error(), "config workspace:fabrikam/api") {
 		t.Fatalf("want the bad section named: %v", err)
 	}
 	if runners, _ := f.config.Runners(root()); len(runners) != 0 {
@@ -345,11 +345,11 @@ func TestApplyPermissions(t *testing.T) {
 	if _, err := f.svc.Apply(root(), Input{Document: parse(t, sample)}); err != nil {
 		t.Fatal(err)
 	}
-	plain := auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: "k2", Workspaces: map[string]struct{}{"fx/api": {}}})
+	plain := auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: "k2", Workspaces: map[string]struct{}{"fabrikam/api": {}}})
 	if _, err := f.svc.Apply(plain, Input{Plan: true}); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("a key without the admin permission: %v", err)
 	}
-	if _, err := f.svc.Export(admin(false, "fx/api")); !errors.Is(err, auth.ErrAdminRequired) {
+	if _, err := f.svc.Export(admin(false, "fabrikam/api")); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("an export lists everything: fleet admins only (%v)", err)
 	}
 	if _, err := f.svc.Export(admin(true)); err != nil {
@@ -357,16 +357,16 @@ func TestApplyPermissions(t *testing.T) {
 	}
 	// An admin of one workspace may apply a file that changes only it …
 	one := parse(t, `
-[workspaces."fx/api".config]
+[workspaces."fabrikam/api".config]
 checks = ["npm run lint"]
-[workspaces."fx/api".pipeline]
+[workspaces."fabrikam/api".pipeline]
 code_index = true
-[workspaces."fx/api".pipeline.stages]
+[workspaces."fabrikam/api".pipeline.stages]
 plan = { members = "claude-opus" }
 `)
-	scoped := auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: "k1", Name: "ops", Admin: true, Approver: true, Workspaces: map[string]struct{}{"fx/api": {}}})
+	scoped := auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: "k1", Name: "ops", Admin: true, Approver: true, Workspaces: map[string]struct{}{"fabrikam/api": {}}})
 	res, err := f.svc.Apply(scoped, Input{Document: one})
-	if err != nil || lines(res) != "update config workspace:fx/api" {
+	if err != nil || lines(res) != "update config workspace:fabrikam/api" {
 		t.Fatalf("a workspace admin applies its workspace: %v %s", err, lines(res))
 	}
 	// … and not one that touches the fleet or another workspace.
@@ -378,7 +378,7 @@ plan = { members = "claude-opus" }
 	if _, err := f.svc.Apply(scoped, Input{Document: runners, Plan: true}); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("runner definitions are the fleet admin's: %v", err)
 	}
-	group := parse(t, "[groups.globex]\nworkspaces = [\"fx/api\", \"fx/web\"]\n")
+	group := parse(t, "[groups.globex]\nworkspaces = [\"fabrikam/api\", \"fabrikam/web\"]\n")
 	if _, err := f.svc.Apply(admin(true), Input{Document: group, Plan: true}); !errors.Is(err, auth.ErrRootRequired) {
 		t.Fatalf("a group's members are root's to change: %v", err)
 	}
@@ -395,16 +395,16 @@ func TestApplyRevealsNothingOutOfScope(t *testing.T) {
 	if _, err := f.svc.Apply(root(), Input{Document: parse(t, "[workspaces.\"secret/repo\".config]\nchecks = [\"x\"]\n")}); err != nil {
 		t.Fatal(err)
 	}
-	scoped := admin(false, "fx/api")
+	scoped := admin(false, "fabrikam/api")
 	plan, err := f.svc.Apply(scoped, Input{Plan: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(plan.Unlisted, ","); got != "workspace:fx/api" {
+	if got := strings.Join(plan.Unlisted, ","); got != "workspace:fabrikam/api" {
 		t.Fatalf("only the caller's own workspace is named: %s", got)
 	}
 	full, _ := f.svc.Apply(root(), Input{Plan: true})
-	if got := strings.Join(full.Unlisted, ","); got != "group:globex,workspace:fx/api,workspace:secret/repo" {
+	if got := strings.Join(full.Unlisted, ","); got != "group:globex,workspace:fabrikam/api,workspace:secret/repo" {
 		t.Fatalf("root sees everything unlisted: %s", got)
 	}
 	var messages []string
@@ -425,7 +425,7 @@ func TestApplyRevealsNothingOutOfScope(t *testing.T) {
 	// does not exist.
 	messages = nil
 	elsewhere := admin(false, "secret/repo")
-	for _, text := range []string{"[groups.globex]\nworkspaces = [\"fx/api\"]\n", "[groups.nosuch]\nworkspaces = [\"fx/api\"]\n"} {
+	for _, text := range []string{"[groups.globex]\nworkspaces = [\"fabrikam/api\"]\n", "[groups.nosuch]\nworkspaces = [\"fabrikam/api\"]\n"} {
 		_, err := f.svc.Apply(elsewhere, Input{Document: parse(t, text), Plan: true})
 		if !errors.Is(err, auth.ErrAdminRequired) {
 			t.Fatalf("want ErrAdminRequired, got %v", err)
@@ -455,25 +455,25 @@ func TestUnchangedPipelinesNeedNoPermission(t *testing.T) {
 		t.Fatalf("a fleet admin applies the export: %v %s", err, lines(res))
 	}
 	one := parse(t, `
-[workspaces."fx/api".config]
+[workspaces."fabrikam/api".config]
 checks = ["npm run lint"]
-[workspaces."fx/api".pipeline]
+[workspaces."fabrikam/api".pipeline]
 code_index = true
-[workspaces."fx/api".pipeline.stages]
+[workspaces."fabrikam/api".pipeline.stages]
 plan = { members = "claude-opus" }
 `)
-	res, err = f.svc.Apply(admin(false, "fx/api"), Input{Document: one})
-	if err != nil || lines(res) != "update config workspace:fx/api" {
+	res, err = f.svc.Apply(admin(false, "fabrikam/api"), Input{Document: one})
+	if err != nil || lines(res) != "update config workspace:fabrikam/api" {
 		t.Fatalf("an admin without approver, pipeline unchanged: %v %s", err, lines(res))
 	}
 	changed := parse(t, `
-[workspaces."fx/api".config]
+[workspaces."fabrikam/api".config]
 checks = ["npm run lint"]
-[workspaces."fx/api".pipeline.stages]
+[workspaces."fabrikam/api".pipeline.stages]
 plan = { members = "claude-opus" }
 review = { members = "claude-opus" }
 `)
-	if _, err := f.svc.Apply(admin(false, "fx/api"), Input{Document: changed, Plan: true}); !errors.Is(err, auth.ErrApproverRequired) {
+	if _, err := f.svc.Apply(admin(false, "fabrikam/api"), Input{Document: changed, Plan: true}); !errors.Is(err, auth.ErrApproverRequired) {
 		t.Fatalf("changing a workspace's pipeline needs the approver permission: %v", err)
 	}
 }
@@ -487,15 +487,15 @@ func TestPlanSaysWhatItCouldNotCheck(t *testing.T) {
 	if _, err := f.svc.Apply(root(), Input{Document: parse(t, sample)}); err != nil {
 		t.Fatal(err)
 	}
-	// globex already sets default_branch for fx/api.
-	clash := parse(t, "[groups.second]\nworkspaces = [\"fx/api\"]\n[groups.second.config]\ndefault_branch = \"main\"\n")
+	// globex already sets default_branch for fabrikam/api.
+	clash := parse(t, "[groups.second]\nworkspaces = [\"fabrikam/api\"]\n[groups.second.config]\ndefault_branch = \"main\"\n")
 	if _, err := f.svc.Apply(root(), Input{Document: clash, Plan: true}); !errors.Is(err, wsconfig.ErrConflict) {
 		t.Fatalf("a new group's config is checked against its members' other groups: %v", err)
 	}
 	if groups, _ := f.svc.groups.ListGroups(root()); len(groups) != 1 {
 		t.Fatalf("nothing was created: %d groups", len(groups))
 	}
-	fine := parse(t, "[groups.second]\nworkspaces = [\"fx/api\"]\n[groups.second.config]\nsetup_timeout = \"20m0s\"\n")
+	fine := parse(t, "[groups.second]\nworkspaces = [\"fabrikam/api\"]\n[groups.second.config]\nsetup_timeout = \"20m0s\"\n")
 	plan, err := f.svc.Apply(root(), Input{Document: fine, Plan: true})
 	if err != nil {
 		t.Fatal(err)
@@ -545,12 +545,12 @@ const wrapped = `
 argv = ["bwrap", "--bind", "{dir}", "{dir}"]
 check = ["bwrap", "--version"]
 
-[workspaces."fx/api".config]
+[workspaces."fabrikam/api".config]
 default_branch = "main"
-[workspaces."fx/api".config.stages.implement]
+[workspaces."fabrikam/api".config.stages.implement]
 tools = ["Bash(npm run:*)"]
 env = { NODE_ENV = "test" }
-[[workspaces."fx/api".config.stages.review.wrap]]
+[[workspaces."fabrikam/api".config.stages.review.wrap]]
 kind = "opencode"
 wrapper = "opencode-bwrap"
 `
@@ -565,14 +565,14 @@ func TestWrappersAndStageBlocksInTheFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "create wrapper wrapper:opencode-bwrap\ncreate workspace workspace:fx/api\ncreate config workspace:fx/api"
+	want := "create wrapper wrapper:opencode-bwrap\ncreate workspace workspace:fabrikam/api\ncreate config workspace:fabrikam/api"
 	if got := lines(plan); got != want {
 		t.Fatalf("plan:\n%s\nwant:\n%s", got, want)
 	}
 	if _, err := f.svc.Apply(root(), Input{Document: parse(t, wrapped)}); err != nil {
 		t.Fatal(err)
 	}
-	eff, err := f.config.Effective(root(), "fx/api")
+	eff, err := f.config.Effective(root(), "fabrikam/api")
 	if err != nil || eff.Config.Stages["implement"].Env["NODE_ENV"] != "test" || eff.Config.Stages["review"].Wrap[0].Wrapper != "opencode-bwrap" {
 		t.Fatalf("the stage blocks: %+v %v", eff, err)
 	}
@@ -607,7 +607,7 @@ func TestWrappersAndStageBlocksInTheFile(t *testing.T) {
 	}
 	// The same drop, with the workspace that names it not in the file.
 	only := Document{Wrappers: map[string]wsconfig.WrapperDef{}}
-	if _, err := f.svc.Apply(root(), Input{Document: only, Plan: true}); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "workspace:fx/api") {
+	if _, err := f.svc.Apply(root(), Input{Document: only, Plan: true}); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "workspace:fabrikam/api") {
 		t.Fatalf("dropping a wrapper an unlisted workspace names: %v", err)
 	}
 	forced, err := f.svc.Apply(root(), Input{Document: only, Plan: true, Force: true})
@@ -615,9 +615,9 @@ func TestWrappersAndStageBlocksInTheFile(t *testing.T) {
 		t.Fatalf("forced: %v %s", err, lines(forced))
 	}
 	// Dropping the rule and the wrapper together: the config changes first.
-	without := parse(t, "[wrappers]\n[workspaces.\"fx/api\".config]\ndefault_branch = \"main\"\n")
+	without := parse(t, "[wrappers]\n[workspaces.\"fabrikam/api\".config]\ndefault_branch = \"main\"\n")
 	res, err := f.svc.Apply(root(), Input{Document: without})
-	if err != nil || lines(res) != "update config workspace:fx/api\ndelete wrapper wrapper:opencode-bwrap" {
+	if err != nil || lines(res) != "update config workspace:fabrikam/api\ndelete wrapper wrapper:opencode-bwrap" {
 		t.Fatalf("apply: %v\n%s", err, lines(res))
 	}
 	if fleet, _ := f.config.Fleet(root()); len(fleet.Wrappers) != 0 {
@@ -627,11 +627,11 @@ func TestWrappersAndStageBlocksInTheFile(t *testing.T) {
 	if _, err := f.svc.Apply(root(), Input{Document: parse(t, wrapped)}); err != nil {
 		t.Fatal(err)
 	}
-	if res, err := f.svc.Apply(root(), Input{Document: parse(t, "[workspaces.\"fx/api\".config]\ndefault_branch = \"main\"\n"), Plan: true}); err != nil || lines(res) != "update config workspace:fx/api" {
+	if res, err := f.svc.Apply(root(), Input{Document: parse(t, "[workspaces.\"fabrikam/api\".config]\ndefault_branch = \"main\"\n"), Plan: true}); err != nil || lines(res) != "update config workspace:fabrikam/api" {
 		t.Fatalf("no [wrappers] section: %v\n%s", err, lines(res))
 	}
 	// Only a fleet admin defines wrappers.
-	if _, err := f.svc.Apply(admin(false, "fx/api"), Input{Document: parse(t, wrapped), Plan: true}); !errors.Is(err, auth.ErrAdminRequired) {
+	if _, err := f.svc.Apply(admin(false, "fabrikam/api"), Input{Document: parse(t, wrapped), Plan: true}); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("a workspace admin changed a wrapper: %v", err)
 	}
 }
@@ -640,7 +640,7 @@ const withMCP = `
 [mcp.router]
 type = "http"
 url = "https://router.example.com/mcp"
-workspaces = ["fx/*"]
+workspaces = ["fabrikam/*"]
 [mcp.router.headers]
 Authorization = "Bearer ${secret:token}"
 
@@ -648,7 +648,7 @@ Authorization = "Bearer ${secret:token}"
 type = "command"
 command = ["${TOOLS_DIR}/scripts", "mcp"]
 
-[workspaces."fx/api".config]
+[workspaces."fabrikam/api".config]
 mcp = ["router", "scripts"]
 mcp_servers = ["mcp__router", "mcp__scripts__run"]
 `
@@ -662,7 +662,7 @@ func TestMCPServersInTheFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "create mcp mcp:router\ncreate mcp mcp:scripts\ncreate workspace workspace:fx/api\ncreate config workspace:fx/api"
+	want := "create mcp mcp:router\ncreate mcp mcp:scripts\ncreate workspace workspace:fabrikam/api\ncreate config workspace:fabrikam/api"
 	if got := lines(plan); got != want {
 		t.Fatalf("plan:\n%s\nwant:\n%s", got, want)
 	}
@@ -687,14 +687,14 @@ func TestMCPServersInTheFile(t *testing.T) {
 	if res, err := f.svc.Apply(root(), Input{Document: parse(t, changed)}); err != nil || lines(res) != "update mcp mcp:router" || len(res.Changes[0].Warnings) != 0 {
 		t.Fatalf("a changed definition: %v %s %v", err, lines(res), res.Changes)
 	}
-	mcp, err := f.config.RunMCP(root(), "fx/api", true)
+	mcp, err := f.config.RunMCP(root(), "fabrikam/api", true)
 	if err != nil || len(mcp.Servers) != 2 || !strings.Contains(string(mcp.Servers["router"]), value) || !strings.Contains(string(mcp.Servers["router"]), "/mcp/v2") {
 		t.Fatalf("the run's servers: %+v %v", mcp, err)
 	}
 	// A config for a workspace the server is not for is refused, also when
 	// the same file narrows the server.
-	narrowed := strings.Replace(changed, `workspaces = ["fx/*"]`, `workspaces = ["other/*"]`, 1)
-	if _, err := f.svc.Apply(root(), Input{Document: parse(t, narrowed), Plan: true}); !errors.Is(err, wsconfig.ErrInvalid) || !strings.Contains(err.Error(), "may not be given to the runs of fx/api") {
+	narrowed := strings.Replace(changed, `workspaces = ["fabrikam/*"]`, `workspaces = ["other/*"]`, 1)
+	if _, err := f.svc.Apply(root(), Input{Document: parse(t, narrowed), Plan: true}); !errors.Is(err, wsconfig.ErrInvalid) || !strings.Contains(err.Error(), "may not be given to the runs of fabrikam/api") {
 		t.Fatalf("a file that gives a workspace a server it narrows away from it: %v", err)
 	}
 
@@ -731,14 +731,14 @@ func TestMCPServersInTheFile(t *testing.T) {
 	}
 	// Dropping a server a workspace outside the file still uses.
 	only := Document{MCP: map[string]wsconfig.MCPServerDef{"scripts": exported.MCP["scripts"]}}
-	if _, err := f.svc.Apply(root(), Input{Document: only, Plan: true}); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "workspace:fx/api") {
+	if _, err := f.svc.Apply(root(), Input{Document: only, Plan: true}); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "workspace:fabrikam/api") {
 		t.Fatalf("dropping a server an unlisted workspace uses: %v", err)
 	}
 	// Dropping it together with its use: the config changes first, and the
 	// stored secret goes with the definition.
-	without := parse(t, "[mcp]\n[workspaces.\"fx/api\".config]\nmcp = []\n")
+	without := parse(t, "[mcp]\n[workspaces.\"fabrikam/api\".config]\nmcp = []\n")
 	res, err := f.svc.Apply(root(), Input{Document: without})
-	if err != nil || lines(res) != "update config workspace:fx/api\ndelete mcp mcp:router\ndelete mcp mcp:scripts" {
+	if err != nil || lines(res) != "update config workspace:fabrikam/api\ndelete mcp mcp:router\ndelete mcp mcp:scripts" {
 		t.Fatalf("apply: %v\n%s", err, lines(res))
 	}
 	if _, _, err := f.config.SetMCPServer(root(), exported.MCP["router"], "cli"); err != nil {
@@ -748,7 +748,7 @@ func TestMCPServersInTheFile(t *testing.T) {
 		t.Fatalf("a deleted server's secret came back with a new definition: %+v", views)
 	}
 	// Only a fleet admin defines MCP servers.
-	if _, err := f.svc.Apply(admin(false, "fx/api"), Input{Document: parse(t, withMCP), Plan: true}); !errors.Is(err, auth.ErrAdminRequired) {
+	if _, err := f.svc.Apply(admin(false, "fabrikam/api"), Input{Document: parse(t, withMCP), Plan: true}); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("a workspace admin changed an MCP server: %v", err)
 	}
 }

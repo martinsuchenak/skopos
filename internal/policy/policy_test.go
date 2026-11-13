@@ -353,14 +353,14 @@ func TestResolveExecutor(t *testing.T) {
 	facts := []ExecutorFact{
 		{Executor: "host:knot"},
 		{Runner: "codex", Executor: "runner:codex"},
-		{Stage: "implement", Executor: "wrapper:ff3:aaaa"},
+		{Stage: "implement", Executor: "wrapper:box:aaaa"},
 		{Stage: "review", Runner: "claude", Executor: "sandbox:bbbb"},
 	}
 	for _, c := range []struct{ stage, runner, want string }{
 		{"plan", "claude", "host:knot"},
 		{"plan", "codex", "runner:codex"},
-		{"implement", "claude", "wrapper:ff3:aaaa"},
-		{"implement", "codex", "wrapper:ff3:aaaa"}, // a stage's wrapper wraps every runner
+		{"implement", "claude", "wrapper:box:aaaa"},
+		{"implement", "codex", "wrapper:box:aaaa"}, // a stage's wrapper wraps every runner
 		{"review", "claude", "sandbox:bbbb"},
 		{"review", "codex", "runner:codex"},
 		{"review", "opencode-glm", "host:knot"},

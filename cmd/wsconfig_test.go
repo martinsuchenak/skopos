@@ -87,19 +87,19 @@ mcp_config = "/etc/mcp.json"
 [worker.runner_config.glm]
 kind = "opencode"
 
-[worker.repos."fx/api"]
+[worker.repos."fabrikam/api"]
 path = "/clones/api"
 default_branch = "develop"
 setup = ["npm ci"]
 checks = ["npm test"]
 setup_env = { NPM_TOKEN = "${NPM_TOKEN}" }
-[worker.repos."fx/api".push]
+[worker.repos."fabrikam/api".push]
 kind = "github"
-remote_url = "https://github.com/fx/api.git"
+remote_url = "https://github.com/fabrikam/api.git"
 token_env = "API_PUSH_TOKEN"
 pull_request = "draft"
 
-[worker.repos."fx/web"]
+[worker.repos."fabrikam/web"]
 path = "/clones/web"
 checks = ["make test"]
 
@@ -136,7 +136,7 @@ func TestProposeImport(t *testing.T) {
 	if len(p.conflicts) != 0 || len(p.workspaces) != 2 {
 		t.Fatalf("proposal: %+v", p)
 	}
-	api := p.workspaces["fx/api"]
+	api := p.workspaces["fabrikam/api"]
 	got := strings.Join(api.FieldNames(), ",")
 	if got != "checks,default_branch,mcp_servers,plan_timeout,push.kind,push.pull_request,push.remote_url,setup" {
 		t.Fatalf("the fields the file sets, and nothing of the machine's own: %s", got)
@@ -144,7 +144,7 @@ func TestProposeImport(t *testing.T) {
 	if raw := string(wsconfig.Canonical(api)); strings.Contains(raw, "/clones") || strings.Contains(raw, "TOKEN") {
 		t.Fatalf("paths and token variables stay in the worker's file: %s", raw)
 	}
-	if web := p.workspaces["fx/web"]; web.Push != nil || web.DefaultBranch != nil || (*web.Checks)[0] != "make test" {
+	if web := p.workspaces["fabrikam/web"]; web.Push != nil || web.DefaultBranch != nil || (*web.Checks)[0] != "make test" {
 		t.Fatalf("a field the file leaves out is left out: %s", wsconfig.Canonical(web))
 	}
 	claude, glm := p.runners["claude"], p.runners["glm"]
@@ -166,17 +166,17 @@ func TestProposeImport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.conflicts) != 2 || !strings.Contains(strings.Join(p.conflicts, "\n"), "workspace fx/api") || !strings.Contains(strings.Join(p.conflicts, "\n"), "differ in checks") ||
+	if len(p.conflicts) != 2 || !strings.Contains(strings.Join(p.conflicts, "\n"), "workspace fabrikam/api") || !strings.Contains(strings.Join(p.conflicts, "\n"), "differ in checks") ||
 		!strings.Contains(strings.Join(p.conflicts, "\n"), "runner claude") {
 		t.Fatalf("conflicts: %v", p.conflicts)
 	}
-	if _, ok := p.workspaces["fx/api"]; ok {
+	if _, ok := p.workspaces["fabrikam/api"]; ok {
 		t.Fatal("a workspace the files disagree about is not proposed")
 	}
 	if _, ok := p.runners["claude"]; ok {
 		t.Fatal("a runner the files disagree about is not proposed")
 	}
-	if _, ok := p.workspaces["fx/web"]; !ok || p.runners["glm"].Kind != "opencode" {
+	if _, ok := p.workspaces["fabrikam/web"]; !ok || p.runners["glm"].Kind != "opencode" {
 		t.Fatal("what the files agree about is proposed")
 	}
 }
@@ -266,22 +266,22 @@ func TestProposeImportStageBlocks(t *testing.T) {
 	text := `[worker]
 id = "worker-knot"
 
-[worker.profiles.ff3.implement]
+[worker.profiles.shop.implement]
 wrapper = ["env", "SKOPOS_CONTAINED_BY=knot"]
 tools = ["Bash(./cli_tools/dothis:*)", "Bash(mago:*)"]
-env = { CODECEPTION_ENV = "local", CACHE = "${CACHE_DIR}/ff3" }
+env = { CODECEPTION_ENV = "local", CACHE = "${CACHE_DIR}/shop" }
 
-[worker.profiles.ff3.review]
+[worker.profiles.shop.review]
 settings = '{"sandbox":{"enabled":true},"permissions":{"allow":["Bash(mago:*)"]}}'
 
-[worker.profiles.ff3.plan]
+[worker.profiles.shop.plan]
 settings = '{"sandbox":{"enabled":true}}'
 
-[worker.repos."fx/ff3"]
-path = "/srv/clones/ff3"
-profile = "ff3"
+[worker.repos."globex/shop"]
+path = "/srv/clones/shop"
+profile = "shop"
 
-[worker.repos."fx/ff3".stages.qa]
+[worker.repos."globex/shop".stages.qa]
 tools = ["Bash(npm run:*)"]
 wrapper = ["bwrap", "{dir}"]
 
@@ -296,12 +296,12 @@ runner = "claude"
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, ok := prop.workspaces["fx/ff3"]
+	c, ok := prop.workspaces["globex/shop"]
 	if !ok {
 		t.Fatalf("the workspace was not proposed: %+v", prop)
 	}
 	impl, review, qa := c.Stages["implement"], c.Stages["review"], c.Stages["qa"]
-	if impl == nil || len(impl.Tools) != 2 || impl.Env["CODECEPTION_ENV"] != "local" || impl.Env["CACHE"] != "${CACHE_DIR}/ff3" {
+	if impl == nil || len(impl.Tools) != 2 || impl.Env["CODECEPTION_ENV"] != "local" || impl.Env["CACHE"] != "${CACHE_DIR}/shop" {
 		t.Fatalf("implement: %+v", impl)
 	}
 	// The sandbox block stays the worker's; the allow rule moves.

@@ -50,7 +50,7 @@ func TestNormalizeMCPServer(t *testing.T) {
 		// Secrets go to every worker that runs a workspace the server is
 		// given to: a server with secrets has to say which those are.
 		"secrets without workspaces": {Name: "x", Type: MCPHTTP, URL: "https://x/mcp", Headers: map[string]string{"Authorization": "Bearer ${secret:token}"}},
-		"a bad workspace pattern":    {Name: "x", Type: MCPHTTP, URL: "https://x/mcp", Workspaces: []string{"fx/[a"}},
+		"a bad workspace pattern":    {Name: "x", Type: MCPHTTP, URL: "https://x/mcp", Workspaces: []string{"fabrikam/[a"}},
 	}
 	// What is not a credential stays writable as it is.
 	for name, d := range map[string]MCPServerDef{
@@ -68,11 +68,11 @@ func TestNormalizeMCPServer(t *testing.T) {
 		}
 	}
 	http, err := NormalizeMCPServer(MCPServerDef{Name: "router", Type: " HTTP ", URL: " https://router.example.com/mcp?key=${secret:extra} ",
-		Headers: map[string]string{"Authorization": "Bearer ${secret:token}", "X-Tenant": "globex", "X-Extra-Key": "${secret:extra}"}, Workspaces: []string{" fx/* ", "fx/*", ""}})
+		Headers: map[string]string{"Authorization": "Bearer ${secret:token}", "X-Tenant": "globex", "X-Extra-Key": "${secret:extra}"}, Workspaces: []string{" fabrikam/* ", "fabrikam/*", ""}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if http.Type != MCPHTTP || http.URL != "https://router.example.com/mcp?key=${secret:extra}" || strings.Join(http.SecretNames(), ",") != "extra,token" || strings.Join(http.Workspaces, ",") != "fx/*" {
+	if http.Type != MCPHTTP || http.URL != "https://router.example.com/mcp?key=${secret:extra}" || strings.Join(http.SecretNames(), ",") != "extra,token" || strings.Join(http.Workspaces, ",") != "fabrikam/*" {
 		t.Fatalf("http: %+v %v", http, http.SecretNames())
 	}
 	cmd, err := NormalizeMCPServer(MCPServerDef{Name: "scripts", Type: MCPCommand, Command: []string{"${TOOLS_DIR}/scripts", "mcp"},
@@ -112,16 +112,16 @@ func TestMCPServersAndSecrets(t *testing.T) {
 	s, sink, _ := mcpFixture(t, "test key")
 	ctx := root()
 	router := MCPServerDef{Name: "router", Type: MCPHTTP, URL: "https://router.example.com/mcp", Headers: map[string]string{"Authorization": "Bearer ${secret:token}"},
-		Workspaces: []string{"fx/api"}}
+		Workspaces: []string{"fabrikam/api"}}
 	// Fleet admins only.
-	if _, _, err := s.SetMCPServer(key(true, false, "fx/api"), router, "cli"); !errors.Is(err, auth.ErrAdminRequired) {
+	if _, _, err := s.SetMCPServer(key(true, false, "fabrikam/api"), router, "cli"); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("a workspace admin defined an MCP server: %v", err)
 	}
 	if _, err := s.MCPServers(key(false, true)); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("a key without the admin permission listed MCP servers: %v", err)
 	}
 	// A config cannot name a server that is not defined.
-	if _, err := s.Set(ctx, KindWorkspace, "fx/api", mcpConfig("router"), "cli", ""); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "not defined") {
+	if _, err := s.Set(ctx, KindWorkspace, "fabrikam/api", mcpConfig("router"), "cli", ""); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "not defined") {
 		t.Fatalf("an undefined server: %v", err)
 	}
 	v, changed, err := s.SetMCPServer(key(true, true), router, "cli")
@@ -133,20 +133,20 @@ func TestMCPServersAndSecrets(t *testing.T) {
 	}
 	// A server the runs get needs an allow rule for its tools.
 	onlyAttached := []string{"router"}
-	if _, err := s.Set(ctx, KindWorkspace, "fx/api", Config{MCP: &onlyAttached}, "cli", ""); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "mcp__router") {
+	if _, err := s.Set(ctx, KindWorkspace, "fabrikam/api", Config{MCP: &onlyAttached}, "cli", ""); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "mcp__router") {
 		t.Fatalf("attached and not allowed: %v", err)
 	}
-	if _, err := s.Set(ctx, KindWorkspace, "fx/api", mcpConfig("router"), "cli", ""); err != nil {
+	if _, err := s.Set(ctx, KindWorkspace, "fabrikam/api", mcpConfig("router"), "cli", ""); err != nil {
 		t.Fatal(err)
 	}
 
 	// The secret is not set: the run goes without the server, and is told.
-	mcp, err := s.RunMCP(ctx, "fx/api", true)
+	mcp, err := s.RunMCP(ctx, "fabrikam/api", true)
 	if err != nil || mcp == nil || len(mcp.Servers) != 0 || len(mcp.Notes) != 1 || !strings.Contains(mcp.Notes[0], "secret token is not set") {
 		t.Fatalf("without the secret: %+v %v", mcp, err)
 	}
 	const value = "tok-3f9a-very-secret"
-	if err := s.SetMCPSecret(key(true, false, "fx/api"), "router", "token", []byte(value), "cli"); !errors.Is(err, auth.ErrAdminRequired) {
+	if err := s.SetMCPSecret(key(true, false, "fabrikam/api"), "router", "token", []byte(value), "cli"); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("a workspace admin set a secret: %v", err)
 	}
 	if err := s.SetMCPSecret(ctx, "router", "nope", []byte(value), "cli"); !errors.Is(err, ErrInvalid) {
@@ -164,7 +164,7 @@ func TestMCPServersAndSecrets(t *testing.T) {
 	if e := sink.last(); e.Action != "mcp_server.secret_set" || !strings.Contains(e.Notes, "secret token") || strings.Contains(e.Notes, value) {
 		t.Fatalf("the audit event names the secret, never its value: %+v", e)
 	}
-	mcp, err = s.RunMCP(ctx, "fx/api", false)
+	mcp, err = s.RunMCP(ctx, "fabrikam/api", false)
 	if err != nil || len(mcp.Servers) != 1 || len(mcp.Notes) != 0 || len(mcp.Secrets) != 1 || mcp.Secrets[0] != value {
 		t.Fatalf("with the secret: %+v %v", mcp, err)
 	}
@@ -176,23 +176,23 @@ func TestMCPServersAndSecrets(t *testing.T) {
 		t.Fatalf("the delivered server: %s %v", mcp.Servers["router"], err)
 	}
 	// Only for the workspace whose config names it.
-	if other, err := s.RunMCP(ctx, "fx/web", true); err != nil || other != nil {
+	if other, err := s.RunMCP(ctx, "fabrikam/web", true); err != nil || other != nil {
 		t.Fatalf("a workspace the server holds no MCP servers for: %+v %v", other, err)
 	}
-	if !s.MCPManaged(ctx, "fx/api") || s.MCPManaged(ctx, "fx/web") {
+	if !s.MCPManaged(ctx, "fabrikam/api") || s.MCPManaged(ctx, "fabrikam/web") {
 		t.Fatal("which workspaces' MCP servers the server holds")
 	}
 	// An empty list is held too: the runs get none, and no worker's file.
-	if _, err := s.Set(ctx, KindWorkspace, "fx/web", Config{MCP: &[]string{}}, "cli", ""); err != nil {
+	if _, err := s.Set(ctx, KindWorkspace, "fabrikam/web", Config{MCP: &[]string{}}, "cli", ""); err != nil {
 		t.Fatal(err)
 	}
-	if none, err := s.RunMCP(ctx, "fx/web", true); err != nil || none == nil || len(none.Servers) != 0 || !s.MCPManaged(ctx, "fx/web") {
+	if none, err := s.RunMCP(ctx, "fabrikam/web", true); err != nil || none == nil || len(none.Servers) != 0 || !s.MCPManaged(ctx, "fabrikam/web") {
 		t.Fatalf("an empty list: %+v %v", none, err)
 	}
 
 	// Nothing that reads the definitions shows the value.
 	views, err := s.MCPServers(ctx)
-	if err != nil || len(views) != 1 || !views[0].Secrets[0].Set || strings.Join(views[0].UsedBy, ",") != "workspace:fx/api" {
+	if err != nil || len(views) != 1 || !views[0].Secrets[0].Set || strings.Join(views[0].UsedBy, ",") != "workspace:fabrikam/api" {
 		t.Fatalf("list: %+v %v", views, err)
 	}
 	buf, _ := json.Marshal(views)
@@ -210,14 +210,14 @@ func TestMCPServersAndSecrets(t *testing.T) {
 	if _, _, err := s.SetMCPServer(ctx, tool, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Set(ctx, KindWorkspace, "fx/api", mcpConfig("router", "scripts"), "cli", ""); err != nil {
+	if _, err := s.Set(ctx, KindWorkspace, "fabrikam/api", mcpConfig("router", "scripts"), "cli", ""); err != nil {
 		t.Fatal(err)
 	}
-	without, _ := s.RunMCP(ctx, "fx/api", false)
+	without, _ := s.RunMCP(ctx, "fabrikam/api", false)
 	if len(without.Servers) != 1 || len(without.Notes) != 1 || !strings.Contains(without.Notes[0], "server_commands") {
 		t.Fatalf("a command server without server_commands: %+v", without)
 	}
-	with, _ := s.RunMCP(ctx, "fx/api", true)
+	with, _ := s.RunMCP(ctx, "fabrikam/api", true)
 	var cmd struct {
 		Command string
 		Args    []string
@@ -227,12 +227,12 @@ func TestMCPServersAndSecrets(t *testing.T) {
 		t.Fatalf("the worker's variables are left for the worker: %s %v", with.Servers["scripts"], err)
 	}
 
-	// The server is for fx/api only: no other workspace's admin can give it
+	// The server is for fabrikam/api only: no other workspace's admin can give it
 	// to its runs, and a group that reaches another workspace cannot either.
-	if _, err := s.Set(ctx, KindWorkspace, "fx/web", mcpConfig("router"), "cli", ""); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "may not be given to the runs of fx/web") {
+	if _, err := s.Set(ctx, KindWorkspace, "fabrikam/web", mcpConfig("router"), "cli", ""); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "may not be given to the runs of fabrikam/web") {
 		t.Fatalf("a server given to a workspace it is not for: %v", err)
 	}
-	if _, err := s.Set(ctx, KindGroup, "globex", mcpConfig("router"), "cli", ""); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "fx/web") {
+	if _, err := s.Set(ctx, KindGroup, "globex", mcpConfig("router"), "cli", ""); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "fabrikam/web") {
 		t.Fatalf("a group that reaches a workspace the server is not for: %v", err)
 	}
 	// The definition is narrowed after a config named it: the run goes
@@ -242,13 +242,13 @@ func TestMCPServersAndSecrets(t *testing.T) {
 	if _, _, err := s.SetMCPServer(ctx, elsewhere, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if mcp, _ := s.RunMCP(ctx, "fx/api", true); mcp.Servers["router"] != nil || !strings.Contains(strings.Join(mcp.Notes, " "), "may not be given to this workspace") {
+	if mcp, _ := s.RunMCP(ctx, "fabrikam/api", true); mcp.Servers["router"] != nil || !strings.Contains(strings.Join(mcp.Notes, " "), "may not be given to this workspace") {
 		t.Fatalf("a server no longer for the workspace: %+v", mcp)
 	}
 	if _, _, err := s.SetMCPServer(ctx, router, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if mcp, _ := s.RunMCP(ctx, "fx/api", true); mcp.Servers["router"] == nil {
+	if mcp, _ := s.RunMCP(ctx, "fabrikam/api", true); mcp.Servers["router"] == nil {
 		t.Fatalf("the workspaces a server is for do not touch its secrets: %+v", mcp)
 	}
 	// A secret is for the server it was set for: a definition that sends
@@ -261,7 +261,7 @@ func TestMCPServersAndSecrets(t *testing.T) {
 	if e := sink.last(); !strings.Contains(e.Notes, "address changed") || !strings.Contains(e.Notes, "token") {
 		t.Fatalf("audit: %+v", e)
 	}
-	if mcp, _ := s.RunMCP(ctx, "fx/api", true); mcp.Servers["router"] != nil || !strings.Contains(strings.Join(mcp.Notes, " "), "secret token is not set") {
+	if mcp, _ := s.RunMCP(ctx, "fabrikam/api", true); mcp.Servers["router"] != nil || !strings.Contains(strings.Join(mcp.Notes, " "), "secret token is not set") {
 		t.Fatalf("the secret followed the server to another host: %+v", mcp)
 	}
 	if _, _, err := s.SetMCPServer(ctx, router, "cli"); err != nil {
@@ -270,7 +270,7 @@ func TestMCPServersAndSecrets(t *testing.T) {
 	if err := s.SetMCPSecret(ctx, "router", "token", []byte("  "+value+" \t"), "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if mcp, _ := s.RunMCP(ctx, "fx/api", true); len(mcp.Secrets) != 1 || mcp.Secrets[0] != value {
+	if mcp, _ := s.RunMCP(ctx, "fabrikam/api", true); len(mcp.Secrets) != 1 || mcp.Secrets[0] != value {
 		t.Fatalf("a padded value is stored without its padding: %+v", mcp.Secrets)
 	}
 
@@ -290,7 +290,7 @@ func TestMCPServersAndSecrets(t *testing.T) {
 	if _, _, err := s.SetMCPServer(ctx, router, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if mcp, _ := s.RunMCP(ctx, "fx/api", true); len(mcp.Servers["router"]) != 0 {
+	if mcp, _ := s.RunMCP(ctx, "fabrikam/api", true); len(mcp.Servers["router"]) != 0 {
 		t.Fatal("a secret came back with the definition that names it again")
 	}
 	if err := s.UnsetMCPSecret(ctx, "router", "token", "cli"); !errors.Is(err, ErrNotFound) {
@@ -299,7 +299,7 @@ func TestMCPServersAndSecrets(t *testing.T) {
 	if _, err := s.DeleteMCPServer(ctx, "router", "cli", true); err != nil {
 		t.Fatal(err)
 	}
-	if mcp, _ := s.RunMCP(ctx, "fx/api", true); len(mcp.Notes) == 0 || !strings.Contains(strings.Join(mcp.Notes, " "), "no longer defined") {
+	if mcp, _ := s.RunMCP(ctx, "fabrikam/api", true); len(mcp.Notes) == 0 || !strings.Contains(strings.Join(mcp.Notes, " "), "no longer defined") {
 		t.Fatalf("a deleted server a config still names: %+v", mcp)
 	}
 }
@@ -320,14 +320,14 @@ func TestMCPWithoutASecretKey(t *testing.T) {
 	if err := s.SetMCPSecret(ctx, "needs", "token", []byte("a-long-enough-value"), "cli"); !errors.Is(err, ErrNoSecretKey) {
 		t.Fatalf("a secret stored without a key: %v", err)
 	}
-	if _, err := s.Set(ctx, KindWorkspace, "fx/api", mcpConfig("needs", "open"), "cli", ""); err != nil {
+	if _, err := s.Set(ctx, KindWorkspace, "fabrikam/api", mcpConfig("needs", "open"), "cli", ""); err != nil {
 		t.Fatal(err)
 	}
-	mcp, err := s.RunMCP(ctx, "fx/api", true)
+	mcp, err := s.RunMCP(ctx, "fabrikam/api", true)
 	if err != nil || mcp == nil || len(mcp.Servers) != 1 || mcp.Servers["open"] == nil || !strings.Contains(strings.Join(mcp.Notes, " "), "no secret key") {
 		t.Fatalf("without a key: %+v %v", mcp, err)
 	}
-	if !s.MCPManaged(ctx, "fx/api") {
+	if !s.MCPManaged(ctx, "fabrikam/api") {
 		t.Fatal("the server still holds the workspace's MCP servers")
 	}
 }
@@ -338,17 +338,17 @@ func TestMCPSecretUnderALostKey(t *testing.T) {
 	s, sqlDB, _ := fixture(t)
 	ctx := root()
 	s.SetSecrets(secretbox.NewStore(sqlDB, secretbox.New("first key")))
-	if _, _, err := s.SetMCPServer(ctx, MCPServerDef{Name: "x", Type: MCPHTTP, URL: "https://a/mcp", Headers: map[string]string{"Authorization": "${secret:token}"}, Workspaces: []string{"fx/*"}}, "cli"); err != nil {
+	if _, _, err := s.SetMCPServer(ctx, MCPServerDef{Name: "x", Type: MCPHTTP, URL: "https://a/mcp", Headers: map[string]string{"Authorization": "${secret:token}"}, Workspaces: []string{"fabrikam/*"}}, "cli"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SetMCPSecret(ctx, "x", "token", []byte("a-long-enough-value"), "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Set(ctx, KindWorkspace, "fx/api", mcpConfig("x"), "cli", ""); err != nil {
+	if _, err := s.Set(ctx, KindWorkspace, "fabrikam/api", mcpConfig("x"), "cli", ""); err != nil {
 		t.Fatal(err)
 	}
 	s.SetSecrets(secretbox.NewStore(sqlDB, secretbox.New("another key")))
-	mcp, err := s.RunMCP(ctx, "fx/api", true)
+	mcp, err := s.RunMCP(ctx, "fabrikam/api", true)
 	if err != nil || len(mcp.Servers) != 0 || len(mcp.Notes) != 1 || !strings.Contains(mcp.Notes[0], "cannot be opened") || strings.Contains(mcp.Notes[0], "a-long-enough-value") {
 		t.Fatalf("a lost key: %+v %v", mcp, err)
 	}

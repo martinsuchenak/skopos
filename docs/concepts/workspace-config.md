@@ -147,7 +147,7 @@ skopos workspace config set \
 # the same in a config file (skopos workspace config set --file, or fleet.toml)
 [stages.implement]
 tools = ["Bash(./cli_tools/dothis:*)", "Bash(mago:*)"]
-env = { CODECEPTION_ENV = "local", CACHE = "${CACHE_DIR}/ff3" }
+env = { CODECEPTION_ENV = "local", CACHE = "${CACHE_DIR}/shop" }
 
 [stages.review]
 tools = ["Bash(mago:*)"]

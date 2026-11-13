@@ -229,14 +229,14 @@ func TestRunnerFactsEndpointSwitches(t *testing.T) {
 func TestFactProblemsProfileEnv(t *testing.T) {
 	c := &Config{
 		Accounts: []*Account{{Name: "a", Runner: "claude"}},
-		Profiles: map[string]map[string]*StageProfile{"ff3": {
+		Profiles: map[string]map[string]*StageProfile{"shop": {
 			"implement": {Wrapper: []string{"env"}, Env: map[string]string{"CODECEPTION_ENV": "local", "HTTPS_PROXY": "http://proxy:3128"}},
 			"review":    {Wrapper: []string{"env"}, Env: map[string]string{"ANTHROPIC_BASE_URL": "https://gateway.example"}},
 		}},
 		Repos: map[string]*Repo{"ws": {Stages: map[string]*StageProfile{"plan": {Wrapper: []string{"env"}, Env: map[string]string{"OPENCODE_CONFIG": "/x.json"}}}}},
 	}
 	p := strings.Join(c.FactProblems(), "\n")
-	for _, want := range []string{"profile ff3.implement: env sets HTTPS_PROXY", "profile ff3.review: env sets ANTHROPIC_BASE_URL", "repo ws stage plan: env sets OPENCODE_CONFIG"} {
+	for _, want := range []string{"profile shop.implement: env sets HTTPS_PROXY", "profile shop.review: env sets ANTHROPIC_BASE_URL", "repo ws stage plan: env sets OPENCODE_CONFIG"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("missing %q in:\n%s", want, p)
 		}

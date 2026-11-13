@@ -101,10 +101,10 @@ func TestWorkspaceStageBlockReplacesTheGroups(t *testing.T) {
 	}), "cli", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Set(ctx, KindWorkspace, "fx/api", stages(map[string]*StageCaps{"implement": {Tools: []string{"Bash(ws:*)"}}}), "cli", ""); err != nil {
+	if _, err := s.Set(ctx, KindWorkspace, "fabrikam/api", stages(map[string]*StageCaps{"implement": {Tools: []string{"Bash(ws:*)"}}}), "cli", ""); err != nil {
 		t.Fatal(err)
 	}
-	eff, err := s.Effective(ctx, "fx/api")
+	eff, err := s.Effective(ctx, "fabrikam/api")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,10 +119,10 @@ func TestWorkspaceStageBlockReplacesTheGroups(t *testing.T) {
 		t.Fatalf("sources: %v", eff.Sources)
 	}
 	// An empty block undoes the group's for that stage.
-	if _, err := s.Set(ctx, KindWorkspace, "fx/api", stages(map[string]*StageCaps{"review": {}}), "cli", ""); err != nil {
+	if _, err := s.Set(ctx, KindWorkspace, "fabrikam/api", stages(map[string]*StageCaps{"review": {}}), "cli", ""); err != nil {
 		t.Fatal(err)
 	}
-	eff, _ = s.Effective(ctx, "fx/api")
+	eff, _ = s.Effective(ctx, "fabrikam/api")
 	if r := eff.Config.Stages["review"]; r == nil || len(r.Tools) != 0 {
 		t.Fatalf("review should be set to nothing: %+v", r)
 	}
@@ -135,7 +135,7 @@ func TestWorkspaceStageBlockReplacesTheGroups(t *testing.T) {
 
 func TestStageBlocksAreAuditedInFull(t *testing.T) {
 	s, _, sink := fixture(t)
-	if _, err := s.Set(root(), KindWorkspace, "fx/api", stages(map[string]*StageCaps{"implement": {Tools: []string{"Bash(make deploy:*)"}}}), "cli", ""); err != nil {
+	if _, err := s.Set(root(), KindWorkspace, "fabrikam/api", stages(map[string]*StageCaps{"implement": {Tools: []string{"Bash(make deploy:*)"}}}), "cli", ""); err != nil {
 		t.Fatal(err)
 	}
 	if e := sink.last(); e.Action != "config.update" || !strings.Contains(e.Notes, "stages.implement = ") || !strings.Contains(e.Notes, "Bash(make deploy:*)") {
@@ -211,12 +211,12 @@ func TestWrapperDefinitions(t *testing.T) {
 	s, _, sink := fixture(t)
 	def := WrapperDef{Name: "opencode-bwrap", Argv: []string{"bwrap", "--bind", "{dir}", "{dir}"}, Check: []string{"bwrap", "--version"}}
 	// Fleet admins only.
-	if _, _, err := s.SetWrapper(key(true, false, "fx/api"), def, "cli"); !errors.Is(err, auth.ErrAdminRequired) {
+	if _, _, err := s.SetWrapper(key(true, false, "fabrikam/api"), def, "cli"); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("a workspace admin defined a wrapper: %v", err)
 	}
 	// A stage block cannot name a wrapper that is not defined.
 	use := stages(map[string]*StageCaps{"review": {Wrap: []WrapRule{{Kind: "opencode", Wrapper: "opencode-bwrap"}}}})
-	if _, err := s.Set(root(), KindWorkspace, "fx/api", use, "cli", ""); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "not defined") {
+	if _, err := s.Set(root(), KindWorkspace, "fabrikam/api", use, "cli", ""); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "not defined") {
 		t.Fatalf("an undefined wrapper was accepted: %v", err)
 	}
 	before, _ := s.Fleet(root())
@@ -237,11 +237,11 @@ func TestWrapperDefinitions(t *testing.T) {
 	if action, err := s.PlanWrapper(root(), WrapperDef{Name: "opencode-bwrap", Argv: []string{"bwrap", "--unshare-all"}}); err != nil || action != "update" {
 		t.Fatalf("plan: %q %v", action, err)
 	}
-	if _, err := s.Set(root(), KindWorkspace, "fx/api", use, "cli", ""); err != nil {
+	if _, err := s.Set(root(), KindWorkspace, "fabrikam/api", use, "cli", ""); err != nil {
 		t.Fatal(err)
 	}
 	users, err := s.WrapperUsers(root())
-	if err != nil || strings.Join(users["opencode-bwrap"], ",") != "workspace:fx/api" {
+	if err != nil || strings.Join(users["opencode-bwrap"], ",") != "workspace:fabrikam/api" {
 		t.Fatalf("users: %v %v", users, err)
 	}
 	// A wrapper stage blocks name is not deleted by accident.
@@ -251,7 +251,7 @@ func TestWrapperDefinitions(t *testing.T) {
 	if _, err := s.DeleteWrapper(root(), "opencode-bwrap", "cli", true); err != nil {
 		t.Fatal(err)
 	}
-	if e := sink.last(); e.Action != "wrapper.delete" || !strings.Contains(e.Notes, "workspace:fx/api") {
+	if e := sink.last(); e.Action != "wrapper.delete" || !strings.Contains(e.Notes, "workspace:fabrikam/api") {
 		t.Fatalf("audit: %+v", e)
 	}
 	if _, err := s.DeleteWrapper(root(), "opencode-bwrap", "cli", true); !errors.Is(err, ErrNotFound) {
@@ -260,10 +260,10 @@ func TestWrapperDefinitions(t *testing.T) {
 	// A document that states the full set is checked against that set.
 	ctx := WithWrapperSet(root(), []string{"other"})
 	other := stages(map[string]*StageCaps{"review": {Wrap: []WrapRule{{Wrapper: "other"}}}})
-	if _, err := s.Plan(ctx, KindWorkspace, "fx/api", &other); err != nil {
+	if _, err := s.Plan(ctx, KindWorkspace, "fabrikam/api", &other); err != nil {
 		t.Fatalf("a wrapper the document defines: %v", err)
 	}
-	if _, err := s.Plan(root(), KindWorkspace, "fx/api", &other); !errors.Is(err, ErrInvalid) {
+	if _, err := s.Plan(root(), KindWorkspace, "fabrikam/api", &other); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("without the document's set: %v", err)
 	}
 }

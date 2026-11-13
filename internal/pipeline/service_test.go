@@ -51,18 +51,18 @@ func exec(t *testing.T, sqlDB *sql.DB, q string, args ...any) {
 	}
 }
 
-// fixture: workspaces fx/api and fx/web (+ other/x), group "globex" by the
-// pattern fx/*, group "web-team" holding fx/web explicitly.
+// fixture: workspaces fabrikam/api and fabrikam/web (+ other/x), group "globex" by the
+// pattern fabrikam/*, group "web-team" holding fabrikam/web explicitly.
 func fixture(t *testing.T) (*Service, *sql.DB, *recSink) {
 	t.Helper()
 	sqlDB := testDB(t)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	for _, ws := range []string{"fx/api", "fx/web", "other/x"} {
+	for _, ws := range []string{"fabrikam/api", "fabrikam/web", "other/x"} {
 		exec(t, sqlDB, `INSERT INTO workspaces (id, created_at) VALUES (?, ?)`, ws, now)
 	}
 	exec(t, sqlDB, `INSERT INTO workspace_groups (id, name, created_at) VALUES ('g1', 'globex', ?), ('g2', 'web-team', ?)`, now, now)
-	exec(t, sqlDB, `INSERT INTO workspace_group_patterns (group_id, pattern) VALUES ('g1', 'fx/*')`)
-	exec(t, sqlDB, `INSERT INTO workspace_group_members (group_id, workspace_id) VALUES ('g2', 'fx/web')`)
+	exec(t, sqlDB, `INSERT INTO workspace_group_patterns (group_id, pattern) VALUES ('g1', 'fabrikam/*')`)
+	exec(t, sqlDB, `INSERT INTO workspace_group_members (group_id, workspace_id) VALUES ('g2', 'fabrikam/web')`)
 	s := NewService(NewStorage(sqlDB))
 	sink := &recSink{}
 	s.SetAuditSink(sink)
@@ -133,7 +133,7 @@ func TestResolutionAndSources(t *testing.T) {
 	}, audit.ViaDashboard); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Put(root(), KindWorkspace, "fx/api", Settings{Stages: map[string]StageSetting{"plan": {Members: members(t, "claude")}}}, audit.ViaCLI)
+	v, err := s.Put(root(), KindWorkspace, "fabrikam/api", Settings{Stages: map[string]StageSetting{"plan": {Members: members(t, "claude")}}}, audit.ViaCLI)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestResolutionAndSources(t *testing.T) {
 	if _, ok := v.Effective["qa"]; ok {
 		t.Fatal("qa is not set anywhere")
 	}
-	p := s.Prefs(root(), "fx/api")
+	p := s.Prefs(root(), "fabrikam/api")
 	if p.StageRunner("plan") != "claude" || p.GroupMembers("plan") != nil {
 		t.Fatalf("plan single: %+v", p)
 	}
@@ -158,10 +158,10 @@ func TestResolutionAndSources(t *testing.T) {
 	}
 	// Clearing the workspace override falls back to the group — at once
 	// (writes drop the cache).
-	if _, err := s.Put(root(), KindWorkspace, "fx/api", Settings{}, audit.ViaCLI); err != nil {
+	if _, err := s.Put(root(), KindWorkspace, "fabrikam/api", Settings{}, audit.ViaCLI); err != nil {
 		t.Fatal(err)
 	}
-	if p := s.Prefs(root(), "fx/api"); p.GroupMembers("plan") == nil {
+	if p := s.Prefs(root(), "fabrikam/api"); p.GroupMembers("plan") == nil {
 		t.Fatalf("plan falls back to the group's two planners: %+v", p)
 	}
 }
@@ -175,7 +175,7 @@ func TestGroupConflicts(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := s.Put(root(), KindGroup, "web-team", Settings{Stages: map[string]StageSetting{"review": {Members: members(t, "opencode-glm")}}}, "")
-	if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "fx/web is also in group globex") {
+	if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "fabrikam/web is also in group globex") {
 		t.Fatalf("shared workspace, same stage: %v", err)
 	}
 	if _, err := s.Put(root(), KindGroup, "web-team", Settings{Stages: map[string]StageSetting{"qa": {Members: members(t, "opencode-glm")}}}, ""); err != nil {
@@ -183,7 +183,7 @@ func TestGroupConflicts(t *testing.T) {
 	}
 	// Membership changes outside this service create a conflict anyway.
 	exec(t, sqlDB, `INSERT INTO pipeline_stages (owner_kind, owner_id, stage, members, updated_ms, updated_by) VALUES ('group', 'g2', 'review', '[{"runner":"qwen"}]', 0, '')`)
-	v, err := s.Get(root(), KindWorkspace, "fx/web")
+	v, err := s.Get(root(), KindWorkspace, "fabrikam/web")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,18 +201,18 @@ func TestAgentsDefaultConflicts(t *testing.T) {
 	if _, err := s.Put(root(), KindGroup, "globex", Settings{AgentsDefault: "solo"}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Put(root(), KindGroup, "web-team", Settings{AgentsDefault: "panel"}, ""); !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "agents default: workspace fx/web is also in group globex") {
+	if _, err := s.Put(root(), KindGroup, "web-team", Settings{AgentsDefault: "panel"}, ""); !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "agents default: workspace fabrikam/web is also in group globex") {
 		t.Fatalf("second group setting the agents default: %v", err)
 	}
 	exec(t, sqlDB, `INSERT INTO pipeline_defaults (owner_kind, owner_id, agents_default, updated_ms, updated_by) VALUES ('group', 'g2', 'panel', 0, '')`)
-	v, err := s.Get(root(), KindWorkspace, "fx/web")
+	v, err := s.Get(root(), KindWorkspace, "fabrikam/web")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(v.Conflicts) != 1 || !strings.Contains(v.Conflicts[0], "agents default") || v.EffectiveAgentsDefault != "solo" || v.AgentsDefaultSource != "group:globex" {
 		t.Fatalf("agents-default conflict reported, globex wins: %+v", v)
 	}
-	v, err = s.Put(root(), KindWorkspace, "fx/web", Settings{AgentsDefault: "panel"}, "")
+	v, err = s.Put(root(), KindWorkspace, "fabrikam/web", Settings{AgentsDefault: "panel"}, "")
 	if err != nil || len(v.Conflicts) != 0 || v.AgentsDefaultSource != "workspace" {
 		t.Fatalf("the workspace's own value settles it: %+v %v", v, err)
 	}
@@ -221,25 +221,25 @@ func TestAgentsDefaultConflicts(t *testing.T) {
 func TestPermissions(t *testing.T) {
 	s, _, _ := fixture(t)
 	set := Settings{Stages: map[string]StageSetting{"review": {Members: members(t, "claude")}}}
-	if _, err := s.Put(key("k1", false, "fx/api"), KindWorkspace, "fx/api", set, ""); !errors.Is(err, auth.ErrApproverRequired) {
+	if _, err := s.Put(key("k1", false, "fabrikam/api"), KindWorkspace, "fabrikam/api", set, ""); !errors.Is(err, auth.ErrApproverRequired) {
 		t.Fatalf("plain scoped key: %v", err)
 	}
-	if _, err := s.Put(key("k2", true, "fx/web"), KindWorkspace, "fx/api", set, ""); !errors.Is(err, auth.ErrOutOfScope) {
+	if _, err := s.Put(key("k2", true, "fabrikam/web"), KindWorkspace, "fabrikam/api", set, ""); !errors.Is(err, auth.ErrOutOfScope) {
 		t.Fatalf("approver out of scope: %v", err)
 	}
-	if _, err := s.Put(key("k3", true, "fx/api"), KindWorkspace, "fx/api", set, ""); err != nil {
+	if _, err := s.Put(key("k3", true, "fabrikam/api"), KindWorkspace, "fabrikam/api", set, ""); err != nil {
 		t.Fatalf("approver in scope: %v", err)
 	}
-	if _, err := s.Put(key("k3", true, "fx/api"), KindGroup, "globex", set, ""); !errors.Is(err, auth.ErrRootRequired) {
+	if _, err := s.Put(key("k3", true, "fabrikam/api"), KindGroup, "globex", set, ""); !errors.Is(err, auth.ErrRootRequired) {
 		t.Fatalf("groups are root-only: %v", err)
 	}
-	if _, err := s.Get(key("k1", false, "fx/api"), KindGroup, "globex"); err == nil {
+	if _, err := s.Get(key("k1", false, "fabrikam/api"), KindGroup, "globex"); err == nil {
 		t.Fatal("group reads are root-only")
 	}
-	if _, err := s.Get(key("k1", false, "fx/web"), KindWorkspace, "fx/api"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Get(key("k1", false, "fabrikam/web"), KindWorkspace, "fabrikam/api"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("foreign workspace reads 404: %v", err)
 	}
-	if v, err := s.Get(key("k1", false, "fx/api"), KindWorkspace, "fx/api"); err != nil || FormatMembers(v.Effective["review"].Members) != "claude" {
+	if v, err := s.Get(key("k1", false, "fabrikam/api"), KindWorkspace, "fabrikam/api"); err != nil || FormatMembers(v.Effective["review"].Members) != "claude" {
 		t.Fatalf("any key in scope may read: %+v %v", v, err)
 	}
 	if _, err := s.Put(root(), KindWorkspace, "not/registered", set, ""); !errors.Is(err, ErrNotFound) {
@@ -249,8 +249,8 @@ func TestPermissions(t *testing.T) {
 
 func TestAuditAndUnknownRunners(t *testing.T) {
 	s, sqlDB, sink := fixture(t)
-	exec(t, sqlDB, `INSERT INTO workers (id, runners, workspaces, last_seen, updated_at) VALUES ('w1', '["claude"]', '["fx/api"]', '', '')`)
-	v, err := s.Put(key("k3", true, "fx/api"), KindWorkspace, "fx/api", Settings{
+	exec(t, sqlDB, `INSERT INTO workers (id, runners, workspaces, last_seen, updated_at) VALUES ('w1', '["claude"]', '["fabrikam/api"]', '', '')`)
+	v, err := s.Put(key("k3", true, "fabrikam/api"), KindWorkspace, "fabrikam/api", Settings{
 		Stages:        map[string]StageSetting{"review": {Members: members(t, "security@claude,tests@opencode-glm")}},
 		AgentsDefault: "panel",
 	}, audit.ViaDashboard)
@@ -258,18 +258,18 @@ func TestAuditAndUnknownRunners(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Join(v.UnknownRunners, ",") != "opencode-glm" {
-		t.Fatalf("runner no worker serving fx/api offers: %v", v.UnknownRunners)
+		t.Fatalf("runner no worker serving fabrikam/api offers: %v", v.UnknownRunners)
 	}
 	if len(sink.entries) != 1 {
 		t.Fatalf("one audit entry: %+v", sink.entries)
 	}
 	e := sink.entries[0]
-	if e.Action != "pipeline.update" || e.EntityID != "workspace:fx/api" || e.WorkspaceID != "fx/api" || e.Via != audit.ViaDashboard ||
+	if e.Action != "pipeline.update" || e.EntityID != "workspace:fabrikam/api" || e.WorkspaceID != "fabrikam/api" || e.Via != audit.ViaDashboard ||
 		!strings.Contains(e.Notes, "review: not set → security@claude,tests@opencode-glm") || !strings.Contains(e.Notes, "agents default: not set → panel") {
 		t.Fatalf("audit entry: %+v", e)
 	}
 	// Saving the same thing again is not a change.
-	if _, err := s.Put(key("k3", true, "fx/api"), KindWorkspace, "fx/api", v.Own, audit.ViaDashboard); err != nil || len(sink.entries) != 1 {
+	if _, err := s.Put(key("k3", true, "fabrikam/api"), KindWorkspace, "fabrikam/api", v.Own, audit.ViaDashboard); err != nil || len(sink.entries) != 1 {
 		t.Fatalf("no-op save must not audit: %v %d", err, len(sink.entries))
 	}
 }
@@ -278,12 +278,12 @@ func TestAuditAndUnknownRunners(t *testing.T) {
 // the workspace), stored settings win, invalid entries are skipped.
 func TestImport(t *testing.T) {
 	s, sqlDB, sink := fixture(t)
-	if _, err := s.Put(root(), KindWorkspace, "fx/api", Settings{Stages: map[string]StageSetting{"review": {Members: members(t, "claude")}}}, ""); err != nil {
+	if _, err := s.Put(root(), KindWorkspace, "fabrikam/api", Settings{Stages: map[string]StageSetting{"review": {Members: members(t, "claude")}}}, ""); err != nil {
 		t.Fatal(err)
 	}
 	sink.entries = nil
 	flags := map[string]*runs.WorkspacePrefs{
-		"fx/api": {Stages: map[string]string{"plan": "claude", "review": "qwen"}, Groups: map[string][]runs.Member{}, Policies: map[string]runs.StagePolicy{}, AgentsDefault: "solo"},
+		"fabrikam/api": {Stages: map[string]string{"plan": "claude", "review": "qwen"}, Groups: map[string][]runs.Member{}, Policies: map[string]runs.StagePolicy{}, AgentsDefault: "solo"},
 		"new/repo": {Stages: map[string]string{"implement": "claude"}, Groups: map[string][]runs.Member{
 			"qa": {{Runner: "a"}, {Runner: "b"}}}, Policies: map[string]runs.StagePolicy{"plan": {Policy: "majority"}}},
 	}
@@ -294,12 +294,12 @@ func TestImport(t *testing.T) {
 		return nil
 	})
 	all := strings.Join(lines, "\n")
-	for _, want := range []string{"fx/api: imported plan: not set → claude; agents default: not set → solo", "review flag (qwen) differs from the stored setting (claude); stored setting wins", "new/repo: imported implement: not set → claude; qa: not set → a,b"} {
+	for _, want := range []string{"fabrikam/api: imported plan: not set → claude; agents default: not set → solo", "review flag (qwen) differs from the stored setting (claude); stored setting wins", "new/repo: imported implement: not set → claude; qa: not set → a,b"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("import log missing %q:\n%s", want, all)
 		}
 	}
-	v, _ := s.Get(root(), KindWorkspace, "fx/api")
+	v, _ := s.Get(root(), KindWorkspace, "fabrikam/api")
 	if FormatMembers(v.Own.Stages["review"].Members) != "claude" || FormatMembers(v.Own.Stages["plan"].Members) != "claude" {
 		t.Fatalf("stored wins, missing added: %+v", v.Own)
 	}
@@ -341,27 +341,27 @@ func TestSecondOpinionDefault(t *testing.T) {
 	if _, err := s.Put(root(), KindGroup, "globex", Settings{SecondOpinionRunner: "codex"}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.SecondOpinionRunner(root(), "fx/api"); got != "codex" {
+	if got := s.SecondOpinionRunner(root(), "fabrikam/api"); got != "codex" {
 		t.Fatalf("from the group: %q", got)
 	}
 	if _, err := s.Put(root(), KindGroup, "web-team", Settings{SecondOpinionRunner: "opus"}, ""); !errors.Is(err, ErrConflict) {
 		t.Fatalf("a second group setting it for a shared workspace: %v", err)
 	}
-	v, err := s.Put(root(), KindWorkspace, "fx/web", Settings{SecondOpinionRunner: "opus"}, "")
+	v, err := s.Put(root(), KindWorkspace, "fabrikam/web", Settings{SecondOpinionRunner: "opus"}, "")
 	if err != nil || v.EffectiveSecondOpinionRunner != "opus" || v.SecondOpinionSource != "workspace" {
 		t.Fatalf("workspace override: %+v %v", v, err)
 	}
 	if !strings.Contains(sink.entries[len(sink.entries)-1].Notes, "second-opinion runner: not set → opus") {
 		t.Fatalf("audited: %+v", sink.entries[len(sink.entries)-1])
 	}
-	if _, err := s.Put(root(), KindWorkspace, "fx/web", Settings{SecondOpinionRunner: "bad runner"}, ""); !errors.Is(err, ErrInvalidInput) {
+	if _, err := s.Put(root(), KindWorkspace, "fabrikam/web", Settings{SecondOpinionRunner: "bad runner"}, ""); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("validated: %v", err)
 	}
 	// "none" clears it; the agents default in the same row survives.
-	if _, err := s.Put(root(), KindWorkspace, "fx/web", Settings{AgentsDefault: "solo", SecondOpinionRunner: "opus"}, ""); err != nil {
+	if _, err := s.Put(root(), KindWorkspace, "fabrikam/web", Settings{AgentsDefault: "solo", SecondOpinionRunner: "opus"}, ""); err != nil {
 		t.Fatal(err)
 	}
-	v, err = s.Put(root(), KindWorkspace, "fx/web", Settings{AgentsDefault: "solo", SecondOpinionRunner: "none"}, "")
+	v, err = s.Put(root(), KindWorkspace, "fabrikam/web", Settings{AgentsDefault: "solo", SecondOpinionRunner: "none"}, "")
 	if err != nil || v.Own.SecondOpinionRunner != "" || v.Own.AgentsDefault != "solo" || v.EffectiveSecondOpinionRunner != "codex" {
 		t.Fatalf("clear falls back to the group: %+v %v", v, err)
 	}
@@ -381,13 +381,13 @@ func TestCodeIndexSwitch(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	exec(t, sqlDB, `INSERT INTO workers (id, runners, workspaces, last_seen, updated_at, indexable) VALUES
-		('w-new', '[]', '["fx/api"]', ?, ?, '["fx/api"]'),
-		('w-stale', '[]', '["fx/api"]', ?, ?, '["fx/api"]'),
-		('w-other', '[]', '["fx/web"]', ?, ?, '["fx/web"]')`,
+		('w-new', '[]', '["fabrikam/api"]', ?, ?, '["fabrikam/api"]'),
+		('w-stale', '[]', '["fabrikam/api"]', ?, ?, '["fabrikam/api"]'),
+		('w-other', '[]', '["fabrikam/web"]', ?, ?, '["fabrikam/web"]')`,
 		now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano),
 		now.Add(-time.Hour).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano),
 		now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
-	v, err := s.Put(root(), KindWorkspace, "fx/api", Settings{AgentsDefault: "solo", CodeIndex: &on}, "")
+	v, err := s.Put(root(), KindWorkspace, "fabrikam/api", Settings{AgentsDefault: "solo", CodeIndex: &on}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,14 +400,14 @@ func TestCodeIndexSwitch(t *testing.T) {
 	if !strings.Contains(sink.entries[len(sink.entries)-1].Notes, "code index: off → on") {
 		t.Fatalf("audited: %+v", sink.entries[len(sink.entries)-1])
 	}
-	if !s.Prefs(root(), "fx/api").CodeIndexOn() || s.Prefs(root(), "fx/web").CodeIndexOn() {
+	if !s.Prefs(root(), "fabrikam/api").CodeIndexOn() || s.Prefs(root(), "fabrikam/web").CodeIndexOn() {
 		t.Fatal("the run queue sees the switch per workspace")
 	}
 	off := false
-	if v, err = s.Put(root(), KindWorkspace, "fx/api", Settings{CodeIndex: &off}, ""); err != nil || v.Own.CodeIndex == nil || *v.Own.CodeIndex {
+	if v, err = s.Put(root(), KindWorkspace, "fabrikam/api", Settings{CodeIndex: &off}, ""); err != nil || v.Own.CodeIndex == nil || *v.Own.CodeIndex {
 		t.Fatalf("switched off: %+v %v", v, err)
 	}
-	if s.Prefs(root(), "fx/api").CodeIndexOn() {
+	if s.Prefs(root(), "fabrikam/api").CodeIndexOn() {
 		t.Fatal("off reaches the run queue")
 	}
 }

@@ -43,7 +43,7 @@ func TestIntegrationRunToken(t *testing.T) {
 	worker := workerClient{base: baseURL, key: mint(t, root, `{"name":"worker-1","workspaces":["`+wsA+`","`+wsB+`"]}`), lease: map[string]string{}}
 
 	// Something recorded about the other repository.
-	mustDo(t, root.req("POST", "/api/blackboard/entries", `{"workspace_id":"`+wsB+`","scope":"project","entry_type":"finding","title":"ff3 secret design","content":"only for ff3","author_agent_id":"alex"}`), 201)
+	mustDo(t, root.req("POST", "/api/blackboard/entries", `{"workspace_id":"`+wsB+`","scope":"project","entry_type":"finding","title":"shop secret design","content":"only for shop","author_agent_id":"alex"}`), 201)
 
 	item := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+wsA+`","title":"an item","author_agent_id":"alex"}`), 201).(map[string]any)
 	mustDo(t, approver.req("POST", "/api/inbox/"+item["id"].(string)+"/queue", ""), 200)
@@ -74,7 +74,7 @@ func TestIntegrationRunToken(t *testing.T) {
 		"code_search":     {"workspace_id": wsB, "q": "secret"},
 	} {
 		code, body := mcpCall(t, baseURL, token, tool, args)
-		if code != 200 || !strings.Contains(body, "out of scope") || strings.Contains(body, "ff3 secret design") {
+		if code != 200 || !strings.Contains(body, "out of scope") || strings.Contains(body, "shop secret design") {
 			t.Fatalf("%s on the other workspace must be out of scope: %d %s", tool, code, body)
 		}
 	}
@@ -101,7 +101,7 @@ func TestIntegrationRunToken(t *testing.T) {
 
 	// The worker's own key is no substitute on the MCP side of the same
 	// question: it still reaches both (that is what the token narrows).
-	if _, body := mcpCall(t, baseURL, worker.key, "blackboard_read", map[string]any{"workspace_id": wsB}); !strings.Contains(body, "ff3 secret design") {
+	if _, body := mcpCall(t, baseURL, worker.key, "blackboard_read", map[string]any{"workspace_id": wsB}); !strings.Contains(body, "shop secret design") {
 		t.Fatalf("the worker key reaches the other workspace (the control for this test): %s", body)
 	}
 

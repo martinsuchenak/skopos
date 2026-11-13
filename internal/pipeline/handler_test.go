@@ -27,14 +27,14 @@ func TestHandlerStatusCodes(t *testing.T) {
 		mux.ServeHTTP(rec, req)
 		return rec.Code, rec.Body.String()
 	}
-	if code, _ := do("GET", "/api/workspaces/fx%2Fapi/pipeline", "", false); code != http.StatusUnauthorized {
+	if code, _ := do("GET", "/api/workspaces/fabrikam%2Fapi/pipeline", "", false); code != http.StatusUnauthorized {
 		t.Fatalf("no key: %d", code)
 	}
-	code, body := do("PUT", "/api/workspaces/fx%2Fapi/pipeline", `{"stages":{"review":{"members":[{"runner":"claude","focus":"security"}]}},"via":"dashboard"}`, true)
+	code, body := do("PUT", "/api/workspaces/fabrikam%2Fapi/pipeline", `{"stages":{"review":{"members":[{"runner":"claude","focus":"security"}]}},"via":"dashboard"}`, true)
 	if code != http.StatusOK || !strings.Contains(body, `"source":"workspace"`) {
 		t.Fatalf("put: %d %s", code, body)
 	}
-	if code, body := do("PUT", "/api/workspaces/fx%2Fapi/pipeline", `{"stages":{"implement":{"members":[{"runner":"a"},{"runner":"b"}]}}}`, true); code != http.StatusBadRequest {
+	if code, body := do("PUT", "/api/workspaces/fabrikam%2Fapi/pipeline", `{"stages":{"implement":{"members":[{"runner":"a"},{"runner":"b"}]}}}`, true); code != http.StatusBadRequest {
 		t.Fatalf("invalid settings: %d %s", code, body)
 	}
 	if code, _ := do("GET", "/api/workspaces/nope/pipeline", "", true); code != http.StatusNotFound {

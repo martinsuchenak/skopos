@@ -55,8 +55,8 @@ func exec(t *testing.T, sqlDB *sql.DB, q string, args ...any) {
 	}
 }
 
-// fixture: workspaces fx/api and fx/web (+ other/x), group "globex" by the
-// pattern fx/*, group "web-team" holding fx/web explicitly.
+// fixture: workspaces fabrikam/api and fabrikam/web (+ other/x), group "globex" by the
+// pattern fabrikam/*, group "web-team" holding fabrikam/web explicitly.
 func fixture(t *testing.T) (*Service, *sql.DB, *recSink) {
 	t.Helper()
 	dsn := filepath.Join(t.TempDir(), "c.db") + "?_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)"
@@ -69,12 +69,12 @@ func fixture(t *testing.T) (*Service, *sql.DB, *recSink) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	for _, ws := range []string{"fx/api", "fx/web", "other/x"} {
+	for _, ws := range []string{"fabrikam/api", "fabrikam/web", "other/x"} {
 		exec(t, sqlDB, `INSERT INTO workspaces (id, created_at) VALUES (?, ?)`, ws, now)
 	}
 	exec(t, sqlDB, `INSERT INTO workspace_groups (id, name, created_at) VALUES ('g1', 'globex', ?), ('g2', 'web-team', ?)`, now, now)
-	exec(t, sqlDB, `INSERT INTO workspace_group_patterns (group_id, pattern) VALUES ('g1', 'fx/*')`)
-	exec(t, sqlDB, `INSERT INTO workspace_group_members (group_id, workspace_id) VALUES ('g2', 'fx/web')`)
+	exec(t, sqlDB, `INSERT INTO workspace_group_patterns (group_id, pattern) VALUES ('g1', 'fabrikam/*')`)
+	exec(t, sqlDB, `INSERT INTO workspace_group_members (group_id, workspace_id) VALUES ('g2', 'fabrikam/web')`)
 	s := NewService(sqlDB, confrev.NewStore(sqlDB), pipeline.NewStorage(sqlDB))
 	sink := &recSink{}
 	s.SetAuditSink(sink)
@@ -160,14 +160,14 @@ func TestManagedAndGroupDefaults(t *testing.T) {
 	if _, err := s.Set(root(), KindGroup, "globex", Config{Checks: list("make lint"), DefaultBranch: new("develop")}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
-	eff, err := s.Effective(root(), "fx/api")
+	eff, err := s.Effective(root(), "fabrikam/api")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if eff.Managed || eff.Rev != "" || s.Rev(root(), "fx/api") != "" {
+	if eff.Managed || eff.Rev != "" || s.Rev(root(), "fabrikam/api") != "" {
 		t.Fatalf("a group default alone must not manage a workspace: %+v", eff)
 	}
-	v, err := s.Set(root(), KindWorkspace, "fx/api", Config{Checks: list("go test ./...")}, audit.ViaCLI, "")
+	v, err := s.Set(root(), KindWorkspace, "fabrikam/api", Config{Checks: list("go test ./...")}, audit.ViaCLI, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,10 +188,10 @@ func TestManagedAndGroupDefaults(t *testing.T) {
 		t.Fatal("a workspace outside every group with no config is not managed")
 	}
 	// Clearing the workspace's config hands it back to the workers' files.
-	if _, err := s.Clear(root(), KindWorkspace, "fx/api", audit.ViaCLI); err != nil {
+	if _, err := s.Clear(root(), KindWorkspace, "fabrikam/api", audit.ViaCLI); err != nil {
 		t.Fatal(err)
 	}
-	if s.Rev(root(), "fx/api") != "" {
+	if s.Rev(root(), "fabrikam/api") != "" {
 		t.Fatal("cleared: not managed")
 	}
 }
@@ -200,14 +200,14 @@ func TestManagedAndGroupDefaults(t *testing.T) {
 // revisions, and reads back the same after the config has moved on.
 func TestRevNamesWhatApplied(t *testing.T) {
 	s, _, _ := fixture(t)
-	if _, err := s.Set(root(), KindWorkspace, "fx/api", Config{Checks: list("one")}, audit.ViaCLI, ""); err != nil {
+	if _, err := s.Set(root(), KindWorkspace, "fabrikam/api", Config{Checks: list("one")}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
-	first := s.Rev(root(), "fx/api")
-	if _, err := s.Set(root(), KindWorkspace, "fx/api", Config{Checks: list("two")}, audit.ViaCLI, ""); err != nil {
+	first := s.Rev(root(), "fabrikam/api")
+	if _, err := s.Set(root(), KindWorkspace, "fabrikam/api", Config{Checks: list("two")}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
-	second := s.Rev(root(), "fx/api")
+	second := s.Rev(root(), "fabrikam/api")
 	if first == "" || second == "" || first == second {
 		t.Fatalf("a save must change the revision at once: %q %q", first, second)
 	}
@@ -215,12 +215,12 @@ func TestRevNamesWhatApplied(t *testing.T) {
 	if _, err := s.Set(root(), KindGroup, "globex", Config{Setup: list("npm ci")}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
-	third := s.Rev(root(), "fx/api")
+	third := s.Rev(root(), "fabrikam/api")
 	if third == second {
 		t.Fatal("a group's change must change the revision of the workspaces under it")
 	}
 	for rev, want := range map[string]string{first: "one", second: "two", third: "two"} {
-		at, err := s.At(root(), "fx/api", rev)
+		at, err := s.At(root(), "fabrikam/api", rev)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -232,15 +232,15 @@ func TestRevNamesWhatApplied(t *testing.T) {
 		}
 	}
 	// Saving the same content is not a change.
-	v, err := s.Set(root(), KindWorkspace, "fx/api", Config{Checks: list("two")}, audit.ViaCLI, "")
-	if err != nil || len(v.Changed) != 0 || s.Rev(root(), "fx/api") != third {
+	v, err := s.Set(root(), KindWorkspace, "fabrikam/api", Config{Checks: list("two")}, audit.ViaCLI, "")
+	if err != nil || len(v.Changed) != 0 || s.Rev(root(), "fabrikam/api") != third {
 		t.Fatalf("an identical save: %v %+v", err, v.Changed)
 	}
 	// A revision belongs to its workspace, and an unknown one is not found.
-	if _, err := s.At(root(), "fx/web", first); !errors.Is(err, ErrNotFound) {
+	if _, err := s.At(root(), "fabrikam/web", first); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("another workspace's revision: %v", err)
 	}
-	if _, err := s.At(root(), "fx/api", UnreadableRev); !errors.Is(err, ErrNotFound) {
+	if _, err := s.At(root(), "fabrikam/api", UnreadableRev); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("the unreadable marker must never resolve: %v", err)
 	}
 }
@@ -250,7 +250,7 @@ func TestGroupConflictsAndEffectiveChecks(t *testing.T) {
 	if _, err := s.Set(root(), KindGroup, "globex", Config{Checks: list("a")}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
-	// fx/web is in both groups: the second may not set the same field.
+	// fabrikam/web is in both groups: the second may not set the same field.
 	if _, err := s.Set(root(), KindGroup, "web-team", Config{Checks: list("b")}, audit.ViaCLI, ""); !errors.Is(err, ErrConflict) {
 		t.Fatalf("want ErrConflict, got %v", err)
 	}
@@ -262,8 +262,8 @@ func TestGroupConflictsAndEffectiveChecks(t *testing.T) {
 	exec(t, sqlDB, `INSERT INTO workspace_groups (id, name, created_at) VALUES ('g0', 'alpha', '')`)
 	exec(t, sqlDB, `INSERT INTO config_revisions (id, kind, owner, content, content_hash, created_ms) VALUES ('rx', 'workspace_config', 'group:g0', '{"checks":["z"]}', 'h', 1)`)
 	exec(t, sqlDB, `INSERT INTO config_heads (kind, owner, revision_id, updated_ms) VALUES ('workspace_config', 'group:g0', 'rx', 1)`)
-	exec(t, sqlDB, `INSERT INTO workspace_group_members (group_id, workspace_id) VALUES ('g0', 'fx/web')`)
-	v, err := s.Set(root(), KindWorkspace, "fx/web", Config{}, audit.ViaCLI, "")
+	exec(t, sqlDB, `INSERT INTO workspace_group_members (group_id, workspace_id) VALUES ('g0', 'fabrikam/web')`)
+	v, err := s.Set(root(), KindWorkspace, "fabrikam/web", Config{}, audit.ViaCLI, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,21 +271,21 @@ func TestGroupConflictsAndEffectiveChecks(t *testing.T) {
 		t.Fatalf("conflict reported, first group by name wins: %+v", v.Effective)
 	}
 	// What only holds for the merged config: a push needs a remote URL.
-	if _, err := s.Set(root(), KindWorkspace, "fx/api", Config{Push: &Push{Kind: new("github")}}, audit.ViaCLI, ""); !errors.Is(err, ErrInvalid) {
+	if _, err := s.Set(root(), KindWorkspace, "fabrikam/api", Config{Push: &Push{Kind: new("github")}}, audit.ViaCLI, ""); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("push without a remote URL: %v", err)
 	}
-	if _, err := s.Set(root(), KindWorkspace, "fx/api", Config{Push: &Push{Kind: new("github"), RemoteURL: new("https://github.com/fx/api.git"), PullRequest: new("draft")}}, audit.ViaCLI, ""); err != nil {
+	if _, err := s.Set(root(), KindWorkspace, "fabrikam/api", Config{Push: &Push{Kind: new("github"), RemoteURL: new("https://github.com/fabrikam/api.git"), PullRequest: new("draft")}}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestGroupSaveRefusedForAManagedMember(t *testing.T) {
 	s, _, _ := fixture(t)
-	if _, err := s.Set(root(), KindWorkspace, "fx/api", Config{}, audit.ViaCLI, ""); err != nil {
+	if _, err := s.Set(root(), KindWorkspace, "fabrikam/api", Config{}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
 	_, err := s.Set(root(), KindGroup, "globex", Config{Push: &Push{PullRequest: new("draft")}}, audit.ViaCLI, "")
-	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "fx/api") {
+	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "fabrikam/api") {
 		t.Fatalf("a pull request without a push on a managed member: %v", err)
 	}
 }
@@ -294,72 +294,72 @@ func TestPermissions(t *testing.T) {
 	s, _, _ := fixture(t)
 	c := Config{Checks: list("make test")}
 	// Not an admin: the same refusal whether or not the owner exists.
-	for _, id := range []string{"fx/api", "nope/x"} {
-		if _, err := s.Set(key(false, false, "fx/api"), KindWorkspace, id, c, audit.ViaCLI, ""); !errors.Is(err, auth.ErrAdminRequired) {
+	for _, id := range []string{"fabrikam/api", "nope/x"} {
+		if _, err := s.Set(key(false, false, "fabrikam/api"), KindWorkspace, id, c, audit.ViaCLI, ""); !errors.Is(err, auth.ErrAdminRequired) {
 			t.Fatalf("%s: want ErrAdminRequired, got %v", id, err)
 		}
 	}
-	if _, err := s.Set(key(true, false, "fx/api"), KindWorkspace, "fx/web", c, audit.ViaCLI, ""); !errors.Is(err, auth.ErrAdminRequired) {
+	if _, err := s.Set(key(true, false, "fabrikam/api"), KindWorkspace, "fabrikam/web", c, audit.ViaCLI, ""); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("an admin outside its scope: %v", err)
 	}
-	if _, err := s.Set(key(true, false, "fx/api"), KindWorkspace, "fx/api", c, audit.ViaCLI, ""); err != nil {
+	if _, err := s.Set(key(true, false, "fabrikam/api"), KindWorkspace, "fabrikam/api", c, audit.ViaCLI, ""); err != nil {
 		t.Fatalf("an admin in scope: %v", err)
 	}
 	// A group needs every member in scope.
-	if _, err := s.Set(key(true, false, "fx/api"), KindGroup, "globex", c, audit.ViaCLI, ""); !errors.Is(err, auth.ErrAdminRequired) {
+	if _, err := s.Set(key(true, false, "fabrikam/api"), KindGroup, "globex", c, audit.ViaCLI, ""); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("a group with a member out of scope: %v", err)
 	}
-	if _, err := s.Set(key(true, false, "fx/api", "fx/web"), KindGroup, "globex", Config{Setup: list("x")}, audit.ViaCLI, ""); err != nil {
+	if _, err := s.Set(key(true, false, "fabrikam/api", "fabrikam/web"), KindGroup, "globex", Config{Setup: list("x")}, audit.ViaCLI, ""); err != nil {
 		t.Fatalf("a group with every member in scope: %v", err)
 	}
 	// Reading a workspace's config needs only the workspace in scope; a
 	// foreign one is not found.
-	if _, err := s.Get(key(false, false, "fx/api"), KindWorkspace, "fx/api"); err != nil {
+	if _, err := s.Get(key(false, false, "fabrikam/api"), KindWorkspace, "fabrikam/api"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Get(key(false, false, "fx/api"), KindWorkspace, "fx/web"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Get(key(false, false, "fabrikam/api"), KindWorkspace, "fabrikam/web"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("a foreign workspace: %v", err)
 	}
-	if _, err := s.EffectiveFor(key(false, false, "fx/api"), "fx/web"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.EffectiveFor(key(false, false, "fabrikam/api"), "fabrikam/web"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("a foreign workspace's effective config: %v", err)
 	}
-	if _, err := s.Get(key(false, false, "fx/api"), KindGroup, "globex"); !errors.Is(err, auth.ErrAdminRequired) {
+	if _, err := s.Get(key(false, false, "fabrikam/api"), KindGroup, "globex"); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("a group's config is its admins': %v", err)
 	}
 	// A run never passes.
-	run := auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: "run:1", Admin: true, Run: &auth.RunIdentity{}, Workspaces: map[string]struct{}{"fx/api": {}}})
-	if _, err := s.Set(run, KindWorkspace, "fx/api", c, audit.ViaCLI, ""); !errors.Is(err, auth.ErrAdminRequired) {
+	run := auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: "run:1", Admin: true, Run: &auth.RunIdentity{}, Workspaces: map[string]struct{}{"fabrikam/api": {}}})
+	if _, err := s.Set(run, KindWorkspace, "fabrikam/api", c, audit.ViaCLI, ""); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("a run principal: %v", err)
 	}
 }
 
 func TestAudit(t *testing.T) {
 	s, _, sink := fixture(t)
-	if _, err := s.Set(root(), KindWorkspace, "fx/api", Config{Checks: list("make test"), DefaultBranch: new("develop")}, audit.ViaDashboard, ""); err != nil {
+	if _, err := s.Set(root(), KindWorkspace, "fabrikam/api", Config{Checks: list("make test"), DefaultBranch: new("develop")}, audit.ViaDashboard, ""); err != nil {
 		t.Fatal(err)
 	}
 	e := sink.last()
-	if e.Action != "config.update" || e.EntityType != AuditEntity || e.EntityID != "workspace:fx/api" || e.WorkspaceID != "fx/api" || e.Via != audit.ViaDashboard {
+	if e.Action != "config.update" || e.EntityType != AuditEntity || e.EntityID != "workspace:fabrikam/api" || e.WorkspaceID != "fabrikam/api" || e.Via != audit.ViaDashboard {
 		t.Fatalf("event: %+v", e)
 	}
 	// The command field is recorded with its value; the others by name.
 	if !strings.Contains(e.Notes, "(was none): checks, default_branch") || !strings.Contains(e.Notes, `checks = ["make test"]`) || strings.Contains(e.Notes, "develop") {
 		t.Fatalf("notes: %s", e.Notes)
 	}
-	if _, err := s.Set(root(), KindWorkspace, "fx/api", Config{Checks: list("make test"), DefaultBranch: new("develop")}, audit.ViaDashboard, ""); err != nil {
+	if _, err := s.Set(root(), KindWorkspace, "fabrikam/api", Config{Checks: list("make test"), DefaultBranch: new("develop")}, audit.ViaDashboard, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Set(root(), KindWorkspace, "fx/api", Config{Checks: list("make test")}, ViaImport, ""); err != nil {
+	if _, err := s.Set(root(), KindWorkspace, "fabrikam/api", Config{Checks: list("make test")}, ViaImport, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Clear(root(), KindWorkspace, "fx/api", audit.ViaCLI); err != nil {
+	if _, err := s.Clear(root(), KindWorkspace, "fabrikam/api", audit.ViaCLI); err != nil {
 		t.Fatal(err)
 	}
 	if got := sink.actions(); got != "config.update config.import config.delete" {
 		t.Fatalf("an identical save writes nothing; an import and a delete have their own actions: %s", got)
 	}
 	// Revisions are never removed: the cleared config's history is there.
-	hist, err := confrevHistory(s, "workspace:fx/api")
+	hist, err := confrevHistory(s, "workspace:fabrikam/api")
 	if err != nil || len(hist) != 2 {
 		t.Fatalf("history: %v %d", err, len(hist))
 	}
@@ -388,7 +388,7 @@ func TestRunnerDefinitions(t *testing.T) {
 	if f, _ := s.Fleet(root()); f.Rev != "" || len(f.Runners) != 0 {
 		t.Fatalf("nothing defined: %+v", f)
 	}
-	if _, _, err := s.SetRunner(key(true, false, "fx/api"), RunnerDef{Name: "claude-opus", Kind: "claude"}, audit.ViaCLI); !errors.Is(err, auth.ErrAdminRequired) {
+	if _, _, err := s.SetRunner(key(true, false, "fabrikam/api"), RunnerDef{Name: "claude-opus", Kind: "claude"}, audit.ViaCLI); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("a runner definition is the fleet's: %v", err)
 	}
 	v, changed, err := s.SetRunner(key(true, true), RunnerDef{Name: "claude-opus", Kind: "Claude", Model: "opus", Effort: "high", Provider: "Anthropic"}, audit.ViaCLI)
@@ -433,20 +433,20 @@ func TestRunnerDefinitions(t *testing.T) {
 
 func TestDigest(t *testing.T) {
 	s, _, _ := fixture(t)
-	if d := s.Digest(root(), []string{"fx/api", "fx/web"}); d != "" {
+	if d := s.Digest(root(), []string{"fabrikam/api", "fabrikam/web"}); d != "" {
 		t.Fatalf("nothing managed: %q", d)
 	}
-	if _, err := s.Set(root(), KindWorkspace, "fx/api", Config{}, audit.ViaCLI, ""); err != nil {
+	if _, err := s.Set(root(), KindWorkspace, "fabrikam/api", Config{}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
-	a := s.Digest(root(), []string{"fx/web", "fx/api"})
-	if a == "" || a != s.Digest(root(), []string{"fx/api", "fx/web"}) {
+	a := s.Digest(root(), []string{"fabrikam/web", "fabrikam/api"})
+	if a == "" || a != s.Digest(root(), []string{"fabrikam/api", "fabrikam/web"}) {
 		t.Fatalf("the digest does not depend on the order: %q", a)
 	}
-	if _, err := s.Set(root(), KindWorkspace, "fx/api", Config{Checks: list("x")}, audit.ViaCLI, ""); err != nil {
+	if _, err := s.Set(root(), KindWorkspace, "fabrikam/api", Config{Checks: list("x")}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
-	if b := s.Digest(root(), []string{"fx/api", "fx/web"}); b == a {
+	if b := s.Digest(root(), []string{"fabrikam/api", "fabrikam/web"}); b == a {
 		t.Fatal("a change must change the digest")
 	}
 }
@@ -474,20 +474,20 @@ func TestNilListIsSetToNothing(t *testing.T) {
 // that relies on it must not be left with a config that cannot work.
 func TestGroupClearRefusedForADependentMember(t *testing.T) {
 	s, _, _ := fixture(t)
-	if _, err := s.Set(root(), KindGroup, "globex", Config{Push: &Push{Kind: new("github"), RemoteURL: new("https://github.com/fx/x.git")}}, audit.ViaCLI, ""); err != nil {
+	if _, err := s.Set(root(), KindGroup, "globex", Config{Push: &Push{Kind: new("github"), RemoteURL: new("https://github.com/fabrikam/x.git")}}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Set(root(), KindWorkspace, "fx/api", Config{Push: &Push{PullRequest: new("draft")}}, audit.ViaCLI, ""); err != nil {
+	if _, err := s.Set(root(), KindWorkspace, "fabrikam/api", Config{Push: &Push{PullRequest: new("draft")}}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Clear(root(), KindGroup, "globex", audit.ViaCLI); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "fx/api") {
-		t.Fatalf("clearing the group would leave fx/api with a pull request and no push: %v", err)
+	if _, err := s.Clear(root(), KindGroup, "globex", audit.ViaCLI); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "fabrikam/api") {
+		t.Fatalf("clearing the group would leave fabrikam/api with a pull request and no push: %v", err)
 	}
 	if _, err := s.Plan(root(), KindGroup, "globex", nil); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("a plan of the clear says the same: %v", err)
 	}
 	// Once the workspace no longer needs it, the clear goes through.
-	if _, err := s.Set(root(), KindWorkspace, "fx/api", Config{}, audit.ViaCLI, ""); err != nil {
+	if _, err := s.Set(root(), KindWorkspace, "fabrikam/api", Config{}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Clear(root(), KindGroup, "globex", audit.ViaCLI); err != nil {
@@ -499,20 +499,20 @@ func TestGroupClearRefusedForADependentMember(t *testing.T) {
 // refuses it.
 func TestSetIfRefusesALostRace(t *testing.T) {
 	s, _, _ := fixture(t)
-	first, err := s.SetIf(root(), KindWorkspace, "fx/api", Config{Checks: list("a")}, audit.ViaCLI, "", "")
+	first, err := s.SetIf(root(), KindWorkspace, "fabrikam/api", Config{Checks: list("a")}, audit.ViaCLI, "", "")
 	if err != nil {
 		t.Fatalf("nothing stored, as read: %v", err)
 	}
-	if _, err := s.Set(root(), KindWorkspace, "fx/api", Config{Checks: list("b")}, audit.ViaDashboard, ""); err != nil {
+	if _, err := s.Set(root(), KindWorkspace, "fabrikam/api", Config{Checks: list("b")}, audit.ViaDashboard, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.SetIf(root(), KindWorkspace, "fx/api", Config{Checks: list("c")}, audit.ViaCLI, "", first.Rev); !errors.Is(err, ErrConflict) {
+	if _, err := s.SetIf(root(), KindWorkspace, "fabrikam/api", Config{Checks: list("c")}, audit.ViaCLI, "", first.Rev); !errors.Is(err, ErrConflict) {
 		t.Fatalf("someone else saved since: %v", err)
 	}
-	if _, err := s.SetIf(root(), KindWorkspace, "fx/api", Config{Checks: list("c")}, audit.ViaCLI, "", ""); !errors.Is(err, ErrConflict) {
+	if _, err := s.SetIf(root(), KindWorkspace, "fabrikam/api", Config{Checks: list("c")}, audit.ViaCLI, "", ""); !errors.Is(err, ErrConflict) {
 		t.Fatalf("read as empty, and it is not: %v", err)
 	}
-	v, _ := s.Get(root(), KindWorkspace, "fx/api")
+	v, _ := s.Get(root(), KindWorkspace, "fabrikam/api")
 	if (*v.Config.Checks)[0] != "b" {
 		t.Fatalf("the refused saves wrote nothing: %s", Canonical(*v.Config))
 	}
@@ -525,7 +525,7 @@ func TestEmptyBranchTemplateAndViaLabel(t *testing.T) {
 	if _, err := s.Set(root(), KindGroup, "globex", Config{BranchTemplate: new("{prefix}{ref}")}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Set(root(), KindWorkspace, "fx/api", Config{BranchTemplate: new("")}, "made-up-surface", "")
+	v, err := s.Set(root(), KindWorkspace, "fabrikam/api", Config{BranchTemplate: new("")}, "made-up-surface", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -544,14 +544,14 @@ func TestPlanNewGroupFindsConflicts(t *testing.T) {
 	if _, err := s.Set(root(), KindGroup, "globex", Config{DefaultBranch: new("develop")}, audit.ViaCLI, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.PlanNew(root(), KindGroup, "new-team", []string{"fx/api"}, Config{DefaultBranch: new("main")}); !errors.Is(err, ErrConflict) {
-		t.Fatalf("globex already sets default_branch for fx/api: %v", err)
+	if _, err := s.PlanNew(root(), KindGroup, "new-team", []string{"fabrikam/api"}, Config{DefaultBranch: new("main")}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("globex already sets default_branch for fabrikam/api: %v", err)
 	}
-	fields, err := s.PlanNew(root(), KindGroup, "new-team", []string{"fx/api"}, Config{Checks: list("x")})
+	fields, err := s.PlanNew(root(), KindGroup, "new-team", []string{"fabrikam/api"}, Config{Checks: list("x")})
 	if err != nil || strings.Join(fields, ",") != "checks" {
 		t.Fatalf("another field is fine: %v %v", fields, err)
 	}
-	if _, err := s.PlanNew(key(true, false, "fx/web"), KindGroup, "new-team", []string{"fx/api"}, Config{}); !errors.Is(err, auth.ErrAdminRequired) {
+	if _, err := s.PlanNew(key(true, false, "fabrikam/web"), KindGroup, "new-team", []string{"fabrikam/api"}, Config{}); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("a new group's config needs every member in scope: %v", err)
 	}
 	if _, err := s.PlanNew(root(), KindWorkspace, "new/ws", nil, Config{Push: &Push{Kind: new("github")}}); !errors.Is(err, ErrInvalid) {

@@ -87,14 +87,14 @@ func TestEffectivePolicyLayers(t *testing.T) {
 		}
 		return e
 	}
-	if e := eff("fx/api"); !e.AllowAll() {
+	if e := eff("fabrikam/api"); !e.AllowAll() {
 		t.Fatalf("no policy anywhere allows everything: %+v", e)
 	}
 	// Only a default: it covers every workspace.
 	if _, err := s.SetPolicy(ctx, KindFleetDefault, "", allow("provider=anthropic", "provider=local"), false, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if got := sources(eff("fx/api")); got != "fleet default" {
+	if got := sources(eff("fabrikam/api")); got != "fleet default" {
 		t.Fatalf("default only: %s", got)
 	}
 	// A group policy replaces the default for its workspaces — here it is
@@ -102,50 +102,50 @@ func TestEffectivePolicyLayers(t *testing.T) {
 	if _, err := s.SetPolicy(ctx, KindGroup, "globex", allow("provider=anthropic", "provider=zai"), false, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if got := sources(eff("fx/api")); got != "group globex" {
+	if got := sources(eff("fabrikam/api")); got != "group globex" {
 		t.Fatalf("group replaces the default: %s", got)
 	}
 	if got := sources(eff("other/x")); got != "fleet default" {
 		t.Fatalf("a workspace outside the group keeps the default: %s", got)
 	}
-	if !eff("fx/api").Allows(wGLM, "review").Allowed || eff("other/x").Allows(wGLM, "review").Allowed {
+	if !eff("fabrikam/api").Allows(wGLM, "review").Allowed || eff("other/x").Allows(wGLM, "review").Allowed {
 		t.Fatal("GLM is allowed in the group and not under the default")
 	}
 	// A workspace narrows its group; a second group narrows too.
-	if _, err := s.SetPolicy(ctx, KindWorkspace, "fx/web", allow("provider=anthropic"), false, "cli"); err != nil {
+	if _, err := s.SetPolicy(ctx, KindWorkspace, "fabrikam/web", allow("provider=anthropic"), false, "cli"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.SetPolicy(ctx, KindGroup, "web-team", allow("any"), false, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if got := sources(eff("fx/web")); got != "group globex > group web-team > workspace" {
+	if got := sources(eff("fabrikam/web")); got != "group globex > group web-team > workspace" {
 		t.Fatalf("groups then the workspace: %s", got)
 	}
-	if eff("fx/web").Allows(wGLM, "review").Allowed || !eff("fx/web").Allows(wClaude, "review").Allowed {
+	if eff("fabrikam/web").Allows(wGLM, "review").Allowed || !eff("fabrikam/web").Allows(wClaude, "review").Allowed {
 		t.Fatal("the workspace narrows what its groups allow")
 	}
 	// The ceiling applies to everything, on top.
 	if _, err := s.SetPolicy(ctx, KindFleetCeiling, "", allow("provider=anthropic", "provider=local"), false, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if got := sources(eff("fx/api")); got != "fleet ceiling > group globex" {
+	if got := sources(eff("fabrikam/api")); got != "fleet ceiling > group globex" {
 		t.Fatalf("ceiling first: %s", got)
 	}
-	if eff("fx/api").Allows(wGLM, "review").Allowed {
+	if eff("fabrikam/api").Allows(wGLM, "review").Allowed {
 		t.Fatal("the ceiling refuses what a group would allow")
 	}
 	// The run queue gets the same policy with the routing.
-	if p := s.Prefs(ctx, "fx/api"); p.Policy == nil || p.Policy.Rev() != eff("fx/api").Rev() {
+	if p := s.Prefs(ctx, "fabrikam/api"); p.Policy == nil || p.Policy.Rev() != eff("fabrikam/api").Rev() {
 		t.Fatalf("the routing carries the policy: %+v", p.Policy)
 	}
 	// Clearing a level takes it out.
 	if _, err := s.ClearPolicy(ctx, KindFleetCeiling, "", false, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if got := sources(eff("fx/api")); got != "group globex" {
+	if got := sources(eff("fabrikam/api")); got != "group globex" {
 		t.Fatalf("after clearing the ceiling: %s", got)
 	}
-	if p := s.Prefs(ctx, "fx/api"); p.Policy.Rev() != eff("fx/api").Rev() {
+	if p := s.Prefs(ctx, "fabrikam/api"); p.Policy.Rev() != eff("fabrikam/api").Rev() {
 		t.Fatal("a policy change must drop the cached routing")
 	}
 }
@@ -159,20 +159,20 @@ func TestPolicyNeedsAdminAtTheLevel(t *testing.T) {
 		_, err := s.SetPolicy(ctx, kind, id, p, false, "cli")
 		return err
 	}
-	approver := key("appr", true, "fx/api", "fx/web")
+	approver := key("appr", true, "fabrikam/api", "fabrikam/web")
 	for name, c := range map[string]struct {
 		ctx      context.Context
 		kind, id string
 		ok       bool
 	}{
 		"root, fleet":                         {root(), KindFleetCeiling, "", true},
-		"approver, workspace":                 {approver, KindWorkspace, "fx/api", false},
-		"plain key, workspace":                {key("k", false, "fx/api"), KindWorkspace, "fx/api", false},
-		"admin of the workspace":              {admin(false, "fx/api"), KindWorkspace, "fx/api", true},
-		"admin of another workspace":          {admin(false, "fx/web"), KindWorkspace, "fx/api", false},
-		"admin of one workspace, its group":   {admin(false, "fx/api"), KindGroup, "globex", false},
-		"admin of every workspace in a group": {admin(false, "fx/api", "fx/web"), KindGroup, "globex", true},
-		"admin of a group, the fleet":         {admin(false, "fx/api", "fx/web"), KindFleetDefault, "", false},
+		"approver, workspace":                 {approver, KindWorkspace, "fabrikam/api", false},
+		"plain key, workspace":                {key("k", false, "fabrikam/api"), KindWorkspace, "fabrikam/api", false},
+		"admin of the workspace":              {admin(false, "fabrikam/api"), KindWorkspace, "fabrikam/api", true},
+		"admin of another workspace":          {admin(false, "fabrikam/web"), KindWorkspace, "fabrikam/api", false},
+		"admin of one workspace, its group":   {admin(false, "fabrikam/api"), KindGroup, "globex", false},
+		"admin of every workspace in a group": {admin(false, "fabrikam/api", "fabrikam/web"), KindGroup, "globex", true},
+		"admin of a group, the fleet":         {admin(false, "fabrikam/api", "fabrikam/web"), KindFleetDefault, "", false},
 		"admin of all workspaces, the fleet":  {admin(true), KindFleetDefault, "", true},
 	} {
 		err := set(c.ctx, c.kind, c.id)
@@ -185,22 +185,22 @@ func TestPolicyNeedsAdminAtTheLevel(t *testing.T) {
 	}
 	// Reads: a workspace's policy by any key in scope, a foreign one looks
 	// missing; the fleet's by anyone; a group's by its admins.
-	if _, err := s.GetPolicy(key("k", false, "fx/api"), KindWorkspace, "fx/api"); err != nil {
+	if _, err := s.GetPolicy(key("k", false, "fabrikam/api"), KindWorkspace, "fabrikam/api"); err != nil {
 		t.Fatalf("a key reads its workspace's policy: %v", err)
 	}
-	if _, err := s.GetPolicy(key("k", false, "fx/web"), KindWorkspace, "fx/api"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.GetPolicy(key("k", false, "fabrikam/web"), KindWorkspace, "fabrikam/api"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("a foreign workspace's policy: %v", err)
 	}
-	if _, err := s.GetPolicy(key("k", false, "fx/api"), KindFleetCeiling, ""); err != nil {
+	if _, err := s.GetPolicy(key("k", false, "fabrikam/api"), KindFleetCeiling, ""); err != nil {
 		t.Fatalf("the fleet policy binds everyone, so everyone reads it: %v", err)
 	}
-	if _, err := s.GetPolicy(key("k", false, "fx/api"), KindGroup, "globex"); !errors.Is(err, auth.ErrAdminRequired) {
+	if _, err := s.GetPolicy(key("k", false, "fabrikam/api"), KindGroup, "globex"); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("a group's policy by a plain key: %v", err)
 	}
-	if _, err := s.EffectivePolicyView(key("k", false, "fx/api"), "fx/api"); err != nil {
+	if _, err := s.EffectivePolicyView(key("k", false, "fabrikam/api"), "fabrikam/api"); err != nil {
 		t.Fatalf("a key sees what binds its workspace: %v", err)
 	}
-	if _, err := s.EffectivePolicyView(key("k", false, "fx/web"), "fx/api"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.EffectivePolicyView(key("k", false, "fabrikam/web"), "fabrikam/api"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("effective policy of a foreign workspace: %v", err)
 	}
 }
@@ -260,7 +260,7 @@ func TestPolicyRevisionsAndAudit(t *testing.T) {
 		"no rules":      {},
 		"unknown stage": {Allow: []policy.Rule{{Stages: []string{"deploy"}}}},
 	} {
-		if _, err := s.SetPolicy(ctx, KindWorkspace, "fx/api", bad, false, "cli"); !errors.Is(err, ErrInvalidInput) {
+		if _, err := s.SetPolicy(ctx, KindWorkspace, "fabrikam/api", bad, false, "cli"); !errors.Is(err, ErrInvalidInput) {
 			t.Errorf("%s: want ErrInvalidInput, got %v", name, err)
 		}
 	}
@@ -278,24 +278,24 @@ func TestPolicyRevisionsAndAudit(t *testing.T) {
 func TestPolicySaveThatStrands(t *testing.T) {
 	s, sqlDB, sink := policyFixture(t)
 	ctx := root()
-	// fx/api reviews on GLM and asks Claude for second opinions; a worker
-	// offers both. fx/web plans on a runner nobody reports yet.
-	if _, err := s.Put(ctx, KindWorkspace, "fx/api", Settings{
+	// fabrikam/api reviews on GLM and asks Claude for second opinions; a worker
+	// offers both. fabrikam/web plans on a runner nobody reports yet.
+	if _, err := s.Put(ctx, KindWorkspace, "fabrikam/api", Settings{
 		Stages:              map[string]StageSetting{"review": {Members: []runs.Member{{Runner: "opencode-glm"}}}},
 		SecondOpinionRunner: "claude",
 	}, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Put(ctx, KindWorkspace, "fx/web", Settings{Stages: map[string]StageSetting{"plan": {Members: []runs.Member{{Runner: "gemini"}}}}}, "cli"); err != nil {
+	if _, err := s.Put(ctx, KindWorkspace, "fabrikam/web", Settings{Stages: map[string]StageSetting{"plan": {Members: []runs.Member{{Runner: "gemini"}}}}}, "cli"); err != nil {
 		t.Fatal(err)
 	}
-	worker(t, sqlDB, "w1", []string{"fx/api", "fx/web"}, wClaude, wGLM)
+	worker(t, sqlDB, "w1", []string{"fabrikam/api", "fabrikam/web"}, wClaude, wGLM)
 
 	_, err := s.SetPolicy(ctx, KindGroup, "globex", allow("provider=anthropic"), false, "cli")
 	if !errors.Is(err, ErrStrands) {
 		t.Fatalf("want ErrStrands, got %v", err)
 	}
-	if msg := err.Error(); !strings.Contains(msg, "fx/api: review uses runner opencode-glm (provider zai, model zai-coding-plan/glm-5.3)") ||
+	if msg := err.Error(); !strings.Contains(msg, "fabrikam/api: review uses runner opencode-glm (provider zai, model zai-coding-plan/glm-5.3)") ||
 		!strings.Contains(msg, "the group globex policy does not allow") || strings.Contains(msg, "claude") || strings.Contains(msg, "gemini") {
 		t.Fatalf("the refusal names exactly what is stranded: %s", msg)
 	}
@@ -337,14 +337,14 @@ func TestPolicySaveThatStrands(t *testing.T) {
 func TestRunnerAllowed(t *testing.T) {
 	s, sqlDB, _ := policyFixture(t)
 	ctx := root()
-	if ok, known, _, err := s.RunnerAllowed(ctx, "fx/api", "second_opinion", "anything"); err != nil || !ok || !known {
+	if ok, known, _, err := s.RunnerAllowed(ctx, "fabrikam/api", "second_opinion", "anything"); err != nil || !ok || !known {
 		t.Fatalf("no policy: everything is allowed: %v %v %v", ok, known, err)
 	}
 	if _, err := s.SetPolicy(ctx, KindGroup, "globex", allow("provider=anthropic", "provider=openai,stages=second_opinion"), false, "cli"); err != nil {
 		t.Fatal(err)
 	}
 	codex := policy.Facts{Name: "codex", Kind: "codex", Provider: "openai"}
-	worker(t, sqlDB, "w1", []string{"fx/api"}, wClaude, wGLM, codex)
+	worker(t, sqlDB, "w1", []string{"fabrikam/api"}, wClaude, wGLM, codex)
 	for _, c := range []struct {
 		stage, runner string
 		ok, known     bool
@@ -354,7 +354,7 @@ func TestRunnerAllowed(t *testing.T) {
 		{"second_opinion", "opencode-glm", false, true},
 		{"second_opinion", "gemini", false, false},
 	} {
-		ok, known, refused, err := s.RunnerAllowed(ctx, "fx/api", c.stage, c.runner)
+		ok, known, refused, err := s.RunnerAllowed(ctx, "fabrikam/api", c.stage, c.runner)
 		if err != nil || ok != c.ok || known != c.known {
 			t.Errorf("%s on %s: allowed=%v known=%v (%v), want %v %v", c.runner, c.stage, ok, known, err, c.ok, c.known)
 		}
@@ -412,8 +412,8 @@ func TestPolicySaveStrandsUnpinnedStages(t *testing.T) {
 		t.Fatalf("a worker with an allowed runner serves it: %v", err)
 	}
 	// Only a worker without facts: said plainly.
-	worker(t, sqlDB, "w-old-2", []string{"fx/api"})
-	_, err = s.SetPolicy(ctx, KindWorkspace, "fx/api", allow("provider=anthropic"), false, "cli")
+	worker(t, sqlDB, "w-old-2", []string{"fabrikam/api"})
+	_, err = s.SetPolicy(ctx, KindWorkspace, "fabrikam/api", allow("provider=anthropic"), false, "cli")
 	if !errors.Is(err, ErrStrands) || !strings.Contains(err.Error(), "report no runner facts, so none passes a policy") {
 		t.Fatalf("only fact-less workers: %v", err)
 	}
@@ -432,14 +432,14 @@ func TestPolicySaveStrandsUnpinnedStages(t *testing.T) {
 // the audit trail.
 func TestPolicyRefusalsLeakNothingAndOrphansAreAudited(t *testing.T) {
 	s, sqlDB, sink := policyFixture(t)
-	plain := key("k", false, "fx/api")
+	plain := key("k", false, "fabrikam/api")
 	for name, call := range map[string]func() error{
 		"set on a missing workspace": func() error {
 			_, err := s.SetPolicy(plain, KindWorkspace, "nope/x", allow("any"), false, "cli")
 			return err
 		},
 		"set on a real workspace": func() error {
-			_, err := s.SetPolicy(plain, KindWorkspace, "fx/web", allow("any"), false, "cli")
+			_, err := s.SetPolicy(plain, KindWorkspace, "fabrikam/web", allow("any"), false, "cli")
 			return err
 		},
 		"set on a missing group": func() error { _, err := s.SetPolicy(plain, KindGroup, "nope", allow("any"), false, "cli"); return err },
@@ -456,8 +456,8 @@ func TestPolicyRefusalsLeakNothingAndOrphansAreAudited(t *testing.T) {
 	}
 	// An admin of one workspace in a group is refused without the name of
 	// the workspace it lacks.
-	_, err := s.SetPolicy(admin(false, "fx/api"), KindGroup, "globex", allow("any"), false, "cli")
-	if !errors.Is(err, auth.ErrAdminRequired) || strings.Contains(err.Error(), "fx/web") {
+	_, err := s.SetPolicy(admin(false, "fabrikam/api"), KindGroup, "globex", allow("any"), false, "cli")
+	if !errors.Is(err, auth.ErrAdminRequired) || strings.Contains(err.Error(), "fabrikam/web") {
 		t.Fatalf("the refusal must not name the group's other members: %v", err)
 	}
 
@@ -494,25 +494,25 @@ func workerExec(t *testing.T, sqlDB *sql.DB, id string, executors map[string][]p
 func TestExecutorRulesInSavesAndRunnerAllowed(t *testing.T) {
 	s, sqlDB, _ := policyFixture(t)
 	ctx := root()
-	if _, err := s.Put(ctx, KindWorkspace, "fx/api", Settings{Stages: map[string]StageSetting{"review": {Members: []runs.Member{{Runner: "opencode-glm"}}}}}, "cli"); err != nil {
+	if _, err := s.Put(ctx, KindWorkspace, "fabrikam/api", Settings{Stages: map[string]StageSetting{"review": {Members: []runs.Member{{Runner: "opencode-glm"}}}}}, "cli"); err != nil {
 		t.Fatal(err)
 	}
 	// GLM runs unwrapped on w1; on w2 only its reviews are wrapped.
-	workerExec(t, sqlDB, "w1", map[string][]policy.ExecutorFact{"fx/api": {{Executor: "local"}}}, wClaude, wGLM)
+	workerExec(t, sqlDB, "w1", map[string][]policy.ExecutorFact{"fabrikam/api": {{Executor: "local"}}}, wClaude, wGLM)
 	rules := allow("provider=anthropic", "provider=zai,executor=isolated")
-	_, err := s.SetPolicy(ctx, KindWorkspace, "fx/api", rules, false, "cli")
+	_, err := s.SetPolicy(ctx, KindWorkspace, "fabrikam/api", rules, false, "cli")
 	if !errors.Is(err, ErrStrands) || !strings.Contains(err.Error(), "review uses runner opencode-glm") || !strings.Contains(err.Error(), "executor local") {
 		t.Fatalf("an unwrapped GLM review would be stranded: %v", err)
 	}
-	workerExec(t, sqlDB, "w2", map[string][]policy.ExecutorFact{"fx/api": {{Executor: "local"}, {Stage: "review", Runner: "opencode-glm", Executor: "wrapper:bwrap:0123456789ab"}}}, wGLM)
-	if _, err := s.SetPolicy(ctx, KindWorkspace, "fx/api", rules, false, "cli"); err != nil {
+	workerExec(t, sqlDB, "w2", map[string][]policy.ExecutorFact{"fabrikam/api": {{Executor: "local"}, {Stage: "review", Runner: "opencode-glm", Executor: "wrapper:bwrap:0123456789ab"}}}, wGLM)
+	if _, err := s.SetPolicy(ctx, KindWorkspace, "fabrikam/api", rules, false, "cli"); err != nil {
 		t.Fatalf("a worker that wraps GLM reviews keeps the stage usable: %v", err)
 	}
 	for _, c := range []struct {
 		stage string
 		ok    bool
 	}{{"review", true}, {"second_opinion", false}, {"qa", false}} {
-		ok, known, refused, err := s.RunnerAllowed(ctx, "fx/api", c.stage, "opencode-glm")
+		ok, known, refused, err := s.RunnerAllowed(ctx, "fabrikam/api", c.stage, "opencode-glm")
 		if err != nil || !known || ok != c.ok {
 			t.Errorf("opencode-glm on %s: allowed=%v known=%v (%v), want %v", c.stage, ok, known, err, c.ok)
 		}
@@ -529,23 +529,23 @@ func TestExecutorRulesInSavesAndRunnerAllowed(t *testing.T) {
 func TestUnavailableExecutorIsNotAPolicyRefusal(t *testing.T) {
 	s, sqlDB, _ := policyFixture(t)
 	ctx := root()
-	if _, err := s.Put(ctx, KindWorkspace, "fx/api", Settings{Stages: map[string]StageSetting{"review": {Members: []runs.Member{{Runner: "opencode-glm"}}}}}, "cli"); err != nil {
+	if _, err := s.Put(ctx, KindWorkspace, "fabrikam/api", Settings{Stages: map[string]StageSetting{"review": {Members: []runs.Member{{Runner: "opencode-glm"}}}}}, "cli"); err != nil {
 		t.Fatal(err)
 	}
 	// The only worker with GLM cannot run its reviews (its wrapper does
 	// not start), and can run the rest.
-	workerExec(t, sqlDB, "w1", map[string][]policy.ExecutorFact{"fx/api": {{Executor: "host:knot"},
+	workerExec(t, sqlDB, "w1", map[string][]policy.ExecutorFact{"fabrikam/api": {{Executor: "host:knot"},
 		{Stage: "review", Runner: "opencode-glm", Executor: policy.NoExecutor(policy.NoneWrapper)},
 		{Stage: "second_opinion", Runner: "opencode-glm", Executor: policy.NoExecutor(policy.NoneWrapper)}}}, wClaude, wGLM)
 	// A policy that allows GLM anywhere: the save strands nothing.
-	if _, err := s.SetPolicy(ctx, KindWorkspace, "fx/api", allow("provider=anthropic", "provider=zai"), false, "cli"); err != nil {
+	if _, err := s.SetPolicy(ctx, KindWorkspace, "fabrikam/api", allow("provider=anthropic", "provider=zai"), false, "cli"); err != nil {
 		t.Fatalf("a worker that cannot run the stage is not a policy refusal: %v", err)
 	}
-	ok, known, refused, err := s.RunnerAllowed(ctx, "fx/api", "second_opinion", "opencode-glm")
+	ok, known, refused, err := s.RunnerAllowed(ctx, "fabrikam/api", "second_opinion", "opencode-glm")
 	if err != nil || ok || known || refused != "" {
 		t.Fatalf("no worker can run it, and the policy refused nothing: allowed=%v known=%v refused=%q %v", ok, known, refused, err)
 	}
-	if ok, known, _, err := s.RunnerAllowed(ctx, "fx/api", "qa", "opencode-glm"); err != nil || !ok || !known {
+	if ok, known, _, err := s.RunnerAllowed(ctx, "fabrikam/api", "qa", "opencode-glm"); err != nil || !ok || !known {
 		t.Fatalf("a stage the worker can run: allowed=%v known=%v %v", ok, known, err)
 	}
 }
@@ -573,39 +573,39 @@ func TestPipelineSaveRefusesADefinedRunnerThePolicyForbids(t *testing.T) {
 		return err
 	}
 	// Before any policy: anything goes.
-	if err := put(KindWorkspace, "fx/api", map[string]string{"review": "glm"}, ""); err != nil {
+	if err := put(KindWorkspace, "fabrikam/api", map[string]string{"review": "glm"}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.SetPolicy(root(), KindGroup, "globex", allow("provider=anthropic", "provider=openai,stages=second_opinion", "provider=zai,executor=isolated,stages=qa"), true, "cli"); err != nil {
 		t.Fatal(err)
 	}
 	// The setting that was already there does not block an unrelated edit.
-	if err := put(KindWorkspace, "fx/api", map[string]string{"review": "glm", "plan": "claude-opus"}, ""); err != nil {
+	if err := put(KindWorkspace, "fabrikam/api", map[string]string{"review": "glm", "plan": "claude-opus"}, ""); err != nil {
 		t.Fatalf("an existing setting is not checked again: %v", err)
 	}
 	// Newly naming it is refused.
-	err := put(KindWorkspace, "fx/api", map[string]string{"review": "glm", "plan": "glm"}, "")
+	err := put(KindWorkspace, "fabrikam/api", map[string]string{"review": "glm", "plan": "glm"}, "")
 	if !errors.Is(err, ErrPolicyRefuses) || !strings.Contains(err.Error(), "glm") || !strings.Contains(err.Error(), "plan") {
 		t.Fatalf("want ErrPolicyRefuses naming the runner and stage, got %v", err)
 	}
-	if err := put(KindWorkspace, "fx/api", map[string]string{"review": "glm"}, "glm"); !errors.Is(err, ErrPolicyRefuses) {
+	if err := put(KindWorkspace, "fabrikam/api", map[string]string{"review": "glm"}, "glm"); !errors.Is(err, ErrPolicyRefuses) {
 		t.Fatalf("the second-opinion default is checked too: %v", err)
 	}
 	// A rule that needs an executor could still allow it somewhere: no
 	// worker's containment is known here, so the save is not refused.
-	if err := put(KindWorkspace, "fx/api", map[string]string{"review": "glm", "qa": "glm"}, ""); err != nil {
+	if err := put(KindWorkspace, "fabrikam/api", map[string]string{"review": "glm", "qa": "glm"}, ""); err != nil {
 		t.Fatalf("zai is allowed for qa where something isolates the run: %v", err)
 	}
 	// Not defined on the server, or no declared provider: nothing certain.
-	if err := put(KindWorkspace, "fx/api", map[string]string{"plan": "some-local-runner", "review": "undeclared"}, ""); err != nil {
+	if err := put(KindWorkspace, "fabrikam/api", map[string]string{"plan": "some-local-runner", "review": "undeclared"}, ""); err != nil {
 		t.Fatalf("an undefined runner is only warned about: %v", err)
 	}
 	// A group save is checked for the workspaces that take the stage from
 	// it; one that sets the stage itself is skipped.
-	if err := put(KindWorkspace, "fx/web", map[string]string{"plan": "claude-opus"}, ""); err != nil {
+	if err := put(KindWorkspace, "fabrikam/web", map[string]string{"plan": "claude-opus"}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := put(KindWorkspace, "fx/api", map[string]string{"plan": "claude-opus"}, ""); err != nil {
+	if err := put(KindWorkspace, "fabrikam/api", map[string]string{"plan": "claude-opus"}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := put(KindGroup, "globex", map[string]string{"plan": "glm"}, ""); err != nil {

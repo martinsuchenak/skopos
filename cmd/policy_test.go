@@ -31,9 +31,9 @@ func TestPolicyCLI(t *testing.T) {
 	if err := db.RunMigrations(sqlDB); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sqlDB.Exec(`INSERT INTO workspaces (id, created_at) VALUES ('fx/api', '');
+	if _, err := sqlDB.Exec(`INSERT INTO workspaces (id, created_at) VALUES ('fabrikam/api', '');
 		INSERT INTO workspace_groups (id, name, created_at) VALUES ('g1', 'globex', '');
-		INSERT INTO workspace_group_members (group_id, workspace_id) VALUES ('g1', 'fx/api')`); err != nil {
+		INSERT INTO workspace_group_members (group_id, workspace_id) VALUES ('g1', 'fabrikam/api')`); err != nil {
 		t.Fatal(err)
 	}
 	svc := pipeline.NewService(pipeline.NewStorage(sqlDB))
@@ -65,7 +65,7 @@ func TestPolicyCLI(t *testing.T) {
 		return out
 	}
 
-	if out := must("show", "--workspace", "fx/api"); !strings.Contains(out, "no policy applies") {
+	if out := must("show", "--workspace", "fabrikam/api"); !strings.Contains(out, "no policy applies") {
 		t.Fatalf("nothing set yet: %s", out)
 	}
 	must("set", "--fleet", "ceiling", "--allow", "provider=anthropic", "--allow", "provider=openai", "--allow", "provider=local")
@@ -73,7 +73,7 @@ func TestPolicyCLI(t *testing.T) {
 	if !strings.Contains(out, "saved group globex") || !strings.Contains(out, "allow provider=openai,stages=second_opinion") || !strings.Contains(out, "set by root") {
 		t.Fatalf("set output: %s", out)
 	}
-	out = must("show", "--workspace", "fx/api")
+	out = must("show", "--workspace", "fabrikam/api")
 	if !strings.Contains(out, "fleet ceiling (revision ") || !strings.Contains(out, "group globex (revision ") ||
 		strings.Index(out, "fleet ceiling") > strings.Index(out, "group globex") || !strings.Contains(out, "    allow provider=local") {
 		t.Fatalf("a workspace shows every policy that applies, the ceiling first: %s", out)
@@ -85,18 +85,18 @@ func TestPolicyCLI(t *testing.T) {
 		t.Fatalf("fleet default is not set: %s", out)
 	}
 	must("clear", "--group", "globex")
-	if out := must("show", "--workspace", "fx/api"); strings.Contains(out, "group globex") || !strings.Contains(out, "fleet ceiling") {
+	if out := must("show", "--workspace", "fabrikam/api"); strings.Contains(out, "group globex") || !strings.Contains(out, "fleet ceiling") {
 		t.Fatalf("after clearing the group policy: %s", out)
 	}
 
 	for name, args := range map[string][]string{
-		"no rules":      {"set", "--workspace", "fx/api"},
-		"a bad rule":    {"set", "--workspace", "fx/api", "--allow", "vendor=x"},
-		"two owners":    {"set", "--workspace", "fx/api", "--group", "globex", "--allow", "any"},
+		"no rules":      {"set", "--workspace", "fabrikam/api"},
+		"a bad rule":    {"set", "--workspace", "fabrikam/api", "--allow", "vendor=x"},
+		"two owners":    {"set", "--workspace", "fabrikam/api", "--group", "globex", "--allow", "any"},
 		"no owner":      {"clear"},
 		"a bad level":   {"show", "--fleet", "floor"},
 		"unknown group": {"set", "--group", "nope", "--allow", "any"},
-		"unknown stage": {"set", "--workspace", "fx/api", "--allow", "stages=deploy"},
+		"unknown stage": {"set", "--workspace", "fabrikam/api", "--allow", "stages=deploy"},
 	} {
 		if _, err := run(args...); err == nil {
 			t.Errorf("%s: must fail", name)
