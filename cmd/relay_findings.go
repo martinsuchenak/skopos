@@ -68,6 +68,11 @@ func (r *slackRelay) findingsBlock(itemID string) string {
 	for rank := 0; rank <= 3; rank++ {
 		for _, sev := range []string{findings.SeverityBlocking, findings.SeverityNit} {
 			for _, f := range all {
+				// A finding of a run from before the record is history,
+				// not something nobody followed up.
+				if f.Earlier() {
+					continue
+				}
 				if o, ok := order[f.State]; ok && o == rank && f.Severity == sev {
 					listed = append(listed, f)
 				}

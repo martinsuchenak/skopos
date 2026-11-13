@@ -27,8 +27,8 @@ versions follow [Semantic Versioning](https://semver.org/).
   - **Every save is a revision,** with who and when; the audit log records
     each change with its size and hash.
   - **Permission:** an approver in scope for a workspace, root for a group.
-  - **Workers** older than this release get no runs of a workspace whose
-    stages use a brief held on the server.
+  - **Workers** older than this release get no runs of a workspace that
+    holds a brief on the server, its own or a group's.
 - **QA tests the change.** A QA run now has its own prompt: test the change
   as its users would, against the item and the approved plan, and report
   each failed scenario as a finding with the steps to repeat it. Before, QA
@@ -49,7 +49,8 @@ versions follow [Semantic Versioning](https://semver.org/).
   - **`qa_timeout`** (30 minutes by default; worker file and workspace
     config).
   - **`redact_files`** in a worker's repo block names credential files in
-    the clone; their secrets are replaced in every run log.
+    the clone; their secrets are replaced in every run log and in what QA
+    reports.
 
 - **Each pipeline run gets its own skopos credential.** The server mints a
   token when a worker claims a run, and the worker hands it to that run's
@@ -413,13 +414,15 @@ versions follow [Semantic Versioning](https://semver.org/).
   of `worker.runners`. Before, the worker chose. A run also follows the
   workspace's current preference: one queued before a preference change
   used to run the old runner.
-- **A worker refuses to start when what it would report about a runner is
-  untrue:** a proxy variable in an account's `env`; a stage profile's `env`
-  that sets a proxy or an endpoint variable (`ANTHROPIC_BASE_URL`,
-  `OPENAI_BASE_URL`, `CLAUDE_CODE_USE_*`, `OPENCODE_CONFIG`); two accounts
-  of one runner that differ in model, provider or endpoint (this was a
-  warning: give each its own runner name); a declared provider that
-  contradicts the endpoint. `skopos worker check` reports the same.
+- **A worker reports no runner facts when what it would report about a
+  runner is untrue:** a proxy variable in an account's `env`; a stage
+  profile's `env` that sets a proxy or an endpoint variable
+  (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CLAUDE_CODE_USE_*`,
+  `OPENCODE_CONFIG`); two accounts of one runner that differ in model,
+  provider or endpoint (give each its own runner name); a declared provider
+  that contradicts the endpoint. The worker starts, logs each problem as an
+  error, and takes runs only for workspaces without a runner policy.
+  `skopos worker check` and `skopos worker install` refuse such a file.
 - **A run that comes back naming another runner starts again on that
   runner's account.** The worker used to keep the account and session the
   run started with.
@@ -461,8 +464,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   (a container image, a bwrap profile) has to hold what they need. A
   wrapper that only sets variables changes nothing here.
 - **A wrapper that uses `{cli}` starts the agent by its resolved path.**
-- **A `{name}` in a wrapper that is not a placeholder** is refused at
-  startup.
+- **A `{name}` in a wrapper that is not a placeholder** is refused when a
+  wrapper is saved on the server. In a worker file's own wrapper it is
+  passed on as written, with a warning at startup.
 - **Runners create their temporary config directories under the run's own
   directory** (`<state_dir>/runs/<run>/tmp`), not in the shared `/tmp`,
   and the worker removes them with the run.

@@ -1042,6 +1042,9 @@ type RunSummary struct {
 	// GroupID: the run was one member of a multi-agent stage (its group's
 	// summary section speaks for the decision, not this member).
 	GroupID string `json:"group_id,omitempty"`
+	// Found: how many findings the run reported, plus the earlier ones it
+	// found still open. 0 for a run that found nothing (or only asked).
+	Found int `json:"found,omitempty"`
 }
 
 // ListRuns is the inbox-facing read (amendment-paused check).
@@ -1053,7 +1056,8 @@ func (s *Service) ListRuns(ctx context.Context, itemID string) ([]RunSummary, er
 	out := make([]RunSummary, 0, len(all))
 	for _, r := range all {
 		out = append(out, RunSummary{ID: r.ID, Stage: r.Stage, Status: string(r.Status), Runner: r.Runner,
-			Branch: r.Branch, HeadSHA: r.HeadSHA, Diffstat: r.Diffstat, Summary: r.ResultSummary, FailReason: r.FailReason, GroupID: r.GroupID})
+			Branch: r.Branch, HeadSHA: r.HeadSHA, Diffstat: r.Diffstat, Summary: r.ResultSummary, FailReason: r.FailReason, GroupID: r.GroupID,
+			Found: len(r.Findings) + r.StillOpen})
 	}
 	return out, nil
 }

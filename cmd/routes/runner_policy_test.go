@@ -40,6 +40,11 @@ func TestIntegrationRunnerPolicy(t *testing.T) {
 	mustDo(t, worker.req("PUT", wsPath+"/policy", policyBody), 403, "a plain key")
 	mustDo(t, ops.req("PUT", "/api/policy/fleet/ceiling", policyBody), 403, "a group admin does not reach the fleet")
 	mustDo(t, ops.req("PUT", "/api/groups/globex/policy", `{"allow":[{"stages":["deploy"]}]}`), 400, "an unknown stage")
+	// A misspelt field is refused: read as left out, the rule would allow
+	// every executor (or every stage, or every provider).
+	mustDo(t, ops.req("PUT", "/api/groups/globex/policy", `{"allow":[{"provider":"anthropic","executer":"isolated"}]}`), 400, "a misspelt rule field")
+	mustDo(t, ops.req("PUT", "/api/groups/globex/policy", `{"allow":[{"provider":"anthropic","stage":["review"]}]}`), 400, "stage for stages")
+	mustDo(t, ops.req("PUT", "/api/groups/globex/policy", `{"alow":[{"provider":"anthropic"}]}`), 400, "a misspelt allow")
 	set := mustJSON(t, ops.req("PUT", "/api/groups/globex/policy", policyBody), 200).(map[string]any)
 	rev, _ := set["rev"].(string)
 	if rev == "" || set["updated_by"] != "key ops" {

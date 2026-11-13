@@ -428,6 +428,7 @@ func (s *Service) checkBriefConflict(ctx context.Context, groupID, name string) 
 func (s *Service) invalidateBriefs() {
 	s.mu.Lock()
 	s.briefCache = map[string]cachedBriefs{}
+	s.briefGen++
 	s.mu.Unlock()
 }
 
@@ -441,6 +442,7 @@ type cachedBriefs struct {
 func (s *Service) workspaceBriefs(ctx context.Context, ws string) ([]Brief, error) {
 	s.mu.Lock()
 	c, ok := s.briefCache[ws]
+	gen := s.briefGen
 	s.mu.Unlock()
 	if ok && s.now().Sub(c.at) < cacheTTL {
 		return c.briefs, nil
@@ -450,10 +452,12 @@ func (s *Service) workspaceBriefs(ctx context.Context, ws string) ([]Brief, erro
 		return nil, err
 	}
 	s.mu.Lock()
-	if s.briefCache == nil {
-		s.briefCache = map[string]cachedBriefs{}
+	if s.briefGen == gen {
+		if s.briefCache == nil {
+			s.briefCache = map[string]cachedBriefs{}
+		}
+		s.briefCache[ws] = cachedBriefs{briefs: all, at: s.now()}
 	}
-	s.briefCache[ws] = cachedBriefs{briefs: all, at: s.now()}
 	s.mu.Unlock()
 	return all, nil
 }
@@ -477,33 +481,19 @@ func (s *Service) RunBrief(ctx context.Context, ws, focus string) (*runs.RunBrie
 	return nil, nil
 }
 
-// HoldsBriefs reports whether a member of the workspace's pipeline has a
-// focus the server holds a brief for: a worker that cannot take a brief
-// from the claim answer would run such a member with other instructions.
+// HoldsBriefs reports whether the server holds any brief for the workspace
+// (its own or a group's): a worker that cannot take a brief from the claim
+// answer would run a member with that focus on other instructions.
+//
+// Any brief, not only one a current member uses: a run keeps the focus it
+// was queued with, so RunBrief can find a brief for a run whose stage has
+// since been changed. Were this narrower than RunBrief, a worker that
+// cannot take briefs would claim such a run, have it released, and claim
+// it again on every poll.
+//
 // An unreadable state counts as held (the run then waits for a worker that
 // can, rather than run with the wrong text).
 func (s *Service) HoldsBriefs(ctx context.Context, ws string) bool {
 	all, err := s.workspaceBriefs(ctx, ws)
-	if err != nil {
-		return true
-	}
-	if len(all) == 0 {
-		return false
-	}
-	held := map[string]bool{}
-	for _, b := range all {
-		held[b.Name] = true
-	}
-	r, err := s.resolve(ctx, ws)
-	if err != nil {
-		return true
-	}
-	for _, st := range r.effective {
-		for _, m := range st.Members {
-			if m.Focus != "" && held[m.Focus] {
-				return true
-			}
-		}
-	}
-	return false
+	return err != nil || len(all) > 0
 }

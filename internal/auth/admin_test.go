@@ -133,6 +133,11 @@ func TestRunTokenPrincipal(t *testing.T) {
 	if p := a.Authenticate(other); p != nil {
 		t.Fatalf("unknown run token: %+v", p)
 	}
+	// Also on a server without authentication: a token whose run has ended
+	// (or was cancelled, or lost its lease) must not make its agent root.
+	if p := open.Authenticate(other); p != nil {
+		t.Fatalf("a run token that no longer resolves on an unauthenticated server: %+v", p)
+	}
 }
 
 func TestPrincipalKind(t *testing.T) {

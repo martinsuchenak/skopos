@@ -192,10 +192,11 @@ func (a *Authenticator) Authenticate(r *http.Request) *Principal {
 		// except a request that presents a live run token. That is a run's
 		// agent, and it stays a run: scoped to its workspace and its
 		// stage's tools, as on any other server.
+		// One that no longer resolves (the run ended, was cancelled or lost
+		// its lease while its agent was still alive) is refused: it must
+		// not turn that agent into root.
 		if strings.HasPrefix(cred, RunTokenPrefix) {
-			if p := a.runPrincipal(r.Context(), cred); p != nil {
-				return p
-			}
+			return a.runPrincipal(r.Context(), cred)
 		}
 		return &Principal{Root: true}
 	}

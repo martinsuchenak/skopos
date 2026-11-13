@@ -260,13 +260,47 @@ func (p *StageProfile) validate(where string, hostContained bool) error {
 			return fmt.Errorf("%s: settings is not valid JSON: %v", where, err)
 		}
 	}
-	if ph := wsconfig.UnknownPlaceholder(p.Wrapper); ph != "" {
-		return fmt.Errorf("%s: the wrapper uses %s, which is not a placeholder (%s)", where, ph, strings.Join(wrapperPlaceholders, " "))
-	}
 	if (len(p.Tools) > 0 || len(p.Env) > 0 || p.grantsAllow()) && !p.Contained() && !hostContained {
 		return fmt.Errorf("%s: grants capabilities (tools/env/settings allow) but is not contained — set a wrapper, settings with sandbox.enabled = true, or worker.contained_by when the whole host is a container (skopos only grants capabilities to stages the operator contains)", where)
 	}
 	return nil
+}
+
+// WrapperWarnings names every {name} in the worker file's own wrappers that
+// is not a placeholder. It is passed to the wrapper as written, as releases
+// before placeholders were checked did; a wrapper the server defines is
+// refused for the same thing when it is saved.
+func (c *Config) WrapperWarnings() []string {
+	var out []string
+	note := func(where string, p *StageProfile) {
+		if p == nil {
+			return
+		}
+		if ph := wsconfig.UnknownPlaceholder(p.Wrapper); ph != "" {
+			out = append(out, fmt.Sprintf("%s: the wrapper has %s, which is not a placeholder (%s); it is passed on as written", where, ph, strings.Join(wrapperPlaceholders, " ")))
+		}
+	}
+	profiles := make([]string, 0, len(c.Profiles))
+	for name := range c.Profiles {
+		profiles = append(profiles, name)
+	}
+	sort.Strings(profiles)
+	for _, name := range profiles {
+		for _, stage := range sortedStages(c.Profiles[name]) {
+			note("profile "+name+"."+stage, c.Profiles[name][stage])
+		}
+	}
+	repos := make([]string, 0, len(c.Repos))
+	for id := range c.Repos {
+		repos = append(repos, id)
+	}
+	sort.Strings(repos)
+	for _, id := range repos {
+		for _, stage := range sortedStages(c.Repos[id].Stages) {
+			note("repo "+id+" stage "+stage, c.Repos[id].Stages[stage])
+		}
+	}
+	return out
 }
 
 // shortHash is the 12-hex id of a profile part.
@@ -317,9 +351,10 @@ func (p *StageProfile) Grants() string {
 
 // runsRepoCommands: for these stages the worker itself runs the repo's
 // setup and check commands on the branch — code the implementer wrote.
-// Only a wrapper goes around those; a runner's own sandbox does not.
+// Only a wrapper goes around those; a runner's own sandbox does not. QA
+// is one of them: it sets the head up to run before the agent tests it.
 func runsRepoCommands(stage string) bool {
-	return stage == "implement" || stage == "branch_review"
+	return stage == "implement" || stage == "branch_review" || stage == "qa"
 }
 
 // stagePhase is the profile stage a run's stage uses: a second opinion and

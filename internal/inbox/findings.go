@@ -199,7 +199,9 @@ func (s *Service) signOffFindings(ctx context.Context, itemID string) string {
 	} {
 		var ids []string
 		for _, f := range fs {
-			if f.State == st.state {
+			// Findings of runs from before the record are history: not
+			// counted as left without a follow-up.
+			if f.State == st.state && !f.Earlier() {
 				ids = append(ids, f.ID)
 			}
 		}

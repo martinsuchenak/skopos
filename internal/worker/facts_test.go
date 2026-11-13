@@ -279,3 +279,37 @@ func TestPickAccountFollowsTheNamedRunner(t *testing.T) {
 		t.Fatalf("the old account and session must be forgotten: %q %q", w.accounts["r1"], w.sessions["r1:implement"])
 	}
 }
+
+// A worker whose facts would be untrue reports none, and then takes what a
+// server gives a worker without facts: unpinned runs where no policy
+// applies.
+func TestWithheldFactsAreNotReported(t *testing.T) {
+	c := &Config{Runners: []string{"claude"}, Accounts: []*Account{{Name: "a", Runner: "claude"}}}
+	w := New(c, NewClient("https://skopos.example", "k"), nil)
+	if len(w.runnerFacts()) != 1 {
+		t.Fatalf("facts are reported: %+v", w.runnerFacts())
+	}
+	w.WithholdFacts([]string{"account a: env sets HTTPS_PROXY"})
+	if got := w.runnerFacts(); got != nil {
+		t.Fatalf("withheld facts are not reported: %+v", got)
+	}
+	w.client.factsUsed = true
+	if why := w.refuseRunner(&Run{Runner: ""}); why != "" {
+		t.Fatalf("without facts the server pins nothing, and the run is taken as before: %q", why)
+	}
+}
+
+// A {name} that is not a placeholder in the worker file's own wrapper is
+// passed on as written and named in a warning; it does not stop the load.
+func TestUnknownWrapperTokenIsAWarning(t *testing.T) {
+	c := &Config{Profiles: map[string]map[string]*StageProfile{
+		"php": {"implement": {Wrapper: []string{"docker", "run", "--label", "job={id}", "-v", "{dir}:{dir}", "img"}}}}}
+	warn := c.WrapperWarnings()
+	if len(warn) != 1 || !strings.Contains(warn[0], "{id}") || !strings.Contains(warn[0], "profile php.implement") {
+		t.Fatalf("warnings: %v", warn)
+	}
+	argv, err := expandWrapper(c.Profiles["php"]["implement"].Wrapper, map[string]string{"{dir}": "/w"})
+	if err != nil || strings.Join(argv, " ") != "docker run --label job={id} -v /w:/w img" {
+		t.Fatalf("the token is passed on as written: %v %v", argv, err)
+	}
+}

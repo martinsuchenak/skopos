@@ -105,16 +105,27 @@ func (l *runLog) flush() {
 }
 
 // line records one or more lines of text from src.
+// setRedact replaces the stream's redactor: a run learned of more secrets
+// after its log opened (a credentials file that setup wrote).
+func (l *runLog) setRedact(r *strings.Replacer) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.redact = r
+	l.mu.Unlock()
+}
+
 func (l *runLog) line(src, text string, isErr bool) {
 	if l == nil {
 		return
 	}
 	text = strings.ToValidUTF8(strings.TrimRight(text, "\r\n"), "\uFFFD")
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.redact != nil {
 		text = l.redact.Replace(text)
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	for _, ln := range strings.Split(text, "\n") {
 		ln = strings.TrimRight(ln, "\r")
 		for _, piece := range splitBytes(ln, maxRunLogLine) {

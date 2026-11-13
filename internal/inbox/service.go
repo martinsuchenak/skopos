@@ -79,6 +79,11 @@ type RunSummary struct {
 	Runner  string `json:"runner,omitempty"`
 	Branch  string `json:"branch,omitempty"`
 	HeadSHA string `json:"head_sha,omitempty"`
+	// GroupID: the multi-agent round the run was a member of ("" = alone).
+	GroupID string `json:"group_id,omitempty"`
+	// Found: findings the run reported plus earlier ones it found still
+	// open.
+	Found int `json:"found,omitempty"`
 }
 
 func (s *Service) SetRunLister(l RunLister) { s.runLister = l }

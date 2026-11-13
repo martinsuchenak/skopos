@@ -317,6 +317,27 @@ func TestImport(t *testing.T) {
 	if idsOf(v.Fix) != "f-live" {
 		t.Fatalf("an imported finding is not sent to an implementer: %q", idsOf(v.Fix))
 	}
+	// Imported and untouched, a finding is history (what became of it is
+	// not known): not listed as left without a follow-up. Sent back by the
+	// approver, it is followed like any other.
+	var old string
+	for _, f := range fs {
+		if f.Earlier() != (f.Source == SourceImported) {
+			t.Fatalf("only untouched imported findings are from earlier: %+v", f)
+		}
+		if f.Source == SourceImported && f.Severity == SeverityBlocking && old == "" {
+			old = f.ID
+		}
+	}
+	if _, err := s.SendBack(ctx, item, []string{old}, Who{Actor: "alex"}); err != nil {
+		t.Fatal(err)
+	}
+	fs, _ = s.Item(ctx, item)
+	for _, f := range fs {
+		if f.ID == old && (f.Earlier() || !f.Tracked || f.State != StateOpen) {
+			t.Fatalf("sent back, an imported finding is followed: %+v", f)
+		}
+	}
 }
 
 // What an agent writes is bounded, and a stage that is no review records
@@ -551,5 +572,34 @@ func TestWaiveNeedsAReason(t *testing.T) {
 	}
 	if f, err := s.Waive(ctx, item, "f-b", "tracked in the next item", Who{Actor: "alex"}); err != nil || f.State != StateWaived || f.Updates[0].Note != "tracked in the next item" {
 		t.Fatalf("with a reason: %+v %v", f, err)
+	}
+}
+
+// A check of the same commit after the finding was answered is a new
+// check: its "addressed" counts. (The commit need not change between two
+// QA runs — what was wrong may have been the system it was tested on.)
+// Before, a "not fixed" recorded for a commit kept every later "addressed"
+// on that commit out for good, and the finding could never be settled.
+func TestALaterCheckOfTheSameCommitCounts(t *testing.T) {
+	s, sqlDB := testService(t)
+	q1 := run("qa1", "qa", "claude", "")
+	q1.HeadSHA = "head-1"
+	report(t, s, sqlDB, q1, []NewFinding{{ID: "f-q", Severity: "blocking", Text: "the login fails"}}, nil)
+	impl := run("impl2", "implement", "claude", "")
+	impl.HeadSHA = "head-1"
+	report(t, s, sqlDB, impl, nil, []Answer{{ID: "f-q", Status: "fixed"}})
+	q2 := run("qa2", "qa", "claude", "")
+	q2.HeadSHA = "head-1"
+	report(t, s, sqlDB, q2, nil, []Answer{{ID: "f-q", Status: "still_open", Note: "the test system was down"}})
+	if got := states(t, s); got["f-q"] != StateStillOpen {
+		t.Fatalf("not fixed on head-1: %v", got)
+	}
+	impl.ID = "impl3"
+	report(t, s, sqlDB, impl, nil, []Answer{{ID: "f-q", Status: "not_fixed", Note: "nothing to change"}})
+	q3 := run("qa3", "qa", "claude", "")
+	q3.HeadSHA = "head-1"
+	report(t, s, sqlDB, q3, nil, []Answer{{ID: "f-q", Status: "addressed"}})
+	if got := states(t, s); got["f-q"] != StateAddressed {
+		t.Fatalf("a later check of the same commit settles it: %v", got)
 	}
 }

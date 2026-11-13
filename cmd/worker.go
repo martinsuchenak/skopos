@@ -108,6 +108,9 @@ func workerCmd() *cli.Command {
 			for _, warn := range append(warnings, cfg.AccountWarnings()...) {
 				log.Warn(warn)
 			}
+			for _, warn := range cfg.WrapperWarnings() {
+				log.Warn(warn)
+			}
 			serverURL := resolveClientSetting(cmd.GetString("server-url"), "SKOPOS_SERVER_URL", "http://localhost:8080", clientCfg.ServerURL)
 			client := worker.NewClient(expandTilde(serverURL, home), key)
 			client.SetPollInterval(cfg.PollEvery)
@@ -130,15 +133,25 @@ func workerCmd() *cli.Command {
 				return fmt.Errorf("agent runners not ready: %s", strings.Join(problems, "; "))
 			}
 			// What the worker tells the server about its runners decides
-			// which runs the policy lets it take: refuse a config whose
-			// facts would be untrue (a proxy in an account's env, accounts
-			// of one runner on different models or providers, a declared
-			// provider the endpoint contradicts).
+			// which runs the policy lets it take, so it must be true. A
+			// config whose facts would not be (a proxy in an account's env,
+			// accounts of one runner on different models or providers, a
+			// declared provider the endpoint contradicts) reports none: the
+			// worker then takes runs only where no runner policy applies,
+			// as a release before runner facts did. Not a reason to stop —
+			// a worker that upgraded itself with a file the release before
+			// accepted would never come back. `worker check` and `worker
+			// install` refuse such a file.
 			if problems := cfg.FactProblems(); len(problems) > 0 {
-				return fmt.Errorf("runner facts: %s", strings.Join(problems, "; "))
-			}
-			for _, f := range cfg.RunnerFacts() {
-				log.Info("runner", "name", f.Name, "kind", f.Kind, "provider", f.Provider, "endpoint", f.Endpoint, "model", f.Model)
+				for _, p := range problems {
+					log.Error("runner facts: " + p)
+				}
+				log.Error("this worker reports no runner facts until that is fixed: it takes runs only for workspaces without a runner policy")
+				w.WithholdFacts(problems)
+			} else {
+				for _, f := range cfg.RunnerFacts() {
+					log.Info("runner", "name", f.Name, "kind", f.Kind, "provider", f.Provider, "endpoint", f.Endpoint, "model", f.Model)
+				}
 			}
 			// What contains a run here (a policy rule may require it).
 			for ws, facts := range cfg.ExecutorFacts() {

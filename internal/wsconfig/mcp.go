@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"path"
 	"regexp"
@@ -127,7 +128,8 @@ func credentialName(name string) bool {
 var (
 	reOpaque  = regexp.MustCompile(`^[A-Za-z0-9_\-.~+=]{20,}$`)
 	reHexLike = regexp.MustCompile(`^[0-9a-fA-F-]+$`)
-	reURLCred = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^/\s:@]+:[^/\s@]+@`)
+	// user:password@ in a URL; the user may be empty (redis://:password@host).
+	reURLCred = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^/\s:@]*:[^/\s@]+@`)
 	reScheme  = regexp.MustCompile(`(?i)^(bearer|basic|token|apikey|api-key)?[\s:=]*$`)
 )
 
@@ -573,42 +575,49 @@ func (s *Service) SetMCPServer(ctx context.Context, d MCPServerDef, via string) 
 		return nil, false, err
 	}
 	actor, keyID := auth.Actor(ctx)
+	// From here on the save is carried through whatever becomes of the
+	// request: a client that goes away must not leave the definition and
+	// its secrets half changed.
+	ctx = context.WithoutCancel(ctx)
+	// A stored value is for the server it was set for. A new definition
+	// starts without any (one left by an earlier server of the name must
+	// not attach to it), and one that sends the secret somewhere else —
+	// another host, another command — has to be given it again. The
+	// secrets go BEFORE the definition is saved, and on every save, not
+	// only a changed one: saved first, a failure in between would leave
+	// the old values attached to the new address, and the same save sent
+	// again would find nothing to change.
+	var gone []string
+	moved := false
+	if s.secrets != nil {
+		keep := norm.SecretNames()
+		if before == nil {
+			keep = nil
+		} else {
+			var prev MCPServerDef
+			if json.Unmarshal(before.Content, &prev) != nil || !sameTarget(prev, norm) {
+				keep, moved = nil, true
+			}
+		}
+		if gone, err = s.secrets.Keep(ctx, owner, keep); err != nil {
+			return nil, false, err
+		}
+	}
 	rev, changed, err := s.revs.Put(ctx, KindMCPServer, owner, content, confrev.Meta{Actor: actor, ActorKeyID: keyID, Via: via})
 	if err != nil {
 		return nil, false, err
 	}
-	if changed {
+	if changed || len(gone) > 0 {
 		action, was := "mcp_server.create", "none"
 		if before != nil {
 			action, was = "mcp_server.update", before.ID
 		}
 		notes := "revision " + rev.ID + " (was " + was + "): " + describeMCP(norm)
-		if s.secrets != nil {
-			// A stored value is for the server it was set for. A new
-			// definition starts without any (one left by an earlier server
-			// of the name must not attach to it), and one that sends the
-			// secret somewhere else — another host, another command — has
-			// to be given it again.
-			keep := norm.SecretNames()
-			moved := false
-			if before == nil {
-				keep = nil
-			} else {
-				var prev MCPServerDef
-				if json.Unmarshal(before.Content, &prev) != nil || !sameTarget(prev, norm) {
-					keep, moved = nil, true
-				}
-			}
-			gone, err := s.secrets.Keep(ctx, owner, keep)
-			if err != nil {
-				return nil, false, err
-			}
-			switch {
-			case len(gone) > 0 && moved:
-				notes += "; the server's address changed, so its stored secrets were deleted (set them again): " + strings.Join(gone, ", ")
-			case len(gone) > 0:
-				notes += "; secrets no longer named were deleted: " + strings.Join(gone, ", ")
-			}
+		switch {
+		case len(gone) > 0 && moved:
+			notes += "; the server's address changed, so its stored secrets were deleted (set them again): " + strings.Join(gone, ", ")
+		case len(gone) > 0:
+			notes += "; secrets no longer named were deleted: " + strings.Join(gone, ", ")
 		}
 		s.recordMCP(ctx, norm.Name, action, via, notes)
 		s.mcpChanged()
@@ -622,17 +631,31 @@ func (s *Service) SetMCPServer(ctx context.Context, d MCPServerDef, via string) 
 
 // sameTarget reports whether two definitions of a server send its secrets
 // to the same place: the same kind, and the same host for an http server
-// or the same command for a command server.
+// or, for a command server, the same command with the same plain
+// environment (a command is told where to connect by its variables: another
+// JIRA_URL is another server for the token beside it).
 func sameTarget(a, b MCPServerDef) bool {
 	if a.Type != b.Type {
 		return false
 	}
 	if a.Type == MCPCommand {
-		return slices.Equal(a.Command, b.Command)
+		return slices.Equal(a.Command, b.Command) && maps.Equal(plainEnv(a.Env), plainEnv(b.Env))
 	}
 	ua, erra := url.Parse(reSecretRef.ReplaceAllString(a.URL, "x"))
 	ub, errb := url.Parse(reSecretRef.ReplaceAllString(b.URL, "x"))
 	return erra == nil && errb == nil && ua.Scheme == ub.Scheme && ua.Host == ub.Host
+}
+
+// plainEnv is the part of a command server's environment that holds no
+// secret: what tells the command where to go.
+func plainEnv(env map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range env {
+		if !reSecretRef.MatchString(v) {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // DeleteMCPServer removes a definition and its secrets. A server a stored
@@ -658,17 +681,21 @@ func (s *Service) DeleteMCPServer(ctx context.Context, name, via string, force b
 	if in := users[name]; len(in) > 0 && !force {
 		return false, fmt.Errorf("%w: mcp server %s is given to the runs of %s. Take it out of their config first, or force the delete (skopos mcp-server delete --force)", ErrConflict, name, strings.Join(in, ", "))
 	}
+	// The secrets first, and whatever becomes of the request: a definition
+	// left without its secrets delivers nothing; secrets left without their
+	// definition would wait for the next server of that name.
+	ctx = context.WithoutCancel(ctx)
+	if s.secrets != nil {
+		if err := s.secrets.DeleteOwner(ctx, mcpOwner(name)); err != nil {
+			return false, err
+		}
+	}
 	was, err := s.revs.Clear(ctx, KindMCPServer, mcpOwner(name))
 	if err != nil {
 		return false, err
 	}
 	if was == nil {
 		return false, fmt.Errorf("%w: mcp server %s is not defined", ErrNotFound, name)
-	}
-	if s.secrets != nil {
-		if err := s.secrets.DeleteOwner(ctx, mcpOwner(name)); err != nil {
-			return false, err
-		}
 	}
 	notes := "was revision " + was.ID + "; its secrets were deleted"
 	if in := users[name]; len(in) > 0 {

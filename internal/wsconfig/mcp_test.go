@@ -378,3 +378,59 @@ func TestMCPServerWorkspaces(t *testing.T) {
 		}
 	}
 }
+
+// A secret is for the server it was set for. A command server is told
+// where to connect by its plain variables, so another value there is
+// another server for the token beside it; and a value left attached to a
+// definition it does not belong to (a save that failed halfway, in a
+// release that saved the definition first) goes at the next save of the
+// same definition, with an audit entry.
+func TestMCPSecretsFollowTheTarget(t *testing.T) {
+	s, sink, store := mcpFixture(t, "test key")
+	ctx := root()
+	def := MCPServerDef{Name: "tracker", Type: MCPCommand, Command: []string{"npx", "-y", "tracker-mcp"},
+		Env: map[string]string{"TRACKER_URL": "https://tracker.example.com", "TRACKER_TOKEN": "${secret:token}"}, Workspaces: []string{"*"}}
+	if _, _, err := s.SetMCPServer(ctx, def, "cli"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetMCPSecret(ctx, "tracker", "token", []byte("tracker-secret-1"), "cli"); err != nil {
+		t.Fatal(err)
+	}
+	// The same definition again keeps the value.
+	if v, changed, err := s.SetMCPServer(ctx, def, "cli"); err != nil || changed || !v.Secrets[0].Set {
+		t.Fatalf("an unchanged save keeps the secret: %+v %v %v", v, changed, err)
+	}
+	// Another address in a plain variable: the value has to be set again.
+	def.Env["TRACKER_URL"] = "https://elsewhere.example.com"
+	v, _, err := s.SetMCPServer(ctx, def, "cli")
+	if err != nil || v.Secrets[0].Set {
+		t.Fatalf("the token must not follow the command to another address: %+v %v", v, err)
+	}
+	last := sink.entries[len(sink.entries)-1]
+	if last.Action != "mcp_server.update" || !strings.Contains(last.Notes, "stored secrets were deleted") {
+		t.Fatalf("the audit entry says the secrets went: %+v", last)
+	}
+
+	// A value left behind under the owner is dropped by a save that changes
+	// nothing else, and that is recorded.
+	if err := store.Set(ctx, mcpOwner("tracker"), "stale", []byte("left-behind-value"), "test"); err != nil {
+		t.Fatal(err)
+	}
+	before := len(sink.entries)
+	if _, changed, err := s.SetMCPServer(ctx, def, "cli"); err != nil || changed {
+		t.Fatalf("the definition itself is unchanged: %v %v", changed, err)
+	}
+	have, _ := store.List(ctx, mcpOwner("tracker"))
+	if _, ok := have["stale"]; ok {
+		t.Fatal("a secret the definition does not name was kept")
+	}
+	if len(sink.entries) != before+1 || !strings.Contains(sink.entries[len(sink.entries)-1].Notes, "stale") {
+		t.Fatalf("dropping it is recorded: %+v", sink.entries[before:])
+	}
+
+	// A password in a URL with no user name is a credential in plain text.
+	if _, err := NormalizeMCPServer(MCPServerDef{Name: "cache", Type: MCPCommand, Command: []string{"cache-mcp"},
+		Env: map[string]string{"CACHE_ADDR": "redis://:s3cretPassw0rd@cache.example.com:6379/0"}}); err == nil {
+		t.Fatal("a password in a URL without a user was accepted in plain text")
+	}
+}

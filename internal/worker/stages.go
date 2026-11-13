@@ -938,6 +938,9 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 			return w.report(ctx, run, false, map[string]any{"reason": "qa: preparing the system failed: " + serr.Error(), "setup": setup, "head_sha": head, "retryable": true})
 		}
 		wt, qaSetup = dir, setup
+		// The credential files as they are now, in the tree QA works in:
+		// setup may have written them, and a worktree has its own.
+		w.addRunSecrets(ctx, w.fileSecretsIn(run.WorkspaceID, dir))
 	} else {
 		if err := createDetached(ctx, repo.Path, wt, ref); err != nil {
 			return fmt.Errorf("review worktree at %s: %w", ref, err)
@@ -1000,13 +1003,22 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 		// notes, change requests) are part of the spec: a reviewer that
 		// cannot see them blocks on behaviour he explicitly accepted (found
 		// in the live multi-agent run).
-		for _, h := range []string{"## Answers", "## Approval notes", "## Change requests"} {
+		// The questions and every answer come from the record, as for the
+		// planner and the implementer: the item's newest "## Answers"
+		// section holds only what one action answered, so a QA that asked
+		// two things and was answered in two steps would ask the first
+		// again.
+		var secs []itemSection
+		itemBrief, secs = splitItem(item.Content)
+		if qa := w.decisions(ctx, run, secs); qa != "" {
+			decisions = append(decisions, qa)
+		}
+		for _, h := range []string{"## Approval notes", "## Change requests"} {
 			if sec := sectionOnly(item.Content, h); sec != "" {
 				decisions = append(decisions, sec)
 			}
 		}
 		itemTitle = item.Title
-		itemBrief, _ = splitItem(item.Content)
 		if plan, perr := w.client.GetPlan(ctx, item.PlanID); perr == nil {
 			for _, pi := range plan.Items {
 				if isReviewStep(pi.Title, pi.Phase) {
@@ -1076,6 +1088,12 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 	var rr reviewResult
 	var scenarios []qaScenario
 	if qa {
+		// QA signs in to systems. What it returns goes into the item, to
+		// Slack and into the findings record, so the known secrets are
+		// taken out of the whole result, not only out of the log.
+		if red := w.redactor(); red != nil {
+			res.Structured = json.RawMessage(red.Replace(string(res.Structured)))
+		}
 		var qr qaResult
 		if err := json.Unmarshal(res.Structured, &qr); err != nil || qr.Verdict == "" {
 			return fmt.Errorf("qa returned no verdict: %s", firstLine(res.Text))

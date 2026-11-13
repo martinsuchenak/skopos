@@ -148,12 +148,20 @@ from a worker's own mcp_config.`,
 						return fmt.Errorf("%s: unknown fields: %s", file, strings.Join(keys, ", "))
 					}
 				} else {
+					if len(cmd.GetStringSlice("set")) == 0 && len(cmd.GetStringSlice("unset")) == 0 {
+						return fmt.Errorf("nothing to set: give --set field=value, --unset field or --file")
+					}
 					var cur wsconfig.View
 					if err := configCall(ctx, cmd, audit.ViaCLI, http.MethodGet, configPath(kind, id), nil, &cur); err != nil {
 						return err
 					}
 					if cur.Config != nil {
 						next = *cur.Config
+					} else if len(cmd.GetStringSlice("set")) == 0 {
+						// Saving an empty config would start one: for a
+						// workspace that means its workers stop reading
+						// their own files for it.
+						return fmt.Errorf("the %s has no config on the server, so there is nothing to unset", kind)
 					}
 					// Changing single fields of what was just read: refused
 					// when someone else saved in between.

@@ -329,7 +329,7 @@ func (w *Worker) prepareRunMCP(run *Run) (func(), error) {
 	if run.AgentToken == "" && run.MCP == nil {
 		return func() {}, nil
 	}
-	w.tokenRun, w.runMCP, w.runSecrets = run.ID, "", nil
+	w.tokenRun, w.runMCP, w.runMCPBody, w.runSecrets = run.ID, "", nil, nil
 	w.runOwned, w.runSkopos, w.runMCPNotes, w.runMCPNames = run.MCP != nil, run.AgentToken != "", nil, nil
 	if run.AgentToken != "" {
 		w.runSecrets = append(w.runSecrets, run.AgentToken)
@@ -338,7 +338,7 @@ func (w *Worker) prepareRunMCP(run *Run) (func(), error) {
 		w.runSecrets = append(w.runSecrets, run.MCP.Secrets...)
 	}
 	forget := func() {
-		w.tokenRun, w.runMCP, w.runSecrets = "", "", nil
+		w.tokenRun, w.runMCP, w.runMCPBody, w.runSecrets = "", "", nil, nil
 		w.runOwned, w.runSkopos, w.runMCPNotes, w.runMCPNames = false, false, nil, nil
 	}
 	if run.AgentToken != "" && !w.runTokensSeen {
@@ -382,7 +382,7 @@ func (w *Worker) prepareRunMCP(run *Run) (func(), error) {
 	if err := writeFile0600(path, b); err != nil {
 		return forget, err
 	}
-	w.runMCP, w.runMCPNames = path, gave
+	w.runMCP, w.runMCPBody, w.runMCPNames = path, b, gave
 	return func() {
 		forget()
 		_ = os.Remove(path)
@@ -433,15 +433,41 @@ func (w *Worker) mcpConfigFor(run *Run, runner string) (path string, skopos bool
 	own := w.tokenRun != "" && w.tokenRun == run.ID
 	takes := w.cfg.runnerHasSkopos(runner)
 	if own && w.runOwned {
-		if w.runMCP == "" || !takes {
+		if w.runMCP == "" || !takes || !w.freshRunMCP() {
 			return "", false
 		}
 		return w.runMCP, w.runSkopos
 	}
 	if f := w.mcpFor(run); f != "" && takes {
+		if own && f == w.runMCP && !w.freshRunMCP() {
+			// As when the file could not be written at the start: no
+			// skopos tools, and never the shared agent key.
+			return w.cfg.MCPConfig, false
+		}
 		return f, true
 	}
 	return w.cfg.MCPConfig, false
+}
+
+// freshRunMCP writes the run's MCP file again, as it was built at the
+// claim, and reports whether it is in place. The file lives in the run's
+// directory, which a wrapped agent can write to: an earlier agent of the
+// run could have replaced it — with other servers, or with a link to the
+// operator's own config and its credentials — for the next one (a fix
+// round, a resume) to be started with. Every agent starts with the
+// worker's own copy.
+func (w *Worker) freshRunMCP() bool {
+	if w.runMCP == "" {
+		return false
+	}
+	if w.runMCPBody == nil {
+		return true
+	}
+	if err := writeFile0600(w.runMCP, w.runMCPBody); err != nil {
+		w.log.Warn("the run's MCP config could not be written again; this agent gets none of its servers", "err", err)
+		return false
+	}
+	return true
 }
 
 // EnableAgentMCP gives every run of a claude or opencode agent that came

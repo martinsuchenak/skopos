@@ -305,9 +305,11 @@ func (h *Handler) putPolicy(w http.ResponseWriter, r *http.Request, kind, id str
 		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	// Strictly: a misspelt field of a rule ("executer", "stage") would be
+	// a constraint left out, and the rule would allow more than was written.
 	var in policyPut
-	if err := rest.DecodeJSON(w, r, &in); err != nil {
-		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
+	if err := rest.DecodeJSONStrict(w, r, &in); err != nil {
+		rest.RespondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
 	v, err := h.service.SetPolicy(r.Context(), kind, id, policy.Policy{Allow: in.Allow}, in.Force, viaOf(r, in.Via))

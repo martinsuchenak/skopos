@@ -413,6 +413,12 @@ func (s *Service) change(ctx context.Context, kind, id string, next *Config, via
 			now = *next
 		}
 		fields = Changed(was, now)
+		if (before == nil) != (next == nil) && len(fields) == 0 {
+			// Becoming managed with an empty config (or the reverse) is a
+			// change though no field differs: a workspace's workers stop
+			// reading their own file for it. Said as the dry run says it.
+			fields = []string{"managed"}
+		}
 		s.record(ctx, kind, id, before, after, fields, now, via)
 		if s.publisher != nil {
 			ws := ""

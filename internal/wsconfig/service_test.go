@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -16,7 +17,6 @@ import (
 	"github.com/martinsuchenak/skopos/internal/confrev"
 	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/pipeline"
-
 	_ "modernc.org/sqlite"
 )
 
@@ -556,5 +556,26 @@ func TestPlanNewGroupFindsConflicts(t *testing.T) {
 	}
 	if _, err := s.PlanNew(root(), KindWorkspace, "new/ws", nil, Config{Push: &Push{Kind: new("github")}}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("a new workspace's config is checked on its own: %v", err)
+	}
+}
+
+// A workspace that starts to hold a config on the server is a change even
+// when the config sets nothing: its workers stop reading their own files
+// for it. The save says so, as the dry run does.
+func TestBecomingManagedIsReportedAsAChange(t *testing.T) {
+	s, _, _ := fixture(t)
+	plan, err := s.Plan(root(), KindWorkspace, "fabrikam/api", &Config{})
+	if err != nil || !slices.Equal(plan, []string{"managed"}) {
+		t.Fatalf("the dry run: %v %v", plan, err)
+	}
+	v, err := s.Set(root(), KindWorkspace, "fabrikam/api", Config{}, audit.ViaCLI, "")
+	if err != nil || !slices.Equal(v.Changed, []string{"managed"}) {
+		t.Fatalf("an empty config that makes the workspace managed is a change: %+v %v", v, err)
+	}
+	if v, err = s.Set(root(), KindWorkspace, "fabrikam/api", Config{}, audit.ViaCLI, ""); err != nil || len(v.Changed) != 0 {
+		t.Fatalf("saved again, nothing changes: %+v %v", v, err)
+	}
+	if v, err = s.Clear(root(), KindWorkspace, "fabrikam/api", audit.ViaCLI); err != nil || !slices.Equal(v.Changed, []string{"managed"}) {
+		t.Fatalf("and so is giving it back to the workers' files: %+v %v", v, err)
 	}
 }

@@ -301,7 +301,10 @@ kind = "opencode"
 provider = "router"    # a router: match it with provider=router,model=…
 ```
 
-A worker refuses to start when its facts would be untrue:
+A worker reports no facts when they would be untrue. It starts, logs each
+problem as an error, and takes runs only for workspaces without a runner
+policy. `skopos worker check` and `skopos worker install` refuse such a
+file. The cases:
 
 - an account's `env` sets `HTTPS_PROXY`, `HTTP_PROXY` or `ALL_PROXY`;
 - a stage profile's `env` sets a proxy or an endpoint variable

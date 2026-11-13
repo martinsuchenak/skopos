@@ -829,9 +829,12 @@ func (s *Service) retryStage(ctx context.Context, item *Item) (target Status, st
 const StageQA = "qa"
 
 // qaAsked reports the branch of an item whose newest agent stage was a QA
-// that stopped with a question ("" otherwise): among the QA runs since the
-// newest run of another stage, one failed and has questions on record.
-// Second opinions are advisory and left aside.
+// that stopped with a question ("" otherwise). Only the newest QA round
+// counts — the newest run and, for a panel, the members of its group: an
+// earlier QA that asked says nothing about a later one that tested. When a
+// run of the round found something, that goes back to the implementer,
+// whatever another member asked. Second opinions are advisory and left
+// aside.
 func (s *Service) qaAsked(ctx context.Context, item *Item) string {
 	if s.runLister == nil || s.questions == nil {
 		return ""
@@ -840,26 +843,36 @@ func (s *Service) qaAsked(ctx context.Context, item *Item) string {
 	if err != nil {
 		return ""
 	}
-	var failed []RunSummary
+	var round []RunSummary
 	for _, r := range runs {
 		if r.Stage == "second_opinion" {
 			continue
 		}
-		if r.Stage != StageQA {
+		if len(round) == 0 {
+			if r.Stage != StageQA {
+				return ""
+			}
+			round = append(round, r)
+			continue
+		}
+		if r.Stage != StageQA || r.GroupID == "" || r.GroupID != round[0].GroupID {
 			break
 		}
-		if r.Status == "failed" && r.Branch != "" {
-			failed = append(failed, r)
-		}
+		round = append(round, r)
 	}
-	if len(failed) == 0 {
-		return ""
+	for _, r := range round {
+		if r.Found > 0 {
+			return ""
+		}
 	}
 	rec, err := s.questions.Record(ctx, item.ID)
 	if err != nil || rec == nil {
 		return ""
 	}
-	for _, r := range failed {
+	for _, r := range round {
+		if r.Status != "failed" || r.Branch == "" {
+			continue
+		}
 		for _, set := range rec.Sets {
 			if set.RunID == r.ID {
 				return r.Branch

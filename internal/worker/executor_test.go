@@ -218,8 +218,10 @@ func TestHostDeclarations(t *testing.T) {
 		{"grants on a bare host", Config{Profiles: map[string]map[string]*StageProfile{
 			"php": {"implement": {Tools: []string{"Bash(php:*)"}}}}}, "worker.contained_by"},
 		{"contained_by is a short name", Config{ContainedBy: "my knot space!"}, "contained_by"},
+		// The file's own wrapper keeps a {name} that is not a placeholder
+		// (a release before they were checked passed it on): a warning.
 		{"an unknown placeholder", Config{Profiles: map[string]map[string]*StageProfile{
-			"php": {"implement": {Wrapper: []string{"bwrap", "--bind", "{home}", "{home}"}}}}}, "{home}, which is not a placeholder"},
+			"php": {"implement": {Wrapper: []string{"bwrap", "--bind", "{home}", "{home}"}}}}}, ""},
 		{"braces that are not placeholders", Config{Profiles: map[string]map[string]*StageProfile{
 			"php": {"implement": {Wrapper: []string{"docker", "run", "--label", `{"a":1}`, "--format", "{{.ID}}", "-v", "{dir}:{dir}"}}}}}, ""},
 	})
@@ -494,5 +496,57 @@ func TestLoginDirIgnoresEnvFileValues(t *testing.T) {
 	}
 	if got := c.loginDir(&Account{Runner: "claude", Env: map[string]string{"CLAUDE_CONFIG_DIR": "/logins/c"}}); got != "/logins/c" {
 		t.Fatalf("the account's own env does: %q", got)
+	}
+}
+
+// The claude runner's raw log and a run's MCP file are in the run's
+// directory too. A link an earlier agent of the run left there is replaced
+// before the next agent starts: the log is not written through it, and the
+// agent is not started with whatever the link points at.
+func TestRawLogAndRunMCPAreTheWorkersOwnFiles(t *testing.T) {
+	state := t.TempDir()
+	victim := filepath.Join(t.TempDir(), "operator-mcp.json")
+	if err := os.WriteFile(victim, []byte(`{"mcpServers":{"private":{"url":"https://private.example.com"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{StateDir: state}
+	runDir := cfg.runDir("r1")
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(runDir, "implement.log")
+	if err := os.Symlink(victim, logPath); err != nil {
+		t.Fatal(err)
+	}
+	out, done := openRawLog(logPath)
+	_, _ = out.Write([]byte("agent output"))
+	done([]byte("stderr"))
+	if b, _ := os.ReadFile(victim); !strings.Contains(string(b), "private.example.com") {
+		t.Fatalf("the raw log was written through a link: %q", b)
+	}
+	if fi, err := os.Lstat(logPath); err != nil || !fi.Mode().IsRegular() {
+		t.Fatalf("the raw log is the worker's own file: %v %v", fi, err)
+	}
+
+	w := New(cfg, nil, nil)
+	mcp := filepath.Join(runDir, "mcp.json")
+	own := []byte(`{"mcpServers":{"skopos":{"url":"https://skopos.example"}}}`)
+	w.tokenRun, w.runMCP, w.runMCPBody, w.runOwned, w.runSkopos = "r1", mcp, own, true, true
+	if err := os.Symlink(victim, mcp); err != nil {
+		t.Fatal(err)
+	}
+	path, skopos := w.mcpConfigFor(&Run{ID: "r1"}, "claude")
+	if path != mcp || !skopos {
+		t.Fatalf("the run's own file: %q %v", path, skopos)
+	}
+	fi, err := os.Lstat(mcp)
+	if err != nil || !fi.Mode().IsRegular() {
+		t.Fatalf("the link was replaced by the worker's file: %v %v", fi, err)
+	}
+	if b, _ := os.ReadFile(mcp); string(b) != string(own) {
+		t.Fatalf("the agent starts with the worker's copy: %s", b)
+	}
+	if b, _ := os.ReadFile(victim); !strings.Contains(string(b), "private.example.com") {
+		t.Fatal("the operator's file is untouched")
 	}
 }

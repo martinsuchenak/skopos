@@ -230,7 +230,9 @@ Workers view shows them too.
   worker reports. Set such a variable in the account's `env`.
 - **Derived once, at startup.** Restart the worker after changing an
   account, a runner or an opencode config.
-- **Refused at startup, and by `skopos worker check`:**
+- **Refused by `skopos worker check` and `skopos worker install`.** A
+  running worker with one of these reports no facts, logs the problem as
+  an error and takes runs only for workspaces without a runner policy:
   - an account's `env` sets `HTTPS_PROXY`, `HTTP_PROXY` or `ALL_PROXY`
     (a proxy for the whole host belongs in the service's environment);
   - a stage profile's `env` sets a proxy or an endpoint variable
@@ -789,7 +791,8 @@ profile = "php"
   - A placeholder the wrapper uses and the worker has no value for fails
     the run before the agent starts. A `command` runner has no login
     directory unless its account sets `login_dir`. A `{name}` that is not
-    in this table is refused at startup.
+    in this table is passed on as written, with a warning at startup; in
+    a wrapper defined on the server it is refused when the wrapper is saved.
   - **Setup and checks run behind the wrapper too.** The worker's `setup`
     and `checks` commands for an implement stage, and for the review of an
     existing branch, execute the branch's code, so they run through the

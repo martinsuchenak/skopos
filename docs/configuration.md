@@ -249,8 +249,8 @@ How it works:
   `-` and `_`). Two groups cannot hold a brief of the same name for a
   workspace both contain.
 - **Workers** need a release that takes briefs from the server. An older
-  one is given no runs of a workspace whose stages use such a brief, and
-  shows as unhealthy for it with that reason.
+  one is given no runs of a workspace that holds a brief (its own or a
+  group's), and shows as unhealthy for it with that reason.
 - **Not in `skopos config export`:** the fleet file does not carry briefs.
 
 #### QA: testing the change
@@ -295,9 +295,12 @@ skopos workspace pipeline set --workspace github.com/you/repo --stage qa --runne
 - **Timeout:** `qa_timeout`, 30 minutes by default.
 - **Credentials in the log.** List the repository's credential files in the
   worker's repo block, `redact_files = ["tests/e2e/.env.e2e"]`: the values
-  of their password, secret, token and key lines are replaced in every run
-  log. Credentials that reach a run another way (an MCP tool's answer) are
-  not known to the worker and are not replaced.
+  of their password, secret, token and key lines, and a password inside a
+  URL value, are replaced in every run log and in what QA reports (its
+  summary, scenarios, findings and questions). The files are read in the
+  clone before the run and again in the tree QA tests, after setup.
+  Credentials that reach a run another way (an MCP tool's answer) are not
+  known to the worker and are not replaced.
 
 #### Multi-agent planning
 

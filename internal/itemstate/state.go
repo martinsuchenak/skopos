@@ -194,6 +194,11 @@ func findingsView(all []findings.Finding) *FindingsView {
 	}
 	v := &FindingsView{Counts: map[string]int{}, Open: []FindingView{}}
 	for _, f := range all {
+		// Findings of runs from before the record are history, not part
+		// of what is owed or left on the item now.
+		if f.Earlier() {
+			continue
+		}
 		v.Counts[f.State]++
 		switch f.State {
 		case findings.StateOpen, findings.StateFixed, findings.StateStillOpen:

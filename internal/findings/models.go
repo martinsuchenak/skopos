@@ -157,6 +157,14 @@ func (f Finding) By() string {
 	return name
 }
 
+// Earlier reports a finding recorded from a run of before the findings
+// record that nobody has acted on since. What became of it is not known:
+// it may have been fixed and reviewed again long ago. It is history, and
+// is not listed or counted as "not followed up" beside the findings the
+// record has followed from the start. Sent back, it is tracked like any
+// other.
+func (f Finding) Earlier() bool { return f.Source == SourceImported && len(f.Updates) == 0 }
+
 // pending: something is still owed on it — a fix, or a review's check.
 func pending(state string) bool {
 	return state == StateOpen || state == StateFixed || state == StateStillOpen
@@ -176,22 +184,29 @@ func derive(f *Finding) {
 	f.SentBack = false
 	// stillOpenAt: the commits a review found it not fixed on. Another
 	// reviewer's "addressed" for the same commit does not undo that: two
-	// checks of one commit that disagree leave it open.
+	// checks of one commit that disagree leave it open. Only checks with
+	// nothing between them disagree: once the finding went back or the
+	// implementer answered it, a later check of the same commit is a new
+	// check (the commit need not change — the fault may have been in the
+	// system it was tested on), and its "addressed" counts.
 	stillOpenAt := map[string]string{}
 	for _, u := range f.Updates {
 		switch u.Kind {
 		case KindSentBack:
 			f.SentBack, tracked, state = true, true, StateOpen
+			clear(stillOpenAt)
 		case KindWaived:
 			state = StateWaived
 		case KindFixed:
 			if state == StateOpen || state == StateStillOpen {
 				state = StateFixed
 			}
+			clear(stillOpenAt)
 		case KindNotFixed:
 			if state == StateFixed || state == StateStillOpen {
 				state = StateOpen
 			}
+			clear(stillOpenAt)
 		case KindAddressed:
 			if by, ok := stillOpenAt[u.HeadSHA]; ok && u.HeadSHA != "" && by != u.RunID {
 				continue

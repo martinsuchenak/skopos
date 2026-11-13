@@ -582,3 +582,29 @@ func TestStartupDoesNotWaitOnARefusal(t *testing.T) {
 		t.Fatal("only a 4xx answer counts as a refusal")
 	}
 }
+
+// The key a release before runner definitions ran with may not read them
+// either (it lacks workspaces read access): the refusal is an answer, and
+// the worker goes on with its own file.
+func TestStartupDoesNotWaitOnARefusedFleetFetch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"this key lacks workspaces:read"}`, http.StatusForbidden)
+	}))
+	defer srv.Close()
+	c := managedConfig(t, true)
+	c.PollEvery = time.Hour // a wait would hang the test
+	w := New(c, NewClient(srv.URL, "k"), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	done := make(chan struct{})
+	go func() { w.loadServerConfig(context.Background()); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a refused fetch of the runner definitions must not block startup")
+	}
+	if !w.fleetRefused {
+		t.Fatal("the refusal is remembered, so it is said once")
+	}
+	if w.repo("ws").Checks[0] != "local check" {
+		t.Fatal("the worker goes on with its own file")
+	}
+}

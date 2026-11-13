@@ -1095,7 +1095,8 @@ func (a runsListerAdapter) ListRuns(ctx context.Context, itemID string) ([]inbox
 	}
 	out := make([]inbox.RunSummary, 0, len(rs))
 	for _, r := range rs {
-		out = append(out, inbox.RunSummary{ID: r.ID, Stage: r.Stage, Status: r.Status, Runner: r.Runner, Branch: r.Branch, HeadSHA: r.HeadSHA})
+		out = append(out, inbox.RunSummary{ID: r.ID, Stage: r.Stage, Status: r.Status, Runner: r.Runner, Branch: r.Branch, HeadSHA: r.HeadSHA,
+			GroupID: r.GroupID, Found: r.Found})
 	}
 	return out, nil
 }

@@ -218,9 +218,20 @@ func (c *Config) dropRunners(drop map[string]string, notes *[]string) {
 func (w *Worker) refreshFleet(ctx context.Context) bool {
 	f, err := w.client.FleetConfig(ctx)
 	if err != nil {
+		if refused(err) {
+			// The server answers and refuses (the key may not read them):
+			// waiting changes nothing, and a worker that holds no
+			// definitions offers what its own file configures.
+			if !w.fleetRefused {
+				w.fleetRefused = true
+				w.log.Error("runner definitions: the server refuses this worker's key (it needs workspaces read access); the worker offers only the runners its own file configures", "err", err)
+			}
+			return true
+		}
 		w.log.Warn("runner definitions could not be fetched; keeping what this worker holds", "err", err)
 		return false
 	}
+	w.fleetRefused = false
 	rev := ""
 	if f != nil {
 		rev = f.Rev

@@ -396,7 +396,14 @@ func openRawLog(path string) (io.Writer, func(stderr []byte)) {
 		return io.Discard, func([]byte) {}
 	}
 	_ = os.MkdirAll(logsDirOf(path), 0o700)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	// The log is in the run's directory, which a wrapped agent can write
+	// to: whatever is at the path is removed and the file created anew, so
+	// a link an earlier agent of the run left there is replaced, never
+	// written through (writeNoFollow's rule).
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return io.Discard, func([]byte) {}
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return io.Discard, func([]byte) {}
 	}

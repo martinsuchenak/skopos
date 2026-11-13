@@ -164,9 +164,14 @@ type Worker struct {
 	facts    []policy.Facts
 	factsSet bool
 	factsMu  sync.Mutex
+	// factsHeld: why this worker reports no runner facts (FactProblems at
+	// start). Empty = it reports them.
+	factsHeld []string
 	// fleetLoaded: the server's runner definitions were fetched at least
 	// once (defs.go).
 	fleetLoaded bool
+	// fleetRefused: the server refused the fetch of them (said once).
+	fleetRefused bool
 	// wrapperChecked: when each server-defined wrapper's check last ran
 	// here (stagecaps.go). execProblems: what the worker last said it
 	// cannot run under the server's config, to log only changes.
@@ -174,6 +179,8 @@ type Worker struct {
 	execProblems   []string
 	tokenRun       string
 	runMCP         string
+	// runMCPBody: that file's content, written again before each agent.
+	runMCPBody []byte
 	// runOwned: the server holds the MCP servers of the run being executed
 	// (its claim answer carried them); runSkopos: the run's MCP file holds
 	// the skopos entry; runMCPNames / runMCPNotes: the servers it got from
@@ -954,6 +961,10 @@ type Check struct {
 func (w *Worker) runnerFacts() []policy.Facts {
 	w.factsMu.Lock()
 	defer w.factsMu.Unlock()
+	if len(w.factsHeld) > 0 {
+		// Facts that would be untrue are not reported at all.
+		return nil
+	}
 	if !w.factsSet {
 		w.facts, w.factsSet = w.cfg.RunnerFacts(), true
 		if w.client != nil {
@@ -970,6 +981,22 @@ func (w *Worker) runnerFacts() []policy.Facts {
 		w.execProblems = problems
 	}
 	return w.facts
+}
+
+// WithholdFacts makes the worker report no runner facts, for the reasons
+// given (Config.FactProblems): what it would report is not what its runs
+// would do. The server then gives it runs only where no runner policy
+// applies.
+func (w *Worker) WithholdFacts(why []string) {
+	w.factsMu.Lock()
+	w.factsHeld = slices.Clone(why)
+	w.factsMu.Unlock()
+}
+
+func (w *Worker) factsWithheld() bool {
+	w.factsMu.Lock()
+	defer w.factsMu.Unlock()
+	return len(w.factsHeld) > 0
 }
 
 // refuseExecutor says why a claimed run must not be executed ("" = run
@@ -1011,7 +1038,10 @@ func (w *Worker) refuseExecutor(run *Run) string {
 // claim did not cover what would run here. A server from before runner
 // facts hands out unpinned runs as it always did.
 func (w *Worker) refuseRunner(run *Run) string {
-	if w.client == nil || !w.client.FactsUsed() {
+	if w.client == nil || !w.client.FactsUsed() || w.factsWithheld() {
+		// No facts were sent, so the server matched no policy on them: it
+		// hands this worker runs only where none applies, unpinned as a
+		// server before runner facts did.
 		return ""
 	}
 	if run.Runner == "" {

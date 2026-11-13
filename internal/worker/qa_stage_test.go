@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -352,5 +353,72 @@ func TestRestoreTrackedInstructionFiles(t *testing.T) {
 	}
 	if got := read(".claude/settings.local.json"); got != `{"mine":true}` {
 		t.Fatalf("a local file git ignores must stay: %q", got)
+	}
+}
+
+// The shapes an env file really has: a comment after the value, quotes
+// with a comment after them, an escaped quote, a password inside a URL,
+// and the key names in use. Kept with its comment or its quotes, a value
+// would never match what an agent prints.
+func TestEnvSecretsReadsValuesAsAShellDoes(t *testing.T) {
+	file := strings.Join([]string{
+		`E2E_PASSWORD="p4ss word!" # staging`,
+		`ADMIN_PASSWORD=hunter2hunter2 # the admin`,
+		`OTHER_SECRET='single # not a comment'`,
+		`QUOTED_TOKEN="with \"quotes\" inside"`,
+		`DB_PASS=dbpassword1`,
+		`ROOT_PWD=rootpassword1`,
+		`STRIPE_APIKEY=sk_test_abcdefgh`,
+		`DATABASE_URL=postgres://app:urlpassw0rd@db.example.com:5432/app`,
+		`E2E_BASE_URL=https://staging.example.com`,
+		`PWD=/srv/app`,
+	}, "\n")
+	got := envSecrets([]byte(file))
+	want := []string{"p4ss word!", "hunter2hunter2", "single # not a comment", `with "quotes" inside`,
+		"dbpassword1", "rootpassword1", "sk_test_abcdefgh", "urlpassw0rd"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got  %q\nwant %q", got, want)
+	}
+}
+
+// A QA run's result is cleaned of the secrets the run knows before it is
+// read: what QA writes goes into the item and to Slack.
+func TestRunSecretsAddedAfterTheLogOpened(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "tests"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "tests", ".env.e2e"), []byte("E2E_PASSWORD=written-by-setup-1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := &Config{Repos: map[string]*Repo{"ws": {Path: t.TempDir(), RedactFiles: []string{"tests/.env.e2e"}}}}
+	w := New(c, nil, nil)
+	if got := w.fileSecrets("ws"); len(got) != 0 {
+		t.Fatalf("the clone has no such file yet: %q", got)
+	}
+	l := &runLog{}
+	ctx := withRunLog(context.Background(), l)
+	w.addRunSecrets(ctx, w.fileSecretsIn("ws", dir))
+	if l.redact == nil || l.redact.Replace("signed in with written-by-setup-1") != "signed in with [redacted]" {
+		t.Fatal("the open log redacts what was found in the tree the stage works in")
+	}
+	if got := w.redactor().Replace(`{"note":"password written-by-setup-1"}`); got != `{"note":"password [redacted]"}` {
+		t.Fatalf("a result is cleaned the same way: %s", got)
+	}
+}
+
+// QA sets the head up to run: the repository's setup commands run on the
+// branch's code there, so a runner's own sandbox is not what contains the
+// stage (only a wrapper goes around those commands).
+func TestQARunsRepositoryCommands(t *testing.T) {
+	for _, stage := range []string{"implement", "branch_review", "qa"} {
+		if !runsRepoCommands(stage) {
+			t.Errorf("%s runs the repository's commands", stage)
+		}
+	}
+	for _, stage := range []string{"plan", "review", "second_opinion", "compare", "synthesize"} {
+		if runsRepoCommands(stage) {
+			t.Errorf("%s runs none of the repository's commands", stage)
+		}
 	}
 }

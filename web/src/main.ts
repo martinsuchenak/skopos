@@ -133,7 +133,7 @@ type StageRow = { key: string; name: string; who: string; state: string; when: s
 type TextRow = { key: string; ic: string; text: string; more?: MoreRow[] };
 // The item's record of review findings (GET /api/inbox/{id}/findings).
 type FindingUpdate = { id: string; kind: string; note?: string; run_id?: string; actor?: string; created_at: string };
-type FindingRec = { id: string; run_id: string; stage: string; runner?: string; focus?: string; head_sha?: string; severity: string; text: string; file?: string; state: string; tracked: boolean; sent_back: boolean; updates: FindingUpdate[] };
+type FindingRec = { id: string; source?: string; run_id: string; stage: string; runner?: string; focus?: string; head_sha?: string; severity: string; text: string; file?: string; state: string; tracked: boolean; sent_back: boolean; updates: FindingUpdate[] };
 type FindingRow = { key: string; id: string; severity: string; tone: string; text: string; meta: string; notes: string[]; canSend: boolean; picked: boolean; canWaive: boolean; waiving: boolean };
 // One planning round of an item (GET /api/inbox/{id}/plans): every planner's
 // plan in full, the comparison and the synthesis.
@@ -581,7 +581,7 @@ const appState = () => ({
   anyModalOpen() {
     return this.showKeyModal || this.showApiKeyModal || this.showSecretModal || this.showWebhookModal || this.showWsModal || this.showGroupModal
       || this.showEntryModal || this.showPlanModal || this.showItemModal || this.showInboxItemModal || this.showInboxPreview
-      || this.showFileModal || this.confirm.open || this.pipe.open || this.planView.open || this.mcpForm.open || (this.sidebarOpen && window.matchMedia('(max-width: 767px)').matches);
+      || this.showFileModal || this.confirm.open || this.pipe.open || this.planView.open || this.mcpForm.open || this.pausingWorker !== '' || (this.sidebarOpen && window.matchMedia('(max-width: 767px)').matches);
   },
 
   // ---- shared dialog helpers ----
@@ -2494,6 +2494,10 @@ const appState = () => ({
     if (this.previewFindingsSend === 'retry') return st === 'blocked' || st === 'failed';
     return false;
   },
+  // A finding recorded from a run of before the findings record that nobody
+  // has acted on since (findings.Finding.Earlier): history, not something
+  // left without a follow-up.
+  findingEarlier(f: FindingRec): boolean { return f.source === 'imported' && !(f.updates || []).length; },
   // A finding can be ticked to go back when it would not go back by itself.
   findingTickable(f: FindingRec): boolean { return this.findingsSendable() && ['noted', 'fixed', 'addressed', 'waived'].includes(f.state); },
   // The record grouped by what is owed on each finding, in the order the
@@ -2512,8 +2516,9 @@ const appState = () => ({
       { id: 'noted', title: 'Not followed up', hint: 'nits and second-opinion findings; tick one to have it fixed', open: true },
       { id: 'addressed', title: 'Addressed', hint: 'a review confirmed they are fixed', open: false },
       { id: 'waived', title: 'Waived', hint: 'you accepted them as they are', open: false },
+      { id: 'earlier', title: 'From earlier runs', hint: 'recorded from runs of before findings were followed; what became of them is not known. Tick one to have it fixed', open: false },
     ];
-    const groupOf = (f: FindingRec) => (f.state === 'open' && !(f.updates || []).length && newest.includes(f.run_id) ? 'new' : f.state);
+    const groupOf = (f: FindingRec) => (this.findingEarlier(f) ? 'earlier' : f.state === 'open' && !(f.updates || []).length && newest.includes(f.run_id) ? 'new' : f.state);
     return defs.map(d => {
       const rows: FindingRow[] = fs.filter((f: FindingRec) => groupOf(f) === d.id).map((f: FindingRec) => {
         const waiving = this.waive.id === f.id;
@@ -2631,7 +2636,7 @@ const appState = () => ({
     //   - grey: none ever finished.
     const onHead = this.secondOpinionsOnHead();
     const ours = this.previewFindings.filter((f: FindingRec) => f.stage === 'second_opinion');
-    const unsettled = ours.filter((f: FindingRec) => f.severity === 'blocking' && f.state !== 'addressed' && f.state !== 'waived');
+    const unsettled = ours.filter((f: FindingRec) => f.severity === 'blocking' && f.state !== 'addressed' && f.state !== 'waived' && !this.findingEarlier(f));
     if (all.some(open)) state = 'run';
     else if (unsettled.length > 0 || onHead.some((r: RunRow) => this.wouldBlock(r)) || (newest.status !== 'succeeded' && !stale(newest))) state = 'flag';
     else if (!all.some((r: RunRow) => r.status === 'succeeded')) state = 'skip';
@@ -2845,8 +2850,11 @@ const appState = () => ({
     if (wres.ok) for (const w of (await wres.json()) as WorkerSeen[]) for (const r of w.runners || []) if (!runners.includes(r)) runners.push(r);
     // Runners the server defines can be chosen before any worker offers them.
     if (dres.ok) for (const d of (((await dres.json()) as { runners?: RunnerDef[] }).runners || [])) if (!runners.includes(d.name)) runners.push(d.name);
-    await this.loadPipeConfig(kind, v.owner_id);
+    // Whose dialog this is, before the config form loads: the form's
+    // baseline (cfgFingerprint) depends on the kind. Set after it, a
+    // workspace opened after a group had its Save armed with nothing changed.
     this.pipe.kind = kind; this.pipe.id = v.owner_id; this.pipe.label = label;
+    await this.loadPipeConfig(kind, v.owner_id);
     this.pipe.tab = 'stages'; this.pipe.editing = '';
     this.pipeBriefs.editing = false; this.pipeBriefs.confirm = '';
     await this.loadPipeBriefs();
@@ -2913,6 +2921,9 @@ const appState = () => ({
   // stage changes.
   pipeCloseFromTab() {
     if (this.pipeDirty()) { this.pipe.tab = 'stages'; this.notify('The stages or options have unsaved changes: Save or Cancel', 'error'); return; }
+    // Nor past what the other of the two tabs has not saved.
+    if (this.pipe.tab !== 'config' && this.pipeConfigDirty()) { this.pipe.tab = 'config'; this.notify('The server config has unsaved changes: Save config, or Undo changes', 'error'); return; }
+    if (this.pipe.tab !== 'briefs' && this.pipeBriefs.editing) { this.pipe.tab = 'briefs'; this.notify('A brief is still open: Save it, or Cancel', 'error'); return; }
     this.closePipeline();
   },
   pipeRow(stage: string): PipeRow | undefined { return this.pipe.rows.find((r: PipeRow) => r.stage === stage); },
@@ -3006,6 +3017,9 @@ const appState = () => ({
     f.error = ''; f.confirm = false;
     const name = f.name.trim();
     if (!name) { f.error = 'Give the server a name.'; return; }
+    // The save is a PUT by name: a new server under a name in use would
+    // replace that definition, and its stored secrets with it.
+    if (!f.editing && this.mcpDefs.some((m: MCPServerDef) => m.name === name)) { f.error = 'A server named ' + name + ' is already defined. Edit that one, or choose another name.'; return; }
     const body: Record<string, unknown> = { type: f.type };
     if (f.type === 'http') {
       const h = this.boxPairs(f.headers, ':');
@@ -3293,6 +3307,11 @@ const appState = () => ({
       const res = await this.authFetch(base + encodeURIComponent(this.pipe.id) + '/pipeline', { method: 'PUT', body: JSON.stringify(doc) });
       if (!await this.handleBad(res, 'Pipeline not saved')) return;
       this.notify('Pipeline saved — applies from the next stage', 'success');
+      this.pipe.was = this.pipeSnapshot();
+      // Briefs and the server config save on their own: the dialog does
+      // not close over what one of them has not saved yet.
+      if (this.pipeConfigDirty()) { this.pipe.tab = 'config'; this.notify('The server config has unsaved changes: Save config, or Undo changes', 'info'); return; }
+      if (this.pipeBriefs.editing) { this.pipe.tab = 'briefs'; this.notify('A brief is still open: Save it, or Cancel', 'info'); return; }
       this.pipe.open = false;
     } finally { this.pipe.saving = false; }
   },
@@ -3803,6 +3822,9 @@ const appState = () => ({
     if (c.saving || !c.canEdit || !this.pipeConfigDirty()) return;
     if (cfgCheckTimer) { clearTimeout(cfgCheckTimer); cfgCheckTimer = null; }
     const removes = this.cfgRemoves();
+    // A workspace that holds no config here and is not asked to: nothing to
+    // save. (An empty PUT would make it managed.)
+    if (!removes && this.pipe.kind === 'workspace' && !c.managed) return;
     // Nothing stored and nothing to store: a group with no field ticked.
     if (!removes && this.pipe.kind === 'group' && this.cfgEmpty()) { this.notify('Tick a field to set it for this group', 'info'); return; }
     c.saving = true;

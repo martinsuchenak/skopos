@@ -47,6 +47,11 @@ type Service struct {
 
 	mu    sync.Mutex
 	cache map[string]cached
+	// gen and briefGen count the drops of the two caches. A read that
+	// began before a drop must not store what it read after it: it would
+	// put the old policy (or brief) back for a whole TTL, while the save
+	// that dropped it has already answered.
+	gen, briefGen uint64
 	// briefCache: each workspace's briefs with their text (briefs.go).
 	briefCache map[string]cachedBriefs
 
@@ -67,8 +72,13 @@ func NewService(storage *Storage) *Service {
 func (s *Service) SetAuditSink(a AuditSink)        { s.audit = a }
 func (s *Service) SetPublisher(p events.Publisher) { s.publisher = p }
 func (s *Service) SetClock(now func() time.Time)   { s.now = now }
-func (s *Service) invalidate()                     { s.mu.Lock(); s.cache = map[string]cached{}; s.mu.Unlock() }
-func ownerEntity(kind, id string) string           { return kind + ":" + id }
+func (s *Service) invalidate() {
+	s.mu.Lock()
+	s.cache = map[string]cached{}
+	s.gen++
+	s.mu.Unlock()
+}
+func ownerEntity(kind, id string) string { return kind + ":" + id }
 
 // Prefs is the run queue's lookup: the effective routing of a workspace.
 // Internal (no scope check) — the queue has already authorized the caller.
@@ -77,6 +87,7 @@ func ownerEntity(kind, id string) string           { return kind + ":" + id }
 func (s *Service) Prefs(ctx context.Context, ws string) *runs.WorkspacePrefs {
 	s.mu.Lock()
 	c, ok := s.cache[ws]
+	gen := s.gen
 	s.mu.Unlock()
 	if ok && s.now().Sub(c.at) < cacheTTL {
 		return c.prefs
@@ -107,11 +118,15 @@ func (s *Service) Prefs(ctx context.Context, ws string) *runs.WorkspacePrefs {
 		if c.prefs != nil {
 			return c.prefs
 		}
-		eff = policy.DenyAll("the policy could not be read")
+		// Held for this claim only, not for a TTL: the next one reads again.
+		p.Policy = policy.DenyAll("the policy could not be read")
+		return p
 	}
 	p.Policy = eff
 	s.mu.Lock()
-	s.cache[ws] = cached{prefs: p, at: s.now()}
+	if s.gen == gen {
+		s.cache[ws] = cached{prefs: p, at: s.now()}
+	}
 	s.mu.Unlock()
 	return p
 }
