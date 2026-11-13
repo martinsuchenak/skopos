@@ -2339,6 +2339,10 @@ paths:
               properties:
                 notes: { type: string }
                 answers: { $ref: "#/components/schemas/Answers" }
+                findings:
+                  type: array
+                  items: { type: string }
+                  description: "From in_review: review findings (ids from GET /api/inbox/{id}/findings) to have fixed, from a review or a second opinion, whatever their state. Each is followed from here on: the implementer answers it and the next review checks it. An id the item does not have is refused (400) before anything is queued. With findings, notes may be left out."
                 revision_id:
                   type: string
                   description: >-
@@ -2414,6 +2418,10 @@ paths:
               properties:
                 answer: { type: string }
                 answers: { $ref: "#/components/schemas/Answers" }
+                findings:
+                  type: array
+                  items: { type: string }
+                  description: "Review findings (ids) to have fixed in the implementation this starts: a second opinion's, say, on an item its review blocked. Refused (400) when the retry starts another stage, or for an id the item does not have."
       responses:
         "200":
           description: Item back to implementing
@@ -2621,6 +2629,55 @@ paths:
                   open: { type: integer }
         "401": { description: Unauthorized }
         "404": { description: Not found }
+
+  /api/inbox/{id}/findings:
+    get:
+      summary: The item's review findings
+      description: Everything a review, a QA run, a review-only run or a second opinion found on the item, oldest first, each with its state and what happened to it. counts is the number of findings by state.
+      operationId: inboxItemFindings
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      responses:
+        "200":
+          description: The record
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  findings: { type: array, items: { $ref: "#/components/schemas/ReviewFinding" } }
+                  counts: { type: object, additionalProperties: { type: integer }, description: Findings by state }
+                  send_back: { type: string, enum: ["", request-changes, retry], description: "The action that takes findings to send back now, for an approver: request-changes at sign-off, retry for a blocked or failed item whose retry starts an implementation. Empty when none does, or the key is no approver" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+
+  /api/inbox/{id}/findings/{finding}/waive:
+    post:
+      summary: Accept a review finding as it is (approver permission required)
+      description: The finding becomes waived — the implementer is not asked to fix it, no review checks it again or blocks on it, and reviewers are told it was accepted, with the note. Sending it back later (request-changes or retry, by id) undoes it. Waiving a waived finding changes nothing. A blocking finding needs a note (400 without one). Audited as inbox.finding_waive.
+      operationId: waiveInboxFinding
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/InboxItemId" }
+        - { name: finding, in: path, required: true, schema: { type: string }, description: The finding's id }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string, description: Why it is accepted; reviewers read it }
+      responses:
+        "200":
+          description: The finding, waived
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewFinding" }
+        "400": { description: A blocking finding needs a note }
+        "401": { description: Unauthorized }
+        "403": { description: Approver permission required }
+        "404": { description: The item or the finding was not found }
 
   /api/inbox/{id}/answers:
     post:
@@ -2945,6 +3002,50 @@ paths:
         "401": { description: Unauthorized }
         "404": { description: Not found or not the claim holder }
 
+  /api/runs/{id}/findings/read:
+    post:
+      summary: The review findings the run acts on, for its prompt (the worker holding the claim)
+      description: >-
+        Authorised like a heartbeat (worker_id, the claim's key, X-Skopos-Lease).
+        fix: what an implement run is to fix — followed-up findings nobody
+        claims are fixed. check: what a review is to check again — its own
+        earlier findings (same stage, same focus) something is still owed on;
+        findings no reviewer of the round answers for (a second opinion's that
+        the approver sent back, a focus no longer in the panel) go to the
+        round's first reviewer; a second opinion gets its own runner's earlier
+        blocking findings. others: followed-up findings another reviewer
+        checks. waived: what the approver accepted. The run answers by id in
+        its report (finding_answers).
+      operationId: readRunFindings
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: X-Skopos-Lease, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [worker_id]
+              properties:
+                worker_id: { type: string }
+      responses:
+        "200":
+          description: The findings by what the run does with them
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  fix: { type: array, items: { $ref: "#/components/schemas/FindingEntry" } }
+                  check: { type: array, items: { $ref: "#/components/schemas/FindingEntry" } }
+                  others: { type: array, items: { $ref: "#/components/schemas/FindingEntry" } }
+                  waived: { type: array, items: { $ref: "#/components/schemas/FindingEntry" } }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+        "409": { description: Not the claim holder }
+
   /api/runs/{id}/log:
     post:
       summary: Append lines to a run's log (the worker holding the claim)
@@ -3116,8 +3217,18 @@ paths:
                 cost_usd: { type: number, description: What the agent run cost, when the runner reports it }
                 findings:
                   type: array
-                  description: Review/QA structured findings
+                  description: Review/QA structured findings — only what this run found new. Each gets an id in the record; an id sent here is not kept.
                   items: { $ref: "#/components/schemas/Finding" }
+                finding_answers:
+                  type: array
+                  description: "What the run says about earlier findings (POST /api/runs/{id}/findings/read lists them): an implement run's fixed / not_fixed, a review's addressed / still_open. An answer the record cannot use — an id the item does not have, a status the stage does not give, a finding that is settled — is left out, never an error."
+                  items:
+                    type: object
+                    required: [id, status]
+                    properties:
+                      id: { type: string }
+                      status: { type: string, enum: [fixed, not_fixed, addressed, still_open] }
+                      note: { type: string }
       responses:
         "200":
           description: The finished run
@@ -4512,7 +4623,9 @@ components:
         cost_usd: { type: number }
         findings:
           type: array
+          description: What this review found that no earlier review had
           items: { $ref: "#/components/schemas/Finding" }
+        still_open: { type: integer, description: Earlier blocking findings this review checked and found not fixed; they count against it like its own blocking findings }
         retries: { type: integer, description: How often a retryable failure sent the run back to the queue }
         retry_after: { type: string, format: date-time, description: A requeued run is not claimable before this }
         avoid_worker: { type: string, description: The worker that failed it last; kept off it until retry_after + 30 minutes }
@@ -4523,9 +4636,65 @@ components:
       type: object
       required: [severity, text]
       properties:
+        id: { type: string, description: "The finding's id in the record (GET /api/inbox/{id}/findings), set by the server when the run reports; absent on runs from before the record" }
         severity: { type: string, enum: [blocking, nit], description: Blocking findings fail the review; nits never block }
         text: { type: string }
         file: { type: string, description: "path:line" }
+
+    ReviewFinding:
+      type: object
+      description: One thing a review found, with what became of it
+      properties:
+        id: { type: string }
+        workspace_id: { type: string }
+        item_id: { type: string }
+        run_id: { type: string, description: The run that raised it }
+        stage: { type: string, enum: [review, qa, branch_review, second_opinion] }
+        runner: { type: string }
+        focus: { type: string }
+        head_sha: { type: string, description: The commit it was raised on }
+        n: { type: integer, description: Its place among the run's findings }
+        severity: { type: string, enum: [blocking, nit] }
+        text: { type: string }
+        file: { type: string }
+        source: { type: string, enum: [run, imported], description: "imported: from a run that reported before findings were records; never followed up unless sent back" }
+        created_at: { type: string, format: date-time }
+        state:
+          type: string
+          enum: [open, fixed, addressed, still_open, waived, noted]
+          description: "open: to be fixed. fixed: the implementer says so, no review confirmed it. addressed: a review confirmed it. still_open: a review found it not fixed. waived: the approver accepted it. noted: recorded and not followed up (a nit, a second opinion's finding, an imported one) until sent back"
+        tracked: { type: boolean, description: "It is followed up: a blocking finding of a review that gates the item, or anything the approver sent back" }
+        sent_back: { type: boolean }
+        updates:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              finding_id: { type: string }
+              kind: { type: string, enum: [sent_back, fixed, not_fixed, addressed, still_open, waived] }
+              note: { type: string }
+              run_id: { type: string, description: "The implement run (fixed, not_fixed) or the review (addressed, still_open)" }
+              head_sha: { type: string }
+              actor: { type: string, description: "The approver (sent_back, waived)" }
+              via: { type: string }
+              created_at: { type: string, format: date-time }
+
+    FindingEntry:
+      type: object
+      description: A finding as a run's prompt reads it
+      properties:
+        id: { type: string }
+        severity: { type: string, enum: [blocking, nit] }
+        text: { type: string }
+        file: { type: string }
+        by: { type: string, description: 'Who raised it: "review", "review · security", "second opinion · codex"' }
+        head_sha: { type: string }
+        state: { type: string }
+        claim: { type: string, enum: [fixed, not_fixed], description: "The implementer's newest word on it" }
+        claim_note: { type: string }
+        review_note: { type: string, description: Why the newest review found it still open }
+        waive_note: { type: string, description: "The approver's note when they accepted it" }
 
     RunGroup:
       type: object
@@ -4806,6 +4975,23 @@ components:
             setup: { type: array, items: { $ref: "#/components/schemas/RunCheck" } }
             checks: { type: array, items: { $ref: "#/components/schemas/RunCheck" } }
             fix_rounds: { type: integer }
+        findings:
+          type: object
+          description: "The review findings in short (absent when the item has none): counts by state, and the ones something is still owed on. GET /api/inbox/{id}/findings is the full record."
+          properties:
+            counts: { type: object, additionalProperties: { type: integer } }
+            open:
+              type: array
+              items:
+                type: object
+                properties:
+                  id: { type: string }
+                  state: { type: string, enum: [open, fixed, still_open] }
+                  severity: { type: string, enum: [blocking, nit] }
+                  text: { type: string }
+                  file: { type: string }
+                  by: { type: string }
+                  head_sha: { type: string }
         reviews:
           type: array
           items:
@@ -4817,8 +5003,9 @@ components:
               focus: { type: string }
               head_sha: { type: string }
               status: { type: string }
-              passed: { type: boolean, description: "Succeeded with no blocking finding" }
-              blocking: { type: integer }
+              passed: { type: boolean, description: "Succeeded with no blocking finding, its own or an earlier one it found still open" }
+              blocking: { type: integer, description: Its own blocking findings plus still_open }
+              still_open: { type: integer, description: Earlier blocking findings it checked and found not fixed }
               nits: { type: integer }
               summary: { type: string }
               findings:

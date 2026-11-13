@@ -226,6 +226,25 @@ func (h *Handler) ReadQuestions(w http.ResponseWriter, r *http.Request) {
 	rest.RespondJSON(w, http.StatusOK, out)
 }
 
+// ReadFindings handles POST /api/runs/{id}/findings/read: the part of the
+// item's findings the run acts on, for its prompt — what an implement run
+// is to fix, what a review is to check again — from the worker holding it.
+func (h *Handler) ReadFindings(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		WorkerID string `json:"worker_id"`
+	}
+	if err := rest.DecodeJSON(w, r, &in); err != nil {
+		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	out, err := h.service.ReadFindings(r.Context(), r.PathValue("id"), in.WorkerID, r.Header.Get("X-Skopos-Lease"))
+	if err != nil {
+		h.respondRunError(w, err, "read findings")
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, out)
+}
+
 // Log handles GET /api/runs/{id}/log?after=&tail=&wait=: the run's log
 // records after the cursor, or the last tail of them; wait (seconds, at
 // most 25) long-polls for the next batch when nothing is new.

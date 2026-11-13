@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/dbtime"
+	"github.com/martinsuchenak/skopos/internal/findings"
 	"github.com/martinsuchenak/skopos/internal/integrations"
 	"github.com/martinsuchenak/skopos/internal/policy"
 )
@@ -27,6 +28,9 @@ type Storage struct {
 	// events records run events in the claim and report transactions
 	// (internal/integrations; nil = none).
 	events *integrations.Emitter
+	// findings records a review's findings and a run's answers to earlier
+	// ones in the report transaction (internal/findings; nil = none).
+	findings *findings.Service
 }
 
 func NewStorage(db *sql.DB) *Storage { return &Storage{db: db} }
@@ -42,7 +46,7 @@ const runColumns = `id, workspace_id, item_id, plan_rev_id, stage, runner, worke
 	resume_kind, lease_expires_at, resume_after, attempt, branch, base_sha, head_sha,
 	result_summary, diffstat, checks, log_ref, fail_reason, lease_token_hash, claimed_key_id, created_at, updated_at, executor,
 	group_id, focus, cost_usd, findings, pushed, pr_url, setup, fix_rounds, phase, retries, retry_after, avoid_worker,
-	prefer_worker, prefer_until, runner_picked, policy_rev, facts, stranded_reason, grants, config_rev`
+	prefer_worker, prefer_until, runner_picked, policy_rev, facts, stranded_reason, grants, config_rev, still_open`
 
 func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	var r Run
@@ -57,7 +61,7 @@ func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 		&r.ResumeKind, &lease, &resumeAfter, &r.Attempt, &r.Branch, &r.BaseSHA, &r.HeadSHA,
 		&r.ResultSummary, &r.Diffstat, &checks, &r.LogRef, &r.FailReason, &r.LeaseTokenHash, &r.ClaimedKeyID, &createdAt, &updatedAt, &r.Executor,
 		&groupID, &focus, &cost, &findings, &pushed, &r.PRURL, &setup, &r.FixRounds, &r.Phase, &r.Retries, &retryAfter, &r.AvoidWorker,
-		&r.PreferWorker, &preferUntil, &picked, &r.PolicyRev, &facts, &r.Stranded, &r.Grants, &r.ConfigRev); err != nil {
+		&r.PreferWorker, &preferUntil, &picked, &r.PolicyRev, &facts, &r.Stranded, &r.Grants, &r.ConfigRev, &r.StillOpen); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -897,6 +901,28 @@ func (s *Storage) Report(ctx context.Context, id, workerID, keyID, tokenHash str
 	run, err := scanRun(row)
 	if err != nil {
 		return nil, err
+	}
+	// The record of findings, with the report: what this review found new,
+	// and what the run says about earlier findings. Earlier blocking
+	// findings it found still open count against it (BlockingFindings).
+	if s.findings != nil {
+		round, err := findingRound(ctx, tx, run)
+		if err != nil {
+			return nil, err
+		}
+		// Passed: a review that found nothing blocking of its own (what it
+		// found still open is counted by the record).
+		passed := run.Status == StatusSucceeded && BlockingFindings(*run) == 0
+		still, err := s.findings.RecordRun(ctx, tx, findingRun(run), round, newFindings(in.Findings), in.FindingAnswers, passed, now)
+		if err != nil {
+			return nil, err
+		}
+		if still > 0 {
+			if _, err := tx.ExecContext(ctx, `UPDATE runs SET still_open = ? WHERE id = ?`, still, id); err != nil {
+				return nil, fmt.Errorf("recording still-open findings: %w", err)
+			}
+			run.StillOpen = still
+		}
 	}
 	if err := s.events.Emit(ctx, tx, finishedEvents(run)...); err != nil {
 		return nil, err

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/auth"
+	"github.com/martinsuchenak/skopos/internal/findings"
 	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/itemtext"
 	"github.com/martinsuchenak/skopos/internal/plans"
@@ -43,12 +44,18 @@ type Questions interface {
 	Record(ctx context.Context, itemID string) (*qa.Record, error)
 }
 
-// Service builds the state; Plans and Questions may be nil.
+// Findings is the record of review findings (internal/findings).
+type Findings interface {
+	Item(ctx context.Context, itemID string) ([]findings.Finding, error)
+}
+
+// Service builds the state; Plans, Questions and Findings may be nil.
 type Service struct {
 	Items     Items
 	Plans     Plans
 	Runs      Runs
 	Questions Questions
+	Findings  Findings
 }
 
 // Turn and gate values.
@@ -77,6 +84,7 @@ type State struct {
 	Questions      []QuestionView  `json:"questions"`
 	Implementation *Implementation `json:"implementation,omitempty"`
 	Reviews        []ReviewView    `json:"reviews"`
+	Findings       *FindingsView   `json:"findings,omitempty"`
 	Run            *RunView        `json:"run,omitempty"`
 	Actions        []string        `json:"actions"`
 }
@@ -146,17 +154,53 @@ type Implementation struct {
 // member, a single reviewer, a review-only run or a second opinion).
 // Passed: it succeeded with no blocking finding.
 type ReviewView struct {
-	RunID    string         `json:"run_id"`
-	Stage    string         `json:"stage"`
-	Runner   string         `json:"runner,omitempty"`
-	Focus    string         `json:"focus,omitempty"`
-	HeadSHA  string         `json:"head_sha,omitempty"`
-	Status   string         `json:"status"`
-	Passed   bool           `json:"passed"`
-	Blocking int            `json:"blocking"`
-	Nits     int            `json:"nits"`
-	Summary  string         `json:"summary,omitempty"`
-	Findings []runs.Finding `json:"findings"`
+	RunID     string         `json:"run_id"`
+	Stage     string         `json:"stage"`
+	Runner    string         `json:"runner,omitempty"`
+	Focus     string         `json:"focus,omitempty"`
+	HeadSHA   string         `json:"head_sha,omitempty"`
+	Status    string         `json:"status"`
+	Passed    bool           `json:"passed"`
+	Blocking  int            `json:"blocking"`
+	StillOpen int            `json:"still_open,omitempty"`
+	Nits      int            `json:"nits"`
+	Summary   string         `json:"summary,omitempty"`
+	Findings  []runs.Finding `json:"findings"`
+}
+
+// FindingsView is the item's review findings in short: how many are in each
+// state, and the ones something is still owed on (to fix, claimed fixed,
+// found still open). GET /api/inbox/{id}/findings is the full record.
+type FindingsView struct {
+	Counts map[string]int `json:"counts"`
+	Open   []FindingView  `json:"open"`
+}
+
+// FindingView is one finding something is still owed on.
+type FindingView struct {
+	ID       string `json:"id"`
+	State    string `json:"state"`
+	Severity string `json:"severity"`
+	Text     string `json:"text"`
+	File     string `json:"file,omitempty"`
+	By       string `json:"by"`
+	HeadSHA  string `json:"head_sha,omitempty"`
+}
+
+// findingsView is nil for an item without findings.
+func findingsView(all []findings.Finding) *FindingsView {
+	if len(all) == 0 {
+		return nil
+	}
+	v := &FindingsView{Counts: map[string]int{}, Open: []FindingView{}}
+	for _, f := range all {
+		v.Counts[f.State]++
+		switch f.State {
+		case findings.StateOpen, findings.StateFixed, findings.StateStillOpen:
+			v.Open = append(v.Open, FindingView{ID: f.ID, State: f.State, Severity: f.Severity, Text: f.Text, File: f.File, By: f.By(), HeadSHA: f.HeadSHA})
+		}
+	}
+	return v
 }
 
 // RunView is the run in progress (queued, claimed, running, paused or
@@ -203,6 +247,14 @@ func (s *Service) Get(ctx context.Context, itemID string) (*State, error) {
 		st.Reviews = reviews(all)
 		if st.Gate == GateBlocked || st.Gate == GateFailed {
 			st.Reason = failReason(all)
+		}
+		// Findings come from runs: the same capability as the reviews.
+		if s.Findings != nil {
+			fs, err := s.Findings.Item(ctx, item.ID)
+			if err != nil {
+				return nil, err
+			}
+			st.Findings = findingsView(fs)
 		}
 	}
 	if item.PlanID != "" && s.Plans != nil && p.Allows(auth.AreaPlans, false) {
@@ -399,8 +451,11 @@ func reviews(all []runs.Run) []ReviewView {
 		if v.Findings == nil {
 			v.Findings = []runs.Finding{}
 		}
+		// Blocking counts the earlier findings the review found still open
+		// too (StillOpen); nits are only among its own.
 		v.Blocking = runs.BlockingFindings(r)
-		v.Nits = len(r.Findings) - v.Blocking
+		v.StillOpen = r.StillOpen
+		v.Nits = len(r.Findings) - (v.Blocking - r.StillOpen)
 		v.Passed = runs.ReviewPassed(r)
 		out = append(out, v)
 	}

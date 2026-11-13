@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/martinsuchenak/skopos/build"
+	"github.com/martinsuchenak/skopos/internal/findings"
 	"github.com/martinsuchenak/skopos/internal/logship"
 	"github.com/martinsuchenak/skopos/internal/policy"
 	"github.com/martinsuchenak/skopos/internal/wsconfig"
@@ -573,6 +574,21 @@ func (c *Client) AskQuestions(ctx context.Context, runID string, in QuestionsPos
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// ReadFindings is the part of the item's review findings the run acts on:
+// what an implement run is to fix, what a review is to check again
+// (internal/findings). false: the server predates the record (404).
+func (c *Client) ReadFindings(ctx context.Context, runID, workerID string) (*findings.View, bool, error) {
+	var out findings.View
+	err := c.doHeader(ctx, http.MethodPost, "/api/runs/"+runID+"/findings/read", map[string]string{"worker_id": workerID}, &out, "X-Skopos-Lease", c.leaseHeader(runID))
+	if err != nil && strings.Contains(err.Error(), ": 404 ") {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return &out, true, nil
 }
 
 // ReadQuestions is the item's questions and answers as the run's prompt

@@ -20,6 +20,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/codeindex"
 	"github.com/martinsuchenak/skopos/internal/confrev"
 	"github.com/martinsuchenak/skopos/internal/db"
+	"github.com/martinsuchenak/skopos/internal/findings"
 	"github.com/martinsuchenak/skopos/internal/fleetfile"
 	"github.com/martinsuchenak/skopos/internal/idempotency"
 	"github.com/martinsuchenak/skopos/internal/inbox"
@@ -245,6 +246,9 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	inboxService.SetApprovalLog(approvalsService)
 	inboxService.SetPlanRevisions(plansService)
 	runsService := runs.NewService(runs.NewStorage(sqlDB))
+	findingsService := findings.NewService(findings.NewStorage(sqlDB))
+	runsService.SetFindings(findingsService)
+	inboxService.SetFindingLog(findingsService)
 	runsService.SetAuditRecorder(auditService)
 	runsService.SetItemTransition(func(ctx context.Context, itemID, to, reason, agentID string) error {
 		_, err := inboxService.SystemTransition(ctx, itemID, inbox.Status(to), reason, agentID, audit.ViaWorker)
@@ -309,7 +313,7 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	bb := blackboard.NewHandler(blackboard.NewService(blackboard.NewStorage(sqlDB)), authn)
 	pl := plans.NewHandler(plansService, authn)
 	ib := inbox.NewHandler(inboxService, authn)
-	ib.SetStateHandler(itemstate.NewHandler(&itemstate.Service{Items: inboxService, Plans: plansService, Runs: runsService}).Get)
+	ib.SetStateHandler(itemstate.NewHandler(&itemstate.Service{Items: inboxService, Plans: plansService, Runs: runsService, Findings: findingsService}).Get)
 	ws := workspaces.NewHandler(workspaces.NewService(workspaces.NewStorage(sqlDB)), authn)
 	ak := apikeys.NewHandler(apikeys.NewService(apikeys.NewStorage(sqlDB)), workspaces.NewService(workspaces.NewStorage(sqlDB)))
 	rh := runs.NewHandler(runsService)

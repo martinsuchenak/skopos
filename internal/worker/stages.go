@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/martinsuchenak/skopos/internal/findings"
 	"github.com/martinsuchenak/skopos/internal/itemtext"
 )
 
@@ -530,9 +531,16 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		if notes != "" {
 			review = lastReview(secs)
 		}
+		// The review findings to fix, from the record: each is answered by
+		// id in the result (fixed, or not fixed and why).
+		var toFix []findingRef
+		if view := w.runFindings(ctx, run); view != nil {
+			toFix = findingRefs(view.Fix)
+		}
 		prompt, err := renderPrompt("implement.md", map[string]any{
 			"Branch": branch, "Base": repo.DefaultBranch, "Title": item.Title,
 			"Content": brief, "QA": w.decisions(ctx, run, secs), "Steps": steps, "Notes": notes, "LastReview": review,
+			"Findings":      toFix,
 			"ApprovalNotes": newestBody(secs, "Approval notes"),
 			"Resumed":       len(resumed) > 0, "Leftover": leftover,
 			"Instructions": instructions, "Skills": skillBodies,
@@ -566,6 +574,11 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			return fmt.Errorf("agent reported done but made no commits")
 		}
 		rec.ImplementedRun, rec.ImplementedSummary, rec.FixRounds = run.ID, ir.Summary, 0
+		said := resolveAnswers(toFix, ir.Findings, findings.KindFixed, findings.KindNotFixed)
+		rec.FindingAnswers = wireAnswers(said)
+		if len(toFix) > 0 {
+			rl.notef("the implementer answered %d of %d review findings", len(said), len(toFix))
+		}
 		w.saveBranch(rec)
 	}
 	// The checks are the CI: a failure goes back to the implementer (the
@@ -662,6 +675,9 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		"diffstat": diffStat(ctx, worktree, baseRef), "checks": checks,
 		"pushed": repo.Push.Kind != "none", "pr_url": rec.PRURL, "setup": setup, "fix_rounds": rounds,
 	}
+	if rec.ImplementedRun == run.ID && len(rec.FindingAnswers) > 0 {
+		fields["finding_answers"] = rec.FindingAnswers
+	}
 	if len(failed) > 0 {
 		// The gate: a branch that fails its checks never reaches review.
 		reason := "checks failed: " + checkNames(failed)
@@ -714,13 +730,16 @@ func (w *Worker) fixChecksRound(ctx context.Context, run *Run, item *Item, repo 
 // findings fail the review, nits are reported but never block (multi-agent
 // stages merge them across reviewers). `issues` is the older shape, still
 // accepted as all-blocking.
-const reviewSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","fail"]},"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["blocking","nit"]},"text":{"type":"string"},"file":{"type":"string"}},"required":["severity","text"]}},"issues":{"type":"array","items":{"type":"string"}}},"required":["verdict","summary"]}`
+const reviewSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","fail"]},"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["blocking","nit"]},"text":{"type":"string"},"file":{"type":"string"}},"required":["severity","text"]}},"issues":{"type":"array","items":{"type":"string"}},"previous":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"status":{"type":"string"},"note":{"type":"string"}}}}},"required":["verdict","summary"]}`
 
 type reviewResult struct {
 	Verdict  string    `json:"verdict"`
 	Summary  string    `json:"summary"`
 	Findings []Finding `json:"findings"`
 	Issues   []string  `json:"issues"`
+	// Previous: what the review says about the earlier findings its prompt
+	// listed, by handle.
+	Previous findingAnswers `json:"previous"`
 }
 
 // Finding is one review observation (mirrors runs.Finding on the wire).
@@ -734,7 +753,12 @@ type Finding struct {
 // free-form verdict: a review fails exactly when it has a blocking finding.
 // Older `issues` count as blocking; a "fail" with no findings at all keeps
 // the reviewer's judgement as one blocking finding (its summary).
-func (rr *reviewResult) normalise() {
+func (rr *reviewResult) normalise() { rr.normaliseWith(0) }
+
+// normaliseWith is normalise for a review that also checked earlier
+// findings: stillOpen of them are blocking and not fixed, which fails the
+// review like a finding of its own.
+func (rr *reviewResult) normaliseWith(stillOpen int) {
 	for _, is := range rr.Issues {
 		if strings.TrimSpace(is) != "" {
 			rr.Findings = append(rr.Findings, Finding{Severity: "blocking", Text: strings.TrimSpace(is)})
@@ -755,6 +779,9 @@ func (rr *reviewResult) normalise() {
 		kept = append(kept, f)
 	}
 	rr.Findings = kept
+	if stillOpen > 0 {
+		blocking = true
+	}
 	if !blocking && rr.Verdict == "fail" && len(rr.Findings) == 0 {
 		rr.Findings = append(rr.Findings, Finding{Severity: "blocking", Text: strings.TrimSpace(rr.Summary)})
 		blocking = true
@@ -910,7 +937,16 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 	} else {
 		checks = w.client.HeadChecks(ctx, run.ItemID, headSHA(ctx, wt))
 	}
+	// Earlier findings, from the record: the ones this reviewer checks
+	// again (answered by id in the result), the ones another reviewer
+	// checks, and the ones the approver accepted.
+	var recheck, others, waived []findingRef
+	if view := w.runFindings(ctx, run); view != nil {
+		recheck, others, waived = findingRefs(view.Check), findingRefs(view.Others), findingRefs(view.Waived)
+	}
+	reviewed := headSHA(ctx, wt)
 	prompt, err := renderPrompt("review.md", map[string]any{
+		"Recheck": recheck, "OthersCheck": others, "Waived": waived,
 		"Base": repo.DefaultBranch, "Stage": run.Stage, "Steps": steps, "Brief": brief, "BranchReview": br != nil,
 		"Instructions": instructions, "Skills": skillBodies, "Focus": focus,
 		"Decisions": decisions, "SecondOpinion": second, "HandoverBase": handoverBase,
@@ -930,13 +966,21 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 	if err := json.Unmarshal(res.Structured, &rr); err != nil || rr.Verdict == "" {
 		return fmt.Errorf("review returned no verdict: %s", firstLine(res.Text))
 	}
-	rr.normalise()
+	// What it says about the earlier findings; one that blocks and is not
+	// fixed fails the review like a finding of its own.
+	said := resolveAnswers(recheck, rr.Previous, findings.KindAddressed, findings.KindStillOpen)
+	rr.normaliseWith(stillOpenBlocking(said))
+	answers := wireAnswers(said)
+	if len(recheck) > 0 {
+		runLogFrom(ctx).notef("the reviewer answered %d of %d earlier findings", len(said), len(recheck))
+	}
 	if second {
 		// The server writes the section (runner and head from the run
 		// record), and the verdict is advisory: the run itself succeeded.
 		log.Info("second opinion finished", "verdict", rr.Verdict, "findings", len(rr.Findings), "head", run.HeadSHA, "cost_usd", res.CostUSD)
 		return w.report(ctx, run, true, map[string]any{
 			"summary": rr.Summary, "findings": rr.Findings, "verdict": rr.Verdict, "head_sha": run.HeadSHA,
+			"finding_answers": answers,
 		})
 	}
 	if br != nil {
@@ -946,10 +990,10 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 		if run.Focus != "" {
 			heading = "review — " + run.Focus + " · " + account.Name
 		}
-		_ = w.client.AppendSection(ctx, run.ItemID, heading, reviewSection(rr))
+		_ = w.client.AppendSection(ctx, run.ItemID, heading, reviewSection(rr, said))
 		log.Info("branch review finished", "verdict", rr.Verdict, "findings", len(rr.Findings), "branch", run.Branch, "head", br.Head, "cost_usd", res.CostUSD)
 		return w.report(ctx, run, true, map[string]any{
-			"summary": rr.Summary, "findings": rr.Findings, "verdict": rr.Verdict,
+			"summary": rr.Summary, "findings": rr.Findings, "verdict": rr.Verdict, "finding_answers": answers,
 			"head_sha": br.Head, "branch": run.Branch, "checks": br.Checks, "setup": br.Setup,
 			"diffstat": diffStat(ctx, wt, base),
 		})
@@ -959,23 +1003,36 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 	if run.Focus != "" {
 		heading = run.Stage + " — " + run.Focus + " · " + account.Name
 	}
-	_ = w.client.AppendSection(ctx, run.ItemID, heading, reviewSection(rr))
-	log.Info("review finished", "verdict", rr.Verdict, "findings", len(rr.Findings), "focus", run.Focus, "cost_usd", res.CostUSD)
+	_ = w.client.AppendSection(ctx, run.ItemID, heading, reviewSection(rr, said))
+	log.Info("review finished", "verdict", rr.Verdict, "findings", len(rr.Findings), "still_open", stillOpenBlocking(said), "focus", run.Focus, "cost_usd", res.CostUSD)
 	if !passed {
 		return w.report(ctx, run, false, map[string]any{
 			"reason": run.Stage + " failed: " + rr.Summary, "summary": rr.Summary, "findings": rr.Findings,
+			"finding_answers": answers, "head_sha": reviewed,
 		})
 	}
 	return w.report(ctx, run, true, map[string]any{
-		"summary": rr.Summary, "findings": rr.Findings,
+		"summary": rr.Summary, "findings": rr.Findings, "finding_answers": answers, "head_sha": reviewed,
 		"checks": []Check{{Name: run.Stage + ":" + account.Name, Passed: true, Output: rr.Summary}},
 	})
 }
 
-// reviewSection renders one reviewer's verdict and findings for the item.
-func reviewSection(rr reviewResult) string {
+// reviewSection renders one reviewer's verdict for the item: what it says
+// about the earlier findings it checked again, then what it found new.
+func reviewSection(rr reviewResult, said []answered) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "**Verdict:** %s\n\n%s", rr.Verdict, rr.Summary)
+	for _, a := range said {
+		word := "addressed"
+		if a.Status == findings.KindStillOpen {
+			word = "still open"
+		}
+		note := ""
+		if a.Note != "" {
+			note = " — " + a.Note
+		}
+		fmt.Fprintf(&b, "\n- **%s** (raised by %s) %s%s", word, a.Ref.By, a.Ref.Text, note)
+	}
 	for _, f := range rr.Findings {
 		loc := ""
 		if f.File != "" {
@@ -1080,6 +1137,9 @@ type implResult struct {
 	// single-string shape the schema had before.
 	Questions []itemtext.Question `json:"questions"`
 	Question  string              `json:"question"`
+	// Findings: what the implementer says about the review findings its
+	// prompt listed, by handle.
+	Findings findingAnswers `json:"findings"`
 }
 
 // asked is the implementer's questions in both shapes.

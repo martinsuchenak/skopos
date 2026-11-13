@@ -64,7 +64,10 @@ func finishedEvents(r *Run) []integrations.Event {
 		rd["head_sha"] = r.HeadSHA
 		rd["passed"] = ReviewPassed(*r)
 		rd["blocking"] = blocking
-		rd["nits"] = len(r.Findings) - blocking
+		rd["nits"] = len(r.Findings) - (blocking - r.StillOpen)
+		if r.StillOpen > 0 {
+			rd["still_open"] = r.StillOpen
+		}
 		if r.Focus != "" {
 			rd["focus"] = r.Focus
 		}

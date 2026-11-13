@@ -33,6 +33,7 @@ type Service struct {
 	itemNotifier ItemNotifier
 	events       *integrations.Emitter
 	questions    QuestionLog
+	findings     FindingLog
 }
 
 func NewService(store Store) *Service {

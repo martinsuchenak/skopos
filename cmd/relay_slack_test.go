@@ -13,6 +13,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/db"
+	"github.com/martinsuchenak/skopos/internal/findings"
 	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/notify"
 	"github.com/martinsuchenak/skopos/internal/plans"
@@ -100,6 +101,9 @@ func relayStack(t *testing.T) (*inbox.Service, *runs.Service, *plans.Service, *f
 	plansSvc.SetDeletionGuard(inboxSvc.PlanHasWorkflowItem)
 
 	runsSvc := runs.NewService(runs.NewStorage(sqlDB))
+	findingsSvc := findings.NewService(findings.NewStorage(sqlDB))
+	runsSvc.SetFindings(findingsSvc)
+	inboxSvc.SetFindingLog(findingsSvc)
 	runsSvc.SetItemTransition(func(ctx context.Context, itemID, to, reason, agentID string) error {
 		_, err := inboxSvc.SystemTransition(ctx, itemID, inbox.Status(to), reason, agentID, audit.ViaWorker)
 		return err

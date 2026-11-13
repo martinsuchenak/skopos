@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/martinsuchenak/skopos/internal/findings"
 )
 
 // branchRecord is what an implementation left on this worker for one item:
@@ -36,6 +38,9 @@ type branchRecord struct {
 	ImplementedRun     string `json:"implemented_run,omitempty"`
 	ImplementedSummary string `json:"implemented_summary,omitempty"`
 	FixRounds          int    `json:"fix_rounds,omitempty"`
+	// FindingAnswers: what that implement turn said about the review
+	// findings it was given, kept for the run's report.
+	FindingAnswers []findings.Answer `json:"finding_answers,omitempty"`
 	// SetupRun: the run that set the worktree up, with the setup results
 	// its report carries. SetupPending: setup started in the worktree but
 	// never finished, so the next run on it runs setup again.

@@ -41,6 +41,17 @@ name with `git add <file>` instead of `git add -A`) and say so in your summary.
 # Change requests from the approver (address every point)
 
 {{.Notes}}
+{{end}}{{if .Findings}}
+# Review findings to fix (answer every one)
+
+A review found these and they are still to be fixed. Fix each one. If you leave one as it is,
+say why. A reviewer checks each of them again afterwards.
+{{range .Findings}}
+- `{{.Handle}}` ({{.Severity}}, raised by {{.By}}{{if .File}}, `{{.File}}`{{end}}): {{.Text}}{{if .ReviewNote}}
+  A reviewer checked it again and it was not fixed: {{.ReviewNote}}{{end}}
+{{end}}
+In your result, list every one of them under `findings`: its `id` (`F1`, `F2`, …), `status`
+"fixed" or "not_fixed", and a one-sentence `note` (what you changed, or why you left it).
 {{end}}{{if .Instructions}}
 # Repository instructions (AGENTS.md at the approved base commit)
 

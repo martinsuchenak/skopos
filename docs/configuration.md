@@ -307,6 +307,18 @@ from the reviewer.
   - **REST:** `POST /api/inbox/{id}/second-opinion`.
   - **MCP:** agents can read the result (it's part of the item), but can't
     ask for one.
+- **Where you read it.** The item preview shows a **Second opinion** step
+  after Agent review, in every status once one was asked for:
+  - one line per opinion, newest first: the runner, the commit and the
+    verdict (`pass`, `would block: …`, or why it didn't finish);
+  - **Watch live** while one runs and **Log** afterwards, for each;
+  - every finding and summary under "Findings and summaries";
+  - an opinion on a commit older than the one waiting for sign-off is
+    marked "(older commit)".
+
+  The step is amber when a runner's newest opinion on the current commit
+  would block, or the newest one didn't finish; the sign-off card then says
+  so too. It's greyed out when every opinion is about an older commit.
 - **Default runner.** Set "Second opinions use" in a workspace's or group's
   Pipeline dialog, or `skopos workspace|group pipeline set --second-opinion
   <runner>` (`none` clears it). It resolves like the agents default: the
@@ -319,6 +331,102 @@ from the reviewer.
   - Every request is audit-logged (`inbox.second_opinion`).
 - **The runner** needs a worker that offers it, like any pinned run. It runs
   with the repo's `review` profile, so a contained stage keeps its tools.
+
+#### Review findings
+
+Every finding of a review, a QA run, a review-only run or a second opinion
+is a record with an id. What happens to it afterwards is recorded with it,
+so a later round says which findings are new, which are confirmed fixed and
+which are still open.
+
+| State | Meaning |
+|---|---|
+| `open` | to be fixed; nobody says it is |
+| `fixed` | the implementer says it is fixed; no review has confirmed it |
+| `addressed` | a review checked it and it is fixed |
+| `still_open` | a review checked it and it is not fixed |
+| `waived` | you accepted it as it is |
+| `noted` | recorded, not followed up |
+
+- **What is followed up.** A blocking finding of a review that gates the
+  item (review, QA, a review-only run) is followed from the start. A nit, a
+  second opinion's finding and a finding from before this record are
+  `noted` until you send them back.
+- **The implementer** is given the followed-up findings that are `open` or
+  `still_open`, and answers each: fixed, or not fixed and why. That is a
+  claim, not a result.
+- **The next review** is given the findings something is still owed on,
+  with the implementer's answer, and says of each whether it is addressed
+  or still open. Its own list holds only what nobody reported before. A
+  blocking finding that is still open fails the review, like a new one.
+- **Who checks what.** Each finding is checked by one reviewer.
+  - A reviewer checks its own earlier findings: the same stage and, in a
+    panel, the same focus. When two members review alike, the first of
+    them checks it.
+  - A finding no reviewer of the round answers for goes to the first
+    reviewer: a second opinion's finding you sent back, or a focus that is
+    no longer in the panel.
+  - The other members see those findings as someone else's and don't
+    report them again; an answer from them isn't recorded.
+  - QA checks QA's findings, the review stage the rest.
+  - What another member found in the same round isn't shown to the others,
+    so each member's verdict is its own.
+  - Another second opinion by the same runner answers that runner's
+    earlier blocking findings, sent back or not, until one is addressed.
+- **A review that passes** settles the findings that were its to check and
+  that it didn't answer by name; the record says "not raised again". A
+  review that fails settles only what it answers.
+- **Two checks of one commit that disagree** leave the finding open: a
+  second opinion calling it addressed doesn't undo a review that found it
+  not fixed on the same commit.
+- **Send findings back.** Request changes at sign-off, or retry a blocked
+  item, with the ids of the findings to fix: from a review or a second
+  opinion, whatever their state. Each is followed from then on.
+  - **CLI:** `skopos inbox request-changes --id <item> --finding <id>`
+    (repeatable; `--notes` is then optional), `skopos inbox retry --id
+    <item> --finding <id>`.
+  - **REST:** `findings: [ids]` in the body of
+    `POST /api/inbox/{id}/request-changes` and `…/retry`.
+  - An id the item doesn't have is refused before anything is queued.
+- **Waive a finding** to accept it as it is. The implementer isn't asked to
+  fix it, no review checks it or blocks on it, and reviewers are told you
+  accepted it, with your note. Sending it back later undoes the waive.
+  - **CLI:** `skopos inbox waive --id <item> --finding <id> [--note …]`.
+  - **REST:** `POST /api/inbox/{id}/findings/{finding}/waive`.
+  - Approver keys only; audited (`inbox.finding_waive`).
+  - **A blocking finding needs a reason** (`--note`, `note`); a nit can be
+    waived without one.
+- **At sign-off** the audit entry of Mark done records the findings'
+  state: how many are in each state, and by id the ones no review settled
+  (to fix, still open, fixed but not confirmed) and the ones you waived.
+- **Read the record.** `skopos inbox findings --id <item> [--state open]`,
+  or `GET /api/inbox/{id}/findings`: every finding with its state and what
+  happened to it. Any key with the item in scope can read it.
+- **In the dashboard.** The item preview's action card lists the findings
+  in groups: New (raised by the newest review), To fix, Still open, Fixed
+  but not confirmed, Not followed up, Addressed and Waived.
+  - Each shows who raised it, on which commit, and what happened to it.
+  - **Tick** a finding to send it back with Request changes or Retry.
+    Request changes then needs no notes. Findings to fix and still open
+    go back without a tick.
+  - **Waive** asks for a note and accepts the finding; a blocking finding
+    needs the note.
+  - The Agent review and Second opinion steps show each run's findings
+    with their state, and the earlier findings that run checked again.
+- **In Slack.** The "Branch ready" and "Blocked" messages list the findings
+  something is still owed on, and the ones nobody follows up, numbered.
+  - `findings` posts the list again.
+  - `changes 2,3: <notes>` (at sign-off) and `retry 2: <answer>` (blocked)
+    send findings back by number; `waive 2: <why>` accepts one.
+  - The numbers are those of the list the relay showed last. After a
+    server restart it asks you to reply `findings` first.
+  - A reply by number that arrives mid-run isn't kept for later.
+- **A finding nobody checks again** stays `fixed` (claimed, not confirmed):
+  a second opinion's finding you sent back in a workspace that has QA but
+  no review stage, say. You see it as such and decide.
+- **Workers.** A worker older than this record keeps working: its reviews'
+  findings are recorded, a passing review of its settles them, and nothing
+  it runs answers one by name.
 
 ## Slack relay (server)
 
@@ -343,7 +451,10 @@ scopes and the `message.im` event subscription.
 Commands (replies in an item's thread): `approve` [`: <notes>`], `revise:
 <notes>`, `changes: <notes>`, `done`, `retry: <answer>`, `reject`,
 `second` / `second <runner>` (an advisory [second opinion](#second-opinions-on-demand),
-`force` to repeat a runner on the same head), and
+`force` to repeat a runner on the same head),
+`findings`, `waive <n>: <why>`, `changes <n,…>: <notes>` and `retry <n,…>:
+<answer>` (the [review findings](#review-findings) by their number in the
+list, applied at once for `findings` and `waive`), and
 `panel` / `solo` / `default` (the item's [agents switch](#per-item-switch-panel-or-solo),
 applied at once, even mid-run). A command is
 the bare word or `word: <text>` on its own — "done with lunch" is not `done`

@@ -50,6 +50,10 @@ type slackRelay struct {
 	// item. In memory: after a restart the relay cannot know what the approver
 	// read, so an approve then re-posts the current plan (fail closed).
 	shown map[string][]shownRev
+	// shownFindings is the numbering of the findings list the latest
+	// message showed per item (finding ids, in order). In memory too: after
+	// a restart a reply by number is asked to list them again.
+	shownFindings map[string][]string
 }
 
 // planRevisions is the slice of the plans service the relay needs.
@@ -83,7 +87,7 @@ func relayCtx() context.Context {
 // casual replies into irreversible actions).
 // Groups: 1 the command, 2 an optional selector (a plan candidate: its
 // number or label — `approve 2`, `revise glm: notes`), 3 the notes.
-var reCmd = regexp.MustCompile(`(?is)^\s*([a-z]+)(?:\s+([a-z0-9@._-]+))?(?:\s*[.!]?\s*|\s*:\s*(.*))$`)
+var reCmd = regexp.MustCompile(`(?is)^\s*([a-z]+)(?:\s+([a-z0-9@._,-]+))?(?:\s*[.!]?\s*|\s*:\s*(.*))$`)
 
 // reWord is the leading word of a reply that did not parse as a command —
 // used only to hint at the syntax when it names one.
@@ -144,6 +148,7 @@ const slackHelp = "*skopos commands* — reply in an item's thread:\n" +
 	"• `answer: 1) a, 2) …` — answer the open questions without approving (while the item waits for you)\n" +
 	"• `reject` — discard the item\n" +
 	"• `second` / `second <runner>` — an advisory second opinion on the finished branch (`force` re-runs a runner on the same head)\n" +
+	"• `findings` — the review findings, numbered; `changes 2,3: <notes>` / `retry 2: <answer>` send findings back to be fixed, `waive 2: <why>` accepts one\n" +
 	"• `panel` / `solo` / `default` — the item's plan, review and QA stages use the repository's agent panel, one agent, or the repository default (from the next stage)\n" +
 	"Top-level: `new: <what to do>` creates and queues an item; add `#panel` or `#solo` to choose its agents."
 
@@ -208,7 +213,9 @@ func (r *slackRelay) Apply(ctx context.Context, itemID, text string) bool {
 		// Not a command; leave un-acked. When it LEADS with a command word
 		// ("done with lunch", "approve? ..."), say how to issue the real
 		// one rather than silently ignoring what may have been meant.
-		if w := reWord.FindStringSubmatch(text); w != nil && isCommand(strings.ToLower(w[1])) {
+		// `findings` and `waive` are ordinary words at the start of a
+		// sentence ("findings look fine"): no hint for those.
+		if w := reWord.FindStringSubmatch(text); w != nil && isCommand(strings.ToLower(w[1])) && !isFindingCommand(strings.ToLower(w[1])) {
 			if item, err := r.inbox.GetItem(relayCtx(), itemID); err == nil {
 				word := strings.ToLower(w[1])
 				r.post(ctx, item.SlackThreadTS, "🤔 Not applied — a command is the bare word (`"+word+"`) or `"+word+": <notes>` on its own.")
@@ -217,9 +224,11 @@ func (r *slackRelay) Apply(ctx context.Context, itemID, text string) bool {
 		return false
 	}
 	cmd, sel, arg := strings.ToLower(m[1]), strings.ToLower(strings.TrimSpace(m[2])), strings.TrimSpace(m[3])
-	if sel != "" && cmd != "approve" && cmd != "approved" && cmd != "lgtm" && cmd != "revise" && cmd != "second" {
-		// Only approve/revise (a candidate) and second (a runner) take a
-		// selector; anything else with a word after it is prose.
+	byNumber := (cmd == "changes" || cmd == "retry" || cmd == "waive") && reFindingNumbers.MatchString(sel)
+	if sel != "" && !byNumber && cmd != "approve" && cmd != "approved" && cmd != "lgtm" && cmd != "revise" && cmd != "second" {
+		// Only approve/revise (a candidate), second (a runner) and
+		// changes/retry/waive (findings by number) take a selector;
+		// anything else with a word after it is prose.
 		return false
 	}
 	item, err := r.inbox.GetItem(relayCtx(), itemID)
@@ -230,6 +239,11 @@ func (r *slackRelay) Apply(ctx context.Context, itemID, text string) bool {
 	// at once (never buffered) and takes effect at the next stage.
 	if isAgentsCommand(cmd) {
 		return r.setAgents(ctx, item, cmd)
+	}
+	// Listing findings and waiving one are no workflow action either: they
+	// apply at once, whatever the item is doing.
+	if isFindingCommand(cmd) {
+		return r.applyFindingCommand(ctx, item, cmd, sel, arg)
 	}
 	if !inbox.IsWorkflowStatus(item.Status) {
 		r.post(ctx, item.SlackThreadTS, "⚠️ The item is "+statusWord(item.Status)+" — no workflow actions apply.")
@@ -245,7 +259,9 @@ func (r *slackRelay) Apply(ctx context.Context, itemID, text string) bool {
 		// message instead; the non-advancing replies still buffer.
 		// Answers name the questions open now: buffered, they would land
 		// on whatever the next round asks.
-		if isApproval(cmd) || cmd == "answer" {
+		// A reply by number names findings in the list shown now: buffered,
+		// it would pick from whatever list the next message shows.
+		if isApproval(cmd) || cmd == "answer" || byNumber {
 			r.post(ctx, item.SlackThreadTS, "⚠️ `"+cmd+"` applies at the gate — the item is "+statusWord(item.Status)+
 				". Reply to the gate message once it arrives.")
 			return true
@@ -327,7 +343,17 @@ func (r *slackRelay) applyCommand(ctx context.Context, item *inbox.Item, cmd, se
 			r.post(ctx, thread, "⚠️ changes applies to a finished branch — the item is "+statusWord(item.Status)+".")
 			return true
 		}
-		if _, err := r.inbox.RequestChanges(relayCtx, item.ID, arg, audit.ViaSlack); err != nil {
+		// `changes 2,3: notes` sends those findings back with the notes.
+		in := inbox.ChangesInput{Notes: arg, Via: audit.ViaSlack}
+		if sel != "" {
+			ids, msg := r.pickFindings(item.ID, sel)
+			if msg != "" {
+				r.post(ctx, thread, "⚠️ "+msg)
+				return true
+			}
+			in.Findings = ids
+		}
+		if _, err := r.inbox.RequestChangesWith(relayCtx, item.ID, in); err != nil {
 			return fail(err)
 		}
 		return true
@@ -350,7 +376,17 @@ func (r *slackRelay) applyCommand(ctx context.Context, item *inbox.Item, cmd, se
 			r.post(ctx, thread, "⚠️ Nothing to retry — the item is "+statusWord(item.Status)+".")
 			return true
 		}
-		retried, err := r.inbox.Retry(relayCtx, item.ID, arg, audit.ViaSlack)
+		// `retry 2: answer` has those findings fixed in the run it starts.
+		in := inbox.RetryInput{Answers: qa.AnswersInput{Text: arg}, Via: audit.ViaSlack}
+		if sel != "" {
+			ids, msg := r.pickFindings(item.ID, sel)
+			if msg != "" {
+				r.post(ctx, thread, "⚠️ "+msg)
+				return true
+			}
+			in.Findings = ids
+		}
+		retried, err := r.inbox.RetryOn(relayCtx, item.ID, in)
 		if err != nil {
 			return fail(err)
 		}
@@ -674,6 +710,9 @@ func (r *slackRelay) formatGate(itemID string, from, to inbox.Status) string {
 		return ""
 	}
 	title := item.Title
+	// A gate message replaces what the thread showed before: a findings
+	// list it does not repeat is no longer the one a number refers to.
+	r.forgetFindings(itemID)
 	switch to {
 	case inbox.StatusAwaitingApproval:
 		msg, _ := r.planReadyMessage(itemID)
@@ -716,6 +755,10 @@ func (r *slackRelay) formatGate(itemID string, from, to inbox.Status) string {
 			return "⚠️ *Blocked* · " + title + "\n\n" + truncate(reason, 500) +
 				"\n\n*Questions for you:*\n" + q + "\n`retry: 1) a, 2) …` · `reject`"
 		}
+		if block := r.findingsBlock(itemID); block != "" {
+			return "⚠️ *Blocked* · " + title + "\n\n" + truncate(reason, 500) + "\n\n" + block +
+				"\n`retry: <answer>` · " + findingHints(r.inbox.SendBackWith(relayCtx(), item)) + " · `reject`"
+		}
 		return "⚠️ *Blocked* · " + title + "\n\n" + truncate(reason, 500) +
 			"\n\n`retry: <answer>` · `reject`"
 	case inbox.StatusInReview:
@@ -746,6 +789,10 @@ func (r *slackRelay) formatGate(itemID string, from, to inbox.Status) string {
 					break
 				}
 			}
+		}
+		if block := r.findingsBlock(itemID); block != "" {
+			return "✅ *Branch ready* · " + title + "\n\n" + detail + "\n\n" + block +
+				"\n`done` (approves head " + short(head) + ") · `changes: <notes>` · " + findingHints(r.inbox.SendBackWith(relayCtx(), item)) + " · `reject`"
 		}
 		return "✅ *Branch ready* · " + title + "\n\n" + detail +
 			"\n\n`done` (approves head " + short(head) + ") · `changes: <notes>` · `reject`"
@@ -820,7 +867,7 @@ func (r *slackRelay) drainAll(ctx context.Context) {
 // isCommand: the thread-reply vocabulary.
 func isCommand(w string) bool {
 	switch w {
-	case "approve", "approved", "lgtm", "revise", "changes", "done", "retry", "reject", "second", "answer":
+	case "approve", "approved", "lgtm", "revise", "changes", "done", "retry", "reject", "second", "answer", "waive", "findings":
 		return true
 	}
 	return isAgentsCommand(w)

@@ -205,13 +205,21 @@ act on it:
 | `plan.revisions` | the plan(s) waiting for approval, with steps, `revision_id` and `content_hash` |
 | `questions` | open questions, with their options |
 | `implementation` | the newest implementation: head commit, checks, setup, pull request |
-| `reviews` | the reviews of the newest reviewed commit, with findings and `passed` |
+| `reviews` | the reviews of the newest reviewed commit, with findings and `passed`. `blocking` counts a review's own blocking findings and the earlier ones it found still open (`still_open`) |
+| `findings` | the review findings in short: `counts` by state, and `open` — the ones something is still owed on (`open`, `fixed`, `still_open`). Absent when the item has none |
 | `run` | the run in progress, if any |
 | `actions` | what this key may do now |
 
 A key limited by capabilities sees `plan` only with `plans:read`, and
-`reason`, `implementation`, `reviews` and `run` only with `runs:read`, as
+`reason`, `implementation`, `reviews`, `findings` and `run` only with `runs:read`, as
 on `/api/plans` and `/api/runs`. The `integration` preset has both.
+
+`GET /api/inbox/{id}/findings` is the full record of review findings: each
+with an id, its state (`open`, `fixed`, `addressed`, `still_open`, `waived`,
+`noted`) and what happened to it. `request-changes` and `retry` take
+`findings: [ids]` to send findings back to be fixed, and
+`POST /api/inbox/{id}/findings/{finding}/waive` accepts one as it is. See
+[Review findings](../configuration.md#review-findings).
 
 Each action names the endpoint to POST: `/api/inbox/{id}/<action>`.
 

@@ -250,6 +250,66 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Review findings are records, followed across rounds.** Every finding of
+  a review, a QA run, a review-only run or a second opinion gets an id, and
+  what happens to it is recorded with it. A later round now says which
+  findings are new, which are confirmed fixed and which are still open.
+  See [Review findings](docs/configuration.md#review-findings).
+  - **The implementer answers each blocking finding:** fixed, or not fixed
+    and why. Before, it was given the last review as text, and only when
+    you had written change requests.
+  - **The next review checks them again** and answers each as addressed or
+    still open; its own list is only what nobody reported before. A
+    blocking finding that is still open fails the review. A review that
+    passes settles what it didn't answer by name.
+  - **One reviewer checks each finding.** In a panel that is the member
+    with the same focus, and the first member for a second opinion's
+    finding you sent back. What a member finds isn't shown to the others
+    in the same round.
+  - **Send findings back by id** with request changes or retry
+    (`--finding`, or `findings` in the request): a nit or a second
+    opinion's finding is followed up only then.
+  - **Waive a finding** to accept it as it is
+    (`skopos inbox waive`, `POST /api/inbox/{id}/findings/{finding}/waive`;
+    approver keys only, audited). A blocking finding needs a reason.
+  - **Sign-off records the findings:** the audit entry of Mark done lists
+    how many findings are in each state, and by id the ones no review
+    settled and the ones waived.
+  - **Read the record** with `skopos inbox findings` or
+    `GET /api/inbox/{id}/findings`: states `open`, `fixed`, `addressed`,
+    `still_open`, `waived`, `noted`.
+  - **In the dashboard,** the item preview lists the findings in groups:
+    New, To fix, Still open, Fixed but not confirmed, Not followed up,
+    Addressed and Waived. Tick one to send it back with Request changes or
+    Retry (no notes needed then), or waive it with a note. The Agent review
+    and Second opinion steps show each finding's state and the earlier
+    findings that run checked again.
+  - **In Slack,** the "Branch ready" and "Blocked" messages carry a
+    numbered list of findings. `findings` posts it again;
+    `changes 2,3: <notes>`, `retry 2: <answer>` and `waive 2: <why>` act on
+    findings by number.
+  - **The item state** (`GET /api/inbox/{id}/state`) has `findings`: counts
+    by state and the ones something is still owed on.
+  - **Runs carry `still_open`:** the earlier blocking findings a review
+    found not fixed. It counts as blocking in the item state, the
+    `review.finished` event and a panel's verdict.
+  - **Findings of earlier runs** are taken into the record at the first
+    start; they are `noted` and never followed up unless you send them
+    back.
+  - **Update the workers with the server.** A worker older than this
+    release keeps working, but its implementers and reviewers don't answer
+    earlier findings by name; a passing review still settles them.
+- **A second opinion is a step of its own in the item preview,** after
+  Agent review, in every status once one was asked for. Before, results
+  were a line inside the sign-off card and gone once the item moved on.
+  - **Logs:** "Watch live" while it runs and "Log" afterwards, for each
+    opinion.
+  - **Results:** one line per opinion with the runner, commit and verdict,
+    and every finding and summary underneath. An opinion on an older commit
+    is marked.
+  - **At sign-off:** when a runner's newest opinion on the commit would
+    block, the step is amber and the sign-off card says so. It stays
+    advisory.
 - **The server names the runner of every run.** For a stage with no
   preference it picks the first runner in the worker's order that can run
   the stage (and that the policy allows): `claude` first, then the order

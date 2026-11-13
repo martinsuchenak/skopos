@@ -104,31 +104,44 @@ func inboxWorkflowCmds() []*cli.Command {
 			Name:  "request-changes",
 			Usage: "Send an item back: a re-plan from the gate, or a re-implementation from review",
 			Flags: workflowFlags(
-				&cli.StringFlag{Name: "notes", Usage: "What to change (required; the next run reads it)"},
+				&cli.StringFlag{Name: "notes", Usage: "What to change (the next run reads it; required unless --finding is given)"},
 				&cli.StringFlag{Name: "revision", Usage: "At a multi-agent plan gate: the candidate to revise (one planner reworks it); omit to re-plan all"},
+				&cli.StringSliceFlag{Name: "finding", Usage: "From review: a review finding to have fixed, by id (repeatable; skopos inbox findings lists them). The implementer answers each and the next review checks it"},
 			),
 			Run: func(ctx context.Context, cmd *cli.Command) error {
 				n := strings.TrimSpace(cmd.GetString("notes"))
-				if n == "" {
-					return fmt.Errorf("--notes is required: it is what the next run reads")
+				sent := findingIDs(cmd)
+				if n == "" && len(sent) == 0 {
+					return fmt.Errorf("--notes is required: it is what the next run reads (or name findings to fix with --finding)")
 				}
-				body := map[string]string{"notes": n}
+				body := map[string]any{"notes": n}
 				if rv := strings.TrimSpace(cmd.GetString("revision")); rv != "" {
 					body["revision_id"] = rv
 				}
-				return simpleAction(ctx, cmd, "request-changes", body, "changes requested")
+				if len(sent) > 0 {
+					body["findings"] = sent
+				}
+				return bodyAction(ctx, cmd, "request-changes", body, "changes requested")
 			},
 		},
 		{
 			Name:  "retry",
 			Usage: "Answer a blocked (or failed) item and requeue it",
-			Flags: workflowFlags(&cli.StringFlag{Name: "answer", Usage: "Answer to the blocker (required; appended for the next run)"}),
+			Flags: workflowFlags(
+				&cli.StringFlag{Name: "answer", Usage: "Answer to the blocker (appended for the next run; required unless --finding is given)"},
+				&cli.StringSliceFlag{Name: "finding", Usage: "A review finding to have fixed in the implementation this starts, by id (repeatable): a second opinion's, say"},
+			),
 			Run: func(ctx context.Context, cmd *cli.Command) error {
 				a := strings.TrimSpace(cmd.GetString("answer"))
-				if a == "" {
+				sent := findingIDs(cmd)
+				if a == "" && len(sent) == 0 {
 					return fmt.Errorf("--answer is required")
 				}
-				return simpleAction(ctx, cmd, "retry", map[string]string{"answer": a}, "requeued")
+				body := map[string]any{"answer": a}
+				if len(sent) > 0 {
+					body["findings"] = sent
+				}
+				return bodyAction(ctx, cmd, "retry", body, "requeued")
 			},
 		},
 		{
@@ -285,6 +298,19 @@ func (c *apiClient) action(ctx context.Context, id, action string, body map[stri
 	if body == nil {
 		body = map[string]string{}
 	}
+	return c.actionBody(ctx, id, action, body, ok)
+}
+
+// bodyAction is simpleAction for a body with lists in it.
+func bodyAction(ctx context.Context, cmd *cli.Command, action string, body map[string]any, ok string) error {
+	c, id, err := workflowClient(cmd)
+	if err != nil {
+		return err
+	}
+	return c.actionBody(ctx, id, action, body, ok)
+}
+
+func (c *apiClient) actionBody(ctx context.Context, id, action string, body any, ok string) error {
 	var item struct {
 		Status string `json:"status"`
 	}

@@ -270,6 +270,12 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "runs", "config_rev", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	// Findings as records (internal/findings). runs.still_open: how many
+	// earlier blocking findings this review checked and found not fixed —
+	// they count against it like its own blocking findings.
+	if err := ensureColumn(db, "runs", "still_open", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 	if err := ensureColumn(db, "workers", "server_commands", "INTEGER"); err != nil {
 		return err
 	}

@@ -24,6 +24,7 @@ type actionRequest struct {
 	RevisionID  string          `json:"revision_id"`  // approve: bind to the revision the approver saw; request-changes: the plan candidate to revise
 	ContentHash string          `json:"content_hash"` // approve: optional stronger binding
 	BaseSHA     string          `json:"base_sha"`     // amend-plan
+	Findings    []string        `json:"findings"`     // request-changes, retry: review findings (ids) to have fixed
 }
 
 type transitionRequest struct {
@@ -124,7 +125,7 @@ func (h *Handler) RequestChanges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item, err := h.service.RequestChangesWith(r.Context(), r.PathValue("id"), ChangesInput{
-		Notes: req.Notes, Answers: req.Answers, Via: viaFrom(r, ""), RevisionID: req.RevisionID,
+		Notes: req.Notes, Answers: req.Answers, Via: viaFrom(r, ""), RevisionID: req.RevisionID, Findings: req.Findings,
 	})
 	h.respondTransition(w, item, err)
 }
@@ -172,7 +173,7 @@ func (h *Handler) Retry(w http.ResponseWriter, r *http.Request) {
 	if a := strings.TrimSpace(req.Answer); a != "" {
 		answers.Text = strings.TrimSpace(answers.Text + "\n" + a)
 	}
-	item, err := h.service.RetryWith(r.Context(), r.PathValue("id"), answers, viaFrom(r, ""))
+	item, err := h.service.RetryOn(r.Context(), r.PathValue("id"), RetryInput{Answers: answers, Via: viaFrom(r, ""), Findings: req.Findings})
 	h.respondTransition(w, item, err)
 }
 

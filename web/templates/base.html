@@ -1206,6 +1206,38 @@
                                 <a class="btn btn-sm" :href="lk.href" target="_blank" rel="noopener noreferrer" x-text="lk.text + ' ↗'"></a>
                             </template>
                         </div>
+                        <!-- The item's review findings, grouped by what is owed
+                             on each. A tick sends one back with Request changes
+                             or Retry; Waive accepts one as it is. Keyed x-for:
+                             the groups re-render when the record changes. -->
+                        <template x-for="g in findingGroups()" :key="g.key">
+                            <details class="q-group w-full" :open="g.open" @toggle="setFindingFold(g.id, $event.target.open)">
+                                <summary class="fold-summary cursor-pointer text-xs"><span class="fold-caret" aria-hidden="true">&#9656;</span> <span class="font-semibold text-zinc-200" x-text="g.title"></span> <span class="text-zinc-500" x-text="g.hint"></span></summary>
+                                <ul class="mt-1.5 space-y-2.5">
+                                    <template x-for="f in g.rows" :key="f.key">
+                                        <li class="finding-row">
+                                            <div class="flex items-start gap-2">
+                                                <input type="checkbox" class="mt-1" x-show="f.canSend" :checked="f.picked" @change="toggleFinding(f.id)" :aria-label="'Send back to be fixed: ' + f.text" />
+                                                <div class="min-w-0 flex-1">
+                                                    <p class="text-sm"><span class="chip" :class="f.tone" x-text="f.severity"></span> <span x-text="f.text"></span></p>
+                                                    <p class="stage-more-label" x-text="f.meta"></p>
+                                                    <template x-for="(n, ni) in f.notes" :key="f.key + '|n' + ni">
+                                                        <p class="text-xs text-zinc-400" x-text="n"></p>
+                                                    </template>
+                                                    <div x-show="f.waiving" class="mt-1 flex flex-wrap items-center gap-2">
+                                                        <input type="text" class="fld-sm min-w-0 flex-1" :value="waive.note" @input="setWaiveNote($event.target.value)" :placeholder="waiveNotePlaceholder()" :aria-label="'Why this finding is accepted: ' + f.text" />
+                                                        <button type="button" class="btn btn-xs btn-ghost btn-warn" @click.stop="confirmWaive()" :disabled="waiveNotReady()">Waive it</button>
+                                                        <button type="button" class="btn btn-xs btn-ghost" @click.stop="cancelWaive()">Cancel</button>
+                                                    </div>
+                                                </div>
+                                                <button type="button" x-show="f.canWaive && !f.waiving" class="btn btn-xs btn-ghost shrink-0" @click.stop="startWaive(f.id)" :aria-label="'Waive finding: ' + f.text" title="Accept it as it is: nobody is asked to fix or check it again">Waive</button>
+                                            </div>
+                                        </li>
+                                    </template>
+                                </ul>
+                            </details>
+                        </template>
+                        <p x-show="pickedFindingsText()" class="w-full text-[11px] text-zinc-400" x-text="pickedFindingsText()"></p>
                         <!-- Labeled, multi-line: retry answers and change
                              requests carry real sentences, and the input was a
                              single xs-height line with only a placeholder. -->
@@ -1271,19 +1303,6 @@
                         <template x-for="so in secondOpinionRow()" :key="so.key">
                             <div class="flex w-full flex-wrap items-end gap-2 border-t border-dashed border-zinc-700 pt-2">
                                 <p class="w-full text-xs"><span class="font-semibold text-zinc-200">Second opinions</span> <span class="text-zinc-500">optional; they never change the status</span></p>
-                                <template x-for="r in secondOpinionResults()" :key="r.key">
-                                    <div class="w-full">
-                                        <p class="stage-check"><span class="stage-ic" :class="'stage-ic-' + r.ic" x-text="r.ic === 'y' ? '✓' : (r.ic === 'w' ? '!' : '○')"></span><span x-text="r.text"></span></p>
-                                        <template x-if="r.more.length > 0">
-                                            <details class="stage-more ml-6">
-                                                <summary class="fold-summary"><span class="fold-caret" aria-hidden="true">&#9656;</span> Read it</summary>
-                                                <template x-for="m in r.more" :key="m.key">
-                                                    <div class="stage-more-row"><p class="stage-more-label" x-text="m.label"></p><p class="stage-more-text" x-text="m.text"></p></div>
-                                                </template>
-                                            </details>
-                                        </template>
-                                    </div>
-                                </template>
                                 <span x-show="so.running" class="chip tone-info" x-text="'Second opinion running (' + so.running + ')'"></span>
                                 <div x-show="!so.running" class="min-w-0 flex-1 basis-full sm:basis-auto sm:max-w-56">
                                     <label class="lbl" for="so-runner">Second opinion from</label>

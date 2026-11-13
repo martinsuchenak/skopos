@@ -75,7 +75,7 @@ type PlanRevisionInfo = { id: string; revision_no: number; content_hash: string;
 // One thing the approver can approve at the gate: the plan revision, or one
 // candidate of a multi-agent plan round.
 type ApproveTarget = { id: string; title: string; meta: string; steps: string[]; candidate: boolean; hash: string; toast: string };
-type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { severity: string; text: string; file?: string }[]; lease_expires_at?: string; pushed?: boolean; pr_url?: string; checks?: { name: string; passed: boolean; output?: string }[]; setup?: { name: string; passed: boolean; output?: string }[]; fix_rounds?: number; phase?: string; retries?: number; retry_after?: string; prefer_worker?: string; prefer_until?: string; stranded?: string; runner_picked?: boolean; policy_rev?: string; created_at: string; updated_at: string };
+type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { id?: string; severity: string; text: string; file?: string }[]; still_open?: number; lease_expires_at?: string; pushed?: boolean; pr_url?: string; checks?: { name: string; passed: boolean; output?: string }[]; setup?: { name: string; passed: boolean; output?: string }[]; fix_rounds?: number; phase?: string; retries?: number; retry_after?: string; prefer_worker?: string; prefer_until?: string; stranded?: string; runner_picked?: boolean; policy_rev?: string; created_at: string; updated_at: string };
 // One row of the preview's stage tracker. state: done | run | you | bad |
 // up (not reached) | skip (not configured, or never reached on a discarded item).
 type LinkRow = { key: string; href: string; text: string };
@@ -86,6 +86,11 @@ type LogButton = { key: string; id: string; text: string };
 type MoreRow = { key: string; label: string; text: string; mono?: boolean };
 type StageRow = { key: string; name: string; who: string; state: string; when: string; round: string; lines: string[]; links: LinkRow[]; more: MoreRow[]; moreLabel: string; warn: string; logs: LogButton[] };
 type TextRow = { key: string; ic: string; text: string; more?: MoreRow[] };
+// The item's record of review findings (GET /api/inbox/{id}/findings).
+type FindingUpdate = { id: string; kind: string; note?: string; run_id?: string; actor?: string; created_at: string };
+type FindingRec = { id: string; run_id: string; stage: string; runner?: string; focus?: string; head_sha?: string; severity: string; text: string; file?: string; state: string; tracked: boolean; sent_back: boolean; updates: FindingUpdate[] };
+type FindingRow = { key: string; id: string; severity: string; tone: string; text: string; meta: string; notes: string[]; canSend: boolean; picked: boolean; canWaive: boolean; waiving: boolean };
+type FindingGroupView = { key: string; id: string; title: string; hint: string; open: boolean; rows: FindingRow[] };
 type AuditEntry = { id: string; action: string; actor: string; via?: string; notes?: string; created_at: string };
 // wsLocked: a workflow item cannot move workspace (its runs, plan and
 // branch live there) — the server refuses it; the modal hides the picker.
@@ -204,6 +209,16 @@ const appState = () => ({
   // picked option's letter and free text. Sent with the action as answers.
   questionAnswers: {} as Record<string, { pick: string; text: string }>,
   previewQuestions: [] as QASet[],
+  // The item's review findings, the ones ticked to be sent back with
+  // Request changes or Retry, and the one being waived (with its note).
+  previewFindings: [] as FindingRec[],
+  // The action that takes findings to send back now, as the server says
+  // ('request-changes', 'retry', or '' when none does or the key may not).
+  previewFindingsSend: '',
+  findingPicks: {} as Record<string, boolean>,
+  // Groups the approver folded or unfolded by hand (by group id).
+  findingFold: {} as Record<string, boolean>,
+  waive: { id: '', note: '', busy: false },
   // The item whose answers were saved on their own in this preview: its
   // Retry then needs no more text.
   answersSavedFor: '',
@@ -518,7 +533,7 @@ const appState = () => ({
   // The one status → colour mapping. Colours live in style.css (.tone-*,
   // both themes); this only names the meaning. kind separates vocabularies
   // that reuse a word: a run STAGE "plan" vs nothing else.
-  toneOf(kind: 'status' | 'entry' | 'scope' | 'stage', value?: string | null): string {
+  toneOf(kind: 'status' | 'entry' | 'scope' | 'stage' | 'severity', value?: string | null): string {
     const v = value || '';
     const maps: Record<string, Record<string, string>> = {
       status: {
@@ -533,6 +548,7 @@ const appState = () => ({
         pending: 'neutral',
       },
       entry: { bug: 'danger', debt: 'warn', warning: 'warn', finding: 'active', decision: 'success', context: 'neutral' },
+      severity: { blocking: 'danger', nit: 'neutral' },
       scope: { session: 'neutral', branch: 'accent', project: 'secondary' },
       stage: { plan: 'accent', implement: 'active', review: 'review', qa: 'review', second_opinion: 'review' },
     };
@@ -1185,6 +1201,11 @@ const appState = () => ({
     this.previewRoundOpen = {};
     this.questionAnswers = {};
     this.answersSavedFor = '';
+    this.previewFindings = [];
+    this.previewFindingsSend = '';
+    this.findingPicks = {};
+    this.findingFold = {};
+    this.waive = { id: '', note: '', busy: false };
     this.injectPreviewContent();
     this.workflowNote = '';
     this.previewStatusSeen = '';
@@ -1215,15 +1236,21 @@ const appState = () => ({
   // Workers (stuck-run warning) and the audit trail (History): refetched with
   // the runs on every live refresh.
   async fetchPreviewExtras(id: string) {
-    const [wres, tres, qres] = await Promise.all([
+    const [wres, tres, qres, fres] = await Promise.all([
       this.authFetch('/api/workers'),
       this.authFetch('/api/inbox/' + encodeURIComponent(id) + '/timeline'),
       this.authFetch('/api/inbox/' + encodeURIComponent(id) + '/questions'),
+      this.authFetch('/api/inbox/' + encodeURIComponent(id) + '/findings'),
     ]);
     if (!this.showInboxPreview || !this.previewItem || this.previewItem.id !== id) return;
     if (wres.ok) this.previewWorkers = ((await wres.json()) as WorkerSeen[]) ?? [];
     if (tres.ok) this.previewTimeline = ((await tres.json()) as AuditEntry[]) ?? [];
     if (qres.ok) this.previewQuestions = (((await qres.json()) as { sets: QASet[] }).sets) ?? [];
+    if (fres.ok) {
+      const rec = (await fres.json()) as { findings: FindingRec[]; send_back?: string };
+      this.previewFindings = rec.findings ?? [];
+      this.previewFindingsSend = rec.send_back || '';
+    }
   },
   // Section defaults follow the status: the description is open until the
   // plan is approved, the run history is closed. Applied on open and on a
@@ -1231,6 +1258,9 @@ const appState = () => ({
   syncPreviewSections() {
     const st = this.previewItem ? this.previewItem.status : '';
     if (st === this.previewStatusSeen) return;
+    // The item moved on: ticks and a half-made waive were for the gate it
+    // left.
+    if (this.previewStatusSeen) { this.findingPicks = {}; this.waive = { id: '', note: '', busy: false }; }
     this.previewStatusSeen = st;
     this.previewDescOpen = ['open', 'in_progress', 'queued', 'planning', 'awaiting_approval', 'converted'].includes(st);
     this.previewRunsOpen = false;
@@ -1343,7 +1373,7 @@ const appState = () => ({
     if (!item || !this.answersReady()) return;
     if (await this.postWorkflowAction(item.id, 'answers', { answers: this.answerItems() }, 'Answers saved')) this.answersSavedFor = item.id;
   },
-  hasWorkflowInput(): boolean { return this.workflowNote.trim().length > 0 || this.answerItems().length > 0; },
+  hasWorkflowInput(): boolean { return this.workflowNote.trim().length > 0 || this.answerItems().length > 0 || this.pickedFindings().length > 0; },
   async copyItemId() {
     const item = this.previewItem;
     if (!item) return;
@@ -1681,7 +1711,11 @@ const appState = () => ({
   // A review passed: it finished and found nothing blocking. A branch review
   // succeeds whatever its verdict, so its blocking findings decide (the
   // server's panel policy reads it the same way).
-  reviewPassed(r: RunRow): boolean { return r.status === 'succeeded' && this.findingCount(r, 'blocking') === 0; },
+  reviewPassed(r: RunRow): boolean { return r.status === 'succeeded' && this.blockingCount(r) === 0; },
+  // What blocks in a review's result: its own blocking findings and the
+  // earlier ones it found still open (runs.BlockingFindings on the server).
+  blockingCount(r: RunRow): number { return this.findingCount(r, 'blocking') + (r.still_open || 0); },
+  stillOpenText(r: RunRow): string { return r.still_open ? this.plural(r.still_open, 'earlier finding') + ' still open' : ''; },
   plural(n: number, word: string): string { return n + ' ' + word + (n === 1 ? '' : 's'); },
   reviewLine(r: RunRow): string {
     const who = (r.focus || (r.stage === 'branch_review' ? 'review' : r.stage)) + (r.runner ? ' (' + r.runner + ')' : '');
@@ -1690,10 +1724,11 @@ const appState = () => ({
     if (r.status === 'succeeded' && !this.reviewPassed(r)) {
       const blocking = (r.findings || []).find(f => f.severity === 'blocking');
       if (blocking) return who + ' blocking: ' + blocking.text;
+      if (r.still_open) return who + ' blocking: ' + this.stillOpenText(r);
     }
     if (r.status === 'failed') {
       const blocking = (r.findings || []).find(f => f.severity === 'blocking');
-      return who + ' blocking: ' + (blocking ? blocking.text : (r.fail_reason || 'failed'));
+      return who + ' blocking: ' + (blocking ? blocking.text : (this.stillOpenText(r) || r.fail_reason || 'failed'));
     }
     const nits = this.findingCount(r, 'nit');
     return who + ' passed' + (nits ? ', ' + this.plural(nits, 'nit') : '');
@@ -1770,8 +1805,29 @@ const appState = () => ({
   },
   // Unfoldable detail for a review-like run: each finding with its severity
   // and file, then the reviewer's summary.
+  // From the record when it has the run's findings: each with its state
+  // and what happened to it since, then the earlier findings this run
+  // checked again. A run the record does not have falls back to its own list.
   runMore(r: RunRow, who: string): MoreRow[] {
-    const out: MoreRow[] = (r.findings || []).map((f, k) => ({ key: r.id + '|f' + k, label: f.severity + ' · ' + who + (f.file ? ' · ' + f.file : ''), text: f.text }));
+    const state = (st: string) => st.replace(/_/g, ' ');
+    const own = this.previewFindings.filter((f: FindingRec) => f.run_id === r.id);
+    let out: MoreRow[] = own.length
+      ? own.map((f: FindingRec) => ({
+        key: r.id + '|' + f.id + '|' + f.state + '|' + (f.updates || []).length,
+        label: state(f.state) + ' · ' + f.severity + ' · ' + who + (f.file ? ' · ' + f.file : ''),
+        text: [f.text].concat(this.findingNotes(f)).join('\n'),
+      }))
+      : (r.findings || []).map((f, k) => ({ key: r.id + '|f' + k, label: f.severity + ' · ' + who + (f.file ? ' · ' + f.file : ''), text: f.text }));
+    for (const f of this.previewFindings) {
+      for (const u of f.updates || []) {
+        if (u.run_id !== r.id || (u.kind !== 'addressed' && u.kind !== 'still_open')) continue;
+        out = out.concat([{
+          key: r.id + '|' + f.id + '|' + u.id,
+          label: (u.kind === 'addressed' ? 'addressed' : 'still open') + ' · earlier finding of ' + this.findingBy(f) + ' · checked by ' + who,
+          text: f.text + (u.note ? '\n' + u.note : ''),
+        }]);
+      }
+    }
     if (r.result_summary) out.push({ key: r.id + '|sum', label: 'summary · ' + who, text: r.result_summary });
     return out;
   },
@@ -1817,7 +1873,7 @@ const appState = () => ({
     return '';
   },
   stageModel(): { rows: StageRow[]; current: number } {
-    const inputs = [this.previewItem, this.previewRuns, this.previewApprovedRev, this.previewPipe, this.previewWorkers];
+    const inputs = [this.previewItem, this.previewRuns, this.previewApprovedRev, this.previewPipe, this.previewWorkers, this.previewFindings];
     if (stageCache && stageCache.inputs.every((v, i) => v === inputs[i])) return stageCache.model as { rows: StageRow[]; current: number };
     const model = this.buildStageModel();
     stageCache = { inputs, model };
@@ -1923,6 +1979,8 @@ const appState = () => ({
         const ok = reviews.filter((r: RunRow) => this.reviewPassed(r)).length;
         const lines = reviews.map((r: RunRow) => this.reviewLine(r));
         if (impl && impl.head_sha) lines.push(ok + ' of ' + reviews.length + ' passed, on ' + this.shortSha(impl.head_sha));
+        const followed = this.followedLine();
+        if (followed) lines.push(followed);
         return { lines, when: this.timeAgo(reviews[0].updated_at), more: reviews.flatMap((r: RunRow) => this.runMore(r, this.reviewerName(r))) };
       }
       if (i === 6 && st === 'done') {
@@ -1945,7 +2003,7 @@ const appState = () => ({
       if (state === 'you') when = 'waiting ' + this.timeAgo(waitingSince).replace(' ago', '').replace('just now', 'under a minute');
       if (state === 'bad') {
         const failed = i === 4 ? last : main.find((r: RunRow) => this.stageOf(r.stage) === i && r.status === 'failed');
-        lines = i === 5 && reviews.length ? reviews.map((r: RunRow) => this.reviewLine(r)) : [(failed && failed.fail_reason) || 'Blocked: open the run history for the reason'];
+        lines = i === 5 && reviews.length ? reviews.map((r: RunRow) => this.reviewLine(r)).concat([this.followedLine()].filter(Boolean)) : [(failed && failed.fail_reason) || 'Blocked: open the run history for the reason'];
         if (i === 5) more = reviews.flatMap((r: RunRow) => this.runMore(r, this.reviewerName(r)));
         // A failed setup: what ran and what it printed.
         if (i === 3 && failed) more = this.setupSummary(failed).more;
@@ -2017,11 +2075,26 @@ const appState = () => ({
   },
   // Screen-reader text for a row's state (the mark is aria-hidden).
   stageStateLabel(s: StageRow): string {
-    const words: Record<string, string> = { done: 'finished', run: 'in progress', you: 'waiting for you', bad: 'blocked', up: 'not reached yet', skip: 'skipped' };
+    const words: Record<string, string> = { done: 'finished', run: 'in progress', you: 'waiting for you', bad: 'blocked', up: 'not reached yet', skip: 'skipped', flag: 'needs a look' };
     return s.name + ': ' + (words[s.state] || s.state);
   },
-  stageTrackHead(): StageRow[] { const m = this.stageModel(); return m.current >= 7 ? m.rows : m.rows.slice(0, m.current + 1); },
-  stageTrackTail(): StageRow[] { const m = this.stageModel(); return m.current >= 7 || m.current < 0 ? [] : m.rows.slice(m.current + 1); },
+  // The tracker above and below the action card. The second-opinion step
+  // comes right after Agent review (row 5) — below the card when Agent
+  // review is the current step, so the card stays under the step it is for.
+  stageTrackHead(): StageRow[] {
+    const m = this.stageModel();
+    if (m.current < 0) return [];
+    const head = m.current >= 7 ? m.rows : m.rows.slice(0, m.current + 1);
+    return m.current > 5 ? head.slice(0, 6).concat(this.secondOpinionStage(), head.slice(6)) : head;
+  },
+  stageTrackTail(): StageRow[] {
+    const m = this.stageModel();
+    if (m.current >= 7 || m.current < 0) return [];
+    const tail = m.rows.slice(m.current + 1);
+    if (m.current > 5) return tail;
+    const upToReview = 5 - m.current;
+    return tail.slice(0, upToReview).concat(this.secondOpinionStage(), tail.slice(upToReview));
+  },
   // The header pill: where the item stands, in words.
   stageSummary(): { key: string; text: string; tone: string }[] {
     const m = this.stageModel();
@@ -2063,35 +2136,223 @@ const appState = () => ({
     if (reviews.length) {
       const ok = reviews.filter((r: RunRow) => this.reviewPassed(r)).length;
       const nits = reviews.reduce((n: number, r: RunRow) => n + this.findingCount(r, 'nit'), 0);
-      const blocking = reviews.reduce((n: number, r: RunRow) => n + this.findingCount(r, 'blocking'), 0);
+      const blocking = reviews.reduce((n: number, r: RunRow) => n + this.blockingCount(r), 0);
       const found = [blocking ? this.plural(blocking, 'blocking finding') : '', nits ? this.plural(nits, 'nit') : ''].filter(Boolean).join(', ');
       out.push({ key: 'g-head|' + head, ic: 'y', text: 'Commit ' + this.shortSha(head) + ' is the branch head, and the reviewers checked it' });
       out.push({ key: 'g-rev|' + ok + '|' + reviews.length + '|' + blocking, ic: ok === reviews.length ? 'y' : 'w', text: 'Agent review: ' + ok + ' of ' + reviews.length + ' passed' + (found ? ', ' + found : '') + (ok === reviews.length && !blocking ? ', no blocking findings' : '') });
     } else {
       out.push({ key: 'g-head|' + head, ic: 'w', text: 'Commit ' + this.shortSha(head) + ' is the branch head. No agent reviewed it, so check it yourself' + (this.unpushed(head) ? ' on the worker.' : ' or ask for a second opinion.') });
     }
+    // Advisory, but the approver should not sign off past it unseen.
+    const against = this.secondOpinionsOnHead().filter((r: RunRow) => this.wouldBlock(r));
+    if (against.length) {
+      const who = against.map((r: RunRow) => r.runner || 'agent').join(', ');
+      out.push({ key: 'g-so|' + against.map((r: RunRow) => r.id).join(','), ic: 'w', text: 'Second opinion: ' + who + ' would block this commit (advisory). Read it in the step above.' });
+    }
     return out;
   },
-  // Second opinions already asked for, newest first: runner, commit, verdict
-  // (a blocking finding = the reviewer would block). An opinion on an older
-  // commit is marked, since it does not cover what sign-off approves.
-  secondOpinionResults(): TextRow[] {
+  // Second opinions as a step of their own, right after Agent review: shown
+  // in every status once one was asked for, with the same row as the other
+  // steps (state, time, log buttons, findings and summaries). Advisory: its
+  // state never follows or moves the item's. One line per opinion, newest
+  // first; one on an older commit is marked, since it does not cover what
+  // sign-off approves. [] when none was asked for.
+  // Each runner's newest second opinion on the commit sign-off approves
+  // (runs are newest first): what counts for "does a second opinion stand
+  // against this commit". An older one by the same runner was superseded.
+  secondOpinionsOnHead(): RunRow[] {
     const head = this.reviewHead();
-    return this.previewRuns.filter((r: RunRow) => r.stage === 'second_opinion').map((r: RunRow) => {
-      const on = (r.runner || 'agent') + ' on ' + this.shortSha(r.head_sha || '');
-      let ic = 'y';
-      let verdict = '';
-      if (this.runActive(r)) { ic = 'n'; verdict = r.status === 'queued' ? 'waiting for a worker' : 'running'; }
-      else if (r.status === 'failed') { ic = 'w'; verdict = 'did not finish: ' + (r.fail_reason || 'no reason given'); }
-      else {
-        const blocking = (r.findings || []).find(f => f.severity === 'blocking');
-        const nits = this.findingCount(r, 'nit');
-        if (blocking) { ic = 'w'; verdict = 'would block: ' + blocking.text; }
-        else verdict = 'pass' + (nits ? ', ' + this.plural(nits, 'nit') : '');
-      }
-      const stale = !!head && !!r.head_sha && r.head_sha !== head ? ' (older commit)' : '';
-      return { key: r.id + '|' + r.status + '|' + r.updated_at, ic, text: on + ': ' + verdict + stale, more: this.runMore(r, r.runner || 'agent') };
+    const seen: string[] = [];
+    return this.previewRuns.filter((r: RunRow) => {
+      if (r.stage !== 'second_opinion' || r.status === 'cancelled' || !head || r.head_sha !== head) return false;
+      const runner = r.runner || '';
+      if (seen.includes(runner)) return false;
+      seen.push(runner);
+      return true;
     });
+  },
+  wouldBlock(r: RunRow): boolean { return r.status === 'succeeded' && this.blockingCount(r) > 0; },
+  // ---- review findings (the record: internal/findings) ----
+  // Who raised a finding: "review", "review · security", "second opinion · codex".
+  findingBy(f: FindingRec): string {
+    const stage = f.stage.replace(/_/g, ' ');
+    if (f.stage === 'second_opinion' && f.runner) return stage + ' · ' + f.runner;
+    return f.focus ? stage + ' · ' + f.focus : stage;
+  },
+  // What happened to a finding, one line per update, oldest first.
+  findingNotes(f: FindingRec): string[] {
+    const note = (u: FindingUpdate) => (u.note ? ': ' + u.note : '');
+    return (f.updates || []).map((u: FindingUpdate) => {
+      switch (u.kind) {
+        case 'sent_back': return 'Sent back to be fixed' + (u.actor ? ' by ' + u.actor : '');
+        case 'waived': return 'Waived' + (u.actor ? ' by ' + u.actor : '') + note(u);
+        case 'fixed': return 'The implementer says fixed' + note(u);
+        case 'not_fixed': return 'The implementer left it' + note(u);
+        case 'addressed': return 'A review confirmed it is fixed' + note(u);
+        case 'still_open': return 'A review found it not fixed' + note(u);
+      }
+      return u.kind + note(u);
+    });
+  },
+  // Sending findings back needs the gate that starts an implementation
+  // (sign-off, or a blocked item whose retry implements) and an approver:
+  // the server says which action takes them now, with the record. Checked
+  // against the status too, so a record loaded before the item moved on
+  // offers nothing.
+  findingsSendable(): boolean {
+    const st = this.previewItem ? this.previewItem.status : '';
+    if (this.previewFindingsSend === 'request-changes') return st === 'in_review';
+    if (this.previewFindingsSend === 'retry') return st === 'blocked' || st === 'failed';
+    return false;
+  },
+  // A finding can be ticked to go back when it would not go back by itself.
+  findingTickable(f: FindingRec): boolean { return this.findingsSendable() && ['noted', 'fixed', 'addressed', 'waived'].includes(f.state); },
+  // The record grouped by what is owed on each finding, in the order the
+  // approver acts on them. "New" is what the newest review round raised and
+  // nobody has touched; the settled groups start folded.
+  findingGroups(): FindingGroupView[] {
+    const fs = this.previewFindings;
+    if (!fs.length) return [];
+    const newest = this.trackReviews().map((r: RunRow) => r.id);
+    const approver = this.canApprove();
+    const defs = [
+      { id: 'new', title: 'New', hint: 'raised by the newest review; the implementer is asked to fix them', open: true },
+      { id: 'open', title: 'To fix', hint: 'the implementer is asked to fix them', open: true },
+      { id: 'still_open', title: 'Still open', hint: 'a review checked them again and they are not fixed', open: true },
+      { id: 'fixed', title: 'Fixed, not confirmed', hint: 'the implementer says so; no review has confirmed it', open: true },
+      { id: 'noted', title: 'Not followed up', hint: 'nits and second-opinion findings; tick one to have it fixed', open: true },
+      { id: 'addressed', title: 'Addressed', hint: 'a review confirmed they are fixed', open: false },
+      { id: 'waived', title: 'Waived', hint: 'you accepted them as they are', open: false },
+    ];
+    const groupOf = (f: FindingRec) => (f.state === 'open' && !(f.updates || []).length && newest.includes(f.run_id) ? 'new' : f.state);
+    return defs.map(d => {
+      const rows: FindingRow[] = fs.filter((f: FindingRec) => groupOf(f) === d.id).map((f: FindingRec) => {
+        const waiving = this.waive.id === f.id;
+        const canSend = this.findingTickable(f);
+        const picked = canSend && !!this.findingPicks[f.id];
+        return {
+          key: f.id + '|' + f.state + '|' + (f.updates || []).length + '|' + (waiving ? 'w' : '') + (picked ? 'p' : ''),
+          id: f.id, severity: f.severity, tone: this.toneOf('severity', f.severity), text: f.text,
+          meta: [this.findingBy(f), f.head_sha ? 'on ' + this.shortSha(f.head_sha) : '', f.file || ''].filter(Boolean).join(' · '),
+          notes: this.findingNotes(f),
+          // Open and still-open ones go back by themselves; the rest go
+          // back only when ticked (a waived one: that undoes the waive).
+          canSend, picked,
+          canWaive: approver && f.state !== 'waived' && f.state !== 'addressed', waiving,
+        };
+      });
+      // Keyed by the group alone: its rows re-render by their own keys,
+      // and the fold stays as the approver left it. A group holding a
+      // ticked finding is unfolded unless they folded it themselves.
+      const folded = this.findingFold[d.id];
+      const open = folded === undefined ? d.open || rows.some((r: FindingRow) => r.picked) : folded;
+      return { key: d.id, id: d.id, title: d.title + ' (' + rows.length + ')', hint: d.hint, open, rows };
+    }).filter((g: FindingGroupView) => g.rows.length > 0);
+  },
+  toggleFinding(id: string) {
+    const picks = { ...this.findingPicks };
+    if (picks[id]) delete picks[id]; else picks[id] = true;
+    this.findingPicks = picks;
+  },
+  // A group folded or unfolded by hand stays that way. The browser fires
+  // toggle for the fold the page itself set too; recording that is harmless.
+  setFindingFold(id: string, open: boolean) {
+    if (this.findingFold[id] === open) return;
+    this.findingFold = { ...this.findingFold, [id]: open };
+  },
+  // The ticked findings that will be sent: still in the record, and still
+  // tickable now (a tick on a finding that has since been settled by a run,
+  // or left from before the item moved on, is not sent and not counted).
+  pickedFindings(): string[] {
+    return this.previewFindings.filter((f: FindingRec) => this.findingPicks[f.id] && this.findingTickable(f)).map((f: FindingRec) => f.id);
+  },
+  pickedFindingsText(): string {
+    const n = this.pickedFindings().length;
+    return n ? this.plural(n, 'finding') + ' ticked: sent back to be fixed with ' + (this.previewFindingsSend === 'retry' ? 'Retry' : 'Request changes') : '';
+  },
+  startWaive(id: string) { this.waive = { id, note: '', busy: false }; },
+  cancelWaive() { this.waive = { id: '', note: '', busy: false }; },
+  setWaiveNote(v: string) { this.waive.note = v; },
+  // Accepting a blocking finding needs a reason (the server refuses it
+  // without one); a nit may be waived without.
+  waiveNeedsNote(): boolean {
+    const f = this.previewFindings.find((x: FindingRec) => x.id === this.waive.id);
+    return !!f && f.severity === 'blocking';
+  },
+  waiveNotReady(): boolean { return this.waive.busy || (this.waiveNeedsNote() && !this.waive.note.trim()); },
+  waiveNotePlaceholder(): string { return this.waiveNeedsNote() ? 'why it is accepted (required; reviewers read it)' : 'why it is accepted (reviewers read it)'; },
+  // Waive: the approver accepts a finding as it is (reviewers read the note).
+  async confirmWaive() {
+    const item = this.previewItem;
+    if (!item || !this.waive.id || this.waiveNotReady()) return;
+    this.waive.busy = true;
+    try {
+      const res = await this.authFetch('/api/inbox/' + encodeURIComponent(item.id) + '/findings/' + encodeURIComponent(this.waive.id) + '/waive', {
+        method: 'POST', headers: { 'X-Skopos-Via': 'dashboard' }, body: JSON.stringify({ note: this.waive.note.trim() }),
+      });
+      if (!await this.handleBad(res, 'Finding not waived')) return;
+      this.notify('Finding waived', 'success');
+      const picks = { ...this.findingPicks };
+      delete picks[this.waive.id];
+      this.findingPicks = picks;
+      this.waive = { id: '', note: '', busy: false };
+      await this.fetchPreviewExtras(item.id);
+    } finally { this.waive.busy = false; }
+  },
+  // The followed-up findings in numbers, for the review step: '' when the
+  // item has none.
+  followedLine(): string {
+    const count = (state: string) => this.previewFindings.filter((f: FindingRec) => f.tracked && f.state === state).length;
+    const parts = [
+      [count('open'), 'to fix'], [count('still_open'), 'still open'], [count('fixed'), 'fixed, not confirmed'],
+      [count('addressed'), 'addressed'], [count('waived'), 'waived'],
+    ].filter(p => (p[0] as number) > 0).map(p => p[0] + ' ' + p[1]);
+    return parts.length ? 'Findings followed: ' + parts.join(', ') : '';
+  },
+  secondOpinionStage(): StageRow[] {
+    const all = this.previewRuns.filter((r: RunRow) => r.stage === 'second_opinion' && r.status !== 'cancelled'); // newest first
+    if (!all.length) return [];
+    const head = this.reviewHead();
+    const stale = (r: RunRow) => !!head && !!r.head_sha && r.head_sha !== head;
+    const who = (r: RunRow) => (r.runner || 'agent') + ' on ' + this.shortSha(r.head_sha || '');
+    const blocks = (r: RunRow) => (r.findings || []).find(f => f.severity === 'blocking');
+    const open = (r: RunRow) => this.runActive(r) || r.status === 'interrupted';
+    const line = (r: RunRow) => {
+      let verdict = '';
+      if (open(r)) verdict = r.status === 'queued' ? 'waiting for a worker' : (r.status === 'paused' ? 'paused' : (r.status === 'interrupted' ? 'interrupted; it resumes when its worker is back' : 'reviewing'));
+      else if (r.status === 'failed') verdict = 'did not finish: ' + (r.fail_reason || 'no reason given');
+      else if (r.status !== 'succeeded') verdict = r.status;
+      else {
+        const blocking = blocks(r);
+        const nits = this.findingCount(r, 'nit');
+        verdict = blocking ? 'would block: ' + blocking.text : r.still_open ? 'would block: ' + this.stillOpenText(r) : 'pass' + (nits ? ', ' + this.plural(nits, 'nit') : '');
+      }
+      return who(r) + ': ' + verdict + (stale(r) ? ' (older commit)' : '');
+    };
+    const shown = all.slice(0, 5);
+    const newest = all[0];
+    let state = 'done';
+    // The state is about the commit waiting for sign-off: running, none on
+    // it (only older commits), or a runner's newest opinion would block (or
+    // the newest one did not finish).
+    const onHead = this.secondOpinionsOnHead();
+    if (all.some(open)) state = 'run';
+    else if (!onHead.length) state = 'skip';
+    else if (newest.status !== 'succeeded' || onHead.some((r: RunRow) => this.wouldBlock(r))) state = 'flag';
+    const lines = shown.map(line);
+    if (all.length > shown.length) lines.push('and ' + this.plural(all.length - shown.length, 'earlier one'));
+    const live = (r: RunRow) => r.status === 'claimed' || r.status === 'running';
+    const logged = shown.filter((r: RunRow) => r.status !== 'queued').slice(0, 3);
+    const logs: LogButton[] = logged.map((r: RunRow) => ({
+      key: r.id, id: r.id, text: (live(r) ? 'Watch live' : 'Log') + (logged.length > 1 ? ' (' + who(r) + ')' : ''),
+    }));
+    const more = shown.flatMap((r: RunRow) => this.runMore(r, who(r)));
+    // `when` stays out of the key, as for the other rows.
+    return [{
+      key: 'so|' + state + '|' + lines.join('/') + '|' + more.map((m: MoreRow) => m.key).join(',') + '|' + logs.map((l: LogButton) => l.id + l.text).join(','),
+      name: 'Second opinion', who: 'optional', state, when: this.timeAgo(newest.updated_at), round: '', lines, links: [], more,
+      moreLabel: 'Findings and summaries', warn: '', logs,
+    }];
   },
   // Why the Second opinion button is disabled, '' when it isn't: the server
   // refuses a second run of the same runner on the same commit unless
@@ -2189,7 +2450,7 @@ const appState = () => ({
     const asked = this.openQuestionGroups().length > 0;
     if (this.workflowShowRetry()) return asked || this.savedAnswers() ? 'anything else for the agent (optional once you answered)' : 'answer to the blocker (required)';
     if (this.workflowShowApprove() && asked) return 'notes (Request changes needs notes or answers)';
-    if (this.workflowShowMarkDone()) return 'what to change (required for Request changes)';
+    if (this.workflowShowMarkDone()) return this.previewFindings.length ? 'what to change (Request changes needs notes or a ticked finding)' : 'what to change (required for Request changes)';
     if (this.workflowShowApprove()) return 'notes (required for Request changes)';
     return '';
   },
@@ -2221,6 +2482,7 @@ const appState = () => ({
     this.notify(okMessage, 'success');
     this.workflowNote = '';
     this.questionAnswers = {};
+    this.findingPicks = {};
     await this.fetchInbox();
     await this.reloadPreview();
     return true;
@@ -2236,12 +2498,21 @@ const appState = () => ({
       pending: { kind: 'inboxreject', id },
     };
   },
-  requestChangesInboxItem(id: string) { if (this.hasWorkflowInput()) this.postWorkflowAction(id, 'request-changes', { notes: this.workflowNote, answers: this.answerItems() }, 'Change requested'); },
+  // The ticked findings go with it, from the review gate only (the plan
+  // gate has none to send back).
+  requestChangesInboxItem(id: string) {
+    if (!this.hasWorkflowInput()) return;
+    const body: Record<string, unknown> = { notes: this.workflowNote, answers: this.answerItems() };
+    if (this.pickedFindings().length) body.findings = this.pickedFindings();
+    this.postWorkflowAction(id, 'request-changes', body, 'Change requested');
+  },
   // Retry: the answers by question id, and the note as free text (read
   // against the open questions too).
   retryInboxItem(id: string) {
     if (!this.hasWorkflowInput() && !this.savedAnswers()) return;
-    this.postWorkflowAction(id, 'retry', { answers: this.answerItems(), answer: this.workflowNote.trim() }, 'Requeued');
+    const body: Record<string, unknown> = { answers: this.answerItems(), answer: this.workflowNote.trim() };
+    if (this.pickedFindings().length) body.findings = this.pickedFindings();
+    this.postWorkflowAction(id, 'retry', body, 'Requeued');
   },
   markDoneInboxItem(id: string) { const head = this.reviewHead(); if (head) this.postWorkflowAction(id, 'mark-done', { head_sha: head }, 'Marked done'); },
   // The quick action for a card/row is the one that needs no input; Retry

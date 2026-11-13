@@ -29,6 +29,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/confrev"
 	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/events"
+	"github.com/martinsuchenak/skopos/internal/findings"
 	"github.com/martinsuchenak/skopos/internal/fleetfile"
 	"github.com/martinsuchenak/skopos/internal/health"
 	"github.com/martinsuchenak/skopos/internal/idempotency"
@@ -301,6 +302,16 @@ func serveCmd() *cli.Command {
 			} else if n > 0 {
 				log.Info("imported the questions and answers of existing items", "items", n)
 			}
+			// Review findings as records: what each review found and what
+			// became of it. Runs that reported before the record existed are
+			// taken in at start (never followed up by themselves).
+			findingsService := findings.NewService(findings.NewStorage(sqlDB))
+			inboxService.SetFindingLog(findingsService)
+			if n, total, err := findingsService.Import(ctx); err != nil {
+				log.Warn("findings import: " + err.Error())
+			} else if n > 0 {
+				log.Info("recorded the review findings of earlier runs", "runs", n, "findings", total)
+			}
 			inboxService.SetPlanRevisions(plansService) // Approve locks the approved revision
 			// Review fix 2: amendments unlock content only through the
 			// workflow's pause, and plans with in-flight items survive.
@@ -518,6 +529,7 @@ func serveCmd() *cli.Command {
 			// item's lifecycle; chaining moves the item through the workflow
 			// via the system transitions.
 			runsService := runs.NewService(runs.NewStorage(sqlDB))
+			runsService.SetFindings(findingsService)
 			runsService.SetAuditRecorder(auditService)
 			// Pipeline settings (which agents run each stage) live in the
 			// database, per workspace or group, edited in the dashboard; the
@@ -710,7 +722,7 @@ func serveCmd() *cli.Command {
 			// GET /api/inbox/{id}/state: the item's state for other
 			// systems (tmp/integrations — design.md §4).
 			inboxHandler.SetStateHandler(itemstate.NewHandler(&itemstate.Service{
-				Items: inboxService, Plans: plansService, Runs: runsService, Questions: qaService,
+				Items: inboxService, Plans: plansService, Runs: runsService, Questions: qaService, Findings: findingsService,
 			}).Get)
 			runsHandler := runs.NewHandler(runsService)
 

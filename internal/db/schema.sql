@@ -568,6 +568,51 @@ CREATE TABLE IF NOT EXISTS qa_imports (
     version  INTEGER NOT NULL CHECK (version >= 1)
 ) STRICT;
 
+-- Review findings as records (internal/findings): what a review, QA run,
+-- review-only run or second opinion found, one row each, never changed.
+-- source: 'run' = recorded when the run reported; 'imported' = taken from
+-- a run that reported before findings were records (never followed up
+-- unless the approver sends it back).
+CREATE TABLE IF NOT EXISTS review_findings (
+    id            TEXT    PRIMARY KEY,
+    workspace_id  TEXT    NOT NULL,
+    item_id       TEXT    NOT NULL,
+    run_id        TEXT    NOT NULL,
+    stage         TEXT    NOT NULL CHECK (stage IN ('review', 'qa', 'branch_review', 'second_opinion')),
+    runner        TEXT    NOT NULL DEFAULT '',
+    focus         TEXT    NOT NULL DEFAULT '',
+    head_sha      TEXT    NOT NULL DEFAULT '',
+    n             INTEGER NOT NULL CHECK (n >= 1),
+    severity      TEXT    NOT NULL CHECK (severity IN ('blocking', 'nit')),
+    text          TEXT    NOT NULL CHECK (text != ''),
+    file          TEXT    NOT NULL DEFAULT '',
+    source        TEXT    NOT NULL CHECK (source IN ('run', 'imported')),
+    created_ms    INTEGER NOT NULL,
+    UNIQUE (run_id, n)
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_review_findings_item ON review_findings(item_id, created_ms);
+
+-- What became of a finding, appended and never changed; its state is
+-- derived from these in order (internal/findings derive). run_id: the
+-- implement run that said fixed / not_fixed, or the review that said
+-- addressed / still_open; actor: the approver who sent it back or waived it.
+CREATE TABLE IF NOT EXISTS finding_updates (
+    id            TEXT    PRIMARY KEY,
+    finding_id    TEXT    NOT NULL REFERENCES review_findings(id),
+    workspace_id  TEXT    NOT NULL,
+    item_id       TEXT    NOT NULL,
+    kind          TEXT    NOT NULL CHECK (kind IN ('sent_back', 'fixed', 'not_fixed', 'addressed', 'still_open', 'waived')),
+    note          TEXT    NOT NULL DEFAULT '',
+    run_id        TEXT    NOT NULL DEFAULT '',
+    head_sha      TEXT    NOT NULL DEFAULT '',
+    actor         TEXT    NOT NULL DEFAULT '',
+    actor_key_id  TEXT    NOT NULL DEFAULT '',
+    via           TEXT    NOT NULL DEFAULT '',
+    created_ms    INTEGER NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_finding_updates_item ON finding_updates(item_id, created_ms);
+CREATE INDEX IF NOT EXISTS idx_finding_updates_finding ON finding_updates(finding_id);
+
 -- Idempotency-Key (internal/idempotency): a POST's key, per API key, and
 -- the response a retry gets back; pruned after 24 hours. status 0 = the
 -- request is still running.

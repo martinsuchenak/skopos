@@ -3,6 +3,7 @@ package runs
 import (
 	"encoding/json"
 	"errors"
+	"github.com/martinsuchenak/skopos/internal/findings"
 	"github.com/martinsuchenak/skopos/internal/policy"
 	"time"
 )
@@ -186,8 +187,13 @@ type Run struct {
 	Focus   string `json:"focus,omitempty"`
 	// CostUSD is what the agent run cost, when the runner reports it.
 	CostUSD *float64 `json:"cost_usd,omitempty"`
-	// Findings are a review/QA member's structured findings.
+	// Findings are a review/QA member's structured findings: what this
+	// run found that no earlier review had (the record, internal/findings,
+	// follows each one afterwards).
 	Findings []Finding `json:"findings,omitempty"`
+	// StillOpen: earlier blocking findings this review checked and found
+	// not fixed. They count against it like its own blocking findings.
+	StillOpen int `json:"still_open,omitempty"`
 	// Pushed: whether an implement run pushed its branch to the remote; nil
 	// when the worker did not say (older workers, other stages).
 	Pushed *bool `json:"pushed,omitempty"`
@@ -220,6 +226,9 @@ type Run struct {
 // Finding is one review/QA observation. Blocking findings fail the member;
 // nits are reported but never block.
 type Finding struct {
+	// ID names the finding in the record (internal/findings); set by the
+	// server when the run reports, empty on runs from before the record.
+	ID       string `json:"id,omitempty"`
 	Severity string `json:"severity"` // blocking | nit
 	Text     string `json:"text"`
 	File     string `json:"file,omitempty"`
@@ -369,8 +378,14 @@ type ReportInput struct {
 	Grants   string `json:"grants,omitempty"`
 	// CostUSD: the agent run's cost when the runner reports one.
 	CostUSD *float64 `json:"cost_usd,omitempty"`
-	// Findings: review/QA structured findings (severity + text).
+	// Findings: review/QA structured findings (severity + text) — only what
+	// this run found new; what it says about earlier ones is in
+	// FindingAnswers.
 	Findings []Finding `json:"findings,omitempty"`
+	// FindingAnswers: what the run says about earlier findings, by id: an
+	// implement run's "fixed" / "not_fixed", a review's "addressed" /
+	// "still_open" (internal/findings).
+	FindingAnswers []findings.Answer `json:"finding_answers,omitempty"`
 	// Pushed: implement only — false when the repo has no push configured,
 	// so the head exists on the worker alone.
 	Pushed *bool `json:"pushed,omitempty"`

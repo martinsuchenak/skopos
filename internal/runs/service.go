@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/auth"
+	"github.com/martinsuchenak/skopos/internal/findings"
 	"github.com/martinsuchenak/skopos/internal/ids"
 )
 
@@ -46,6 +47,9 @@ type Service struct {
 	questionAsker QuestionAsker
 	// questionReader reads the record for a run's prompt.
 	questionReader QuestionReader
+	// findings is the record of review findings (internal/findings; nil =
+	// none): written with a report, read for a run's prompt.
+	findings *findings.Service
 	// secondOpinionNotify hears about every finished second opinion (the
 	// Slack relay posts it to the item's thread).
 	secondOpinionNotify func(ctx context.Context, r SecondOpinionResult)
@@ -710,6 +714,9 @@ func (s *Service) Report(ctx context.Context, id string, in ReportInput, leaseTo
 		in.Grants = in.Grants[:64]
 	}
 	mismatch := s.checkExecutor(ctx, id, &in)
+	// Each finding gets its id in the record here, so the run's own copy
+	// (runs.findings) and the record name it alike.
+	nameFindings(in.Findings)
 	// The dashboard renders pr_url as a link: http(s) only, bounded.
 	if in.PRURL = strings.TrimSpace(in.PRURL); len(in.PRURL) > 512 ||
 		(!strings.HasPrefix(in.PRURL, "https://") && !strings.HasPrefix(in.PRURL, "http://")) {

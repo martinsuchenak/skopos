@@ -28,10 +28,34 @@ all of them; say in a finding whose commits it concerns when that matters.
 {{if .Decisions}}
 # The approver's decisions (part of the spec)
 
-These are his answers and notes for this item. Behaviour he explicitly accepted here is NOT a
+These are their answers and notes for this item. Behaviour they explicitly accepted here is NOT a
 finding — do not block on it; you may mention a residual concern as a nit.
 {{range .Decisions}}
 {{.}}
+{{end}}{{end}}{{if .Recheck}}
+# Earlier findings to check again (answer every one)
+
+An earlier review raised these, and they went back to be fixed. Check each one against the code
+as it is now.
+{{range .Recheck}}
+- `{{.Handle}}` ({{.Severity}}, raised by {{.By}}{{if .File}}, `{{.File}}`{{end}}): {{.Text}}{{if .ClaimText}}
+  The implementer says: {{.ClaimText}}{{if .ClaimNote}}. {{.ClaimNote}}{{end}}{{end}}{{if .ReviewNote}}
+  The last check found it not fixed: {{.ReviewNote}}{{end}}
+{{end}}
+The implementer's word is a claim, not a result: read the code.
+{{end}}{{if .OthersCheck}}
+# Findings another reviewer checks
+
+These were raised earlier and another reviewer checks them. Do not report them again.
+{{range .OthersCheck}}
+- ({{.Severity}}, raised by {{.By}}{{if .File}}, `{{.File}}`{{end}}) {{.Text}}
+{{end}}{{end}}{{if .Waived}}
+# Findings the approver accepted
+
+The approver decided these stay as they are. They are not findings: do not report them again
+and do not block on them.
+{{range .Waived}}
+- {{.Text}}{{if .WaiveNote}} (the approver: {{.WaiveNote}}){{end}}
 {{end}}{{end}}{{if .SecondOpinion}}
 # You are giving a second opinion
 
@@ -79,10 +103,14 @@ Each finding has a severity:
   never block.
 
 Return ONLY the structured result:
-- `verdict`: "fail" if there is at least one blocking finding, otherwise "pass".
+- `verdict`: "fail" if there is at least one blocking finding{{if .Recheck}} or an earlier blocking finding is
+  still open{{end}}, otherwise "pass".
 - `summary`: one paragraph.
-- `findings`: one entry per problem, most severe first, each with `severity`, `text` (one
+- `findings`: one entry per problem{{if .Recheck}} nobody reported before{{end}}, most severe first, each with `severity`, `text` (one
   sentence: what is wrong and why) and, when it applies, `file` as `path:line`.
-
+{{if .Recheck}}- `previous`: one entry for every earlier finding listed above: its `id` (`F1`, `F2`, …), `status`
+  "addressed" (it is fixed) or "still_open" (it is not), and a one-sentence `note`. Never repeat
+  one of them under `findings`.
+{{end}}
 The diff you are reviewing is `git diff origin/<Base>...HEAD` in this worktree; if that diff is
 empty, verdict "fail" with summary "empty diff".

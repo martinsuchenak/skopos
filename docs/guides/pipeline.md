@@ -439,6 +439,22 @@ request), the review verdicts and the run history. Then:
   reviewers checked. A push after it needs a new sign-off;
 - or **Request changes**, with notes, sends it back to implementation.
 
+**Findings are followed across rounds.** Each review finding is a record.
+When work goes back, the implementer answers every blocking finding (fixed,
+or not and why), and the next review says of each whether it is addressed
+or still open, apart from what it finds new.
+- The preview's action card lists them in groups (New, To fix, Still open,
+  Fixed but not confirmed, Not followed up, Addressed, Waived). Tick one to
+  send it back with Request changes, or waive it with a note.
+- `skopos inbox findings --id <item>` lists them with their states and ids.
+- `skopos inbox request-changes --id <item> --finding <id>` sends one back
+  to be fixed: a nit, or a second opinion's finding, which nobody follows
+  up otherwise.
+- `skopos inbox waive --id <item> --finding <id> --note "…"` accepts one as
+  it is.
+
+See [Review findings](../configuration.md#review-findings).
+
 Mark done doesn't merge. Merge the pull request or the branch yourself: skopos
 never merges. With `pull_request = "draft"` in the repo's push config, the
 worker opens the pull request when it pushes. Rejecting an item closes its
@@ -450,6 +466,8 @@ preview (or `second codex` in Slack).
   pick, ideally a different model family from the reviewer.
 - **Advisory:** the result is appended to the item, and the status doesn't
   change.
+- **Where it shows:** as a Second opinion step after Agent review, with its
+  log and findings. If it would block, the sign-off card says so.
 - **Also when blocked:** it works when the item is blocked by its review, to
   get a counter-opinion on a disputed finding.
 - **Default runner:** set one in the workspace's Pipeline dialog. See
@@ -497,6 +515,9 @@ the current plan and asks again. You reply with:
 - `reject`;
 - `second` or `second <runner>` for an advisory second opinion on the
   finished branch;
+- `findings` for the numbered list of review findings, `changes 2,3: notes`
+  or `retry 2: answer` to send findings back by number, `waive 2: why` to
+  accept one;
 - `panel`, `solo` or `default` to switch the item's agents (applied at once,
   even mid-run; it takes effect from the next stage).
 

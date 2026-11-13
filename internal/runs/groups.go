@@ -229,10 +229,11 @@ func verdicts(g *Group, members []Run) []Run {
 
 func hasBlocking(r Run) bool { return BlockingFindings(r) > 0 }
 
-// BlockingFindings counts a run's findings that block (anything but a
-// nit).
+// BlockingFindings counts what blocks in a run's result: its own findings
+// (anything but a nit) and the earlier blocking findings it found still
+// open.
 func BlockingFindings(r Run) int {
-	n := 0
+	n := r.StillOpen
 	for _, f := range r.Findings {
 		if f.Severity != SeverityNit {
 			n++
@@ -257,7 +258,15 @@ func (s *Service) applyGroupDecision(ctx context.Context, g *Group, members []Ru
 	g.Outcome = d.outcome
 	if s.itemAppend != nil {
 		heading := groupSummaryHeading(g)
-		_ = s.itemAppend(ctx, g.ItemID, heading, groupSummary(g, members))
+		summary := groupSummary(g, members)
+		// What the members said about findings of earlier rounds: each is
+		// checked by one member, so nothing repeats.
+		for i := range members {
+			if earlier := strings.TrimSpace(s.earlierAnswers(ctx, &members[i])); earlier != "" {
+				summary += "\n\n" + earlier
+			}
+		}
+		_ = s.itemAppend(ctx, g.ItemID, heading, summary)
 	}
 	if s.itemTransition == nil {
 		return
@@ -363,7 +372,11 @@ func groupSummary(g *Group, members []Run) string {
 		if blocking+nits > 0 {
 			line += fmt.Sprintf(" — %d blocking, %d nit", blocking, nits)
 		}
-		if r.Status == StatusFailed && len(r.Findings) == 0 && r.FailReason != "" {
+		if r.StillOpen > 0 {
+			// What it found not fixed from an earlier round fails it too.
+			line += fmt.Sprintf(" — %d earlier still open", r.StillOpen)
+		}
+		if r.Status == StatusFailed && len(r.Findings) == 0 && r.StillOpen == 0 && r.FailReason != "" {
 			line += " — " + firstLine(r.FailReason)
 		}
 		if r.Status == StatusCancelled && r.FailReason != "" {

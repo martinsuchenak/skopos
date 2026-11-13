@@ -55,6 +55,9 @@ func (s *Service) secondOpinionDone(ctx context.Context, run *Run, in ReportInpu
 		}
 		writeFindings(&b, "Blocking", blocking)
 		writeFindings(&b, "Nits", nits)
+		// What it said about its own earlier findings: a verdict of fail
+		// with nothing new blocking is explained here.
+		b.WriteString(s.earlierAnswers(ctx, run))
 	} else {
 		fmt.Fprintf(&b, "The second opinion did not finish: %s\n", firstLine(in.Reason, in.Summary, "no reason given"))
 	}

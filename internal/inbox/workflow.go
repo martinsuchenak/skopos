@@ -634,6 +634,10 @@ type ChangesInput struct {
 	Answers    qa.AnswersInput
 	Via        string
 	RevisionID string
+	// Findings: review findings (by id) the approver wants fixed — from a
+	// review or a second opinion, whatever their state. Only at the review
+	// gate: they go to the implementer and are checked again afterwards.
+	Findings []string
 }
 
 // RequestChangesWith is RequestChangesOn with answers.
@@ -665,6 +669,17 @@ func (s *Service) RequestChangesWith(ctx context.Context, itemID string, in Chan
 		}
 	default:
 		return nil, fmt.Errorf("%w: request-changes applies to awaiting_approval or in_review items (item is %s)", ErrInvalidInput, statusLabel(item.Status))
+	}
+	if len(in.Findings) > 0 {
+		if item.Status != StatusInReview {
+			return nil, fmt.Errorf("%w: findings are sent back from the review gate (item is %s)", ErrInvalidInput, statusLabel(item.Status))
+		}
+		if err := s.checkSendBack(ctx, item.ID, in.Findings); err != nil {
+			return nil, err
+		}
+		// The item says in words what was asked; the next run's prompt
+		// gets the findings themselves from the record.
+		notes = joinNotes(notes, s.sentBackNotes(ctx, item.ID, in.Findings))
 	}
 	revID, baseSHA := s.approvedRevision(ctx, item)
 	answers := in.Answers
@@ -738,6 +753,7 @@ func (s *Service) RequestChangesWith(ctx context.Context, itemID string, in Chan
 	}
 	if err == nil {
 		s.commitAnswers(ctx, out, prepared, "", via)
+		s.sendBack(ctx, out, in.Findings, via)
 	}
 	return out, err
 }
@@ -775,6 +791,38 @@ func (s *Service) Retry(ctx context.Context, itemID, answer, via string) (*Item,
 // RetryWith is Retry with answers by question id as well as free text: the
 // answer is read against the open questions (internal/qa) and recorded.
 func (s *Service) RetryWith(ctx context.Context, itemID string, answers qa.AnswersInput, via string) (*Item, error) {
+	return s.RetryOn(ctx, itemID, RetryInput{Answers: answers, Via: via})
+}
+
+// RetryInput is a retry: the approver's answers, and optionally review
+// findings (by id) to have fixed in the run it starts — a second opinion's,
+// say, on an item its review blocked.
+type RetryInput struct {
+	Answers  qa.AnswersInput
+	Via      string
+	Findings []string
+}
+
+// retryStage is what a retry of the item starts: the review of a
+// review-only item's branch again, the implementation when the plan's
+// newest revision is approved, else the plan.
+func (s *Service) retryStage(ctx context.Context, item *Item) (target Status, stage, revID, baseSHA, branch string) {
+	target, stage = StatusPlanning, "plan"
+	if s.noLockedPlan(ctx, item) {
+		// A review-only item blocked by its review run: run it again.
+		return StatusImplementing, StageBranchReview, "", "", item.Branch
+	}
+	if item.PlanID != "" && s.plans != nil {
+		if rev, revErr := s.plans.LatestRevision(ctx, item.PlanID); revErr == nil && rev != nil && rev.LockedAt != nil {
+			return StatusImplementing, "implement", rev.ID, rev.BaseSHA, ""
+		}
+	}
+	return target, stage, "", "", ""
+}
+
+// RetryOn is RetryWith with findings to send back.
+func (s *Service) RetryOn(ctx context.Context, itemID string, in RetryInput) (*Item, error) {
+	answers, via := in.Answers, in.Via
 	if err := s.requireItemScopeQuiet(ctx, itemID); err != nil {
 		return nil, err
 	}
@@ -791,18 +839,7 @@ func (s *Service) RetryWith(ctx context.Context, itemID string, answers qa.Answe
 	default:
 		return nil, fmt.Errorf("%w: retry applies to blocked or failed items (item is %s)", ErrInvalidInput, statusLabel(item.Status))
 	}
-	target := StatusPlanning
-	stage := "plan"
-	revID, baseSHA, branch := "", "", ""
-	if s.noLockedPlan(ctx, item) {
-		// A review-only item blocked by its review run: run it again.
-		target, stage, branch = StatusImplementing, StageBranchReview, item.Branch
-	} else if item.PlanID != "" && s.plans != nil {
-		if rev, revErr := s.plans.LatestRevision(ctx, item.PlanID); revErr == nil && rev != nil && rev.LockedAt != nil {
-			target, stage = StatusImplementing, "implement"
-			revID, baseSHA = rev.ID, rev.BaseSHA
-		}
-	}
+	target, stage, revID, baseSHA, branch := s.retryStage(ctx, item)
 	// The answer feeds the next run: the planner (and implementer) prompt
 	// reads the item CONTENT, so the answer is appended there — the audit
 	// trail alone would leave the agent asking the same questions again.
@@ -819,6 +856,19 @@ func (s *Service) RetryWith(ctx context.Context, itemID string, answers qa.Answe
 	if err != nil {
 		return nil, err
 	}
+	if len(in.Findings) > 0 {
+		if stage != "implement" {
+			return nil, fmt.Errorf("%w: findings are sent back to an implementation; this retry starts the %s stage", ErrInvalidInput, strings.ReplaceAll(stage, "_", " "))
+		}
+		if err := s.checkSendBack(ctx, item.ID, in.Findings); err != nil {
+			return nil, err
+		}
+		appendFindings, nerr := s.appendNotes(ctx, "## Change requests", s.sentBackNotes(ctx, item.ID, in.Findings))
+		if nerr != nil {
+			return nil, nerr
+		}
+		appendAnswer = chainMutations(appendAnswer, appendFindings)
+	}
 	var queuedRun string
 	if s.runQueuer != nil {
 		id, qErr := s.runQueuer.QueueStage(ctx, item.ID, item.WorkspaceID, stage, revID, baseSHA, branch)
@@ -833,6 +883,7 @@ func (s *Service) RetryWith(ctx context.Context, itemID string, answers qa.Answe
 	}
 	if err == nil {
 		s.commitAnswers(ctx, out, prepared, "", via)
+		s.sendBack(ctx, out, in.Findings, via)
 	}
 	return out, err
 }
@@ -859,7 +910,9 @@ func (s *Service) MarkDone(ctx context.Context, itemID, headSHA, via string) (*I
 	if headSHA == "" {
 		return nil, fmt.Errorf("%w: head_sha is required — the review approval names the commit being approved", ErrInvalidInput)
 	}
-	item, err := s.transition(ctx, itemID, StatusDone, ActorHuman, "inbox.mark_done", via, "", "")
+	// The sign-off's audit entry says what it was given with the commit:
+	// the review findings' state, with the ones no review settled by id.
+	item, err := s.transition(ctx, itemID, StatusDone, ActorHuman, "inbox.mark_done", via, s.signOffFindings(ctx, strings.TrimSpace(itemID)), "")
 	if err != nil {
 		return nil, err
 	}
