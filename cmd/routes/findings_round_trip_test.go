@@ -429,3 +429,51 @@ func TestIntegrationFindingsPanelAndScope(t *testing.T) {
 		}
 	}
 }
+
+// GET /api/inbox/{id}/plans over REST: the round's plans for a key with the
+// item in scope, the same round as a Markdown file, and nothing for a key
+// without the workspace or an item without a plan.
+func TestIntegrationItemPlans(t *testing.T) {
+	const ws = "github.com/globex/shop"
+	_, baseURL := workerStack(t)
+	root := workerClient{base: baseURL, key: "root-secret"}
+	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`"}`), 201)
+	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"github.com/globex/other"}`), 201)
+	reader := workerClient{base: baseURL, key: mint(t, root, `{"name":"reader","workspaces":["`+ws+`"]}`)}
+	outsider := workerClient{base: baseURL, key: mint(t, root, `{"name":"elsewhere","workspaces":["github.com/globex/other"]}`)}
+
+	content := "Count the words.\n\n## Candidate — claude\n\n**Candidate:** claude · **Revision:** 01a1d342-e9d3-7036-bbef-16902557fb85\n\nAdds Count.\n\n## Questions — planner claude\n\n1. Which words?\n\n## Candidate — codex\n\n**Candidate:** codex · **Revision:** 01a1d342-e9d3-7036-bbef-16902557fb86\n\nAdds Count, tested.\n\n## Comparison — codex\n\n**Recommendation:** Candidate 2 (codex)."
+	body, _ := json.Marshal(map[string]string{"workspace_id": ws, "title": "Count: words & more", "content": content, "author_agent_id": "alex"})
+	itemID := mustJSON(t, root.req("POST", "/api/inbox", string(body)), 201).(map[string]any)["id"].(string)
+	plain := mustJSON(t, root.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"no plan yet","content":"just a brief","author_agent_id":"alex"}`), 201).(map[string]any)["id"].(string)
+
+	v := mustJSON(t, reader.req("GET", "/api/inbox/"+itemID+"/plans", ""), 200).(map[string]any)
+	plans := v["plans"].([]any)
+	if v["round"] != float64(1) || v["rounds"] != float64(1) || len(plans) != 2 {
+		t.Fatalf("the round's plans: %v", v)
+	}
+	second := plans[1].(map[string]any)
+	if second["title"] != "Candidate 2 · codex" || second["revision_id"] != "01a1d342-e9d3-7036-bbef-16902557fb86" || !strings.Contains(second["html"].(string), "Adds Count, tested.") {
+		t.Fatalf("the second candidate: %v", second)
+	}
+	if first := plans[0].(map[string]any); !strings.Contains(first["questions_html"].(string), "Which words?") {
+		t.Fatalf("a candidate carries its questions: %v", first)
+	}
+	if cmp := v["comparison"].(map[string]any); cmp["heading"] != "Comparison — codex" {
+		t.Fatalf("the comparison: %v", cmp)
+	}
+
+	md := mustDo(t, reader.req("GET", "/api/inbox/"+itemID+"/plans?format=md", ""), 200)
+	if !strings.HasPrefix(md.body, "# Count: words & more\n\n_Item "+itemID+" · planning round 1 of 1_\n\nCount the words.\n\n## Candidate — claude\n") || !strings.Contains(md.body, "## Comparison — codex\n\n**Recommendation:** Candidate 2 (codex).") {
+		t.Fatalf("the Markdown document:\n%s", md.body)
+	}
+	if ct, cd := md.header.Get("Content-Type"), md.header.Get("Content-Disposition"); ct != "text/markdown; charset=utf-8" || cd != `attachment; filename="count-words-more-plans.md"` {
+		t.Fatalf("a Markdown file to save: %q %q", ct, cd)
+	}
+
+	mustDo(t, reader.req("GET", "/api/inbox/"+itemID+"/plans?round=2", ""), 400, "a round the item does not have")
+	mustDo(t, reader.req("GET", "/api/inbox/"+itemID+"/plans?format=pdf", ""), 400, "an unknown format")
+	mustDo(t, reader.req("GET", "/api/inbox/"+plain+"/plans", ""), 404, "an item without a plan")
+	mustDo(t, outsider.req("GET", "/api/inbox/"+itemID+"/plans", ""), 404, "out of scope")
+	mustDo(t, outsider.req("GET", "/api/inbox/"+itemID+"/plans?format=md", ""), 404, "out of scope, as a file")
+}

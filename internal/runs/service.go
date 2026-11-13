@@ -182,7 +182,7 @@ func defaultStageSequence(_, stage string) string {
 	case StageImplement:
 		return StageReview // only queued when the workspace prefers a reviewer
 	case StageReview:
-		return StageQA // same: queued only when configured
+		return StageQA // same; it follows implement when no review is configured
 	}
 	return ""
 }
@@ -838,16 +838,21 @@ func (s *Service) toReview(ctx context.Context, itemID, agent string) {
 // run, or a group's passing decision): queue the next configured stage, or
 // hand the item to the approver at in_review.
 func (s *Service) advance(ctx context.Context, run *Run, agentID string) {
-	next := s.nextStage(run.WorkspaceID, run.Stage)
 	// Review/QA run only when the workspace configures them (one runner or
-	// a group); otherwise the sequence ends and the approver reviews.
-	if next != "" && s.prefsOf(ctx, run.WorkspaceID).Configured(next) {
+	// a group). A stage that is not configured is passed over, not the end
+	// of the sequence: QA runs after implement when no review is set.
+	prefs := s.prefsOf(ctx, run.WorkspaceID)
+	for next := s.nextStage(run.WorkspaceID, run.Stage); next != ""; next = s.nextStage(run.WorkspaceID, next) {
+		if !prefs.Configured(next) {
+			continue
+		}
 		if _, err := s.Queue(ctx, QueueInput{
 			WorkspaceID: run.WorkspaceID, ItemID: run.ItemID, PlanRevID: run.PlanRevID,
 			Stage: next, Branch: run.Branch, BaseSHA: run.BaseSHA,
 		}); err == nil {
 			return
 		}
+		break
 	}
 	_ = s.itemTransition(ctx, run.ItemID, "implementing", "", agentID)
 	_ = s.itemTransition(ctx, run.ItemID, "in_review", "", agentID)

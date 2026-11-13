@@ -123,14 +123,3 @@ func advisoryBrief(content string) string {
 	}
 	return strings.Join(parts, "\n\n")
 }
-
-// newestComparison is the newest judge's comparison section.
-func newestComparison(content string) string {
-	_, secs := splitItem(content)
-	for i := len(secs) - 1; i >= 0; i-- {
-		if headingIs(secs[i], "Comparison — ") {
-			return secs[i].Text()
-		}
-	}
-	return ""
-}

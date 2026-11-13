@@ -191,12 +191,13 @@ func (c workerClient) reqH(method, path, body, leaseToken string) *stubResp {
 			}
 		}
 	}
-	return &stubResp{code: resp.StatusCode, body: string(b)}
+	return &stubResp{code: resp.StatusCode, body: string(b), header: resp.Header}
 }
 
 type stubResp struct {
-	code int
-	body string
+	code   int
+	body   string
+	header http.Header
 }
 
 func mustDo(t *testing.T, r *stubResp, want int, what ...string) *stubResp {

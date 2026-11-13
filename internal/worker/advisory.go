@@ -10,10 +10,11 @@ import (
 )
 
 // Advisory plan stages (tmp/multi-agent-stages — design.md §4): after a
-// multi-agent plan round, an optional judge compares the candidates and an
-// optional merge writes one more candidate built from them. Both are read-
-// only and advisory: they never approve, never hide a candidate, and a
-// failure leaves the gate opening with the candidates as they are.
+// multi-agent plan round, an optional merge writes one more candidate built
+// from the planners' and an optional judge then compares every candidate,
+// the merged one among them. Both are read-only and advisory: they never
+// approve, never hide a candidate, and a failure leaves the gate opening
+// with the candidates as they are.
 
 // compareSchema: a score per candidate per criterion (1 = worst, 5 = best),
 // risks, and a recommendation with reasons. The dashboard and Slack show it
@@ -61,6 +62,20 @@ func candidateViews(cands []Revision) []candidateView {
 	return out
 }
 
+// synthesisLabel names the candidate the merge writes.
+const synthesisLabel = "synthesis"
+
+// synthesisNumber is the number of the round's merged candidate, 0 when the
+// round has none (no merge configured, or it failed).
+func synthesisNumber(views []candidateView) int {
+	for _, v := range views {
+		if v.Label == synthesisLabel {
+			return v.N
+		}
+	}
+	return 0
+}
+
 // advisoryContext loads what both stages read: the item, the round's open
 // candidates (at least two, else there is nothing to compare), and a read-
 // only checkout at the candidates' base (they share it: the round pinned it).
@@ -104,7 +119,8 @@ func (w *Worker) advisoryContext(ctx context.Context, run *Run) (*Item, []Revisi
 }
 
 // stageCompare: the judge. Writes "## Comparison" into the item; the gate
-// shows it beside the candidates without pre-selecting anything.
+// shows it beside the candidates without pre-selecting anything. It runs
+// after the merge, so the round's candidates include the synthesis.
 func (w *Worker) stageCompare(ctx context.Context, run *Run, log *slog.Logger) error {
 	account := w.pickAccount(run, log)
 	if account == nil {
@@ -118,6 +134,7 @@ func (w *Worker) stageCompare(ctx context.Context, run *Run, log *slog.Logger) e
 	repo := w.repo(run.WorkspaceID)
 	prompt, err := renderPrompt("compare.md", map[string]any{
 		"Title": item.Title, "Content": advisoryBrief(item.Content), "Candidates": candidateViews(cands),
+		"Synthesis":    synthesisNumber(candidateViews(cands)),
 		"Instructions": repoInstructions(ctx, repo.Path, base),
 	})
 	if err != nil {
@@ -163,7 +180,9 @@ func comparisonSection(cr compareResult, views []candidateView) string {
 }
 
 // stageSynthesize: the merge. Writes one more candidate (label
-// "synthesis") into the same round; the originals stay approvable.
+// "synthesis") into the same round; the originals stay approvable. It runs
+// before the judge and reads no comparison: the newest one in the item
+// would be an earlier round's.
 func (w *Worker) stageSynthesize(ctx context.Context, run *Run, log *slog.Logger) error {
 	account := w.pickAccount(run, log)
 	if account == nil {
@@ -178,7 +197,6 @@ func (w *Worker) stageSynthesize(ctx context.Context, run *Run, log *slog.Logger
 	skills := repoSkills(ctx, repo.Path, base)
 	prompt, err := renderPrompt("synthesize.md", map[string]any{
 		"Title": item.Title, "Content": advisoryBrief(item.Content), "Candidates": candidateViews(cands),
-		"Comparison":   newestComparison(item.Content),
 		"Instructions": repoInstructions(ctx, repo.Path, base),
 		"SkillIndex":   skillIndex(skills),
 	})
@@ -200,7 +218,7 @@ func (w *Worker) stageSynthesize(ctx context.Context, run *Run, log *slog.Logger
 		return fmt.Errorf("synthesize: the round's group is gone")
 	}
 	selected := selectSkills(skills, pr.Skills, item.Tags)
-	rev, err := w.client.CreateCandidate(ctx, item.PlanID, base, pr.Steps, selected, group, "synthesis")
+	rev, err := w.client.CreateCandidate(ctx, item.PlanID, base, pr.Steps, selected, group, synthesisLabel)
 	if err != nil {
 		return err
 	}

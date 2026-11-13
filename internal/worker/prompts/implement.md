@@ -52,6 +52,8 @@ say why. A reviewer checks each of them again afterwards.
 {{end}}
 In your result, list every one of them under `findings`: its `id` (`F1`, `F2`, …), `status`
 "fixed" or "not_fixed", and a one-sentence `note` (what you changed, or why you left it).
+The `F` numbers exist only in this prompt. In `summary` and in notes, say what a finding was
+about in words: the people who read them never see these numbers.
 {{end}}{{if .Instructions}}
 # Repository instructions (AGENTS.md at the approved base commit)
 

@@ -91,7 +91,7 @@ func knownStage(stage string) bool {
 // --run-stage / --stage-policy flags had.
 func ValidateStage(stage string, st StageSetting) error {
 	if !knownStage(stage) {
-		return fmt.Errorf("%w: unknown stage %q (plan, compare, synthesize, implement, review, qa)", ErrInvalidInput, stage)
+		return fmt.Errorf("%w: unknown stage %q (plan, synthesize, compare, implement, review, qa)", ErrInvalidInput, stage)
 	}
 	if len(st.Members) == 0 {
 		return fmt.Errorf("%w: %s: at least one runner is required", ErrInvalidInput, stage)

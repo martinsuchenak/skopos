@@ -135,8 +135,11 @@ skopos workspace pipeline show --workspace github.com/you/repo
 - **Plan and implement** always run. Without a setting, any runner's
   account may take them.
 - **Review and QA** run only when set. Otherwise a finished implementation
-  goes straight to `in_review`. **Compare and synthesize** are off unless
-  set.
+  goes straight to `in_review`. The order is implement → review → QA: QA
+  starts when the review has passed, or right after the implementation when
+  no review is set. A stage that blocks stops the item there. The item
+  preview shows QA as a step of its own, after Agent review, in workspaces
+  that set it. **Compare and synthesize** are off unless set.
 - **Pinned runs wait for their own runner.** A pinned run waits for an
   account of its runner; it never falls back to another runner. The dialog
   and `show` warn about a runner no worker serving the workspace offers yet.
@@ -229,28 +232,51 @@ skopos workspace pipeline set --workspace github.com/you/repo --stage plan --run
   with your notes. *Re-plan all*: every planner runs again as round 2. Either
   way the old round's candidates can no longer be approved.
 
-**Optional judge and merge.** Between the candidates and the gate:
+**Optional merge and judge.** Between the candidates and the gate:
 
 ```bash
-skopos workspace pipeline set --workspace github.com/you/repo --stage compare --runners opencode-qwen     # the judge
 skopos workspace pipeline set --workspace github.com/you/repo --stage synthesize --runners claude         # the merge
+skopos workspace pipeline set --workspace github.com/you/repo --stage compare --runners opencode-qwen     # the judge
 ```
 
-- `compare` scores every candidate (correctness, scope, step granularity,
-  tests, fit with AGENTS.md), lists risks and recommends one with reasons.
-  It's written into the item as `Comparison`, shown at the gate and in
-  Slack, and **never pre-selects** anything. Prefer a runner that wrote no
-  candidate: a judge favours its own style.
-- `synthesize` writes one more candidate, `synthesis`, combining the others
-  (and reading the comparison when there is one). The originals stay
-  approvable — merging can average away the one idea that made a candidate
-  better.
-- Order: candidates → compare → synthesize → gate, each only when
-  configured and only when the round has two or more candidates. Both are
-  advisory: if one fails, the gate opens with the candidates as they are.
+- `synthesize` writes one more candidate, `synthesis`, combining the
+  planners' candidates. The originals stay approvable — merging can average
+  away the one idea that made a candidate better.
+- `compare` scores every candidate, the synthesis among them (correctness,
+  scope, step granularity, tests, fit with AGENTS.md), lists risks and
+  recommends one with reasons. It's written into the item as `Comparison`,
+  shown at the gate and in Slack, and **never pre-selects** anything.
+  Prefer a runner that wrote no candidate and is not the merge's: a judge
+  favours its own style.
+- Order: candidates → synthesize → compare → gate, each only when
+  configured and only when the round has two or more candidates. The
+  recommendation therefore covers every plan you can approve. Both are
+  advisory: if one fails, the gate opens with the candidates as they are —
+  after a failed merge the judge compares the planners' candidates.
 
 `implement`, `compare` and `synthesize` take one runner; a list there keeps
 the first runner and logs a warning.
+
+**Read the plans side by side.** "Read the plans side by side", at the
+approval gate and on the Plan step of the item preview, opens every plan of
+the planning round in full, one column each: the candidates with their
+questions, the synthesis and the comparison.
+- Hide and show columns with the chips above them, to put two plans next to
+  each other.
+- **Approve** on a candidate's column approves that candidate, with the
+  notes and answers typed in the preview.
+- An item planned more than once has a round switcher: a re-plan after
+  "request changes" starts a new round.
+- It works for a single planner's plan too, and after the gate.
+
+**Export the plans as Markdown.** One document with the item's title and
+brief, then every section of the round as the item has it: each plan, its
+questions, the comparison, the synthesis and your notes.
+- **Dashboard:** "Download .md" and "Copy as Markdown" in the side-by-side
+  view.
+- **CLI:** `skopos inbox plans --id <item> [--round N] [--out plans.md]`.
+- **REST:** `GET /api/inbox/{id}/plans?format=md`; without `format`, the
+  same round as JSON, each plan rendered.
 
 #### Per-item switch: panel or solo
 
@@ -316,9 +342,13 @@ from the reviewer.
   - an opinion on a commit older than the one waiting for sign-off is
     marked "(older commit)".
 
-  The step is amber when a runner's newest opinion on the current commit
-  would block, or the newest one didn't finish; the sign-off card then says
-  so too. It's greyed out when every opinion is about an older commit.
+  The step says whether anything from a second opinion is outstanding:
+  - **amber** when a runner's newest opinion on the current commit would
+    block or didn't finish (the sign-off card then says so too), or when a
+    blocking finding of any second opinion is neither addressed nor waived;
+  - **green** when one finished and nothing of it is left open, also for
+    an opinion on an older commit whose findings were dealt with since;
+  - a line sums up what became of its findings.
 - **Default runner.** Set "Second opinions use" in a workspace's or group's
   Pipeline dialog, or `skopos workspace|group pipeline set --second-opinion
   <runner>` (`none` clears it). It resolves like the agents default: the

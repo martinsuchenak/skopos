@@ -250,6 +250,31 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Plans can be read side by side and exported.** "Read the plans side by
+  side" in the item preview opens every plan of a planning round in full,
+  one column each: the candidates with their questions, the synthesis and
+  the comparison. Columns can be hidden, a candidate approved from its
+  column, and earlier planning rounds paged through.
+  - **Export as Markdown:** "Download .md" and "Copy as Markdown" in that
+    view, `skopos inbox plans --id <item> [--round N] [--out file]`, and
+    `GET /api/inbox/{id}/plans?format=md`. Without `format` the endpoint
+    returns the round as JSON.
+- **The live run log moves with the pipeline.** A log opened on a running
+  step now shows the item's next run as soon as it starts, so the panel
+  follows an item from plan to implement, each reviewer and QA. "Move to
+  the next run" in the panel turns it off or on. The panel stays put while
+  you have scrolled up, and a log opened on a finished step stays on that
+  run.
+- **QA is a step of its own in the item preview.** In a workspace whose
+  pipeline sets QA, the tracker shows QA after Agent review with its own
+  results, findings and logs, and the sign-off card counts the two apart.
+  Before, QA results were listed under Agent review.
+- **The judge compares the synthesis too.** A multi-agent plan round now
+  runs candidates → synthesize → compare → gate: the merged candidate is
+  written first, and the judge scores it with the planners' candidates, so
+  its recommendation covers every plan that can be approved. The synthesis
+  no longer reads a comparison. A workspace with only one of the two
+  stages behaves as before.
 - **Review findings are records, followed across rounds.** Every finding of
   a review, a QA run, a review-only run or a second opinion gets an id, and
   what happens to it is recorded with it. A later round now says which
@@ -310,6 +335,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   - **At sign-off:** when a runner's newest opinion on the commit would
     block, the step is amber and the sign-off card says so. It stays
     advisory.
+  - **Afterwards:** the step stays amber while a blocking finding of a
+    second opinion is neither addressed nor waived, and is green once
+    nothing of it is left open.
 - **The server names the runner of every run.** For a stage with no
   preference it picks the first runner in the worker's order that can run
   the stage (and that the policy allows): `claude` first, then the order
@@ -389,6 +417,14 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **QA set without a review stage now runs.** A workspace with a QA
+  preference and no review preference sent a finished implementation
+  straight to sign-off, and QA never ran. QA now follows the implementation
+  there.
+- **`skopos workspace pipeline set` turned the code index off.** The
+  command left the code-index switch out of what it saved, so every save
+  from the CLI cleared it, and `--code-index on` did nothing. The dashboard
+  was not affected.
 - **A key limited by capabilities could list tools it may not call.** An
   MCP `tools/list` or `initialize` request with malformed parameters was
   answered with the full tool list and the full instructions. Calling

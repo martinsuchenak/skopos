@@ -84,12 +84,18 @@ type LinkRow = { key: string; href: string; text: string };
 type LogRecord = { t: number; src: string; msg: string; err?: boolean; k?: number };
 type LogButton = { key: string; id: string; text: string };
 type MoreRow = { key: string; label: string; text: string; mono?: boolean };
-type StageRow = { key: string; name: string; who: string; state: string; when: string; round: string; lines: string[]; links: LinkRow[]; more: MoreRow[]; moreLabel: string; warn: string; logs: LogButton[] };
+type StageRow = { key: string; name: string; who: string; state: string; when: string; round: string; lines: string[]; links: LinkRow[]; more: MoreRow[]; moreLabel: string; warn: string; logs: LogButton[]; plans: boolean; hidden?: boolean };
 type TextRow = { key: string; ic: string; text: string; more?: MoreRow[] };
 // The item's record of review findings (GET /api/inbox/{id}/findings).
 type FindingUpdate = { id: string; kind: string; note?: string; run_id?: string; actor?: string; created_at: string };
 type FindingRec = { id: string; run_id: string; stage: string; runner?: string; focus?: string; head_sha?: string; severity: string; text: string; file?: string; state: string; tracked: boolean; sent_back: boolean; updates: FindingUpdate[] };
 type FindingRow = { key: string; id: string; severity: string; tone: string; text: string; meta: string; notes: string[]; canSend: boolean; picked: boolean; canWaive: boolean; waiving: boolean };
+// One planning round of an item (GET /api/inbox/{id}/plans): every planner's
+// plan in full, the comparison and the synthesis.
+type PlanDocView = { kind: string; label?: string; title: string; revision_id?: string; html: string; questions_html?: string };
+type PlanNoteView = { heading: string; html: string };
+type PlansRound = { item_id: string; title: string; round: number; rounds: number; plans: PlanDocView[]; comparison?: PlanNoteView; notes?: PlanNoteView[] };
+type PlanColumn = { key: string; title: string; kind: string; tone: string; html: string; questionsHtml: string; hasQuestions: boolean; revisionId: string; canApprove: boolean; hidden: boolean };
 type FindingGroupView = { key: string; id: string; title: string; hint: string; open: boolean; rows: FindingRow[] };
 type AuditEntry = { id: string; action: string; actor: string; via?: string; notes?: string; created_at: string };
 // wsLocked: a workflow item cannot move workspace (its runs, plan and
@@ -131,7 +137,14 @@ let previewPoll: ReturnType<typeof setInterval> | null = null;
 // The run log panel's long-poll (aborted when the panel closes), and the
 // running key its lines get (stable while old lines are trimmed).
 let runLogAbort: AbortController | null = null;
+// The run log panel's poll loop is reading (a loop ends with its run), and
+// the timer that looks for the item's next run while the panel follows it.
+let runLogLooping = false;
+let runLogWatch: ReturnType<typeof setInterval> | null = null;
 let runLogKey = 0;
+// When the plans dialog was last closed: Escape reaches every open dialog,
+// and the item preview under it must not close with it.
+let plansClosedAt = 0;
 // Lines the panel keeps (the server keeps the whole log).
 const RUN_LOG_KEEP = 5000;
 
@@ -211,6 +224,9 @@ const appState = () => ({
   previewQuestions: [] as QASet[],
   // The item's review findings, the ones ticked to be sent back with
   // Request changes or Retry, and the one being waived (with its note).
+  // The side-by-side view of an item's plans: one planning round, and the
+  // columns the reader hid.
+  planView: { open: false, loading: false, view: null as PlansRound | null, hidden: {} as Record<string, boolean> },
   previewFindings: [] as FindingRec[],
   // The action that takes findings to send back now, as the server says
   // ('request-changes', 'retry', or '' when none does or the key may not).
@@ -236,6 +252,11 @@ const appState = () => ({
   logLoading: false,
   logFollow: true,
   logError: '',
+  // Move to the next run: when the shown run ends, the panel shows the
+  // item's next run as soon as it starts (on when a live run is opened).
+  logAuto: false,
+  // What the panel moved on from ('' = opened by hand).
+  logFrom: '',
   workflowNote: '',
   workflowBusy: false,
   expandedInbox: null as InboxDetail | null,
@@ -497,7 +518,7 @@ const appState = () => ({
   anyModalOpen() {
     return this.showKeyModal || this.showApiKeyModal || this.showSecretModal || this.showWebhookModal || this.showWsModal || this.showGroupModal
       || this.showEntryModal || this.showPlanModal || this.showItemModal || this.showInboxItemModal || this.showInboxPreview
-      || this.showFileModal || this.confirm.open || this.pipe.open || (this.sidebarOpen && window.matchMedia('(max-width: 767px)').matches);
+      || this.showFileModal || this.confirm.open || this.pipe.open || this.planView.open || (this.sidebarOpen && window.matchMedia('(max-width: 767px)').matches);
   },
 
   // ---- shared dialog helpers ----
@@ -1443,7 +1464,7 @@ const appState = () => ({
       await this.fetchPreviewRuns(item.id);
     } finally { this.secondOpinion.busy = false; }
   },
-  closeInboxPreview() { this.closeRunLog(); if (previewPoll) { clearInterval(previewPoll); previewPoll = null; } this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.previewCandidates = []; this.previewApprovedRev = null; this.previewPipe = null; this.previewStatusSeen = ''; this.previewWorkers = []; this.previewTimeline = []; this.previewQuestions = []; this.workflowNote = ''; this.questionAnswers = {}; this.previewRoundOpen = {}; this.workflowBusy = false; },
+  closeInboxPreview() { if (this.planView.open || Date.now() - plansClosedAt < 150) return; this.closeRunLog(); if (previewPoll) { clearInterval(previewPoll); previewPoll = null; } this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.previewCandidates = []; this.previewApprovedRev = null; this.previewPipe = null; this.previewStatusSeen = ''; this.previewWorkers = []; this.previewTimeline = []; this.previewQuestions = []; this.workflowNote = ''; this.questionAnswers = {}; this.previewRoundOpen = {}; this.workflowBusy = false; },
   // The newest revision of the previewed item's plan, while it waits at the
   // gate (revisions list newest first).
   async fetchPreviewRevision() {
@@ -1524,6 +1545,7 @@ const appState = () => ({
     this.previewRunsLoading = false;
     if (!res.ok) { this.previewRuns = []; return; }
     this.previewRuns = (await res.json()) as RunRow[];
+    this.followLog();
   },
   refreshPreviewRuns() { if (this.previewItem) this.fetchPreviewRuns(this.previewItem.id); },
 
@@ -1537,26 +1559,35 @@ const appState = () => ({
     if (!r) return 'Run log';
     return [this.statusText(r.stage), r.runner, r.focus, r.worker_id, 'try ' + r.attempt].filter(Boolean).join(' · ');
   },
-  async openRunLog(id: string) {
+  // from: set when the panel moved here on its own from another run.
+  async openRunLog(id: string, from = '') {
     if (this.logRunId === id) return;
     this.closeRunLog();
     this.logRunId = id;
+    this.logFrom = from;
+    // A live run is watched, so the panel goes on to what runs next; a
+    // finished run is being read, so it stays.
+    this.logAuto = !!from || this.logLive();
+    this.watchLog();
     this.logLoading = true;
     const abort = new AbortController();
     runLogAbort = abort;
+    // A loop is about to read this run: followLog must not start a second.
+    runLogLooping = true;
     let res: Response;
     try {
       res = await this.authFetch('/api/runs/' + encodeURIComponent(id) + '/log?tail=2000', { signal: abort.signal });
-    } catch { return; }
+    } catch { if (runLogAbort === abort) runLogLooping = false; return; }
     if (abort.signal.aborted || this.logRunId !== id) return;
     this.logLoading = false;
-    if (!res.ok) { this.logError = res.status === 403 ? 'This key may not read run logs.' : 'Could not load the log (HTTP ' + res.status + ').'; return; }
+    if (!res.ok) { runLogLooping = false; this.logError = res.status === 403 ? 'This key may not read run logs.' : 'Could not load the log (HTTP ' + res.status + ').'; return; }
     const page = await res.json() as { records: LogRecord[]; cursor: number; truncated: boolean };
     this.logRecords = this.keyed(page.records || []);
     this.logCursor = page.cursor || 0;
     this.logTruncated = !!page.truncated;
     this.logFollow = true;
-    this.scrollRunLog(true);
+    // Only a panel the reader opened is scrolled into view.
+    this.scrollRunLog(!from);
     this.pollRunLog(id, abort);
   },
   keyed(recs: LogRecord[]): LogRecord[] { for (const r of recs) r.k = ++runLogKey; return recs; },
@@ -1564,6 +1595,10 @@ const appState = () => ({
   // next batch, so lines show within a second and nothing is missed between
   // reads; a finished run's log is read to its end once.
   async pollRunLog(id: string, abort: AbortController) {
+    runLogLooping = true;
+    try { await this.readRunLog(id, abort); } finally { if (runLogAbort === abort) runLogLooping = false; }
+  },
+  async readRunLog(id: string, abort: AbortController) {
     while (this.logRunId === id && !abort.signal.aborted) {
       const live = this.logLive();
       let res: Response;
@@ -1590,8 +1625,65 @@ const appState = () => ({
   },
   closeRunLog() {
     if (runLogAbort) { runLogAbort.abort(); runLogAbort = null; }
+    runLogLooping = false;
+    if (runLogWatch) { clearInterval(runLogWatch); runLogWatch = null; }
     this.logRunId = ''; this.logRecords = []; this.logCursor = 0; this.logTruncated = false; this.logLoading = false; this.logError = '';
+    this.logAuto = false; this.logFrom = '';
   },
+  // ---- move to the next run ----
+  // The run list of the preview refreshes on item events and every 20s,
+  // which is too slow to notice a run ending and the next one starting. So
+  // while the panel follows the item, its runs are read every few seconds:
+  // only while agents have the item or one of its runs is under way.
+  watchLog() {
+    if (runLogWatch) { clearInterval(runLogWatch); runLogWatch = null; }
+    if (this.logRunId && this.logAuto) runLogWatch = setInterval(() => this.watchLogRuns(), 4000);
+  },
+  async watchLogRuns() {
+    const item = this.previewItem;
+    if (!this.logRunId || !this.logAuto || !item || !this.showInboxPreview || document.hidden) return;
+    const agentsTurn = ['queued', 'planning', 'approved', 'implementing'].includes(item.status);
+    if (!agentsTurn && !this.previewRuns.some((r: RunRow) => this.runActive(r))) return;
+    const res = await this.authFetch('/api/runs?item_id=' + encodeURIComponent(item.id));
+    if (!res.ok || !this.previewItem || this.previewItem.id !== item.id) return;
+    const runs = (await res.json()) as RunRow[];
+    // Swapped in only when something changed: a new list redraws the tracker.
+    const sig = (rs: RunRow[]) => rs.map((r: RunRow) => r.id + '|' + r.status + '|' + r.attempt + '|' + (r.phase || '')).join(',');
+    if (sig(runs) !== sig(this.previewRuns)) this.previewRuns = runs;
+    this.followLog();
+  },
+  // The run the panel moves to: one that is running now, the oldest first,
+  // so parallel reviewers are shown one after the other.
+  logNext(): RunRow | undefined {
+    const live = this.previewRuns.filter((r: RunRow) => r.id !== this.logRunId && (r.status === 'claimed' || r.status === 'running'));
+    return live[live.length - 1];
+  },
+  // Called whenever the run list was read. A reader who scrolled up is
+  // reading: the panel stays until they go back to the newest lines.
+  followLog() {
+    if (!this.logRunId || !this.logAuto) return;
+    if (this.logLive()) {
+      // The same run again (a retry, a resumed pause): its loop ended with it.
+      if (!runLogLooping && runLogAbort && !this.logLoading && !this.logError) this.pollRunLog(this.logRunId, runLogAbort);
+      return;
+    }
+    const next = this.logNext();
+    if (!next || !this.logFollow) return;
+    const cur = this.logRun();
+    this.openRunLog(next.id, this.logTitle() + (cur ? ', ' + this.statusText(cur.status).toLowerCase() : ''));
+  },
+  toggleLogAuto() {
+    this.logAuto = !this.logAuto;
+    this.watchLog();
+    if (this.logAuto) this.watchLogRuns();
+  },
+  // Under the lines of a run that ended while the panel follows the item.
+  logAutoNote(): string {
+    if (!this.logRunId || !this.logAuto || this.logLoading || this.logLive() || !this.logRun()) return '';
+    if (this.logNext()) return this.logFollow ? '' : 'The next run of this item has started. Press Follow to move to it.';
+    return 'This run has ended. The next run of this item shows here when it starts.';
+  },
+  logFromNote(): string { return this.logFrom ? 'Moved here from ' + this.logFrom + '.' : ''; },
   // Follow: stay at the bottom while new lines arrive, unless the reader
   // scrolled up (then the panel stays put until they scroll back down).
   scrollRunLog(reveal = false) {
@@ -1608,7 +1700,7 @@ const appState = () => ({
     if (this.logLoading || this.logError || this.logRecords.length > 0) return '';
     return this.logLive() ? 'Nothing yet: lines appear as the worker sends them.' : 'No log for this run (it ran before run logs, or on a worker that could not send them).';
   },
-  followRunLog() { this.logFollow = true; this.scrollRunLog(); },
+  followRunLog() { this.logFollow = true; this.scrollRunLog(); this.followLog(); },
   onRunLogScroll(e: globalThis.Event) {
     const el = e.target as HTMLElement;
     this.logFollow = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
@@ -1624,7 +1716,7 @@ const appState = () => ({
     if (state === 'up' || state === 'skip') runs = [];
     else if (state === 'run') runs = this.previewRuns.filter((r: RunRow) => onStep(r) && this.runActive(r));
     else if (state === 'bad') runs = this.previewRuns.filter((r: RunRow) => onStep(r) && r.status === 'failed').slice(0, 3);
-    else if (state === 'done') runs = this.previewRuns.filter((r: RunRow) => onStep(r) && r.status === 'succeeded').slice(0, step === 5 ? 3 : 1);
+    else if (state === 'done') runs = this.previewRuns.filter((r: RunRow) => onStep(r) && r.status === 'succeeded').slice(0, step === 5 || step === 6 ? 3 : 1);
     else runs = this.previewRuns.filter(onStep).slice(0, 1); // waiting on you: the run that stopped here
     const many = runs.length > 1;
     return runs.map((r: RunRow) => ({
@@ -1657,14 +1749,17 @@ const appState = () => ({
     return head ? 'Mark done (approve ' + this.shortSha(head) + ')' : 'Mark done';
   },
   // ---- stage tracker (the preview's "where is this item" list) ----
-  // Six fixed steps; two are the approver's. Built from what the preview
+  // Fixed steps (rows 0-7; 8 = finished); three are the approver's. QA is
+  // row 6, shown only where it applies (stageTrackHead/Tail leave a hidden
+  // row out). Built from what the preview
   // already loads (status, runs, the approved revision, the pipeline), so
   // a live refresh re-renders it. The rows split around the current step:
   // the action card sits right under it, the steps not reached below.
   stageOf(stage: string): number {
     if (stage === 'plan' || stage === 'compare' || stage === 'synthesize') return 1;
     if (stage === 'implement') return 3;
-    if (stage === 'review' || stage === 'qa' || stage === 'branch_review') return 5;
+    if (stage === 'review' || stage === 'branch_review') return 5;
+    if (stage === 'qa') return 6;
     return -1;
   },
   runActive(r: RunRow): boolean { return r.status === 'queued' || r.status === 'claimed' || r.status === 'running' || r.status === 'paused'; },
@@ -1677,13 +1772,13 @@ const appState = () => ({
     return r.stage === 'implement' && !!r.phase && this.runActive(r) ? 4 : this.stageOf(r.stage);
   },
   runTime(r: RunRow): number { return new Date(r.created_at).getTime(); },
-  // A configured review/QA stage: a runner or a group. null = unknown (the
-  // pipeline could not be read).
-  reviewConfigured(): boolean | null {
+  // A configured stage (review, qa): a runner or a group. null = unknown
+  // (the pipeline could not be read).
+  stageConfigured(stage: string): boolean | null {
     const p = this.previewPipe;
     if (!p) return null;
     const eff = p.effective || {};
-    return ['review', 'qa'].some((s: string) => !!eff[s] && (eff[s].members || []).length > 0);
+    return !!eff[stage] && (eff[stage].members || []).length > 0;
   },
   // The newest successful implementation (its head is what sign-off
   // approves) and the review/QA results on it.
@@ -1904,20 +1999,26 @@ const appState = () => ({
       case 'awaiting_approval': cur = 2; curState = 'you'; break;
       case 'approved': cur = 3; break;
       case 'implementing': cur = last && this.runStep(last) >= 4 ? this.runStep(last) : 3; break;
-      case 'in_review': cur = 6; curState = 'you'; break;
+      case 'in_review': cur = 7; curState = 'you'; break;
       case 'blocked': case 'failed': cur = checksBlocked || (reviewOnly && !!last && last.stage === 'branch_review') ? 4 : last ? Math.max(1, this.stageOf(last.stage)) : 1; curState = 'bad'; break;
-      case 'done': cur = 7; break;
-      case 'discarded': cur = 7; break;
+      case 'done': cur = 8; break;
+      case 'discarded': cur = 8; break;
     }
     const impl = this.trackImpl();
     // The implementation the Implement and Checks steps describe: the newest
     // successful one, the one its checks blocked, or the one being checked.
     const inChecks = st === 'implementing' && cur === 4;
     const implRun = checksBlocked || inChecks ? last : impl;
-    const reviews = this.trackReviews();
+    // The results on the newest head, by step: Agent review (row 5) and QA
+    // (row 6).
+    const onHead = this.trackReviews();
+    const reviews = onHead.filter((r: RunRow) => r.stage !== 'qa');
+    const qaRuns = onHead.filter((r: RunRow) => r.stage === 'qa');
+    const stepRuns = (i: number): RunRow[] => (i === 6 ? qaRuns : reviews);
     const planRuns = main.filter((r: RunRow) => r.stage === 'plan' && r.status === 'succeeded');
     const rev = this.previewApprovedRev;
-    const configured = this.reviewConfigured();
+    const configured = this.stageConfigured('review');
+    const qaConfigured = this.stageConfigured('qa');
     // The implementation round: one per successful push, plus the one under
     // way (or failed) when the newest implement run has not succeeded.
     const newestImpl = main.find((r: RunRow) => r.stage === 'implement');
@@ -1935,6 +2036,7 @@ const appState = () => ({
       { name: 'Implement', who: 'agent' },
       { name: 'Checks', who: 'worker' },
       { name: 'Agent review', who: 'agents' },
+      { name: 'QA', who: 'agents' },
       { name: 'Your sign-off', who: 'you' },
     ];
     // Evidence for a finished step.
@@ -1944,8 +2046,8 @@ const appState = () => ({
         const round = newest.group_id ? planRuns.filter((r: RunRow) => r.group_id === newest.group_id) : [newest];
         const names = round.map((r: RunRow) => r.runner || r.worker_id || 'The agent').filter((v: string, k: number, a: string[]) => a.indexOf(v) === k);
         let text = round.length > 1 ? names.join(', ') + ' wrote ' + round.length + ' candidates' : names[0] + ' wrote the plan';
-        if (main.some((r: RunRow) => r.stage === 'compare' && r.status === 'succeeded')) text += ', compared';
         if (main.some((r: RunRow) => r.stage === 'synthesize' && r.status === 'succeeded')) text += ', plus a synthesis';
+        if (main.some((r: RunRow) => r.stage === 'compare' && r.status === 'succeeded')) text += ', compared';
         return { lines: [text], when: this.timeAgo(newest.updated_at) };
       }
       if (i === 2 && rev) {
@@ -1975,15 +2077,17 @@ const appState = () => ({
         if (fixRounds > 0 && implRun.status === 'succeeded') lines.push('They failed at first; the implementer fixed them in ' + this.plural(fixRounds, 'fix round') + '.');
         return { lines, when: this.timeAgo(implRun.updated_at), more: checks.more };
       }
-      if (i === 5 && reviews.length) {
-        const ok = reviews.filter((r: RunRow) => this.reviewPassed(r)).length;
-        const lines = reviews.map((r: RunRow) => this.reviewLine(r));
-        if (impl && impl.head_sha) lines.push(ok + ' of ' + reviews.length + ' passed, on ' + this.shortSha(impl.head_sha));
-        const followed = this.followedLine();
+      if ((i === 5 || i === 6) && stepRuns(i).length) {
+        const runs = stepRuns(i);
+        const ok = runs.filter((r: RunRow) => this.reviewPassed(r)).length;
+        const lines = runs.map((r: RunRow) => this.reviewLine(r));
+        if (impl && impl.head_sha) lines.push(ok + ' of ' + runs.length + ' passed, on ' + this.shortSha(impl.head_sha));
+        // The followed findings are counted once, on the last agent step that ran.
+        const followed = i === 6 || !qaRuns.length ? this.followedLine() : '';
         if (followed) lines.push(followed);
-        return { lines, when: this.timeAgo(reviews[0].updated_at), more: reviews.flatMap((r: RunRow) => this.runMore(r, this.reviewerName(r))) };
+        return { lines, when: this.timeAgo(runs[0].updated_at), more: runs.flatMap((r: RunRow) => this.runMore(r, this.reviewerName(r))) };
       }
-      if (i === 6 && st === 'done') {
+      if (i === 7 && st === 'done') {
         const head = impl && impl.head_sha ? impl.head_sha : '';
         const lines = [head ? 'Approved ' + this.shortSha(head) : 'Marked done'];
         if (head && !this.unpushed(head)) lines.push(this.pullRequestURL(head) ? 'Merge the pull request to land it.' : 'Merge the branch to land it.');
@@ -2003,8 +2107,9 @@ const appState = () => ({
       if (state === 'you') when = 'waiting ' + this.timeAgo(waitingSince).replace(' ago', '').replace('just now', 'under a minute');
       if (state === 'bad') {
         const failed = i === 4 ? last : main.find((r: RunRow) => this.stageOf(r.stage) === i && r.status === 'failed');
-        lines = i === 5 && reviews.length ? reviews.map((r: RunRow) => this.reviewLine(r)).concat([this.followedLine()].filter(Boolean)) : [(failed && failed.fail_reason) || 'Blocked: open the run history for the reason'];
-        if (i === 5) more = reviews.flatMap((r: RunRow) => this.runMore(r, this.reviewerName(r)));
+        const agentStep = i === 5 || i === 6;
+        lines = agentStep && stepRuns(i).length ? stepRuns(i).map((r: RunRow) => this.reviewLine(r)).concat([this.followedLine()].filter(Boolean)) : [(failed && failed.fail_reason) || 'Blocked: open the run history for the reason'];
+        if (agentStep) more = stepRuns(i).flatMap((r: RunRow) => this.runMore(r, this.reviewerName(r)));
         // A failed setup: what ran and what it printed.
         if (i === 3 && failed) more = this.setupSummary(failed).more;
         // Blocked by its checks: each check with its output.
@@ -2022,8 +2127,20 @@ const appState = () => ({
       if (i === 5 && state !== 'run' && state !== 'bad' && !reviews.length && ((state === 'done' && !!impl) || configured === false)) {
         state = 'skip';
         lines = [configured === false
-          ? 'No review stage is configured for this workspace, so no agent reviews the commit. Set one under Workspaces → Pipeline.'
+          ? (qaConfigured ? 'No review stage is configured for this workspace: QA is the only agent stage on the commit.' : 'No review stage is configured for this workspace, so no agent reviews the commit. Set one under Workspaces → Pipeline.')
           : 'No agent reviewed this commit'];
+      }
+      // QA is a step of its own only where it applies: the workspace sets
+      // it, or it ran on this head (or runs now). A review-only item has no
+      // QA stage. Passed without a result on this head: skipped, not green.
+      let hidden = false;
+      if (i === 6) {
+        const active = main.some((r: RunRow) => r.stage === 'qa' && this.runActive(r));
+        hidden = cur !== 6 && !qaRuns.length && !active && (reviewOnly || qaConfigured !== true);
+        if (!hidden && state === 'done' && !qaRuns.length) {
+          state = 'skip';
+          lines = ['QA did not run on this commit'];
+        }
       }
       // Review only: nobody plans or implements the branch.
       if (reviewOnly && i >= 1 && i <= 3) {
@@ -2033,13 +2150,15 @@ const appState = () => ({
       }
       // A discarded item: the steps it never finished are greyed out.
       if (st === 'discarded' && state === 'done' && !lines.length && i > 0) state = 'skip';
-      const round = i >= 3 && i <= 6 && rounds > 1 && state !== 'up' ? 'round ' + rounds : '';
+      const round = i >= 3 && i <= 7 && rounds > 1 && state !== 'up' ? 'round ' + rounds : '';
       // The key leaves out `when` (relative time): it changes every minute,
       // and a re-keyed row is re-created, closing an open fold-out. A kept
       // row still updates its time through the bindings.
       const moreLabel = i === 3 ? 'Setup output' : i === 4 ? 'Check output' : 'Findings and summaries';
       const logs = this.stepLogs(i, state);
-      return { key: i + '|' + state + '|' + round + '|' + lines.join('/') + '|' + warn + '|' + more.map((m: MoreRow) => m.key).join(',') + '|' + logs.map((l: LogButton) => l.id).join(','), name: d.name, who: d.who, state, when, round, lines, links, more, moreLabel, warn, logs };
+      // The Plan step opens the plans side by side once there is one to read.
+      const plans = i === 1 && !!item.plan_id && state !== 'up' && state !== 'skip';
+      return { key: i + '|' + state + '|' + round + '|' + lines.join('/') + '|' + warn + '|' + more.map((m: MoreRow) => m.key).join(',') + '|' + logs.map((l: LogButton) => l.id).join(',') + (plans ? '|p' : ''), name: d.name, who: d.who, state, when, round, lines, links, more, moreLabel, warn, logs, plans, hidden };
     });
     return { rows, current: cur };
   },
@@ -2079,21 +2198,24 @@ const appState = () => ({
     return s.name + ': ' + (words[s.state] || s.state);
   },
   // The tracker above and below the action card. The second-opinion step
-  // comes right after Agent review (row 5) — below the card when Agent
-  // review is the current step, so the card stays under the step it is for.
+  // comes right after the agent stages (Agent review, row 5, and QA, row 6)
+  // — below the card when one of them is the current step, so the card
+  // stays under the step it is for. A hidden row (QA where it does not
+  // apply) is left out.
   stageTrackHead(): StageRow[] {
     const m = this.stageModel();
     if (m.current < 0) return [];
-    const head = m.current >= 7 ? m.rows : m.rows.slice(0, m.current + 1);
-    return m.current > 5 ? head.slice(0, 6).concat(this.secondOpinionStage(), head.slice(6)) : head;
+    const head = m.current >= 8 ? m.rows : m.rows.slice(0, m.current + 1);
+    const out = m.current > 6 ? head.slice(0, 7).concat(this.secondOpinionStage(), head.slice(7)) : head;
+    return out.filter((s: StageRow) => !s.hidden);
   },
   stageTrackTail(): StageRow[] {
     const m = this.stageModel();
-    if (m.current >= 7 || m.current < 0) return [];
+    if (m.current >= 8 || m.current < 0) return [];
     const tail = m.rows.slice(m.current + 1);
-    if (m.current > 5) return tail;
-    const upToReview = 5 - m.current;
-    return tail.slice(0, upToReview).concat(this.secondOpinionStage(), tail.slice(upToReview));
+    if (m.current > 6) return tail;
+    const upToQA = 6 - m.current;
+    return tail.slice(0, upToQA).concat(this.secondOpinionStage(), tail.slice(upToQA)).filter((s: StageRow) => !s.hidden);
   },
   // The header pill: where the item stands, in words.
   stageSummary(): { key: string; text: string; tone: string }[] {
@@ -2107,7 +2229,7 @@ const appState = () => ({
     else {
       const row = m.rows[m.current];
       if (row.state === 'you') { text = row.name === 'Queued' ? 'Ready to queue' : row.name + ': your turn'; tone = 'tone-warn'; }
-      else if (row.state === 'bad') { text = 'Blocked at ' + row.name.toLowerCase(); tone = 'tone-danger'; }
+      else if (row.state === 'bad') { text = 'Blocked at ' + (row.name === 'QA' ? row.name : row.name.toLowerCase()); tone = 'tone-danger'; }
       else text = row.name + (row.round ? ' · ' + row.round : '');
     }
     return [{ key: text + '|' + tone, text, tone }];
@@ -2134,12 +2256,17 @@ const appState = () => ({
     const reviews = this.trackReviews();
     if (!head) return out;
     if (reviews.length) {
-      const ok = reviews.filter((r: RunRow) => this.reviewPassed(r)).length;
-      const nits = reviews.reduce((n: number, r: RunRow) => n + this.findingCount(r, 'nit'), 0);
-      const blocking = reviews.reduce((n: number, r: RunRow) => n + this.blockingCount(r), 0);
-      const found = [blocking ? this.plural(blocking, 'blocking finding') : '', nits ? this.plural(nits, 'nit') : ''].filter(Boolean).join(', ');
       out.push({ key: 'g-head|' + head, ic: 'y', text: 'Commit ' + this.shortSha(head) + ' is the branch head, and the reviewers checked it' });
-      out.push({ key: 'g-rev|' + ok + '|' + reviews.length + '|' + blocking, ic: ok === reviews.length ? 'y' : 'w', text: 'Agent review: ' + ok + ' of ' + reviews.length + ' passed' + (found ? ', ' + found : '') + (ok === reviews.length && !blocking ? ', no blocking findings' : '') });
+      // One line per agent step that ran on the head: Agent review, QA.
+      const steps: [string, RunRow[]][] = [['Agent review', reviews.filter((r: RunRow) => r.stage !== 'qa')], ['QA', reviews.filter((r: RunRow) => r.stage === 'qa')]];
+      for (const [name, runs] of steps) {
+        if (!runs.length) continue;
+        const ok = runs.filter((r: RunRow) => this.reviewPassed(r)).length;
+        const nits = runs.reduce((n: number, r: RunRow) => n + this.findingCount(r, 'nit'), 0);
+        const blocking = runs.reduce((n: number, r: RunRow) => n + this.blockingCount(r), 0);
+        const found = [blocking ? this.plural(blocking, 'blocking finding') : '', nits ? this.plural(nits, 'nit') : ''].filter(Boolean).join(', ');
+        out.push({ key: 'g-rev|' + name + '|' + ok + '|' + runs.length + '|' + blocking, ic: ok === runs.length ? 'y' : 'w', text: name + ': ' + ok + ' of ' + runs.length + ' passed' + (found ? ', ' + found : '') + (ok === runs.length && !blocking ? ', no blocking findings' : '') });
+      }
     } else {
       out.push({ key: 'g-head|' + head, ic: 'w', text: 'Commit ' + this.shortSha(head) + ' is the branch head. No agent reviewed it, so check it yourself' + (this.unpushed(head) ? ' on the worker.' : ' or ask for a second opinion.') });
     }
@@ -2172,6 +2299,105 @@ const appState = () => ({
     });
   },
   wouldBlock(r: RunRow): boolean { return r.status === 'succeeded' && this.blockingCount(r) > 0; },
+  // ---- plans side by side ----
+  // Opens the plans of a planning round (the newest by default): each
+  // planner's plan in full, the comparison and the synthesis as columns.
+  async openPlans(round = 0) {
+    const item = this.previewItem;
+    if (!item || this.planView.loading) return;
+    this.planView.loading = true;
+    try {
+      const res = await this.authFetch('/api/inbox/' + encodeURIComponent(item.id) + '/plans' + (round ? '?round=' + round : ''));
+      if (!await this.handleBad(res, 'Could not load the plans')) return;
+      const view = (await res.json()) as PlansRound;
+      // Hidden columns are kept while paging through rounds, not between items.
+      const hidden = this.planView.open && this.planView.view && this.planView.view.item_id === view.item_id ? this.planView.hidden : {};
+      this.planView = { open: true, loading: false, view, hidden };
+      this.injectPlans();
+    } finally { this.planView.loading = false; }
+  },
+  closePlans() { if (!this.planView.open) return; plansClosedAt = Date.now(); this.planView.open = false; },
+  plansTitle(): string { return this.planView.view ? this.planView.view.title : ''; },
+  plansRoundText(): string { const v = this.planView.view; return v ? 'Round ' + v.round + ' of ' + v.rounds : ''; },
+  plansHasRounds(): boolean { return !!this.planView.view && this.planView.view.rounds > 1; },
+  plansCanPrev(): boolean { return !!this.planView.view && this.planView.view.round > 1 && !this.planView.loading; },
+  plansCanNext(): boolean { return !!this.planView.view && this.planView.view.round < this.planView.view.rounds && !this.planView.loading; },
+  plansPrev() { if (this.plansCanPrev()) this.openPlans(this.planView.view!.round - 1); },
+  plansNext() { if (this.plansCanNext()) this.openPlans(this.planView.view!.round + 1); },
+  // Every column of the round: the plans, then the comparison, then the
+  // approver's notes that closed it. A plan of the newest round that the
+  // gate offers can be approved from its column.
+  planColumns(): PlanColumn[] {
+    const v = this.planView.view;
+    if (!v) return [];
+    const newest = v.round === v.rounds;
+    const targets = newest && this.previewItem && this.previewItem.id === v.item_id ? this.approveTargets() : [];
+    const tones: Record<string, string> = { plan: 'tone-info', candidate: 'tone-info', synthesis: 'tone-accent', comparison: 'tone-warn', notes: 'tone-neutral' };
+    const col = (key: string, title: string, kind: string, html: string, questionsHtml: string, revisionId: string): PlanColumn => ({
+      key: v.round + '|' + key, title, kind, tone: tones[kind] || 'tone-neutral', html, questionsHtml, hasQuestions: !!questionsHtml, revisionId,
+      canApprove: !!revisionId && targets.some((t: ApproveTarget) => t.id === revisionId), hidden: !!this.planView.hidden[key],
+    });
+    const out = v.plans.map((d: PlanDocView, i: number) => col('p' + i, d.title, d.kind, d.html, d.questions_html || '', d.revision_id || ''));
+    if (v.comparison) out.push(col('comparison', v.comparison.heading, 'comparison', v.comparison.html, '', ''));
+    (v.notes || []).forEach((n: PlanNoteView, i: number) => out.push(col('n' + i, n.heading, 'notes', n.html, '', '')));
+    return out;
+  },
+  shownPlanColumns(): PlanColumn[] { return this.planColumns().filter((c: PlanColumn) => !c.hidden); },
+  togglePlanColumn(key: string) {
+    const plain = key.slice(key.indexOf('|') + 1);
+    const hidden = { ...this.planView.hidden };
+    if (hidden[plain]) delete hidden[plain]; else hidden[plain] = true;
+    this.planView.hidden = hidden;
+    this.injectPlans();
+  },
+  // The rendered plans go in imperatively (the CSP build has no x-html):
+  // server-rendered, sanitised HTML only, after the columns exist.
+  injectPlans() {
+    this.$nextTick(() => {
+      for (const c of this.shownPlanColumns()) {
+        document.querySelectorAll('[data-plan-html="' + CSS.escape(c.key) + '"]').forEach((el) => { el.innerHTML = c.html; });
+        document.querySelectorAll('[data-plan-q="' + CSS.escape(c.key) + '"]').forEach((el) => { el.innerHTML = c.questionsHtml; });
+      }
+    });
+  },
+  // Approve a plan from its column: the same action as the gate's button
+  // (the notes and answers typed in the preview go with it).
+  approveFromPlans(revisionId: string) {
+    this.closePlans();
+    this.approveTarget(revisionId);
+  },
+  // The round as one Markdown document, as the server writes it.
+  async plansMarkdown(): Promise<{ text: string; name: string } | null> {
+    const v = this.planView.view;
+    if (!v) return null;
+    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(v.item_id) + '/plans?format=md&round=' + v.round);
+    if (!await this.handleBad(res, 'Could not export the plans')) return null;
+    const named = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '');
+    return { text: await res.text(), name: named ? named[1] : 'plans.md' };
+  },
+  async downloadPlans() {
+    const doc = await this.plansMarkdown();
+    if (!doc) return;
+    const url = URL.createObjectURL(new Blob([doc.text], { type: 'text/markdown;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = doc.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    this.notify('Saved ' + doc.name, 'success');
+  },
+  async copyPlans() {
+    const doc = await this.plansMarkdown();
+    if (!doc) return;
+    try {
+      await navigator.clipboard.writeText(doc.text);
+      this.notify('Plans copied as Markdown', 'success');
+    } catch {
+      this.notify('The browser did not allow copying; use Download instead', 'error');
+    }
+  },
   // ---- review findings (the record: internal/findings) ----
   // Who raised a finding: "review", "review · security", "second opinion · codex".
   findingBy(f: FindingRec): string {
@@ -2332,14 +2558,28 @@ const appState = () => ({
     const shown = all.slice(0, 5);
     const newest = all[0];
     let state = 'done';
-    // The state is about the commit waiting for sign-off: running, none on
-    // it (only older commits), or a runner's newest opinion would block (or
-    // the newest one did not finish).
+    // The state says whether anything from a second opinion is outstanding:
+    //   - amber: a runner's newest opinion on the commit waiting for sign-off
+    //     would block, the newest opinion on that commit did not finish, or a
+    //     blocking finding of any second opinion is neither addressed nor
+    //     waived (the record follows it past the commit it was raised on);
+    //   - green: one finished and nothing of it is left open — also when it
+    //     was about an older commit and its findings were dealt with since;
+    //   - grey: none ever finished.
     const onHead = this.secondOpinionsOnHead();
+    const ours = this.previewFindings.filter((f: FindingRec) => f.stage === 'second_opinion');
+    const unsettled = ours.filter((f: FindingRec) => f.severity === 'blocking' && f.state !== 'addressed' && f.state !== 'waived');
     if (all.some(open)) state = 'run';
-    else if (!onHead.length) state = 'skip';
-    else if (newest.status !== 'succeeded' || onHead.some((r: RunRow) => this.wouldBlock(r))) state = 'flag';
+    else if (unsettled.length > 0 || onHead.some((r: RunRow) => this.wouldBlock(r)) || (newest.status !== 'succeeded' && !stale(newest))) state = 'flag';
+    else if (!all.some((r: RunRow) => r.status === 'succeeded')) state = 'skip';
     const lines = shown.map(line);
+    // What became of what the second opinions found, from the record.
+    if (ours.length) {
+      const count = (st: string) => ours.filter((f: FindingRec) => f.state === st).length;
+      const parts = [[count('open'), 'to fix'], [count('still_open'), 'still open'], [count('fixed'), 'fixed, not confirmed'], [count('noted'), 'not followed up'],
+        [count('addressed'), 'addressed'], [count('waived'), 'waived']].filter(p => (p[0] as number) > 0).map(p => p[0] + ' ' + p[1]);
+      lines.push('Its findings: ' + parts.join(', '));
+    }
     if (all.length > shown.length) lines.push('and ' + this.plural(all.length - shown.length, 'earlier one'));
     const live = (r: RunRow) => r.status === 'claimed' || r.status === 'running';
     const logged = shown.filter((r: RunRow) => r.status !== 'queued').slice(0, 3);
@@ -2351,7 +2591,7 @@ const appState = () => ({
     return [{
       key: 'so|' + state + '|' + lines.join('/') + '|' + more.map((m: MoreRow) => m.key).join(',') + '|' + logs.map((l: LogButton) => l.id + l.text).join(','),
       name: 'Second opinion', who: 'optional', state, when: this.timeAgo(newest.updated_at), round: '', lines, links: [], more,
-      moreLabel: 'Findings and summaries', warn: '', logs,
+      moreLabel: 'Findings and summaries', warn: '', logs, plans: false,
     }];
   },
   // Why the Second opinion button is disabled, '' when it isn't: the server
@@ -2556,7 +2796,7 @@ const appState = () => ({
     this.pipe.indexableBy = v.indexable_by || [];
     const labels: Record<string, string> = { plan: 'Plan', compare: 'Compare (judge)', synthesize: 'Synthesize (merge)', implement: 'Implement', review: 'Review', qa: 'QA' };
     const own = v.own.stages || {};
-    this.pipe.rows = ['plan', 'compare', 'synthesize', 'implement', 'review', 'qa'].map((stage: string) => {
+    this.pipe.rows = ['plan', 'synthesize', 'compare', 'implement', 'review', 'qa'].map((stage: string) => {
       const mine = own[stage];
       const eff = v.effective ? v.effective[stage] : undefined;
       const inherited = eff && eff.source !== 'workspace' ? eff : null;

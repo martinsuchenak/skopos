@@ -1275,6 +1275,9 @@
                              candidate of a multi-agent plan round (numbered as in
                              Slack and the CLI). A keyed x-for: it re-renders when
                              the async revision load lands (CSP build). -->
+                        <div class="flex w-full justify-end" x-show="workflowShowApprove()">
+                            <button type="button" class="btn btn-sm" @click.stop="openPlans()" aria-haspopup="dialog" title="Each plan in full, the comparison and the synthesis, side by side; export as Markdown">Read the plans side by side</button>
+                        </div>
                         <template x-for="c in approveTargets()" :key="c.id + '|' + previewItem.updated_at">
                             <div class="w-full rounded-lg border border-zinc-700 p-3">
                                 <div class="flex flex-wrap items-center gap-2">
@@ -1332,9 +1335,17 @@
                             <h3 id="run-log-title" class="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Run log</h3>
                             <span class="min-w-0 truncate text-[11px] text-zinc-400" x-text="logTitle()"></span>
                             <span x-show="logLive()" class="chip tone-info" title="New lines appear as the worker sends them">live</span>
-                            <button type="button" x-show="!logFollow" @click="followRunLog()" class="btn btn-ghost btn-xs ml-auto">Follow</button>
-                            <button type="button" @click="closeRunLog()" class="btn btn-ghost btn-xs" :class="logFollow ? 'ml-auto' : ''" aria-label="Close the run log">&times;</button>
+                            <label class="ml-auto flex cursor-pointer items-center gap-1.5 text-[11px] text-zinc-400" title="When this run ends, show the log of the item's next run as soon as it starts">
+                                <input type="checkbox" id="run-log-auto" class="accent-violet-500" :checked="logAuto" @change="toggleLogAuto()">
+                                <span>Move to the next run</span>
+                            </label>
+                            <button type="button" x-show="!logFollow" @click="followRunLog()" class="btn btn-ghost btn-xs">Follow</button>
+                            <button type="button" @click="closeRunLog()" class="btn btn-ghost btn-xs" aria-label="Close the run log">&times;</button>
                         </div>
+                        <!-- Outside the scrolling lines, so a reader anywhere in
+                             the log sees that the panel moved, or will. -->
+                        <p x-show="logFromNote()" class="run-log-note border-b border-zinc-800" x-text="logFromNote()"></p>
+                        <p x-show="logAutoNote()" class="run-log-note border-b border-zinc-800" role="status" x-text="logAutoNote()"></p>
                         <div class="run-log" id="run-log-lines" @scroll="onRunLogScroll($event)" role="log" aria-live="off" tabindex="0" aria-label="Run log lines">
                             <p x-show="logLoading" class="run-log-note">Loading&hellip;</p>
                             <p x-show="logError" class="run-log-note run-log-err" x-text="logError"></p>
@@ -1417,6 +1428,45 @@
                     </div>
                 </div>
             </template>
+    {{template "modal-close"}}
+
+    <!-- The plans of one planning round, side by side: each planner's plan
+         in full, the comparison and the synthesis. After the preview in the
+         page, so it sits on top of it. -->
+    {{template "modal-open" (dict "ID" "plans-modal" "Show" "planView.open" "Close" "closePlans()" "Size" "flex max-h-[94vh] w-[97vw] max-w-[97vw] flex-col max-sm:h-[100dvh] max-sm:max-h-[100dvh] max-sm:rounded-none max-sm:p-4" "Wrap" "max-sm:p-0")}}
+            <h2 id="plans-modal-title" class="modal-title pr-8">Plans · <span x-text="plansTitle()"></span></h2>
+            <div class="mb-3 flex shrink-0 flex-wrap items-center gap-2">
+                <span x-show="plansHasRounds()" class="flex items-center gap-1">
+                    <button type="button" class="btn btn-xs btn-ghost" @click="plansPrev()" :disabled="!plansCanPrev()" aria-label="The planning round before this one">&#8249;</button>
+                    <span class="text-xs text-zinc-400" x-text="plansRoundText()" aria-live="polite"></span>
+                    <button type="button" class="btn btn-xs btn-ghost" @click="plansNext()" :disabled="!plansCanNext()" aria-label="The planning round after this one">&#8250;</button>
+                </span>
+                <span class="text-xs text-zinc-500">Show:</span>
+                <template x-for="c in planColumns()" :key="'toggle|' + c.key + '|' + c.hidden">
+                    <button type="button" class="chip cursor-pointer" :class="c.hidden ? 'tone-muted line-through' : c.tone" :aria-pressed="!c.hidden" @click="togglePlanColumn(c.key)" x-text="c.title"></button>
+                </template>
+                <span class="ml-auto flex gap-2">
+                    <button type="button" class="btn btn-sm btn-ghost" @click="copyPlans()">Copy as Markdown</button>
+                    <button type="button" class="btn btn-sm" @click="downloadPlans()">Download .md</button>
+                </span>
+            </div>
+            <div class="plan-cols">
+                <template x-for="c in shownPlanColumns()" :key="c.key">
+                    <section class="plan-col" :aria-label="c.title">
+                        <header class="plan-col-head">
+                            <h3 class="text-sm font-semibold" x-text="c.title"></h3>
+                            <span class="chip" :class="c.tone" x-text="c.kind"></span>
+                            <button type="button" x-show="c.canApprove" class="btn btn-xs btn-success ml-auto" @click="approveFromPlans(c.revisionId)" :aria-label="'Approve ' + c.title">Approve</button>
+                        </header>
+                        <div class="md-body" :data-plan-html="c.key"></div>
+                        <div x-show="c.hasQuestions" class="mt-3 border-t border-dashed border-zinc-700 pt-2">
+                            <h4 class="text-xs font-semibold uppercase tracking-wide text-zinc-400">Questions</h4>
+                            <div class="md-body" :data-plan-q="c.key"></div>
+                        </div>
+                    </section>
+                </template>
+                <p x-show="shownPlanColumns().length === 0" class="p-6 text-sm text-zinc-500">Every column is hidden. Pick one above.</p>
+            </div>
     {{template "modal-close"}}
         </main>
     </div>

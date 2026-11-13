@@ -67,8 +67,8 @@ const (
 	StageReview    = "review"
 	StageQA        = "qa"
 	// Advisory plan stages (multi-agent planning, design §4): after a plan
-	// group's candidates, an optional judge (compare) and an optional merge
-	// (synthesize, which writes one more candidate). Single runner each;
+	// group's candidates, an optional merge (synthesize, which writes one
+	// more candidate) and then an optional judge (compare). Single runner each;
 	// a failure never blocks — the gate opens without them.
 	StageCompare    = "compare"
 	StageSynthesize = "synthesize"

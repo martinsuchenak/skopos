@@ -23,7 +23,7 @@ func pipelineCmd(kind string) *cli.Command {
 	flags := func(extra ...cli.Flag) []cli.Flag { return append(append(keyClientFlags(), ownerFlag), extra...) }
 	return &cli.Command{
 		Name:  "pipeline",
-		Usage: "Which agents run each stage (plan, compare, synthesize, implement, review, qa)",
+		Usage: "Which agents run each stage (plan, synthesize, compare, implement, review, qa)",
 		Commands: []*cli.Command{
 			{
 				Name:  "show",
@@ -42,7 +42,7 @@ func pipelineCmd(kind string) *cli.Command {
 				Name:  "set",
 				Usage: "Set one stage's agents (and decision rule), or the agents default",
 				Flags: flags(
-					&cli.StringFlag{Name: "stage", Usage: "plan, compare, synthesize, implement, review or qa"},
+					&cli.StringFlag{Name: "stage", Usage: "plan, synthesize, compare, implement, review or qa"},
 					&cli.StringFlag{Name: "runners", Usage: "[focus@]runner list, e.g. security@claude,tests@opencode-glm (several only on plan, review, qa)"},
 					&cli.StringFlag{Name: "policy", Usage: "review/qa with several agents: any-blocks (default), majority or all-pass"},
 					&cli.BoolFlag{Name: "early-exit", Usage: "review/qa: decide as soon as the outcome is certain"},
@@ -167,6 +167,12 @@ func pipelinePut(ctx context.Context, cmd *cli.Command, kind, ownerID string, ow
 	}
 	body := map[string]any{"stages": own.Stages, "agents_default": own.AgentsDefault,
 		"second_opinion_runner": own.SecondOpinionRunner, "via": audit.ViaCLI}
+	// The save replaces the owner's settings: a switch left out of it is
+	// cleared, so the code-index switch travels with every save (it was
+	// left out, and each `pipeline set` turned the index off).
+	if own.CodeIndex != nil {
+		body["code_index"] = *own.CodeIndex
+	}
 	var v pipeline.View
 	if err := keysCall(ctx, cmd, http.MethodPut, p, body, &v); err != nil {
 		return err

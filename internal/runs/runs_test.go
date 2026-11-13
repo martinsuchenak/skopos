@@ -280,6 +280,42 @@ func TestChaining(t *testing.T) {
 	assertMoved(t, moved, "item-2:in_review:", "item-3:in_review:", "item-4:blocked:run failed: tests exploded")
 }
 
+// QA follows implement when the workspace sets QA and no review: a stage
+// that is not configured is passed over, it does not end the sequence.
+func TestChainingQAWithoutReview(t *testing.T) {
+	var moved []string
+	s := testService(t)
+	s.SetItemTransition(func(ctx context.Context, itemID, to, reason, agentID string) error {
+		moved = append(moved, itemID+":"+to+":"+reason)
+		return nil
+	})
+	s.SetPrefs(map[string]*WorkspacePrefs{"ws-a": {Stages: map[string]string{"qa": "gemini"}}})
+	ctx := rootCtx()
+
+	_ = mustQueue(t, s, ctx, "ws-a", "item-1", StageImplement)
+	run, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	if _, err := s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded, HeadSHA: "abc"}, run.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	queued, _ := s.List(ctx, StatusQueued, "item-1")
+	if len(queued) != 1 || queued[0].Stage != StageQA || queued[0].Runner != "gemini" {
+		t.Fatalf("qa run not queued after implement: %+v", queued)
+	}
+	for _, m := range moved {
+		if strings.HasPrefix(m, "item-1:in_review") {
+			t.Fatalf("the item reached sign-off before QA ran: %v", moved)
+		}
+	}
+	run, _ = s.ClaimNext(ctx, ClaimInput{WorkerID: "w-gemini", Runners: []string{"gemini"}, Workspaces: []string{"ws-a"}})
+	if run == nil || run.Stage != StageQA {
+		t.Fatalf("gemini worker should claim qa: %+v", run)
+	}
+	if _, err := s.Report(ctx, run.ID, ReportInput{WorkerID: "w-gemini", Status: StatusSucceeded, Summary: "works"}, run.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	assertMoved(t, moved, "item-1:in_review:")
+}
+
 // H1: the item enters its phase on CLAIM, so a failure blocks from a valid
 // edge even when the run was claimed from queued/approved.
 func TestClaimMovesItemPhase(t *testing.T) {

@@ -1336,7 +1336,8 @@ print:
 
 - **To skopos,** always. The dashboard's item view shows it: **Watch live**
   on the running step, **Log** on finished steps and in Run history. Lines
-  appear within a second (the panel long-polls); skopos keeps each run's log (8 MB at most)
+  appear within a second (the panel long-polls), and a live view moves to
+  the item's next run when it starts ("Move to the next run"); skopos keeps each run's log (8 MB at most)
   for the cleanup retention (`cleanup.retention_days`, 30 days by default).
 - **To the log output,** when one is configured (`LOG_OUTPUT_URL` in
   `skopos-worker.env`; see [Log output](../configuration.md#log-output)).

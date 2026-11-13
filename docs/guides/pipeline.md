@@ -8,7 +8,7 @@ you approving at two gates. It takes about an hour the first time.
 capture ──► queued ──► planning ──► awaiting_approval ──► approved ──► implementing
   (you)                (agent)        YOU approve the plan              (agent)
                                                                            │
-   done ◄── you mark done ◄── in_review ◄── [review] ◄── [qa] ◄────────────┘
+   done ◄── you mark done ◄── in_review ◄── [qa] ◄── [review] ◄────────────┘
             (approves the head)              (optional agent stages)
 ```
 
@@ -103,7 +103,9 @@ group; a repository overrides only the stages it needs.
 - **Plan and implement always run.** They use any available account unless
   pinned.
 - **Review and QA only run when you give them a preference.** Without one, a
-  finished branch comes straight to you.
+  finished branch comes straight to you. Review runs first; QA runs once the
+  review has passed, or straight after the implementation when only QA is
+  set.
 - **Use a different model for review.** A second opinion catches more than
   the implementer reviewing itself.
 - **Limit which models may see a repository.** A runner policy allows
@@ -343,6 +345,10 @@ Then either:
   implementer and override the plan where they conflict;
 - or click **Request changes**, with notes or answers, to get a re-plan.
 
+To read a plan in full, or several planners' plans next to each other,
+click **Read the plans side by side**. The same view exports them as
+Markdown, as does `skopos inbox plans --id <item>`.
+
 The approval binds to that revision. If the planner wrote a newer one
 meanwhile, the server refuses and the preview reloads with the current plan.
 
@@ -418,6 +424,11 @@ sign-off.
   steps before that (waiting for the clone, fetching, checking out). Finished steps
   and every Run history row have a **Log** button for the saved copy. See
   [Run logs](../deployment/worker.md#run-logs).
+  - **The live view moves with the pipeline.** With **Move to the next run**
+    ticked (it is when you open a running step), the panel shows the item's
+    next run as soon as it starts: plan, then implement, each reviewer, QA.
+    It stays where it is while you have scrolled up to read; **Follow**
+    takes you on. A log opened on a finished step stays on that run.
 - **Below the steps:** the item description, the run history and a short
   history of who queued, approved, asked for changes or signed off. The
   description shows your own text, then what the pipeline added, in rounds:

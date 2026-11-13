@@ -104,6 +104,7 @@ func TestPromptsCarryFindings(t *testing.T) {
 		"- `F2` (blocking, raised by second opinion · codex): race in the counter",
 		"A reviewer checked it again and it was not fixed: two statements, no transaction",
 		`"fixed" or "not_fixed"`,
+		"The `F` numbers exist only in this prompt.",
 	} {
 		if !strings.Contains(impl, want) {
 			t.Fatalf("implement prompt lacks %q:\n%s", want, impl)
@@ -136,13 +137,14 @@ func TestPromptsCarryFindings(t *testing.T) {
 		"or an earlier blocking finding is",
 		"nobody reported before",
 		"- `previous`: one entry for every earlier finding listed above",
+		"The `F` numbers exist only in this prompt.",
 	} {
 		if !strings.Contains(review, want) {
 			t.Fatalf("review prompt lacks %q:\n%s", want, review)
 		}
 	}
 	plain, _ := renderPrompt("review.md", map[string]any{"Base": "main"})
-	for _, not := range []string{"Earlier findings", "`previous`", "another reviewer checks", "approver accepted", "nobody reported before"} {
+	for _, not := range []string{"Earlier findings", "`previous`", "another reviewer checks", "approver accepted", "nobody reported before", "`F` numbers"} {
 		if strings.Contains(plain, not) {
 			t.Fatalf("no earlier findings, but the prompt says %q:\n%s", not, plain)
 		}

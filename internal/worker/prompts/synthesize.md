@@ -15,11 +15,7 @@ so only write a combination if it is genuinely better than each original. You do
 {{range .Candidates}}
 ## Candidate {{.N}} · {{.Label}}
 {{range $i, $st := .Steps}}{{inc $i}}. {{$st.Title}}{{if $st.Description}} — {{$st.Description}}{{end}}
-{{end}}{{end}}{{if .Comparison}}
-# The judge's comparison
-
-{{.Comparison}}
-{{end}}{{if .SkillIndex}}
+{{end}}{{end}}{{if .SkillIndex}}
 # Skills available in this repository
 {{range .SkillIndex}}- `{{.Name}}`{{if .Description}}: {{.Description}}{{end}}
 {{end}}{{end}}

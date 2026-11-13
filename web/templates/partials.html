@@ -105,6 +105,7 @@
                                 <template x-for="lk in s.links" :key="lk.key">
                                     <a class="stage-link" :href="lk.href" target="_blank" rel="noopener noreferrer" x-text="lk.text"></a>
                                 </template>
+                                <button type="button" x-show="s.plans" class="stage-link stage-log-btn" @click.stop="openPlans()" aria-haspopup="dialog">Read the plans side by side</button>
                                 <template x-for="lg in s.logs" :key="lg.key">
                                     <button type="button" class="stage-link stage-log-btn" :class="logRunId === lg.id ? 'stage-log-open' : ''" @click.stop="openRunLog(lg.id)" :aria-pressed="logRunId === lg.id" x-text="lg.text"></button>
                                 </template>

@@ -14,7 +14,7 @@ func TestAdvisoryPromptsAndComparison(t *testing.T) {
 	}
 	views := candidateViews(cands)
 	for _, name := range []string{"compare.md", "synthesize.md"} {
-		out, err := renderPrompt(name, map[string]any{"Title": "t", "Content": "c", "Candidates": views, "Comparison": "**Recommendation:** 2", "Instructions": "Use mago."})
+		out, err := renderPrompt(name, map[string]any{"Title": "t", "Content": "c", "Candidates": views, "Synthesis": synthesisNumber(views), "Instructions": "Use mago."})
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -26,6 +26,29 @@ func TestAdvisoryPromptsAndComparison(t *testing.T) {
 		if strings.Contains(out, "Review and push") {
 			t.Errorf("%s must not list the server-owned review step", name)
 		}
+	}
+	// The judge runs after the merge: its prompt names the synthesis by its
+	// number, and only when the round has one.
+	if synthesisNumber(views) != 0 {
+		t.Fatal("no synthesis among the planners' candidates")
+	}
+	merged := candidateViews(append(cands, Revision{Label: synthesisLabel, Steps: []RevStep{{Title: "both", Phase: "implement"}}}))
+	if n := synthesisNumber(merged); n != 3 {
+		t.Fatalf("synthesis number = %d, want 3", n)
+	}
+	render := func(v []candidateView) string {
+		t.Helper()
+		out, err := renderPrompt("compare.md", map[string]any{"Title": "t", "Content": "c", "Candidates": v, "Synthesis": synthesisNumber(v)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if out := render(merged); !strings.Contains(out, "## Candidate 3 · synthesis") || !strings.Contains(out, "Candidate 3 · synthesis was written after the others") {
+		t.Errorf("the judge's prompt must list and name the synthesis:\n%s", out)
+	}
+	if out := render(views); strings.Contains(out, "written after the others") || !strings.Contains(out, "or when a combination would be better") {
+		t.Errorf("without a synthesis the judge's prompt says nothing about one:\n%s", out)
 	}
 	var cr compareResult
 	cr.Summary, cr.Recommendation, cr.Reasons = "glm covers tests", "2 · glm", []string{"adds tests"}

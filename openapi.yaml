@@ -2630,6 +2630,50 @@ paths:
         "401": { description: Unauthorized }
         "404": { description: Not found }
 
+  /api/inbox/{id}/plans:
+    get:
+      summary: The plans of one planning round, in full
+      description: Every planner's plan of a planning round as it wrote it (a single plan, or each candidate with its number and label), the questions it asked, the judge's comparison and the synthesis — cut from the item's own sections and rendered. The newest round by default; a re-plan after request-changes starts a new one. format=md answers with one Markdown document (title, brief, then the round's sections verbatim) as a file to save.
+      operationId: inboxItemPlans
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/InboxItemId" }
+        - { name: round, in: query, schema: { type: integer, minimum: 1 }, description: "The planning round, from 1 (default: the newest)" }
+        - { name: format, in: query, schema: { type: string, enum: [md] }, description: "md: one Markdown document (text/markdown, as an attachment)" }
+      responses:
+        "200":
+          description: The round's plans (JSON), or the Markdown document with format=md
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  item_id: { type: string }
+                  title: { type: string }
+                  round: { type: integer, description: The planning round shown }
+                  rounds: { type: integer, description: How many planning rounds the item has }
+                  plans:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind: { type: string, enum: [plan, candidate, synthesis] }
+                        label: { type: string }
+                        title: { type: string, description: '"Plan", or "Candidate 2 · codex", numbered as the approval gate numbers them' }
+                        revision_id: { type: string, description: The plan revision an approval of it names }
+                        markdown: { type: string }
+                        html: { type: string, description: Rendered and sanitised }
+                        questions_markdown: { type: string }
+                        questions_html: { type: string }
+                  comparison: { $ref: "#/components/schemas/PlanNote" }
+                  summary: { $ref: "#/components/schemas/PlanNote" }
+                  notes: { type: array, items: { $ref: "#/components/schemas/PlanNote" }, description: "The approver's notes that closed the round" }
+            text/markdown:
+              schema: { type: string }
+        "400": { description: A round the item does not have, or an unknown format }
+        "401": { description: Unauthorized }
+        "404": { description: Not found, or the item has no plan yet }
+
   /api/inbox/{id}/findings:
     get:
       summary: The item's review findings
@@ -4640,6 +4684,14 @@ components:
         severity: { type: string, enum: [blocking, nit], description: Blocking findings fail the review; nits never block }
         text: { type: string }
         file: { type: string, description: "path:line" }
+
+    PlanNote:
+      type: object
+      description: A section beside the plans of a round (the comparison, the round's summary, the approver's notes)
+      properties:
+        heading: { type: string }
+        markdown: { type: string }
+        html: { type: string }
 
     ReviewFinding:
       type: object

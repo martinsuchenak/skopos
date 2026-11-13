@@ -111,6 +111,9 @@ Return ONLY the structured result:
 {{if .Recheck}}- `previous`: one entry for every earlier finding listed above: its `id` (`F1`, `F2`, …), `status`
   "addressed" (it is fixed) or "still_open" (it is not), and a one-sentence `note`. Never repeat
   one of them under `findings`.
+
+The `F` numbers exist only in this prompt. In `summary`, in notes and in findings, say what an
+earlier finding was about in words: the people who read them never see these numbers.
 {{end}}
 The diff you are reviewing is `git diff origin/<Base>...HEAD` in this worktree; if that diff is
 empty, verdict "fail" with summary "empty diff".

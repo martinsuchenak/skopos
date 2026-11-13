@@ -42,6 +42,7 @@ func registerInboxRoutes(mux *http.ServeMux, h *inbox.Handler) {
 	mux.HandleFunc("GET /api/inbox/questions/summary", h.QuestionSummary)
 	mux.HandleFunc("GET /api/inbox/{id}/questions", h.Questions)
 	mux.HandleFunc("GET /api/inbox/{id}/findings", h.ItemFindings)
+	mux.HandleFunc("GET /api/inbox/{id}/plans", h.ItemPlans)
 	mux.HandleFunc("POST /api/inbox/{id}/findings/{finding}/waive", h.WaiveFinding)
 	mux.HandleFunc("POST /api/inbox/{id}/answers", h.Answer)
 	mux.HandleFunc("GET /api/inbox/{id}/approvals", h.Approvals)

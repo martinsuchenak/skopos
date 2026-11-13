@@ -295,8 +295,8 @@ func (s *Service) applyGroupDecision(ctx context.Context, g *Group, members []Ru
 		rep := representative(members)
 		s.advance(ctx, &rep, agent)
 	case OutcomeCandidates:
-		// Two or more candidates: the optional judge and merge run first
-		// (compare → synthesize → gate); with one, straight to the gate.
+		// Two or more candidates: the optional merge and judge run first
+		// (synthesize → compare → gate); with one, straight to the gate.
 		passed := 0
 		for _, m := range members {
 			if m.Status == StatusSucceeded {
@@ -484,16 +484,18 @@ func (s *Service) ListGroups(ctx context.Context, itemID string) ([]GroupView, e
 }
 
 // afterAdvisory walks a multi-agent plan round after `done`: candidates →
-// compare (if configured) → synthesize (if configured) → the gate. Each
-// advisory stage is one run; it reads the round's candidates itself.
+// synthesize (if configured) → compare (if configured) → the gate. The
+// merge comes first so the judge's comparison covers every plan the
+// approver can pick, the synthesis among them. Each advisory stage is one
+// run; it reads the round's candidates itself.
 func (s *Service) afterAdvisory(ctx context.Context, done, itemID, workspaceID, agent string) {
 	prefs := s.prefsOf(ctx, workspaceID)
 	var next []string
 	switch done {
 	case StagePlan:
-		next = []string{StageCompare, StageSynthesize}
-	case StageCompare:
-		next = []string{StageSynthesize}
+		next = []string{StageSynthesize, StageCompare}
+	case StageSynthesize:
+		next = []string{StageCompare}
 	}
 	for _, stage := range next {
 		if !prefs.Configured(stage) {

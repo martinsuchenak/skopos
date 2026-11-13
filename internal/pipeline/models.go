@@ -18,7 +18,7 @@ const (
 )
 
 // Stages lists the configurable stages in workflow order.
-var Stages = []string{runs.StagePlan, runs.StageCompare, runs.StageSynthesize, runs.StageImplement, runs.StageReview, runs.StageQA}
+var Stages = []string{runs.StagePlan, runs.StageSynthesize, runs.StageCompare, runs.StageImplement, runs.StageReview, runs.StageQA}
 
 var (
 	ErrInvalidInput = errors.New("invalid pipeline settings")

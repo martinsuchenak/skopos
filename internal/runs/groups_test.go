@@ -302,9 +302,10 @@ func TestGroupCancelAndNextRound(t *testing.T) {
 	}
 }
 
-// A multi-agent plan round with a judge and a merge configured: candidates →
-// compare → synthesize → gate. The item stays planning until the end; a
-// failed judge is advisory and the round moves on.
+// A multi-agent plan round with a merge and a judge configured: candidates →
+// synthesize → compare → gate, so the judge compares the synthesis too. The
+// item stays planning until the end; a failed merge is advisory and the
+// round moves on to the judge.
 func TestPlanRoundAdvisoryChain(t *testing.T) {
 	f := newGroupFixture(t, StagePolicy{})
 	f.s.SetPrefs(map[string]*WorkspacePrefs{"ws-a": {
@@ -320,25 +321,28 @@ func TestPlanRoundAdvisoryChain(t *testing.T) {
 	if m := f.lastMove(); m != "" {
 		t.Fatalf("the gate must wait for compare/synthesize: %q", m)
 	}
-	cmp := f.claimAs(t, "w3", "qwen")
-	if cmp == nil || cmp.Stage != StageCompare || cmp.GroupID != "" {
-		t.Fatalf("compare run: %+v", cmp)
+	syn := f.claimAs(t, "w1", "claude")
+	if syn == nil || syn.Stage != StageSynthesize || syn.GroupID != "" {
+		t.Fatalf("synthesize run first: %+v", syn)
+	}
+	if other := f.claimAs(t, "w3", "qwen"); other != nil {
+		t.Fatalf("the judge must wait for the merge: %+v", other)
 	}
 	f.resetMoves()
-	if _, err := f.s.Report(rootCtx(), cmp.ID, ReportInput{WorkerID: "w3", Status: StatusFailed, Reason: "judge timed out"}, cmp.LeaseToken); err != nil {
+	if _, err := f.s.Report(rootCtx(), syn.ID, ReportInput{WorkerID: "w1", Status: StatusFailed, Reason: "merge timed out"}, syn.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
-	if strings.HasPrefix(f.lastMove(), "blocked") {
-		t.Fatal("a failed judge must not block the round")
+	if m := f.lastMove(); m != "" {
+		t.Fatalf("a failed merge neither blocks the round nor opens the gate: %q", m)
 	}
-	syn := f.claimAs(t, "w1", "claude")
-	if syn == nil || syn.Stage != StageSynthesize {
-		t.Fatalf("synthesize run after the judge: %+v", syn)
+	cmp := f.claimAs(t, "w3", "qwen")
+	if cmp == nil || cmp.Stage != StageCompare {
+		t.Fatalf("compare run after the merge: %+v", cmp)
 	}
-	if _, err := f.s.Report(rootCtx(), syn.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded, Summary: "merged"}, syn.LeaseToken); err != nil {
+	if _, err := f.s.Report(rootCtx(), cmp.ID, ReportInput{WorkerID: "w3", Status: StatusSucceeded, Summary: "compared"}, cmp.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
 	if m := f.lastMove(); m != "awaiting_approval|" {
-		t.Fatalf("the gate opens after the merge: %q (%v)", m, f.moves)
+		t.Fatalf("the gate opens after the judge: %q (%v)", m, f.moves)
 	}
 }
