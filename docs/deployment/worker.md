@@ -1382,6 +1382,19 @@ No secrets live in the service definition or the TOML. The daemon loads
   Consul ([SRV URLs](../configuration.md#srv-urls)).
 - **What agents see:** env-file values never reach an agent directly. Only an
   account's `env = { NAME = "${VAR}" }` passes a credential to the agent run.
+- **Credentials a repository keeps for testing:** a QA run may read them
+  from the clone to sign in to a test system
+  ([QA](../configuration.md#qa-testing-the-change)). Name those files in the
+  repo block and their secrets stay out of every run log:
+
+  ```toml
+  [worker.repos."github.com/you/app"]
+  redact_files = ["tests/e2e/.env.e2e"]   # relative to the clone, KEY=VALUE lines
+  ```
+
+  The values of lines whose key reads as a credential (`PASSWORD`, `SECRET`,
+  `TOKEN`, `…_KEY`) are replaced; values under 8 characters are not, like
+  every redacted value.
 
 ## Presence
 

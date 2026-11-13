@@ -606,6 +606,8 @@ func serveCmd() *cli.Command {
 			runsService.SetPrefsSource(func(ctx context.Context, ws string) *runs.WorkspacePrefs {
 				return pipelineService.Prefs(ctx, ws)
 			})
+			// Briefs held on the server reach a run with its claim.
+			runsService.SetBriefSource(pipelineService.RunBrief, pipelineService.HoldsBriefs)
 			// Multi-agent stages: the group summary lands in the item, and
 			// groups past their deadline are decided with what they have.
 			runsService.SetItemAppend(func(ctx context.Context, itemID, heading, body string) error {

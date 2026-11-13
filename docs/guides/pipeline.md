@@ -106,6 +106,13 @@ group; a repository overrides only the stages it needs.
   finished branch comes straight to you. Review runs first; QA runs once the
   review has passed, or straight after the implementation when only QA is
   set.
+- **Briefs without a commit.** What a focused agent is told can be held on
+  the server (Pipeline → Briefs) instead of in `.skopos/focus/`:
+  [Briefs on the server](../configuration.md#briefs-on-the-server).
+- **Review reads the code, QA tests it.** QA runs at the pushed commit after
+  the repository's setup, with the instructions you give it in a focus
+  brief, and asks you when it has nothing to test on. See
+  [QA: testing the change](../configuration.md#qa-testing-the-change).
 - **Use a different model for review.** A second opinion catches more than
   the implementer reviewing itself.
 - **Limit which models may see a repository.** A runner policy allows

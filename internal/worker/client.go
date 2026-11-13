@@ -165,7 +165,7 @@ func (c *Client) Claim(ctx context.Context, workerID string, runners, workspaces
 	// What this release can take from a claim answer (the run's MCP
 	// servers): a server gives a worker that does not say so none of the
 	// runs that need it.
-	req["features"] = []string{FeatureRunMCP}
+	req["features"] = []string{FeatureRunMCP, FeatureRunBrief}
 	c.mu.Lock()
 	req["server_commands"] = c.serverCommands
 	if c.heldFleet != "" {
@@ -777,8 +777,11 @@ type Run struct {
 	HeadSHA    string `json:"head_sha"`
 	// GroupID: set when the run is one member of a multi-agent stage;
 	// Focus: the member's brief (.skopos/focus/<name>.md at the base).
-	GroupID   string    `json:"group_id"`
-	Focus     string    `json:"focus"`
+	GroupID string `json:"group_id"`
+	Focus   string `json:"focus"`
+	// Brief: the brief the server holds for Focus (the claim answer only);
+	// nil = the repository's file applies.
+	Brief     *RunBrief `json:"brief,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -846,6 +849,21 @@ func (e *RunCancelledError) Error() string { return "run cancelled: " + e.Reason
 // FeatureRunMCP: this worker takes a run's MCP servers from the claim
 // answer.
 const FeatureRunMCP = "run_mcp"
+
+// FeatureRunBrief: this worker takes a run's focus brief from the claim
+// answer when the server holds one.
+const FeatureRunBrief = "run_brief"
+
+// RunBrief is a focus brief the server holds for the run's member
+// (internal/pipeline): it is used in place of the repository's file.
+type RunBrief struct {
+	Name   string `json:"name"`
+	Body   string `json:"body,omitempty"`
+	Rev    string `json:"rev,omitempty"`
+	Source string `json:"source,omitempty"`
+	// Unreadable: the server holds one and could not read it.
+	Unreadable bool `json:"unreadable,omitempty"`
+}
 
 // RunMCP is the MCP servers of one run as the claim answer carries them
 // (tmp/central-config — design.md, phase 2b): by name, in the mcpServers

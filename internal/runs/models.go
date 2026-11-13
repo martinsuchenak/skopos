@@ -152,7 +152,11 @@ type Run struct {
 	// MCP is the MCP servers the run's agent gets, with their credentials:
 	// set ONLY in the claim response, for the run's workspace, never
 	// stored. nil = the server does not hold the workspace's MCP servers.
-	MCP            *RunMCP   `json:"mcp,omitempty"`
+	MCP *RunMCP `json:"mcp,omitempty"`
+	// Brief is the brief the server holds for the run's focus: set ONLY in
+	// the claim response, never stored. nil = the server holds none, the
+	// worker reads the repository's file.
+	Brief          *RunBrief `json:"brief,omitempty"`
 	LeaseTokenHash string    `json:"-"`
 	ClaimedKeyID   string    `json:"-"`
 	Status         Status    `json:"status"`
@@ -543,6 +547,25 @@ type RunMCP struct {
 	// run back instead of running it without them.
 	Unreadable bool `json:"unreadable,omitempty"`
 }
+
+// RunBrief is a focus brief held on the server (internal/pipeline), as a
+// claim answer carries it for the run's member.
+type RunBrief struct {
+	Name string `json:"name"`
+	Body string `json:"body,omitempty"`
+	// Rev is the brief's revision, for the run's log.
+	Rev string `json:"rev,omitempty"`
+	// Source: "workspace" or "group:<name>".
+	Source string `json:"source,omitempty"`
+	// Unreadable: the server holds a brief for the focus and could not read
+	// it; the worker gives the run back rather than use another text.
+	Unreadable bool `json:"unreadable,omitempty"`
+}
+
+// FeatureRunBrief is the claim feature of a worker that takes a run's
+// focus brief from the claim answer. One that does not would run a member
+// whose brief the server holds with the repository's file instead.
+const FeatureRunBrief = "run_brief"
 
 // FeatureRunMCP is the claim feature of a worker that takes a run's MCP
 // servers from the claim answer.

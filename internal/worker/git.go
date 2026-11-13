@@ -534,6 +534,35 @@ func restoreInstructionFiles(ctx context.Context, wt, base string) error {
 	return nil
 }
 
+// restoreTrackedInstructionFiles is restoreInstructionFiles for a clone a
+// person also works in: only what git tracks goes back to base — files the
+// branch added under these paths are removed, the ones it changed or
+// deleted are restored — and local files git does not track (an editor's
+// or an agent's own settings) stay. The caller resets the clone afterwards.
+func restoreTrackedInstructionFiles(ctx context.Context, dir, base string) error {
+	for _, p := range instructionPaths {
+		added, err := git(ctx, dir, "diff", "--name-only", "--diff-filter=A", base, "HEAD", "--", p)
+		if err != nil {
+			return err
+		}
+		for _, f := range strings.Split(added, "\n") {
+			if f = strings.TrimSpace(f); f == "" {
+				continue
+			}
+			if _, err := git(ctx, dir, "rm", "--quiet", "-f", "--", f); err != nil {
+				return err
+			}
+		}
+		if _, err := git(ctx, dir, "cat-file", "-e", base+":"+p); err != nil {
+			continue // absent at base
+		}
+		if _, err := git(ctx, dir, "checkout", base, "--", p); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type logSrcKey struct{}
 
 // withLogSrc names the run-log source a command's output goes under.

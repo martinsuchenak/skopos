@@ -3,8 +3,12 @@ package web
 import (
 	"bytes"
 	"os"
+	"reflect"
 	"regexp"
+	"strings"
 	"testing"
+
+	"github.com/martinsuchenak/skopos/internal/wsconfig"
 )
 
 // The release pipeline builds the frontend before running tests, so a missing
@@ -100,6 +104,56 @@ func TestStageStatesHaveMarkStyleAndLabel(t *testing.T) {
 		// "up" (not reached yet) is the plain empty circle.
 		if s != "up" && (!marks[s] || !styles[s]) {
 			t.Errorf("state %q: mark in the row partial %v, .stage-%s .stage-mark style %v", s, marks[s], s, styles[s])
+		}
+	}
+}
+
+// The config form has a control for every field of a workspace config but
+// the stage blocks: a field added to wsconfig.Config without a row in
+// CFG_FIELDS could only be set from the CLI or the API.
+func TestConfigFormCoversEveryField(t *testing.T) {
+	src, err := os.ReadFile("src/main.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := bytes.Index(src, []byte("const CFG_FIELDS: CfgField[] = ["))
+	if start < 0 {
+		t.Fatal("CFG_FIELDS not found in src/main.ts")
+	}
+	end := bytes.Index(src[start:], []byte("\n];"))
+	form := map[string]bool{}
+	for _, m := range regexp.MustCompile(`\{ key: '([a-z_.]+)'`).FindAllSubmatch(src[start:start+end], -1) {
+		form[string(m[1])] = true
+	}
+	want := map[string]bool{}
+	var walk func(prefix string, typ reflect.Type)
+	walk = func(prefix string, typ reflect.Type) {
+		for i := 0; i < typ.NumField(); i++ {
+			f := typ.Field(i)
+			name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+			if name == "" || name == "-" || name == "stages" {
+				continue
+			}
+			ft := f.Type
+			if ft.Kind() == reflect.Pointer {
+				ft = ft.Elem()
+			}
+			if ft == reflect.TypeOf(wsconfig.Push{}) {
+				walk(name+".", ft)
+				continue
+			}
+			want[prefix+name] = true
+		}
+	}
+	walk("", reflect.TypeOf(wsconfig.Config{}))
+	for name := range want {
+		if !form[name] {
+			t.Errorf("the config field %s has no row in CFG_FIELDS (web/src/main.ts)", name)
+		}
+	}
+	for name := range form {
+		if !want[name] {
+			t.Errorf("CFG_FIELDS has a row %s that is not a config field", name)
 		}
 	}
 }

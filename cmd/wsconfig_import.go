@@ -286,6 +286,7 @@ func configFromWorker(w *worker.Config, r *worker.Repo) wsconfig.Config {
 	dur(&c.QuietTimeout, r.QuietTimeout)
 	dur(&c.PlanTimeout, w.PlanTimeout)
 	dur(&c.ImplTimeout, w.ImplTimeout)
+	dur(&c.QATimeout, w.QATimeout)
 	if r.Push.Kind != "" || r.Push.RemoteURL != "" || r.Push.PullRequest != "" || r.Push.Steps != nil {
 		c.Push = &wsconfig.Push{Steps: r.Push.Steps}
 		str(&c.Push.Kind, r.Push.Kind)

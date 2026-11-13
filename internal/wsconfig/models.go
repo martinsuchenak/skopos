@@ -77,6 +77,9 @@ type Config struct {
 	QuietTimeout *Duration `json:"quiet_timeout,omitempty" toml:"quiet_timeout,omitempty"`
 	PlanTimeout  *Duration `json:"plan_timeout,omitempty" toml:"plan_timeout,omitempty"`
 	ImplTimeout  *Duration `json:"impl_timeout,omitempty" toml:"impl_timeout,omitempty"`
+	// QATimeout bounds a QA run's agent: it drives a browser or a test
+	// system, which takes longer than reading a diff.
+	QATimeout *Duration `json:"qa_timeout,omitempty" toml:"qa_timeout,omitempty"`
 
 	Push *Push `json:"push,omitempty" toml:"push,omitempty"`
 
@@ -140,8 +143,9 @@ func Defaults() Config {
 		Preflight: new([]string{}), PreflightInterval: new(Duration(5 * time.Minute)),
 		SetupTimeout: new(Duration(10 * time.Minute)), CheckTimeout: new(Duration(30 * time.Minute)),
 		QuietTimeout: new(Duration(0)), PlanTimeout: new(Duration(10 * time.Minute)), ImplTimeout: new(Duration(90 * time.Minute)),
-		Push:    &Push{Kind: new("none"), RemoteURL: new(""), PullRequest: new("none"), Steps: new(true)},
-		MCPDeny: new([]string{}), MCPServers: new([]string{}),
+		QATimeout: new(Duration(30 * time.Minute)),
+		Push:      &Push{Kind: new("none"), RemoteURL: new(""), PullRequest: new("none"), Steps: new(true)},
+		MCPDeny:   new([]string{}), MCPServers: new([]string{}),
 	}
 }
 
@@ -399,6 +403,7 @@ func Normalize(in Config) (Config, error) {
 		{"preflight_interval", c.PreflightInterval, time.Minute, MaxPreflightInterval, false},
 		{"plan_timeout", c.PlanTimeout, time.Minute, MaxAgentTimeout, false},
 		{"impl_timeout", c.ImplTimeout, time.Minute, MaxAgentTimeout, false},
+		{"qa_timeout", c.QATimeout, time.Minute, MaxAgentTimeout, false},
 	}
 	for _, d := range durations {
 		if d.p == nil || (d.zeroOK && *d.p == 0) {

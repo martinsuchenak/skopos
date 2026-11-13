@@ -318,6 +318,9 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 	// before the run log opens, so its redactor knows the token.
 	forgetMCP, err := w.prepareRunMCP(run)
 	defer forgetMCP()
+	// The credentials in the repository's own files (redact_files), for the
+	// same reason: an agent that reads them must not put them in the log.
+	w.runSecrets = append(w.runSecrets, w.fileSecrets(run.WorkspaceID)...)
 	// The runners' temporary directories of this run go with it.
 	defer func() {
 		if w.cfg.StateDir != "" && plainRunID(run.ID) {
@@ -340,6 +343,13 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 	if run.MCP != nil && run.MCP.Unreadable {
 		log.Error("not running the run", "reason", "the server could not read the run's MCP servers")
 		_ = w.report(ctx, run, false, map[string]any{"reason": "mcp: the server could not read the run's MCP servers", "retryable": true})
+		return
+	}
+	// The same for a brief the server holds for the run's focus: never the
+	// repository's file in its place.
+	if run.Brief != nil && run.Brief.Unreadable {
+		log.Error("not running the run", "reason", "the server could not read the run's brief", "focus", run.Focus)
+		_ = w.report(ctx, run, false, map[string]any{"reason": "brief: the server could not read the brief it holds for " + run.Focus, "retryable": true})
 		return
 	}
 	// The run log streams from here to the end (runlog.go); its last lines

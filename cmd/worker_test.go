@@ -135,6 +135,7 @@ upgrade_url = "https://releases.example.test"
 claude_bin = "/opt/claude"
 plan_timeout = "3m"
 impl_timeout = "9m"
+qa_timeout = "20m"
 mcp_deny = ["mcp__x__w"]
 mcp_servers = ["mcp__skopos"]
 mcp_config = "/etc/mcp.json"

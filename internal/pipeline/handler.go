@@ -78,6 +78,92 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request, kind string) {
 	rest.RespondJSON(w, http.StatusOK, v)
 }
 
+// --- briefs (briefs.go) ---
+
+type briefPut struct {
+	Body string `json:"body"`
+}
+
+func (h *Handler) ListWorkspaceBriefs(w http.ResponseWriter, r *http.Request) {
+	h.listBriefs(w, r, KindWorkspace)
+}
+func (h *Handler) GetWorkspaceBrief(w http.ResponseWriter, r *http.Request) {
+	h.getBrief(w, r, KindWorkspace)
+}
+func (h *Handler) PutWorkspaceBrief(w http.ResponseWriter, r *http.Request) {
+	h.putBrief(w, r, KindWorkspace)
+}
+func (h *Handler) DeleteWorkspaceBrief(w http.ResponseWriter, r *http.Request) {
+	h.deleteBrief(w, r, KindWorkspace)
+}
+func (h *Handler) ListGroupBriefs(w http.ResponseWriter, r *http.Request) {
+	h.listBriefs(w, r, KindGroup)
+}
+func (h *Handler) GetGroupBrief(w http.ResponseWriter, r *http.Request) { h.getBrief(w, r, KindGroup) }
+func (h *Handler) PutGroupBrief(w http.ResponseWriter, r *http.Request) { h.putBrief(w, r, KindGroup) }
+func (h *Handler) DeleteGroupBrief(w http.ResponseWriter, r *http.Request) {
+	h.deleteBrief(w, r, KindGroup)
+}
+
+func (h *Handler) listBriefs(w http.ResponseWriter, r *http.Request, kind string) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	out, err := h.service.Briefs(r.Context(), kind, r.PathValue("id"))
+	if err != nil {
+		respondError(w, err)
+		return
+	}
+	if out == nil {
+		out = []Brief{}
+	}
+	rest.RespondJSON(w, http.StatusOK, map[string]any{"briefs": out, "max_bytes": MaxBriefBytes})
+}
+
+func (h *Handler) getBrief(w http.ResponseWriter, r *http.Request, kind string) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	v, err := h.service.Brief(r.Context(), kind, r.PathValue("id"), r.PathValue("name"))
+	if err != nil {
+		respondError(w, err)
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, v)
+}
+
+func (h *Handler) putBrief(w http.ResponseWriter, r *http.Request, kind string) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var in briefPut
+	if err := rest.DecodeJSONStrict(w, r, &in); err != nil {
+		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	b, err := h.service.SetBrief(r.Context(), kind, r.PathValue("id"), r.PathValue("name"), in.Body, viaOf(r, ""))
+	if err != nil {
+		respondError(w, err)
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, b)
+}
+
+func (h *Handler) deleteBrief(w http.ResponseWriter, r *http.Request, kind string) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if err := h.service.DeleteBrief(r.Context(), kind, r.PathValue("id"), r.PathValue("name"), viaOf(r, "")); err != nil {
+		respondError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func respondError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrPolicyRefuses):

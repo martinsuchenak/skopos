@@ -103,3 +103,29 @@ func TestReviewPromptCarriesDecisions(t *testing.T) {
 		t.Fatalf("review prompt decisions:\n%s", out)
 	}
 }
+
+// A brief the server holds for the run's focus is used in place of the
+// repository's file of that name; without one, or for another name, the
+// file at the base applies.
+func TestFocusBriefFromTheServerWins(t *testing.T) {
+	dir, base := gitRepo(t)
+	w := &Worker{}
+	repo := &Repo{Path: dir}
+	ctx := context.Background()
+	// gitRepo's base has no .skopos/focus: only the server can brief "e2e".
+	run := &Run{ID: "r1", Focus: "e2e", Brief: &RunBrief{Name: "e2e", Rev: "rev-1", Source: "workspace",
+		Body: "---\ndescription: End-to-end testing\n---\nTest on the local system."}}
+	f, err := w.focusBrief(ctx, run, repo, base)
+	if err != nil || f.Name != "e2e" || f.Body != "Test on the local system." || f.Description != "End-to-end testing" {
+		t.Fatalf("the server's brief: %+v %v", f, err)
+	}
+	// A brief for another focus is not this run's.
+	run.Brief.Name = "security"
+	if _, err := w.focusBrief(ctx, run, repo, base); err == nil || !strings.Contains(err.Error(), `unknown focus "e2e"`) {
+		t.Fatalf("without a brief of its name the run reads the repository: %v", err)
+	}
+	run.Brief = &RunBrief{Name: "e2e", Body: "---\ndescription: only a header\n---\n"}
+	if _, err := w.focusBrief(ctx, run, repo, base); err == nil || !strings.Contains(err.Error(), "is empty") {
+		t.Fatalf("an empty brief from the server fails the member: %v", err)
+	}
+}

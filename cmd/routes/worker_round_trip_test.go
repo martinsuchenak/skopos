@@ -26,8 +26,10 @@ import (
 	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/integrations"
 	"github.com/martinsuchenak/skopos/internal/itemstate"
+	"github.com/martinsuchenak/skopos/internal/itemtext"
 	"github.com/martinsuchenak/skopos/internal/pipeline"
 	"github.com/martinsuchenak/skopos/internal/plans"
+	"github.com/martinsuchenak/skopos/internal/qa"
 	"github.com/martinsuchenak/skopos/internal/rest"
 	"github.com/martinsuchenak/skopos/internal/runs"
 	"github.com/martinsuchenak/skopos/internal/secretbox"
@@ -259,6 +261,28 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 		return inboxService.AppendSection(ctx, itemID, heading, body, audit.ViaWorker)
 	})
 	inboxService.SetRunQueuer(runsService)
+	// The question record, as serve.go wires it: a run's questions are
+	// recorded, then rendered into its item.
+	qaService := qa.NewService(qa.NewStorage(sqlDB))
+	inboxService.SetQuestionLog(qaService)
+	runsService.SetQuestionAsker(func(ctx context.Context, r *runs.Run, in runs.QuestionsInput) (any, error) {
+		qs := make([]itemtext.Question, len(in.Questions))
+		for i, q := range in.Questions {
+			qs[i] = itemtext.Question{Text: q.Question, Options: q.Options}
+		}
+		set, err := qaService.Ask(ctx, qa.AskInput{
+			WorkspaceID: r.WorkspaceID, ItemID: r.ItemID, RunID: r.ID, Asker: in.Asker, Stage: r.Stage,
+			Runner: r.Runner, Label: r.Label(), SubjectKind: in.SubjectKind, Subject: in.Subject,
+			Blocking: in.Blocking, Questions: qs,
+		})
+		if err != nil || set == nil {
+			return set, err
+		}
+		if err := inboxService.AppendSection(ctx, r.ItemID, set.Heading(), qa.Render(*set), audit.ViaWorker); err != nil {
+			return nil, err
+		}
+		return set, nil
+	})
 	// Plan-group hooks, as serve.go wires them.
 	runsService.SetPlanHooks(func(ctx context.Context, itemID string) error {
 		item, err := inboxService.GetItem(ctx, itemID)
@@ -299,6 +323,7 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	runsService.SetPrefsSource(func(ctx context.Context, ws string) *runs.WorkspacePrefs {
 		return pipelineService.Prefs(ctx, ws)
 	})
+	runsService.SetBriefSource(pipelineService.RunBrief, pipelineService.HoldsBriefs)
 	inboxService.SetSecondOpinionDefault(pipelineService.SecondOpinionRunner)
 	inboxService.SetRunnerPolicy(pipelineService.RunnerAllowed)
 	inboxService.SetRunLister(testRunLister{runsService})

@@ -55,6 +55,26 @@ func (w *Worker) stageCommands(workspace, stage string, base []string) []string 
 	return out
 }
 
+// stageTools lists the tools a stage's profile grants beyond shell
+// commands (MCP servers and their tools), as the agent names them.
+func (w *Worker) stageTools(workspace, stage string) []string {
+	p := w.cfg.StageProfile(workspace, stage)
+	if p == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range p.Tools {
+		name, _, _ := strings.Cut(t, "(")
+		if name == "Bash" || name == "" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	return out
+}
+
 // Skill is one repo playbook: .skopos/skills/<name>/SKILL.md.
 type Skill struct {
 	Name        string
@@ -116,6 +136,26 @@ func repoSkills(ctx context.Context, clone, base string) []Skill {
 		skills = skills[:skillIndexMax]
 	}
 	return skills
+}
+
+// focusBrief is the brief of a run's focus: the one the server holds for
+// it, when the claim answer brought one, else the repository's file at the
+// base. The server's is someone's deliberate choice for this workspace
+// (an approver's, on record), so it wins over the file of the same name.
+func (w *Worker) focusBrief(ctx context.Context, run *Run, repo *Repo, base string) (Skill, error) {
+	if b := run.Brief; b != nil && b.Name == run.Focus {
+		desc, body := parseSkill(b.Body)
+		if strings.TrimSpace(body) == "" {
+			return Skill{}, fmt.Errorf("focus %q: the brief the server holds is empty", run.Focus)
+		}
+		from := "the " + b.Source
+		if b.Source == "" {
+			from = "the server"
+		}
+		runLogFrom(ctx).notef("focus brief %s: held on the server for %s (revision %s), used in place of %s/%s.md", b.Name, from, b.Rev, focusDir, b.Name)
+		return Skill{Name: b.Name, Description: desc, Body: capText(body, skillBodyCap, "the brief "+b.Name)}, nil
+	}
+	return repoFocus(ctx, repo.Path, base, run.Focus)
 }
 
 var reFocusName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)

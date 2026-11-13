@@ -47,6 +47,8 @@ type Service struct {
 
 	mu    sync.Mutex
 	cache map[string]cached
+	// briefCache: each workspace's briefs with their text (briefs.go).
+	briefCache map[string]cachedBriefs
 
 	// revs: the revision store runner policies live in (policy.go); nil =
 	// no policy applies. embeddings: the code index's embeddings lookup.
@@ -217,6 +219,11 @@ func (s *Service) Get(ctx context.Context, kind, id string) (*View, error) {
 		EffectiveSecondOpinionRunner: r.second, SecondOpinionSource: r.secondSource}
 	if able, err := s.storage.Indexable(ctx, id, s.now().Add(-indexableWindow).UnixMilli()); err == nil {
 		v.IndexableBy = able
+	}
+	// Two groups holding the same brief is the same kind of problem as two
+	// setting the same stage.
+	if _, briefConflicts, err := s.effectiveBriefs(ctx, id, false); err == nil {
+		v.Conflicts = append(v.Conflicts, briefConflicts...)
 	}
 	if eff, err := s.EffectivePolicy(ctx, id); err == nil {
 		v.Policy = &EffectivePolicyView{WorkspaceID: id, AllowAll: eff.AllowAll(), Rev: eff.Rev(), Layers: eff.Layers}

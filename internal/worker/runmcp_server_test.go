@@ -221,8 +221,10 @@ func TestClaimSendsTheFeature(t *testing.T) {
 	if _, err := NewClient(srv.URL, "k").Claim(t.Context(), "w1", []string{"claude"}, []string{"ws"}, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
+	// Every feature this release has: the run's MCP servers and its focus
+	// brief from the claim answer.
 	features, _ := body["features"].([]any)
-	if len(features) != 1 || features[0] != FeatureRunMCP {
+	if len(features) != 2 || features[0] != FeatureRunMCP || features[1] != FeatureRunBrief {
 		t.Fatalf("features: %v", body["features"])
 	}
 }

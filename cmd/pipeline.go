@@ -129,6 +129,7 @@ func pipelineCmd(kind string) *cli.Command {
 					return pipelinePut(ctx, cmd, kind, v.OwnerID, own)
 				},
 			},
+			pipelineBriefCmd(kind, flags),
 		},
 	}
 }

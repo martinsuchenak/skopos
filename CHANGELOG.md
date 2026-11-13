@@ -8,6 +8,49 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **MCP servers are managed in the dashboard.** Workspaces → MCP servers
+  for runs lists the definitions for admins, with whether each secret is
+  set and which configs name the server, and creates, edits and deletes
+  them. A secret's value is typed into the server's form and never shown
+  again. Before, definitions and secrets could only be set from the CLI.
+- **Briefs on the server.** What a pipeline member with a focus is told
+  can be held on the server, per workspace or group, instead of committed
+  as `.skopos/focus/<name>.md`. One on the server wins over the
+  repository's file of the same name, and a workspace's own over its
+  group's. See `docs/configuration.md#briefs-on-the-server`.
+  - **Where:** Workspaces → Pipeline → Briefs,
+    `skopos workspace|group pipeline brief list|show|set|delete`, and
+    `/api/workspaces/{id}/pipeline/briefs` (the same under `/api/groups`).
+  - **From the next run,** with no commit and no restart: a run gets its
+    brief when a worker claims it, and its log says where the brief came
+    from.
+  - **Every save is a revision,** with who and when; the audit log records
+    each change with its size and hash.
+  - **Permission:** an approver in scope for a workspace, root for a group.
+  - **Workers** older than this release get no runs of a workspace whose
+    stages use a brief held on the server.
+- **QA tests the change.** A QA run now has its own prompt: test the change
+  as its users would, against the item and the approved plan, and report
+  each failed scenario as a finding with the steps to repeat it. Before, QA
+  ran the review prompt. See
+  `docs/configuration.md#qa-testing-the-change`.
+  - **It runs where the code can run:** at the pushed commit, after the
+    repository's `setup`. With `checkout = "branch"` that is the clone
+    itself, with its local configuration, put back on the default branch
+    afterwards; otherwise a worktree of its own.
+  - **Your instructions per repository** are the QA member's focus brief
+    (`qa=e2e@claude` reads `.skopos/focus/e2e.md`).
+  - **It asks when it cannot test.** With no system, credentials or tool to
+    test with, QA stops with questions and the item waits for you. Your
+    answer starts QA again on the same commit; the implementation is not run
+    again.
+  - **Scenarios:** the item's `qa — <runner>` section lists every scenario
+    with its result.
+  - **`qa_timeout`** (30 minutes by default; worker file and workspace
+    config).
+  - **`redact_files`** in a worker's repo block names credential files in
+    the clone; their secrets are replaced in every run log.
+
 - **Each pipeline run gets its own skopos credential.** The server mints a
   token when a worker claims a run, and the worker hands it to that run's
   agent for the skopos MCP tools. It reaches only the run's own workspace,
@@ -259,6 +302,25 @@ versions follow [Semantic Versioning](https://semver.org/).
     view, `skopos inbox plans --id <item> [--round N] [--out file]`, and
     `GET /api/inbox/{id}/plans?format=md`. Without `format` the endpoint
     returns the round as JSON.
+- **The server config is a form.** Workspaces → Pipeline → Server config
+  has one control per field, in folds, in place of one JSON box. A field is
+  set at this level when its box is ticked, and otherwise shows what
+  applies and where it comes from.
+  - **Stage blocks are a form too,** one fold per stage: extra tools,
+    environment, the wrapper by runner and the permission rules. Only a
+    stage's sandbox settings are still JSON.
+  - **Checked before it is saved:** every edit is checked by the server,
+    and each problem shows under its field, all of them at once.
+    `POST /api/workspaces/{id}/config/check` (and under `/api/groups`) is
+    that check: the problems by field and the fields a save would change,
+    with nothing written.
+  - **No overwrite of a newer config:** a save over a config changed since
+    the form was loaded is refused.
+- **The pipeline dialog has tabs.** Stages, Options, Briefs and Server
+  config are each a tab. On Stages every stage is one line, and only the
+  stage being edited shows its form. Problems (a read-only key, conflicts,
+  runners nothing offers) stay above the tabs; what merely applies is on
+  Options.
 - **The live run log moves with the pipeline.** A log opened on a running
   step now shows the item's next run as soon as it starts, so the panel
   follows an item from plan to implement, each reviewer and QA. "Move to

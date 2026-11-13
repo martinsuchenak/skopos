@@ -105,6 +105,8 @@ type View struct {
 	Effective *Effective `json:"effective,omitempty"`
 	// Changed: the fields the save changed (empty = it changed nothing).
 	Changed []string `json:"changed,omitempty"`
+	// Defaults: what a field nothing sets is, for a form to show.
+	Defaults *Config `json:"defaults,omitempty"`
 }
 
 type cachedRev struct {
@@ -265,7 +267,8 @@ func (s *Service) Get(ctx context.Context, kind, id string) (*View, error) {
 }
 
 func (s *Service) view(ctx context.Context, kind, id string) (*View, error) {
-	v := &View{OwnerKind: kind, OwnerID: id}
+	defaults := Defaults()
+	v := &View{OwnerKind: kind, OwnerID: id, Defaults: &defaults}
 	rev, err := s.revs.Head(ctx, KindWorkspaceConfig, ownerOf(kind, id))
 	if err != nil {
 		return nil, err

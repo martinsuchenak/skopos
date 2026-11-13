@@ -81,7 +81,8 @@ walkthrough.
 | `worker.accounts` | — | — | Credential pool: `name`, `runner` (`claude`, `opencode`, `codex`, or a `runner_config` name such as an `antigravity` one), `priority`, `model`, `effort` (reasoning effort, checked against the runner's CLI: claude/antigravity `low`…`max`, codex `minimal`…`xhigh`, opencode a model variant, command `{effort}`), `env` (injected into agent runs only), `login_dir` (where the account's CLI keeps its login, for a stage wrapper's `{login}`; default: the directory its kind uses). Or, in place of `runner`, `model` and `effort`: `kind` (`claude`, `opencode`, `codex`, `antigravity`) makes the account a login that feeds every runner of that kind the server defines, and `models` (patterns such as `zai-coding-plan/*`) narrows which — see [Runner definitions](concepts/workspace-config.md#runner-definitions) |
 | `worker.runner_config.<name>` | — | — | Agent CLI per runner name: `kind` (`claude` / `opencode` / `codex` / `antigravity` / `command`; codex takes read-only stages only; antigravity and command are unverified, wrapper-only), `bin`, `config` (opencode base config: providers/models), `command` (argv template for any other CLI: `{prompt}` `{dir}` `{model}` `{effort}` — unverified, wrapper-only) |
 | `worker.claude_bin` | — | `claude` | Claude Code binary (or `runner_config.claude.bin`) — must support `--setting-sources`, `--restricted`, `--strict-mcp-config` (checked at start) |
-| `worker.plan_timeout` / `worker.impl_timeout` | — | `10m` / `90m` | Agent run timeouts (review/qa use the plan timeout) |
+| `worker.plan_timeout` / `worker.impl_timeout` | — | `10m` / `90m` | Agent run timeouts (review uses the plan timeout) |
+| `worker.qa_timeout` | — | `30m` | How long a QA run's agent may take: it tests the change on a running system ([QA](#qa-testing-the-change)) |
 | `worker.mcp_config` | — | — | JSON file with the MCP servers pipeline runs get (Claude Code `mcpServers` shape); required when `mcp_servers` is set |
 | `worker.mcp_servers` | — | — | MCP tool prefixes allowed in plan/implement runs, e.g. `["mcp__skopos"]` |
 | `worker.mcp_deny` | — | none | MCP tools denied in every run (added to the built-in git/network denials) |
@@ -179,10 +180,16 @@ In the dashboard: Pipeline → Review → add each runner with its focus.
   run, pinned to its runner; together they form a *group* that is decided
   once. A single entry with a focus (`review=security@claude`) is one
   focused reviewer, not a group.
-- **Focus briefs** live in the repository, `.skopos/focus/<name>.md`
-  (optional `description:` frontmatter, then the brief). Workers read them at
-  the approved base commit, never from the branch under review. A missing
-  brief fails that member.
+- **Focus briefs** are what a member with a focus is told. They come from
+  one of two places, and a brief on the server wins over a file of the same
+  name:
+  - **the repository,** `.skopos/focus/<name>.md` (optional `description:`
+    frontmatter, then the brief). Workers read it at the approved base
+    commit, never from the branch under review;
+  - **the server,** held with the pipeline settings: see
+    [Briefs on the server](#briefs-on-the-server).
+
+  A focus with no brief in either place fails that member.
 - **Findings** carry a severity: `blocking` fails a reviewer, `nit` is
   reported but never blocks.
 - **Policies** (Decision in the dialog, `--policy` / `--early-exit` /
@@ -204,6 +211,93 @@ In the dashboard: Pipeline → Review → add each runner with its focus.
   summary.
 - **Parallelism** comes from workers: a worker runs one job at a time, so
   members claimed by one worker run one after another.
+
+#### Briefs on the server
+
+A brief can be held on the server instead of committed to the repository:
+for an experiment, for a pipeline you run only for a while, or to give one
+brief to every repository of a group.
+
+- **Dashboard:** Workspaces → **Pipeline** → **Briefs**. The tab lists the
+  briefs held for the workspace, the ones it gets from a group (**Override
+  here** saves a copy for the workspace), and every focus the stages use
+  that has none (**Write here**).
+- **CLI:**
+
+  ```bash
+  skopos workspace pipeline brief set --workspace github.com/you/repo --name e2e --file e2e.md
+  skopos workspace pipeline brief list --workspace github.com/you/repo
+  skopos workspace pipeline brief show --workspace github.com/you/repo --name e2e [--history]
+  skopos workspace pipeline brief delete --workspace github.com/you/repo --name e2e
+  skopos group pipeline brief set --group you --name security --file security.md
+  ```
+- **REST:** `GET`/`PUT`/`DELETE /api/workspaces/{id}/pipeline/briefs/{name}`
+  and the same under `/api/groups/{id}`; `GET …/pipeline/briefs` lists them.
+
+How it works:
+
+- **Which brief a run gets:** the workspace's own, else its group's, else
+  the repository's file. The run's log says which.
+- **From the next run.** A brief reaches a run when a worker claims it, so a
+  change needs no commit and no restart.
+- **Who may change one:** an approver whose scope covers the workspace;
+  root for a group. Any key with the workspace in scope may read them.
+- **Every save is a revision.** The history says who saved which version
+  when, and the audit log records each change with its size and hash.
+  Removing a brief keeps its history.
+- **Limits:** 16 KB, the name a focus can have (lowercase letters, digits,
+  `-` and `_`). Two groups cannot hold a brief of the same name for a
+  workspace both contain.
+- **Workers** need a release that takes briefs from the server. An older
+  one is given no runs of a workspace whose stages use such a brief, and
+  shows as unhealthy for it with that reason.
+- **Not in `skopos config export`:** the fleet file does not carry briefs.
+
+#### QA: testing the change
+
+Review reads the code; QA runs it. A QA run gets its own prompt: test the
+change as the people who use it would, against the item and the approved
+plan, and report every failed scenario as a finding with the steps to
+repeat it. Set it like any stage:
+
+```bash
+skopos workspace pipeline set --workspace github.com/you/repo --stage qa --runners e2e@claude
+```
+
+- **Your instructions** are the member's focus brief, here `e2e`: which
+  system to test on, where its credentials are, how to sign in, what to do
+  when it is not there. It is `.skopos/focus/e2e.md` in the repository, or a
+  [brief held on the server](#briefs-on-the-server).
+- **Where QA runs.** At the head of the pushed branch, after the
+  repository's `setup` commands:
+  - with `checkout = "branch"`, in the clone itself, switched to that commit
+    for the run. A system that runs from the clone runs the change, and the
+    files git ignores (local configuration, credentials) are there. The
+    clone goes back to its default branch afterwards and what the run
+    changed in tracked files is discarded;
+  - otherwise in a worktree of its own, which has none of the ignored files;
+    a `setup` command can copy one in (`cp {clone}/tests/e2e/.env.e2e
+    tests/e2e/.env.e2e`).
+- **What QA can use** is what its stage gives it: by default reading files
+  and `git diff`. A browser, a test runner or a service that creates test
+  environments comes from the QA stage's tools and MCP servers
+  ([stages](concepts/workspace-config.md#stages),
+  [MCP servers](concepts/workspace-config.md#mcp-servers)), which need a
+  contained stage.
+- **When QA cannot test** (no system, no credentials, a missing tool,
+  nothing says where to test) it does not fall back to reading the code. It
+  stops with questions, the item waits for you as *blocked*, and your answer
+  (**Retry** with the answer, `skopos inbox retry`, or a Slack reply) starts
+  QA again on the same commit. The implementation is not run again.
+- **The result** is a verdict, findings and the list of scenarios with what
+  each did, in the item's `qa — <runner>` section. A blocking finding sends
+  the item back like a review's.
+- **Timeout:** `qa_timeout`, 30 minutes by default.
+- **Credentials in the log.** List the repository's credential files in the
+  worker's repo block, `redact_files = ["tests/e2e/.env.e2e"]`: the values
+  of their password, secret, token and key lines are replaced in every run
+  log. Credentials that reach a run another way (an MCP tool's answer) are
+  not known to the worker and are not replaced.
 
 #### Multi-agent planning
 

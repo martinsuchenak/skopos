@@ -92,7 +92,7 @@ func configCmd(kind string) *cli.Command {
 			Usage: "Save " + what + " config (admin permission). A workspace with a config is managed: every shared field comes from the server",
 			Description: `Fields: default_branch, branch_prefix, branch_template, checkout, protected_branches,
 setup, checks, check_fix_rounds, preflight, preflight_interval, setup_timeout,
-check_timeout, quiet_timeout, plan_timeout, impl_timeout, push.kind, push.remote_url,
+check_timeout, quiet_timeout, plan_timeout, impl_timeout, qa_timeout, push.kind, push.remote_url,
 push.pull_request, push.steps, mcp_deny, mcp_servers, mcp, stages.<stage>.
 
 --file replaces the whole config with a TOML file's. --set and --unset change

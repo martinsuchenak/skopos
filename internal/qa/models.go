@@ -134,14 +134,21 @@ type Record struct {
 	Free []Answer `json:"free,omitempty"`
 }
 
+// StageQA is the stage of a QA run: its questions are asked by the worker
+// (AskerWorker) on the run's behalf and read as QA's.
+const StageQA = "qa"
+
 // Asked names who asked a set, as people read it: a plan candidate's label,
-// "the implementer", or "" for a single planner (or the worker).
+// "the implementer", "QA", or "" for a single planner (or the worker).
 func (s Set) Asked() string {
 	if s.Label != "" {
 		return s.Label
 	}
 	if s.Asker == AskerImplementer {
 		return "the implementer"
+	}
+	if s.Stage == StageQA {
+		return "QA"
 	}
 	return ""
 }
@@ -150,6 +157,9 @@ func (s Set) Asked() string {
 func (s Set) Heading() string {
 	if s.Asker == AskerImplementer {
 		return "Questions — implementer"
+	}
+	if s.Stage == StageQA {
+		return "Questions — QA"
 	}
 	if s.Label != "" {
 		return "Questions — planner " + s.Label

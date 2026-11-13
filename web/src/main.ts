@@ -56,12 +56,53 @@ type RunnerFacts = { name: string; kind?: string; model?: string; effort?: strin
 type WorkerSeen = { id: string; runners: string[]; workspaces: string[]; last_seen: string; version?: string; state?: string; unhealthy?: Record<string, string>; indexable?: string[]; paused?: WorkerPause; runner_facts?: RunnerFacts[]; executors?: Record<string, ExecutorFact[]>; server_commands?: boolean; fleet_rev?: string };
 // Workspace config held on the server (internal/wsconfig).
 type ConfigEffective = { workspace: string; managed: boolean; rev?: string; config: Record<string, unknown>; sources?: Record<string, string>; conflicts?: string[] };
-type ConfigView = { owner_kind: string; owner_id: string; config: Record<string, unknown> | null; rev?: string; updated_by?: string; effective?: ConfigEffective; changed?: string[] };
+type ConfigView = { owner_kind: string; owner_id: string; config: Record<string, unknown> | null; rev?: string; updated_by?: string; effective?: ConfigEffective; changed?: string[]; defaults?: Record<string, unknown> };
+// The config form (pipeline dialog, Server config tab): one row per field
+// that has a control of its own. kind picks the control; a row is part of
+// the saved config only when it is set.
+type CfgOption = { value: string; label: string };
+type CfgField = { key: string; label: string; group: string; kind: 'text' | 'duration' | 'number' | 'select' | 'lines'; options?: CfgOption[]; hint: string; placeholder?: string };
+type CfgRow = CfgField & { set: boolean; value: string; applies: string; from: string; error: string; options: CfgOption[]; placeholder: string };
+type CfgGroup = { name: string; open: boolean; rows: CfgRow[] };
+type CfgProblem = { field: string; message: string };
+// A stage's block as the form holds it: lists as one entry per line, the
+// wrapper rules as rows, the sandbox settings as JSON text.
+type CfgWrap = { id: number; wrapper: string; runner: string; kind: string; provider: string; model: string };
+type CfgStage = { stage: string; label: string; open: boolean; set: boolean; tools: string; env: string; allow: string; deny: string; dirs: string; sandbox: string; wraps: CfgWrap[]; error: string; from: string };
+const CFG_STAGES: [string, string][] = [['plan', 'Plan'], ['implement', 'Implement'], ['review', 'Review'], ['qa', 'QA']];
+let cfgWrapSeq = 0;
+// Every config field with a control. What is not here (the stage blocks)
+// stays text in the form.
+const CFG_FIELDS: CfgField[] = [
+  { key: 'default_branch', label: 'Default branch', group: 'Branches', kind: 'text', hint: 'The branch work starts from and is compared with.' },
+  { key: 'branch_prefix', label: 'Branch prefix', group: 'Branches', kind: 'text', hint: 'Branches the agents create start with this.' },
+  { key: 'branch_template', label: 'Branch name', group: 'Branches', kind: 'text', hint: 'Placeholders {prefix}, {tail}, {slug}, {ref}; needs {tail} or {ref}. Empty: {prefix}{tail}-{slug}.', placeholder: '{prefix}{tail}-{slug}' },
+  { key: 'checkout', label: 'Implementations run in', group: 'Branches', kind: 'select', options: [{ value: 'worktree', label: 'a worktree per item' }, { value: 'branch', label: 'the clone itself (branch checkout)' }], hint: 'The clone itself suits a repository tied to a local system; QA then tests there too.' },
+  { key: 'protected_branches', label: 'Protected branches', group: 'Branches', kind: 'lines', hint: 'No run pushes to these. One per line; ** matches across slashes.' },
+  { key: 'setup', label: 'Setup', group: 'Commands the workers run', kind: 'lines', hint: 'Prepare a checkout before an agent works in it: one command per line. {clone} is the clone\'s path.' },
+  { key: 'checks', label: 'Checks', group: 'Commands the workers run', kind: 'lines', hint: 'Run after every implementation: one command per line. A failing one goes back to the implementer.' },
+  { key: 'check_fix_rounds', label: 'Fix rounds', group: 'Commands the workers run', kind: 'number', hint: 'How often failing checks go back to the implementer: 0 to 5.' },
+  { key: 'preflight', label: 'Preflight', group: 'Commands the workers run', kind: 'lines', hint: 'Say whether a worker can take the repository\'s work right now: one command per line.' },
+  { key: 'preflight_interval', label: 'Preflight every', group: 'Commands the workers run', kind: 'duration', hint: 'At least 1m.' },
+  { key: 'setup_timeout', label: 'Setup', group: 'Timeouts', kind: 'duration', hint: 'All setup commands together, e.g. 10m.' },
+  { key: 'check_timeout', label: 'Checks', group: 'Timeouts', kind: 'duration', hint: 'All checks together.' },
+  { key: 'quiet_timeout', label: 'Silent command', group: 'Timeouts', kind: 'duration', hint: 'Stops a setup or check command that prints nothing for this long. 0s: off.' },
+  { key: 'plan_timeout', label: 'Plan and review', group: 'Timeouts', kind: 'duration', hint: 'A planning, review, compare or synthesize agent.' },
+  { key: 'impl_timeout', label: 'Implement', group: 'Timeouts', kind: 'duration', hint: 'The implementing agent.' },
+  { key: 'qa_timeout', label: 'QA', group: 'Timeouts', kind: 'duration', hint: 'The testing agent.' },
+  { key: 'push.kind', label: 'Push to', group: 'Push and pull requests', kind: 'select', options: [{ value: 'none', label: 'nowhere (branches stay on the worker)' }, { value: 'github', label: 'GitHub' }, { value: 'gitea', label: 'Gitea' }], hint: 'The token stays on each worker (push.token_env in its file).' },
+  { key: 'push.remote_url', label: 'Remote URL', group: 'Push and pull requests', kind: 'text', hint: 'An http(s) URL without credentials.', placeholder: 'https://github.com/you/repo.git' },
+  { key: 'push.pull_request', label: 'Pull request', group: 'Push and pull requests', kind: 'select', options: [{ value: 'none', label: 'none' }, { value: 'draft', label: 'open as a draft' }, { value: 'ready', label: 'open ready for review' }], hint: 'Opened or reused for the item\'s branch. Workers never merge.' },
+  { key: 'push.steps', label: 'Push as it goes', group: 'Push and pull requests', kind: 'select', options: [{ value: 'true', label: 'yes: each step\'s commits' }, { value: 'false', label: 'no: only at the end' }], hint: 'Pushing the implementer\'s commits while it works keeps them if the worker dies.' },
+  { key: 'mcp', label: 'MCP servers for runs', group: 'MCP', kind: 'lines', hint: 'Names of MCP server definitions on the server, one per line. Set (also to nothing), runs get exactly these and no worker\'s own mcp_config.' },
+  { key: 'mcp_servers', label: 'Allowed MCP tools', group: 'MCP', kind: 'lines', hint: 'Tool prefixes plan and implement runs may call, one per line: mcp__<server>.', placeholder: 'mcp__router' },
+  { key: 'mcp_deny', label: 'Denied MCP tools', group: 'MCP', kind: 'lines', hint: 'Tools no run may call, one per line.', placeholder: 'mcp__router__delete_thing' },
+];
 type RunnerDef = { name: string; kind: string; model?: string; effort?: string; provider?: string };
 type PolicyRule = { provider?: string; model?: string; kind?: string; runner?: string; stages?: string[]; executor?: string };
 type ExecutorFact = { stage?: string; runner?: string; executor: string };
 type WrapperDef = { name: string; argv: string[]; check?: string[]; executor?: string };
-type MCPServerDef = { name: string; type: string; url?: string; command?: string[]; secrets?: { name: string; set: boolean }[] };
+type MCPServerDef = { name: string; type: string; url?: string; headers?: Record<string, string>; command?: string[]; env?: Record<string, string>; workspaces?: string[]; secrets?: { name: string; set: boolean }[]; used_by?: string[]; rev?: string };
 type PolicyLayer = { source: string; rev: string; policy: { allow: PolicyRule[] | null } };
 // Pipeline settings (which agents run each stage, per workspace or group).
 type PipeMember = { runner: string; focus?: string };
@@ -69,6 +110,10 @@ type PipeStage = { members: PipeMember[]; policy?: string; early_exit?: boolean;
 type PipeView = { owner_kind: string; owner_id: string; indexable_by?: string[]; own: { stages: Record<string, PipeStage> | null; agents_default?: string; second_opinion_runner?: string; code_index?: boolean }; effective?: Record<string, PipeStage & { source: string }>; effective_agents_default?: string; agents_default_source?: string; effective_second_opinion_runner?: string; second_opinion_source?: string; groups?: { id: string; name: string }[]; conflicts?: string[]; unknown_runners?: string[]; policy?: { allow_all: boolean; rev?: string; layers: PolicyLayer[] }; policy_refused?: string[] };
 // One dialog row per stage. mode: own (set at this level, editable),
 // inherited (from a group; Override copies it here), unset.
+// A brief held on the server for a pipeline member's focus (no text in a
+// listing), and one row of the Briefs tab.
+type BriefInfo = { rev: string; owner_kind: string; owner_id: string; name: string; body?: string; deleted?: boolean; bytes: number; created_at: string; created_by: string; source?: string };
+type BriefRow = { key: string; name: string; where: string; tone: string; detail: string; action: string; held: boolean; own: boolean };
 type PipeRow = { stage: string; label: string; multi: boolean; rule: boolean; mode: string; members: PipeMember[]; policy: string; earlyExit: boolean; timeoutMin: string; inherited: PipeStage | null; inheritedFrom: string; addRunner: string; addFocus: string };
 
 type PlanRevisionInfo = { id: string; revision_no: number; content_hash: string; skills?: string[]; base_sha?: string; group_id?: string; label?: string; candidate_state?: string; steps?: { title: string; phase?: string }[]; locked_at?: string };
@@ -136,6 +181,10 @@ let previewPoll: ReturnType<typeof setInterval> | null = null;
 
 // The run log panel's long-poll (aborted when the panel closes), and the
 // running key its lines get (stable while old lines are trimmed).
+// The config form's debounced check, and a counter that drops the answer
+// to a check an edit has overtaken.
+let cfgCheckTimer: ReturnType<typeof setTimeout> | null = null;
+let cfgCheckSeq = 0;
 let runLogAbort: AbortController | null = null;
 // The run log panel's poll loop is reading (a loop ends with its run), and
 // the timer that looks for the item's next run while the panel follows it.
@@ -310,10 +359,21 @@ const appState = () => ({
   // re-evaluates when a dialog reopens for different data (CSP build)
   formNonce: 0,
   showGroupModal: false,
-  pipe: { open: false, kind: 'workspace', id: '', label: '', saving: false, readOnly: false, rev: 0, rows: [] as PipeRow[], agentsDefault: '', agentsInherited: '', agentsInheritedFrom: '', secondOpinion: '', secondInherited: '', codeIndex: false, codeIndexWas: false, indexableBy: [] as string[], notes: [] as { key: string; tone: string; text: string }[], runnerOptions: [] as string[], policyBound: false },
+  pipe: { open: false, kind: 'workspace', id: '', label: '', saving: false, readOnly: false, rev: 0, rows: [] as PipeRow[], agentsDefault: '', agentsInherited: '', agentsInheritedFrom: '', secondOpinion: '', secondInherited: '', codeIndex: false, codeIndexWas: false, indexableBy: [] as string[], notes: [] as { key: string; tone: string; text: string }[], runnerOptions: [] as string[], policyBound: false, tab: 'stages', editing: '', was: '' },
+  // MCP servers for runs (Workspaces view, admins): the definitions, and
+  // the dialog that edits one and sets its secrets.
+  mcpDefs: [] as MCPServerDef[],
+  mcpForm: { open: false, editing: false, name: '', type: 'http', url: '', headers: '', command: '', env: '', workspaces: '', error: '', saving: false, confirm: false, rev: 0, secrets: [] as { name: string; set: boolean; value: string }[] },
+  // The Briefs tab of the pipeline dialog: the briefs held for this owner
+  // (and, for a workspace, the ones a group gives it), and the editor.
+  pipeBriefs: { list: [] as BriefInfo[], editing: false, name: '', nameLocked: false, body: '', was: '', from: '', history: [] as BriefInfo[], saving: false, confirm: '', rev: 0 },
   // The workspace's (or group's) config on the server, in the pipeline
   // dialog: what applies, and for an admin the stored config as JSON.
-  pipeConfig: { shown: false, status: '', lines: [] as string[], wrappers: [] as string[], mcp: [] as string[], text: '', was: '', stored: false, saving: false, canEdit: false, rev: 0 },
+  pipeConfig: { shown: false, status: '', wrappers: [] as string[], mcp: [] as string[], stored: false, storedRev: '', saving: false, canEdit: false, rev: 0,
+    // The form: whether the owner has a config at all (a workspace's
+    // switch), its fields in folds, the stage blocks as JSON, and what a
+    // check said that belongs to no field.
+    managed: false, groups: [] as CfgGroup[], stageForms: [] as CfgStage[], stagesOpen: false, stagesError: '', wrapperNames: [] as string[], general: '', conflicts: [] as string[], was: '', checking: false, checked: '', view: null as ConfigView | null },
   groupModalMode: 'create' as 'create' | 'edit',
   groupSaving: false,
   groupErrors: {} as Record<string, string>,
@@ -518,7 +578,7 @@ const appState = () => ({
   anyModalOpen() {
     return this.showKeyModal || this.showApiKeyModal || this.showSecretModal || this.showWebhookModal || this.showWsModal || this.showGroupModal
       || this.showEntryModal || this.showPlanModal || this.showItemModal || this.showInboxItemModal || this.showInboxPreview
-      || this.showFileModal || this.confirm.open || this.pipe.open || this.planView.open || (this.sidebarOpen && window.matchMedia('(max-width: 767px)').matches);
+      || this.showFileModal || this.confirm.open || this.pipe.open || this.planView.open || this.mcpForm.open || (this.sidebarOpen && window.matchMedia('(max-width: 767px)').matches);
   },
 
   // ---- shared dialog helpers ----
@@ -695,7 +755,7 @@ const appState = () => ({
     if (v === 'inbox') this.fetchInbox();
     if (v === 'index') this.fetchIndexStatus();
     if (v === 'keys') this.fetchKeys();
-    if (v === 'workspaces') { this.fetchWorkspaces(); this.fetchGroups(); if (this.whoamiIsRoot()) this.fetchKeys(); }
+    if (v === 'workspaces') { this.fetchWorkspaces(); this.fetchGroups(); this.fetchMcpDefs(); if (this.whoamiIsRoot()) this.fetchKeys(); }
     if (v === 'workers') this.fetchWorkers();
     if (v === 'webhooks') { this.fetchWebhooks(); if (this.whoamiIsRoot()) this.fetchGroups(); }
   },
@@ -876,7 +936,7 @@ const appState = () => ({
     else if (this.activeView === 'inbox') await this.fetchInbox();
     else if (this.activeView === 'index') await this.fetchIndexStatus();
     else if (this.activeView === 'keys') await this.fetchKeys();
-    else if (this.activeView === 'workspaces') { await this.fetchWorkspaces(); await this.fetchGroups(); if (this.whoamiIsRoot()) await this.fetchKeys(); }
+    else if (this.activeView === 'workspaces') { await this.fetchWorkspaces(); await this.fetchGroups(); await this.fetchMcpDefs(); if (this.whoamiIsRoot()) await this.fetchKeys(); }
     else if (this.activeView === 'workers') await this.fetchWorkers();
     else if (this.activeView === 'webhooks') { await this.fetchWebhooks(); if (this.whoamiIsRoot()) await this.fetchGroups(); }
   },
@@ -2784,6 +2844,9 @@ const appState = () => ({
     if (dres.ok) for (const d of (((await dres.json()) as { runners?: RunnerDef[] }).runners || [])) if (!runners.includes(d.name)) runners.push(d.name);
     await this.loadPipeConfig(kind, v.owner_id);
     this.pipe.kind = kind; this.pipe.id = v.owner_id; this.pipe.label = label;
+    this.pipe.tab = 'stages'; this.pipe.editing = '';
+    this.pipeBriefs.editing = false; this.pipeBriefs.confirm = '';
+    await this.loadPipeBriefs();
     this.pipe.runnerOptions = runners.sort();
     this.pipe.agentsDefault = v.own.agents_default || '';
     const fromGroup = kind === 'workspace' && v.agents_default_source && v.agents_default_source !== 'workspace';
@@ -2829,26 +2892,331 @@ const appState = () => ({
     if (kind === 'workspace' && (v.groups || []).length) notes.push({ key: 'g', tone: 'tone-neutral', text: 'Inherits from group' + ((v.groups || []).length > 1 ? 's ' : ' ') + (v.groups || []).map((g: { name: string }) => g.name).join(', ') + ' where a stage is not set here.' });
     this.pipe.notes = notes;
     this.pipe.rev++;
+    this.pipe.was = this.pipeSnapshot();
     this.pipe.open = true;
   },
   closePipeline() { this.pipe.open = false; },
+  // What Save would send, as text: the Stages and Options tabs share one
+  // Save, and the other tabs save on their own, so the dialog says when
+  // something on those two is not saved yet.
+  pipeSnapshot(): string {
+    const rows = (this.pipe.rows as PipeRow[]).filter((r: PipeRow) => r.mode === 'own')
+      .map((r: PipeRow) => [r.stage, r.members.map((m: PipeMember) => (m.focus || '') + '@' + m.runner), r.policy, r.earlyExit, r.timeoutMin.trim()]);
+    return JSON.stringify([rows, this.pipe.agentsDefault, this.pipe.secondOpinion.trim(), this.pipe.codeIndex]);
+  },
+  pipeDirty(): boolean { return !this.pipe.readOnly && this.pipeSnapshot() !== this.pipe.was; },
+  pipeDirtyElsewhere(): boolean { return (this.pipe.tab === 'briefs' || this.pipe.tab === 'config') && this.pipeDirty(); },
+  // Close from a tab that has no Save of the pipeline: not past unsaved
+  // stage changes.
+  pipeCloseFromTab() {
+    if (this.pipeDirty()) { this.pipe.tab = 'stages'; this.notify('The stages or options have unsaved changes: Save or Cancel', 'error'); return; }
+    this.closePipeline();
+  },
   pipeRow(stage: string): PipeRow | undefined { return this.pipe.rows.find((r: PipeRow) => r.stage === stage); },
   pipeBump() { this.pipe.rows = this.pipe.rows.map((r: PipeRow) => ({ ...r })); this.pipe.rev++; },
   pipeOverride(stage: string) {
     const r = this.pipeRow(stage);
     if (!r || !r.inherited) return;
     r.mode = 'own';
+    this.pipe.editing = stage;
     r.members = r.inherited.members.map((m: PipeMember) => ({ runner: m.runner, focus: m.focus || '' }));
     r.policy = r.inherited.policy || ''; r.earlyExit = !!r.inherited.early_exit;
     r.timeoutMin = r.inherited.timeout_ms ? String(Math.round(r.inherited.timeout_ms / 60000)) : '';
     this.pipeBump();
   },
-  pipeSetHere(stage: string) { const r = this.pipeRow(stage); if (r) { r.mode = 'own'; r.members = []; this.pipeBump(); } },
+  pipeSetHere(stage: string) { const r = this.pipeRow(stage); if (r) { r.mode = 'own'; r.members = []; this.pipe.editing = stage; this.pipeBump(); } },
+  // One stage's form is open at a time: the rest stay one line each.
+  pipeEdit(stage: string) { this.pipe.editing = this.pipe.editing === stage ? '' : stage; },
+  // The decision settings of a stage with several agents, in words.
+  pipeRuleText(r: PipeRow): string {
+    if (r.mode !== 'own' || r.members.length < 2) return '';
+    const parts: string[] = [];
+    if (r.rule) parts.push(r.policy === 'majority' ? 'majority decides' : r.policy === 'all-pass' ? 'all must pass' : 'any blocking finding fails');
+    if (r.rule && r.earlyExit) parts.push('early exit');
+    if (r.timeoutMin.trim()) parts.push('timeout ' + r.timeoutMin.trim() + 'm');
+    return parts.join(' · ');
+  },
+  async errorText(res: Response, prefix: string): Promise<string> { return prefix + ': ' + (await this.extractError(res)).replace(/^invalid config: /, ''); },
+  // ---- MCP servers for runs (Workspaces view; admins) ----
+  // The definitions are the fleet's; a workspace's config names the ones its
+  // runs get. A secret's value is only ever sent, never read.
+  async fetchMcpDefs() {
+    if (!this.canAdmin()) { this.mcpDefs = []; return; }
+    const res = await this.authFetch('/api/fleet/mcp-servers');
+    // A server from before MCP definitions has no such route.
+    this.mcpDefs = res.ok ? (((await res.json()) as { mcp_servers?: MCPServerDef[] }).mcp_servers || []) : [];
+  },
+  mcpRows(): { key: string; name: string; type: string; target: string; scope: string; secrets: { name: string; set: boolean }[] }[] {
+    return this.mcpDefs.map((m: MCPServerDef) => {
+      const ws = m.workspaces || [];
+      const used = (m.used_by || []).map((o: string) => o.replace(/^workspace:/, '').replace(/^group:/, 'group '));
+      return {
+        key: m.name + '|' + (m.rev || '') + '|' + (m.secrets || []).map((s: { name: string; set: boolean }) => s.name + s.set).join(','),
+        name: m.name, type: m.type,
+        target: m.type === 'command' ? (m.command || []).join(' ') : (m.url || ''),
+        scope: (ws.length ? 'For ' + ws.join(', ') : 'For any workspace') + ' · ' + (used.length ? 'given to the runs of ' + used.join(', ') : 'no config names it yet'),
+        secrets: m.secrets || [],
+      };
+    });
+  },
+  // Lines of a box as a list (blank lines dropped).
+  boxLines(text: string): string[] { return text.split('\n').map((l: string) => l.trim()).filter((l: string) => l !== ''); },
+  // NAME<sep>value lines as an object; a line without the separator is
+  // returned as the problem.
+  boxPairs(text: string, sep: string): { pairs: Record<string, string>; bad: string } {
+    const pairs: Record<string, string> = {};
+    for (const line of this.boxLines(text)) {
+      const i = line.indexOf(sep);
+      if (i <= 0) return { pairs, bad: line };
+      pairs[line.slice(0, i).trim()] = line.slice(i + sep.length).trim();
+    }
+    return { pairs, bad: '' };
+  },
+  pairsBox(pairs: Record<string, string> | undefined, sep: string): string {
+    return Object.keys(pairs || {}).sort().map((k: string) => k + sep + (pairs as Record<string, string>)[k]).join('\n');
+  },
+  openMcpModal(name: string) {
+    const def = this.mcpDefs.find((m: MCPServerDef) => m.name === name);
+    const f = this.mcpForm;
+    f.editing = !!def; f.error = ''; f.saving = false; f.confirm = false;
+    f.name = def ? def.name : '';
+    f.type = def ? def.type : 'http';
+    f.url = (def && def.url) || '';
+    f.headers = this.pairsBox(def && def.headers, ': ');
+    f.command = ((def && def.command) || []).join('\n');
+    f.env = this.pairsBox(def && def.env, '=');
+    f.workspaces = ((def && def.workspaces) || []).join('\n');
+    this.mcpSecretsOf(def);
+    f.open = true;
+    this.$nextTick(() => document.getElementById(def ? 'mcp-url' : 'mcp-name')?.focus());
+  },
+  // The secrets of the open definition, with an empty box each: a value
+  // typed for one is dropped when the list is read again.
+  mcpSecretsOf(def: MCPServerDef | undefined) {
+    this.mcpForm.secrets = ((def && def.secrets) || []).map((s: { name: string; set: boolean }) => ({ name: s.name, set: s.set, value: '' }));
+    this.mcpForm.rev++;
+  },
+  closeMcpModal() { this.mcpForm.open = false; this.mcpForm.secrets = []; },
+  async saveMcpDef() {
+    const f = this.mcpForm;
+    if (f.saving) return;
+    f.error = ''; f.confirm = false;
+    const name = f.name.trim();
+    if (!name) { f.error = 'Give the server a name.'; return; }
+    const body: Record<string, unknown> = { type: f.type };
+    if (f.type === 'http') {
+      const h = this.boxPairs(f.headers, ':');
+      if (h.bad) { f.error = 'A header is written as Name: value. This line is not: ' + h.bad; return; }
+      body.url = f.url.trim();
+      if (Object.keys(h.pairs).length) body.headers = h.pairs;
+    } else {
+      const e = this.boxPairs(f.env, '=');
+      if (e.bad) { f.error = 'A variable is written as NAME=value. This line is not: ' + e.bad; return; }
+      body.command = this.boxLines(f.command);
+      if (Object.keys(e.pairs).length) body.env = e.pairs;
+    }
+    const ws = this.boxLines(f.workspaces);
+    if (ws.length) body.workspaces = ws;
+    f.saving = true;
+    try {
+      const res = await this.authFetch('/api/fleet/mcp-servers/' + encodeURIComponent(name), { method: 'PUT', headers: { 'X-Skopos-Via': 'dashboard' }, body: JSON.stringify(body) });
+      if (!res.ok) { f.error = await this.errorText(res, 'The MCP server was not saved'); return; }
+      await this.fetchMcpDefs();
+      const def = this.mcpDefs.find((m: MCPServerDef) => m.name === name);
+      const unset = ((def && def.secrets) || []).filter((s: { set: boolean }) => !s.set).length;
+      // Stay open while a secret still needs its value.
+      f.editing = true; f.name = name;
+      this.mcpSecretsOf(def);
+      this.notify('MCP server ' + name + ' saved' + (unset ? ': set its ' + this.plural(unset, 'secret') + ' below' : ''), 'success');
+      if (!unset) this.closeMcpModal();
+    } finally { f.saving = false; }
+  },
+  async setMcpSecret(secret: string) {
+    const f = this.mcpForm;
+    const row = f.secrets.find((s: { name: string }) => s.name === secret);
+    if (!row || f.saving) return;
+    f.error = '';
+    if (row.value.length < 8) { f.error = 'A secret\'s value is at least 8 characters.'; return; }
+    f.saving = true;
+    try {
+      const res = await this.authFetch('/api/fleet/mcp-servers/' + encodeURIComponent(f.name) + '/secrets/' + encodeURIComponent(secret), { method: 'PUT', headers: { 'X-Skopos-Via': 'dashboard' }, body: JSON.stringify({ value: row.value }) });
+      row.value = '';
+      if (!res.ok) { f.error = await this.errorText(res, 'The secret was not set'); return; }
+      await this.fetchMcpDefs();
+      this.mcpSecretsOf(this.mcpDefs.find((m: MCPServerDef) => m.name === f.name));
+      this.notify('Secret ' + secret + ' set', 'success');
+    } finally { f.saving = false; }
+  },
+  async unsetMcpSecret(secret: string) {
+    const f = this.mcpForm;
+    if (f.saving) return;
+    f.error = ''; f.saving = true;
+    try {
+      const res = await this.authFetch('/api/fleet/mcp-servers/' + encodeURIComponent(f.name) + '/secrets/' + encodeURIComponent(secret), { method: 'DELETE', headers: { 'X-Skopos-Via': 'dashboard' } });
+      if (!res.ok) { f.error = await this.errorText(res, 'The secret\'s value was not removed'); return; }
+      await this.fetchMcpDefs();
+      this.mcpSecretsOf(this.mcpDefs.find((m: MCPServerDef) => m.name === f.name));
+      this.notify('The value of ' + secret + ' was removed', 'success');
+    } finally { f.saving = false; }
+  },
+  // Two presses. A definition a config still names is refused by the
+  // server, which says who names it.
+  async deleteMcpDef() {
+    const f = this.mcpForm;
+    if (f.saving || !f.editing) return;
+    if (!f.confirm) { f.confirm = true; return; }
+    f.confirm = false; f.error = ''; f.saving = true;
+    try {
+      const res = await this.authFetch('/api/fleet/mcp-servers/' + encodeURIComponent(f.name), { method: 'DELETE', headers: { 'X-Skopos-Via': 'dashboard' } });
+      if (!res.ok) { f.error = await this.errorText(res, 'The MCP server was not deleted'); return; }
+      this.notify('MCP server ' + f.name + ' deleted', 'success');
+      this.closeMcpModal();
+      await this.fetchMcpDefs();
+    } finally { f.saving = false; }
+  },
+  // ---- tabs ----
+  pipeTabs(): { id: string; label: string }[] {
+    const n = this.pipeBriefs.list.length;
+    const tabs = [{ id: 'stages', label: 'Stages' }, { id: 'options', label: 'Options' }, { id: 'briefs', label: n ? 'Briefs (' + n + ')' : 'Briefs' }];
+    if (this.pipeConfig.shown) tabs.push({ id: 'config', label: 'Server config' });
+    return tabs;
+  },
+  pipeShowTab(id: string) { this.pipe.tab = id; },
+  // Arrow keys move between tabs, as a tab list does.
+  pipeTabKey(dir: number) {
+    const ids = this.pipeTabs().map((t: { id: string }) => t.id);
+    const next = ids[(ids.indexOf(this.pipe.tab) + dir + ids.length) % ids.length];
+    this.pipe.tab = next;
+    this.$nextTick(() => document.getElementById('pipe-tab-' + next)?.focus());
+  },
+  // Above the tabs: only what needs attention. The rest is on Options.
+  pipeAlerts(): { key: string; tone: string; text: string }[] {
+    return this.pipe.notes.filter((n: { key: string; tone: string }) => n.key === 'ro' || n.tone === 'tone-danger' || n.tone === 'tone-warn');
+  },
+  pipeInfo(): { key: string; tone: string; text: string }[] {
+    const alerts = this.pipeAlerts();
+    return this.pipe.notes.filter((n: { key: string }) => !alerts.some((a: { key: string }) => a.key === n.key));
+  },
+  // ---- briefs held on the server ----
+  pipeBase(): string { return (this.pipe.kind === 'group' ? '/api/groups/' : '/api/workspaces/') + encodeURIComponent(this.pipe.id) + '/pipeline'; },
+  async loadPipeBriefs() {
+    this.pipeBriefs.list = [];
+    const res = await this.authFetch(this.pipeBase() + '/briefs');
+    // A server from before briefs has no such route: the tab stays empty.
+    if (res.ok) this.pipeBriefs.list = ((await res.json()) as { briefs?: BriefInfo[] }).briefs || [];
+    this.pipeBriefs.rev++;
+  },
+  // The stages (as the dialog has them now) whose members have this focus.
+  pipeFocusUsers(name: string): string[] {
+    const out: string[] = [];
+    for (const r of this.pipe.rows as PipeRow[]) {
+      const members = r.mode === 'own' ? r.members : (r.mode === 'inherited' && r.inherited ? r.inherited.members : []);
+      if (members.some((m: PipeMember) => (m.focus || '') === name)) out.push(r.label);
+    }
+    return out;
+  },
+  // Every brief held for this owner, then every focus a stage uses that has
+  // none: those read the repository's file.
+  pipeBriefRows(): BriefRow[] {
+    const group = this.pipe.kind === 'group';
+    const rows: BriefRow[] = this.pipeBriefs.list.map((b: BriefInfo) => {
+      const own = group || b.source === 'workspace';
+      const users = this.pipeFocusUsers(b.name);
+      const used = users.length ? 'used by ' + users.join(', ') : 'no stage uses it';
+      return {
+        key: b.name + '|' + b.rev + '|' + used + '|' + this.pipe.readOnly, name: b.name, held: true, own,
+        where: own ? 'held here' : 'from ' + (b.source || '').replace('group:', 'group '), tone: own ? 'tone-accent' : 'tone-info',
+        detail: this.briefSize(b.bytes) + ' · saved ' + this.timeAgo(b.created_at) + ' by ' + b.created_by + ' · ' + used,
+        action: this.pipe.readOnly ? 'View' : (own ? 'Edit' : 'Override here'),
+      };
+    });
+    const held = this.pipeBriefs.list.map((b: BriefInfo) => b.name);
+    const seen: string[] = [];
+    for (const r of this.pipe.rows as PipeRow[]) {
+      const members = r.mode === 'own' ? r.members : (r.mode === 'inherited' && r.inherited ? r.inherited.members : []);
+      for (const m of members) {
+        const f = m.focus || '';
+        if (!f || held.includes(f) || seen.includes(f)) continue;
+        seen.push(f);
+        rows.push({
+          key: 'repo|' + f + '|' + this.pipe.readOnly, name: f, held: false, own: false, where: 'repository', tone: 'tone-neutral',
+          detail: 'No brief is held here: read from .skopos/focus/' + f + '.md at the item\'s base commit · used by ' + this.pipeFocusUsers(f).join(', '),
+          action: this.pipe.readOnly ? '' : 'Write here',
+        });
+      }
+    }
+    return rows;
+  },
+  briefSize(n: number): string { return n < 1024 ? n + ' bytes' : (n / 1024).toFixed(1) + ' KB'; },
+  briefBytes(): number { return new TextEncoder().encode(this.pipeBriefs.body.trim()).length; },
+  pipeBriefTooLong(): boolean { return this.briefBytes() > 16384; },
+  pipeBriefDirty(): boolean {
+    const b = this.pipeBriefs;
+    return b.name.trim() !== '' && b.body.trim() !== '' && b.body.trim() !== b.was.trim();
+  },
+  pipeBriefHint(): string {
+    const b = this.pipeBriefs;
+    const size = this.briefSize(this.briefBytes()) + ' of 16 KB';
+    if (this.pipeBriefTooLong()) return size + ': too long';
+    if (b.from) return size + '. This is the text of ' + b.from + '; saving keeps a copy here that wins over it.';
+    return size + '. Saved here it is used from the next run on, in place of the repository\'s file of the same name.';
+  },
+  pipeBriefSaveLabel(): string { return this.pipeBriefs.from ? 'Save here' : 'Save brief'; },
+  pipeBriefHistoryLine(h: BriefInfo): string {
+    return new Date(h.created_at).toLocaleString() + ' · ' + (h.deleted ? 'removed' : this.briefSize(h.bytes)) + ' · ' + h.created_by;
+  },
+  // Opens the editor: a new brief, one held here, a group's (to override
+  // it here) or a focus that reads the repository so far.
+  async pipeBriefOpen(name: string, held: boolean) {
+    if (!name && this.pipe.readOnly) return;
+    const b = this.pipeBriefs;
+    b.name = name; b.nameLocked = !!name; b.body = ''; b.was = ''; b.from = ''; b.history = []; b.confirm = '';
+    if (held) {
+      const res = await this.authFetch(this.pipeBase() + '/briefs/' + encodeURIComponent(name));
+      if (!await this.handleBad(res, 'Could not load the brief')) return;
+      const v = (await res.json()) as BriefInfo & { history?: BriefInfo[] };
+      b.body = v.body || '';
+      const own = this.pipe.kind === 'group' || v.source === 'workspace';
+      // A group's text opened in a workspace: saving it makes a copy here.
+      b.was = own ? b.body : '';
+      b.from = own ? '' : (v.source || '').replace('group:', 'group ');
+      b.history = v.history || [];
+    }
+    b.editing = true;
+    this.$nextTick(() => document.getElementById(name ? 'pipe-brief-body' : 'pipe-brief-name')?.focus());
+  },
+  pipeBriefCancel() { this.pipeBriefs.editing = false; },
+  async pipeBriefSave() {
+    const b = this.pipeBriefs;
+    if (b.saving || this.pipe.readOnly || !this.pipeBriefDirty() || this.pipeBriefTooLong()) return;
+    const name = b.name.trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(name)) { this.notify('A brief\'s name is lowercase letters, digits, - and _', 'error'); return; }
+    b.saving = true;
+    try {
+      const res = await this.authFetch(this.pipeBase() + '/briefs/' + encodeURIComponent(name), { method: 'PUT', headers: { 'X-Skopos-Via': 'dashboard' }, body: JSON.stringify({ body: b.body }) });
+      if (!await this.handleBad(res, 'Brief not saved')) return;
+      this.notify('Brief ' + name + ' saved — used from the next run', 'success');
+      b.editing = false;
+      await this.loadPipeBriefs();
+    } finally { b.saving = false; }
+  },
+  // Two clicks: the first arms the button, the second removes.
+  async pipeBriefDelete(name: string) {
+    const b = this.pipeBriefs;
+    if (this.pipe.readOnly) return;
+    if (b.confirm !== name) { b.confirm = name; this.notify('Press Remove again to remove the brief ' + name + ' held here', 'info'); return; }
+    b.confirm = '';
+    const res = await this.authFetch(this.pipeBase() + '/briefs/' + encodeURIComponent(name), { method: 'DELETE', headers: { 'X-Skopos-Via': 'dashboard' } });
+    if (!await this.handleBad(res, 'Brief not removed')) return;
+    this.notify('Brief ' + name + ' removed', 'success');
+    await this.loadPipeBriefs();
+  },
   // Back to the group's value (or to not set when no group sets it).
   pipeClearStage(stage: string) {
     const r = this.pipeRow(stage);
     if (!r) return;
     r.mode = r.inherited ? 'inherited' : 'unset'; r.members = []; r.policy = ''; r.earlyExit = false; r.timeoutMin = '';
+    if (this.pipe.editing === stage) this.pipe.editing = '';
     this.pipeBump();
   },
   pipeAddMember(stage: string) {
@@ -2901,7 +3269,7 @@ const appState = () => ({
     const stages: Record<string, PipeStage> = {};
     for (const r of this.pipe.rows as PipeRow[]) {
       if (r.mode !== 'own') continue;
-      if (r.members.length === 0) { this.notify(r.label + ': add a runner, or clear the stage', 'error'); return; }
+      if (r.members.length === 0) { this.pipe.tab = 'stages'; this.pipe.editing = r.stage; this.notify(r.label + ': add a runner, or clear the stage', 'error'); return; }
       const st: PipeStage = { members: r.members.map((m: PipeMember) => (m.focus ? { runner: m.runner, focus: m.focus } : { runner: m.runner })) };
       if (r.members.length > 1) {
         if (r.rule && r.policy) st.policy = r.policy;
@@ -3021,7 +3389,7 @@ const appState = () => ({
   // without one each worker uses its own file.
   async loadPipeConfig(kind: string, id: string) {
     const c = this.pipeConfig;
-    c.shown = false; c.status = ''; c.lines = []; c.text = ''; c.was = ''; c.stored = false; c.canEdit = this.canAdmin();
+    c.shown = false; c.status = ''; c.groups = []; c.stageForms = []; c.stagesOpen = false; c.wrapperNames = []; c.was = ''; c.stored = false; c.view = null; c.canEdit = this.canAdmin();
     const base = kind === 'group' ? '/api/groups/' : '/api/workspaces/';
     const res = await this.authFetch(base + encodeURIComponent(id) + '/config');
     // A group's config is its admins' to read; a server from before
@@ -3032,7 +3400,11 @@ const appState = () => ({
     c.wrappers = [];
     try {
       const wres = await this.authFetch('/api/fleet/wrappers');
-      if (wres.ok) c.wrappers = (((await wres.json()) as { wrappers?: WrapperDef[] }).wrappers || []).map((w: WrapperDef) => this.wrapperLine(w));
+      if (wres.ok) {
+        const defs = ((await wres.json()) as { wrappers?: WrapperDef[] }).wrappers || [];
+        c.wrappers = defs.map((w: WrapperDef) => this.wrapperLine(w));
+        c.wrapperNames = defs.map((w: WrapperDef) => w.name);
+      }
     } catch { /* the list is extra */ }
     // The MCP servers a config can name (admins only; older servers have
     // no such route). Never a secret's value: only whether it is set.
@@ -3059,69 +3431,357 @@ const appState = () => ({
   showPipeConfig(kind: string, v: ConfigView) {
     const c = this.pipeConfig;
     c.shown = true;
+    c.view = v;
     c.stored = !!v.config;
-    c.text = c.was = v.config ? JSON.stringify(v.config, null, 2) : '';
+    c.storedRev = v.rev || '';
     const eff = v.effective;
-    const lines: string[] = [];
-    if (kind === 'group') {
-      c.status = v.config ? 'Defaults for the managed workspaces of this group (revision ' + (v.rev || '') + ').' : 'No config at this level.';
-      for (const [k, val] of this.configFields(v.config || {})) lines.push(k + ' = ' + val);
-    } else if (eff && eff.managed) {
-      c.status = 'Managed by the server: every worker takes these from here. Runs record config revision ' + (eff.rev || '') + '.';
-      const sources = eff.sources || {};
-      for (const [k, val] of this.configFields(eff.config || {})) lines.push(k + ' = ' + val + (sources[k] && sources[k] !== 'workspace' ? '   (' + sources[k].replace('group:', 'group ') + ')' : ''));
-      for (const conflict of eff.conflicts || []) lines.push('conflict: ' + conflict);
-      lines.push('every other field has its default');
-    } else {
-      c.status = 'Not managed: each worker uses its own file.';
+    c.conflicts = eff && eff.managed ? (eff.conflicts || []).map((x: string) => 'Conflict: ' + x) : [];
+    if (kind === 'group') c.status = v.config ? 'Defaults for the managed workspaces of this group (revision ' + (v.rev || '') + ').' : 'This group sets no config.';
+    else if (eff && eff.managed) c.status = 'Managed by the server: every worker takes these from here. Runs record config revision ' + (eff.rev || '') + '.';
+    else c.status = 'Not managed: each worker uses its own file.';
+    this.cfgLoad(kind, v);
+  },
+  // ---- the config form ----
+  cfgGet(obj: Record<string, unknown> | null | undefined, key: string): unknown {
+    let cur: unknown = obj;
+    for (const part of key.split('.')) {
+      if (!cur || typeof cur !== 'object') return undefined;
+      cur = (cur as Record<string, unknown>)[part];
     }
-    c.lines = lines;
+    return cur;
+  },
+  cfgText(v: unknown): string {
+    if (v === undefined || v === null) return '';
+    if (Array.isArray(v)) return v.join('\n');
+    return String(v);
+  },
+  // The value a row sends. What does not read as the field's kind goes as
+  // typed: the server's check says what is wrong with it.
+  cfgValue(row: CfgRow): unknown {
+    const text = row.value;
+    if (row.kind === 'lines') return text.split('\n').map((l: string) => l.trim()).filter((l: string) => l !== '');
+    if (row.kind === 'number') return /^\d+$/.test(text.trim()) ? parseInt(text.trim(), 10) : text.trim();
+    if (row.key === 'push.steps') return text === 'true';
+    return text.trim();
+  },
+  // Fills the form from what the owner stores and, for each field it does
+  // not set, what applies instead: its group's value for a managed
+  // workspace, else the default.
+  cfgLoad(kind: string, v: ConfigView) {
+    const c = this.pipeConfig;
+    const own = v.config || {};
+    const eff = v.effective && v.effective.managed ? v.effective : null;
+    const sources = (eff && eff.sources) || {};
+    const open: Record<string, boolean> = {};
+    for (const g of c.groups as CfgGroup[]) open[g.name] = g.open;
+    const groups: CfgGroup[] = [];
+    for (const f of CFG_FIELDS) {
+      const mine = this.cfgGet(own, f.key);
+      const set = mine !== undefined;
+      const src = sources[f.key] || '';
+      const inherited = !!eff && src !== '' && src !== 'workspace' && src !== 'default';
+      const applies = this.cfgText(inherited ? this.cfgGet(eff!.config, f.key) : this.cfgGet(v.defaults || {}, f.key));
+      const row: CfgRow = {
+        ...f, options: f.options || [], placeholder: f.placeholder || '', set, error: '',
+        value: set ? this.cfgText(mine) : applies, applies,
+        from: inherited ? 'the value of ' + src.replace('group:', 'group ') : 'the default' + (applies === '' ? ' (none)' : ''),
+      };
+      let g = groups.find((x: CfgGroup) => x.name === f.group);
+      if (!g) { g = { name: f.group, open: false, rows: [] }; groups.push(g); }
+      g.rows.push(row);
+    }
+    // Folded until opened: each fold's line says what it sets, so the whole
+    // config reads on one screen. A fold stays as the reader left it.
+    groups.forEach((g: CfgGroup) => { g.open = !!open[g.name]; });
+    c.groups = groups;
+    c.managed = kind === 'group' ? true : !!v.config;
+    const stages = (own.stages || {}) as Record<string, unknown>;
+    const stageOpen: Record<string, boolean> = {};
+    for (const st of c.stageForms as CfgStage[]) stageOpen[st.stage] = st.open;
+    c.stageForms = CFG_STAGES.map(([stage, label]: [string, string]) => {
+      const src = sources['stages.' + stage] || '';
+      const from = !!eff && src !== '' && src !== 'workspace' && src !== 'default' ? src.replace('group:', 'group ') : '';
+      return this.cfgStageForm(stage, label, stages[stage], !!stageOpen[stage], from);
+    });
+    c.general = ''; c.stagesError = ''; c.checked = '';
+    c.was = this.cfgFingerprint();
     c.rev++;
   },
-  // A config flattened to "push.kind"-style names, sorted.
-  configFields(cfg: Record<string, unknown>): [string, string][] {
-    const out: [string, string][] = [];
-    for (const k of Object.keys(cfg)) {
-      const val = cfg[k];
-      if ((k === 'push' || k === 'stages') && val && typeof val === 'object') {
-        // push.kind, and one line per stage: stages.implement = {tools, env, …}.
-        for (const pk of Object.keys(val as Record<string, unknown>)) out.push([k + '.' + pk, JSON.stringify((val as Record<string, unknown>)[pk])]);
-      } else out.push([k, JSON.stringify(val)]);
-    }
-    return out.sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  cfgRows(): CfgRow[] { return (this.pipeConfig.groups as CfgGroup[]).flatMap((g: CfgGroup) => g.rows); },
+  // The config as a save sends it: the fields set here, and the stage
+  // blocks. null when a stage's form cannot be read (said in its fold).
+  cfgDoc(): Record<string, unknown> | null {
+    const parts = this.cfgDocParts();
+    return parts.problems.length ? null : parts.doc;
   },
+  // The same with what the form itself could not read as problems: the
+  // rest is still checked by the server, so every problem shows at once.
+  cfgDocParts(): { doc: Record<string, unknown>; problems: CfgProblem[] } {
+    const doc: Record<string, unknown> = {};
+    // A stored field this form has no control for is carried as it is: a
+    // save replaces the whole config and must not drop it.
+    const known = CFG_FIELDS.map((f: CfgField) => f.key);
+    const stored = (this.pipeConfig.view && this.pipeConfig.view.config) || {};
+    for (const k of Object.keys(stored)) {
+      if (k === 'stages') continue;
+      const val = stored[k];
+      if (k === 'push' && val && typeof val === 'object') {
+        for (const pk of Object.keys(val as Record<string, unknown>)) {
+          if (known.includes('push.' + pk)) continue;
+          const inner = (doc.push || {}) as Record<string, unknown>;
+          inner[pk] = (val as Record<string, unknown>)[pk];
+          doc.push = inner;
+        }
+      } else if (!known.includes(k) && k !== 'push') doc[k] = val;
+    }
+    for (const row of this.cfgRows()) {
+      if (!row.set) continue;
+      const parts = row.key.split('.');
+      if (parts.length === 1) doc[row.key] = this.cfgValue(row);
+      else {
+        const inner = (doc[parts[0]] || {}) as Record<string, unknown>;
+        inner[parts[1]] = this.cfgValue(row);
+        doc[parts[0]] = inner;
+      }
+    }
+    const problems: CfgProblem[] = [];
+    const stages: Record<string, unknown> = {};
+    for (const st of this.pipeConfig.stageForms as CfgStage[]) {
+      if (!st.set) continue;
+      const built = this.cfgStageBlock(st);
+      if (built.problem) problems.push({ field: 'stages.' + st.stage, message: built.problem });
+      stages[st.stage] = built.block;
+    }
+    if (Object.keys(stages).length) doc.stages = stages;
+    return { doc, problems };
+  },
+  // A stage's block from its form. What the form cannot read (an
+  // environment line without a name, sandbox settings that are not JSON)
+  // is the problem; the rest of the block is built all the same.
+  cfgStageBlock(st: CfgStage): { block: Record<string, unknown>; problem: string } {
+    const block: Record<string, unknown> = {};
+    let problem = '';
+    const tools = this.boxLines(st.tools);
+    if (tools.length) block.tools = tools;
+    const env = this.boxPairs(st.env, '=');
+    if (env.bad) problem = 'an environment line is written NAME=value; this one is not: ' + env.bad;
+    if (Object.keys(env.pairs).length) block.env = env.pairs;
+    const wrap = st.wraps.filter((w: CfgWrap) => w.wrapper.trim() !== '').map((w: CfgWrap) => {
+      const rule: Record<string, string> = { wrapper: w.wrapper.trim() };
+      for (const k of ['runner', 'kind', 'provider', 'model'] as const) if (w[k].trim()) rule[k] = w[k].trim();
+      return rule;
+    });
+    if (wrap.length) block.wrap = wrap;
+    const settings: Record<string, unknown> = {};
+    const permissions: Record<string, string[]> = {};
+    const allow = this.boxLines(st.allow), deny = this.boxLines(st.deny), dirs = this.boxLines(st.dirs);
+    if (allow.length) permissions.allow = allow;
+    if (deny.length) permissions.deny = deny;
+    if (dirs.length) permissions.additionalDirectories = dirs;
+    if (Object.keys(permissions).length) settings.permissions = permissions;
+    if (st.sandbox.trim() !== '') {
+      let parsed: unknown = null;
+      try { parsed = JSON.parse(st.sandbox); } catch { /* said below */ }
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) settings.sandbox = parsed;
+      else if (!problem) problem = 'the sandbox settings are not a JSON object';
+    }
+    if (Object.keys(settings).length) block.settings = settings;
+    return { block, problem };
+  },
+  // A stage's form from its stored block (undefined = not set here).
+  cfgStageForm(stage: string, label: string, raw: unknown, open: boolean, from: string): CfgStage {
+    const block = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+    let settings = block.settings as unknown;
+    if (typeof settings === 'string') { try { settings = JSON.parse(settings); } catch { settings = {}; } }
+    const set = (settings && typeof settings === 'object' ? settings : {}) as Record<string, unknown>;
+    const perms = (set.permissions || {}) as Record<string, string[]>;
+    const list = (v: unknown): string => (Array.isArray(v) ? v.join('\n') : '');
+    return {
+      stage, label, open, from, set: raw !== undefined && raw !== null, error: '',
+      tools: list(block.tools), env: this.pairsBox(block.env as Record<string, string> | undefined, '='),
+      allow: list(perms.allow), deny: list(perms.deny), dirs: list(perms.additionalDirectories),
+      sandbox: set.sandbox ? JSON.stringify(set.sandbox, null, 2) : '',
+      wraps: ((block.wrap || []) as Record<string, string>[]).map((w: Record<string, string>) => ({ id: ++cfgWrapSeq, wrapper: w.wrapper || '', runner: w.runner || '', kind: w.kind || '', provider: w.provider || '', model: w.model || '' })),
+    };
+  },
+  cfgStage(stage: string): CfgStage | undefined { return (this.pipeConfig.stageForms as CfgStage[]).find((x: CfgStage) => x.stage === stage); },
+  cfgWrapAdd(stage: string) {
+    const st = this.cfgStage(stage);
+    if (!st) return;
+    st.wraps = st.wraps.concat([{ id: ++cfgWrapSeq, wrapper: '', runner: '', kind: '', provider: '', model: '' }]);
+  },
+  cfgWrapRemove(stage: string, id: number) {
+    const st = this.cfgStage(stage);
+    if (!st) return;
+    st.wraps = st.wraps.filter((w: CfgWrap) => w.id !== id);
+    this.cfgTouched();
+  },
+  cfgStageNote(st: CfgStage): string {
+    if (st.set) return 'An empty block is still set: it gives the stage nothing, also where a group gives it something.';
+    return st.from ? 'Not set here: the block of ' + st.from + ' applies.' : 'Not set here: no block comes from the server (a worker\'s own profile applies, if it has one).';
+  },
+  cfgStageSummary(st: CfgStage): string {
+    if (st.error) return '1 problem';
+    if (!st.set) return st.from ? 'from ' + st.from : 'not set here';
+    const block = this.cfgStageBlock(st).block;
+    const parts: string[] = [];
+    if (block.tools) parts.push(this.plural((block.tools as string[]).length, 'tool'));
+    if (block.env) parts.push(this.plural(Object.keys(block.env as object).length, 'variable'));
+    if (block.wrap) parts.push('wrapper ' + (block.wrap as Record<string, string>[]).map((w: Record<string, string>) => w.wrapper).join(', '));
+    if (block.settings) parts.push('settings');
+    return 'set here: ' + (parts.join(', ') || 'nothing given');
+  },
+  cfgStagesBad(): boolean { return this.pipeConfig.stagesError !== '' || (this.pipeConfig.stageForms as CfgStage[]).some((st: CfgStage) => st.error !== ''); },
+  // What would be saved, as text: the form is dirty when it differs.
+  cfgFingerprint(): string {
+    const c = this.pipeConfig;
+    if (this.pipe.kind === 'workspace' && !c.managed) return 'unmanaged';
+    const rows = this.cfgRows().filter((r: CfgRow) => r.set).map((r: CfgRow) => [r.key, JSON.stringify(this.cfgValue(r))]);
+    const stages = (c.stageForms as CfgStage[]).filter((st: CfgStage) => st.set).map((st: CfgStage) => { const b = this.cfgStageBlock(st); return [st.stage, b.block, b.problem]; });
+    return JSON.stringify([rows, stages]);
+  },
+  cfgEmpty(): boolean { return !this.cfgRows().some((r: CfgRow) => r.set) && !(this.pipeConfig.stageForms as CfgStage[]).some((st: CfgStage) => st.set); },
+  // A box ticked: the field starts from what applied. Unticked: it shows
+  // that again.
+  cfgToggle(key: string) {
+    const row = this.cfgRows().find((r: CfgRow) => r.key === key);
+    if (!row) return;
+    if (!row.set) { row.value = row.applies; row.error = ''; }
+    this.cfgTouched();
+    if (row.set) this.$nextTick(() => {
+      const id = row.kind === 'select' ? 'cfg-sel-' : row.kind === 'lines' ? 'cfg-lines-' : 'cfg-';
+      document.getElementById(id + key)?.focus();
+    });
+  },
+  cfgFold(name: string, open: boolean) {
+    if (name === 'stages') { this.pipeConfig.stagesOpen = open; return; }
+    if (name.startsWith('stage:')) { const st = this.cfgStage(name.slice(6)); if (st) st.open = open; return; }
+    const g = (this.pipeConfig.groups as CfgGroup[]).find((x: CfgGroup) => x.name === name);
+    if (g) g.open = open;
+  },
+  cfgRowsOf(row: CfgRow): number { return Math.min(8, Math.max(2, row.value.split('\n').length)); },
+  cfgNote(row: CfgRow): string {
+    if (row.error) return row.error;
+    return row.set ? row.hint : 'Not set here: ' + row.from + ' applies. ' + row.hint;
+  },
+  cfgGroupBad(g: CfgGroup): boolean { return g.rows.some((r: CfgRow) => r.error !== ''); },
+  cfgGroupSummary(g: CfgGroup): string {
+    const bad = g.rows.filter((r: CfgRow) => r.error !== '').length;
+    if (bad) return this.plural(bad, 'problem');
+    const set = g.rows.filter((r: CfgRow) => r.set).map((r: CfgRow) => r.label);
+    return set.length ? 'set here: ' + set.join(', ') : 'nothing set here';
+  },
+  cfgStagesSummary(): string {
+    const forms = this.pipeConfig.stageForms as CfgStage[];
+    const bad = forms.filter((st: CfgStage) => st.error !== '').length + (this.pipeConfig.stagesError ? 1 : 0);
+    if (bad) return this.plural(bad, 'problem');
+    const set = forms.filter((st: CfgStage) => st.set).map((st: CfgStage) => st.label);
+    return set.length ? 'set here: ' + set.join(', ') : 'nothing set here';
+  },
+  cfgState(): string {
+    const c = this.pipeConfig;
+    if (c.checking) return 'Checking…';
+    const bad = this.cfgRows().filter((r: CfgRow) => r.error !== '').length + (c.stageForms as CfgStage[]).filter((st: CfgStage) => st.error !== '').length + (c.stagesError ? 1 : 0) + (c.general ? 1 : 0);
+    if (bad) return this.plural(bad, 'problem') + ' to fix';
+    if (!this.pipeConfigDirty()) return '';
+    return c.checked === this.cfgFingerprint() ? 'Checked: it can be saved' : '';
+  },
+  cfgReset() { if (this.pipeConfig.view) this.cfgLoad(this.pipe.kind, this.pipeConfig.view); },
+  // Every edit schedules a check by the server, so a problem shows next to
+  // its field while the form is still open.
+  cfgTouched() {
+    if (cfgCheckTimer) clearTimeout(cfgCheckTimer);
+    cfgCheckTimer = setTimeout(() => { this.cfgCheck(); }, 600);
+  },
+  cfgProblems(problems: CfgProblem[]) {
+    const c = this.pipeConfig;
+    const rows = this.cfgRows();
+    for (const r of rows) r.error = '';
+    const forms = c.stageForms as CfgStage[];
+    for (const st of forms) st.error = '';
+    c.general = ''; c.stagesError = '';
+    const general: string[] = [];
+    for (const p of problems) {
+      const row = rows.find((r: CfgRow) => r.key === p.field);
+      const st = p.field.startsWith('stages.') ? forms.find((x: CfgStage) => 'stages.' + x.stage === p.field && x.set) : undefined;
+      if (row && row.set) row.error = p.message;
+      else if (st) st.error = (st.error ? st.error + ' ' : '') + p.message;
+      // About the stage blocks, but no one stage: said at their fold.
+      else if (p.field === 'stages') c.stagesError = (c.stagesError ? c.stagesError + ' ' : '') + p.message;
+      else general.push((p.field ? p.field + ': ' : '') + p.message);
+    }
+    c.general = general.join(' ');
+    // A problem is not left inside a closed fold.
+    for (const g of c.groups as CfgGroup[]) if (this.cfgGroupBad(g)) g.open = true;
+    for (const st of forms) if (st.error) { st.open = true; c.stagesOpen = true; }
+    if (c.stagesError) c.stagesOpen = true;
+  },
+  // Asks the server what a save would say. true = no problems.
+  async cfgCheck(): Promise<boolean> {
+    const c = this.pipeConfig;
+    if (!c.canEdit || !c.shown) return false;
+    if ((this.pipe.kind === 'workspace' && !c.managed) || !this.pipeConfigDirty()) { this.cfgProblems([]); return true; }
+    // What the form itself cannot read is a problem of its own; the rest
+    // is checked all the same, so every problem shows at once.
+    const { doc, problems: own } = this.cfgDocParts();
+    const print = this.cfgFingerprint();
+    const seq = ++cfgCheckSeq;
+    c.checking = true;
+    try {
+      const res = await this.authFetch(this.cfgURL() + '/check', { method: 'POST', body: JSON.stringify({ config: doc }) });
+      if (seq !== cfgCheckSeq) return false; // an older answer
+      if (!res.ok) { c.general = 'The check could not run (HTTP ' + res.status + ').'; return false; }
+      const out = (await res.json()) as { problems?: CfgProblem[] };
+      // The form's own word about a stage stands in for the server's.
+      const mine = own.map((p: CfgProblem) => p.field);
+      const problems = own.concat((out.problems || []).filter((p: CfgProblem) => !mine.includes(p.field)));
+      this.cfgProblems(problems);
+      c.checked = problems.length ? '' : print;
+      return problems.length === 0;
+    } finally { if (seq === cfgCheckSeq) c.checking = false; }
+  },
+  cfgURL(): string { return (this.pipe.kind === 'group' ? '/api/groups/' : '/api/workspaces/') + encodeURIComponent(this.pipe.id) + '/config'; },
   pipeConfigHint(): string {
     if (!this.pipeConfig.canEdit) return 'Changing it needs the admin permission (skopos workspace config set).';
     return this.pipe.kind === 'group'
-      ? 'JSON: the fields this group sets for its managed workspaces. Empty and saved removes it.'
-      : 'JSON: the fields this workspace sets; {} manages it with every default. setup, checks and preflight run on its workers, stages says what each stage\u2019s agent is given there, and mcp names the MCP servers its runs get (with mcp_servers allowing their tools). Empty and saved hands it back to the workers\u2019 files.';
+      ? 'A field ticked here is this group\'s value for its managed workspaces. With nothing ticked the group sets no config.'
+      : 'A field ticked here is this workspace\'s own value. The commands and the stage blocks reach a worker only when its file sets server_commands.';
   },
-  pipeConfigDirty(): boolean { return this.pipeConfig.text.trim() !== this.pipeConfig.was.trim(); },
+  pipeConfigDirty(): boolean { return this.pipeConfig.shown && this.cfgFingerprint() !== this.pipeConfig.was; },
+  // What Save does here: remove the stored config (a workspace handed back
+  // to its workers, a group with nothing set), or store the form.
+  cfgRemoves(): boolean {
+    const c = this.pipeConfig;
+    return c.stored && ((this.pipe.kind === 'workspace' && !c.managed) || (this.pipe.kind === 'group' && this.cfgEmpty()));
+  },
   pipeConfigSaveLabel(): string {
-    if (this.pipeConfig.saving) return 'Saving\u2026';
-    return this.pipeConfig.stored && this.pipeConfig.text.trim() === '' ? 'Remove config' : 'Save config';
+    if (this.pipeConfig.saving) return 'Saving…';
+    return this.cfgRemoves() ? 'Remove config' : 'Save config';
   },
   async savePipeConfig() {
     const c = this.pipeConfig;
     if (c.saving || !c.canEdit || !this.pipeConfigDirty()) return;
-    const url = (this.pipe.kind === 'group' ? '/api/groups/' : '/api/workspaces/') + encodeURIComponent(this.pipe.id) + '/config';
-    const text = c.text.trim();
-    let res: Response;
+    if (cfgCheckTimer) { clearTimeout(cfgCheckTimer); cfgCheckTimer = null; }
+    const removes = this.cfgRemoves();
+    // Nothing stored and nothing to store: a group with no field ticked.
+    if (!removes && this.pipe.kind === 'group' && this.cfgEmpty()) { this.notify('Tick a field to set it for this group', 'info'); return; }
     c.saving = true;
     try {
-      if (text === '') {
-        // Emptying the box and pressing "Remove config" is the two steps.
-        res = await this.authFetch(url, { method: 'DELETE' });
+      let res: Response;
+      if (removes) {
+        res = await this.authFetch(this.cfgURL(), { method: 'DELETE' });
       } else {
-        let parsed: unknown;
-        try { parsed = JSON.parse(text); } catch { this.notify('The config is not valid JSON', 'error'); return; }
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) { this.notify('The config is a JSON object of fields', 'error'); return; }
-        res = await this.authFetch(url, { method: 'PUT', body: JSON.stringify({ config: parsed }) });
+        if (!await this.cfgCheck()) { this.notify('The config has problems: see the marked fields', 'error'); return; }
+        // if_rev: a save over someone else's newer config is refused.
+        res = await this.authFetch(this.cfgURL(), { method: 'PUT', body: JSON.stringify({ config: this.cfgDoc(), if_rev: c.storedRev }) });
       }
+      if (res.status === 409) { this.notify('The stored config changed since this form was loaded: reopen the dialog and apply your changes again', 'error'); return; }
       if (!await this.handleBad(res, 'Config not saved')) return;
       const v = (await res.json()) as ConfigView;
+      // The answer to a save carries no defaults: keep the ones loaded.
+      if (!v.defaults && c.view) v.defaults = c.view.defaults;
       this.showPipeConfig(this.pipe.kind, v);
-      this.notify(text === '' ? 'Config removed' : ((v.changed || []).length ? 'Config saved: ' + (v.changed || []).join(', ') : 'Nothing changed'), 'success');
+      this.notify(removes ? 'Config removed' : ((v.changed || []).length ? 'Config saved: ' + (v.changed || []).join(', ') : 'Nothing changed'), 'success');
     } finally {
       c.saving = false;
     }
@@ -4245,14 +4905,14 @@ const appState = () => ({
       pending: { kind: 'inboxpurge', id: this.activeWorkspace + '|' + status },
     };
   },
-  // Role-gated page elements (data-role="root" | "approver"), shown
+  // Role-gated page elements (data-role="root" | "approver" | "admin"), shown
   // imperatively like syncSessionPurge: x-show applies a change in the next
   // animation frame, and where frames don't run (a background or embedded
   // view) the Keys item stayed hidden after whoami said root until a reload.
   syncRoles() {
     document.querySelectorAll('[data-role]').forEach((el) => {
       const role = (el as HTMLElement).dataset.role;
-      const show = role === 'root' ? this.isRoot : role === 'approver' ? this.isApprover : false;
+      const show = role === 'root' ? this.isRoot : role === 'approver' ? this.isApprover : role === 'admin' ? this.canAdmin() : false;
       (el as HTMLElement).style.display = show ? '' : 'none';
     });
   },

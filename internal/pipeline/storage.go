@@ -318,7 +318,7 @@ func (s *Storage) GroupWorkspaces(ctx context.Context, groupID string) ([]string
 
 // DropOrphans removes settings of deleted workspaces and groups.
 func (s *Storage) DropOrphans(ctx context.Context) error {
-	for _, table := range []string{"pipeline_stages", "pipeline_defaults"} {
+	for _, table := range []string{"pipeline_stages", "pipeline_defaults", "pipeline_briefs"} {
 		if _, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 			DELETE FROM %s WHERE (owner_kind = 'workspace' AND owner_id NOT IN (SELECT id FROM workspaces))
 				OR (owner_kind = 'group' AND owner_id NOT IN (SELECT id FROM workspace_groups))`, table)); err != nil {

@@ -28,6 +28,9 @@ func RegisterConfigRoutes(mux *http.ServeMux, h *wsconfig.Handler, f *fleetfile.
 	mux.HandleFunc("GET /api/workspaces/{id}/config", h.GetWorkspace)
 	mux.HandleFunc("PUT /api/workspaces/{id}/config", h.PutWorkspace)
 	mux.HandleFunc("DELETE /api/workspaces/{id}/config", h.DeleteWorkspace)
+	// What a save would be told, field by field, writing nothing.
+	mux.HandleFunc("POST /api/workspaces/{id}/config/check", h.CheckWorkspace)
+	mux.HandleFunc("POST /api/groups/{id}/config/check", h.CheckGroup)
 	// What applies to a workspace now, and what a revision id names (the
 	// config a run was claimed with).
 	mux.HandleFunc("GET /api/workspaces/{id}/config/effective", h.Effective)

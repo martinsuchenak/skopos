@@ -104,7 +104,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	// Optional focus brief (plan members may have one), read at the base.
 	var focus *Skill
 	if run.Focus != "" {
-		f, ferr := repoFocus(ctx, repo.Path, kbase, run.Focus)
+		f, ferr := w.focusBrief(ctx, run, repo, kbase)
 		if ferr != nil {
 			return w.report(ctx, run, false, map[string]any{"reason": "plan: " + ferr.Error()})
 		}
@@ -244,6 +244,7 @@ const (
 	askerWorker         = "worker"
 	subjectPlanRevision = "plan_revision"
 	subjectBase         = "base"
+	subjectHead         = "head"
 )
 
 // askQuestions posts a run's questions to the server, which records them
@@ -732,6 +733,71 @@ func (w *Worker) fixChecksRound(ctx context.Context, run *Run, item *Item, repo 
 // accepted as all-blocking.
 const reviewSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","fail"]},"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["blocking","nit"]},"text":{"type":"string"},"file":{"type":"string"}},"required":["severity","text"]}},"issues":{"type":"array","items":{"type":"string"}},"previous":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"status":{"type":"string"},"note":{"type":"string"}}}}},"required":["verdict","summary"]}`
 
+// qaSchema: the review result, plus what only a tester returns — the
+// scenarios it ran, and "blocked" with questions when it could not test.
+const qaSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","fail","blocked"]},"summary":{"type":"string"},"scenarios":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"result":{"type":"string"},"note":{"type":"string"}}}},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["blocking","nit"]},"text":{"type":"string"},"file":{"type":"string"}},"required":["severity","text"]}},"questions":{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"},"options":{"type":"array","items":{"type":"string"}}},"required":["question"]}},"previous":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"status":{"type":"string"},"note":{"type":"string"}}}}},"required":["verdict","summary"]}`
+
+// qaVerdictBlocked: QA could not test and asks instead.
+const qaVerdictBlocked = "blocked"
+
+type qaScenario struct {
+	Name   string `json:"name"`
+	Result string `json:"result"`
+	Note   string `json:"note"`
+}
+
+type qaResult struct {
+	reviewResult
+	Scenarios []qaScenario        `json:"scenarios"`
+	Questions []itemtext.Question `json:"questions"`
+}
+
+// scenariosSection lists what QA ran, for its section in the item.
+func scenariosSection(scs []qaScenario) string {
+	var b strings.Builder
+	for _, sc := range scs {
+		name := strings.TrimSpace(sc.Name)
+		if name == "" {
+			continue
+		}
+		if b.Len() == 0 {
+			b.WriteString("\n\n**Scenarios**\n")
+		}
+		result := strings.ToLower(strings.TrimSpace(sc.Result))
+		if result == "" {
+			result = "not reported"
+		}
+		fmt.Fprintf(&b, "\n- %s: **%s**", name, result)
+		if note := strings.TrimSpace(sc.Note); note != "" {
+			fmt.Fprintf(&b, " — %s", note)
+		}
+	}
+	return b.String()
+}
+
+// qaAsks is a QA run that could not test: its questions go on record for
+// the approver, and the run fails without findings. The answer starts QA
+// again (inbox retry), not a new implementation.
+func (w *Worker) qaAsks(ctx context.Context, run *Run, summary string, qs []itemtext.Question, head string, setup []Check) error {
+	var asked []itemtext.Question
+	for _, q := range qs {
+		if strings.TrimSpace(q.Text) != "" {
+			asked = append(asked, q)
+		}
+	}
+	if len(asked) == 0 {
+		why := firstLine(summary)
+		if why == "" {
+			why = "it gave no reason"
+		}
+		asked = []itemtext.Question{{Text: "QA could not test this change (" + why + "). Which system should it test on, or what is missing?"}}
+	}
+	w.askQuestions(ctx, run, askerWorker, "", asked, true, subjectHead, head)
+	return w.report(ctx, run, false, map[string]any{
+		"reason": "qa needs an answer: " + asked[0].Text, "summary": summary, "head_sha": head, "setup": setup,
+	})
+}
+
 type reviewResult struct {
 	Verdict  string    `json:"verdict"`
 	Summary  string    `json:"summary"`
@@ -829,6 +895,8 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 	if second || br != nil {
 		phase = "review"
 	}
+	// QA tests the change: its own prompt, on the head set up to run.
+	qa := run.Stage == "qa"
 	account := w.pickAccount(run, log)
 	if account == nil {
 		return w.noAccount(run, "review")
@@ -852,10 +920,31 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 	case br != nil:
 		ref = br.Head
 	}
-	if err := createDetached(ctx, repo.Path, wt, ref); err != nil {
-		return fmt.Errorf("review worktree at %s: %w", ref, err)
+	var qaSetup []Check
+	if qa {
+		// QA works where the change can run: the head with the repository's
+		// setup done — in the clone itself for a branch checkout (where a
+		// local system and the configuration git ignores are), else in a
+		// worktree of its own. Setup runs the branch's code: behind the QA
+		// stage's wrapper, when it has one.
+		head, herr := git(ctx, repo.Path, "rev-parse", ref)
+		if herr != nil {
+			return fmt.Errorf("qa: %s: %w", ref, herr)
+		}
+		head = strings.TrimSpace(head)
+		dir, setup, release, serr := w.headDir(withShellWrap(ctx, w.stageShellWrap(run, account, phase)), run, repo, run.Branch, head, "qa", log)
+		defer release()
+		if serr != nil {
+			return w.report(ctx, run, false, map[string]any{"reason": "qa: preparing the system failed: " + serr.Error(), "setup": setup, "head_sha": head, "retryable": true})
+		}
+		wt, qaSetup = dir, setup
+	} else {
+		if err := createDetached(ctx, repo.Path, wt, ref); err != nil {
+			return fmt.Errorf("review worktree at %s: %w", ref, err)
+		}
+		defer removeWorktree(ctx, repo.Path, wt)
 	}
-	defer removeWorktree(ctx, repo.Path, wt)
+	inClone := qa && repo.Checkout == checkoutBranch
 	base := run.BaseSHA
 	if base == "" {
 		base = "origin/" + repo.DefaultBranch
@@ -873,7 +962,13 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 	// Instructions and knowledge from the default branch's history, never
 	// from the branch under review.
 	base = knowledgeBase(ctx, repo, base)
-	if err := restoreInstructionFiles(ctx, wt, base); err != nil {
+	restore := restoreInstructionFiles
+	if inClone {
+		// The clone holds local files git does not track: only git's own
+		// files go back to the base there.
+		restore = restoreTrackedInstructionFiles
+	}
+	if err := restore(ctx, wt, base); err != nil {
 		return fmt.Errorf("review: restoring instruction files to %s: %w", base, err)
 	}
 
@@ -890,6 +985,7 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 	var skillBodies []Skill
 	var decisions []string
 	brief := ""
+	itemTitle, itemBrief := "", ""
 	if br != nil {
 		// Nobody planned this branch: what it is for is the item's text and
 		// The approver's answers.
@@ -909,6 +1005,8 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 				decisions = append(decisions, sec)
 			}
 		}
+		itemTitle = item.Title
+		itemBrief, _ = splitItem(item.Content)
 		if plan, perr := w.client.GetPlan(ctx, item.PlanID); perr == nil {
 			for _, pi := range plan.Items {
 				if isReviewStep(pi.Title, pi.Phase) {
@@ -923,7 +1021,7 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 	// branch under review). A missing brief fails this member loudly.
 	var focus *Skill
 	if run.Focus != "" {
-		f, ferr := repoFocus(ctx, repo.Path, base, run.Focus)
+		f, ferr := w.focusBrief(ctx, run, repo, base)
 		if ferr != nil {
 			return w.report(ctx, run, false, map[string]any{"reason": run.Stage + ": " + ferr.Error()})
 		}
@@ -945,25 +1043,49 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 		recheck, others, waived = findingRefs(view.Check), findingRefs(view.Others), findingRefs(view.Waived)
 	}
 	reviewed := headSHA(ctx, wt)
-	prompt, err := renderPrompt("review.md", map[string]any{
+	data := map[string]any{
 		"Recheck": recheck, "OthersCheck": others, "Waived": waived,
 		"Base": repo.DefaultBranch, "Stage": run.Stage, "Steps": steps, "Brief": brief, "BranchReview": br != nil,
 		"Instructions": instructions, "Skills": skillBodies, "Focus": focus,
 		"Decisions": decisions, "SecondOpinion": second, "HandoverBase": handoverBase,
 		"Checks": checks, "ChecksFailed": len(failedChecks(checks)) > 0, "ChecksConfigured": len(repo.Checks) > 0,
 		"Skopos": w.skoposPrompt(ctx, run, account, repo.DefaultBranch, run.Branch, phase, "", nil, headSHA(ctx, wt)),
-	})
+	}
+	tmpl, schema, timeout := "review.md", reviewSchema, w.planTimeout(run.WorkspaceID)
+	if qa {
+		tmpl, schema, timeout = "qa.md", qaSchema, w.qaTimeout(run.WorkspaceID)
+		commands, tools := w.stageCommands(run.WorkspaceID, "qa", nil), w.stageTools(run.WorkspaceID, "qa")
+		for k, v := range map[string]any{
+			"Title": itemTitle, "Item": itemBrief, "Branch": run.Branch, "Head": shortSHA(reviewed), "InClone": inClone,
+			"Setup": qaSetup, "SetupConfigured": len(repo.Setup) > 0,
+			"Commands": commands, "Tools": tools, "CanAct": len(commands)+len(tools) > 0,
+		} {
+			data[k] = v
+		}
+	}
+	prompt, err := renderPrompt(tmpl, data)
 	if err != nil {
 		return err
 	}
 	log.Info("reviewing", "account", account.Name, "stage", run.Stage, "branch", run.Branch)
-	res := w.runAgent(ctx, w.agentRun(wt, prompt, reviewSchema, reviewTools, w.planTimeout(run.WorkspaceID), account, run, phase))
+	res := w.runAgent(ctx, w.agentRun(wt, prompt, schema, reviewTools, timeout, account, run, phase))
 	w.addCost(run, res)
 	if err := w.handleAgentOutcome(ctx, run, res, account, phase); err != nil {
 		return err
 	}
 	var rr reviewResult
-	if err := json.Unmarshal(res.Structured, &rr); err != nil || rr.Verdict == "" {
+	var scenarios []qaScenario
+	if qa {
+		var qr qaResult
+		if err := json.Unmarshal(res.Structured, &qr); err != nil || qr.Verdict == "" {
+			return fmt.Errorf("qa returned no verdict: %s", firstLine(res.Text))
+		}
+		if qr.Verdict == qaVerdictBlocked {
+			log.Info("qa could not test and asks", "questions", len(qr.Questions), "cost_usd", res.CostUSD)
+			return w.qaAsks(ctx, run, qr.Summary, qr.Questions, reviewed, qaSetup)
+		}
+		rr, scenarios = qr.reviewResult, qr.Scenarios
+	} else if err := json.Unmarshal(res.Structured, &rr); err != nil || rr.Verdict == "" {
 		return fmt.Errorf("review returned no verdict: %s", firstLine(res.Text))
 	}
 	// What it says about the earlier findings; one that blocks and is not
@@ -1003,7 +1125,7 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 	if run.Focus != "" {
 		heading = run.Stage + " — " + run.Focus + " · " + account.Name
 	}
-	_ = w.client.AppendSection(ctx, run.ItemID, heading, reviewSection(rr, said))
+	_ = w.client.AppendSection(ctx, run.ItemID, heading, reviewSection(rr, said)+scenariosSection(scenarios))
 	log.Info("review finished", "verdict", rr.Verdict, "findings", len(rr.Findings), "still_open", stillOpenBlocking(said), "focus", run.Focus, "cost_usd", res.CostUSD)
 	if !passed {
 		return w.report(ctx, run, false, map[string]any{
@@ -1278,28 +1400,44 @@ func (w *Worker) stageBranchReview(ctx context.Context, run *Run, log *slog.Logg
 }
 
 // checkHead runs the repository's setup and checks at a branch head without
-// touching the branch. A branch checkout uses the clone (held for the run),
-// detached at the head; setup is skipped when the clone is already set up
-// for this branch at this head, and whatever the checks changed is thrown
-// away before the clone goes back to its default branch — files a check
-// writes are not anyone's work. A worktree checkout uses a detached worktree
-// it removes afterwards. A setup failure is returned as the error.
+// touching the branch (headDir says where). A setup failure is returned as
+// the error.
 func (w *Worker) checkHead(ctx context.Context, run *Run, repo *Repo, branch, head string, log *slog.Logger) (checks, setup []Check, err error) {
 	if len(repo.Setup) == 0 && len(repo.Checks) == 0 {
 		return nil, nil, nil
 	}
-	dir := repo.Path
+	dir, setup, release, err := w.headDir(ctx, run, repo, branch, head, "check", log)
+	defer release()
+	if err != nil {
+		return nil, setup, err
+	}
+	w.setPhase(ctx, run, phaseChecks)
+	return w.repoChecks(ctx, repo, dir), setup, nil
+}
+
+// headDir puts a branch head where the worker's commands and a QA agent can
+// work on it, set up, without touching the branch. A branch checkout uses
+// the clone (held for the run), detached at the head; setup is skipped when
+// the clone is already set up for this branch at this head, and whatever
+// was changed there is thrown away before the clone goes back to its
+// default branch — files a check or a test writes are not anyone's work. A
+// worktree checkout uses a detached worktree (named kind-<run>) it removes
+// afterwards. release always has to be called, also after an error; a
+// setup failure is the error, with what setup printed.
+func (w *Worker) headDir(ctx context.Context, run *Run, repo *Repo, branch, head, kind string, log *slog.Logger) (dir string, setup []Check, release func(), err error) {
+	release = func() {}
+	dir = repo.Path
 	needSetup := true
 	if repo.Checkout == checkoutBranch {
-		// The marker tells readyClone, after a worker killed mid-checks,
-		// that the detached, dirty clone is this run's leftovers to throw
-		// away (not someone's work to refuse to touch).
+		// The marker tells readyClone, after a worker killed mid-run, that
+		// the detached, dirty clone is this run's leftovers to throw away
+		// (not someone's work to refuse to touch).
 		setCheckMarker(ctx, repo.Path, true)
 		if _, err := git(ctx, repo.Path, "checkout", "--quiet", "--detach", head); err != nil {
 			setCheckMarker(ctx, repo.Path, false)
-			return nil, nil, fmt.Errorf("checkout %s: %w", shortSHA(head), err)
+			return "", nil, release, fmt.Errorf("checkout %s: %w", shortSHA(head), err)
 		}
-		defer func() {
+		release = func() {
 			// On its own context: a cancelled run still leaves the clone
 			// clean, on its default branch.
 			pctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -1307,16 +1445,21 @@ func (w *Worker) checkHead(ctx context.Context, run *Run, repo *Repo, branch, he
 			if err := discardCheckRun(pctx, repo); err != nil {
 				log.Warn("could not put the clone back on its default branch", "clone", repo.Path, "err", err)
 			}
-		}()
+		}
 		cs := readCloneSetup(ctx, repo.Path)
 		needSetup = cs.Branch != branch || cs.Head != head
 	} else {
-		dir = filepath.Join(w.cfg.StateDir, "worktrees", filepath.Base(repo.Path), "check-"+shortID(run.ID))
+		dir = filepath.Join(w.cfg.StateDir, "worktrees", filepath.Base(repo.Path), kind+"-"+shortID(run.ID))
 		removeWorktree(ctx, repo.Path, dir)
 		if err := createDetached(ctx, repo.Path, dir, head); err != nil {
-			return nil, nil, fmt.Errorf("worktree at %s: %w", shortSHA(head), err)
+			return "", nil, release, fmt.Errorf("worktree at %s: %w", shortSHA(head), err)
 		}
-		defer removeWorktree(ctx, repo.Path, dir)
+		wt := dir
+		release = func() {
+			pctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			removeWorktree(pctx, repo.Path, wt)
+		}
 	}
 	if needSetup && len(repo.Setup) > 0 {
 		if repo.Checkout == checkoutBranch {
@@ -1324,12 +1467,11 @@ func (w *Worker) checkHead(ctx context.Context, run *Run, repo *Repo, branch, he
 		}
 		setup, err = runSetup(ctx, dir, repo.Setup, repo.Path, repo.SetupEnv, w.cfg.TokenEnvs(), w.envFileKeys, repo.setupLimits())
 		if err != nil {
-			return nil, setup, err
+			return dir, setup, release, err
 		}
 		if repo.Checkout == checkoutBranch {
 			writeCloneSetup(ctx, repo.Path, cloneSetup{Branch: branch, Head: head})
 		}
 	}
-	w.setPhase(ctx, run, phaseChecks)
-	return w.repoChecks(ctx, repo, dir), setup, nil
+	return dir, setup, release, nil
 }

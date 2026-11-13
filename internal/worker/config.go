@@ -62,6 +62,8 @@ type Config struct {
 	Bin         string        `toml:"claude_bin"`
 	PlanTimeout time.Duration `toml:"plan_timeout"`
 	ImplTimeout time.Duration `toml:"impl_timeout"`
+	// QATimeout bounds a QA run's agent (30m by default).
+	QATimeout time.Duration `toml:"qa_timeout"`
 	// MCPDeny is the per-deployment deny list (none by default), applied
 	// on top of the hard-coded git/network denials.
 	MCPDeny []string `toml:"mcp_deny"`
@@ -585,6 +587,11 @@ type Repo struct {
 	// SetupEnv is extra environment for setup commands (they run with the
 	// scrubbed environment — e.g. a private registry token via ${VAR}).
 	SetupEnv map[string]string `toml:"setup_env"`
+	// RedactFiles are files in the clone, relative to it, that hold
+	// credentials an agent may read (a QA run signing in to a test system):
+	// KEY=VALUE lines, as an env file. The values of the credential-like
+	// keys never appear in a run's log (redact.go). Local to this worker.
+	RedactFiles []string `toml:"redact_files"`
 	// SetupTimeout bounds all the setup commands together (0 = 10m).
 	SetupTimeout time.Duration `toml:"setup_timeout"`
 	// CheckTimeout bounds all the checks together (0 = 30m).
@@ -792,6 +799,9 @@ func (c *Config) Default(home string) error {
 		if c.ImplTimeout != 0 {
 			c.globalSet = append(c.globalSet, "impl_timeout")
 		}
+		if c.QATimeout != 0 {
+			c.globalSet = append(c.globalSet, "qa_timeout")
+		}
 		if len(c.MCPServers) > 0 {
 			c.globalSet = append(c.globalSet, "mcp_servers")
 		}
@@ -801,6 +811,9 @@ func (c *Config) Default(home string) error {
 	}
 	if c.ImplTimeout == 0 {
 		c.ImplTimeout = 90 * time.Minute
+	}
+	if c.QATimeout == 0 {
+		c.QATimeout = 30 * time.Minute
 	}
 	// runners defaults to every runner the accounts feed: adding a runner
 	// is adding an account (an explicit list still restricts what claims
@@ -956,6 +969,11 @@ func (c *Config) Default(home string) error {
 		}
 		for k, v := range r.SetupEnv {
 			r.SetupEnv[k] = expandHome(expandEnvRefs(v), home)
+		}
+		for _, f := range r.RedactFiles {
+			if clean := filepath.ToSlash(filepath.Clean(f)); strings.TrimSpace(f) == "" || filepath.IsAbs(f) || clean == ".." || strings.HasPrefix(clean, "../") {
+				return fmt.Errorf("repo %s: redact_files %q must be a path inside the clone, relative to it", ws, f)
+			}
 		}
 	}
 	for _, a := range c.FileAccounts() {

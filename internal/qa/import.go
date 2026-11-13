@@ -99,12 +99,15 @@ func (s *Service) importAll(ctx context.Context, itemID, workspaceID, content st
 	for i, sec := range secs {
 		switch {
 		case itemtext.IsQuestions(sec):
-			asker, label := AskerPlanner, itemtext.QuestionsLabel(sec)
-			if itemtext.HeadingIs(sec, "Questions — implementer") {
+			asker, label, stage := AskerPlanner, itemtext.QuestionsLabel(sec), ""
+			switch {
+			case itemtext.HeadingIs(sec, "Questions — implementer"):
 				asker, label = AskerImplementer, ""
+			case itemtext.HeadingIs(sec, "Questions — QA"):
+				asker, label, stage = AskerWorker, "", StageQA
 			}
 			if _, err := s.Ask(ctx, AskInput{
-				WorkspaceID: workspaceID, ItemID: itemID, Asker: asker, Label: label,
+				WorkspaceID: workspaceID, ItemID: itemID, Asker: asker, Label: label, Stage: stage,
 				SubjectKind: SubjectNone, Source: SourceImported, Questions: itemtext.ParseQuestions(sec.Body), At: tick(),
 			}); err != nil {
 				return err
@@ -167,12 +170,15 @@ func (s *Service) ImportAppended(ctx context.Context, itemID, workspaceID, appen
 		if !itemtext.IsQuestions(sec) {
 			continue
 		}
-		asker, label := AskerPlanner, itemtext.QuestionsLabel(sec)
-		if itemtext.HeadingIs(sec, "Questions — implementer") {
+		asker, label, stage := AskerPlanner, itemtext.QuestionsLabel(sec), ""
+		switch {
+		case itemtext.HeadingIs(sec, "Questions — implementer"):
 			asker, label = AskerImplementer, ""
+		case itemtext.HeadingIs(sec, "Questions — QA"):
+			asker, label, stage = AskerWorker, "", StageQA
 		}
 		if _, err := s.Ask(ctx, AskInput{
-			WorkspaceID: workspaceID, ItemID: itemID, Asker: asker, Label: label, SubjectKind: SubjectNone,
+			WorkspaceID: workspaceID, ItemID: itemID, Asker: asker, Label: label, Stage: stage, SubjectKind: SubjectNone,
 			Blocking: false, Source: SourceWorker, Questions: itemtext.ParseQuestions(sec.Body),
 		}); err != nil {
 			return err

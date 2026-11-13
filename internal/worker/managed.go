@@ -34,6 +34,7 @@ type managedWS struct {
 	// planTimeout, implTimeout, mcpDeny, mcpServers: worker-wide in the
 	// file, per workspace on the server.
 	planTimeout, implTimeout time.Duration
+	qaTimeout                time.Duration
 	mcpDeny, mcpServers      []string
 	// local: the command fields this worker keeps from its own file
 	// (worker.server_commands is off) although the server sets them.
@@ -144,6 +145,10 @@ func (c *Config) mergeManaged(ws string, eff *wsconfig.Effective) (*managedWS, e
 	r.Push.Steps = &steps
 	m.repo = &r
 	m.planTimeout, m.implTimeout = full.PlanTimeout.D(), full.ImplTimeout.D()
+	// A server from before the QA timeout leaves it out: the file's applies.
+	if full.QATimeout != nil {
+		m.qaTimeout = full.QATimeout.D()
+	}
 	// The file's own deny list stays in force on top of the workspace's:
 	// it is this host's operator saying what no run here may call, and a
 	// deny list only ever narrows.
@@ -216,6 +221,13 @@ func (w *Worker) planTimeout(ws string) time.Duration {
 		return m.planTimeout
 	}
 	return w.cfg.PlanTimeout
+}
+
+func (w *Worker) qaTimeout(ws string) time.Duration {
+	if m := w.managedFor(ws); m != nil && m.qaTimeout > 0 {
+		return m.qaTimeout
+	}
+	return w.cfg.QATimeout
 }
 
 func (w *Worker) implTimeout(ws string) time.Duration {

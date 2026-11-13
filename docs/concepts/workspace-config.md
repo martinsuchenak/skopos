@@ -14,8 +14,8 @@ one keeps using each worker's file.
 | On the server | In each worker's file |
 |---|---|
 | `default_branch`, `branch_prefix`, `branch_template`, `checkout`, `protected_branches` | `id`, `state_dir`, the server URL and the worker's key |
-| `setup`, `checks`, `check_fix_rounds`, `preflight`, `preflight_interval` | per repo: the clone's `path`, `setup_env`, `push.token_env` |
-| `setup_timeout`, `check_timeout`, `quiet_timeout`, `plan_timeout`, `impl_timeout` | accounts: name, kind, credentials, priority |
+| `setup`, `checks`, `check_fix_rounds`, `preflight`, `preflight_interval` | per repo: the clone's `path`, `setup_env`, `push.token_env`, `redact_files` |
+| `setup_timeout`, `check_timeout`, `quiet_timeout`, `plan_timeout`, `impl_timeout`, `qa_timeout` | accounts: name, kind, credentials, priority |
 | `push.kind`, `push.remote_url`, `push.pull_request`, `push.steps` | `contained_by`, `server_commands`, `auto_upgrade` |
 | `mcp_deny`, `mcp_servers`; `mcp`: which MCP servers the runs get | `mcp_config`, for workspaces whose config sets no `mcp` |
 | `stages`: each stage's tools, env and settings, and which wrapper goes around it | what contains a stage on this host: `contained_by`, a profile's `wrapper` and sandbox settings; `vars` |
@@ -54,8 +54,21 @@ skopos workspace config set --workspace github.com/you/repo \
   takes.
 - **`skopos workspace config clear`** removes the config: the workspace is
   no longer managed and its workers go back to their own files.
-- **In the dashboard:** Workspaces → Pipeline shows the config under the
-  pipeline, and an admin can edit the stored config there as JSON.
+- **In the dashboard:** Workspaces → Pipeline → **Server config** is a form
+  with one control per field, in folds (branches, the commands the workers
+  run, timeouts, push and pull requests, MCP), and a form per stage for
+  the stage blocks. The one JSON box left is a stage's sandbox settings.
+  - **Hold this workspace's config on the server** makes the workspace
+    managed; unticked and saved, it goes back to its workers' files.
+  - **A field is set here only when its box is ticked.** Unticked, it shows
+    what applies instead and where that comes from: a group, or the default.
+    A list ticked and left empty is set to nothing, which is not the same
+    as not set.
+  - **Every edit is checked by the server** before anything is saved. Each
+    problem shows under its field, all at once, and its fold opens. Save
+    stores the config only when the check finds nothing.
+  - **A config someone else changed** since the form was loaded is not
+    overwritten: the save is refused and says so.
 
 ### Groups
 
@@ -69,7 +82,8 @@ A group can hold a config too: `skopos group config set --group acme …`.
   the workspaces that have a config of their own, so adding a pattern to a
   group never switches a dozen repositories at once. A workspace becomes
   managed by saving a config for it, even one that sets nothing:
-  `skopos workspace config set --workspace <id>`, or `{}` in the dashboard.
+  `skopos workspace config set --workspace <id>`, or the switch on the
+  dashboard's Server config tab.
 - **Two groups may not set the same field** for a workspace both contain:
   the second save is refused. If a membership change creates that later,
   the first group by name keeps the field and the conflict is shown.
@@ -117,7 +131,11 @@ operator of a host can always forbid a tool there.
 
 ## Stages
 
-A stage block says what a stage's agent is given beyond the defaults:
+A stage block says what a stage's agent is given beyond the defaults. In
+the dashboard it is a form, one fold per stage under Pipeline → Server
+config → **Stage blocks**: extra tools, environment, the wrapper by runner,
+and the permission rules each as fields. Only the agent CLI's own sandbox
+settings are JSON, passed through as they are. From the CLI:
 
 ```sh
 skopos workspace config set \
@@ -267,6 +285,16 @@ keep such a run from starting, the policy needs a rule with `executor`.
 The MCP servers a workspace's runs may use (a tool router, a search
 service) can be defined on the server, with their credentials, and given to
 workspaces by name.
+
+**In the dashboard:** Workspaces → **MCP servers for runs** lists the
+definitions (admins only), with whether each secret has a value and which
+configs name the server. **New MCP server** and **Edit** open its form:
+name, kind (http or command), URL and headers or command and environment,
+and the workspaces that may be given it. A credential is written as
+`${secret:NAME}`; once the server is saved, the form lists the secrets it
+names and takes each value. A value is sent to the server and never shown
+again. A workspace gets a server by naming it under Pipeline → Server
+config → MCP.
 
 ```sh
 # define the server; its credential is named, not written
@@ -627,9 +655,11 @@ skopos workspace config import --from a.toml --from b.toml --runners --yes
 | Method | Path | |
 |---|---|---|
 | `GET` `PUT` `DELETE` | `/api/workspaces/{id}/config` | a workspace's config |
+| `POST` | `/api/workspaces/{id}/config/check` | what a save would be told, field by field; nothing is written |
 | `GET` | `/api/workspaces/{id}/config/effective` | what applies now |
 | `GET` | `/api/workspaces/{id}/config/{rev}` | what a revision names |
 | `GET` `PUT` `DELETE` | `/api/groups/{id}/config` | a group's config |
+| `POST` | `/api/groups/{id}/config/check` | the same check for a group's config |
 | `GET` | `/api/fleet/config` | the runner and wrapper definitions and their revision |
 | `GET` | `/api/fleet/runners` | the runner definitions with their revisions |
 | `PUT` `DELETE` | `/api/fleet/runners/{name}` | one runner definition |

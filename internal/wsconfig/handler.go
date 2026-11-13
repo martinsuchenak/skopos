@@ -1,6 +1,7 @@
 package wsconfig
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -112,6 +113,37 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request, kind string) {
 		return
 	}
 	rest.RespondJSON(w, http.StatusOK, v)
+}
+
+// checkInput is the body of a check: the config as a save would send it,
+// read field by field (so one bad value does not hide the others).
+type checkInput struct {
+	Config json.RawMessage `json:"config"`
+}
+
+// CheckWorkspace handles POST /api/workspaces/{id}/config/check.
+func (h *Handler) CheckWorkspace(w http.ResponseWriter, r *http.Request) {
+	h.check(w, r, KindWorkspace)
+}
+
+// CheckGroup handles POST /api/groups/{id}/config/check.
+func (h *Handler) CheckGroup(w http.ResponseWriter, r *http.Request) { h.check(w, r, KindGroup) }
+
+func (h *Handler) check(w http.ResponseWriter, r *http.Request, kind string) {
+	if !h.authorized(w, r) {
+		return
+	}
+	var in checkInput
+	if err := rest.DecodeJSONStrict(w, r, &in); err != nil || len(in.Config) == 0 {
+		rest.RespondError(w, http.StatusBadRequest, `the body is {"config": {…}}: the config a save would send`)
+		return
+	}
+	res, err := h.service.Check(r.Context(), kind, r.PathValue("id"), in.Config)
+	if err != nil {
+		respondError(w, err)
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, res)
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request, kind string) {

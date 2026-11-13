@@ -942,133 +942,446 @@
                         </li>
                     </template>
                 </ul>
+
+            <!-- MCP servers the pipeline's agents can be given: defined once
+                 for the fleet, named by a workspace's config. Admins only;
+                 a secret's value is set here and never read back. -->
+            <section class="mt-10" data-role="admin" style="display: none" aria-labelledby="mcp-servers-title">
+                <div class="mb-4 flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <h2 id="mcp-servers-title" class="mb-1 text-lg font-semibold">MCP servers for runs</h2>
+                        <p class="max-w-2xl text-sm text-zinc-400">
+                            Servers the pipeline's agents can be given. A workspace's config names the ones its runs get
+                            (Pipeline → Server config → MCP). A credential is a secret kept on the server: its value is set
+                            here and never shown again.
+                        </p>
+                    </div>
+                    <button type="button" @click="openMcpModal('')" class="btn btn-primary btn-sm"><span aria-hidden="true">+</span> New MCP server</button>
+                </div>
+                <p x-show="mcpDefs.length === 0" class="empty-state">No MCP servers are defined. Until a workspace's config names one, each worker's own <code class="font-mono">mcp_config</code> applies.</p>
+                <ul class="space-y-3" x-show="mcpDefs.length > 0">
+                    <template x-for="m in mcpRows()" :key="m.key">
+                        <li class="card p-4">
+                            <div class="flex flex-wrap items-start justify-between gap-2">
+                                <div class="min-w-0">
+                                    <div class="flex flex-wrap items-baseline gap-2">
+                                        <span class="font-mono font-medium text-zinc-100" x-text="m.name"></span>
+                                        <span class="badge tone-neutral" x-text="m.type"></span>
+                                    </div>
+                                    <p class="mt-1 break-all font-mono text-xs text-zinc-300" x-text="m.target"></p>
+                                    <p class="mt-1 text-xs text-zinc-400" x-text="m.scope"></p>
+                                    <div class="mt-2 flex flex-wrap gap-1.5" x-show="m.secrets.length">
+                                        <template x-for="s in m.secrets" :key="m.name + '|' + s.name + '|' + s.set">
+                                            <span class="badge" :class="s.set ? 'tone-success' : 'tone-warn'" x-text="s.name + (s.set ? ': set' : ': not set')"></span>
+                                        </template>
+                                    </div>
+                                </div>
+                                <div class="flex flex-wrap gap-1">
+                                    <button type="button" @click="openMcpModal(m.name)" class="btn btn-sm btn-ghost" :aria-label="'Edit the MCP server ' + m.name">Edit</button>
+                                </div>
+                            </div>
+                        </li>
+                    </template>
+                </ul>
+            </section>
             </section>
 
+
+    <!-- An MCP server definition: where it is, which workspaces may be given
+         it, and the values of the secrets it names. The definition and each
+         secret are saved on their own. -->
+    {{template "modal-open" (dict "ID" "mcp-modal" "Show" "mcpForm.open" "Close" "closeMcpModal()" "Size" "max-w-2xl")}}
+            <h2 id="mcp-modal-title" class="modal-title" x-text="mcpForm.editing ? 'MCP server · ' + mcpForm.name : 'New MCP server'"></h2>
+            <form @submit.prevent="saveMcpDef()" class="space-y-4">
+                <div class="flex flex-wrap gap-3">
+                    <div class="min-w-0 flex-1">
+                        <label class="lbl" for="mcp-name">Name <span aria-hidden="true">*</span></label>
+                        <input id="mcp-name" type="text" x-model="mcpForm.name" class="fld font-mono" placeholder="browser" autocomplete="off" aria-required="true" :disabled="mcpForm.editing" aria-describedby="mcp-name-help" />
+                        <p id="mcp-name-help" class="mt-1 text-xs text-zinc-400">What a config's <code class="font-mono">mcp</code> field names, and the server's name for the agent: <code class="font-mono">mcp__&lt;name&gt;</code>.</p>
+                    </div>
+                    <div class="w-44">
+                        <label class="lbl" for="mcp-type">Kind</label>
+                        <select id="mcp-type" x-model="mcpForm.type" class="fld">
+                            <option value="http">http: the agent calls a URL</option>
+                            <option value="command">command: runs on the worker</option>
+                        </select>
+                    </div>
+                </div>
+                <div x-show="mcpForm.type === 'http'" class="space-y-4">
+                    <div>
+                        <label class="lbl" for="mcp-url">URL</label>
+                        <input id="mcp-url" type="text" x-model="mcpForm.url" class="fld font-mono" placeholder="https://mcp.example.com/mcp" autocomplete="off" spellcheck="false" />
+                    </div>
+                    <div>
+                        <label class="lbl" for="mcp-headers">Headers (one per line, optional)</label>
+                        <textarea id="mcp-headers" rows="2" x-model="mcpForm.headers" class="fld font-mono text-xs" spellcheck="false" placeholder="Authorization: Bearer ${secret:TOKEN}" aria-describedby="mcp-secret-help"></textarea>
+                    </div>
+                </div>
+                <div x-show="mcpForm.type === 'command'" class="space-y-4">
+                    <div>
+                        <label class="lbl" for="mcp-command">Command (one argument per line)</label>
+                        <textarea id="mcp-command" rows="3" x-model="mcpForm.command" class="fld font-mono text-xs" spellcheck="false" placeholder="npx&#10;@playwright/mcp@latest&#10;--headless" aria-describedby="mcp-command-help"></textarea>
+                        <p id="mcp-command-help" class="mt-1 text-xs text-zinc-400">Runs on the worker's host, so a worker takes it only when its file sets <code class="font-mono">server_commands</code>. <code class="font-mono">${NAME}</code> is filled in from the worker's <code class="font-mono">vars</code>.</p>
+                    </div>
+                    <div>
+                        <label class="lbl" for="mcp-env">Environment (NAME=value per line, optional)</label>
+                        <textarea id="mcp-env" rows="2" x-model="mcpForm.env" class="fld font-mono text-xs" spellcheck="false" placeholder="API_TOKEN=${secret:TOKEN}" aria-describedby="mcp-secret-help"></textarea>
+                    </div>
+                </div>
+                <p id="mcp-secret-help" class="text-xs text-zinc-400">A credential is written as <code class="font-mono">${secret:NAME}</code>, never as its value: the value is set below once the server is saved.</p>
+                <div>
+                    <label class="lbl" for="mcp-workspaces">Workspaces that may be given it (one pattern per line)</label>
+                    <textarea id="mcp-workspaces" rows="2" x-model="mcpForm.workspaces" class="fld font-mono text-xs" spellcheck="false" placeholder="github.com/acme/*" aria-describedby="mcp-workspaces-help"></textarea>
+                    <p id="mcp-workspaces-help" class="mt-1 text-xs text-zinc-400"><code class="font-mono">*</code> alone means every workspace. Required when the server names a secret: its credentials go to every worker that runs one of these workspaces.</p>
+                </div>
+                <p x-show="mcpForm.error" class="field-error" role="alert" x-text="mcpForm.error"></p>
+                <div class="modal-actions">
+                    <button type="button" x-show="mcpForm.editing" @click="deleteMcpDef()" class="btn btn-ghost btn-bad mr-auto" :disabled="mcpForm.saving" x-text="mcpForm.confirm ? 'Press again to delete' : 'Delete'"></button>
+                    <button type="button" @click="closeMcpModal()" class="btn">Close</button>
+                    <button type="submit" class="btn btn-primary" :disabled="mcpForm.saving" x-text="mcpForm.saving ? 'Saving…' : (mcpForm.editing ? 'Save' : 'Create')"></button>
+                </div>
+            </form>
+            <!-- The secrets the saved definition names. A value goes in and
+                 never comes back: the list only says whether one is set. -->
+            <section x-show="mcpForm.editing && mcpForm.secrets.length" class="mt-5 border-t border-zinc-700 pt-4" aria-labelledby="mcp-secrets-title">
+                <h3 id="mcp-secrets-title" class="text-sm font-semibold text-zinc-200">Secrets</h3>
+                <p class="mt-1 text-xs text-zinc-400">A run goes without this server until every secret it names has a value. A value is at least 8 characters, on one line.</p>
+                <ul class="mt-2 space-y-2">
+                    <template x-for="s in mcpForm.secrets" :key="s.name + '|' + mcpForm.rev">
+                        <li class="flex flex-wrap items-end gap-2">
+                            <div class="min-w-0 flex-1">
+                                <label class="lbl" :for="'mcp-secret-' + s.name"><span class="font-mono" x-text="s.name"></span> <span class="ml-1 badge" :class="s.set ? 'tone-success' : 'tone-warn'" x-text="s.set ? 'set' : 'not set'"></span></label>
+                                <input :id="'mcp-secret-' + s.name" type="password" x-model="s.value" class="fld font-mono" autocomplete="new-password" :placeholder="s.set ? 'A new value replaces the one set' : 'The value'" />
+                            </div>
+                            <button type="button" class="btn btn-sm" @click="setMcpSecret(s.name)" :disabled="mcpForm.saving" :aria-label="'Set the value of the secret ' + s.name">Set</button>
+                            <button type="button" class="btn btn-sm btn-ghost btn-bad" x-show="s.set" @click="unsetMcpSecret(s.name)" :disabled="mcpForm.saving" :aria-label="'Remove the value of the secret ' + s.name">Remove value</button>
+                        </li>
+                    </template>
+                </ul>
+            </section>
+    {{template "modal-close"}}
 
     <!-- Pipeline settings: which agents run each stage, for a workspace (its
          own values override its groups' per stage) or a group (defaults its
          workspaces inherit). Rows re-render via pipe.rev (CSP build). -->
     {{template "modal-open" (dict "ID" "pipe-modal" "Show" "pipe.open" "Close" "closePipeline()" "Size" "max-w-3xl")}}
             <h2 id="pipe-modal-title" class="modal-title">Pipeline · <span x-text="pipe.label"></span></h2>
-            <p class="mb-3 text-sm text-zinc-400">Which agents run each stage. Several agents are allowed on plan, review and QA; add a focus to give an agent a brief from <code class="font-mono">.skopos/focus/&lt;name&gt;.md</code>. Changes apply from the next stage.</p>
+            <!-- Problems only up here (read-only, conflicts, runners nothing
+                 offers or the policy refuses); what merely applies is on the
+                 Options tab. -->
             <ul class="mb-3 space-y-1" aria-live="polite">
-                <template x-for="n in pipe.notes" :key="n.key + '|' + pipe.rev">
+                <template x-for="n in pipeAlerts()" :key="n.key + '|' + pipe.rev">
                     <li class="chip" :class="n.tone" x-text="n.text"></li>
                 </template>
             </ul>
             <datalist id="pipe-runners">
                 <template x-for="r in pipe.runnerOptions" :key="'ro|' + r"><option :value="r"></option></template>
             </datalist>
-            <form @submit.prevent="savePipeline()">
-                <ul class="space-y-2">
-                    <template x-for="row in pipe.rows" :key="row.stage + '|' + pipe.rev">
-                        <li class="rounded-lg border border-zinc-800 p-3">
-                            <div class="flex flex-wrap items-center justify-between gap-2">
-                                <div class="min-w-0">
-                                    <span class="font-medium text-zinc-100" x-text="row.label"></span>
-                                    <span class="ml-1 text-xs text-zinc-400" x-text="pipeRowHint(row)"></span>
-                                </div>
-                                <div class="flex flex-wrap gap-1">
-                                    <button type="button" x-show="row.mode === 'inherited'" @click="pipeOverride(row.stage)" class="btn btn-sm btn-ghost" :aria-label="'Override ' + row.label + ' here'">Override</button>
-                                    <button type="button" x-show="row.mode === 'unset'" @click="pipeSetHere(row.stage)" class="btn btn-sm btn-ghost" :aria-label="'Set ' + row.label">Set</button>
-                                    <button type="button" x-show="row.mode === 'own'" @click="pipeClearStage(row.stage)" class="btn btn-sm btn-ghost" :aria-label="(row.inherited ? 'Use the group value for ' : 'Clear ') + row.label" x-text="row.inherited ? 'Use group' : 'Clear'"></button>
-                                </div>
-                            </div>
-                            <p x-show="row.mode === 'inherited'" class="mt-1 text-sm text-zinc-300" x-text="pipeStageText(row.inherited)"></p>
-                            <div x-show="row.mode === 'own'" class="mt-2 space-y-2">
-                                <div class="flex flex-wrap gap-1.5">
-                                    <template x-for="m in row.members" :key="row.stage + '|' + m.focus + '@' + m.runner + '|' + pipe.rev">
-                                        <span class="chip tone-accent inline-flex items-center gap-1">
-                                            <span class="font-mono" x-text="pipeMemberLabel(m)"></span>
-                                            <button type="button" @click="pipeRemoveMember(row.stage, m.runner, m.focus)" class="rounded px-1 hover:bg-zinc-700" :aria-label="'Remove ' + pipeMemberLabel(m) + ' from ' + row.label">×</button>
-                                        </span>
-                                    </template>
-                                </div>
-                                <div x-show="pipeCanAdd(row)" class="flex flex-wrap items-end gap-2">
-                                    <div class="w-full min-w-0 sm:w-auto sm:flex-1">
-                                        <label class="lbl" :for="'pipe-runner-' + row.stage">Runner</label>
-                                        <input :id="'pipe-runner-' + row.stage" type="text" list="pipe-runners" x-model="row.addRunner" class="fld" placeholder="claude" autocomplete="off" />
+            <div class="tabs" role="tablist" aria-label="Pipeline settings">
+                <template x-for="t in pipeTabs()" :key="t.id + '|' + t.label">
+                    <button type="button" class="tab" role="tab" :id="'pipe-tab-' + t.id" :aria-selected="pipe.tab === t.id ? 'true' : 'false'" :aria-controls="'pipe-panel-' + t.id" :tabindex="pipe.tab === t.id ? 0 : -1" @click="pipeShowTab(t.id)" @keydown.arrow-right.prevent="pipeTabKey(1)" @keydown.arrow-left.prevent="pipeTabKey(-1)" x-text="t.label"></button>
+                </template>
+            </div>
+            <p x-show="pipeDirtyElsewhere()" class="mb-2 text-xs text-amber-400" role="status">Stages or Options have changes that are not saved yet. <button type="button" class="underline" @click="pipeShowTab('stages')">Go back to save them</button></p>
+            <form @submit.prevent="savePipeline()" x-show="pipe.tab === 'stages' || pipe.tab === 'options'">
+                <!-- Stages: one line per stage; only the stage being edited
+                     shows its form. -->
+                <div x-show="pipe.tab === 'stages'" id="pipe-panel-stages" role="tabpanel" aria-labelledby="pipe-tab-stages" class="tab-panel">
+                    <p class="mb-2 text-xs text-zinc-500">Which agents run each stage. Changes apply from the next stage.</p>
+                    <ul class="divide-y divide-zinc-800 rounded-lg border border-zinc-800">
+                        <template x-for="row in pipe.rows" :key="row.stage + '|' + pipe.rev">
+                            <li class="px-3 py-2">
+                                <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                    <div class="w-36 shrink-0">
+                                        <span class="font-medium text-zinc-100" x-text="row.label"></span>
+                                        <span class="block text-[11px] text-zinc-500" x-text="pipeRowHint(row)"></span>
                                     </div>
-                                    <div class="min-w-0 flex-1 sm:w-36 sm:flex-none" x-show="row.multi">
-                                        <label class="lbl" :for="'pipe-focus-' + row.stage">Focus (optional)</label>
-                                        <input :id="'pipe-focus-' + row.stage" type="text" x-model="row.addFocus" class="fld" placeholder="security" autocomplete="off" />
+                                    <div class="min-w-0 flex-1">
+                                        <p x-show="row.mode === 'inherited'" class="truncate text-sm text-zinc-300" x-text="pipeStageText(row.inherited)"></p>
+                                        <div x-show="row.mode === 'own'" class="flex flex-wrap items-center gap-1.5">
+                                            <template x-for="m in row.members" :key="row.stage + '|' + m.focus + '@' + m.runner + '|' + pipe.rev">
+                                                <span class="chip tone-accent inline-flex items-center gap-1">
+                                                    <span class="font-mono" x-text="pipeMemberLabel(m)"></span>
+                                                    <button type="button" @click="pipeRemoveMember(row.stage, m.runner, m.focus)" class="rounded px-1 hover:bg-zinc-700" :aria-label="'Remove ' + pipeMemberLabel(m) + ' from ' + row.label">×</button>
+                                                </span>
+                                            </template>
+                                            <span x-show="row.members.length === 0" class="text-xs text-amber-400">add a runner</span>
+                                            <span x-show="pipeRuleText(row)" class="text-xs text-zinc-500" x-text="pipeRuleText(row)"></span>
+                                        </div>
                                     </div>
-                                    <button type="button" @click="pipeAddMember(row.stage)" class="btn btn-sm" :aria-label="'Add agent to ' + row.label">Add</button>
-                                </div>
-                                <div x-show="pipeShowGroupOptions(row)" class="flex flex-wrap items-end gap-3">
-                                    <div x-show="row.rule">
-                                        <label class="lbl" :for="'pipe-policy-' + row.stage">Decision</label>
-                                        <select :id="'pipe-policy-' + row.stage" x-model="row.policy" class="fld">
-                                            <option value="">Any blocking finding fails (default)</option>
-                                            <option value="majority">Majority</option>
-                                            <option value="all-pass">All must pass</option>
-                                        </select>
-                                    </div>
-                                    <label x-show="row.rule" class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="row.earlyExit" /> Early exit</label>
-                                    <div class="w-32">
-                                        <label class="lbl" :for="'pipe-timeout-' + row.stage">Timeout (min)</label>
-                                        <input :id="'pipe-timeout-' + row.stage" type="text" inputmode="numeric" x-model="row.timeoutMin" class="fld" placeholder="60" autocomplete="off" />
+                                    <div class="flex shrink-0 gap-1">
+                                        <button type="button" x-show="row.mode === 'inherited'" @click="pipeOverride(row.stage)" class="btn btn-sm btn-ghost" :aria-label="'Override ' + row.label + ' here'">Override</button>
+                                        <button type="button" x-show="row.mode === 'unset'" @click="pipeSetHere(row.stage)" class="btn btn-sm btn-ghost" :aria-label="'Set ' + row.label">Set</button>
+                                        <button type="button" x-show="row.mode === 'own'" @click="pipeEdit(row.stage)" class="btn btn-sm btn-ghost" :aria-expanded="pipe.editing === row.stage ? 'true' : 'false'" :aria-label="(pipe.editing === row.stage ? 'Finish editing ' : 'Edit ') + row.label" x-text="pipe.editing === row.stage ? 'Done' : 'Edit'"></button>
+                                        <button type="button" x-show="row.mode === 'own'" @click="pipeClearStage(row.stage)" class="btn btn-sm btn-ghost" :aria-label="(row.inherited ? 'Use the group value for ' : 'Clear ') + row.label" x-text="row.inherited ? 'Use group' : 'Clear'"></button>
                                     </div>
                                 </div>
-                            </div>
-                        </li>
-                    </template>
-                </ul>
-                <div class="mt-4">
-                    <label class="lbl" for="pipe-agents">Items without their own choice get</label>
-                    <select id="pipe-agents" x-model="pipe.agentsDefault" class="fld max-w-xs" aria-describedby="pipe-agents-hint">
-                        <option value="" x-text="pipe.agentsInherited ? 'Inherit from group' : 'Not set (agent panel)'"></option>
-                        <option value="panel">The agent panel</option>
-                        <option value="solo">One agent</option>
-                    </select>
-                    <p id="pipe-agents-hint" class="mt-1 text-xs text-zinc-500" x-text="pipeAgentsHint()"></p>
+                                <div x-show="row.mode === 'own' && pipe.editing === row.stage" class="mt-2 space-y-2 rounded-md bg-zinc-900/60 p-2">
+                                    <div x-show="pipeCanAdd(row)" class="flex flex-wrap items-end gap-2">
+                                        <div class="w-full min-w-0 sm:w-auto sm:flex-1">
+                                            <label class="lbl" :for="'pipe-runner-' + row.stage">Runner</label>
+                                            <input :id="'pipe-runner-' + row.stage" type="text" list="pipe-runners" x-model="row.addRunner" class="fld" placeholder="claude" autocomplete="off" />
+                                        </div>
+                                        <div class="min-w-0 flex-1 sm:w-40 sm:flex-none" x-show="row.multi">
+                                            <label class="lbl" :for="'pipe-focus-' + row.stage">Focus (optional)</label>
+                                            <input :id="'pipe-focus-' + row.stage" type="text" list="pipe-brief-names" x-model="row.addFocus" class="fld" placeholder="security" autocomplete="off" :aria-describedby="'pipe-focus-hint-' + row.stage" />
+                                        </div>
+                                        <button type="button" @click="pipeAddMember(row.stage)" class="btn btn-sm" :aria-label="'Add agent to ' + row.label">Add</button>
+                                    </div>
+                                    <p x-show="row.multi" :id="'pipe-focus-hint-' + row.stage" class="text-xs text-zinc-500">A focus gives the agent a brief of that name: one from the Briefs tab, else the repository's <code class="font-mono">.skopos/focus/&lt;name&gt;.md</code>.</p>
+                                    <div x-show="pipeShowGroupOptions(row)" class="flex flex-wrap items-end gap-3">
+                                        <div x-show="row.rule">
+                                            <label class="lbl" :for="'pipe-policy-' + row.stage">Decision</label>
+                                            <select :id="'pipe-policy-' + row.stage" x-model="row.policy" class="fld">
+                                                <option value="">Any blocking finding fails (default)</option>
+                                                <option value="majority">Majority</option>
+                                                <option value="all-pass">All must pass</option>
+                                            </select>
+                                        </div>
+                                        <label x-show="row.rule" class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="row.earlyExit" /> Early exit</label>
+                                        <div class="w-32">
+                                            <label class="lbl" :for="'pipe-timeout-' + row.stage">Timeout (min)</label>
+                                            <input :id="'pipe-timeout-' + row.stage" type="text" inputmode="numeric" x-model="row.timeoutMin" class="fld" placeholder="60" autocomplete="off" />
+                                        </div>
+                                    </div>
+                                </div>
+                            </li>
+                        </template>
+                    </ul>
+                    <datalist id="pipe-brief-names">
+                        <template x-for="b in pipeBriefs.list" :key="'bn|' + b.name"><option :value="b.name"></option></template>
+                    </datalist>
                 </div>
-                <div class="mt-4">
-                    <label class="lbl" for="pipe-second">Second opinions use</label>
-                    <input id="pipe-second" type="text" list="pipe-runners" x-model="pipe.secondOpinion" class="fld max-w-xs" placeholder="e.g. codex" autocomplete="off" aria-describedby="pipe-second-hint" />
-                    <p id="pipe-second-hint" class="mt-1 text-xs text-zinc-500" x-text="pipeSecondHint()"></p>
-                </div>
-                <!-- Code index switch (workspaces only): idle workers keep the
-                     index fresh; it needs a worker that can fetch the repo. -->
-                <div class="mt-4" x-show="pipe.kind === 'workspace'">
-                    <label class="flex items-center gap-2 text-sm"><input id="pipe-index" type="checkbox" x-model="pipe.codeIndex" :disabled="pipeIndexLocked()" aria-describedby="pipe-index-hint" /> Keep the code index fresh</label>
-                    <p id="pipe-index-hint" class="mt-1 text-xs" :class="pipeIndexWarn() ? 'text-amber-400' : 'text-zinc-500'" x-text="pipeIndexHint()"></p>
+                <!-- Options: defaults that are not a stage, and what applies
+                     here from elsewhere (groups, the runner policy). -->
+                <div x-show="pipe.tab === 'options'" id="pipe-panel-options" role="tabpanel" aria-labelledby="pipe-tab-options" class="tab-panel space-y-4">
+                    <div>
+                        <label class="lbl" for="pipe-agents">Items without their own choice get</label>
+                        <select id="pipe-agents" x-model="pipe.agentsDefault" class="fld max-w-xs" aria-describedby="pipe-agents-hint">
+                            <option value="" x-text="pipe.agentsInherited ? 'Inherit from group' : 'Not set (agent panel)'"></option>
+                            <option value="panel">The agent panel</option>
+                            <option value="solo">One agent</option>
+                        </select>
+                        <p id="pipe-agents-hint" class="mt-1 text-xs text-zinc-500" x-text="pipeAgentsHint()"></p>
+                    </div>
+                    <div>
+                        <label class="lbl" for="pipe-second">Second opinions use</label>
+                        <input id="pipe-second" type="text" list="pipe-runners" x-model="pipe.secondOpinion" class="fld max-w-xs" placeholder="e.g. codex" autocomplete="off" aria-describedby="pipe-second-hint" />
+                        <p id="pipe-second-hint" class="mt-1 text-xs text-zinc-500" x-text="pipeSecondHint()"></p>
+                    </div>
+                    <!-- Code index switch (workspaces only): idle workers keep the
+                         index fresh; it needs a worker that can fetch the repo. -->
+                    <div x-show="pipe.kind === 'workspace'">
+                        <label class="flex items-center gap-2 text-sm"><input id="pipe-index" type="checkbox" x-model="pipe.codeIndex" :disabled="pipeIndexLocked()" aria-describedby="pipe-index-hint" /> Keep the code index fresh</label>
+                        <p id="pipe-index-hint" class="mt-1 text-xs" :class="pipeIndexWarn() ? 'text-amber-400' : 'text-zinc-500'" x-text="pipeIndexHint()"></p>
+                    </div>
+                    <div x-show="pipeInfo().length">
+                        <h3 class="lbl">What applies here</h3>
+                        <ul class="space-y-1">
+                            <template x-for="n in pipeInfo()" :key="n.key + '|' + pipe.rev">
+                                <li class="chip" :class="n.tone" x-text="n.text"></li>
+                            </template>
+                        </ul>
+                    </div>
                 </div>
                 <div class="modal-actions">
                     <button type="button" @click="closePipeline()" class="btn">Cancel</button>
                     <button type="submit" class="btn btn-primary" :disabled="pipe.saving || pipe.readOnly" x-text="pipe.saving ? 'Saving…' : 'Save'"></button>
                 </div>
             </form>
+            <!-- Briefs held on the server: what a member with a focus is
+                 told. Each is saved on its own, apart from the stages. -->
+            <section x-show="pipe.tab === 'briefs'" id="pipe-panel-briefs" role="tabpanel" aria-labelledby="pipe-tab-briefs" class="tab-panel">
+                <p class="mb-2 text-xs text-zinc-500">A brief is what an agent with a focus is told (<code class="font-mono">focus@runner</code>). One held here is used in place of the repository's <code class="font-mono">.skopos/focus/&lt;name&gt;.md</code>, and needs no commit. Each brief is saved on its own.</p>
+                <div x-show="!pipeBriefs.editing">
+                    <ul class="divide-y divide-zinc-800 rounded-lg border border-zinc-800" x-show="pipeBriefRows().length">
+                        <template x-for="b in pipeBriefRows()" :key="b.key">
+                            <li class="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
+                                <div class="min-w-0 flex-1">
+                                    <span class="font-mono text-sm text-zinc-100" x-text="b.name"></span>
+                                    <span class="ml-1 chip" :class="b.tone" x-text="b.where"></span>
+                                    <span class="block truncate text-[11px] text-zinc-500" x-text="b.detail"></span>
+                                </div>
+                                <div class="flex shrink-0 gap-1">
+                                    <button type="button" class="btn btn-sm btn-ghost" @click="pipeBriefOpen(b.name, b.held)" :aria-label="b.action + ' the brief ' + b.name" x-text="b.action"></button>
+                                    <button type="button" class="btn btn-sm btn-ghost btn-bad" x-show="b.own && !pipe.readOnly" @click="pipeBriefDelete(b.name)" :aria-label="'Remove the brief ' + b.name + ' held here'">Remove</button>
+                                </div>
+                            </li>
+                        </template>
+                    </ul>
+                    <p x-show="!pipeBriefRows().length" class="rounded-lg border border-dashed border-zinc-700 p-3 text-sm text-zinc-400">No briefs are held here, and no member of this pipeline has a focus.</p>
+                    <div class="mt-3 flex justify-between gap-2">
+                        <button type="button" class="btn btn-sm" x-show="!pipe.readOnly" @click="pipeBriefOpen('', false)">New brief</button>
+                        <button type="button" @click="pipeCloseFromTab()" class="btn btn-sm ml-auto">Close</button>
+                    </div>
+                </div>
+                <form x-show="pipeBriefs.editing" @submit.prevent="pipeBriefSave()" class="space-y-3">
+                    <div>
+                        <label class="lbl" for="pipe-brief-name">Name</label>
+                        <input id="pipe-brief-name" type="text" x-model="pipeBriefs.name" class="fld max-w-xs font-mono" placeholder="e2e" autocomplete="off" :disabled="pipeBriefs.nameLocked" aria-describedby="pipe-brief-name-hint" />
+                        <p id="pipe-brief-name-hint" class="mt-1 text-xs text-zinc-500">The focus of <code class="font-mono">focus@runner</code>: lowercase letters, digits, <code class="font-mono">-</code> and <code class="font-mono">_</code>.</p>
+                    </div>
+                    <div>
+                        <label class="lbl" for="pipe-brief-body">Brief</label>
+                        <textarea id="pipe-brief-body" x-model="pipeBriefs.body" rows="14" class="fld font-mono text-xs" spellcheck="false" :readonly="pipe.readOnly" aria-describedby="pipe-brief-body-hint" placeholder="How to review or test in this repository: which system to use, where its credentials are, what to do when it is not there."></textarea>
+                        <p id="pipe-brief-body-hint" class="mt-1 text-xs" :class="pipeBriefTooLong() ? 'text-rose-400' : 'text-zinc-500'" x-text="pipeBriefHint()"></p>
+                    </div>
+                    <details x-show="pipeBriefs.history.length > 1" class="text-xs text-zinc-400">
+                        <summary class="cursor-pointer">Earlier versions</summary>
+                        <ul class="mt-1 space-y-0.5 font-mono">
+                            <template x-for="h in pipeBriefs.history" :key="h.rev"><li x-text="pipeBriefHistoryLine(h)"></li></template>
+                        </ul>
+                    </details>
+                    <div class="modal-actions">
+                        <button type="button" class="btn" @click="pipeBriefCancel()">Back</button>
+                        <button type="submit" class="btn btn-primary" x-show="!pipe.readOnly" :disabled="pipeBriefs.saving || !pipeBriefDirty() || pipeBriefTooLong()" x-text="pipeBriefs.saving ? 'Saving…' : pipeBriefSaveLabel()"></button>
+                    </div>
+                </form>
+            </section>
             <!-- Config on the server: branches, setup and check commands,
                  timeouts, push settings. Saved apart from the pipeline (it
                  needs the admin permission). -->
-            <section x-show="pipeConfig.shown" class="mt-5 border-t border-zinc-700 pt-4" aria-labelledby="pipe-config-title">
-                <h3 id="pipe-config-title" class="text-sm font-semibold text-zinc-200">Config on the server</h3>
-                <p class="mt-1 text-sm text-zinc-400" x-text="pipeConfig.status"></p>
-                <ul class="mt-2 space-y-0.5 font-mono text-xs text-zinc-300">
-                    <template x-for="l in pipeConfig.lines" :key="l + '|' + pipeConfig.rev"><li class="break-all" x-text="l"></li></template>
+            <section x-show="pipe.tab === 'config'" id="pipe-panel-config" role="tabpanel" aria-labelledby="pipe-tab-config" class="tab-panel">
+                <p class="text-sm text-zinc-400" x-text="pipeConfig.status"></p>
+                <ul class="mt-1 space-y-1" x-show="pipeConfig.conflicts.length">
+                    <template x-for="c in pipeConfig.conflicts" :key="c"><li class="chip tone-danger" x-text="c"></li></template>
                 </ul>
-                <!-- The MCP servers a config's mcp field can name. -->
-                <div x-show="pipeConfig.mcp.length" class="mt-2 text-xs text-zinc-400">
-                    <p>MCP servers the runs can be given:</p>
-                    <ul class="mt-0.5 space-y-0.5 font-mono text-zinc-300">
-                        <template x-for="l in pipeConfig.mcp" :key="l"><li class="break-all" x-text="l"></li></template>
-                    </ul>
+                <!-- A workspace is managed by the server only with a config
+                     of its own, even an empty one. -->
+                <div class="mt-3" x-show="pipe.kind === 'workspace'">
+                    <label class="flex items-center gap-2 text-sm"><input id="pipe-config-managed" type="checkbox" x-model="pipeConfig.managed" :disabled="!pipeConfig.canEdit" @change="cfgTouched()" aria-describedby="pipe-config-managed-hint" /> Hold this workspace's config on the server</label>
+                    <p id="pipe-config-managed-hint" class="mt-1 text-xs text-zinc-500">On: every worker takes the fields below from here; a field not set here comes from a group, else its default. Off: each worker uses its own file.</p>
                 </div>
-                <!-- The wrappers a stage block's wrap rules can name. -->
-                <div x-show="pipeConfig.wrappers.length" class="mt-2 text-xs text-zinc-400">
-                    <p>Wrappers a stage can name:</p>
-                    <ul class="mt-0.5 space-y-0.5 font-mono text-zinc-300">
-                        <template x-for="l in pipeConfig.wrappers" :key="l"><li class="break-all" x-text="l"></li></template>
-                    </ul>
+                <div x-show="pipeConfig.managed" class="mt-3 space-y-2">
+                    <p x-show="pipeConfig.general" class="chip tone-danger" role="alert" x-text="pipeConfig.general"></p>
+                    <!-- One fold per kind of setting. A field is set at this
+                         level only when its box is ticked; otherwise it shows
+                         what applies and where that comes from. -->
+                    <template x-for="g in pipeConfig.groups" :key="g.name + '|' + pipeConfig.rev">
+                        <details class="cfg-group" :open="g.open" @toggle="cfgFold(g.name, $event.target.open)">
+                            <summary>
+                                <span class="font-medium text-zinc-100" x-text="g.name"></span>
+                                <span class="ml-2 text-xs" :class="cfgGroupBad(g) ? 'text-rose-400' : 'text-zinc-500'" x-text="cfgGroupSummary(g)"></span>
+                            </summary>
+                            <div class="cfg-rows">
+                                <template x-for="row in g.rows" :key="row.key">
+                                    <div class="cfg-row">
+                                        <label class="cfg-label" :for="'cfg-set-' + row.key">
+                                            <input type="checkbox" :id="'cfg-set-' + row.key" x-model="row.set" :disabled="!pipeConfig.canEdit" @change="cfgToggle(row.key)" :aria-label="'Set ' + row.label + ' here'" />
+                                            <span>
+                                                <span class="text-sm text-zinc-200" x-text="row.label"></span>
+                                                <code class="block font-mono text-[10px] text-zinc-500" x-text="row.key"></code>
+                                            </span>
+                                        </label>
+                                        <div class="min-w-0">
+                                            <input x-show="row.kind === 'text' || row.kind === 'duration' || row.kind === 'number'" type="text" :id="'cfg-' + row.key" x-model="row.value" :disabled="!row.set || !pipeConfig.canEdit" @input="cfgTouched()" class="fld" :class="row.kind === 'text' ? '' : 'max-w-[10rem]'" autocomplete="off" spellcheck="false" :aria-label="row.label" :aria-invalid="row.error ? 'true' : 'false'" :aria-describedby="'cfg-note-' + row.key" :placeholder="row.placeholder" />
+                                            <select x-show="row.kind === 'select'" :id="'cfg-sel-' + row.key" x-model="row.value" :disabled="!row.set || !pipeConfig.canEdit" @change="cfgTouched()" class="fld max-w-[14rem]" :aria-label="row.label" :aria-invalid="row.error ? 'true' : 'false'" :aria-describedby="'cfg-note-' + row.key">
+                                                <template x-for="o in row.options" :key="row.key + '|' + o.value"><option :value="o.value" x-text="o.label" :selected="o.value === row.value"></option></template>
+                                            </select>
+                                            <textarea x-show="row.kind === 'lines'" :id="'cfg-lines-' + row.key" x-model="row.value" :disabled="!row.set || !pipeConfig.canEdit" @input="cfgTouched()" :rows="cfgRowsOf(row)" class="fld font-mono text-xs" spellcheck="false" :aria-label="row.label + ', one per line'" :aria-invalid="row.error ? 'true' : 'false'" :aria-describedby="'cfg-note-' + row.key" :placeholder="row.placeholder"></textarea>
+                                            <p :id="'cfg-note-' + row.key" class="mt-0.5 text-[11px]" :class="row.error ? 'text-rose-400' : 'text-zinc-500'" x-text="cfgNote(row)"></p>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </details>
+                    </template>
+                    <!-- Stage blocks: what each stage's agent is given on a
+                         worker and which wrapper goes around it. One fold
+                         per stage; the sandbox settings are the one part
+                         with no shape of its own, so they stay JSON. -->
+                    <details class="cfg-group" :open="pipeConfig.stagesOpen" @toggle="cfgFold('stages', $event.target.open)">
+                        <summary>
+                            <span class="font-medium text-zinc-100">Stage blocks</span>
+                            <span class="ml-2 text-xs" :class="cfgStagesBad() ? 'text-rose-400' : 'text-zinc-500'" x-text="cfgStagesSummary()"></span>
+                        </summary>
+                        <div class="cfg-rows">
+                            <p class="text-[11px] text-zinc-500">What a stage's agent is given beyond the built-in tools, and what contains it. A worker takes a block only when its file sets <code class="font-mono">server_commands</code>, and gives a stage extra tools or env only when the stage is contained.</p>
+                            <p x-show="pipeConfig.stagesError" class="text-[11px] text-rose-400" role="alert" x-text="pipeConfig.stagesError"></p>
+                            <datalist id="cfg-wrappers">
+                                <option value="none"></option>
+                                <template x-for="w in pipeConfig.wrapperNames" :key="'wn|' + w"><option :value="w"></option></template>
+                            </datalist>
+                            <template x-for="st in pipeConfig.stageForms" :key="st.stage + '|' + pipeConfig.rev">
+                                <details class="cfg-group" :open="st.open" @toggle="cfgFold('stage:' + st.stage, $event.target.open)">
+                                    <summary>
+                                        <span class="text-sm font-medium text-zinc-100" x-text="st.label"></span>
+                                        <span class="ml-2 text-xs" :class="st.error ? 'text-rose-400' : 'text-zinc-500'" x-text="cfgStageSummary(st)"></span>
+                                    </summary>
+                                    <div class="cfg-rows">
+                                        <label class="flex items-center gap-2 text-sm" :for="'cfg-st-set-' + st.stage"><input type="checkbox" :id="'cfg-st-set-' + st.stage" x-model="st.set" :disabled="!pipeConfig.canEdit" @change="cfgTouched()" /> Set the <span x-text="st.label"></span> block here</label>
+                                        <p class="text-[11px]" :class="st.error ? 'text-rose-400' : 'text-zinc-500'" :role="st.error ? 'alert' : null" x-text="st.error || cfgStageNote(st)"></p>
+                                        <div x-show="st.set" class="space-y-3">
+                                            <div>
+                                                <label class="lbl" :for="'cfg-st-tools-' + st.stage">Extra tools (one per line)</label>
+                                                <textarea :id="'cfg-st-tools-' + st.stage" x-model="st.tools" rows="2" class="fld font-mono text-xs" spellcheck="false" :disabled="!pipeConfig.canEdit" @input="cfgTouched()" placeholder="Bash(make test:*)&#10;mcp__browser"></textarea>
+                                            </div>
+                                            <div>
+                                                <label class="lbl" :for="'cfg-st-env-' + st.stage">Environment (NAME=value per line)</label>
+                                                <textarea :id="'cfg-st-env-' + st.stage" x-model="st.env" rows="2" class="fld font-mono text-xs" spellcheck="false" :disabled="!pipeConfig.canEdit" @input="cfgTouched()" placeholder="APP_ENV=test&#10;CACHE_DIR=${CACHE}"></textarea>
+                                                <p class="mt-0.5 text-[11px] text-zinc-500"><code class="font-mono">${NAME}</code> takes the value a worker declares under <code class="font-mono">vars</code>. No credentials here: they are the account's.</p>
+                                            </div>
+                                            <div>
+                                                <span class="lbl" :id="'cfg-st-wrap-lbl-' + st.stage">Wrapper, by runner</span>
+                                                <ul class="space-y-1.5" :aria-labelledby="'cfg-st-wrap-lbl-' + st.stage">
+                                                    <template x-for="w in st.wraps" :key="w.id">
+                                                        <li class="flex flex-wrap items-center gap-1.5">
+                                                            <input type="text" list="cfg-wrappers" x-model="w.wrapper" class="fld-sm w-28 font-mono" placeholder="wrapper" :disabled="!pipeConfig.canEdit" @input="cfgTouched()" :aria-label="'Wrapper of rule ' + w.id + ' for ' + st.label" autocomplete="off" />
+                                                            <span class="text-xs text-zinc-500">for</span>
+                                                            <input type="text" list="pipe-runners" x-model="w.runner" class="fld-sm w-28 font-mono" placeholder="any runner" :disabled="!pipeConfig.canEdit" @input="cfgTouched()" :aria-label="'Runner of rule ' + w.id + ' for ' + st.label" autocomplete="off" />
+                                                            <input type="text" x-model="w.kind" class="fld-sm w-24 font-mono" placeholder="any kind" :disabled="!pipeConfig.canEdit" @input="cfgTouched()" :aria-label="'Runner kind of rule ' + w.id + ' for ' + st.label" autocomplete="off" />
+                                                            <input type="text" x-model="w.provider" class="fld-sm w-28 font-mono" placeholder="any provider" :disabled="!pipeConfig.canEdit" @input="cfgTouched()" :aria-label="'Provider of rule ' + w.id + ' for ' + st.label" autocomplete="off" />
+                                                            <input type="text" x-model="w.model" class="fld-sm w-28 font-mono" placeholder="any model" :disabled="!pipeConfig.canEdit" @input="cfgTouched()" :aria-label="'Model of rule ' + w.id + ' for ' + st.label" autocomplete="off" />
+                                                            <button type="button" class="btn btn-sm btn-ghost" x-show="pipeConfig.canEdit" @click="cfgWrapRemove(st.stage, w.id)" :aria-label="'Remove wrapper rule ' + w.id + ' of ' + st.label">×</button>
+                                                        </li>
+                                                    </template>
+                                                </ul>
+                                                <button type="button" class="btn btn-sm mt-1.5" x-show="pipeConfig.canEdit" @click="cfgWrapAdd(st.stage)" :aria-label="'Add a wrapper rule to ' + st.label">Add rule</button>
+                                                <p class="mt-0.5 text-[11px] text-zinc-500">The first rule that matches a run's runner decides; <code class="font-mono">none</code> means no wrapper. A blank box matches anything.</p>
+                                            </div>
+                                            <div>
+                                                <label class="lbl" :for="'cfg-st-allow-' + st.stage">Permission rules: allow (one per line)</label>
+                                                <textarea :id="'cfg-st-allow-' + st.stage" x-model="st.allow" rows="2" class="fld font-mono text-xs" spellcheck="false" :disabled="!pipeConfig.canEdit" @input="cfgTouched()" placeholder="Read(/srv/shared/**)"></textarea>
+                                            </div>
+                                            <div>
+                                                <label class="lbl" :for="'cfg-st-deny-' + st.stage">Permission rules: deny (one per line)</label>
+                                                <textarea :id="'cfg-st-deny-' + st.stage" x-model="st.deny" rows="2" class="fld font-mono text-xs" spellcheck="false" :disabled="!pipeConfig.canEdit" @input="cfgTouched()" placeholder="Read(./.env)"></textarea>
+                                            </div>
+                                            <div>
+                                                <label class="lbl" :for="'cfg-st-dirs-' + st.stage">Additional directories (one per line)</label>
+                                                <textarea :id="'cfg-st-dirs-' + st.stage" x-model="st.dirs" rows="2" class="fld font-mono text-xs" spellcheck="false" :disabled="!pipeConfig.canEdit" @input="cfgTouched()" placeholder="/srv/shared"></textarea>
+                                            </div>
+                                            <div>
+                                                <label class="lbl" :for="'cfg-st-sandbox-' + st.stage">Sandbox settings (JSON, optional)</label>
+                                                <textarea :id="'cfg-st-sandbox-' + st.stage" x-model="st.sandbox" rows="3" class="fld font-mono text-xs" spellcheck="false" :disabled="!pipeConfig.canEdit" @input="cfgTouched()" placeholder='{"enabled": true}'></textarea>
+                                                <p class="mt-0.5 text-[11px] text-zinc-500">The agent CLI's own sandbox block, passed through as it is: the one part with no fields of its own.</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </details>
+                            </template>
+                            <!-- The wrappers a rule can name. -->
+                            <div x-show="pipeConfig.wrappers.length" class="text-xs text-zinc-400">
+                                <p>Wrappers defined on the server:</p>
+                                <ul class="mt-0.5 space-y-0.5 font-mono text-zinc-300">
+                                    <template x-for="l in pipeConfig.wrappers" :key="l"><li class="break-all" x-text="l"></li></template>
+                                </ul>
+                            </div>
+                        </div>
+                    </details>
+                    <!-- The MCP servers a config's mcp field can name. -->
+                    <div x-show="pipeConfig.mcp.length" class="text-xs text-zinc-400">
+                        <p>MCP servers defined on the server (the <code class="font-mono">mcp</code> field names them):</p>
+                        <ul class="mt-0.5 space-y-0.5 font-mono text-zinc-300">
+                            <template x-for="l in pipeConfig.mcp" :key="l"><li class="break-all" x-text="l"></li></template>
+                        </ul>
+                    </div>
                 </div>
-                <div class="mt-3" x-show="pipeConfig.canEdit">
-                    <label class="lbl" for="pipe-config-text">Stored config</label>
-                    <textarea id="pipe-config-text" x-model="pipeConfig.text" rows="8" class="fld font-mono text-xs" spellcheck="false" aria-describedby="pipe-config-hint" placeholder='{"default_branch": "main", "checks": ["go test ./..."]}'></textarea>
-                </div>
-                <p id="pipe-config-hint" class="mt-1 text-xs text-zinc-500" x-text="pipeConfigHint()"></p>
-                <div class="mt-2 flex justify-end" x-show="pipeConfig.canEdit">
-                    <button type="button" class="btn" @click="savePipeConfig()" :disabled="pipeConfig.saving || !pipeConfigDirty()" x-text="pipeConfigSaveLabel()"></button>
+                <p id="pipe-config-hint" class="mt-2 text-xs text-zinc-500" x-text="pipeConfigHint()"></p>
+                <div class="modal-actions" x-show="pipeConfig.canEdit">
+                    <span class="mr-auto text-xs text-zinc-500" role="status" x-text="cfgState()"></span>
+                    <button type="button" class="btn" @click="cfgReset()" :disabled="pipeConfig.saving || !pipeConfigDirty()">Undo changes</button>
+                    <button type="button" class="btn btn-primary" @click="savePipeConfig()" :disabled="pipeConfig.saving || !pipeConfigDirty()" x-text="pipeConfigSaveLabel()"></button>
                 </div>
             </section>
     {{template "modal-close"}}

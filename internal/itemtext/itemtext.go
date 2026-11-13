@@ -17,6 +17,7 @@ var Headings = []string{
 	"## Comparison — ",
 	"## Questions — planner",
 	"## Questions — implementer",
+	"## Questions — QA",
 	"## Amendment proposed — worker",
 	"## Review notes",
 	"## Change requests",
@@ -89,17 +90,21 @@ func HeadingIs(s Section, prefixes ...string) bool {
 }
 
 // IsQuestions reports whether the section holds questions for the approver: the
-// planner's, or the implementer's with an amendment or a block.
+// planner's, the implementer's with an amendment or a block, or QA's when it
+// could not test.
 func IsQuestions(s Section) bool {
-	return HeadingIs(s, "Questions — planner", "Questions — implementer")
+	return HeadingIs(s, "Questions — planner", "Questions — implementer", "Questions — QA")
 }
 
 // QuestionsLabel names who asked when it isn't the (single) planner: a plan
 // group member's candidate label ("Questions — planner focus@runner" →
-// "focus@runner"), or "the implementer".
+// "focus@runner"), "the implementer" or "QA".
 func QuestionsLabel(s Section) string {
 	if HeadingIs(s, "Questions — implementer") {
 		return "the implementer"
+	}
+	if HeadingIs(s, "Questions — QA") {
+		return "QA"
 	}
 	return strings.TrimSpace(strings.TrimPrefix(s.Heading, "Questions — planner"))
 }

@@ -79,6 +79,10 @@ type Service struct {
 	// and whether the server holds a workspace's (SetMCPSource).
 	runMCP     func(ctx context.Context, workspaceID string, serverCommands bool) (*RunMCP, error)
 	mcpManaged func(ctx context.Context, workspaceID string) bool
+	// runBrief / briefsHeld: the focus briefs the server holds
+	// (internal/pipeline), for the claim answer.
+	runBrief   func(ctx context.Context, workspaceID, focus string) (*RunBrief, error)
+	briefsHeld func(ctx context.Context, workspaceID string) bool
 }
 
 // UnreadableConfigRev is the revision a claim names when the workspace's
@@ -102,6 +106,13 @@ func (s *Service) SetFleetRev(fn func(ctx context.Context) string) { s.fleetRev 
 // says whether the server holds a workspace's MCP servers at all.
 func (s *Service) SetMCPSource(run func(ctx context.Context, workspaceID string, serverCommands bool) (*RunMCP, error), managed func(ctx context.Context, workspaceID string) bool) {
 	s.runMCP, s.mcpManaged = run, managed
+}
+
+// SetBriefSource wires the briefs held on the server: run resolves the one
+// for a run's focus (nil = none), held says whether a workspace's pipeline
+// has a member whose brief the server holds.
+func (s *Service) SetBriefSource(run func(ctx context.Context, workspaceID, focus string) (*RunBrief, error), held func(ctx context.Context, workspaceID string) bool) {
+	s.runBrief, s.briefsHeld = run, held
 }
 
 // FleetRev is the runner definitions' revision ("" = none defined).
@@ -464,6 +475,21 @@ func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 	// does not offer. The same checks apply there as for an offered one:
 	// the workspace is in this key's scope (the worker id is only the
 	// caller's word), and the worker's release can do what it needs.
+	// And for a workspace with a member whose brief the server holds: a
+	// worker that cannot take it from the claim answer would give that
+	// member the repository's file, or none.
+	takesBrief := slices.Contains(in.Features, FeatureRunBrief)
+	if s.briefsHeld != nil && !takesBrief {
+		for _, ws := range in.Workspaces {
+			if _, set := in.Unhealthy[ws]; set || !s.briefsHeld(ctx, ws) {
+				continue
+			}
+			if in.Unhealthy == nil {
+				in.Unhealthy = map[string]string{}
+			}
+			in.Unhealthy[ws] = "this worker's release cannot take the workspace's briefs from the server: upgrade it"
+		}
+	}
 	in.mayTake = func(ws string) bool {
 		if offered[ws] {
 			return true // checked above; a refusal is in in.Unhealthy
@@ -472,6 +498,9 @@ func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 			return false
 		}
 		if in.ServerCommands == nil && s.configRev != nil && s.configRev(ctx, ws) != "" {
+			return false
+		}
+		if !takesBrief && s.briefsHeld != nil && s.briefsHeld(ctx, ws) {
 			return false
 		}
 		return takesMCP || s.mcpManaged == nil || !s.mcpManaged(ctx, ws)
@@ -540,6 +569,25 @@ func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 			return nil, nil
 		}
 		run.MCP = mcp
+	}
+	// The brief the server holds for the run's focus, in this answer only.
+	// One that cannot be read is said so: the worker gives the run back
+	// rather than brief its agent from the repository instead.
+	if s.runBrief != nil && run.Focus != "" {
+		brief, err := s.runBrief(context.WithoutCancel(ctx), run.WorkspaceID, run.Focus)
+		if err != nil {
+			slog.Warn("runs: the run's brief could not be resolved; the worker is told to give the run back", "run", run.ID, "focus", run.Focus, "err", err)
+			brief = &RunBrief{Name: run.Focus, Unreadable: true}
+		}
+		// It came to be held between the check above and now, and this
+		// worker's release cannot take it: the run goes to one that can.
+		if brief != nil && !takesBrief {
+			if err := s.storage.ReleaseClaim(context.WithoutCancel(ctx), run.ID, run.Attempt, s.now().UTC()); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		}
+		run.Brief = brief
 	}
 	// The claim has committed: what follows must not depend on the worker
 	// still waiting for the response (a client timeout used to leave the item

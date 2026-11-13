@@ -814,10 +814,59 @@ func (s *Service) retryStage(ctx context.Context, item *Item) (target Status, st
 	}
 	if item.PlanID != "" && s.plans != nil {
 		if rev, revErr := s.plans.LatestRevision(ctx, item.PlanID); revErr == nil && rev != nil && rev.LockedAt != nil {
+			// QA asked instead of testing: the answer goes back to QA on the
+			// same branch. Nothing was found wrong with the implementation.
+			if branch := s.qaAsked(ctx, item); branch != "" {
+				return StatusImplementing, StageQA, rev.ID, rev.BaseSHA, branch
+			}
 			return StatusImplementing, "implement", rev.ID, rev.BaseSHA, ""
 		}
 	}
 	return target, stage, "", "", ""
+}
+
+// StageQA is the QA stage of the run queue.
+const StageQA = "qa"
+
+// qaAsked reports the branch of an item whose newest agent stage was a QA
+// that stopped with a question ("" otherwise): among the QA runs since the
+// newest run of another stage, one failed and has questions on record.
+// Second opinions are advisory and left aside.
+func (s *Service) qaAsked(ctx context.Context, item *Item) string {
+	if s.runLister == nil || s.questions == nil {
+		return ""
+	}
+	runs, err := s.runLister.ListRuns(ctx, item.ID) // newest first
+	if err != nil {
+		return ""
+	}
+	var failed []RunSummary
+	for _, r := range runs {
+		if r.Stage == "second_opinion" {
+			continue
+		}
+		if r.Stage != StageQA {
+			break
+		}
+		if r.Status == "failed" && r.Branch != "" {
+			failed = append(failed, r)
+		}
+	}
+	if len(failed) == 0 {
+		return ""
+	}
+	rec, err := s.questions.Record(ctx, item.ID)
+	if err != nil || rec == nil {
+		return ""
+	}
+	for _, r := range failed {
+		for _, set := range rec.Sets {
+			if set.RunID == r.ID {
+				return r.Branch
+			}
+		}
+	}
+	return ""
 }
 
 // RetryOn is RetryWith with findings to send back.

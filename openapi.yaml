@@ -557,6 +557,39 @@ paths:
         "401": { description: Unauthorized }
         "404": { description: No such revision for this workspace, or out of scope }
 
+  /api/workspaces/{id}/config/check:
+    post:
+      summary: What a save of this config would be told, field by field, writing nothing
+      description: >-
+        Every field is checked on its own, so all the problems come back at
+        once, each under the field it is about (as in push.kind, stages.qa).
+        When every field is sound, what only the whole config or its place
+        among the groups shows is checked as a save would. Needs what the
+        save needs (the admin permission with the workspace in scope).
+      operationId: checkWorkspaceConfig
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [config]
+              properties:
+                config: { type: object, description: The config a save would send }
+      responses:
+        "200":
+          description: The problems (none = a save would be accepted) and the fields it would change
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigCheck" }
+        "400": { description: The body has no config }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission at the owner's level }
+        "404": { description: Not found or out of scope }
+
   /api/groups/{id}/config:
     get:
       summary: A group's config (admin key whose scope covers every workspace in the group)
@@ -616,6 +649,39 @@ paths:
         "401": { description: Unauthorized }
         "403": { description: Requires the admin permission for the group }
         "404": { description: Not found }
+
+  /api/groups/{id}/config/check:
+    post:
+      summary: What a save of this config would be told, field by field, writing nothing
+      description: >-
+        Every field is checked on its own, so all the problems come back at
+        once, each under the field it is about (as in push.kind, stages.qa).
+        When every field is sound, what only the whole config or its place
+        among the groups shows is checked as a save would. Needs what the
+        save needs (an admin key whose scope covers every workspace in the group).
+      operationId: checkGroupConfig
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [config]
+              properties:
+                config: { type: object, description: The config a save would send }
+      responses:
+        "200":
+          description: The problems (none = a save would be accepted) and the fields it would change
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigCheck" }
+        "400": { description: The body has no config }
+        "401": { description: Unauthorized }
+        "403": { description: Requires the admin permission at the owner's level }
+        "404": { description: Not found or out of scope }
 
   /api/fleet/config:
     get:
@@ -1720,6 +1786,179 @@ paths:
         "401": { description: Unauthorized }
         "403": { description: Requires the approver permission and the workspace in scope }
         "404": { description: Not found or out of scope }
+
+  /api/workspaces/{id}/pipeline/briefs:
+    get:
+      summary: The briefs held on the server for a workspace's pipeline members, without their text
+      description: >-
+        A brief is what a pipeline member with a focus (focus@runner) is told.
+        One held on the server is used in place of the repository's
+        .skopos/focus/<name>.md of the same name. For a workspace the list holds its own briefs and the ones it gets from a group, each with its source.
+      operationId: listWorkspacePipelineBriefs
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The briefs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  briefs: { type: array, items: { $ref: "#/components/schemas/PipelineBrief" } }
+                  max_bytes: { type: integer }
+        "401": { description: Unauthorized }
+        "403": { description: Out of scope }
+        "404": { description: Not found or out of scope }
+  /api/workspaces/{id}/pipeline/briefs/{name}:
+    get:
+      summary: One brief with its text and the history of the owner that holds it
+      operationId: getWorkspacePipelineBrief
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The brief
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PipelineBriefView" }
+        "401": { description: Unauthorized }
+        "403": { description: Out of scope }
+        "404": { description: No brief of this name is held here, or the owner is not found }
+    put:
+      summary: Save a brief (approver keys whose scope covers the workspace)
+      description: >-
+        Every save is a new revision; saving the text it already has changes
+        nothing. Audit-logged with the size and hash, not the text. Used from
+        the next run on.
+      operationId: putWorkspacePipelineBrief
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: name, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9][a-z0-9_-]{0,63}$" } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              additionalProperties: false
+              properties:
+                body: { type: string, description: "The brief's text, at most 16 KB. Optional frontmatter with a description line, as in a repository's focus file." }
+      responses:
+        "200":
+          description: Saved; the revision, without the text
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PipelineBrief" }
+        "400": { description: An invalid name, an empty or oversized brief, or an unknown field }
+        "409": { description: Another group already holds a brief of this name for a workspace both contain }
+        "401": { description: Unauthorized }
+        "403": { description: Not permitted }
+        "404": { description: Not found or out of scope }
+    delete:
+      summary: Remove a brief held here (approver keys whose scope covers the workspace)
+      description: Its members then get the group's brief of that name, or the repository's file. The history is kept.
+      operationId: deleteWorkspacePipelineBrief
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Removed }
+        "401": { description: Unauthorized }
+        "403": { description: Not permitted }
+        "404": { description: No brief of this name is held here }
+  /api/groups/{id}/pipeline/briefs:
+    get:
+      summary: The briefs held on the server for a group's pipeline members, without their text
+      description: >-
+        A brief is what a pipeline member with a focus (focus@runner) is told.
+        One held on the server is used in place of the repository's
+        .skopos/focus/<name>.md of the same name. Root only.
+      operationId: listGroupPipelineBriefs
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The briefs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  briefs: { type: array, items: { $ref: "#/components/schemas/PipelineBrief" } }
+                  max_bytes: { type: integer }
+        "401": { description: Unauthorized }
+        "403": { description: Out of scope }
+        "404": { description: Not found or out of scope }
+  /api/groups/{id}/pipeline/briefs/{name}:
+    get:
+      summary: One brief with its text and the history of the owner that holds it
+      operationId: getGroupPipelineBrief
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The brief
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PipelineBriefView" }
+        "401": { description: Unauthorized }
+        "403": { description: Out of scope }
+        "404": { description: No brief of this name is held here, or the owner is not found }
+    put:
+      summary: Save a brief (root only)
+      description: >-
+        Every save is a new revision; saving the text it already has changes
+        nothing. Audit-logged with the size and hash, not the text. Used from
+        the next run on.
+      operationId: putGroupPipelineBrief
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: name, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9][a-z0-9_-]{0,63}$" } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              additionalProperties: false
+              properties:
+                body: { type: string, description: "The brief's text, at most 16 KB. Optional frontmatter with a description line, as in a repository's focus file." }
+      responses:
+        "200":
+          description: Saved; the revision, without the text
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PipelineBrief" }
+        "400": { description: An invalid name, an empty or oversized brief, or an unknown field }
+        "409": { description: Another group already holds a brief of this name for a workspace both contain }
+        "401": { description: Unauthorized }
+        "403": { description: Not permitted }
+        "404": { description: Not found or out of scope }
+    delete:
+      summary: Remove a brief held here (root only)
+      description: Its members then get the group's brief of that name, or the repository's file. The history is kept.
+      operationId: deleteGroupPipelineBrief
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Removed }
+        "401": { description: Unauthorized }
+        "403": { description: Not permitted }
+        "404": { description: No brief of this name is held here }
 
   # ---- blackboard ----
   /api/blackboard/entries:
@@ -3190,7 +3429,7 @@ paths:
                   description: "What contains a run on the worker: per offered workspace, the executor by stage and runner. A policy rule with executor is matched on the one for the run's workspace, stage and runner. A worker that sends none gets no run whose rule needs an executor. A change is audited as worker.facts."
                 server_commands: { type: boolean, description: "The worker takes a managed workspace's setup, check and preflight commands from the server (worker.server_commands). A change is audited as worker.facts." }
                 fleet_rev: { type: string, description: "The runner definitions the worker holds (GET /api/fleet/config rev). A change is audited as worker.config_applied." }
-                features: { type: array, items: { type: string }, description: "What the worker's release can do: run_mcp = it takes a run's MCP servers from the claim answer. A worker without it gets no run of a workspace whose config sets mcp" }
+                features: { type: array, items: { type: string }, description: "What the worker's release can do: run_mcp = it takes a run's MCP servers from the claim answer (a worker without it gets no run of a workspace whose config sets mcp); run_brief = it takes a run's focus brief from the claim answer (a worker without it gets no run of a workspace with a pipeline member whose brief the server holds)" }
       responses:
         "200":
           description: "The claimed run (lease started). Every response carries a Skopos-Version header (the server's release; idle workers upgrade to it), and — when set — Skopos-Index-Enabled (offered workspaces with the code_index switch on) and Skopos-Index-Default (those whose default branch this worker indexes), comma-separated."
@@ -3993,6 +4232,27 @@ components:
         second_opinion_runner: { type: string, description: "Default runner for second opinions; none or empty clears it" }
         code_index: { type: boolean, description: "Workspaces only (groups refuse it): idle workers keep the workspace's code index fresh. The document is replaced whole — send it on every save." }
         via: { type: string, description: Surface label for the audit log }
+    PipelineBrief:
+      type: object
+      description: One revision of a brief held on the server. The text is only in a single brief's read.
+      properties:
+        rev: { type: string, description: Revision id (time-sortable) }
+        owner_kind: { type: string, enum: [workspace, group] }
+        owner_id: { type: string }
+        name: { type: string }
+        body: { type: string }
+        deleted: { type: boolean, description: This revision removed the brief }
+        bytes: { type: integer }
+        sha256: { type: string }
+        created_at: { type: string, format: date-time }
+        created_by: { type: string }
+        source: { type: string, description: "For a workspace: workspace, or group:<name>" }
+    PipelineBriefView:
+      allOf:
+        - $ref: "#/components/schemas/PipelineBrief"
+        - type: object
+          properties:
+            history: { type: array, items: { $ref: "#/components/schemas/PipelineBrief" }, description: The holder's revisions, newest first, without text. Absent for a brief a workspace gets from a group }
     PipelineView:
       type: object
       properties:
@@ -4044,6 +4304,7 @@ components:
         check_timeout: { type: string }
         quiet_timeout: { type: string, description: "Stops a setup or check command that prints nothing for this long; 0s = off" }
         plan_timeout: { type: string }
+        qa_timeout: { type: string, description: "How long a QA run's agent may take (30m by default)" }
         impl_timeout: { type: string }
         push:
           type: object
@@ -4151,6 +4412,20 @@ components:
         via: { type: string }
         effective: { $ref: "#/components/schemas/EffectiveConfig" }
         changed: { type: array, items: { type: string }, description: The fields a save changed }
+        defaults:
+          description: What a field nothing sets is, for a form to show
+          allOf: [{ $ref: "#/components/schemas/WorkspaceConfig" }]
+    ConfigCheck:
+      type: object
+      properties:
+        problems:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string, description: "The field as a flattened name (checks, push.kind, stages.qa); empty for the config as a whole" }
+              message: { type: string }
+        changed: { type: array, items: { type: string }, description: The fields a save would change }
     RunnerDef:
       type: object
       required: [kind]
@@ -4643,6 +4918,15 @@ components:
         attempt: { type: integer }
         lease_token: { type: string, description: "Only in the claim answer: the fencing token the worker presents (X-Skopos-Lease) on every later call for this attempt" }
         mcp: { $ref: "#/components/schemas/RunMCP" }
+        brief:
+          type: object
+          description: "The brief the server holds for the run's focus, used in place of the repository's file. In the claim answer only, never stored; absent when the server holds none"
+          properties:
+            name: { type: string }
+            body: { type: string }
+            rev: { type: string }
+            source: { type: string, description: "workspace, or group:<name>" }
+            unreadable: { type: boolean, description: The server holds one and could not read it; the worker gives the run back }
         agent_token: { type: string, description: "Only in the claim answer: the run's own credential for skopos over MCP (skr_…). Valid while this attempt is claimed or running with a live lease; a report, pause, requeue or cancel ends it. Scoped to the run's workspace, MCP only, the stage's tools only" }
         branch: { type: string }
         base_sha: { type: string }
