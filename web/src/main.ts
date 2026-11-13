@@ -318,6 +318,9 @@ const appState = () => ({
   workersLoading: false,
   // The worker whose pause form is open, and the form (for: a duration, ""
   // = until resumed).
+  // Rows whose details are folded out, by worker id (several may be open).
+  workerFold: {} as Record<string, boolean>,
+  // The pause dialog: open while pausingWorker names a worker.
   pausingWorker: '',
   pauseForm: { for: '2h', reason: '' },
   workerBusy: false,
@@ -3309,19 +3312,17 @@ const appState = () => ({
     return 'Idle workers index the default branch and each implemented branch, so agents and reviewers query current code. Can index: ' + who + '.';
   },
 
-  // ---- workers (derived from run history) ----
-  // There is no worker registry yet: what the server knows is what runs
-  // reveal — who claimed what, when, and how it went. Offered runners and
-  // versions need a registration step (future work); this view is the
-  // honest projection of run history per worker.
+  // ---- workers ----
+  // One row per worker: the registry (what it offers, presence, pause; written
+  // on every claim poll) joined with the runs in scope (what it is doing, how
+  // its runs went). A worker known only from its runs still gets a row.
   async fetchWorkers() {
     this.workersLoading = true;
     const [runsRes, workersRes] = await Promise.all([
       this.authFetch('/api/runs'),
       this.authFetch('/api/workers'),
     ]);
-    this.workersLoading = false;
-    if (!runsRes.ok) { this.notify('Could not load runs', 'error'); return; }
+    if (!runsRes.ok) { this.workersLoading = false; this.notify('Could not load runs', 'error'); return; }
     const runs = (await runsRes.json()) as RunRow[];
     // Registry rows (recorded at claim time): offered runners + served
     // workspaces, even for workers whose runs fall outside this key's scope.
@@ -3342,7 +3343,7 @@ const appState = () => ({
       if (reg) { for (const ws of reg.workspaces || []) if (!w.workspaces.includes(ws)) w.workspaces.push(ws); }
       if (run.workspace_id && !w.workspaces.includes(run.workspace_id)) w.workspaces.push(run.workspace_id);
       if (run.stage && !w.stages.includes(run.stage)) w.stages.push(run.stage);
-      if (run.status === 'claimed' || run.status === 'running' || run.status === 'paused') { w.active++; w.currentLabel = run.stage + ' \u00b7 ' + run.status + ' \u00b7 ' + this.timeAgo(run.updated_at); }
+      if (run.status === 'claimed' || run.status === 'running' || run.status === 'paused') { w.active++; w.currentLabel = run.stage + ' \u00b7 ' + run.status + (run.workspace_id ? ' \u00b7 ' + run.workspace_id : '') + ' \u00b7 ' + this.timeAgo(run.updated_at); }
       if (run.status === 'succeeded') w.succeeded++;
       if (run.status === 'failed') w.failed++;
       if (run.updated_at > w.lastActive) w.lastActive = run.updated_at;
@@ -3370,7 +3371,46 @@ const appState = () => ({
       const la = a.lastSeen || a.lastActive, lb = b.lastSeen || b.lastActive;
       return la < lb ? 1 : -1;
     });
+    // Only now: cleared before the rows are in, "no workers yet" would show
+    // for a moment on every load, and can stay when the page is in the
+    // background (shows and hides are applied by different timers there).
+    this.workersLoading = false;
   },
+  // The line above the list: how many workers, by state.
+  workersSummary(): string {
+    const n: Record<string, number> = {};
+    let unhealthy = 0;
+    for (const w of this.workers) {
+      const s = this.workerStatusLabel(w);
+      n[s] = (n[s] || 0) + 1;
+      if (w.unhealthy.length && s !== 'offline') unhealthy++;
+    }
+    const parts = ['busy', 'idle', 'paused', 'offline'].filter((s: string) => n[s]).map((s: string) => n[s] + ' ' + s);
+    let t = this.workers.length + (this.workers.length === 1 ? ' worker: ' : ' workers: ') + parts.join(', ');
+    if (unhealthy) t += ' \u00b7 ' + unhealthy + ' not taking work for a workspace';
+    return t;
+  },
+  // A row's second line: the run it holds, else when it was last heard from.
+  workerActivity(w: WorkerRow): string {
+    if (w.active > 0 && w.currentLabel) return (w.active > 1 ? w.active + ' runs, newest: ' : '') + w.currentLabel;
+    const parts: string[] = [];
+    if (w.lastSeen) parts.push('last seen ' + this.timeAgo(w.lastSeen));
+    if (w.lastActive) parts.push('last run ' + this.timeAgo(w.lastActive));
+    return parts.length ? parts.join(' \u00b7 ') : 'never seen';
+  },
+  // A row's third line: its runners and the workspaces it serves (the first
+  // three by name; Details lists them all).
+  workerOffers(w: WorkerRow): string {
+    const parts: string[] = [];
+    if (w.runners.length) parts.push((w.runners.length === 1 ? 'runner ' : 'runners ') + w.runners.join(', '));
+    if (w.workspaces.length) {
+      const shown = w.workspaces.slice(0, 3).join(', ');
+      parts.push((w.workspaces.length === 1 ? 'workspace ' : 'workspaces ') + (w.workspaces.length > 3 ? shown + ' and ' + (w.workspaces.length - 3) + ' more' : shown));
+    }
+    return parts.join(' \u00b7 ');
+  },
+  workerWhen(v: string): string { return v ? this.timeAgo(v) + ' (' + this.formatDateTime(v) + ')' : ''; },
+  toggleWorker(w: WorkerRow) { this.workerFold[w.id] = !this.workerFold[w.id]; },
   // What a worker takes from the server: commands for managed workspaces
   // (worker.server_commands), and which runner definitions it holds. Empty
   // for a worker that reports neither (from before workspace config).
@@ -3855,19 +3895,19 @@ const appState = () => ({
   },
   openPauseWorker(w: WorkerRow) { this.pausingWorker = w.id; this.pauseForm = { for: '2h', reason: '' }; },
   closePauseWorker() { this.pausingWorker = ''; },
-  setPauseFor(v: string) { this.pauseForm.for = v; },
-  setPauseReason(v: string) { this.pauseForm.reason = v; },
-  // Pause: the worker takes no new work (a run it holds finishes).
-  async pauseWorker(w: WorkerRow) {
-    if (this.workerBusy) return;
+  // Pause the worker the dialog names: it takes no new work (a run it holds
+  // finishes).
+  async pauseWorker() {
+    const id = this.pausingWorker;
+    if (!id || this.workerBusy) return;
     this.workerBusy = true;
     const body: Record<string, string> = { reason: this.pauseForm.reason.trim() };
     if (this.pauseForm.for) body.for = this.pauseForm.for;
-    const res = await this.authFetch('/api/workers/' + encodeURIComponent(w.id) + '/pause', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await this.authFetch('/api/workers/' + encodeURIComponent(id) + '/pause', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     this.workerBusy = false;
     if (!await this.handleBad(res, 'Could not pause the worker')) return;
     this.pausingWorker = '';
-    this.notify(w.id + ' paused', 'success');
+    this.notify(id + ' paused', 'success');
     await this.fetchWorkers();
   },
   async resumeWorker(w: WorkerRow) {

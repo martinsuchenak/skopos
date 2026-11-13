@@ -682,79 +682,83 @@
             </section>
 
             <!-- ===================== WORKERS ===================== -->
+            <!-- A list like every other view: one row per worker with its
+                 state, what it is doing and anything that needs attention;
+                 what it offers folds out under Details. Pausing is a dialog,
+                 not a form in the row: a row is re-created whenever a poll
+                 changes it, which would take the focus out of the form. -->
             <section x-show="activeView === 'workers'" x-cloak>
                 <div class="mb-6">
-                    <p class="max-w-2xl text-sm text-zinc-400">Execution planes: what each worker offers and whether it is online (reported on every poll), plus its run history. Refreshes with the dashboard's live poll.</p>
+                    <p class="max-w-2xl text-sm text-zinc-400">The machines that run the pipeline's stages: whether each is online (reported on every poll), what it is doing and what it offers. Refreshes with the dashboard's live poll.</p>
+                    <p x-show="workers.length > 0" class="mt-2 text-xs text-zinc-400" x-text="workersSummary()"></p>
                 </div>
                 <p x-show="workersLoading && workers.length === 0" class="empty-state" role="status">Loading…</p>
                 <p x-show="!workersLoading && workers.length === 0" class="empty-state">No workers have connected yet. A worker appears here from its first poll.</p>
-                <ul class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <ul class="space-y-2" x-show="workers.length > 0">
                     <template x-for="w in workers" :key="w.id + '|' + w.lastActive + '|' + w.state + '|' + w.lastSeen + '|' + (w.paused ? w.paused.at : '')">
-                        <li class="card p-4">
-                            <div class="flex items-start justify-between gap-2">
-                                <h2 class="min-w-0 break-all font-mono text-sm font-medium" x-text="w.id"></h2>
-                                <span class="badge shrink-0" :class="workerStatusClass(w)" x-text="workerBadge(w)"></span>
+                        <li class="card" :class="workerStatusLabel(w) === 'offline' ? 'opacity-70' : ''">
+                            <div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 px-4 py-3">
+                                <div class="min-w-0 flex-1">
+                                    <div class="flex flex-wrap items-baseline gap-2">
+                                        <h2 class="min-w-0 break-all font-mono text-sm font-medium text-zinc-100" x-text="w.id"></h2>
+                                        <span class="badge" :class="workerStatusClass(w)" x-text="workerBadge(w)"></span>
+                                        <span x-show="w.version" class="font-mono text-xs text-zinc-400" x-text="w.version"></span>
+                                    </div>
+                                    <p class="mt-1 break-words text-xs text-zinc-300" x-text="workerActivity(w)"></p>
+                                    <p x-show="workerOffers(w)" class="mt-0.5 break-words text-xs text-zinc-400" x-text="workerOffers(w)"></p>
+                                    <!-- What needs a person: shown on the row, never only in the fold. -->
+                                    <p x-show="w.paused" class="mt-2 break-words text-xs text-amber-300" x-text="workerPauseText(w)"></p>
+                                    <p x-show="w.factsWarning" class="mt-2 text-xs text-amber-300" x-text="w.factsWarning"></p>
+                                    <div x-show="w.unhealthy.length" class="mt-2 text-xs">
+                                        <p class="font-medium text-rose-300">Not taking work (preflight failing):</p>
+                                        <ul class="mt-1 space-y-1 text-rose-200">
+                                            <template x-for="u in w.unhealthy" :key="u"><li class="break-words" x-text="u"></li></template>
+                                        </ul>
+                                    </div>
+                                </div>
+                                <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
+                                    <p class="whitespace-nowrap text-right text-xs tabular-nums text-zinc-400">
+                                        <span class="font-mono text-zinc-200" x-text="w.active"></span> active ·
+                                        <span class="font-mono text-emerald-300" x-text="w.succeeded"></span> succeeded ·
+                                        <span class="font-mono text-rose-300" x-text="w.failed"></span> failed
+                                    </p>
+                                    <div class="flex min-w-[9.5rem] flex-wrap items-center justify-end gap-1">
+                                        <button type="button" @click="toggleWorker(w)" class="btn btn-sm btn-ghost" :aria-expanded="workerFold[w.id] ? 'true' : 'false'" :aria-label="'Details of worker ' + w.id">Details</button>
+                                        <button type="button" x-show="!w.paused" @click="openPauseWorker(w)" class="btn btn-sm btn-ghost" :aria-label="'Pause worker ' + w.id">Pause…</button>
+                                        <button type="button" x-show="w.paused" @click="resumeWorker(w)" :disabled="workerBusy" class="btn btn-sm btn-ghost" :aria-label="'Resume worker ' + w.id">Resume</button>
+                                    </div>
+                                </div>
                             </div>
-                            <p class="mt-2 text-sm" x-show="w.active > 0" x-text="w.currentLabel"></p>
-                            <dl class="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
-                                <div class="rounded-lg border border-zinc-700 p-2"><dt class="text-zinc-400">active</dt><dd class="font-mono text-sm" x-text="w.active"></dd></div>
-                                <div class="rounded-lg border border-zinc-700 p-2"><dt class="text-zinc-400">succeeded</dt><dd class="font-mono text-sm text-emerald-300" x-text="w.succeeded"></dd></div>
-                                <div class="rounded-lg border border-zinc-700 p-2"><dt class="text-zinc-400">failed</dt><dd class="font-mono text-sm text-rose-300" x-text="w.failed"></dd></div>
-                            </dl>
-                            <dl class="mt-3 space-y-1 text-xs text-zinc-400">
-                                <div><dt class="inline text-zinc-300">workspaces:</dt> <dd class="inline break-all" x-text="w.workspaces.join(', ')"></dd></div>
-                                <div><dt class="inline text-zinc-300">runners:</dt> <dd class="inline font-mono" x-text="w.runners.join(', ')"></dd></div>
-                                <div x-show="w.facts.length">
-                                    <dt class="text-zinc-300">where each runner sends code:</dt>
-                                    <dd><ul class="mt-0.5 space-y-0.5 font-mono">
-                                        <template x-for="f in w.facts" :key="f"><li class="break-all" x-text="f"></li></template>
-                                    </ul></dd>
-                                </div>
-                                <div x-show="w.executors.length">
-                                    <dt class="text-zinc-300">what contains its runs:</dt>
-                                    <dd><ul class="mt-0.5 space-y-0.5 font-mono">
-                                        <template x-for="e in w.executors" :key="e"><li class="break-all" x-text="e"></li></template>
-                                    </ul></dd>
-                                </div>
-                                <div x-show="w.serverConfig"><dt class="inline text-zinc-300">from the server:</dt> <dd class="inline" x-text="w.serverConfig"></dd></div>
-                                <div><dt class="inline text-zinc-300">stages:</dt> <dd class="inline" x-text="w.stages.join(', ')"></dd></div>
-                                <div x-show="w.lastSeen"><dt class="inline text-zinc-300">last seen:</dt> <dd class="inline" x-text="timeAgo(w.lastSeen)"></dd></div>
-                                <div x-show="w.lastActive"><dt class="inline text-zinc-300">last run:</dt> <dd class="inline" x-text="timeAgo(w.lastActive)"></dd></div>
-                                <div x-show="w.version"><dt class="inline text-zinc-300">version:</dt> <dd class="inline font-mono" x-text="w.version"></dd></div>
-                                <div x-show="w.indexable.length"><dt class="inline text-zinc-300">can index:</dt> <dd class="inline break-all" x-text="w.indexable.join(', ')"></dd></div>
-                            </dl>
-                            <p x-show="w.factsWarning" class="mt-3 text-xs text-amber-300" x-text="w.factsWarning"></p>
-                            <div x-show="w.unhealthy.length" class="mt-3 text-xs">
-                                <p class="font-medium text-rose-300">Not taking work (preflight failing):</p>
-                                <ul class="mt-1 space-y-1 text-rose-200">
-                                    <template x-for="u in w.unhealthy" :key="u"><li class="break-words" x-text="u"></li></template>
-                                </ul>
+                            <div x-show="workerFold[w.id]" class="border-t border-zinc-800 px-4 py-3">
+                                <dl class="worker-facts">
+                                    <dt>Workspaces</dt>
+                                    <dd>
+                                        <span x-show="w.workspaces.length === 0">none reported</span>
+                                        <ul class="space-y-0.5"><template x-for="ws in w.workspaces" :key="ws"><li class="break-all" x-text="ws"></li></template></ul>
+                                    </dd>
+                                    <dt>Runners</dt>
+                                    <dd>
+                                        <span x-show="w.runners.length === 0">none reported</span>
+                                        <span x-show="w.facts.length === 0" class="font-mono" x-text="w.runners.join(', ')"></span>
+                                        <!-- With facts: one line per runner, where it sends code. -->
+                                        <ul class="space-y-0.5 font-mono"><template x-for="f in w.facts" :key="f"><li class="break-all" x-text="f"></li></template></ul>
+                                    </dd>
+                                    <dt x-show="w.executors.length">What contains its runs</dt>
+                                    <dd x-show="w.executors.length">
+                                        <ul class="space-y-0.5 font-mono"><template x-for="e in w.executors" :key="e"><li class="break-all" x-text="e"></li></template></ul>
+                                    </dd>
+                                    <dt x-show="w.serverConfig">From the server</dt>
+                                    <dd x-show="w.serverConfig" x-text="w.serverConfig"></dd>
+                                    <dt x-show="w.indexable.length">Can index</dt>
+                                    <dd x-show="w.indexable.length" class="break-all" x-text="w.indexable.join(', ')"></dd>
+                                    <dt x-show="w.stages.length">Stages it ran</dt>
+                                    <dd x-show="w.stages.length" x-text="w.stages.join(', ')"></dd>
+                                    <dt x-show="w.lastSeen">Last seen</dt>
+                                    <dd x-show="w.lastSeen" x-text="workerWhen(w.lastSeen)"></dd>
+                                    <dt x-show="w.lastActive">Last run</dt>
+                                    <dd x-show="w.lastActive" x-text="workerWhen(w.lastActive)"></dd>
+                                </dl>
                             </div>
-                            <!-- Pause: someone works on the worker's machine; it takes no new work. -->
-                            <p x-show="w.paused" class="mt-3 break-words text-xs text-amber-300" x-text="workerPauseText(w)"></p>
-                            <div class="mt-3 flex flex-wrap items-center gap-1" x-show="pausingWorker !== w.id">
-                                <button type="button" x-show="!w.paused" @click="openPauseWorker(w)" class="btn btn-sm btn-ghost" :aria-label="'Pause worker ' + w.id">Pause…</button>
-                                <button type="button" x-show="w.paused" @click="resumeWorker(w)" :disabled="workerBusy" class="btn btn-sm btn-ghost" :aria-label="'Resume worker ' + w.id">Resume</button>
-                            </div>
-                            <form x-show="pausingWorker === w.id" @submit.prevent="pauseWorker(w)" class="mt-3 space-y-2 text-xs">
-                                <p class="text-zinc-400">It takes no new work; a run it holds finishes.</p>
-                                <div class="flex flex-wrap items-center gap-2">
-                                    <label class="text-zinc-300" :for="'pause-for-' + w.id">For</label>
-                                    <select :id="'pause-for-' + w.id" :value="pauseForm.for" @change="setPauseFor($event.target.value)" class="fld-sm w-auto">
-                                        <option value="1h">1 hour</option>
-                                        <option value="2h" selected>2 hours</option>
-                                        <option value="4h">4 hours</option>
-                                        <option value="8h">8 hours</option>
-                                        <option value="24h">1 day</option>
-                                        <option value="">until resumed</option>
-                                    </select>
-                                </div>
-                                <input type="text" :value="pauseForm.reason" @input="setPauseReason($event.target.value)" maxlength="500" placeholder="Reason (optional)" class="fld-sm block w-full" :aria-label="'Reason for pausing ' + w.id" autocomplete="off">
-                                <div class="flex gap-1">
-                                    <button type="submit" :disabled="workerBusy" class="btn btn-sm btn-primary">Pause</button>
-                                    <button type="button" @click="closePauseWorker()" class="btn btn-sm btn-ghost">Cancel</button>
-                                </div>
-                            </form>
                         </li>
                     </template>
                 </ul>
@@ -1415,6 +1419,34 @@
                 <div class="modal-actions">
                     <button type="button" @click="closeWsModal()" class="btn">Cancel</button>
                     <button type="submit" class="btn btn-primary" :disabled="wsSaving" x-text="wsSaving ? 'Saving…' : (wsModalMode === 'create' ? 'Create workspace' : 'Save')"></button>
+                </div>
+            </form>
+    {{template "modal-close"}}
+
+    <!-- Pause a worker: someone works on its machine; it takes no new work. -->
+    {{template "modal-open" (dict "ID" "pause-modal" "Show" "pausingWorker !== ''" "Close" "closePauseWorker()")}}
+            <h2 id="pause-modal-title" class="modal-title">Pause worker</h2>
+            <p class="-mt-2 mb-4 break-all text-sm text-zinc-400"><span class="font-mono text-zinc-200" x-text="pausingWorker"></span> takes no new work; a run it holds finishes.</p>
+            <form @submit.prevent="pauseWorker()" class="space-y-4">
+                <div>
+                    <label class="lbl" for="pause-for">For</label>
+                    <select id="pause-for" x-model="pauseForm.for" class="fld">
+                        <option value="1h">1 hour</option>
+                        <option value="2h">2 hours</option>
+                        <option value="4h">4 hours</option>
+                        <option value="8h">8 hours</option>
+                        <option value="24h">1 day</option>
+                        <option value="">until resumed</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="lbl" for="pause-reason">Reason (optional)</label>
+                    <input id="pause-reason" type="text" x-model="pauseForm.reason" maxlength="500" class="fld" autocomplete="off" aria-describedby="pause-reason-help" />
+                    <p id="pause-reason-help" class="mt-1 text-xs text-zinc-400">Shown on the worker's row with who paused it.</p>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" @click="closePauseWorker()" class="btn">Cancel</button>
+                    <button type="submit" class="btn btn-primary" :disabled="workerBusy" x-text="workerBusy ? 'Pausing…' : 'Pause'"></button>
                 </div>
             </form>
     {{template "modal-close"}}

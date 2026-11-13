@@ -293,6 +293,13 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **The Workers view is a list.** One row per worker: its state and
+  version, the run it holds or when it was last seen, its runners and
+  workspaces, its run counts, and anything that needs a person (a pause, a
+  failing preflight, a runner that means something else on another
+  worker). Details folds out the rest: every workspace, where each runner
+  sends code, what contains its runs, what it takes from the server. A
+  line above the list counts the workers by state. Pause opens a dialog.
 - **Plans can be read side by side and exported.** "Read the plans side by
   side" in the item preview opens every plan of a planning round in full,
   one column each: the candidates with their questions, the synthesis and
