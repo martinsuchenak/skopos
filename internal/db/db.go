@@ -248,6 +248,15 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "workers", "fleet_rev", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	// Routing by label (internal/labels): the labels an operator gave a
+	// worker, and the labels an item needs of the worker that takes its
+	// runs. Both a JSON array, '' = none.
+	if err := ensureColumn(db, "workers", "labels", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "inbox_items", "needs", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	// Idle-worker code indexing per workspace (NULL = off).
 	if err := ensureColumn(db, "pipeline_defaults", "code_index", "INTEGER CHECK (code_index IS NULL OR code_index IN (0, 1))"); err != nil {
 		return err

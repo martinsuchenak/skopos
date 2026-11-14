@@ -17,6 +17,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/dbtime"
 	"github.com/martinsuchenak/skopos/internal/findings"
 	"github.com/martinsuchenak/skopos/internal/integrations"
+	"github.com/martinsuchenak/skopos/internal/labels"
 	"github.com/martinsuchenak/skopos/internal/policy"
 )
 
@@ -46,7 +47,8 @@ const runColumns = `id, workspace_id, item_id, plan_rev_id, stage, runner, worke
 	resume_kind, lease_expires_at, resume_after, attempt, branch, base_sha, head_sha,
 	result_summary, diffstat, checks, log_ref, fail_reason, lease_token_hash, claimed_key_id, created_at, updated_at, executor,
 	group_id, focus, cost_usd, findings, pushed, pr_url, setup, fix_rounds, phase, retries, retry_after, avoid_worker,
-	prefer_worker, prefer_until, runner_picked, policy_rev, facts, stranded_reason, grants, config_rev, still_open`
+	prefer_worker, prefer_until, runner_picked, policy_rev, facts, stranded_reason, grants, config_rev, still_open,
+	COALESCE((SELECT needs FROM inbox_items WHERE inbox_items.id = runs.item_id), '')`
 
 func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	var r Run
@@ -56,18 +58,19 @@ func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	var cost sql.NullFloat64
 	var pushed sql.NullBool
 	var picked int
-	var facts string
+	var facts, needs string
 	if err := row.Scan(&r.ID, &r.WorkspaceID, &r.ItemID, &r.PlanRevID, &r.Stage, &r.Runner, &r.WorkerID, &r.Status,
 		&r.ResumeKind, &lease, &resumeAfter, &r.Attempt, &r.Branch, &r.BaseSHA, &r.HeadSHA,
 		&r.ResultSummary, &r.Diffstat, &checks, &r.LogRef, &r.FailReason, &r.LeaseTokenHash, &r.ClaimedKeyID, &createdAt, &updatedAt, &r.Executor,
 		&groupID, &focus, &cost, &findings, &pushed, &r.PRURL, &setup, &r.FixRounds, &r.Phase, &r.Retries, &retryAfter, &r.AvoidWorker,
-		&r.PreferWorker, &preferUntil, &picked, &r.PolicyRev, &facts, &r.Stranded, &r.Grants, &r.ConfigRev, &r.StillOpen); err != nil {
+		&r.PreferWorker, &preferUntil, &picked, &r.PolicyRev, &facts, &r.Stranded, &r.Grants, &r.ConfigRev, &r.StillOpen, &needs); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("scanning run: %w", err)
 	}
 	r.RunnerPicked = picked != 0
+	r.Needs = labels.Parse(needs)
 	if facts != "" {
 		r.Facts = json.RawMessage(facts)
 	}
@@ -190,6 +193,10 @@ type WorkerSeen struct {
 	// config). FleetRev: the runner definitions it holds.
 	ServerCommands *bool  `json:"server_commands,omitempty"`
 	FleetRev       string `json:"fleet_rev,omitempty"`
+	// Labels: what an operator said this worker has (SetWorkerLabels). A
+	// run of an item that needs labels goes only to a worker with all of
+	// them.
+	Labels []string `json:"labels,omitempty"`
 }
 
 // unhealthyJSON stores a health map (nil when all healthy).
@@ -239,15 +246,15 @@ func (s *Storage) WaitingRuns(ctx context.Context) ([]*Run, error) {
 // workspaces, their runners and what they report about them. A worker
 // gone longer than that is no reason to call a run takeable.
 func (s *Storage) WorkerOffers(ctx context.Context, since time.Time) ([]workerOffer, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT runners, workspaces, COALESCE(runner_info, ''), COALESCE(executor_info, ''), COALESCE(unhealthy, '') FROM workers WHERE last_seen >= ?`, formatTime(since))
+	rows, err := s.db.QueryContext(ctx, `SELECT runners, workspaces, COALESCE(runner_info, ''), COALESCE(executor_info, ''), COALESCE(unhealthy, ''), labels FROM workers WHERE last_seen >= ?`, formatTime(since))
 	if err != nil {
 		return nil, fmt.Errorf("listing workers: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	var out []workerOffer
 	for rows.Next() {
-		var rawRunners, rawWorkspaces, rawFacts, rawExecutors, rawUnhealthy string
-		if err := rows.Scan(&rawRunners, &rawWorkspaces, &rawFacts, &rawExecutors, &rawUnhealthy); err != nil {
+		var rawRunners, rawWorkspaces, rawFacts, rawExecutors, rawUnhealthy, rawLabels string
+		if err := rows.Scan(&rawRunners, &rawWorkspaces, &rawFacts, &rawExecutors, &rawUnhealthy, &rawLabels); err != nil {
 			return nil, err
 		}
 		var runners, workspaces []string
@@ -259,7 +266,7 @@ func (s *Storage) WorkerOffers(ctx context.Context, since time.Time) ([]workerOf
 		for _, f := range facts {
 			runners = append(runners, f.Name)
 		}
-		o := workerOffer{workspaces: map[string]bool{}, facts: newClaimFacts(runners, facts, parseExecutors(rawExecutors))}
+		o := workerOffer{workspaces: map[string]bool{}, facts: newClaimFacts(runners, facts, parseExecutors(rawExecutors)), labels: labels.Parse(rawLabels)}
 		if rawUnhealthy != "" {
 			_ = json.Unmarshal([]byte(rawUnhealthy), &o.unhealthy)
 		}
@@ -324,7 +331,8 @@ const presenceRefresh = 30 * time.Second
 // another key reusing the worker id cannot overwrite it (review H4); its
 // claims are unaffected (runs are fenced by claimed_key_id). force (a
 // successful claim) always writes; an idle poll writes only when something
-// changed or the row is older than presenceRefresh.
+// changed or the row is older than presenceRefresh. The row's labels are the
+// server's (SetWorkerLabels): no poll writes them.
 func recordWorker(ctx context.Context, tx *sql.Tx, in ClaimInput, now time.Time, force bool) error {
 	var version, poll any
 	if in.Version != "" {
@@ -414,7 +422,7 @@ func (s *Storage) BusyWorkers(ctx context.Context) (map[string]bool, error) {
 func (st *Storage) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
 	rows, err := st.db.QueryContext(ctx, `SELECT id, runners, workspaces, last_seen, COALESCE(version, ''), COALESCE(poll_ms, 0), COALESCE(offline_at, ''), COALESCE(unhealthy, ''), indexable,
 		COALESCE(paused_at, ''), COALESCE(paused_until, ''), COALESCE(paused_by, ''), COALESCE(pause_reason, ''), COALESCE(runner_info, ''), COALESCE(executor_info, ''),
-		server_commands, fleet_rev FROM workers ORDER BY last_seen DESC`)
+		server_commands, fleet_rev, labels FROM workers ORDER BY last_seen DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("listing workers: %w", err)
 	}
@@ -422,12 +430,13 @@ func (st *Storage) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
 	var out []WorkerSeen
 	for rows.Next() {
 		var w WorkerSeen
-		var runners, workspaces, unhealthy, indexable, pausedAt, pausedUntil, pausedBy, pauseReason, facts, executors string
+		var runners, workspaces, unhealthy, indexable, pausedAt, pausedUntil, pausedBy, pauseReason, facts, executors, rawLabels string
 		var commands sql.NullBool
 		if err := rows.Scan(&w.ID, &runners, &workspaces, &w.LastSeen, &w.Version, &w.PollMS, &w.OfflineAt, &unhealthy, &indexable,
-			&pausedAt, &pausedUntil, &pausedBy, &pauseReason, &facts, &executors, &commands, &w.FleetRev); err != nil {
+			&pausedAt, &pausedUntil, &pausedBy, &pauseReason, &facts, &executors, &commands, &w.FleetRev, &rawLabels); err != nil {
 			return nil, err
 		}
+		w.Labels = labels.Parse(rawLabels)
 		if commands.Valid {
 			w.ServerCommands = &commands.Bool
 		}
@@ -582,6 +591,17 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs func(workspace
 	// amendment pause has no resume_after and only its approval re-arms it
 	// (H4).
 	offer := newClaimFacts(in.Runners, in.RunnerFacts, in.Executors)
+	// The labels the server holds for this worker: a run of an item that
+	// needs labels is handed only to a worker with all of them, in every
+	// scan below. A worker without a row yet (its first poll) has none, and
+	// neither has another key polling under a labelled worker's id: the id
+	// is the caller's word, the row belongs to the key that wrote it
+	// (recordWorker's rule).
+	var rawLabels string
+	if err := tx.QueryRowContext(ctx, `SELECT labels FROM workers WHERE id = ? AND (key_id IS NULL OR key_id = ?)`, in.WorkerID, in.KeyID).Scan(&rawLabels); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("reading the worker's labels: %w", err)
+	}
+	has := labels.Parse(rawLabels)
 	var cand *Run
 	var chosen decision
 	{
@@ -623,6 +643,15 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs func(workspace
 			if in.mayTake != nil && !in.mayTake(r.WorkspaceID) {
 				continue
 			}
+			// Its item needs a label this worker has not got (the label
+			// was taken off it, or the item's needs changed while the run
+			// waited): another worker takes over from the branch.
+			if !labels.Covers(has, r.Needs) {
+				if err := releaseForTakeover(ctx, tx, r.ID, now); err != nil {
+					return nil, err
+				}
+				continue
+			}
 			d := decideResume(r, prefs(r.WorkspaceID), offer)
 			if d.ok {
 				cand, chosen = r, d
@@ -662,7 +691,7 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs func(workspace
 			wsSet[w] = in.Unhealthy[w] == ""
 		}
 		for _, r := range queued {
-			if !wsSet[r.WorkspaceID] || retryWaiting(r, in.WorkerID, now) {
+			if !wsSet[r.WorkspaceID] || retryWaiting(r, in.WorkerID, now) || !labels.Covers(has, r.Needs) {
 				continue
 			}
 			if r.PreferWorker != "" && r.PreferWorker != in.WorkerID && now.Before(r.PreferUntil) {
@@ -706,7 +735,7 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs func(workspace
 			wsSet[w] = in.Unhealthy[w] == ""
 		}
 		for _, r := range takeover {
-			if !wsSet[r.WorkspaceID] {
+			if !wsSet[r.WorkspaceID] || !labels.Covers(has, r.Needs) {
 				continue
 			}
 			if d := decide(r, prefs(r.WorkspaceID), offer); d.ok {
@@ -985,10 +1014,11 @@ func formatPreferUntil(t time.Time) string {
 
 // workerCanTake: the preferred worker could claim r soon. It polled or sent
 // a heartbeat within workerState's idle window and has not said goodbye,
-// it still offers r's workspace (healthy) and runner. A run waiting for it
-// stops waiting the moment that no longer holds.
+// it still offers r's workspace (healthy) and runner, and it has the labels
+// r's item needs. A run waiting for it stops waiting the moment that no
+// longer holds.
 func workerCanTake(ctx context.Context, tx *sql.Tx, id string, r *Run, prefs *WorkspacePrefs, now time.Time) (bool, error) {
-	var lastSeen, offlineAt, rawRunners, rawFacts, rawExecutors string
+	var lastSeen, offlineAt, rawRunners, rawFacts, rawExecutors, rawLabels string
 	var pollMS int64
 	var offers, healthy, runs, paused int
 	err := tx.QueryRowContext(ctx, `
@@ -996,16 +1026,16 @@ func workerCanTake(ctx context.Context, tx *sql.Tx, id string, r *Run, prefs *Wo
 			EXISTS (SELECT 1 FROM json_each(w.workspaces) WHERE value = ?),
 			NOT EXISTS (SELECT 1 FROM json_each(COALESCE(w.unhealthy, '{}')) WHERE key = ?),
 			(? = '' OR EXISTS (SELECT 1 FROM json_each(w.runners) WHERE value = ?)),
-			`+pausedSQL+`, w.runners, COALESCE(w.runner_info, ''), COALESCE(w.executor_info, '')
+			`+pausedSQL+`, w.runners, COALESCE(w.runner_info, ''), COALESCE(w.executor_info, ''), w.labels
 		FROM workers w WHERE w.id = ?`, r.WorkspaceID, r.WorkspaceID, r.Runner, r.Runner, formatTime(now), id).
-		Scan(&lastSeen, &pollMS, &offlineAt, &offers, &healthy, &runs, &paused, &rawRunners, &rawFacts, &rawExecutors)
+		Scan(&lastSeen, &pollMS, &offlineAt, &offers, &healthy, &runs, &paused, &rawRunners, &rawFacts, &rawExecutors, &rawLabels)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("reading worker %s: %w", id, err)
 	}
-	if offlineAt != "" || offers == 0 || healthy == 0 || runs == 0 || paused == 1 {
+	if offlineAt != "" || offers == 0 || healthy == 0 || runs == 0 || paused == 1 || !labels.Covers(labels.Parse(rawLabels), r.Needs) {
 		return false, nil
 	}
 	// The policy too, by what that worker reports: a run must not wait out

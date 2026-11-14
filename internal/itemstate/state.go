@@ -98,6 +98,7 @@ type ItemView struct {
 	Branch      string    `json:"branch,omitempty"`
 	Flow        string    `json:"flow,omitempty"`
 	Agents      string    `json:"agents,omitempty"`
+	Needs       []string  `json:"needs,omitempty"`
 	Status      string    `json:"status"`
 	PlanID      string    `json:"plan_id,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
@@ -230,7 +231,7 @@ func (s *Service) Get(ctx context.Context, itemID string) (*State, error) {
 	st := &State{
 		Item: ItemView{
 			ID: item.ID, WorkspaceID: item.WorkspaceID, Title: item.Title, Ref: item.Ref, ExternalURL: item.ExternalURL,
-			Branch: item.Branch, Flow: item.Flow, Agents: item.Agents, Status: string(item.Status), PlanID: item.PlanID,
+			Branch: item.Branch, Flow: item.Flow, Agents: item.Agents, Needs: item.Needs, Status: string(item.Status), PlanID: item.PlanID,
 			CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
 		},
 		Brief:     strings.TrimSpace(brief),

@@ -38,6 +38,10 @@ func (s *noopInboxStore) SetFlow(context.Context, string, string, time.Time) err
 func (s *noopInboxStore) SetExternalURL(context.Context, string, string, time.Time) error {
 	return nil
 }
+
+func (s *noopInboxStore) SetNeeds(context.Context, string, []string, time.Time) error {
+	return nil
+}
 func (s *noopInboxStore) EventDB() integrations.DB { return nil }
 func (s *noopInboxStore) ListFiltered(context.Context, inbox.ListFilter) ([]inbox.Item, error) {
 	return nil, nil

@@ -4,6 +4,37 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Worker labels: an item can name the workers that may work on it.** A
+  worker gets labels on the server (`skopos worker label --id <worker> --set
+  stock,plant-2`, Workers → Details → Labels in the dashboard, `PUT
+  /api/workers/{id}/labels`), and an item names the labels it needs
+  (`skopos inbox add --needs stock`, the "Needs a worker labelled" field of
+  the item form, `needs` on `POST /api/inbox` and `PATCH /api/inbox/{id}`,
+  the `inbox_create` and `inbox_update` tools). Every run of such an item
+  (plan, implement, review, QA, second opinion) is handed only to a worker
+  with all of its labels; an item that needs none goes to any worker
+  serving the workspace.
+  - Labels are held on the server per worker id: the worker's config has no
+    setting for them. Root, or an approver whose scope covers every
+    workspace the worker serves, sets them; the worker's own key cannot. A
+    change is audited as `worker.labels`.
+  - An item's `needs` is approver-only once the item is in the agent
+    workflow, and a change is audited with the item's other edits.
+  - A change to a worker's labels or an item's needs applies to runs that
+    still wait. An interrupted run whose worker no longer has the labels is
+    taken over by a worker that has them, and a retry does not wait for a
+    worker that lacks them.
+  - A waiting run no worker serving the workspace has the labels for is
+    marked stranded after two minutes, with the missing labels in the
+    reason.
+  - `GET /api/workers` carries each worker's `labels`; items, runs and
+    `GET /api/inbox/{id}/state` carry `needs`. The Workers page shows a
+    worker's labels on its row, and items show a "needs …" badge.
+
 ## [0.34.0] — 2026-11-14
 
 ### Added

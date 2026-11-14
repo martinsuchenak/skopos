@@ -9,6 +9,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
 	"github.com/martinsuchenak/skopos/internal/inbox"
+	"github.com/martinsuchenak/skopos/internal/labels"
 	mcplib "github.com/paularlott/mcp"
 )
 
@@ -73,8 +74,10 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 			mcplib.Integer("priority", "Optional explicit priority (>= 1; smaller first). Unprioritized items always sort after prioritized ones — set it only on the few items that matter."),
 			mcplib.String("author_agent_id", "Identifier of the capturing agent", mcplib.Required()),
 			mcplib.String("agents", "Multi-agent stages for this item: panel (the repository's configured agents), solo (one agent), or omit for the repository default"),
+			mcplib.String("needs", "Labels the item needs of its worker, comma-separated (e.g. \"stock\"): only a worker an operator gave all of them takes its runs. Omit for any worker."),
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
+			needs, _ := labels.Arg(req.StringOr("needs", ""))
 			item, err := service.CreateItem(ctx, inbox.CreateInput{
 				WorkspaceID:   req.StringOr("workspace_id", ""),
 				Title:         req.StringOr("title", ""),
@@ -83,11 +86,12 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 				Priority:      req.IntOr("priority", 0),
 				AuthorAgentID: req.StringOr("author_agent_id", ""),
 				Agents:        req.StringOr("agents", ""),
+				Needs:         needs,
 			})
 			if err != nil {
 				return nil, toolError(err)
 			}
-			return mcplib.NewToolResponseJSON(map[string]any{"id": item.ID, "status": string(item.Status), "title": item.Title, "priority": item.Priority, "workspace_id": item.WorkspaceID, "agents": item.Agents}), nil
+			return mcplib.NewToolResponseJSON(map[string]any{"id": item.ID, "status": string(item.Status), "title": item.Title, "priority": item.Priority, "workspace_id": item.WorkspaceID, "agents": item.Agents, "needs": item.Needs}), nil
 		},
 	)
 
@@ -168,6 +172,9 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 			if item.Agents != "" {
 				out["agents"] = item.Agents
 			}
+			if len(item.Needs) > 0 {
+				out["needs"] = item.Needs
+			}
 			if item.PlanID != "" {
 				out["plan_id"] = item.PlanID
 				if item.Plan != nil {
@@ -188,6 +195,7 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 			mcplib.Integer("priority", "Priority: >= 1 sets, -1 clears (back to unordered), 0 or omitted leaves unchanged. Prioritized items sort first, smallest first."),
 			mcplib.String("workspace_id", "File (or re-file) an unfiled/misfiled item into this workspace; open/in_progress items only. Omit to keep the current workspace."),
 			mcplib.String("agents", "Multi-agent stages for this item: panel, solo, or default (back to the repository default); omit to keep. Approver-only once the item is in the agent workflow."),
+			mcplib.String("needs", "Labels the item needs of its worker, comma-separated; \"-\" for any worker again; omit to keep. Approver-only once the item is in the agent workflow."),
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 			input := inbox.UpdateInput{
@@ -213,6 +221,10 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 			// Absent leaves the switch unchanged; "default" clears it.
 			if a := req.StringOr("agents", ""); a != "" {
 				input.Agents = &a
+			}
+			// Absent leaves the needed labels unchanged; "-" clears them.
+			if needs, set := labels.Arg(req.StringOr("needs", "")); set {
+				input.Needs = &needs
 			}
 			if err := service.UpdateItem(ctx, req.StringOr("item_id", ""), input); err != nil {
 				return nil, toolError(err)

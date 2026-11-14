@@ -57,6 +57,9 @@ Idempotency-Key: job-100235-create
   (`{ref}`), and `GET /api/inbox?ref=JOB100235` finds the job's items.
 - `external_url` links the item back to the job; the dashboard shows it on
   the item.
+- `needs` (optional, e.g. `["stock"]`) names the
+  [labels](../deployment/worker.md#worker-labels) the item needs of its
+  worker: its runs go only to a worker with all of them.
 - The answer is `201` with the item. If it was created but couldn't start,
   it's open and `start_error` says why; `POST /api/inbox/{id}/queue` (or
   `/review`) starts it later.

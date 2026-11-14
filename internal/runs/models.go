@@ -119,6 +119,10 @@ type Run struct {
 	ItemID      string `json:"item_id"`
 	PlanRevID   string `json:"plan_rev_id,omitempty"`
 	Stage       string `json:"stage"`
+	// Needs: the labels the run's item needs of the worker that takes it
+	// (the item's own, read with the run: a change applies to runs still
+	// waiting). Empty = any worker.
+	Needs []string `json:"needs,omitempty"`
 	// Runner: the runner the run is for. Set at queue time from the stage
 	// preference (or named outright: a panel member, a second opinion); the
 	// claim then resolves the one runner the worker runs, checks it against

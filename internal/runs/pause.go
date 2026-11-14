@@ -131,6 +131,13 @@ func (s *Service) WorkerPaused(ctx context.Context, workerID string) *WorkerPaus
 // serves — a pause stops work for all of them. Others don't see the
 // worker (404) or lack the approver permission (403).
 func (s *Service) mayManageWorker(ctx context.Context, workerID string) error {
+	return s.mayActOnWorker(ctx, workerID, true)
+}
+
+// mayActOnWorker is mayManageWorker's rule; ownKey says whether the key the
+// worker runs with passes too (a pause: yes; its labels: no — what a worker
+// has is said about it, not by it).
+func (s *Service) mayActOnWorker(ctx context.Context, workerID string, ownKey bool) error {
 	if workerID == "" {
 		return fmt.Errorf("%w: worker id is required", ErrInvalidInput)
 	}
@@ -139,7 +146,7 @@ func (s *Service) mayManageWorker(ctx context.Context, workerID string) error {
 		return err
 	}
 	p := auth.PrincipalFromContext(ctx)
-	if p.IsRoot() || (keyID.Valid && keyID.String == p.KeyID) {
+	if p.IsRoot() || (ownKey && keyID.Valid && keyID.String == p.KeyID) {
 		return nil
 	}
 	visible := false

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -208,6 +209,10 @@ func (s *Service) CreateItem(ctx context.Context, input CreateInput) (*Item, err
 	if err != nil {
 		return nil, err
 	}
+	needs, err := NormalizeNeeds(input.Needs)
+	if err != nil {
+		return nil, err
+	}
 	start := strings.ToLower(strings.TrimSpace(input.Start))
 	switch start {
 	case "":
@@ -240,6 +245,7 @@ func (s *Service) CreateItem(ctx context.Context, input CreateInput) (*Item, err
 		Branch:        branch,
 		Ref:           ref,
 		ExternalURL:   externalURL,
+		Needs:         needs,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
@@ -451,6 +457,13 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 		}
 		input.ExternalURL = &externalURL
 	}
+	if input.Needs != nil {
+		needs, err := NormalizeNeeds(*input.Needs)
+		if err != nil {
+			return err
+		}
+		input.Needs = &needs
+	}
 	// Filing names an explicit target workspace: an out-of-scope target is
 	// the actionable 403 flavor (the item itself was already scope-checked).
 	if input.WorkspaceID != "" {
@@ -512,6 +525,10 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 		if ref != item.Ref {
 			changed = append(changed, "ref")
 		}
+		needsChanged := input.Needs != nil && !slices.Equal(*input.Needs, item.Needs)
+		if needsChanged {
+			changed = append(changed, "needs")
+		}
 		if IsWorkflowStatus(item.Status) {
 			if workspace != item.WorkspaceID {
 				return fmt.Errorf("%w: item is in the agent workflow (%s) — its runs, plan and branch live in %s; it cannot move workspace", ErrInvalidInput, statusLabel(item.Status), item.WorkspaceID)
@@ -530,6 +547,11 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 			if branchChanged && approverErr != nil {
 				return fmt.Errorf("%w: changing an agent-workflow item's branch or reference", approverErr)
 			}
+			// Which workers may take the item's runs — where its code
+			// runs and whose data it is tested on — is a human call too.
+			if needsChanged && approverErr != nil {
+				return fmt.Errorf("%w: changing the labels an agent-workflow item needs of its worker", approverErr)
+			}
 		}
 		if content != item.Content && appendsTo(content, item.Content) {
 			appended = content[len(strings.TrimSpace(item.Content)):]
@@ -541,6 +563,11 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 		}
 		if agentsChanged {
 			if err := tx.SetAgents(ctx, itemID, *input.Agents, s.now().UTC()); err != nil {
+				return err
+			}
+		}
+		if needsChanged {
+			if err := tx.SetNeeds(ctx, itemID, *input.Needs, s.now().UTC()); err != nil {
 				return err
 			}
 		}

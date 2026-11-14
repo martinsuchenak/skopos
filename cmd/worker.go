@@ -52,6 +52,7 @@ func workerCmd() *cli.Command {
 			workerCheckCmd(),
 			workerPauseCmd(),
 			workerResumeCmd(),
+			workerLabelCmd(),
 			workerUninstallCmd(),
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {

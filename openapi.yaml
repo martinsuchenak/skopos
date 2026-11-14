@@ -2269,6 +2269,7 @@ paths:
                 branch: { type: string, description: "The branch to work on: an existing one is taken over (handover, review), a new one is created under this name. Omit to let the worker name it" }
                 ref: { type: string, description: "External reference (e.g. a ticket or job number) for the repository's branch template ({ref}); GET /api/inbox?ref= finds the item by it" }
                 external_url: { type: string, description: "https link to the item's job in another system" }
+                needs: { type: array, maxItems: 8, items: { type: string }, description: "Labels the item needs of its worker: its runs go only to a worker with all of them (PUT /api/workers/{id}/labels). Omit for any worker serving the workspace" }
                 start: { type: string, enum: [queue, review], description: "Start the item right after creating it: queue (the pipeline) or review (review-only; needs branch or ref). Needs the approver permission and workspace_id. A start that fails leaves the item open and sets start_error" }
       parameters:
         - { name: Idempotency-Key, in: header, schema: { type: string }, description: "Makes a retry safe (see the API description)" }
@@ -2386,6 +2387,7 @@ paths:
                 branch: { type: string, description: "The branch to work on; \"\" clears it. Approver-only once the item is in the agent workflow" }
                 ref: { type: string, description: "External reference for the branch template; \"\" clears it. Approver-only once the item is in the agent workflow" }
                 external_url: { type: string, description: "https link to the item's job elsewhere; \"\" clears it" }
+                needs: { type: array, maxItems: 8, items: { type: string }, description: "Labels the item needs of its worker; [] for any worker again; omit to keep. Applies to runs still waiting. Approver-only once the item is in the agent workflow" }
       responses:
         "204": { description: Updated }
         "403": { description: "Filing target workspace out of scope for this credential" }
@@ -3586,6 +3588,7 @@ paths:
                       description: What contains its runs, per workspace in the caller's scope
                     server_commands: { type: boolean, description: "It takes commands from the server; absent for a worker that does not say" }
                     fleet_rev: { type: string, description: The runner definitions it holds }
+                    labels: { type: array, items: { type: string }, description: "The worker's labels (PUT /api/workers/{id}/labels). A run of an item that needs labels goes only to a worker with all of them" }
                     state:
                       type: string
                       enum: [busy, idle, paused, offline]
@@ -3639,6 +3642,49 @@ paths:
         "401": { description: Unauthorized }
         "403": { description: Approver permission over every workspace the worker serves required }
         "404": { description: No such worker in your scope }
+
+  /api/workers/{id}/labels:
+    put:
+      summary: Set a worker's labels — what it has that other workers serving the same workspace may not
+      description: >-
+        Replaces the worker's labels. An item names the labels it needs
+        (`needs`); its runs, in every stage, are handed only to a worker with
+        all of them. A waiting run no worker serving the workspace can take
+        for its labels is marked stranded with the missing labels. The labels
+        are held on the server: the worker reports none and its polls do not
+        change them. Allowed for root and for approvers whose scope covers
+        every workspace the worker serves; the key the worker runs with may
+        not. Audited as `worker.labels`.
+      operationId: setWorkerLabels
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [labels]
+              properties:
+                labels:
+                  type: array
+                  maxItems: 8
+                  items: { type: string, pattern: "^[a-z0-9][a-z0-9_.-]{0,31}$" }
+                  description: The full list; an empty list removes every label. Stored lower-cased, without duplicates, sorted
+      responses:
+        "200":
+          description: The labels now held
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  labels: { type: array, items: { type: string } }
+        "400": { description: "A label that is not 1 to 32 of a-z, 0-9, '_', '.', '-' starting with a letter or digit, more than 8 labels, or an unknown field" }
+        "401": { description: Unauthorized }
+        "403": { description: Approver permission over every workspace the worker serves required }
+        "404": { description: No such worker in your scope (a worker is listed once it has polled) }
 
   /api/workers/{id}/offline:
     post:
@@ -4890,7 +4936,8 @@ components:
         facts:
           type: object
           description: "What the claiming worker reported about the runner (RunnerFacts fields) and the executor it reported for the run's workspace, stage and runner, plus policy (the layers' revisions, in order), rules (per layer, the index of the rule that allowed it) and picked"
-        stranded: { type: string, description: "Why no worker may take this queued run under the policy; empty when not stranded. Recorded once as run.stranded" }
+        stranded: { type: string, description: "Why no worker may take this waiting run: the policy refuses every worker's runner, or no worker serving the workspace has the labels its item needs; empty when not stranded. Recorded once as run.stranded" }
+        needs: { type: array, items: { type: string }, description: "The labels the run's item needs of the worker that takes it (the item's own, read with the run)" }
         worker_id: { type: string, description: Affinity owner }
         status: { type: string, enum: [queued, claimed, running, paused, succeeded, failed, interrupted, cancelled] }
         resume_kind: { type: string, enum: ["", session, branch] }
@@ -5200,6 +5247,7 @@ components:
             branch: { type: string }
             flow: { type: string }
             agents: { type: string }
+            needs: { type: array, items: { type: string }, description: Labels the item needs of its worker }
             status: { type: string }
             plan_id: { type: string }
             created_at: { type: string, format: date-time }
@@ -5342,6 +5390,7 @@ components:
         ref: { type: string, description: "External reference, the branch template's {ref}" }
         flow: { type: string, enum: [review], description: "review = a review-only item" }
         external_url: { type: string, description: "Link to the item's job in another system" }
+        needs: { type: array, items: { type: string }, description: "Labels the item needs of its worker; absent = any worker serving the workspace" }
         start_error: { type: string, description: "On a create with start: why the item was created but not started" }
         plan_id: { type: string }
         plan:

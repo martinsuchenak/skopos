@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/audit"
+	"github.com/martinsuchenak/skopos/internal/labels"
 	"github.com/martinsuchenak/skopos/internal/policy"
 )
 
@@ -549,6 +550,8 @@ type workerOffer struct {
 	// (a failing preflight, a release that cannot do what the workspace
 	// needs, a key that is not a worker key).
 	unhealthy map[string]string
+	// labels: what an operator said the worker has (SetWorkerLabels).
+	labels []string
 }
 
 // strandedReason says why no worker may take a waiting run under the
@@ -559,11 +562,21 @@ func strandedReason(r *Run, prefs *WorkspacePrefs, workers []workerOffer) string
 	// (the claim skips a workspace a worker is unhealthy for).
 	var held []string
 	serving := 0
+	// unlabelled: the workers serving the workspace that lack a label the
+	// run's item needs — the claim hands them none of its runs; offered:
+	// every label those workers do have.
+	unlabelled := 0
+	var offered []string
 	for _, w := range workers {
 		if !w.workspaces[r.WorkspaceID] {
 			continue
 		}
 		serving++
+		if !labels.Covers(w.labels, r.Needs) {
+			unlabelled++
+			offered = append(offered, w.labels...)
+			continue
+		}
 		if why := w.unhealthy[r.WorkspaceID]; why != "" {
 			if !slices.Contains(held, why) {
 				held = append(held, why)
@@ -583,6 +596,13 @@ func strandedReason(r *Run, prefs *WorkspacePrefs, workers []workerOffer) string
 		noFacts = noFacts || d.noFacts
 	}
 	switch {
+	case serving > 0 && unlabelled == serving:
+		// Not the policy: the item names what its worker must have, and no
+		// worker serving the workspace has it.
+		if missing := labels.Missing(offered, r.Needs); len(missing) > 0 {
+			return fmt.Sprintf("no worker serving the workspace has the label the item needs: %s", strings.Join(missing, ", "))
+		}
+		return fmt.Sprintf("no worker serving the workspace has all the labels the item needs: %s", strings.Join(r.Needs, ", "))
 	case refused != "":
 		return fmt.Sprintf("no worker offers an allowed runner for %s: refused by the %s policy", r.Stage, refused)
 	case unavailable != "":

@@ -27,7 +27,7 @@ type EntryForm = { scope: 'project' | 'branch' | 'session'; entry_type: 'finding
 type PlanForm = { name: string; description: string; branch_name: string };
 type ItemForm = { title: string; description: string; phase: string; depends_on: string };
 type InboxPlanSummary = { id: string; name: string; status: string };
-type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; agents?: string; branch?: string; ref?: string; external_url?: string; flow?: string; created_at: string; updated_at: string; excerpt?: string };
+type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; agents?: string; branch?: string; ref?: string; external_url?: string; flow?: string; needs?: string[]; created_at: string; updated_at: string; excerpt?: string };
 // The detail view's content, cut server-side (internal/inbox/parts.go):
 // The author's text, then the pipeline's sections in rounds.
 type ItemQuestion = { text: string; options?: string[] };
@@ -51,9 +51,9 @@ function keyIsAgentPreset(caps: string[]): boolean {
 
 // A worker's pause (an operator stopped it taking work); until "" = until resumed.
 type WorkerPause = { at: string; until?: string; by?: string; reason?: string };
-type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string; state: string; version: string; lastSeen: string; unhealthy: string[]; indexable: string[]; paused: WorkerPause | null; facts: string[]; executors: string[]; factsWarning: string; serverConfig: string };
+type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string; state: string; version: string; lastSeen: string; unhealthy: string[]; indexable: string[]; paused: WorkerPause | null; facts: string[]; executors: string[]; factsWarning: string; serverConfig: string; labels: string[] };
 type RunnerFacts = { name: string; kind?: string; model?: string; effort?: string; provider?: string; endpoint?: string; stages?: string[] };
-type WorkerSeen = { id: string; runners: string[]; workspaces: string[]; last_seen: string; version?: string; state?: string; unhealthy?: Record<string, string>; indexable?: string[]; paused?: WorkerPause; runner_facts?: RunnerFacts[]; executors?: Record<string, ExecutorFact[]>; server_commands?: boolean; fleet_rev?: string };
+type WorkerSeen = { id: string; runners: string[]; workspaces: string[]; last_seen: string; version?: string; state?: string; unhealthy?: Record<string, string>; indexable?: string[]; paused?: WorkerPause; runner_facts?: RunnerFacts[]; executors?: Record<string, ExecutorFact[]>; server_commands?: boolean; fleet_rev?: string; labels?: string[] };
 // Workspace config held on the server (internal/wsconfig).
 type ConfigEffective = { workspace: string; managed: boolean; rev?: string; config: Record<string, unknown>; sources?: Record<string, string>; conflicts?: string[] };
 type ConfigView = { owner_kind: string; owner_id: string; config: Record<string, unknown> | null; rev?: string; updated_by?: string; effective?: ConfigEffective; changed?: string[]; defaults?: Record<string, unknown> };
@@ -145,7 +145,7 @@ type FindingGroupView = { key: string; id: string; title: string; hint: string; 
 type AuditEntry = { id: string; action: string; actor: string; via?: string; notes?: string; created_at: string };
 // wsLocked: a workflow item cannot move workspace (its runs, plan and
 // branch live there) — the server refuses it; the modal hides the picker.
-type InboxForm = { id: string; title: string; tags: string; workspace: string; agents: string; branch: string; ref: string; wsLocked: boolean };
+type InboxForm = { id: string; title: string; tags: string; workspace: string; agents: string; branch: string; ref: string; needs: string; wsLocked: boolean };
 
 const UI_AUTHOR = 'ui';
 type View = 'sessions' | 'blackboard' | 'plans' | 'inbox' | 'index' | 'keys' | 'workspaces' | 'workers' | 'webhooks';
@@ -339,6 +339,9 @@ const appState = () => ({
   // The pause dialog: open while pausingWorker names a worker.
   pausingWorker: '',
   pauseForm: { for: '2h', reason: '' },
+  // The labels dialog: open while labelingWorker names a worker.
+  labelingWorker: '',
+  labelForm: { labels: '', error: '' },
   workerBusy: false,
 
   // code index
@@ -605,7 +608,7 @@ const appState = () => ({
   anyModalOpen() {
     return this.showKeyModal || this.showApiKeyModal || this.showSecretModal || this.showWebhookModal || this.showWsModal || this.showGroupModal
       || this.showEntryModal || this.showPlanModal || this.showItemModal || this.showInboxItemModal || this.showInboxPreview
-      || this.showFileModal || this.confirm.open || this.pipe.open || this.planView.open || this.mcpForm.open || this.pausingWorker !== '' || (this.sidebarOpen && window.matchMedia('(max-width: 767px)').matches);
+      || this.showFileModal || this.confirm.open || this.pipe.open || this.planView.open || this.mcpForm.open || this.pausingWorker !== '' || this.labelingWorker !== '' || (this.sidebarOpen && window.matchMedia('(max-width: 767px)').matches);
   },
 
   // ---- shared dialog helpers ----
@@ -3408,12 +3411,12 @@ const appState = () => ({
     const byWorker = new Map<string, WorkerRow>();
     for (const entry of registered) {
       const reg = entry[1];
-      byWorker.set(entry[0], { id: entry[0], workspaces: [...(reg.workspaces || [])], stages: [], runners: [...(reg.runners || [])], active: 0, succeeded: 0, failed: 0, lastActive: '', currentLabel: '', state: reg.state || '', version: reg.version || '', lastSeen: reg.last_seen || '', unhealthy: Object.entries(reg.unhealthy || {}).map(([ws, why]) => ws + ': ' + why), indexable: [...(reg.indexable || [])], paused: reg.paused || null, facts: (reg.runner_facts || []).map((f: RunnerFacts) => this.runnerFactsLine(f)), executors: Object.entries(reg.executors || {}).sort((a, b) => a[0] < b[0] ? -1 : 1).map(([ws, facts]) => this.executorsLine(ws, facts as ExecutorFact[])), factsWarning: '', serverConfig: this.workerConfigLine(reg) });
+      byWorker.set(entry[0], { id: entry[0], workspaces: [...(reg.workspaces || [])], stages: [], runners: [...(reg.runners || [])], active: 0, succeeded: 0, failed: 0, lastActive: '', currentLabel: '', state: reg.state || '', version: reg.version || '', lastSeen: reg.last_seen || '', unhealthy: Object.entries(reg.unhealthy || {}).map(([ws, why]) => ws + ': ' + why), indexable: [...(reg.indexable || [])], paused: reg.paused || null, facts: (reg.runner_facts || []).map((f: RunnerFacts) => this.runnerFactsLine(f)), executors: Object.entries(reg.executors || {}).sort((a, b) => a[0] < b[0] ? -1 : 1).map(([ws, facts]) => this.executorsLine(ws, facts as ExecutorFact[])), factsWarning: '', serverConfig: this.workerConfigLine(reg), labels: [...(reg.labels || [])] });
     }
     for (const run of runs) {
       if (!run.worker_id) continue; // queued, never claimed
       let w = byWorker.get(run.worker_id);
-      if (!w) { w = { id: run.worker_id, workspaces: [], stages: [], runners: [], active: 0, succeeded: 0, failed: 0, lastActive: run.updated_at, currentLabel: '', state: '', version: '', lastSeen: '', unhealthy: [], indexable: [], paused: null, facts: [], executors: [], factsWarning: '', serverConfig: '' }; byWorker.set(run.worker_id, w); }
+      if (!w) { w = { id: run.worker_id, workspaces: [], stages: [], runners: [], active: 0, succeeded: 0, failed: 0, lastActive: run.updated_at, currentLabel: '', state: '', version: '', lastSeen: '', unhealthy: [], indexable: [], paused: null, facts: [], executors: [], factsWarning: '', serverConfig: '', labels: [] }; byWorker.set(run.worker_id, w); }
       const reg = registered.get(run.worker_id);
       if (reg) { for (const ws of reg.workspaces || []) if (!w.workspaces.includes(ws)) w.workspaces.push(ws); }
       if (run.workspace_id && !w.workspaces.includes(run.workspace_id)) w.workspaces.push(run.workspace_id);
@@ -3990,6 +3993,36 @@ const appState = () => ({
     this.notify(id + ' paused', 'success');
     await this.fetchWorkers();
   },
+  // A worker's labels: what it has that the others serving the same
+  // workspaces may not. An item that needs labels is worked only by a worker
+  // with all of them (the server decides at the claim).
+  openWorkerLabels(w: WorkerRow) { this.labelingWorker = w.id; this.labelForm = { labels: w.labels.join(', '), error: '' }; },
+  closeWorkerLabels() { this.labelingWorker = ''; },
+  async saveWorkerLabels() {
+    const id = this.labelingWorker;
+    if (!id || this.workerBusy) return;
+    const labels = labelList(this.labelForm.labels);
+    this.workerBusy = true;
+    const res = await this.authFetch('/api/workers/' + encodeURIComponent(id) + '/labels', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ labels }) });
+    this.workerBusy = false;
+    if (res.status === 400) {
+      const body = await res.json().catch(() => ({}));
+      this.labelForm.error = ((body as { error?: string }).error || 'Not a valid list of labels.').replace(/^invalid runs input: /, '');
+      return;
+    }
+    if (!await this.handleBad(res, 'Could not save the labels')) return;
+    this.labelingWorker = '';
+    this.notify(labels.length ? id + ' labelled ' + labels.join(', ') : id + ' has no labels now', 'success');
+    await this.fetchWorkers();
+  },
+  // The labels an item needs of its worker: badge text and its explanation.
+  needsLabel(it?: InboxItem | null): string {
+    return it && it.needs && it.needs.length ? 'needs ' + it.needs.join(', ') : '';
+  },
+  needsTitle(it?: InboxItem | null): string {
+    if (!it || !it.needs || !it.needs.length) return '';
+    return 'Worked only by a worker labelled ' + it.needs.join(' and ') + ' (Workers page)';
+  },
   async resumeWorker(w: WorkerRow) {
     if (this.workerBusy) return;
     this.workerBusy = true;
@@ -4272,7 +4305,7 @@ const appState = () => ({
     // explicitly (an inline field error, not a silent toast).
     this.inboxForm.workspace = this.activeWorkspace;
     this.inboxErrors = {};
-    this.inboxBaseline = { title: '', tags: '', content: '', workspace: this.activeWorkspace, agents: '', branch: '', ref: '' };
+    this.inboxBaseline = { title: '', tags: '', content: '', workspace: this.activeWorkspace, agents: '', branch: '', ref: '', needs: '' };
     this.showInboxItemModal = true;
     this.syncInboxWsField();
     this.mountInboxEditor('');
@@ -4284,9 +4317,9 @@ const appState = () => ({
     const detail = (await res.json()) as InboxDetail;
     this.inboxForm = {
       id: detail.id, title: detail.title, tags: (detail.tags || []).join(', '), workspace: detail.workspace_id || '',
-      agents: detail.agents || '', branch: detail.branch || '', ref: detail.ref || '', wsLocked: this.isWorkflowStatus(detail.status),
+      agents: detail.agents || '', branch: detail.branch || '', ref: detail.ref || '', needs: (detail.needs || []).join(', '), wsLocked: this.isWorkflowStatus(detail.status),
     };
-    this.inboxBaseline = { title: detail.title, tags: this.inboxForm.tags, content: detail.content, workspace: detail.workspace_id || '', agents: detail.agents || '', branch: detail.branch || '', ref: detail.ref || '' };
+    this.inboxBaseline = { title: detail.title, tags: this.inboxForm.tags, content: detail.content, workspace: detail.workspace_id || '', agents: detail.agents || '', branch: detail.branch || '', ref: detail.ref || '', needs: this.inboxForm.needs };
     this.inboxErrors = {};
     this.showInboxItemModal = true;
     this.syncInboxWsField();
@@ -4318,7 +4351,8 @@ const appState = () => ({
       || this.inboxForm.workspace !== this.inboxBaseline.workspace
       || this.inboxForm.agents !== this.inboxBaseline.agents
       || this.inboxForm.branch !== this.inboxBaseline.branch
-      || this.inboxForm.ref !== this.inboxBaseline.ref;
+      || this.inboxForm.ref !== this.inboxBaseline.ref
+      || this.inboxForm.needs !== this.inboxBaseline.needs;
   },
   // Per-item multi-agent switch: badge text and its explanation.
   agentsLabel(agents?: string): string {
@@ -4368,6 +4402,7 @@ const appState = () => ({
         if (f.agents) body.agents = f.agents;
         if (f.branch.trim()) body.branch = f.branch.trim();
         if (f.ref.trim()) body.ref = f.ref.trim();
+        if (labelList(f.needs).length) body.needs = labelList(f.needs);
         // 'unfiled' (root-only option) captures without a workspace; the
         // server rejects it for scoped keys with an actionable error.
         if (f.workspace !== 'unfiled') body.workspace_id = f.workspace;
@@ -4386,6 +4421,8 @@ const appState = () => ({
         if (f.agents !== this.inboxBaseline.agents) body.agents = f.agents;
         if (f.branch.trim() !== this.inboxBaseline.branch) body.branch = f.branch.trim();
         if (f.ref.trim() !== this.inboxBaseline.ref) body.ref = f.ref.trim();
+        // Only a changed list is sent ([] = any worker again).
+        if (labelList(f.needs).join(',') !== labelList(this.inboxBaseline.needs).join(',')) body.needs = labelList(f.needs);
         const res = await this.authFetch('/api/inbox/' + encodeURIComponent(f.id), { method: 'PATCH', body: JSON.stringify(body) });
         if (!await this.handleBad(res, 'Item not updated')) return;
         this.notify('Item updated', 'success');
@@ -5363,8 +5400,18 @@ function bundleParams(ws: string, branch: string) {
 function emptyEntryForm(branch = ''): EntryForm { return { scope: 'branch', entry_type: 'finding', title: '', content: '', code_ref: '', branch_name: branch, session_id: '' }; }
 function emptyPlanForm(branch = ''): PlanForm { return { name: '', description: '', branch_name: branch }; }
 function emptyItemForm(): ItemForm { return { title: '', description: '', phase: '', depends_on: '' }; }
-function emptyInboxForm(): InboxForm { return { id: '', title: '', tags: '', workspace: '', agents: '', branch: '', ref: '', wsLocked: false }; }
-function emptyInboxBaseline() { return { title: '', tags: '', content: '', workspace: '', agents: '', branch: '', ref: '' }; }
+// A comma-separated list of labels as the server stores it: lower-cased,
+// without blanks and duplicates, sorted (the server checks each label).
+function labelList(v: string): string[] {
+  const out: string[] = [];
+  for (const part of v.split(',')) {
+    const l = part.trim().toLowerCase();
+    if (l && !out.includes(l)) out.push(l);
+  }
+  return out.sort();
+}
+function emptyInboxForm(): InboxForm { return { id: '', title: '', tags: '', workspace: '', agents: '', branch: '', ref: '', needs: '', wsLocked: false }; }
+function emptyInboxBaseline() { return { title: '', tags: '', content: '', workspace: '', agents: '', branch: '', ref: '', needs: '' }; }
 
 Alpine.plugin(focus);
 // Register as a named component: the CSP Alpine build cannot resolve globals

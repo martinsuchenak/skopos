@@ -1447,6 +1447,8 @@ The dashboard's Workers view (and `GET /api/workers`) shows each worker as
 The pipeline settings dialog suggests the runners these workers offer and
 warns about a runner no worker serving the workspace offers yet.
 
+Each row also shows the worker's [labels](#worker-labels).
+
 ## Pausing a worker
 
 To work on a worker's machine yourself (an editor connected over SSH, your
@@ -1477,6 +1479,53 @@ shows who paused a worker, until when and why. Pauses and resumes are in the
 audit log (`worker.pause`, `worker.resume`). The API is
 `POST /api/workers/{id}/pause` (`{"for": "2h", "reason": "…"}`, or `until`)
 and `POST /api/workers/{id}/resume`.
+
+## Worker labels
+
+Workers that serve one workspace are interchangeable by default: whichever
+polls first takes a run. Give a worker a label when it has something the
+others don't (a client's data set, a licensed tool, a device on its
+network), and name that label on the items that need it:
+
+```sh
+skopos worker label --id worker-plant-2 --set stock,plant-2
+skopos inbox add --workspace github.com/acme/shop --title "Stock count rounding" --needs stock
+```
+
+- **What it does:** an item with `needs` is worked only by a worker that has
+  every label it names. That holds for each of its runs: plan, implement,
+  checks, review, QA and a second opinion. An item without `needs` goes to
+  any worker serving the workspace.
+- **Where the labels are held:** on the server, per worker id. The worker's
+  config file has no setting for them and the worker reports none, so the
+  same config can be rolled out to every machine. They count for the key
+  the worker polls with: another key polling under the same worker id does
+  not get them.
+- **Setting them:** `skopos worker label --id <worker> --set a,b` replaces
+  the list, `--clear` removes it, and without either the command prints the
+  list. The dashboard has the same under Workers → Details → Labels. The
+  API is `PUT /api/workers/{id}/labels` (`{"labels": ["stock"]}`). A worker
+  can be labelled once it has polled the server.
+- **Who may:** the root key, or an approver whose scope covers every
+  workspace the worker serves. The key the worker runs with may not.
+  Changes are in the audit log (`worker.labels`).
+- **A label:** 1 to 32 characters of `a-z`, `0-9`, `_`, `.` and `-`,
+  starting with a letter or digit; at most 8 per worker and per item.
+  Upper case is stored as lower case.
+- **On an item:** `needs` is set at capture (`--needs`, the item form's
+  "Needs a worker labelled" field, `needs` on `POST /api/inbox`) and changed
+  with `skopos inbox update --id <item> --needs a,b` (`--needs -` for any
+  worker again) or `PATCH /api/inbox/{id}`. Once the item is in the agent
+  workflow only an approver changes it, and the change is audited.
+- **When a label or an item's needs change:** the new state applies to
+  every run that is still waiting. A run in progress finishes where it is.
+  An interrupted run whose worker no longer has the labels is taken over by
+  a worker that has them, from the pushed branch. A retry does not wait for
+  the worker that ran the stage before when that worker lacks them.
+- **When no worker has the labels:** after two minutes the waiting run is
+  marked stranded, and the item shows "Waiting: no worker serving the
+  workspace has the label the item needs: stock". The mark goes when a
+  worker gets the label, or the item's needs change.
 
 ## Service management
 

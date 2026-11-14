@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/martinsuchenak/skopos/internal/dbtime"
 	"github.com/martinsuchenak/skopos/internal/integrations"
+	"github.com/martinsuchenak/skopos/internal/labels"
 	"strings"
 	"time"
 )
@@ -23,6 +24,8 @@ type Store interface {
 	SetBranchRef(ctx context.Context, id, branch, ref string, updatedAt time.Time) error
 	// SetExternalURL records the item's link to its job elsewhere.
 	SetExternalURL(ctx context.Context, id, externalURL string, updatedAt time.Time) error
+	// SetNeeds records the labels the item needs of a worker (nil = none).
+	SetNeeds(ctx context.Context, id string, needs []string, updatedAt time.Time) error
 	// SetFlow marks a review-only item ('review') or clears the mark.
 	SetFlow(ctx context.Context, id, flow string, updatedAt time.Time) error
 	// ItemForSlackThread resolves an item by its Slack thread root.
@@ -114,7 +117,7 @@ func (s *Storage) RunInTx(ctx context.Context, fn func(Store) error) error {
 // they became, and a deleted plan leaves the summary NULL (dangling plan_id).
 const itemColumns = `
 	i.id, i.workspace_id, i.title, i.content, i.tags, i.status, i.priority,
-	i.claimed_by_agent_id, i.author_agent_id, i.plan_id, i.slack_thread_ts, i.agents, i.branch, i.ref, i.flow, i.external_url, i.created_at, i.updated_at,
+	i.claimed_by_agent_id, i.author_agent_id, i.plan_id, i.slack_thread_ts, i.agents, i.branch, i.ref, i.flow, i.external_url, i.needs, i.created_at, i.updated_at,
 	p.name, p.status
 `
 
@@ -129,10 +132,10 @@ const itemOrder = ` ORDER BY (i.priority IS NULL) ASC, i.priority ASC, i.id DESC
 func (s *Storage) CreateItem(ctx context.Context, item Item) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO inbox_items
-		    (id, workspace_id, title, content, tags, status, priority, claimed_by_agent_id, author_agent_id, plan_id, agents, branch, ref, external_url, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?)
+		    (id, workspace_id, title, content, tags, status, priority, claimed_by_agent_id, author_agent_id, plan_id, agents, branch, ref, external_url, needs, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
 	`, item.ID, item.WorkspaceID, item.Title, item.Content, tagsJSON(item.Tags), string(item.Status),
-		nullableInt(item.Priority), nullableString(item.AuthorAgentID), nullableString(item.Agents), item.Branch, item.Ref, item.ExternalURL, formatTime(item.CreatedAt), formatTime(item.UpdatedAt))
+		nullableInt(item.Priority), nullableString(item.AuthorAgentID), nullableString(item.Agents), item.Branch, item.Ref, item.ExternalURL, labels.JSON(item.Needs), formatTime(item.CreatedAt), formatTime(item.UpdatedAt))
 	if err != nil {
 		return fmt.Errorf("inserting inbox item: %w", err)
 	}
@@ -163,6 +166,11 @@ func (s *Storage) SetBranchRef(ctx context.Context, id, branch, ref string, upda
 // SetExternalURL records the item's link to its job elsewhere ("" = none).
 func (s *Storage) SetExternalURL(ctx context.Context, id, externalURL string, updatedAt time.Time) error {
 	return s.setColumns(ctx, id, `external_url = ?`, updatedAt, externalURL)
+}
+
+// SetNeeds records the labels the item needs of a worker (nil = none).
+func (s *Storage) SetNeeds(ctx context.Context, id string, needs []string, updatedAt time.Time) error {
+	return s.setColumns(ctx, id, `needs = ?`, updatedAt, labels.JSON(needs))
 }
 
 // SetFlow marks a review-only item ("review") or clears the mark ("").
@@ -563,10 +571,10 @@ func scanItem(row rowScanner) (Item, error) {
 	var priority sql.NullInt64
 	var claimedBy, planID, agents sql.NullString
 	var planName, planStatus sql.NullString
-	var tags string
+	var tags, needs string
 	var createdAt, updatedAt string
 	if err := row.Scan(&item.ID, &workspace, &item.Title, &item.Content, &tags, &item.Status, &priority,
-		&claimedBy, &item.AuthorAgentID, &planID, &item.SlackThreadTS, &agents, &item.Branch, &item.Ref, &item.Flow, &item.ExternalURL, &createdAt, &updatedAt, &planName, &planStatus); err != nil {
+		&claimedBy, &item.AuthorAgentID, &planID, &item.SlackThreadTS, &agents, &item.Branch, &item.Ref, &item.Flow, &item.ExternalURL, &needs, &createdAt, &updatedAt, &planName, &planStatus); err != nil {
 		return item, fmt.Errorf("scanning inbox item: %w", err)
 	}
 	if workspace.Valid {
@@ -590,6 +598,7 @@ func scanItem(row rowScanner) (Item, error) {
 		}
 	}
 	item.Tags = parseTags(tags)
+	item.Needs = labels.Parse(needs)
 	item.CreatedAt = parseTime(createdAt)
 	item.UpdatedAt = parseTime(updatedAt)
 	return item, nil

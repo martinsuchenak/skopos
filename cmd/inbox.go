@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/inbox"
+	"github.com/martinsuchenak/skopos/internal/labels"
 	"github.com/paularlott/cli"
 )
 
@@ -79,6 +80,7 @@ func inboxAddCmd() *cli.Command {
 			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID"},
 			&cli.BoolFlag{Name: "unfiled", Usage: "Capture without a workspace (decide later; root key only)"},
 			&cli.StringFlag{Name: "agents", Usage: "Multi-agent stages for this item: panel or solo (omit for the repository default)"},
+			&cli.StringFlag{Name: "needs", Usage: "Labels the item needs of its worker, comma-separated: only a worker with all of them takes its runs (skopos worker label)"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			content, err := inboxContent(cmd.GetString("content"), cmd.GetString("file"))
@@ -89,6 +91,7 @@ func inboxAddCmd() *cli.Command {
 			if cmd.GetBool("unfiled") {
 				ws = ""
 			}
+			needs, _ := labels.Arg(cmd.GetString("needs"))
 			item, err := inboxPost(ctx, cmd.GetString("server-url"), cmd.GetString("api-key"), inbox.CreateInput{
 				Title:         cmd.GetString("title"),
 				Content:       content,
@@ -97,6 +100,7 @@ func inboxAddCmd() *cli.Command {
 				AuthorAgentID: cmd.GetString("agent-id"),
 				WorkspaceID:   ws,
 				Agents:        cmd.GetString("agents"),
+				Needs:         needs,
 			})
 			if err != nil {
 				return err
@@ -186,6 +190,9 @@ func inboxShowCmd() *cli.Command {
 			if item.Agents != "" {
 				fmt.Printf("Agents: %s\n", item.Agents)
 			}
+			if len(item.Needs) > 0 {
+				fmt.Printf("Needs a worker labelled: %s\n", strings.Join(item.Needs, ", "))
+			}
 			if item.ClaimedByAgentID != "" {
 				fmt.Printf("Claimed by: %s\n", item.ClaimedByAgentID)
 			}
@@ -219,6 +226,7 @@ func inboxUpdateCmd() *cli.Command {
 			&cli.StringSliceFlag{Name: "tag", Usage: "Replace tags (repeatable)"},
 			&cli.StringFlag{Name: "priority", Usage: "Set priority: a number >= 1, or 'clear' to unpin (smaller first; unprioritized items sort last)"},
 			&cli.StringFlag{Name: "agents", Usage: "Multi-agent stages for this item: panel, solo, or default (the repository default)"},
+			&cli.StringFlag{Name: "needs", Usage: "Labels the item needs of its worker, comma-separated; '-' for any worker again. Approver-only once the item is in the agent workflow"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			id := strings.TrimSpace(cmd.GetString("id"))
@@ -248,6 +256,9 @@ func inboxUpdateCmd() *cli.Command {
 			}
 			if a := strings.TrimSpace(cmd.GetString("agents")); a != "" {
 				input.Agents = &a
+			}
+			if needs, set := labels.Arg(cmd.GetString("needs")); set {
+				input.Needs = &needs
 			}
 			if err := inboxPatch(ctx, cmd.GetString("server-url"), cmd.GetString("api-key"), id, input); err != nil {
 				return err

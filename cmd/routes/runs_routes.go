@@ -40,4 +40,5 @@ func registerRunsRoutes(mux *http.ServeMux, h *runs.Handler) {
 	mux.HandleFunc("POST /api/workers/{id}/offline", h.WorkerOffline)
 	mux.HandleFunc("POST /api/workers/{id}/pause", h.PauseWorker)
 	mux.HandleFunc("POST /api/workers/{id}/resume", h.ResumeWorker)
+	mux.HandleFunc("PUT /api/workers/{id}/labels", h.SetWorkerLabels)
 }

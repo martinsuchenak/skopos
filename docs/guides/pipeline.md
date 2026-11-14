@@ -557,6 +557,18 @@ Start an item with `new: …`, or `new <workspace>: …` for another repo; add
   [worker reference](../deployment/worker.md#effort).
 - **Other CLIs.** Use `runner add`, kind `command`. These only run inside a
   wrapper, because skopos can't verify their lockdown.
+- **Work that must run on one machine.** When some items need what only one
+  worker has (a client's data set, a licensed tool), label that worker and
+  name the label on those items:
+
+  ```sh
+  skopos worker label --id worker-plant-2 --set stock
+  skopos inbox add --workspace github.com/acme/shop --title "Stock count rounding" --needs stock
+  ```
+
+  Every run of such an item goes to a worker with the label; other items
+  still go to any worker. See
+  [Worker labels](../deployment/worker.md#worker-labels).
 
 ## Troubleshooting
 
