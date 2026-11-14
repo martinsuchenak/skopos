@@ -95,22 +95,21 @@ func groupListCmd() *cli.Command {
 
 func groupAddCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "add",
-		Usage:   "Add workspace IDs to a group (by group name or id)",
-		MaxArgs: 2,
+		Name:  "add",
+		Usage: "Add workspaces or patterns to a group",
+		Arguments: []cli.Argument{
+			&cli.StringArg{Name: "group", Usage: "The group's name or id", Required: true},
+			&cli.StringArg{Name: "workspaces", Usage: "Workspace ids to add, comma-separated"},
+		},
 		Flags: append(keyClientFlags(),
 			&cli.StringSliceFlag{Name: "pattern", Usage: "Also add patterns (path.Match)"},
 		),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			args := cmd.GetArgs()
-			if len(args) < 1 || strings.TrimSpace(args[0]) == "" {
-				return fmt.Errorf("usage: skopos group add <group> [workspace...]")
+			ref := strings.TrimSpace(cmd.GetStringArg("group"))
+			if ref == "" {
+				return fmt.Errorf("the group's name or id is empty")
 			}
-			ref := strings.TrimSpace(args[0])
-			var workspaces []string
-			if len(args) == 2 {
-				workspaces = splitAndTrim(args[1])
-			}
+			workspaces := splitAndTrim(cmd.GetStringArg("workspaces"))
 			patterns := cmd.GetStringSlice("pattern")
 			if len(workspaces) == 0 && len(patterns) == 0 {
 				return fmt.Errorf("nothing to add: pass workspace ids or --pattern")
@@ -147,16 +146,16 @@ func groupAddCmd() *cli.Command {
 
 func keyWhoCanCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "who-can",
-		Usage:   "Which API keys can access a workspace, and how (explicit, group, or pattern)",
-		MaxArgs: 1,
-		Flags:   keyClientFlags(),
+		Name:      "who-can",
+		Usage:     "Which API keys can access a workspace, and how (explicit, group, or pattern)",
+		Flags:     keyClientFlags(),
+		Arguments: []cli.Argument{&cli.StringArg{Name: "workspace", Usage: "The workspace's id, e.g. github.com/acme/shop", Required: true}},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			args := cmd.GetArgs()
-			if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
-				return fmt.Errorf("usage: skopos key who-can <workspace-id>")
+			workspace := strings.TrimSpace(cmd.GetStringArg("workspace"))
+			if workspace == "" {
+				return fmt.Errorf("the workspace id is empty")
 			}
-			return runKeyWhoCan(ctx, cmd, strings.TrimSpace(args[0]))
+			return runKeyWhoCan(ctx, cmd, workspace)
 		},
 	}
 }

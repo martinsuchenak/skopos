@@ -21,9 +21,8 @@ func init() {
 
 func webhookCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "webhook",
-		MaxArgs: 1,
-		Usage:   "Manage webhook subscriptions (signed event deliveries to another system)",
+		Name:  "webhook",
+		Usage: "Manage webhook subscriptions (signed event deliveries to another system)",
 		Commands: []*cli.Command{
 			webhookCreateCmd(), webhookListCmd(), webhookShowCmd(), webhookUpdateCmd(),
 			webhookToggleCmd("enable", true), webhookToggleCmd("disable", false),
@@ -50,12 +49,20 @@ func webhookCall(ctx context.Context, cmd *cli.Command, method, path string, bod
 	return apiDo(ctx, strings.TrimRight(cmd.GetString("server-url"), "/"), cmd.GetString("api-key"), "cli", "webhooks", method, path, body, out)
 }
 
-func oneArg(cmd *cli.Command, usage string) (string, error) {
-	args := cmd.GetArgs()
-	if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
-		return "", fmt.Errorf("usage: %s", usage)
+// webhookID declares the <id> argument of the commands that act on one
+// subscription.
+func webhookID() []cli.Argument {
+	return []cli.Argument{&cli.StringArg{Name: "id", Usage: "The subscription's id (skopos webhook list shows it)", Required: true}}
+}
+
+// webhookArg is that argument. The library refuses a missing one; this
+// refuses one that is only spaces (an unset shell variable in quotes).
+func webhookArg(cmd *cli.Command) (string, error) {
+	id := strings.TrimSpace(cmd.GetStringArg("id"))
+	if id == "" {
+		return "", fmt.Errorf("the subscription's id is empty")
 	}
-	return strings.TrimSpace(args[0]), nil
+	return id, nil
 }
 
 func printWebhook(w integrations.Webhook) {
@@ -126,12 +133,12 @@ func webhookListCmd() *cli.Command {
 
 func webhookShowCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "show",
-		MaxArgs: 1,
-		Usage:   "Show one subscription: skopos webhook show <id>",
-		Flags:   webhookFlags(),
+		Name:      "show",
+		Arguments: webhookID(),
+		Usage:     "Show one subscription",
+		Flags:     webhookFlags(),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			id, err := oneArg(cmd, "skopos webhook show <id>")
+			id, err := webhookArg(cmd)
 			if err != nil {
 				return err
 			}
@@ -147,12 +154,12 @@ func webhookShowCmd() *cli.Command {
 
 func webhookUpdateCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "update",
-		MaxArgs: 1,
-		Usage:   "Change a subscription: skopos webhook update <id> [--name] [--url] [--workspace …] [--group …] [--type …] [--all-types]",
-		Flags:   webhookFlags(append(webhookScopeFlags(), &cli.BoolFlag{Name: "all-types", Usage: "Back to every type but run.*"})...),
+		Name:      "update",
+		Arguments: webhookID(),
+		Usage:     "Change a subscription (only what is given changes)",
+		Flags:     webhookFlags(append(webhookScopeFlags(), &cli.BoolFlag{Name: "all-types", Usage: "Back to every type but run.*"})...),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			id, err := oneArg(cmd, "skopos webhook update <id> [flags]")
+			id, err := webhookArg(cmd)
 			if err != nil {
 				return err
 			}
@@ -193,12 +200,12 @@ func webhookToggleCmd(name string, enabled bool) *cli.Command {
 		usage = "Enable a subscription: delivers what waited since it was disabled"
 	}
 	return &cli.Command{
-		Name:    name,
-		MaxArgs: 1,
-		Usage:   usage,
-		Flags:   webhookFlags(),
+		Name:      name,
+		Arguments: webhookID(),
+		Usage:     usage,
+		Flags:     webhookFlags(),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			id, err := oneArg(cmd, "skopos webhook "+name+" <id>")
+			id, err := webhookArg(cmd)
 			if err != nil {
 				return err
 			}
@@ -214,12 +221,12 @@ func webhookToggleCmd(name string, enabled bool) *cli.Command {
 
 func webhookRotateCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "rotate",
-		MaxArgs: 1,
-		Usage:   "Replace the signing secret (the old one also signs for 24 hours)",
-		Flags:   webhookFlags(),
+		Name:      "rotate",
+		Arguments: webhookID(),
+		Usage:     "Replace the signing secret (the old one also signs for 24 hours)",
+		Flags:     webhookFlags(),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			id, err := oneArg(cmd, "skopos webhook rotate <id>")
+			id, err := webhookArg(cmd)
 			if err != nil {
 				return err
 			}
@@ -235,12 +242,12 @@ func webhookRotateCmd() *cli.Command {
 
 func webhookTestCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "test",
-		MaxArgs: 1,
-		Usage:   "Send a webhook.test event to the subscription",
-		Flags:   webhookFlags(),
+		Name:      "test",
+		Arguments: webhookID(),
+		Usage:     "Send a webhook.test event to the subscription",
+		Flags:     webhookFlags(),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			id, err := oneArg(cmd, "skopos webhook test <id>")
+			id, err := webhookArg(cmd)
 			if err != nil {
 				return err
 			}
@@ -256,15 +263,15 @@ func webhookTestCmd() *cli.Command {
 
 func webhookDeliveriesCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "deliveries",
-		MaxArgs: 1,
-		Usage:   "Show a subscription's deliveries, newest first",
+		Name:      "deliveries",
+		Arguments: webhookID(),
+		Usage:     "Show a subscription's deliveries, newest first",
 		Flags: webhookFlags(
 			&cli.StringFlag{Name: "state", Usage: "pending, delivered or failed"},
 			&cli.IntFlag{Name: "limit", DefaultValue: 20, Usage: "How many (at most 200)"},
 		),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			id, err := oneArg(cmd, "skopos webhook deliveries <id>")
+			id, err := webhookArg(cmd)
 			if err != nil {
 				return err
 			}
@@ -296,15 +303,15 @@ func webhookDeliveriesCmd() *cli.Command {
 
 func webhookRedeliverCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "redeliver",
-		MaxArgs: 1,
-		Usage:   "Deliver again: --delivery <id>, or --since <time|duration> for every failed one since",
+		Name:      "redeliver",
+		Arguments: webhookID(),
+		Usage:     "Deliver again: one delivery (--delivery), or every failed one since a time (--since)",
 		Flags: webhookFlags(
 			&cli.StringFlag{Name: "delivery", Usage: "Delivery id"},
 			&cli.StringFlag{Name: "since", Usage: "RFC 3339 time, or a duration back from now (e.g. 24h)"},
 		),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			id, err := oneArg(cmd, "skopos webhook redeliver <id> --delivery <id> | --since <when>")
+			id, err := webhookArg(cmd)
 			if err != nil {
 				return err
 			}
@@ -337,12 +344,12 @@ func webhookRedeliverCmd() *cli.Command {
 
 func webhookDeleteCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "delete",
-		MaxArgs: 1,
-		Usage:   "Delete a subscription and its deliveries",
-		Flags:   webhookFlags(),
+		Name:      "delete",
+		Arguments: webhookID(),
+		Usage:     "Delete a subscription and its deliveries",
+		Flags:     webhookFlags(),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			id, err := oneArg(cmd, "skopos webhook delete <id>")
+			id, err := webhookArg(cmd)
 			if err != nil {
 				return err
 			}

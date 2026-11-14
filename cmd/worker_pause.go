@@ -68,6 +68,10 @@ func workerTargetFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.StringFlag{Name: "worker-id", Usage: "The worker (default: this host's worker, as its config names it)"},
 		&cli.StringFlag{Name: "env-file", Usage: "Env file to load (default: skopos-worker.env next to the config)", EnvVars: []string{"SKOPOS_WORKER_ENV"}},
+		// No EnvVars, ConfigPath or default on these two: workerTarget
+		// resolves them itself, after the env file is loaded.
+		&cli.StringFlag{Name: "server-url", Usage: "Skopos server URL (default: SKOPOS_SERVER_URL, also from the env file, then [client] in the config)"},
+		&cli.StringFlag{Name: "api-key", Usage: "Skopos API key (default: SKOPOS_API_KEY, also from the env file, then [client] in the config)"},
 	}
 }
 

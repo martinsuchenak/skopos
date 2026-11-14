@@ -69,7 +69,7 @@ func inboxAddCmd() *cli.Command {
 		Name:  "add",
 		Usage: "Capture an inbox item (markdown content via --content, --file <path>, or --file - for stdin)",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
 			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "title", Usage: "Item title"},
 			&cli.StringFlag{Name: "content", Usage: "Markdown content"},
@@ -120,7 +120,7 @@ func inboxListCmd() *cli.Command {
 		Name:  "list",
 		Usage: "List inbox items",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
 			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "status", Usage: "Filter by status: open, in_progress, converted, done, discarded", DefaultValue: "open"},
 			&cli.StringFlag{Name: "tag", Usage: "Filter by tag"},
@@ -165,7 +165,7 @@ func inboxShowCmd() *cli.Command {
 		Name:  "show",
 		Usage: "Show an inbox item (raw markdown)",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
 			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "id", Usage: "Item ID"},
 		},
@@ -217,7 +217,7 @@ func inboxUpdateCmd() *cli.Command {
 		Name:  "update",
 		Usage: "Enrich an item (title/content/tags; content via --content or --file)",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
 			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "id", Usage: "Item ID"},
 			&cli.StringFlag{Name: "title", Usage: "New title"},
@@ -274,7 +274,7 @@ func inboxClaimCmd() *cli.Command {
 		Name:  "claim",
 		Usage: "Claim an item for processing (omit --agent-id to release)",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
 			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "id", Usage: "Item ID"},
 			&cli.StringFlag{Name: "agent-id", Usage: "Agent identifier", EnvVars: []string{"SKOPOS_AGENT_ID"}},
@@ -302,7 +302,7 @@ func inboxConvertCmd() *cli.Command {
 		Name:  "convert",
 		Usage: "Link a plan and mark the item converted",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
 			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "id", Usage: "Item ID"},
 			&cli.StringFlag{Name: "plan-id", Usage: "Plan ID (same workspace)"},
@@ -328,7 +328,7 @@ func inboxFileCmd() *cli.Command {
 		Name:  "file",
 		Usage: "File an unfiled (or misfiled) item into a workspace",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
 			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "id", Usage: "Item ID"},
 			&cli.StringFlag{Name: "workspace", Usage: "Target workspace ID"},
@@ -354,7 +354,7 @@ func inboxDiscardCmd() *cli.Command {
 		Name:  "discard",
 		Usage: "Discard an item (won't do)",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
 			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "id", Usage: "Item ID"},
 		},
@@ -481,7 +481,7 @@ func inboxRestoreCmd() *cli.Command {
 		Name:  "restore",
 		Usage: "Restore a discarded item back to open",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
 			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "id", Usage: "Item ID"},
 		},
@@ -504,7 +504,7 @@ func inboxDeleteCmd() *cli.Command {
 		Name:  "delete",
 		Usage: "Hard-delete an item",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
 			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "id", Usage: "Item ID"},
 		},

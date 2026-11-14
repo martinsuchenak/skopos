@@ -57,9 +57,9 @@ func execGit(root string, args ...string) (string, error) {
 
 func indexBuildCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "build",
-		Usage:   "Parse a checkout and build/refresh its branch index locally",
-		MaxArgs: 1,
+		Name:      "build",
+		Usage:     "Parse a checkout and build/refresh its branch index locally",
+		Arguments: []cli.Argument{&cli.StringArg{Name: "checkout", Usage: "Path of the checkout (default: the current directory)"}},
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "index-dir", DefaultValue: ".skopos/indexes", ConfigPath: []string{"codeindex.dir"}, Usage: "Local index directory"},
 			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID (default: git remote of the checkout)"},
@@ -67,8 +67,8 @@ func indexBuildCmd() *cli.Command {
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			root := "."
-			if args := cmd.GetArgs(); len(args) > 0 {
-				root = args[0]
+			if arg := cmd.GetStringArg("checkout"); arg != "" {
+				root = arg
 			}
 			workspace := workspaceOrDefault(cmd.GetString("workspace"))
 			if workspace == "" {
@@ -111,19 +111,19 @@ func indexBuildCmd() *cli.Command {
 
 func indexPushCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "push",
-		Usage:   "Build a checkout and push its branch index to a skopos server",
-		MaxArgs: 1,
+		Name:      "push",
+		Usage:     "Build a checkout and push its branch index to a skopos server",
+		Arguments: []cli.Argument{&cli.StringArg{Name: "checkout", Usage: "Path of the checkout (default: the current directory)"}},
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
 			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID (default: git remote of the checkout)"},
 			&cli.StringFlag{Name: "branch", Usage: "Branch (default: current git branch)"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			root := "."
-			if args := cmd.GetArgs(); len(args) > 0 {
-				root = args[0]
+			if arg := cmd.GetStringArg("checkout"); arg != "" {
+				root = arg
 			}
 			workspace := workspaceOrDefault(cmd.GetString("workspace"))
 			if workspace == "" {
@@ -342,7 +342,7 @@ func indexRefreshCmd() *cli.Command {
 		Name:  "refresh",
 		Usage: "Ask a skopos server to clone/pull a workspace's git_url and rebuild its index",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
+			&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
 			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID (must have a git_url registered)"},
 			&cli.StringFlag{Name: "branch", Usage: "Branch to build (default: the repo's default branch)"},
@@ -436,9 +436,9 @@ func indexExportCmd() *cli.Command {
 
 func indexImportCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "import",
-		Usage:   "Import an ndjson index bundle into a local index",
-		MinArgs: 1, MaxArgs: 1,
+		Name:      "import",
+		Usage:     "Import an ndjson index bundle into a local index",
+		Arguments: []cli.Argument{&cli.StringArg{Name: "bundle", Usage: "The ndjson bundle file", Required: true}},
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "index-dir", DefaultValue: ".skopos/indexes", ConfigPath: []string{"codeindex.dir"}, Usage: "Local index directory"},
 			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID to import as"},
@@ -451,7 +451,7 @@ func indexImportCmd() *cli.Command {
 			if workspace == "" {
 				return fmt.Errorf("--workspace is required (bundles do not carry the workspace id)")
 			}
-			f, err := os.Open(cmd.GetArgs()[0])
+			f, err := os.Open(cmd.GetStringArg("bundle"))
 			if err != nil {
 				return err
 			}

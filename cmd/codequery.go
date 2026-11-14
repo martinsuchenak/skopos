@@ -104,6 +104,16 @@ func queryFlags() []cli.Flag {
 	}
 }
 
+// queryDepth is --depth of impact and call-tree. The index follows at most
+// 10 levels and would quietly use 3 for anything else, so it is refused here.
+func queryDepth(cmd *cli.Command) (int, error) {
+	depth := cmd.GetInt("depth")
+	if depth < 1 || depth > 10 {
+		return 0, fmt.Errorf("--depth is 1 to 10, not %d", depth)
+	}
+	return depth, nil
+}
+
 // printJSON emits a result in the canonical JSON shape shared with the REST
 // API and MCP tools — one format, two transports.
 func printJSON(v any) error {
@@ -192,12 +202,12 @@ func firstDocLine(doc string) string {
 
 func codeSearchCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "search",
-		Usage:   "Full-text symbol search in the code index",
-		MinArgs: 1, MaxArgs: 1,
-		Flags: queryFlags(),
+		Name:      "search",
+		Usage:     "Full-text symbol search in the code index",
+		Arguments: []cli.Argument{&cli.StringArg{Name: "query", Usage: "Text to look for in symbol names, signatures and docs", Required: true}},
+		Flags:     queryFlags(),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			q := cmd.GetArgs()[0]
+			q := cmd.GetStringArg("query")
 			res, err := queryTarget(ctx, cmd,
 				func(ws, branch string) string {
 					return fmt.Sprintf("/api/codeindex/%s/search?q=%s&branch=%s", url.PathEscape(ws), url.QueryEscape(q), url.QueryEscape(branch))
@@ -223,12 +233,12 @@ func codeSearchCmd() *cli.Command {
 
 func codeSymbolCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "symbol",
-		Usage:   "Find a symbol's definitions by exact name",
-		MinArgs: 1, MaxArgs: 1,
-		Flags: queryFlags(),
+		Name:      "symbol",
+		Usage:     "Find a symbol's definitions by exact name",
+		Arguments: []cli.Argument{&cli.StringArg{Name: "name", Usage: "Symbol name, exactly as defined", Required: true}},
+		Flags:     queryFlags(),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			name := cmd.GetArgs()[0]
+			name := cmd.GetStringArg("name")
 			res, err := queryTarget(ctx, cmd,
 				func(ws, branch string) string {
 					return fmt.Sprintf("/api/codeindex/%s/symbol?name=%s&branch=%s", url.PathEscape(ws), url.QueryEscape(name), url.QueryEscape(branch))
@@ -277,12 +287,12 @@ func codeSymbolCmd() *cli.Command {
 
 func codeWhoCallsCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "who-calls",
-		Usage:   "List call sites of a symbol (default inclusive: call sites + type references; --kinds call for true call sites only)",
-		MinArgs: 1, MaxArgs: 1,
-		Flags: append(queryFlags(), &cli.StringFlag{Name: "kinds", Usage: "Comma-separated edge kinds (call,new,references,extends,implements,uses,embeds); \"call\" = true call sites"}),
+		Name:      "who-calls",
+		Usage:     "List call sites of a symbol (default inclusive: call sites + type references; --kinds call for true call sites only)",
+		Arguments: []cli.Argument{&cli.StringArg{Name: "name", Usage: "Symbol name, exactly as defined", Required: true}},
+		Flags:     append(queryFlags(), &cli.StringFlag{Name: "kinds", Usage: "Comma-separated edge kinds (call,new,references,extends,implements,uses,embeds); \"call\" = true call sites"}),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			name := cmd.GetArgs()[0]
+			name := cmd.GetStringArg("name")
 			res, err := queryTarget(ctx, cmd,
 				func(ws, branch string) string {
 					kindsQ := ""
@@ -335,12 +345,12 @@ func codeWhoCallsCmd() *cli.Command {
 
 func codeOutlineCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "outline",
-		Usage:   "List a file's definitions in source order",
-		MinArgs: 1, MaxArgs: 1,
-		Flags: queryFlags(),
+		Name:      "outline",
+		Usage:     "List a file's definitions in source order",
+		Arguments: []cli.Argument{&cli.StringArg{Name: "path", Usage: "File path, relative to the repository root", Required: true}},
+		Flags:     queryFlags(),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			path := strings.TrimPrefix(cmd.GetArgs()[0], "/")
+			path := strings.TrimPrefix(cmd.GetStringArg("path"), "/")
 			res, err := queryTarget(ctx, cmd,
 				func(ws, branch string) string {
 					return fmt.Sprintf("/api/codeindex/%s/outline?path=%s&branch=%s", url.PathEscape(ws), url.QueryEscape(path), url.QueryEscape(branch))
@@ -406,13 +416,16 @@ func init() {
 
 func codeImpactCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "impact",
-		Usage:   "Show what is transitively affected by changing a symbol",
-		Flags:   queryFlags(),
-		MinArgs: 1, MaxArgs: 1,
+		Name:      "impact",
+		Usage:     "Show what is transitively affected by changing a symbol",
+		Flags:     append(queryFlags(), &cli.IntFlag{Name: "depth", DefaultValue: 3, Usage: "How many levels to follow (1 to 10)"}),
+		Arguments: []cli.Argument{&cli.StringArg{Name: "name", Usage: "Symbol name, exactly as defined", Required: true}},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			name := cmd.GetArgs()[0]
-			depth := 3
+			name := cmd.GetStringArg("name")
+			depth, err := queryDepth(cmd)
+			if err != nil {
+				return err
+			}
 			res, err := queryTarget(ctx, cmd,
 				func(ws, branch string) string {
 					return fmt.Sprintf("/api/codeindex/%s/impact?name=%s&branch=%s&depth=%d", url.PathEscape(ws), url.QueryEscape(name), url.QueryEscape(branch), depth)
@@ -452,10 +465,9 @@ func codeImpactCmd() *cli.Command {
 
 func codeDeadCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "dead-code",
-		Usage:   "List symbols with no incoming call references (verify before deleting)",
-		Flags:   queryFlags(),
-		MinArgs: 0, MaxArgs: 0,
+		Name:  "dead-code",
+		Usage: "List symbols with no incoming call references (verify before deleting)",
+		Flags: queryFlags(),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			res, err := queryTarget(ctx, cmd,
 				func(ws, branch string) string {
@@ -572,13 +584,18 @@ func codeCyclesCmd() *cli.Command {
 
 func codeCallTreeCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "call-tree",
-		Usage:   "Expand what a symbol calls, recursively",
-		Flags:   append(queryFlags(), &cli.BoolFlag{Name: "mermaid", Usage: "Emit a Mermaid flowchart instead of ASCII"}),
-		MinArgs: 1, MaxArgs: 1,
+		Name:  "call-tree",
+		Usage: "Expand what a symbol calls, recursively",
+		Flags: append(queryFlags(),
+			&cli.IntFlag{Name: "depth", DefaultValue: 3, Usage: "How many levels to follow (1 to 10)"},
+			&cli.BoolFlag{Name: "mermaid", Usage: "Emit a Mermaid flowchart instead of ASCII"}),
+		Arguments: []cli.Argument{&cli.StringArg{Name: "name", Usage: "Symbol name, exactly as defined", Required: true}},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			name := cmd.GetArgs()[0]
-			depth := 3
+			name := cmd.GetStringArg("name")
+			depth, err := queryDepth(cmd)
+			if err != nil {
+				return err
+			}
 			res, err := queryTarget(ctx, cmd,
 				func(ws, branch string) string {
 					return fmt.Sprintf("/api/codeindex/%s/call-tree?name=%s&branch=%s&depth=%d", url.PathEscape(ws), url.QueryEscape(name), url.QueryEscape(branch), depth)
@@ -646,14 +663,14 @@ func mermaidNodes(n codeindex.CallTreeNode) {
 
 func codeBranchDiffCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "branch-diff",
-		Usage:   "Compare a feature branch's indexed symbols against the default branch (branch arg defaults to the current git branch)",
-		Flags:   append(queryFlags(), &cli.StringFlag{Name: "base", Usage: "Explicit diff base branch (default: the workspace's default branch)"}),
-		MaxArgs: 1,
+		Name:      "branch-diff",
+		Usage:     "Compare a feature branch's indexed symbols against the default branch (branch arg defaults to the current git branch)",
+		Flags:     append(queryFlags(), &cli.StringFlag{Name: "base", Usage: "Explicit diff base branch (default: the workspace's default branch)"}),
+		Arguments: []cli.Argument{&cli.StringArg{Name: "branch", Usage: "The branch to compare (default: the current git branch)"}},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			branch := gitBranch(".")
-			if args := cmd.GetArgs(); len(args) > 0 {
-				branch = args[0]
+			if arg := cmd.GetStringArg("branch"); arg != "" {
+				branch = arg
 			}
 			base := cmd.GetString("base")
 			res, err := queryTarget(ctx, cmd,

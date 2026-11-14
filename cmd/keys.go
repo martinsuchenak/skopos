@@ -33,6 +33,16 @@ func keyCmd() *cli.Command {
 	}
 }
 
+// keyID is the command's <id> argument. The library refuses a missing one;
+// this refuses one that is only spaces (an unset shell variable in quotes).
+func keyID(cmd *cli.Command) (string, error) {
+	id := strings.TrimSpace(cmd.GetStringArg("id"))
+	if id == "" {
+		return "", fmt.Errorf("the key's id is empty")
+	}
+	return id, nil
+}
+
 func keyClientFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.StringFlag{Name: "server-url", DefaultValue: "http://localhost:8080", Usage: "Skopos server URL", EnvVars: []string{"SKOPOS_SERVER_URL"}, ConfigPath: []string{"client.server_url"}},
@@ -129,16 +139,16 @@ func keyListCmd() *cli.Command {
 
 func keyRevokeCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "revoke",
-		Usage:   "Revoke an API key by id",
-		MaxArgs: 1,
-		Flags:   keyClientFlags(),
+		Name:      "revoke",
+		Usage:     "Revoke an API key by id",
+		Flags:     keyClientFlags(),
+		Arguments: []cli.Argument{&cli.StringArg{Name: "id", Usage: "The key's id (skopos key list shows it)", Required: true}},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			args := cmd.GetArgs()
-			if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
-				return fmt.Errorf("usage: skopos key revoke <id>")
+			id, err := keyID(cmd)
+			if err != nil {
+				return err
 			}
-			if err := keysCall(ctx, cmd, http.MethodDelete, "/api/keys/"+strings.TrimSpace(args[0]), nil, nil); err != nil {
+			if err := keysCall(ctx, cmd, http.MethodDelete, "/api/keys/"+id, nil, nil); err != nil {
 				return err
 			}
 			fmt.Println("revoked")
@@ -216,9 +226,9 @@ func whoamiCmd() *cli.Command {
 
 func keyEditCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "edit",
-		Usage:   "Edit an existing key's name and/or workspace scope (only provided fields change)",
-		MaxArgs: 1,
+		Name:      "edit",
+		Usage:     "Change a key's name, scope, permissions or capabilities (only what is given changes)",
+		Arguments: []cli.Argument{&cli.StringArg{Name: "id", Usage: "The key's id (skopos key list shows it)", Required: true}},
 		Flags: append(keyClientFlags(),
 			&cli.StringFlag{Name: "name", Usage: "New key name"},
 			&cli.StringSliceFlag{Name: "workspace", Usage: "Workspace IDs the key can access (repeat or comma-separate; replaces the current list)"},
@@ -238,9 +248,9 @@ func keyEditCmd() *cli.Command {
 			&cli.BoolFlag{Name: "full-access", Usage: "Remove every capability limit"},
 		),
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			args := cmd.GetArgs()
-			if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
-				return fmt.Errorf("usage: skopos key edit <id> [--name n] [--workspace id] [--group name] | --all-workspaces")
+			id, err := keyID(cmd)
+			if err != nil {
+				return err
 			}
 			body := map[string]any{}
 			if name := strings.TrimSpace(cmd.GetString("name")); name != "" {
@@ -296,7 +306,7 @@ func keyEditCmd() *cli.Command {
 				return fmt.Errorf("nothing to edit: pass --name, --workspace, --group, --approver, --delegate, --admin, --worker, --all-workspaces, --preset, --capability or --full-access")
 			}
 			var key apikeys.Key
-			if err := keysCall(ctx, cmd, http.MethodPatch, "/api/keys/"+strings.TrimSpace(args[0]), body, &key); err != nil {
+			if err := keysCall(ctx, cmd, http.MethodPatch, "/api/keys/"+id, body, &key); err != nil {
 				return err
 			}
 			label := scopeLabel(key) + permissionsLabel(key.Approver, key.Delegate, key.Admin, key.Worker)
@@ -312,18 +322,18 @@ func keyEditCmd() *cli.Command {
 
 func keyDeleteCmd() *cli.Command {
 	return &cli.Command{
-		Name:    "delete",
-		Usage:   "Hard-delete a key (row and scope; usually an old revoked key — use revoke for active keys)",
-		MaxArgs: 1,
+		Name:  "delete",
+		Usage: "Hard-delete a key (row and scope; usually an old revoked key — use revoke for active keys)",
 		Flags: append(keyClientFlags(),
 			&cli.BoolFlag{Name: "force", Usage: "Hard-delete even an active key without revoking first"},
 		),
+		Arguments: []cli.Argument{&cli.StringArg{Name: "id", Usage: "The key's id (skopos key list shows it)", Required: true}},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			args := cmd.GetArgs()
-			if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
-				return fmt.Errorf("usage: skopos key delete <id> [--force]")
+			id, err := keyID(cmd)
+			if err != nil {
+				return err
 			}
-			path := "/api/keys/" + strings.TrimSpace(args[0]) + "?hard=true"
+			path := "/api/keys/" + id + "?hard=true"
 			if !cmd.GetBool("force") {
 				// Without --force, refuse active keys: revoking first
 				// terminates their SSE streams and keeps the audit trail
@@ -331,7 +341,7 @@ func keyDeleteCmd() *cli.Command {
 				var keys []apikeys.Key
 				if err := keysCall(ctx, cmd, http.MethodGet, "/api/keys", nil, &keys); err == nil {
 					for _, k := range keys {
-						if k.ID == strings.TrimSpace(args[0]) && k.RevokedAt == nil {
+						if k.ID == id && k.RevokedAt == nil {
 							return fmt.Errorf("key %s is still active — revoke it first (skopos key revoke) or pass --force", k.ID)
 						}
 					}

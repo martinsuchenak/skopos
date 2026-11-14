@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/paularlott/cli"
 	"github.com/paularlott/cli/env"
@@ -127,4 +128,16 @@ func printError(err error) {
 
 func printErrorTo(w io.Writer, err error) {
 	_, _ = fmt.Fprintln(w, "skopos:", err)
+	if usageError(err.Error()) {
+		_, _ = fmt.Fprintln(w, "Add --help to the command to see its arguments and options")
+	}
+}
+
+// usageError says whether the command line itself was refused: a missing or
+// surplus argument, or a flag the command does not have. The library reports
+// these as plain errors, without the command they belong to.
+func usageError(msg string) bool {
+	return strings.HasPrefix(msg, "missing required argument: ") ||
+		strings.HasPrefix(msg, "unknown flag: ") ||
+		msg == "too many arguments" || msg == "too few arguments"
 }

@@ -34,6 +34,27 @@ versions follow [Semantic Versioning](https://semver.org/).
   - `GET /api/workers` carries each worker's `labels`; items, runs and
     `GET /api/inbox/{id}/state` carry `needs`. The Workers page shows a
     worker's labels on its row, and items show a "needs …" badge.
+- **`skopos impact` and `skopos call-tree` take `--depth`** (1 to 10,
+  default 3). The documentation gave the flag, and the commands refused it.
+- **`skopos worker pause` and `skopos worker resume` take `--server-url`
+  and `--api-key`.** Both commands read the two options, but the command
+  line refused them, so the server and key could only come from the
+  environment or the config.
+
+### Changed
+
+- **`--help` names every argument a command takes.** The usage line reads
+  `skopos key edit [flags] <id>`, and an Arguments section says what each
+  one is. This covers the key, group, webhook, index and code query
+  commands and `skopos worker runner test`.
+- **A missing argument is reported by name**, for example `missing required
+  argument: id`, followed by a line that points at `--help`. The same line
+  follows an unknown flag and a surplus argument. Before, `skopos key edit`
+  without an id printed a usage line that left out most of its flags.
+- **`--server-url` has a description** on the blackboard, inbox, plan and
+  index commands.
+- `skopos key edit --help` describes the command as changing a key's name,
+  scope, permissions or capabilities.
 
 ## [0.34.0] — 2026-11-14
 

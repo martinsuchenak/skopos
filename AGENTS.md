@@ -72,6 +72,7 @@ Every domain package follows `handler → service → storage` layering. Storage
 ## Key Patterns
 
 - Commands self-register via `init()` in `cmd/` using `Register()`.
+- `--help` is printed from a command's declarations, so everything it takes is declared: positional arguments as `Arguments` (`cli.StringArg` with a `Usage`, read with `cmd.GetStringArg`), never `MinArgs`/`MaxArgs` + `GetArgs()` (the help then shows only `[args...]`); every flag with a `Usage`; no usage line or option list written by hand in an error or a description (`TestHelpShowsEverything`, `TestNoHandWrittenUsageLines`). A flag a command reads must be declared on it: `cmd.GetString` of an undeclared flag returns "" and the command line refuses the flag (`TestFlagsReadAreDeclared`, a scan of the source: flags that arrive through a function passed in go in its `flagsFromElsewhere`). `TestDocsUseRealFlags` checks every `skopos …` command line in docs/ and the README against the command's flags. A refused command line (missing or surplus argument, unknown flag) gets a pointer to `--help` from `printErrorTo` (main.go).
 - Routes self-register via `init()` in `cmd/routes/`.
 - `go-scaffolder:` comments are patch markers — do not remove them.
 - Add new CLI commands, API endpoints, or MCP tools with `go-scaffolder add` where possible.

@@ -45,9 +45,8 @@ func workerRunnerCmd() *cli.Command {
 				},
 			},
 			{
-				Name:    "add",
-				Usage:   "Add a runner and its account — interactive wizard, or non-interactive with --kind",
-				MaxArgs: 0,
+				Name:  "add",
+				Usage: "Add a runner and its account — interactive wizard, or non-interactive with --kind",
 				Flags: []cli.Flag{
 					envFileFlag(),
 					&cli.StringFlag{Name: "kind", Usage: "claude | opencode | codex | antigravity | command (omit for the wizard)"},
@@ -98,9 +97,9 @@ func workerRunnerCmd() *cli.Command {
 				},
 			},
 			{
-				Name:    "test",
-				Usage:   "Smoke-test accounts with a real one-prompt run (all accounts, or one runner's)",
-				MaxArgs: 1,
+				Name:      "test",
+				Usage:     "Smoke-test accounts with a real one-prompt run (all accounts, or one runner's)",
+				Arguments: []cli.Argument{&cli.StringArg{Name: "runner", Usage: "Test only this runner's accounts"}},
 				Flags: []cli.Flag{
 					envFileFlag(),
 					&cli.StringFlag{Name: "account", Usage: "Test only this account"},
@@ -111,10 +110,7 @@ func workerRunnerCmd() *cli.Command {
 					if err != nil {
 						return err
 					}
-					runner := ""
-					if args := cmd.GetArgs(); len(args) > 0 {
-						runner = args[0]
-					}
+					runner := cmd.GetStringArg("runner")
 					timeout, err := time.ParseDuration(cmd.GetString("timeout"))
 					if err != nil {
 						return fmt.Errorf("--timeout: %v", err)
