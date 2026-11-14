@@ -52,6 +52,7 @@ func keyCreateCmd() *cli.Command {
 			&cli.BoolFlag{Name: "approver", Usage: "Grant the approver permission (human-only workflow actions; never for agent or worker keys)"},
 			&cli.BoolFlag{Name: "delegate", Usage: "Let the key name the person it acts for (X-Skopos-On-Behalf-Of; an integration recording people's decisions)"},
 			&cli.BoolFlag{Name: "admin", Usage: "Grant the admin permission (change policy and configuration within the key's scope; never for agent or worker keys)"},
+			&cli.BoolFlag{Name: "worker", Usage: "A pipeline worker's key: the only kind that is given the credentials the server holds for runs (a workspace's MCP servers). Not with --approver or --admin"},
 			&cli.StringFlag{Name: "preset", Usage: "Limit the key to a capability preset (agent: MCP only — code read, blackboard and plans write; integration: REST — inbox write, plans and runs read)"},
 			&cli.StringSliceFlag{Name: "capability", Usage: "Limit the key to these capabilities (rest, mcp, <area>:read|write; repeat or comma-separate); none = full access"},
 		),
@@ -69,7 +70,7 @@ func keyCreateCmd() *cli.Command {
 			if all {
 				workspaces = []string{"*"}
 			}
-			body := map[string]any{"name": name, "workspaces": workspaces, "approver": cmd.GetBool("approver"), "delegate": cmd.GetBool("delegate"), "admin": cmd.GetBool("admin")}
+			body := map[string]any{"name": name, "workspaces": workspaces, "approver": cmd.GetBool("approver"), "delegate": cmd.GetBool("delegate"), "admin": cmd.GetBool("admin"), "worker": cmd.GetBool("worker")}
 			if len(groups) > 0 {
 				body["groups"] = groups
 			}
@@ -85,7 +86,7 @@ func keyCreateCmd() *cli.Command {
 			}
 			fmt.Println("API key created — store it now, it is shown only once:")
 			fmt.Printf("  %s\n", result.Secret)
-			label := scopeLabel(result.Key) + permissionsLabel(result.Key.Approver, result.Key.Delegate, result.Key.Admin)
+			label := scopeLabel(result.Key) + permissionsLabel(result.Key.Approver, result.Key.Delegate, result.Key.Admin, result.Key.Worker)
 			fmt.Printf("  id: %s  name: %s  scope: %s\n", result.Key.ID, result.Key.Name, label)
 			if len(result.Key.Groups) > 0 {
 				fmt.Printf("  groups: %s\n", strings.Join(result.Key.Groups, ", "))
@@ -119,7 +120,7 @@ func keyListCmd() *cli.Command {
 				if k.Capabilities != nil {
 					caps = "  [" + capabilitiesLabel(k.Capabilities) + "]"
 				}
-				fmt.Printf("%s  %-20s %-17s %s%s%s%s\n", k.ID, k.Name, k.Prefix, scopeLabel(k), permissionsLabel(k.Approver, k.Delegate, k.Admin), caps, status)
+				fmt.Printf("%s  %-20s %-17s %s%s%s%s\n", k.ID, k.Name, k.Prefix, scopeLabel(k), permissionsLabel(k.Approver, k.Delegate, k.Admin, k.Worker), caps, status)
 			}
 			return nil
 		},
@@ -161,6 +162,7 @@ func whoamiCmd() *cli.Command {
 					Approver      bool     `json:"approver"`
 					Delegate      bool     `json:"delegate"`
 					Admin         bool     `json:"admin"`
+					Worker        bool     `json:"worker"`
 					Workspaces    []string `json:"workspaces"`
 					Capabilities  []string `json:"capabilities"`
 				} `json:"key"`
@@ -182,7 +184,7 @@ func whoamiCmd() *cli.Command {
 			if who.Root {
 				fmt.Println("root key — full access")
 			} else if who.Key != nil {
-				label := scopeLabelKey(who.Key.AllWorkspaces, who.Key.Workspaces) + permissionsLabel(who.Key.Approver, who.Key.Delegate, who.Key.Admin)
+				label := scopeLabelKey(who.Key.AllWorkspaces, who.Key.Workspaces) + permissionsLabel(who.Key.Approver, who.Key.Delegate, who.Key.Admin, who.Key.Worker)
 				fmt.Printf("key %s (%s) — scope: %s\n", who.Key.ID, who.Key.Name, label)
 				fmt.Printf("  capabilities: %s\n", capabilitiesLabel(who.Key.Capabilities))
 			}
@@ -229,6 +231,8 @@ func keyEditCmd() *cli.Command {
 			&cli.BoolFlag{Name: "no-delegate", Usage: "Remove the delegate permission"},
 			&cli.BoolFlag{Name: "admin", Usage: "Grant the admin permission (change policy and configuration within the key's scope)"},
 			&cli.BoolFlag{Name: "no-admin", Usage: "Remove the admin permission"},
+			&cli.BoolFlag{Name: "worker", Usage: "Make it a worker key (given the credentials the server holds for runs; not with approver or admin)"},
+			&cli.BoolFlag{Name: "no-worker", Usage: "Make it an ordinary key again"},
 			&cli.StringFlag{Name: "preset", Usage: "Set the key's capabilities to a preset (joined with --capability)"},
 			&cli.StringSliceFlag{Name: "capability", Usage: "Set the key's capabilities (replaces the current list)"},
 			&cli.BoolFlag{Name: "full-access", Usage: "Remove every capability limit"},
@@ -272,6 +276,12 @@ func keyEditCmd() *cli.Command {
 				body["admin"] = true
 			}
 			switch {
+			case cmd.GetBool("no-worker"):
+				body["worker"] = false
+			case cmd.GetBool("worker"):
+				body["worker"] = true
+			}
+			switch {
 			case cmd.GetBool("full-access"):
 				body["capabilities"] = []string{}
 			default:
@@ -283,13 +293,13 @@ func keyEditCmd() *cli.Command {
 				}
 			}
 			if len(body) == 0 {
-				return fmt.Errorf("nothing to edit: pass --name, --workspace, --group, --approver, --delegate, --admin, --all-workspaces, --preset, --capability or --full-access")
+				return fmt.Errorf("nothing to edit: pass --name, --workspace, --group, --approver, --delegate, --admin, --worker, --all-workspaces, --preset, --capability or --full-access")
 			}
 			var key apikeys.Key
 			if err := keysCall(ctx, cmd, http.MethodPatch, "/api/keys/"+strings.TrimSpace(args[0]), body, &key); err != nil {
 				return err
 			}
-			label := scopeLabel(key) + permissionsLabel(key.Approver, key.Delegate, key.Admin)
+			label := scopeLabel(key) + permissionsLabel(key.Approver, key.Delegate, key.Admin, key.Worker)
 			fmt.Printf("updated %s  name: %s  scope: %s\n", key.ID, key.Name, label)
 			if len(key.Groups) > 0 {
 				fmt.Printf("  groups: %s\n", strings.Join(key.Groups, ", "))
@@ -442,8 +452,11 @@ func capabilitiesLabel(caps []string) string {
 }
 
 // permissionsLabel marks a key's workflow permissions in listings.
-func permissionsLabel(approver, delegate, admin bool) string {
+func permissionsLabel(approver, delegate, admin, worker bool) string {
 	out := ""
+	if worker {
+		out += "  [worker]"
+	}
 	if approver {
 		out += "  [approver]"
 	}

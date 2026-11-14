@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/martinsuchenak/skopos/internal/auth"
 )
 
 func seedWorkspace(t *testing.T, s *Storage, id string) {
@@ -30,6 +32,8 @@ func TestServiceCreateValidation(t *testing.T) {
 		{"star mixed with list", CreateInput{Name: "x", Workspaces: []string{"*", "ws-a"}}},
 		{"unknown workspace", CreateInput{Name: "x", Workspaces: []string{"nope"}}},
 		{"name too long", CreateInput{Name: strings.Repeat("n", 101), Workspaces: []string{"ws-a"}}},
+		{"a worker key with approver", CreateInput{Name: "x", Workspaces: []string{"ws-a"}, Worker: true, Approver: true}},
+		{"a worker key with admin", CreateInput{Name: "x", Workspaces: []string{"ws-a"}, Worker: true, Admin: true}},
 	} {
 		if _, err := svc.Create(ctx, tc.input); !errors.Is(err, ErrInvalidInput) {
 			t.Errorf("%s: expected ErrInvalidInput, got %v", tc.name, err)
@@ -186,5 +190,56 @@ func TestServiceUpdateAndDelete(t *testing.T) {
 	}
 	if err := svc.Delete(ctx, created.Key.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second delete: %v", err)
+	}
+}
+
+// A worker key: the flag is stored, reaches the principal a request is
+// authenticated as, can be given to a key a worker already has, and never
+// sits beside the approver or the admin permission.
+func TestWorkerKeyFlag(t *testing.T) {
+	st := testStorage(t)
+	svc := NewService(st)
+	ctx := context.Background()
+	seedWorkspace(t, st, "ws-a")
+
+	plain, err := svc.Create(ctx, CreateInput{Name: "worker-vm1", Workspaces: []string{"ws-a"}})
+	if err != nil || plain.Key.Worker {
+		t.Fatalf("a key is not a worker key unless asked: %+v %v", plain, err)
+	}
+	info, err := st.LookupKey(ctx, auth.HashKey(plain.Secret))
+	if err != nil || info == nil || info.Worker {
+		t.Fatalf("lookup of a plain key: %+v %v", info, err)
+	}
+	yes, no := true, false
+	updated, err := svc.Update(ctx, plain.Key.ID, UpdateInput{Worker: &yes})
+	if err != nil || !updated.Worker {
+		t.Fatalf("marking a key a worker already has: %+v %v", updated, err)
+	}
+	if info, _ = st.LookupKey(ctx, auth.HashKey(plain.Secret)); info == nil || !info.Worker {
+		t.Fatalf("the same secret now authenticates as a worker key: %+v", info)
+	}
+	if listed, _ := svc.List(ctx); len(listed) != 1 || !listed[0].Worker {
+		t.Fatalf("the listing shows it: %+v", listed)
+	}
+	// Not together with approver or admin, whichever comes second.
+	if _, err := svc.Update(ctx, plain.Key.ID, UpdateInput{Approver: &yes}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("approver on a worker key: %v", err)
+	}
+	if _, err := svc.Update(ctx, plain.Key.ID, UpdateInput{Admin: &yes}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("admin on a worker key: %v", err)
+	}
+	approver, err := svc.Create(ctx, CreateInput{Name: "alex", Workspaces: []string{"ws-a"}, Approver: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Update(ctx, approver.Key.ID, UpdateInput{Worker: &yes}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("worker on an approver key: %v", err)
+	}
+	// Swapping in one edit is fine.
+	if k, err := svc.Update(ctx, approver.Key.ID, UpdateInput{Worker: &yes, Approver: &no}); err != nil || !k.Worker || k.Approver {
+		t.Fatalf("approver off and worker on in one edit: %+v %v", k, err)
+	}
+	if k, err := svc.Update(ctx, plain.Key.ID, UpdateInput{Worker: &no}); err != nil || k.Worker {
+		t.Fatalf("an ordinary key again: %+v %v", k, err)
 	}
 }

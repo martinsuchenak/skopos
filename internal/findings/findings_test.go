@@ -603,3 +603,40 @@ func TestALaterCheckOfTheSameCommitCounts(t *testing.T) {
 		t.Fatalf("a later check of the same commit settles it: %v", got)
 	}
 }
+
+// A passing review settles what it did not answer only when its worker
+// cannot answer by name at all. A worker that lists the findings and sends
+// no answer for one (it could not read the record, or the reviewer left
+// one out) has not checked it; and what the implementer said it did not
+// fix is never settled by silence.
+func TestSilenceSettlesOnlyForAWorkerThatCannotAnswer(t *testing.T) {
+	s, sqlDB := testService(t)
+	report(t, s, sqlDB, run("rev1", "review", "claude", ""), []NewFinding{
+		{ID: "f-a", Severity: "blocking", Text: "a"}, {ID: "f-b", Severity: "blocking", Text: "b"},
+	}, nil)
+	report(t, s, sqlDB, run("impl2", "implement", "claude", ""), nil, []Answer{{ID: "f-b", Status: "not_fixed", Note: "out of scope"}})
+
+	// A worker that lists findings by name, and listed none (its read of
+	// the record failed): the review passes and settles nothing.
+	none := 0
+	blind := run("rev2", "review", "claude", "")
+	blind.Listed = &none
+	reportIn(t, s, sqlDB, blind, Round{}, nil, nil, true)
+	if got := states(t, s); got["f-a"] != StateOpen || got["f-b"] != StateOpen {
+		t.Fatalf("a review that was shown nothing settled findings: %v", got)
+	}
+	// It listed both and answered one: the other stays as it is.
+	two := 2
+	partial := run("rev3", "review", "claude", "")
+	partial.Listed = &two
+	reportIn(t, s, sqlDB, partial, Round{}, nil, []Answer{{ID: "f-a", Status: "addressed"}}, true)
+	if got := states(t, s); got["f-a"] != StateAddressed || got["f-b"] != StateOpen {
+		t.Fatalf("answered one of two: %v", got)
+	}
+	// A worker from before answers by name settles by passing, but not
+	// what the implementer said it did not fix.
+	reportIn(t, s, sqlDB, run("rev4", "review", "claude", ""), Round{}, nil, nil, true)
+	if got := states(t, s); got["f-b"] != StateOpen {
+		t.Fatalf("a finding the implementer did not fix was settled by silence: %v", got)
+	}
+}

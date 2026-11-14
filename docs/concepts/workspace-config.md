@@ -333,6 +333,12 @@ skopos group config set --group acme \
   from the terminal without echo, from piped input, or from an environment
   variable (`--from-env`); never from the command line. It is at least 8
   characters. No command, endpoint, export or audit note returns it.
+- **Only a worker key is given the servers.** They come with their
+  credentials, and every key with the workspace in scope can call the
+  claim endpoint. Mark each worker's key: `skopos key edit <id> --worker`
+  (or `skopos key create … --worker`). A worker whose key is not marked
+  gets no runs of the workspace and shows as unhealthy for it, with that
+  command. The root key counts as a worker key.
 - **`mcp` says which servers a workspace's runs get;** `mcp_servers` says
   which of their tools a run may call (`mcp__router` for all of them,
   `mcp__router__search` for one), and `mcp_deny` which it may not. A
@@ -407,7 +413,7 @@ seals webhook signing secrets.
 | What | Who |
 |---|---|
 | a workspace's config | a key with the admin permission and the workspace in scope |
-| a group's config | an admin key whose scope covers every workspace in the group |
+| a group's config | an admin key whose scope covers every workspace in the group; for a group with patterns, one that reaches every workspace |
 | runner definitions, wrapper definitions | an admin key that reaches every workspace |
 | MCP server definitions and their secrets | an admin key that reaches every workspace; any admin key may list them |
 | the secret key's status and rotation | the root key |
@@ -579,7 +585,9 @@ review = { members = "security@claude-opus,tests@claude-opus", policy = "any-blo
   written into a definition is refused.
 - **A wrapper or MCP server the file drops** is deleted after the configs
   in the file have changed. When a workspace or group outside the file
-  still names it, the apply is refused unless forced.
+  still names it, the apply is refused. `--drop-in-use` deletes it all the
+  same; an MCP server goes with its stored secrets, and the plan says so.
+  `--force` does not do this: it only saves a policy that strands runners.
 - **What the file does not list is left as it is,** and the plan names it.
 - **`--plan`** lists each change (create, update, clear, delete) and makes
   none. It is what the reviewer of a pull request reads.

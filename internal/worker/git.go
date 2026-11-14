@@ -29,9 +29,10 @@ import (
 var reBranch = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
 
 func git(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd, err := gitCommand(ctx, dir, nil, args...)
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w", args[0], err)
+	}
 	out, err := cmd.CombinedOutput()
 	s := strings.TrimSpace(string(out))
 	if err != nil {
@@ -41,9 +42,10 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 }
 
 func gitEnv(ctx context.Context, dir string, env []string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = dir
-	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), env...)
+	cmd, err := gitCommand(ctx, dir, env, args...)
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w", args[0], err)
+	}
 	out, err := cmd.CombinedOutput()
 	s := strings.TrimSpace(string(out))
 	if err != nil {
@@ -254,6 +256,7 @@ func createDetached(ctx context.Context, clone, worktree, ref string) error {
 func removeWorktree(ctx context.Context, clone, worktree string) {
 	if worktree != "" {
 		_, _ = git(ctx, clone, "worktree", "remove", "--force", worktree)
+		forgetWorktreePin(worktree)
 	}
 }
 

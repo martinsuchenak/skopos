@@ -83,7 +83,7 @@ dialog offers full access or the agent preset.
 
 ## Permissions
 
-Three flags sit beside scope and capabilities. Only the root key grants
+Four flags sit beside scope and capabilities. Only the root key grants
 them, each on `key create` and `key edit` (`--approver` / `--no-approver`
 and so on). Key listings and the dashboard's Keys view show them.
 
@@ -92,16 +92,26 @@ and so on). Key listings and the dashboard's Keys view show them.
 | `--approver` | take the pipeline's human actions: queue, approve, request changes, reject, mark done | a person, or the relay acting for one |
 | `--delegate` | name the person it acts for (`X-Skopos-On-Behalf-Of`) | an integration recording people's decisions |
 | `--admin` | change policy and configuration within its scope | whoever runs the pipeline's configuration |
+| `--worker` | receive the credentials the server holds for runs (a workspace's MCP servers), with the runs it claims | each pipeline worker, and nothing else |
 
 **Admin** is scoped like everything else:
 
 - a key with one workspace in scope administers that workspace;
 - a group's settings need a key that reaches every workspace in the group;
+- a group that takes in workspaces by pattern needs a key that reaches all
+  workspaces: what is set on it also binds the ones that register later;
 - fleet-wide settings need a key that reaches all workspaces (`--all-workspaces`).
 
 The root key passes every level. Agent and worker keys must never hold
 approver or admin: a worker refuses to start with a key that holds admin,
 and refuses an agent key that holds either.
+
+**Worker** marks a pipeline worker's key. Every key with a workspace in
+scope can call the claim endpoint, so the server gives the credentials of
+a workspace's MCP servers only to a key with this flag. The server refuses
+`--worker` together with `--approver` or `--admin`. A worker with an
+unmarked key still runs; it gets no runs of a workspace whose MCP servers
+the server holds, and the Workers view says why.
 
 ```sh
 skopos key create --name ops --group acme --admin

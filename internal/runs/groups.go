@@ -496,9 +496,17 @@ func (s *Service) afterAdvisory(ctx context.Context, done, itemID, workspaceID, 
 		next = []string{StageSynthesize, StageCompare}
 	case StageSynthesize:
 		next = []string{StageCompare}
+	case StageCompare:
+		// Only for a round that began under the order of releases before
+		// this one (compare, then synthesize) and was in flight when the
+		// server was upgraded: its merge has not run yet.
+		next = []string{StageSynthesize}
 	}
+	// What already ran in this round is not run again: the other half of
+	// such a round, or a stage that failed (a failure still opens the gate).
+	ran := s.advisoryRan(ctx, itemID)
 	for _, stage := range next {
-		if !prefs.Configured(stage) {
+		if !prefs.Configured(stage) || ran[stage] {
 			continue
 		}
 		if _, err := s.Queue(ctx, QueueInput{WorkspaceID: workspaceID, ItemID: itemID, Stage: stage, Single: true}); err == nil {
@@ -508,6 +516,26 @@ func (s *Service) afterAdvisory(ctx context.Context, done, itemID, workspaceID, 
 		}
 	}
 	s.openPlanGate(ctx, itemID, agent)
+}
+
+// advisoryRan says which advisory stages (synthesize, compare) already have
+// a finished run in the item's current plan round: the runs newer than its
+// newest plan run.
+func (s *Service) advisoryRan(ctx context.Context, itemID string) map[string]bool {
+	out := map[string]bool{}
+	all, err := s.storage.List(ctx, "", itemID) // newest first
+	if err != nil {
+		return out
+	}
+	for _, r := range all {
+		if r.Stage == StagePlan {
+			break
+		}
+		if (r.Stage == StageSynthesize || r.Stage == StageCompare) && (r.Status == StatusSucceeded || r.Status == StatusFailed) {
+			out[r.Stage] = true
+		}
+	}
+	return out
 }
 
 // openPlanGate walks the item (planning) to awaiting_approval; the first

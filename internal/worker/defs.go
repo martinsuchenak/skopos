@@ -175,6 +175,14 @@ func (c *Config) ApplyRunnerDefs(f *wsconfig.Fleet) []string {
 			drop[name] = fmt.Sprintf("the server declares provider %s, and account %s's endpoint %s is %s", d.Provider, a.Name, facts.Endpoint, derived)
 			continue
 		}
+		// The same for a provider this worker's file declares for the
+		// runner's kind (runner_config.<kind>), which a defined runner
+		// without a declaration of its own reports: the startup check ran
+		// before the definitions arrived.
+		if policy.Contradicts(facts.Provider, derived) {
+			drop[name] = fmt.Sprintf("this worker's file declares provider %s for it, and account %s's endpoint %s is %s", facts.Provider, a.Name, facts.Endpoint, derived)
+			continue
+		}
 		if prev, ok := first[name]; !ok {
 			first[name] = facts
 		} else if prev.Provider != facts.Provider || prev.Endpoint != facts.Endpoint {

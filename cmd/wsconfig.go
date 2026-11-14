@@ -362,7 +362,8 @@ func serverConfigCmd() *cli.Command {
 				Usage: "Make the server match a configuration file (admin permission for each change); --plan only lists the changes",
 				Flags: append(keyClientFlags(),
 					&cli.BoolFlag{Name: "plan", Usage: "List what would change and change nothing"},
-					&cli.BoolFlag{Name: "force", Usage: "Save policies even though they strand configured runners, and drop wrappers that stage blocks outside the file still name"},
+					&cli.BoolFlag{Name: "force", Usage: "Save policies even though they strand configured runners"},
+					&cli.BoolFlag{Name: "drop-in-use", Usage: "Delete wrappers and MCP servers the file leaves out although a workspace or group outside the file still uses them (an MCP server goes with its stored secrets)"},
 					&cli.StringFlag{Name: "commit", Usage: "The git commit the file comes from (default: read from the file's checkout)"},
 				),
 				Arguments: []cli.Argument{&cli.StringArg{Name: "file", Usage: "The configuration file", Required: true}},
@@ -391,7 +392,7 @@ func serverConfigCmd() *cli.Command {
 					if commit == "" {
 						commit = fileCommit(path)
 					}
-					in := fleetfile.Input{Document: doc, FileHash: hex.EncodeToString(sum[:]), Commit: commit, Force: cmd.GetBool("force"), Plan: cmd.GetBool("plan")}
+					in := fleetfile.Input{Document: doc, FileHash: hex.EncodeToString(sum[:]), Commit: commit, Force: cmd.GetBool("force"), DropInUse: cmd.GetBool("drop-in-use"), Plan: cmd.GetBool("plan")}
 					var res fleetfile.Result
 					if err := configCall(ctx, cmd, audit.ViaApply, http.MethodPost, "/api/config/apply", in, &res); err != nil {
 						return err

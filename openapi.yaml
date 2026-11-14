@@ -1074,7 +1074,8 @@ paths:
                 document: { $ref: "#/components/schemas/ConfigDocument" }
                 file_hash: { type: string, description: sha256 of the file the document was read from }
                 commit: { type: string, description: The git commit the file comes from }
-                force: { type: boolean, description: Save policies that strand configured runners }
+                force: { type: boolean, description: Save policies that strand configured runners. It overrides nothing else }
+                drop_in_use: { type: boolean, description: "Delete a wrapper or an MCP server the document leaves out although a workspace or group outside the document still uses it. An MCP server goes with its stored secrets" }
                 plan: { type: boolean, description: List the changes and make none }
       responses:
         "200":
@@ -4586,6 +4587,7 @@ components:
             approver: { type: boolean }
             delegate: { type: boolean }
             admin: { type: boolean }
+            worker: { type: boolean, description: "A pipeline worker's key: the only kind given the credentials the server holds for runs" }
             workspaces: { type: array, items: { type: string } }
             capabilities: { type: array, nullable: true, items: { type: string }, description: "null = full access. whoami answers every authenticated key, whatever its capabilities." }
         run:
@@ -4616,6 +4618,7 @@ components:
         approver: { type: boolean, description: May perform human-only workflow actions; root implies it }
         delegate: { type: boolean, description: "May name the person it acts for (X-Skopos-On-Behalf-Of)" }
         admin: { type: boolean, description: "May change policy and configuration within its scope; root implies it. Never for agent or worker keys" }
+        worker: { type: boolean, description: "A pipeline worker's key. A claim answer carries the credentials of a workspace's MCP servers only for such a key (or root); any other key gets no runs of a workspace whose MCP servers the server holds. Never together with approver or admin" }
         capabilities:
           type: array
           nullable: true
@@ -4670,6 +4673,7 @@ components:
         approver: { type: boolean, description: Grant the approver permission (human-only workflow actions) }
         delegate: { type: boolean, description: "Grant the delegate permission (X-Skopos-On-Behalf-Of)" }
         admin: { type: boolean, description: "Grant the admin permission (change policy and configuration within the key's scope)" }
+        worker: { type: boolean, description: "Mark it as a pipeline worker's key (see ApiKey.worker); refused with approver or admin" }
         capabilities: { type: array, items: { type: string }, description: "Limit the key (see ApiKey.capabilities); none = full access" }
         preset: { type: string, enum: [agent, integration], description: "A named capability set joined with capabilities. agent = mcp, code:read, blackboard:write, plans:write, status:read, inbox:read. integration = rest, inbox:write, plans:read, runs:read, events:read" }
 

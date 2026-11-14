@@ -500,12 +500,16 @@ which are still open.
     so each member's verdict is its own.
   - Another second opinion by the same runner answers that runner's
     earlier blocking findings, sent back or not, until one is addressed.
-- **A review that passes** settles the findings that were its to check and
-  that it didn't answer by name; the record says "not raised again". A
-  review that fails settles only what it answers.
+- **A review that passes** settles what it answers. A finding it was shown
+  and did not answer stays as it is, for you to see at sign-off. Only a
+  worker from before findings were listed by name settles the rest by
+  passing (the record says "not raised again"), and never one the
+  implementer said it did not fix. A review that fails settles only what
+  it answers.
 - **Two checks of one commit that disagree** leave the finding open: a
   second opinion calling it addressed doesn't undo a review that found it
-  not fixed on the same commit.
+  not fixed on the same commit. Once the finding went back or the
+  implementer answered it, a later check of the same commit counts.
 - **Send findings back.** Request changes at sign-off, or retry a blocked
   item, with the ids of the findings to fix: from a review or a second
   opinion, whatever their state. Each is followed from then on.

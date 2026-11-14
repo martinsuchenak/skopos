@@ -36,6 +36,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/apikeys"
 	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
+	"github.com/martinsuchenak/skopos/internal/confrev"
 	"github.com/martinsuchenak/skopos/internal/pipeline"
 	"github.com/martinsuchenak/skopos/internal/policy"
 	"github.com/martinsuchenak/skopos/internal/workspaces"
@@ -176,8 +177,14 @@ type Input struct {
 	// it comes from. Both are recorded with the apply.
 	FileHash string `json:"file_hash,omitempty"`
 	Commit   string `json:"commit,omitempty"`
-	// Force saves a policy that strands current settings.
+	// Force saves a policy that strands current settings. Nothing else:
+	// what it overrides is the check a policy save has.
 	Force bool `json:"force,omitempty"`
+	// DropInUse deletes a wrapper or an MCP server the file leaves out
+	// although a workspace or group outside the file still uses it. Its
+	// own switch: an MCP server goes with its stored secrets, and nobody
+	// forcing a policy should lose credentials with the same flag.
+	DropInUse bool `json:"drop_in_use,omitempty"`
 	// Plan lists the changes without making them.
 	Plan bool `json:"plan,omitempty"`
 }
@@ -213,6 +220,50 @@ func NewService(groups Groups, ws Workspaces, pl *pipeline.Service, cfg *wsconfi
 }
 
 func (s *Service) SetAuditSink(a AuditSink) { s.audit = a }
+
+// pendingConfigs is the config each owner the document lists will hold
+// (nil = none: a listed owner's left-out section is cleared), by owner key.
+// A group the same document creates has no id yet and is left out: its
+// settings are decided when they are applied. A config that does not
+// normalize is left out too; its own step reports the error.
+func (s *Service) pendingConfigs(ctx context.Context, doc Document) (map[string]*wsconfig.Config, error) {
+	out := map[string]*wsconfig.Config{}
+	norm := func(c *wsconfig.Config) (*wsconfig.Config, bool) {
+		if c == nil {
+			return nil, true
+		}
+		n, err := wsconfig.Normalize(*c)
+		if err != nil {
+			return nil, false
+		}
+		return &n, true
+	}
+	for id, od := range doc.Workspaces {
+		if od == nil {
+			continue
+		}
+		if c, ok := norm(od.Config); ok {
+			out[confrev.WorkspaceOwner(id)] = c
+		}
+	}
+	if len(doc.Groups) == 0 {
+		return out, nil
+	}
+	groups, err := s.groups.ListGroups(system(ctx))
+	if err != nil {
+		return nil, err
+	}
+	for _, g := range groups {
+		gd := doc.Groups[g.Name]
+		if gd == nil {
+			continue
+		}
+		if c, ok := norm(gd.Config); ok {
+			out[confrev.GroupOwner(g.ID)] = c
+		}
+	}
+	return out, nil
+}
 
 // system is the context reads run with once the caller has been checked:
 // the registries' own listings are root-only.
@@ -349,6 +400,15 @@ func (s *Service) Apply(ctx context.Context, in Input) (*Result, error) {
 	if in.Document.MCP != nil {
 		ctx = wsconfig.WithMCPSet(ctx, in.Document.MCP)
 	}
+	// Each config in the file is checked against the configs the file
+	// leaves for the other owners it lists, not the stored ones: a field
+	// moved between a workspace and its group passes as a whole, and never
+	// stops the apply halfway.
+	if pending, err := s.pendingConfigs(ctx, in.Document); err != nil {
+		return nil, err
+	} else if len(pending) > 0 {
+		ctx = wsconfig.WithPendingConfigs(ctx, pending)
+	}
 	steps, unlisted, err := s.steps(ctx, in)
 	if err != nil {
 		return nil, err
@@ -441,6 +501,9 @@ func (s *Service) steps(ctx context.Context, in Input) ([]step, []string, error)
 	doc := in.Document
 	sys := system(ctx)
 	var out []step
+	// dropRunners: the runner definitions the file leaves out, deleted
+	// after everything else.
+	var dropRunners []step
 
 	// A key that does not administer the whole fleet may only name what it
 	// administers, and learns nothing else: the same refusal for a
@@ -488,7 +551,11 @@ func (s *Service) steps(ctx context.Context, in Input) ([]step, []string, error)
 			if _, keep := doc.Runners[r.Name]; keep {
 				continue
 			}
-			out = append(out, step{kind: "runner", owner: "runner:" + r.Name,
+			// Deleted last, like the wrappers and MCP servers the file
+			// drops: by then the pipelines in the file no longer name it.
+			// First, a stop halfway would leave them naming a runner that
+			// is no longer defined.
+			dropRunners = append(dropRunners, step{kind: "runner", owner: "runner:" + r.Name,
 				plan: func(ctx context.Context) (string, string, []string, error) {
 					return "delete", "", nil, auth.RequireFleetAdmin(ctx)
 				},
@@ -817,8 +884,8 @@ func (s *Service) steps(ctx context.Context, in Input) ([]step, []string, error)
 					if err := auth.RequireFleetAdmin(ctx); err != nil {
 						return "", "", nil, err
 					}
-					if len(still) > 0 && !in.Force {
-						return "", "", nil, fmt.Errorf("%w: the file drops wrapper %s, and the stage blocks of %s (not in the file) name it: runs their rules match would stop. Keep the wrapper, change those, or force the apply (--force)", ErrInvalid, w.Name, strings.Join(still, ", "))
+					if len(still) > 0 && !in.DropInUse {
+						return "", "", nil, fmt.Errorf("%w: the file drops wrapper %s, and the stage blocks of %s (not in the file) name it: runs their rules match would stop. Keep the wrapper, change those, or drop it all the same (--drop-in-use)", ErrInvalid, w.Name, strings.Join(still, ", "))
 					}
 					var warnings []string
 					if len(still) > 0 {
@@ -863,8 +930,8 @@ func (s *Service) steps(ctx context.Context, in Input) ([]step, []string, error)
 					if err := auth.RequireFleetAdmin(ctx); err != nil {
 						return "", "", nil, err
 					}
-					if len(still) > 0 && !in.Force {
-						return "", "", nil, fmt.Errorf("%w: the file drops MCP server %s, and the config of %s (not in the file) gives its runs that server. Keep it, change those, or force the apply (--force)", ErrInvalid, m.Name, strings.Join(still, ", "))
+					if len(still) > 0 && !in.DropInUse {
+						return "", "", nil, fmt.Errorf("%w: the file drops MCP server %s, and the config of %s (not in the file) gives its runs that server. Keep it, change those, or drop it all the same, with its stored secrets (--drop-in-use)", ErrInvalid, m.Name, strings.Join(still, ", "))
 					}
 					warnings := []string{"its stored secrets are deleted with it"}
 					if len(still) > 0 {
@@ -878,6 +945,8 @@ func (s *Service) steps(ctx context.Context, in Input) ([]step, []string, error)
 				}})
 		}
 	}
+
+	out = append(out, dropRunners...)
 
 	// What has settings on the server and is not in the file.
 	// Only what the caller may know of: groups for a key that administers

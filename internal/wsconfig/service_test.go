@@ -309,7 +309,17 @@ func TestPermissions(t *testing.T) {
 	if _, err := s.Set(key(true, false, "fabrikam/api"), KindGroup, "globex", c, audit.ViaCLI, ""); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("a group with a member out of scope: %v", err)
 	}
-	if _, err := s.Set(key(true, false, "fabrikam/api", "fabrikam/web"), KindGroup, "globex", Config{Setup: list("x")}, audit.ViaCLI, ""); err != nil {
+	// globex takes in workspaces by pattern, so what is set on it also
+	// binds the ones that register later: every member of today in scope is
+	// not enough, it takes a key that reaches all workspaces.
+	if _, err := s.Set(key(true, false, "fabrikam/api", "fabrikam/web"), KindGroup, "globex", Config{Setup: list("x")}, audit.ViaCLI, ""); !errors.Is(err, pipeline.ErrPatternGroup) {
+		t.Fatalf("a pattern group, by an admin of its members of today: %v", err)
+	}
+	if _, err := s.Set(key(true, true), KindGroup, "globex", Config{Setup: list("x")}, audit.ViaCLI, ""); err != nil {
+		t.Fatalf("a pattern group, by a fleet admin: %v", err)
+	}
+	// A group of explicit members: every member in scope.
+	if _, err := s.Set(key(true, false, "fabrikam/web"), KindGroup, "web-team", Config{Preflight: list("true")}, audit.ViaCLI, ""); err != nil {
 		t.Fatalf("a group with every member in scope: %v", err)
 	}
 	// Reading a workspace's config needs only the workspace in scope; a
@@ -577,5 +587,69 @@ func TestBecomingManagedIsReportedAsAChange(t *testing.T) {
 	}
 	if v, err = s.Clear(root(), KindWorkspace, "fabrikam/api", audit.ViaCLI); err != nil || !slices.Equal(v.Changed, []string{"managed"}) {
 		t.Fatalf("and so is giving it back to the workers' files: %+v %v", v, err)
+	}
+}
+
+// What a worker would refuse is refused at the save: a pull request needs
+// a push URL that names an owner and a repository (the worker derives the
+// host's API from it). And a URL a worker resolves through SRV records is
+// a push URL like any other.
+func TestPushURLChecks(t *testing.T) {
+	s, _, _ := fixture(t)
+	str := func(v string) *string { return &v }
+	set := func(remote, pr string) error {
+		_, err := s.Set(root(), KindWorkspace, "fabrikam/api", Config{Push: &Push{Kind: str("github"), RemoteURL: str(remote), PullRequest: str(pr)}}, audit.ViaCLI, "")
+		return err
+	}
+	if err := set("https://github.com/fabrikam", "draft"); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "owner/repository") {
+		t.Fatalf("a pull request with a push URL that names no repository: %v", err)
+	}
+	if err := set("https://github.com/fabrikam", "none"); err != nil {
+		t.Fatalf("without a pull request the URL is the remote's business: %v", err)
+	}
+	for _, ok := range []string{"https://github.com/fabrikam/api.git", "https://git.example.com/scm/fabrikam/api", "srv+https://gitea/fabrikam/api.git"} {
+		if err := set(ok, "draft"); err != nil {
+			t.Errorf("%s: %v", ok, err)
+		}
+	}
+	if err := set("ssh://git@github.com/fabrikam/api.git", "none"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("not an http(s) URL: %v", err)
+	}
+}
+
+// A deleted group's config goes with it: left behind, it could never be
+// cleared, and what it named could not be deleted.
+func TestDropOrphansClearsADeletedGroupsConfig(t *testing.T) {
+	s, sqlDB, _ := fixture(t)
+	if _, err := s.Set(root(), KindGroup, "web-team", Config{Preflight: list("true")}, audit.ViaCLI, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DropOrphans(root()); err != nil {
+		t.Fatal(err)
+	}
+	if head, _ := s.revs.Head(root(), KindWorkspaceConfig, "group:g2"); head == nil {
+		t.Fatal("a group that exists keeps its config")
+	}
+	exec(t, sqlDB, `DELETE FROM workspace_group_members WHERE group_id = 'g2'`)
+	exec(t, sqlDB, `DELETE FROM workspace_groups WHERE id = 'g2'`)
+	if err := s.DropOrphans(root()); err != nil {
+		t.Fatal(err)
+	}
+	if head, _ := s.revs.Head(root(), KindWorkspaceConfig, "group:g2"); head != nil {
+		t.Fatalf("a deleted group's config was kept: %s", head.ID)
+	}
+}
+
+// A wrapper's check runs outside any run: no run placeholder anywhere in
+// it, also after another {word}.
+func TestWrapperCheckPlaceholders(t *testing.T) {
+	_, err := NormalizeWrapper(WrapperDef{Name: "box", Argv: []string{"bwrap", "--bind", "{dir}", "{dir}"},
+		Check: []string{"sh", "-c", "awk '{print}' /etc/os-release && test -d {rundir}"}})
+	if err == nil || !strings.Contains(err.Error(), "{rundir}") {
+		t.Fatalf("a run placeholder after another {word}: %v", err)
+	}
+	if _, err := NormalizeWrapper(WrapperDef{Name: "box", Argv: []string{"bwrap", "--bind", "{dir}", "{dir}"},
+		Check: []string{"sh", "-c", "awk '{print}' /etc/os-release"}}); err != nil {
+		t.Fatalf("a {word} that is no placeholder is fine in a check: %v", err)
 	}
 }

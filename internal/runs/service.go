@@ -66,6 +66,8 @@ type Service struct {
 	// itemAgents reads the item's multi-agent switch ("panel", "solo", ""
 	// = workspace default) — wired to the inbox. Nil = always the default.
 	itemAgents func(ctx context.Context, itemID string) string
+	// itemClosed: the item is done or discarded (SetItemClosed).
+	itemClosed func(ctx context.Context, itemID string) bool
 	// nextStage resolves the stage that follows a successful one per
 	// workspace; "" ends the sequence. Defaults to: plan -> implement -> done
 	// (review/qa only when configured).
@@ -168,6 +170,12 @@ func (s *Service) prefsOf(ctx context.Context, workspaceID string) *WorkspacePre
 func (s *Service) SetPlanHooks(roundStart, ensurePlan func(ctx context.Context, itemID string) error) {
 	s.planRoundStart, s.ensurePlan = roundStart, ensurePlan
 }
+
+// SetItemClosed wires the question whether an item is finished or
+// discarded. A stage is not queued for one that is: a report that lands
+// while the approver rejects the item would otherwise start the next stage
+// of an item nobody wants any more.
+func (s *Service) SetItemClosed(fn func(ctx context.Context, itemID string) bool) { s.itemClosed = fn }
 
 // SetItemAgents wires the per-item multi-agent switch lookup.
 func (s *Service) SetItemAgents(fn func(ctx context.Context, itemID string) string) {
@@ -459,8 +467,22 @@ func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 	// The same for a workspace whose MCP servers the server holds: a
 	// worker that cannot take them from the claim answer would give its
 	// runs whatever its own mcp_config names.
+	// And only a worker key is handed them: they come with credentials,
+	// and any key with the workspace in scope can poll this endpoint (a
+	// developer's, an integration's). Such a key gets none of the
+	// workspace's runs — the run would have to go without its servers — and
+	// shows as unhealthy for it with the way to fix that.
 	takesMCP := slices.Contains(in.Features, FeatureRunMCP)
-	if s.mcpManaged != nil && !takesMCP {
+	holdsSecrets := auth.MayHoldRunSecrets(ctx)
+	if s.mcpManaged != nil && (!takesMCP || !holdsSecrets) {
+		why := "this worker's release cannot take the workspace's MCP servers from the server: upgrade it"
+		if takesMCP {
+			id := "<id>"
+			if p := auth.PrincipalFromContext(ctx); p != nil && p.KeyID != "" && p.Run == nil {
+				id = p.KeyID
+			}
+			why = "this worker's key is not a worker key, and the workspace's MCP servers come with credentials only a worker key is given: skopos key edit " + id + " --worker"
+		}
 		for _, ws := range in.Workspaces {
 			if _, set := in.Unhealthy[ws]; set || !s.mcpManaged(ctx, ws) {
 				continue
@@ -468,9 +490,10 @@ func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 			if in.Unhealthy == nil {
 				in.Unhealthy = map[string]string{}
 			}
-			in.Unhealthy[ws] = "this worker's release cannot take the workspace's MCP servers from the server: upgrade it"
+			in.Unhealthy[ws] = why
 		}
 	}
+	takesMCP = takesMCP && holdsSecrets
 	// The worker's own interrupted runs may sit in a workspace this claim
 	// does not offer. The same checks apply there as for an offered one:
 	// the workspace is in this key's scope (the worker id is only the
@@ -784,6 +807,12 @@ func (s *Service) Report(ctx context.Context, id string, in ReportInput, leaseTo
 	if err != nil {
 		return nil, err
 	}
+	// The report has committed: what follows (the next stage, the item's
+	// move, a group's decision) must not depend on the worker still waiting
+	// for the answer. A worker that gave up — its timeout, a restart — used
+	// to leave a succeeded run with nothing queued after it and the item
+	// where it was, and a report sent again is refused.
+	ctx = context.WithoutCancel(ctx)
 	s.recordMismatch(ctx, run, mismatch)
 	s.chain(ctx, run, in)
 	return run, nil
@@ -889,6 +918,9 @@ func (s *Service) advance(ctx context.Context, run *Run, agentID string) {
 	// Review/QA run only when the workspace configures them (one runner or
 	// a group). A stage that is not configured is passed over, not the end
 	// of the sequence: QA runs after implement when no review is set.
+	if s.itemClosed != nil && s.itemClosed(ctx, run.ItemID) {
+		return
+	}
 	prefs := s.prefsOf(ctx, run.WorkspaceID)
 	for next := s.nextStage(run.WorkspaceID, run.Stage); next != ""; next = s.nextStage(run.WorkspaceID, next) {
 		if !prefs.Configured(next) {

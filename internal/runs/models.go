@@ -390,6 +390,11 @@ type ReportInput struct {
 	// implement run's "fixed" / "not_fixed", a review's "addressed" /
 	// "still_open" (internal/findings).
 	FindingAnswers []findings.Answer `json:"finding_answers,omitempty"`
+	// FindingsListed: how many earlier findings the run's prompt listed
+	// for it to answer (0 when the worker could not read them). Absent
+	// from a worker that does not list them by name; only then does a
+	// passing review settle what it did not answer.
+	FindingsListed *int `json:"findings_listed,omitempty"`
 	// Pushed: implement only — false when the repo has no push configured,
 	// so the head exists on the worker alone.
 	Pushed *bool `json:"pushed,omitempty"`

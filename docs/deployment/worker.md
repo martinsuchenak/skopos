@@ -57,7 +57,7 @@ skopos worker init --server-url https://skopos.example.com \
 
 # 2. Mint a worker key (root key, against the server) and put it in
 #    skopos-worker.env as SKOPOS_API_KEY=...
-skopos key create --name worker-vm1 --workspace github.com/you/repo \
+skopos key create --name worker-vm1 --workspace github.com/you/repo --worker \
                   --server-url https://skopos.example.com --api-key <root-key>
 
 # 3. Fill in the repos blocks in skopos-config.toml (clone path, checks, push)
@@ -929,6 +929,14 @@ wrapper = ["bwrap", "--unshare-all", "--share-net", "--die-with-parent",
 - **The network stays open:** the agent has to reach its model API, and
   bwrap can't limit it by host. Services listening on the host's loopback
   are reachable too.
+- **The worker's own git does not trust the worktree.** A run can rewrite
+  the two files that tell git where a worktree's repository is (`.git` in
+  the worktree, `commondir` in its git directory). For every git command
+  the worker itself runs in a run's worktree, and for the value of
+  `{gitdir}`, it names the directories from the clone's side
+  (`GIT_DIR`, `GIT_COMMON_DIR`, `GIT_WORK_TREE`) and turns the file system
+  monitor off. This does not cover `checkout = "branch"`, where the agent
+  works in the clone itself.
 - **`{gitdir}` is the whole git directory of the clone,** so a run can read
   and write every branch of its own repository. Its `config` and `hooks`
   are read-only: the worker runs git in that clone afterwards. It can't

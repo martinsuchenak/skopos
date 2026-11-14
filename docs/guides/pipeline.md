@@ -58,8 +58,8 @@ Mint scoped keys:
 # You: approves plans and reviews. Use it in the dashboard instead of the root key.
 skopos key create --name me --workspace github.com/you/repo --approver
 
-# One per worker machine: never --approver (workers must not approve their own work)
-skopos key create --name worker-vm1 --workspace github.com/you/repo
+# One per worker machine: --worker, never --approver (workers must not approve their own work)
+skopos key create --name worker-vm1 --workspace github.com/you/repo --worker
 ```
 
 Each secret is printed once. Many repositories? Use a workspace group

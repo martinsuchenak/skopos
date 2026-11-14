@@ -239,15 +239,15 @@ func (s *Storage) WaitingRuns(ctx context.Context) ([]*Run, error) {
 // workspaces, their runners and what they report about them. A worker
 // gone longer than that is no reason to call a run takeable.
 func (s *Storage) WorkerOffers(ctx context.Context, since time.Time) ([]workerOffer, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT runners, workspaces, COALESCE(runner_info, ''), COALESCE(executor_info, '') FROM workers WHERE last_seen >= ?`, formatTime(since))
+	rows, err := s.db.QueryContext(ctx, `SELECT runners, workspaces, COALESCE(runner_info, ''), COALESCE(executor_info, ''), COALESCE(unhealthy, '') FROM workers WHERE last_seen >= ?`, formatTime(since))
 	if err != nil {
 		return nil, fmt.Errorf("listing workers: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	var out []workerOffer
 	for rows.Next() {
-		var rawRunners, rawWorkspaces, rawFacts, rawExecutors string
-		if err := rows.Scan(&rawRunners, &rawWorkspaces, &rawFacts, &rawExecutors); err != nil {
+		var rawRunners, rawWorkspaces, rawFacts, rawExecutors, rawUnhealthy string
+		if err := rows.Scan(&rawRunners, &rawWorkspaces, &rawFacts, &rawExecutors, &rawUnhealthy); err != nil {
 			return nil, err
 		}
 		var runners, workspaces []string
@@ -260,6 +260,9 @@ func (s *Storage) WorkerOffers(ctx context.Context, since time.Time) ([]workerOf
 			runners = append(runners, f.Name)
 		}
 		o := workerOffer{workspaces: map[string]bool{}, facts: newClaimFacts(runners, facts, parseExecutors(rawExecutors))}
+		if rawUnhealthy != "" {
+			_ = json.Unmarshal([]byte(rawUnhealthy), &o.unhealthy)
+		}
 		for _, w := range workspaces {
 			o.workspaces[w] = true
 		}
@@ -913,7 +916,9 @@ func (s *Storage) Report(ctx context.Context, id, workerID, keyID, tokenHash str
 		// Passed: a review that found nothing blocking of its own (what it
 		// found still open is counted by the record).
 		passed := run.Status == StatusSucceeded && BlockingFindings(*run) == 0
-		still, err := s.findings.RecordRun(ctx, tx, findingRun(run), round, newFindings(in.Findings), in.FindingAnswers, passed, now)
+		fr := findingRun(run)
+		fr.Listed = in.FindingsListed
+		still, err := s.findings.RecordRun(ctx, tx, fr, round, newFindings(in.Findings), in.FindingAnswers, passed, now)
 		if err != nil {
 			return nil, err
 		}
@@ -1104,32 +1109,28 @@ func (s *Storage) Resume(ctx context.Context, id, workerID string, lease time.Du
 // Cancel retires runs of an item that are still queued/paused (item rejected
 // or done). Returns the ids cancelled.
 func (s *Storage) CancelItem(ctx context.Context, itemID, reason string, now time.Time) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM runs WHERE item_id = ? AND status IN (?, ?, ?, ?, ?)`,
+	// One statement: the runs that are still active when it runs, and only
+	// those. Listed first and updated by id after, a run that reported in
+	// between had its "succeeded" overwritten with "cancelled".
+	rows, err := s.db.QueryContext(ctx, `
+		UPDATE runs SET status = ?, fail_reason = ?, updated_at = ?
+		WHERE item_id = ? AND status IN (?, ?, ?, ?, ?)
+		RETURNING id`,
+		string(StatusCancelled), reason, formatTime(now),
 		itemID, string(StatusQueued), string(StatusPaused), string(StatusClaimed), string(StatusRunning), string(StatusInterrupted))
 	if err != nil {
 		return nil, fmt.Errorf("cancelling runs: %w", err)
 	}
+	defer func() { _ = rows.Close() }()
 	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
 			return nil, err
 		}
 		ids = append(ids, id)
 	}
-	_ = rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	for _, id := range ids {
-		if _, err := s.db.ExecContext(ctx, `
-			UPDATE runs SET status = ?, fail_reason = ?, updated_at = ? WHERE id = ?`,
-			string(StatusCancelled), reason, formatTime(now), id); err != nil {
-			return nil, fmt.Errorf("cancelling run %s: %w", id, err)
-		}
-	}
-	return ids, nil
+	return ids, rows.Err()
 }
 
 // CancelOne retires a single run by id (targeted compensation, review N1).

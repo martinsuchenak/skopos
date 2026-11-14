@@ -125,3 +125,41 @@ func TestHeadsAndValidation(t *testing.T) {
 		t.Fatalf("unknown revision: %v", err)
 	}
 }
+
+// A conditional write happens only while the revision the writer read is
+// still the current one, and the comparison is part of the write: of two
+// writers that both read the same revision, one gets ErrMoved.
+func TestPutIfHead(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	none := ""
+	first, changed, err := s.Put(ctx, "workspace_config", "workspace:a", []byte(`{"n":1}`), Meta{IfHead: &none})
+	if err != nil || !changed {
+		t.Fatalf("nothing stored, as read: %v %v", changed, err)
+	}
+	if _, _, err := s.Put(ctx, "workspace_config", "workspace:a", []byte(`{"n":2}`), Meta{IfHead: &none}); !errors.Is(err, ErrMoved) {
+		t.Fatalf("read as empty, and it is not: %v", err)
+	}
+	read := first.ID
+	results := make(chan error, 2)
+	for _, body := range []string{`{"n":3}`, `{"n":4}`} {
+		go func() {
+			_, _, err := s.Put(ctx, "workspace_config", "workspace:a", []byte(body), Meta{IfHead: &read})
+			results <- err
+		}()
+	}
+	a, b := <-results, <-results
+	moved := 0
+	for _, err := range []error{a, b} {
+		switch {
+		case err == nil:
+		case errors.Is(err, ErrMoved):
+			moved++
+		default:
+			t.Fatalf("an unexpected error: %v", err)
+		}
+	}
+	if moved != 1 {
+		t.Fatalf("of two writers that read the same revision exactly one must be refused: %v, %v", a, b)
+	}
+}

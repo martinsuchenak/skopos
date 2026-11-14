@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/martinsuchenak/skopos/internal/srvurl"
 	"net/url"
 	"regexp"
 	"slices"
@@ -436,7 +437,8 @@ func Normalize(in Config) (Config, error) {
 		}
 		if p.RemoteURL != nil {
 			u, err := url.Parse(*p.RemoteURL)
-			if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+			// srv+http(s) too: a worker resolves such a URL when it pushes.
+			if err != nil || u.Host == "" || !srvurl.HTTPScheme(u.Scheme) {
 				return bad("push.remote_url %q is not an http(s) URL", *p.RemoteURL)
 			}
 			if u.User != nil {
@@ -485,6 +487,20 @@ func (c Config) Wrappers() []string {
 	return out
 }
 
+// OwnerRepo reads the owner and the repository from a push URL: its last
+// two path segments (a host may serve repositories under a path prefix).
+func OwnerRepo(remoteURL string) (owner, repo string, ok bool) {
+	u, err := url.Parse(remoteURL)
+	if err != nil {
+		return "", "", false
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) < 2 || parts[len(parts)-2] == "" || parts[len(parts)-1] == "" {
+		return "", "", false
+	}
+	return parts[len(parts)-2], strings.TrimSuffix(parts[len(parts)-1], ".git"), true
+}
+
 // CheckEffective checks what holds only for a workspace's merged config
 // with defaults filled in: a push needs a remote URL, a pull request needs
 // a push.
@@ -495,6 +511,15 @@ func CheckEffective(c Config) error {
 	}
 	if pr := *full.Push.PullRequest; pr != "none" && *full.Push.Kind == "none" {
 		return fmt.Errorf("%w: push.pull_request needs a push (push.kind github or gitea)", ErrInvalid)
+	}
+	// A pull request is opened through the host's API, which a worker
+	// derives from the push URL: its last two path segments are the owner
+	// and the repository. Checked here, or every worker refuses the config
+	// and the workspace takes no runs anywhere.
+	if pr := *full.Push.PullRequest; pr != "none" {
+		if _, _, ok := OwnerRepo(*full.Push.RemoteURL); !ok {
+			return fmt.Errorf("%w: push.pull_request needs a push.remote_url that ends in owner/repository; %q does not", ErrInvalid, *full.Push.RemoteURL)
+		}
 	}
 	// A server the runs get and may call no tool of is a mistake: the tool
 	// allowlist is apart from which servers are there.

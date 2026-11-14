@@ -3,6 +3,7 @@ package policy
 import (
 	"net"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -43,14 +44,32 @@ var hostProviders = []struct{ suffix, provider string }{
 }
 
 // awsService reports whether host is Amazon Bedrock itself
-// (bedrock[-runtime][.<region>].amazonaws.com), not a customer's host.
+// (bedrock[-runtime|-agent|-agent-runtime][-fips].<region>.amazonaws.com),
+// not a customer's host. A customer names their own load balancers and
+// buckets: bedrock-gw-123.eu-west-1.elb.amazonaws.com is one of those, so
+// the service's own labels are matched exactly and nothing may stand
+// between the region and amazonaws.com.
 func awsService(host string) bool {
-	if !strings.HasSuffix(host, ".amazonaws.com") {
+	rest, ok := strings.CutSuffix(host, ".amazonaws.com")
+	if !ok {
 		return false
 	}
-	first, _, _ := strings.Cut(host, ".")
-	return first == "bedrock" || strings.HasPrefix(first, "bedrock-")
+	labels := strings.Split(rest, ".")
+	if len(labels) < 1 || len(labels) > 2 {
+		return false
+	}
+	if len(labels) == 2 && !reAWSRegion.MatchString(labels[1]) {
+		return false
+	}
+	switch strings.TrimSuffix(labels[0], "-fips") {
+	case "bedrock", "bedrock-runtime", "bedrock-agent", "bedrock-agent-runtime":
+		return true
+	}
+	return false
 }
+
+// reAWSRegion: eu-west-1, us-gov-east-1, ap-southeast-2.
+var reAWSRegion = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-\d+$`)
 
 // Contradicts reports whether a declared provider is at odds with what the
 // endpoint says: the endpoint identifies a provider (it is not unknown) and

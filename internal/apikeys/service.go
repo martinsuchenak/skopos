@@ -22,11 +22,13 @@ var (
 )
 
 type Service struct {
-	storage  *Storage
-	now      func() time.Time
-	onRevoke func(keyID string)
-	onScope  func(keyIDs []string)
-	audit    AuditRecorder
+	// onGroupDelete: fired after a group is deleted (SetGroupDeleteNotifier).
+	onGroupDelete func(groupID string)
+	storage       *Storage
+	now           func() time.Time
+	onRevoke      func(keyID string)
+	onScope       func(keyIDs []string)
+	audit         AuditRecorder
 }
 
 func NewService(storage *Storage) *Service {
@@ -62,6 +64,18 @@ func (s *Service) OnWorkspaceRegistered(ctx context.Context, wsID string) {
 	s.dropKeys(keyIDs)
 }
 
+// workerAlone refuses a worker key that also holds the approver or the
+// admin permission. A worker runs agents on code nobody has reviewed yet,
+// and its key lies in a file on that machine: it must not be able to
+// approve what those agents wrote, nor change the policy and configuration
+// that decide what they may do.
+func workerAlone(worker, approver, admin bool) error {
+	if worker && (approver || admin) {
+		return fmt.Errorf("%w: a worker key cannot hold the approver or the admin permission", ErrInvalidInput)
+	}
+	return nil
+}
+
 type CreateInput struct {
 	Name          string
 	Workspaces    []string // exact ids, or a single "*" for all workspaces
@@ -70,6 +84,7 @@ type CreateInput struct {
 	Approver      bool // may perform human-only workflow actions (agent-pipeline §2); root-only to grant
 	Delegate      bool // may name the person it acts for (X-Skopos-On-Behalf-Of)
 	Admin         bool // may change policy and configuration within its scope (auth.RequireAdmin*)
+	Worker        bool // a pipeline worker's key: may be handed the credentials the server holds for runs
 	// Capabilities limit the key (internal/auth capabilities.go); Preset
 	// names a set in auth.Presets, joined with Capabilities. Neither = full
 	// access.
@@ -144,6 +159,9 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (*CreateResult,
 	if len(input.Name) > 100 {
 		return nil, fmt.Errorf("%w: name must be at most 100 characters", ErrInvalidInput)
 	}
+	if err := workerAlone(input.Worker, input.Approver, input.Admin); err != nil {
+		return nil, err
+	}
 
 	workspaces := make([]string, 0, len(input.Workspaces))
 	for _, w := range input.Workspaces {
@@ -213,6 +231,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (*CreateResult,
 		Approver:      input.Approver,
 		Delegate:      input.Delegate,
 		Admin:         input.Admin,
+		Worker:        input.Worker,
 		Capabilities:  capabilities,
 		Workspaces:    workspaces,
 		Groups:        groupNames,
@@ -270,6 +289,7 @@ type UpdateInput struct {
 	Approver   *bool    // nil = unchanged
 	Delegate   *bool    // nil = unchanged
 	Admin      *bool    // nil = unchanged
+	Worker     *bool    // nil = unchanged
 	// Capabilities: nil = unchanged; [] = full access; otherwise the new
 	// list. Preset (if set) is joined with it.
 	Capabilities *[]string
@@ -397,7 +417,14 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (*Ke
 	if input.Admin != nil {
 		admin = *input.Admin
 	}
-	if err := s.storage.Update(ctx, id, name, all, approver, delegate, admin, capabilities, workspaces, groupIDs); err != nil {
+	worker := existing.Worker
+	if input.Worker != nil {
+		worker = *input.Worker
+	}
+	if err := workerAlone(worker, approver, admin); err != nil {
+		return nil, err
+	}
+	if err := s.storage.Update(ctx, id, name, all, approver, delegate, admin, worker, capabilities, workspaces, groupIDs); err != nil {
 		return nil, err
 	}
 	// A scope or capability change re-shapes what the key's open SSE
@@ -685,8 +712,16 @@ func (s *Service) DeleteGroup(ctx context.Context, id string) error {
 	}
 	s.recordGroup(ctx, "group.delete", id, describeGroup(existing))
 	s.dropKeys(keyIDs)
+	if s.onGroupDelete != nil {
+		s.onGroupDelete(id)
+	}
 	return nil
 }
+
+// SetGroupDeleteNotifier installs a callback fired after a group is
+// deleted: what other packages hold for the group (its policy, its config,
+// its pipeline settings and briefs) goes with it.
+func (s *Service) SetGroupDeleteNotifier(fn func(groupID string)) { s.onGroupDelete = fn }
 
 // WhoCan answers the reverse query: which active keys reach wsID, and how
 // (explicit scope, group member, or group pattern match).

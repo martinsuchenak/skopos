@@ -98,11 +98,18 @@ func cliDir(bin string) string {
 }
 
 // gitCommonDir is the git directory shared by dir's worktrees, "" when dir
-// is not in a repository.
+// is not in a repository. For a worktree the worker made it is the clone's,
+// named from the clone's side (gitpin.go) and never read from the
+// worktree's own files: a wrapper binds this directory, and an agent of an
+// earlier turn could have pointed those files anywhere.
 func gitCommonDir(dir string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	o, err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
+	cmd, err := gitCommand(ctx, dir, nil, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return ""
+	}
+	o, err := cmd.Output()
 	if err != nil {
 		return ""
 	}

@@ -252,9 +252,15 @@ const (
 // item. A server without the endpoint gets the section appended as before.
 // Nothing is sent when there are none.
 func (w *Worker) askQuestions(ctx context.Context, run *Run, asker, label string, qs []itemtext.Question, blocking bool, subjectKind, subject string) {
+	_ = w.recordQuestions(ctx, run, asker, label, qs, blocking, subjectKind, subject)
+}
+
+// recordQuestions is askQuestions that says whether the questions reached
+// the server: for a caller whose next step depends on them being on record.
+func (w *Worker) recordQuestions(ctx context.Context, run *Run, asker, label string, qs []itemtext.Question, blocking bool, subjectKind, subject string) error {
 	text := itemtext.FormatQuestions(qs)
 	if strings.TrimSpace(text) == "" {
-		return
+		return nil
 	}
 	post := QuestionsPost{WorkerID: w.cfg.ID, Asker: asker, Blocking: blocking, SubjectKind: subjectKind, Subject: subject}
 	for _, q := range qs {
@@ -270,10 +276,10 @@ func (w *Worker) askQuestions(ctx context.Context, run *Run, asker, label string
 	}
 	if err != nil {
 		w.log.Warn("posting the questions failed", "run", run.ID, "err", err)
-		return
+		return err
 	}
 	if ok {
-		return
+		return nil
 	}
 	heading := "Questions — planner"
 	switch {
@@ -282,7 +288,7 @@ func (w *Worker) askQuestions(ctx context.Context, run *Run, asker, label string
 	case run.GroupID != "" && label != "":
 		heading = "Questions — planner " + label
 	}
-	_ = w.client.AppendSection(ctx, run.ItemID, heading, text)
+	return w.client.AppendSection(ctx, run.ItemID, heading, text)
 }
 
 // candidateLabel names a plan group member's candidate: "focus@runner" or
@@ -752,6 +758,32 @@ type qaResult struct {
 	Questions []itemtext.Question `json:"questions"`
 }
 
+// qaScenarioCounts is how many scenarios ran and passed, and the ones that
+// failed (at most five: each becomes a finding).
+func qaScenarioCounts(scs []qaScenario) (passed int, failed []qaScenario) {
+	for _, sc := range scs {
+		switch strings.ToLower(strings.TrimSpace(sc.Result)) {
+		case "pass", "passed":
+			passed++
+		case "fail", "failed":
+			if len(failed) < 5 {
+				failed = append(failed, sc)
+			}
+		}
+	}
+	return passed, failed
+}
+
+// hasBlocking reports a blocking finding among the result's own.
+func (r reviewResult) hasBlocking() bool {
+	for _, f := range r.Findings {
+		if f.Severity != "nit" {
+			return true
+		}
+	}
+	return len(r.Issues) > 0
+}
+
 // scenariosSection lists what QA ran, for its section in the item.
 func scenariosSection(scs []qaScenario) string {
 	var b strings.Builder
@@ -792,7 +824,16 @@ func (w *Worker) qaAsks(ctx context.Context, run *Run, summary string, qs []item
 		}
 		asked = []itemtext.Question{{Text: "QA could not test this change (" + why + "). Which system should it test on, or what is missing?"}}
 	}
-	w.askQuestions(ctx, run, askerWorker, "", asked, true, subjectHead, head)
+	// The questions have to be on record before the run says it asked:
+	// the retry that follows the answer starts QA again only when it finds
+	// them (inbox: qaAsked). Not recorded, it would start a whole new
+	// implementation of a change nothing was found wrong with — so the run
+	// is given back to be tried again.
+	if err := w.recordQuestions(ctx, run, askerWorker, "", asked, true, subjectHead, head); err != nil {
+		return w.report(ctx, run, false, map[string]any{
+			"reason": "qa: its questions could not be recorded: " + err.Error(), "head_sha": head, "setup": setup, "retryable": true,
+		})
+	}
 	return w.report(ctx, run, false, map[string]any{
 		"reason": "qa needs an answer: " + asked[0].Text, "summary": summary, "head_sha": head, "setup": setup,
 	})
@@ -1102,6 +1143,20 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 			log.Info("qa could not test and asks", "questions", len(qr.Questions), "cost_usd", res.CostUSD)
 			return w.qaAsks(ctx, run, qr.Summary, qr.Questions, reviewed, qaSetup)
 		}
+		// The verdict follows what ran, not the word the agent chose. A
+		// scenario it reports as failed is a finding, whatever the verdict
+		// says; and a "pass" with no scenario that ran and passed is a QA
+		// that did not test: it asks, like one that says so itself.
+		ran, failed := qaScenarioCounts(qr.Scenarios)
+		if len(failed) > 0 && !qr.hasBlocking() {
+			for _, sc := range failed {
+				qr.Findings = append(qr.Findings, Finding{Severity: "blocking", Text: "QA scenario failed: " + strings.TrimSpace(sc.Name+": "+sc.Note)})
+			}
+		}
+		if qr.Verdict == "pass" && ran == 0 && len(failed) == 0 {
+			log.Info("qa returned pass without a scenario that ran: it asks", "scenarios", len(qr.Scenarios), "cost_usd", res.CostUSD)
+			return w.qaAsks(ctx, run, "it reported the change as passing without running a scenario: "+firstLine(qr.Summary), nil, reviewed, qaSetup)
+		}
 		rr, scenarios = qr.reviewResult, qr.Scenarios
 	} else if err := json.Unmarshal(res.Structured, &rr); err != nil || rr.Verdict == "" {
 		return fmt.Errorf("review returned no verdict: %s", firstLine(res.Text))
@@ -1120,7 +1175,7 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 		log.Info("second opinion finished", "verdict", rr.Verdict, "findings", len(rr.Findings), "head", run.HeadSHA, "cost_usd", res.CostUSD)
 		return w.report(ctx, run, true, map[string]any{
 			"summary": rr.Summary, "findings": rr.Findings, "verdict": rr.Verdict, "head_sha": run.HeadSHA,
-			"finding_answers": answers,
+			"finding_answers": answers, "findings_listed": len(recheck),
 		})
 	}
 	if br != nil {
@@ -1133,7 +1188,7 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 		_ = w.client.AppendSection(ctx, run.ItemID, heading, reviewSection(rr, said))
 		log.Info("branch review finished", "verdict", rr.Verdict, "findings", len(rr.Findings), "branch", run.Branch, "head", br.Head, "cost_usd", res.CostUSD)
 		return w.report(ctx, run, true, map[string]any{
-			"summary": rr.Summary, "findings": rr.Findings, "verdict": rr.Verdict, "finding_answers": answers,
+			"summary": rr.Summary, "findings": rr.Findings, "verdict": rr.Verdict, "finding_answers": answers, "findings_listed": len(recheck),
 			"head_sha": br.Head, "branch": run.Branch, "checks": br.Checks, "setup": br.Setup,
 			"diffstat": diffStat(ctx, wt, base),
 		})
@@ -1148,11 +1203,11 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 	if !passed {
 		return w.report(ctx, run, false, map[string]any{
 			"reason": run.Stage + " failed: " + rr.Summary, "summary": rr.Summary, "findings": rr.Findings,
-			"finding_answers": answers, "head_sha": reviewed,
+			"finding_answers": answers, "findings_listed": len(recheck), "head_sha": reviewed,
 		})
 	}
 	return w.report(ctx, run, true, map[string]any{
-		"summary": rr.Summary, "findings": rr.Findings, "finding_answers": answers, "head_sha": reviewed,
+		"summary": rr.Summary, "findings": rr.Findings, "finding_answers": answers, "findings_listed": len(recheck), "head_sha": reviewed,
 		"checks": []Check{{Name: run.Stage + ":" + account.Name, Passed: true, Output: rr.Summary}},
 	})
 }

@@ -31,6 +31,10 @@ type Run struct {
 	Runner      string
 	Focus       string
 	HeadSHA     string
+	// Listed: how many earlier findings the run's prompt listed for it to
+	// answer, as its worker reports it. nil = the worker says nothing (a
+	// release from before it listed them by name).
+	Listed *int
 }
 
 // Member is one reviewer of a round: its run, and what it reviews as.
@@ -191,8 +195,20 @@ func (s *Service) RecordRun(ctx context.Context, tx *sql.Tx, run Run, round Roun
 	if !settles || stillOpen > 0 {
 		return stillOpen, nil
 	}
+	// A passing review settles what was its to check and it did not answer
+	// only when its worker cannot answer by name at all (a release from
+	// before that). One that lists the findings and got no answer for one —
+	// the read of the record failed, or the reviewer left it out — has not
+	// checked it: it stays as it is, for the approver to see.
+	if run.Listed != nil {
+		return stillOpen, nil
+	}
 	for _, f := range existing {
 		if seen[f.ID] || !f.Tracked || !pending(f.State) || inRound(members, f.RunID) || checker(members, f) != run.ID {
+			continue
+		}
+		// Nor one the implementer said it did not fix: nothing says it is.
+		if claim, _, _, _ := f.standing(); claim == KindNotFixed {
 			continue
 		}
 		if err := insertUpdate(ctx, tx, Update{

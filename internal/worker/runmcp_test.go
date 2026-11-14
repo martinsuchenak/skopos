@@ -192,6 +192,14 @@ func TestCheckWorkerKey(t *testing.T) {
 	if warn, err := check(`{"root":false,"key":{"approver":true,"admin":false}}`); err != nil || len(warn) != 1 || !strings.Contains(warn[0], "approver") {
 		t.Fatalf("approver key: %v %v", warn, err)
 	}
+	// A server that knows worker keys says whether this is one. Without the
+	// flag the worker runs, and is told what it will not be given.
+	if warn, err := check(`{"root":false,"key":{"id":"k-7","approver":false,"admin":false,"worker":false}}`); err != nil || len(warn) != 1 || !strings.Contains(warn[0], "skopos key edit k-7 --worker") {
+		t.Fatalf("a key that is not a worker key: %v %v", warn, err)
+	}
+	if warn, err := check(`{"root":false,"key":{"id":"k-7","approver":false,"admin":false,"worker":true}}`); err != nil || len(warn) != 0 {
+		t.Fatalf("a worker key: %v %v", warn, err)
+	}
 	// No key (a server without authentication) and an unreachable server
 	// are not reasons to refuse: the claim loop reports those.
 	if warn, err := CheckWorkerKey(context.Background(), "http://127.0.0.1:1", ""); err != nil || warn != nil {

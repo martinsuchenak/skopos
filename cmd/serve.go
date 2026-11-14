@@ -584,6 +584,21 @@ func serveCmd() *cli.Command {
 				}
 				configService.DropWorkspace(context.Background(), ws)
 			})
+			// A deleted group takes what was set on it along: its policy,
+			// pipeline settings and briefs, and its config (which would
+			// otherwise keep "using" the wrappers and MCP servers it named).
+			dropGroupless := func(string) {
+				if err := pipelineService.DropOrphans(context.Background()); err != nil {
+					log.Warn("pipeline settings: " + err.Error())
+				}
+				if err := configService.DropOrphans(context.Background()); err != nil {
+					log.Warn("workspace config: " + err.Error())
+				}
+			}
+			apiKeysService.SetGroupDeleteNotifier(dropGroupless)
+			// And once at start: a group deleted by a release before this
+			// left its config behind.
+			dropGroupless("")
 			// Second opinions: a plain request uses the workspace's default
 			// runner from the pipeline settings.
 			inboxService.SetSecondOpinionDefault(pipelineService.SecondOpinionRunner)
@@ -642,6 +657,12 @@ func serveCmd() *cli.Command {
 					return nil, err
 				}
 				return map[string]any{"sets": rec.Sets, "free": rec.Free, "prompt": qa.PromptText(rec)}, nil
+			})
+			// No next stage for an item that was finished or rejected while
+			// its run was reporting.
+			runsService.SetItemClosed(func(ctx context.Context, itemID string) bool {
+				item, err := inboxService.GetItem(ctx, itemID)
+				return err == nil && (item.Status == inbox.StatusDone || item.Status == inbox.StatusDiscarded)
 			})
 			// The item's own panel/solo switch, read at every queue.
 			runsService.SetItemAgents(func(ctx context.Context, itemID string) string {

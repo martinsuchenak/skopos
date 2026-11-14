@@ -86,7 +86,7 @@ func describeKey(k Key) string {
 	for _, f := range []struct {
 		on   bool
 		name string
-	}{{k.Approver, "approver"}, {k.Admin, "admin"}, {k.Delegate, "delegate"}} {
+	}{{k.Approver, "approver"}, {k.Admin, "admin"}, {k.Delegate, "delegate"}, {k.Worker, "worker"}} {
 		if f.on {
 			parts = append(parts, f.name)
 		}

@@ -413,7 +413,36 @@ func validateSchema(v any, schema string) error {
 	if err := json.Unmarshal([]byte(schema), &s); err != nil {
 		return fmt.Errorf("schema: %v", err)
 	}
+	// What an agent says about earlier findings (a list of id, status,
+	// note) is read by a decoder that takes any shape and can never cost a
+	// run its result (findingAnswers). Checked here first, a `null`, a
+	// word or a number for an id would do exactly that: so that list is
+	// not validated.
+	if props, ok := s["properties"].(map[string]any); ok {
+		for name, p := range props {
+			if isAnswerList(p) {
+				delete(props, name)
+			}
+		}
+	}
 	return validateNode(v, s, "$")
+}
+
+// isAnswerList recognises the schema of a finding-answer list: an array of
+// objects with exactly id, status and note.
+func isAnswerList(p any) bool {
+	ps, _ := p.(map[string]any)
+	items, _ := ps["items"].(map[string]any)
+	props, _ := items["properties"].(map[string]any)
+	if ps["type"] != "array" || len(props) != 3 {
+		return false
+	}
+	for _, k := range []string{"id", "status", "note"} {
+		if _, ok := props[k]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func validateNode(v any, s map[string]any, path string) error {

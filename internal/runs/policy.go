@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -235,7 +236,11 @@ func sanitizeFacts(in []policy.Facts) []policy.Facts {
 // broader entry (the default) answer for it. Dropped reads as "reports no
 // executors" for that workspace, and no rule with `executor` then matches.
 func sanitizeExecutors(in map[string][]policy.ExecutorFact, offered map[string]bool) map[string][]policy.ExecutorFact {
-	const maxFacts, maxLen = 128, 200
+	// maxFacts covers what a worker within the runner cap can send: its
+	// default, and one entry per stage and runner that differs from it (64
+	// runners, 8 stages). Smaller, a correctly contained worker with many
+	// runners had its whole list dropped and read as reporting none.
+	const maxFacts, maxLen = 1 + 64*8, 200
 	out := map[string][]policy.ExecutorFact{}
 	for ws, facts := range in {
 		if !offered[ws] || len(facts) > maxFacts {
@@ -540,14 +545,29 @@ func (s *Service) SweepStranded(ctx context.Context) {
 type workerOffer struct {
 	workspaces map[string]bool
 	facts      *claimFacts
+	// unhealthy: the workspaces this worker takes no work of now, with why
+	// (a failing preflight, a release that cannot do what the workspace
+	// needs, a key that is not a worker key).
+	unhealthy map[string]string
 }
 
 // strandedReason says why no worker may take a waiting run under the
 // policy, or "" when one may, or when policy is not what stands in the way.
 func strandedReason(r *Run, prefs *WorkspacePrefs, workers []workerOffer) string {
 	refused, noFacts, unavailable := "", false, ""
+	// held: why the workers that serve the workspace take none of its work
+	// (the claim skips a workspace a worker is unhealthy for).
+	var held []string
+	serving := 0
 	for _, w := range workers {
 		if !w.workspaces[r.WorkspaceID] {
+			continue
+		}
+		serving++
+		if why := w.unhealthy[r.WorkspaceID]; why != "" {
+			if !slices.Contains(held, why) {
+				held = append(held, why)
+			}
 			continue
 		}
 		d := decide(r, prefs, w.facts)
@@ -571,6 +591,15 @@ func strandedReason(r *Run, prefs *WorkspacePrefs, workers []workerOffer) string
 		return fmt.Sprintf("no worker can run %s: on a worker that has the runner, %s", r.Stage, policy.UnavailableReason(unavailable))
 	case noFacts:
 		return fmt.Sprintf("no worker may take %s: the workspace has a runner policy, and the workers serving it report no runner facts (update them)", r.Stage)
+	case serving > 0 && len(held) > 0:
+		// Every worker that serves the workspace is holding off, each for
+		// a reason of its own: said on the run, where someone waiting for
+		// it looks, and not only on the Workers view.
+		sort.Strings(held)
+		if len(held) > 2 {
+			held = append(held[:2], fmt.Sprintf("and %d more reasons", len(held)-2))
+		}
+		return fmt.Sprintf("no worker takes the workspace's work now: %s", strings.Join(held, "; "))
 	}
 	return ""
 }

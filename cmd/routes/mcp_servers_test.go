@@ -80,7 +80,10 @@ func TestIntegrationMCPServersForRuns(t *testing.T) {
 	mustDo(t, root.req("POST", "/api/groups", `{"name":"globex","members":["`+ws+`"]}`), 201)
 	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"alex","workspaces":["`+ws+`","`+other+`"],"approver":true}`)}
 	ops := workerClient{base: baseURL, key: mint(t, root, `{"name":"ops","groups":["globex"],"admin":true}`)}
-	workerKey := mint(t, root, `{"name":"worker-1","workspaces":["`+ws+`","`+other+`"]}`)
+	workerKey := mint(t, root, `{"name":"worker-1","workspaces":["`+ws+`","`+other+`"],"worker":true}`)
+	// A worker key is a worker's and nothing more.
+	mustDo(t, root.req("POST", "/api/keys", `{"name":"both","workspaces":["`+ws+`"],"worker":true,"admin":true}`), 400, "a worker key with the admin permission")
+	mustDo(t, root.req("POST", "/api/keys", `{"name":"both","workspaces":["`+ws+`"],"worker":true,"approver":true}`), 400, "a worker key with the approver permission")
 	worker := workerClient{base: baseURL, key: workerKey}
 	wc := wk.NewClient(baseURL, workerKey)
 	wc.SetServerCommands(true)
@@ -139,6 +142,17 @@ func TestIntegrationMCPServersForRuns(t *testing.T) {
 	var reason string
 	if err := sqlDB.QueryRow(`SELECT json_extract(unhealthy, '$."` + ws + `"') FROM workers WHERE id = 'w-old'`).Scan(&reason); err != nil || !strings.Contains(reason, "MCP servers") {
 		t.Fatalf("it shows as unhealthy for the workspace, with why: %q %v", reason, err)
+	}
+
+	// Any key with the workspace in scope can call the claim endpoint. One
+	// that is not a worker's gets no run of a workspace whose MCP servers
+	// the server holds: the credentials go to worker keys only.
+	plain := approver.req("POST", "/api/runs/claim", `{"worker_id":"w-plain","runners":["claude"],"workspaces":["`+ws+`"],"server_commands":true,"features":["run_mcp","run_brief"]}`)
+	if mustDo(t, plain, http.StatusNoContent, "a key that is not a worker key"); strings.Contains(plain.body, secret) {
+		t.Fatal("the secret left the server for a key that is not a worker's")
+	}
+	if err := sqlDB.QueryRow(`SELECT json_extract(unhealthy, '$."` + ws + `"') FROM workers WHERE id = 'w-plain'`).Scan(&reason); err != nil || !strings.Contains(reason, "not a worker key") {
+		t.Fatalf("it shows as unhealthy for the workspace, with the way to fix it: %q %v", reason, err)
 	}
 
 	// The claim: the servers for this run's workspace, the secret filled in.

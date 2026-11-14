@@ -282,10 +282,12 @@ plan = { members = "claude-opus" }
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The runner the file drops goes last: by then no pipeline in the file
+	// names it (a stop halfway never leaves one naming a deleted runner).
 	want := `update runner runner:claude-opus
-delete runner runner:glm
 clear config workspace:fabrikam/api
-update pipeline workspace:fabrikam/api`
+update pipeline workspace:fabrikam/api
+delete runner runner:glm`
 	if got := lines(plan); got != want {
 		t.Fatalf("plan:\n%s\nwant:\n%s", got, want)
 	}
@@ -610,9 +612,13 @@ func TestWrappersAndStageBlocksInTheFile(t *testing.T) {
 	if _, err := f.svc.Apply(root(), Input{Document: only, Plan: true}); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "workspace:fabrikam/api") {
 		t.Fatalf("dropping a wrapper an unlisted workspace names: %v", err)
 	}
-	forced, err := f.svc.Apply(root(), Input{Document: only, Plan: true, Force: true})
+	// Forcing a policy is another thing: it does not drop what is in use.
+	if _, err := f.svc.Apply(root(), Input{Document: only, Plan: true, Force: true}); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "--drop-in-use") {
+		t.Fatalf("--force must not drop a wrapper that is in use: %v", err)
+	}
+	forced, err := f.svc.Apply(root(), Input{Document: only, Plan: true, DropInUse: true})
 	if err != nil || lines(forced) != "delete wrapper wrapper:opencode-bwrap" || len(forced.Changes[0].Warnings) == 0 {
-		t.Fatalf("forced: %v %s", err, lines(forced))
+		t.Fatalf("dropped in use: %v %s", err, lines(forced))
 	}
 	// Dropping the rule and the wrapper together: the config changes first.
 	without := parse(t, "[wrappers]\n[workspaces.\"fabrikam/api\".config]\ndefault_branch = \"main\"\n")
@@ -750,5 +756,53 @@ func TestMCPServersInTheFile(t *testing.T) {
 	// Only a fleet admin defines MCP servers.
 	if _, err := f.svc.Apply(admin(false, "fabrikam/api"), Input{Document: parse(t, withMCP), Plan: true}); !errors.Is(err, auth.ErrAdminRequired) {
 		t.Fatalf("a workspace admin changed an MCP server: %v", err)
+	}
+}
+
+// A field that moves between a workspace and its group in one file: each
+// save is checked against what the file leaves for the other, not against
+// what is stored. Checked against the stored state, the plan passed and the
+// apply stopped halfway, with the group already changed.
+func TestApplyChecksAgainstWhatTheFileLeaves(t *testing.T) {
+	f := fixture(t)
+	// Stored: the group gives the push URL, the workspace the kind.
+	stored := parse(t, `
+[groups.web-team]
+workspaces = ["fabrikam/web"]
+[groups.web-team.config.push]
+remote_url = "https://git.example.com/fabrikam/web.git"
+
+[workspaces."fabrikam/web".config.push]
+kind = "github"
+`)
+	// The group first: a group the same file creates has no settings a
+	// plan can read yet (they are decided when they are applied).
+	if _, err := f.svc.Apply(root(), Input{Document: parse(t, "[groups.web-team]\nworkspaces = [\"fabrikam/web\"]\n")}); err != nil {
+		t.Fatalf("creating the group: %v", err)
+	}
+	if _, err := f.svc.Apply(root(), Input{Document: stored}); err != nil {
+		t.Fatalf("setting up: %v", err)
+	}
+	// The file moves the URL to the workspace.
+	moved := parse(t, `
+[groups.web-team]
+workspaces = ["fabrikam/web"]
+[groups.web-team.config]
+quiet_timeout = "10m"
+
+[workspaces."fabrikam/web".config.push]
+kind = "github"
+remote_url = "https://git.example.com/fabrikam/web.git"
+`)
+	if _, err := f.svc.Apply(root(), Input{Document: moved, Plan: true}); err != nil {
+		t.Fatalf("the plan of a file that is valid as a whole: %v", err)
+	}
+	res, err := f.svc.Apply(root(), Input{Document: moved})
+	if err != nil || !res.Applied {
+		t.Fatalf("the apply: %v %+v", err, res)
+	}
+	// And back, in one file again.
+	if res, err := f.svc.Apply(root(), Input{Document: stored}); err != nil || !res.Applied {
+		t.Fatalf("moving it back: %v", err)
 	}
 }

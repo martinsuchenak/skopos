@@ -851,6 +851,7 @@
                                     <span x-show="keyIsApprover(k)" class="chip tone-warn">approver</span>
                                     <span x-show="keyIsDelegate(k)" class="chip tone-neutral">delegate</span>
                                     <span x-show="keyIsAdmin(k)" class="chip tone-warn">admin</span>
+                                    <span x-show="keyIsWorker(k)" class="chip tone-info" title="A pipeline worker's key: the only kind given the credentials the server holds for runs">worker</span>
                                     <span x-show="keyCapsLabel(k)" class="chip tone-info" x-text="keyCapsLabel(k)"></span>
                                     <span x-show="k.revoked_at" class="chip tone-danger">revoked</span>
                                 </div>
@@ -1207,7 +1208,7 @@
                                     <span class="block truncate text-[11px] text-zinc-500" x-text="b.detail"></span>
                                 </div>
                                 <div class="flex shrink-0 gap-1">
-                                    <button type="button" class="btn btn-sm btn-ghost" @click="pipeBriefOpen(b.name, b.held)" :aria-label="b.action + ' the brief ' + b.name" x-text="b.action"></button>
+                                    <button type="button" class="btn btn-sm btn-ghost" x-show="b.action" @click="pipeBriefOpen(b.name, b.held)" :aria-label="b.action + ' the brief ' + b.name" x-text="b.action"></button>
                                     <button type="button" class="btn btn-sm btn-ghost btn-bad" x-show="b.own && !pipe.readOnly" @click="pipeBriefDelete(b.name)" :aria-label="'Remove the brief ' + b.name + ' held here'">Remove</button>
                                 </div>
                             </li>

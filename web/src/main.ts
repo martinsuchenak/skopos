@@ -17,7 +17,7 @@ type Bundle = { entries: Entry[]; markdown_bundle: string };
 type PlanItem = { id: string; plan_id: string; title: string; description?: string; phase?: string; status: string; position: number; claimed_by_agent_id?: string; depends_on?: string[] };
 type Plan = { id: string; name: string; branch_name?: string; workspace_id?: string; description?: string; status: string; author_agent_id: string; items?: PlanItem[]; depends_on?: string[]; created_at: string };
 type Toast = { id: number; message: string; type: 'success' | 'error' | 'info' };
-type ApiKey = { id: string; name: string; key_prefix: string; all_workspaces: boolean; approver?: boolean; delegate?: boolean; admin?: boolean; capabilities?: string[] | null; workspaces: string[]; groups?: string[]; created_at: string; last_used_at?: string; revoked_at?: string };
+type ApiKey = { id: string; name: string; key_prefix: string; all_workspaces: boolean; approver?: boolean; delegate?: boolean; admin?: boolean; worker?: boolean; capabilities?: string[] | null; workspaces: string[]; groups?: string[]; created_at: string; last_used_at?: string; revoked_at?: string };
 type KeyGroup = { id: string; name: string; description?: string; members: string[]; patterns: string[]; created_at: string };
 type KeyReach = { key: ApiKey; via: string };
 type WorkspaceRow = { id: string; name?: string; git_url?: string; created_at: string };
@@ -185,6 +185,10 @@ let previewPoll: ReturnType<typeof setInterval> | null = null;
 // to a check an edit has overtaken.
 let cfgCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let cfgCheckSeq = 0;
+// pipeOpenSeq counts the opens of the pipeline dialog: an open that a later
+// one overtook (a second click while the first still loads) stops, so the
+// dialog never shows one owner's stages under another's name.
+let pipeOpenSeq = 0;
 let runLogAbort: AbortController | null = null;
 // The run log panel's poll loop is reading (a loop ends with its run), and
 // the timer that looks for the item's next run while the panel follows it.
@@ -369,7 +373,7 @@ const appState = () => ({
   mcpForm: { open: false, editing: false, name: '', type: 'http', url: '', headers: '', command: '', env: '', workspaces: '', error: '', saving: false, confirm: false, rev: 0, secrets: [] as { name: string; set: boolean; value: string }[] },
   // The Briefs tab of the pipeline dialog: the briefs held for this owner
   // (and, for a workspace, the ones a group gives it), and the editor.
-  pipeBriefs: { list: [] as BriefInfo[], editing: false, name: '', nameLocked: false, body: '', was: '', from: '', history: [] as BriefInfo[], saving: false, confirm: '', rev: 0 },
+  pipeBriefs: { list: [] as BriefInfo[], failed: false, editing: false, name: '', nameLocked: false, body: '', was: '', from: '', history: [] as BriefInfo[], saving: false, confirm: '', rev: 0 },
   // The workspace's (or group's) config on the server, in the pipeline
   // dialog: what applies, and for an admin the stored config as JSON.
   pipeConfig: { shown: false, status: '', wrappers: [] as string[], mcp: [] as string[], stored: false, storedRev: '', saving: false, canEdit: false, rev: 0,
@@ -2220,7 +2224,9 @@ const appState = () => ({
       const moreLabel = i === 3 ? 'Setup output' : i === 4 ? 'Check output' : 'Findings and summaries';
       const logs = this.stepLogs(i, state);
       // The Plan step opens the plans side by side once there is one to read.
-      const plans = i === 1 && !!item.plan_id && state !== 'up' && state !== 'skip';
+      // (A panel's plan is linked at the first claim, before any candidate
+      // is written: a finished plan run is what says there is one.)
+      const plans = i === 1 && !!item.plan_id && state !== 'up' && state !== 'skip' && this.previewRuns.some((r: RunRow) => r.stage === 'plan' && r.status === 'succeeded');
       return { key: i + '|' + state + '|' + round + '|' + lines.join('/') + '|' + warn + '|' + more.map((m: MoreRow) => m.key).join(',') + '|' + logs.map((l: LogButton) => l.id).join(',') + (plans ? '|p' : ''), name: d.name, who: d.who, state, when, round, lines, links, more, moreLabel, warn, logs, plans, hidden };
     });
     return { rows, current: cur };
@@ -2842,8 +2848,10 @@ const appState = () => ({
   // (root). Rows re-render through pipe.rev on every structural change —
   // keyed x-for is the reliable re-render path in the CSP build.
   async openPipeline(kind: string, id: string, label: string) {
+    const seq = ++pipeOpenSeq;
     const base = kind === 'group' ? '/api/groups/' : '/api/workspaces/';
     const [res, wres, dres] = await Promise.all([this.authFetch(base + encodeURIComponent(id) + '/pipeline'), this.authFetch('/api/workers'), this.authFetch('/api/fleet/runners')]);
+    if (seq !== pipeOpenSeq) return;
     if (!await this.handleBad(res, 'Could not load the pipeline')) return;
     const v = (await res.json()) as PipeView;
     const runners: string[] = [];
@@ -2853,11 +2861,14 @@ const appState = () => ({
     // Whose dialog this is, before the config form loads: the form's
     // baseline (cfgFingerprint) depends on the kind. Set after it, a
     // workspace opened after a group had its Save armed with nothing changed.
+    if (seq !== pipeOpenSeq) return;
     this.pipe.kind = kind; this.pipe.id = v.owner_id; this.pipe.label = label;
     await this.loadPipeConfig(kind, v.owner_id);
+    if (seq !== pipeOpenSeq) return;
     this.pipe.tab = 'stages'; this.pipe.editing = '';
     this.pipeBriefs.editing = false; this.pipeBriefs.confirm = '';
     await this.loadPipeBriefs();
+    if (seq !== pipeOpenSeq) return;
     this.pipe.runnerOptions = runners.sort();
     this.pipe.agentsDefault = v.own.agents_default || '';
     const fromGroup = kind === 'workspace' && v.agents_default_source && v.agents_default_source !== 'workspace';
@@ -2906,7 +2917,11 @@ const appState = () => ({
     this.pipe.was = this.pipeSnapshot();
     this.pipe.open = true;
   },
-  closePipeline() { this.pipe.open = false; },
+  closePipeline() {
+    this.pipe.open = false;
+    // No check of a form that is no longer on screen.
+    if (cfgCheckTimer) { clearTimeout(cfgCheckTimer); cfgCheckTimer = null; }
+  },
   // What Save would send, as text: the Stages and Options tabs share one
   // Save, and the other tabs save on their own, so the dialog says when
   // something on those two is not saved yet.
@@ -2957,8 +2972,11 @@ const appState = () => ({
   async fetchMcpDefs() {
     if (!this.canAdmin()) { this.mcpDefs = []; return; }
     const res = await this.authFetch('/api/fleet/mcp-servers');
-    // A server from before MCP definitions has no such route.
-    this.mcpDefs = res.ok ? (((await res.json()) as { mcp_servers?: MCPServerDef[] }).mcp_servers || []) : [];
+    // A server from before MCP definitions has no such route. Any other
+    // failure keeps the list as it was: "none defined" would be untrue.
+    if (res.ok) this.mcpDefs = ((await res.json()) as { mcp_servers?: MCPServerDef[] }).mcp_servers || [];
+    else if (res.status === 404) this.mcpDefs = [];
+    else this.notify('The MCP servers could not be loaded', 'error');
   },
   mcpRows(): { key: string; name: string; type: string; target: string; scope: string; secrets: { name: string; set: boolean }[] }[] {
     return this.mcpDefs.map((m: MCPServerDef) => {
@@ -3118,9 +3136,14 @@ const appState = () => ({
   pipeBase(): string { return (this.pipe.kind === 'group' ? '/api/groups/' : '/api/workspaces/') + encodeURIComponent(this.pipe.id) + '/pipeline'; },
   async loadPipeBriefs() {
     this.pipeBriefs.list = [];
+    this.pipeBriefs.failed = false;
     const res = await this.authFetch(this.pipeBase() + '/briefs');
     // A server from before briefs has no such route: the tab stays empty.
+    // Any other failure is not "no briefs": shown as none, a held brief
+    // would read as the repository's, and saving from there would replace
+    // it. The tab then takes no edits until the dialog is opened again.
     if (res.ok) this.pipeBriefs.list = ((await res.json()) as { briefs?: BriefInfo[] }).briefs || [];
+    else if (res.status !== 404) { this.pipeBriefs.failed = true; this.notify('The briefs could not be loaded: open the dialog again before changing one', 'error'); }
     this.pipeBriefs.rev++;
   },
   // The stages (as the dialog has them now) whose members have this focus.
@@ -3186,6 +3209,7 @@ const appState = () => ({
   // it here) or a focus that reads the repository so far.
   async pipeBriefOpen(name: string, held: boolean) {
     if (!name && this.pipe.readOnly) return;
+    if (this.pipeBriefs.failed) { this.notify('The briefs could not be loaded: open the dialog again', 'error'); return; }
     const b = this.pipeBriefs;
     b.name = name; b.nameLocked = !!name; b.body = ''; b.was = ''; b.from = ''; b.history = []; b.confirm = '';
     if (held) {
@@ -3750,7 +3774,9 @@ const appState = () => ({
   // its field while the form is still open.
   cfgTouched() {
     if (cfgCheckTimer) clearTimeout(cfgCheckTimer);
-    cfgCheckTimer = setTimeout(() => { this.cfgCheck(); }, 600);
+    // Not while a save runs its own check: a second check would overtake
+    // it, and the save would report problems that are not there.
+    cfgCheckTimer = setTimeout(() => { if (!this.pipeConfig.saving) this.cfgCheck(); }, 600);
   },
   cfgProblems(problems: CfgProblem[]) {
     const c = this.pipeConfig;
@@ -4642,6 +4668,7 @@ const appState = () => ({
   keyIsApprover(k: ApiKey): boolean { return !!k.approver; },
   keyIsDelegate(k: ApiKey): boolean { return !!k.delegate; },
   keyIsAdmin(k: ApiKey): boolean { return !!k.admin; },
+  keyIsWorker(k: ApiKey): boolean { return !!k.worker; },
   // keyCapsLabel names a capped key's limits ("" = full access, no chip).
   keyCapsLabel(k: ApiKey): string {
     const caps = k.capabilities;

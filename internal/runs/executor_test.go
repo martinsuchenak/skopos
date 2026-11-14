@@ -2,6 +2,7 @@ package runs
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -278,8 +279,18 @@ func TestSanitizeExecutorsFailsClosed(t *testing.T) {
 	wrapped := policy.ExecutorFact{Executor: "wrapper:bwrap:0123456789ab"}
 	long := policy.ExecutorFact{Stage: "implement", Executor: "host:" + strings.Repeat("x", 300)}
 	many := []policy.ExecutorFact{wrapped}
-	for i := 0; i < 200; i++ {
-		many = append(many, policy.ExecutorFact{Stage: "review", Runner: "r" + strings.Repeat("x", i%7) + string(rune('a'+i%26)) + string(rune('a'+i/26)), Executor: "local"})
+	// More than a worker within the runner cap can have: 64 runners on 8
+	// stages, and its default.
+	for i := 0; i < 64*8+1; i++ {
+		many = append(many, policy.ExecutorFact{Stage: "review", Runner: fmt.Sprintf("r%d", i), Executor: "local"})
+	}
+	// What such a worker can send is kept.
+	fits := []policy.ExecutorFact{wrapped}
+	for i := 0; i < 64*8; i++ {
+		fits = append(fits, policy.ExecutorFact{Stage: "review", Runner: fmt.Sprintf("r%d", i), Executor: "local"})
+	}
+	if got := sanitizeExecutors(map[string][]policy.ExecutorFact{"ws": fits}, offered); len(got["ws"]) != len(fits) {
+		t.Errorf("a worker with 64 runners differing on 8 stages: kept %d of %d entries", len(got["ws"]), len(fits))
 	}
 	for name, in := range map[string][]policy.ExecutorFact{
 		"an override too long to keep": {wrapped, long},
@@ -289,7 +300,7 @@ func TestSanitizeExecutorsFailsClosed(t *testing.T) {
 		"no executor":                  {wrapped, {Stage: "implement"}},
 	} {
 		if got := sanitizeExecutors(map[string][]policy.ExecutorFact{"ws": in}, offered); got != nil {
-			t.Errorf("%s: the whole list must go, got %+v", name, got)
+			t.Errorf("%s: the whole list must go, got %d workspaces", name, len(got))
 		}
 	}
 	got := sanitizeExecutors(map[string][]policy.ExecutorFact{"ws": {{Stage: " Implement ", Executor: " local "}, wrapped}, "elsewhere": {wrapped}}, offered)

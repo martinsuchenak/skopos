@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -151,7 +152,7 @@ func runWorkerInitRepos(out io.Writer, configPath, serverURL string, repos []rep
 	n := 0
 	step := func(s string) { n++; _, _ = fmt.Fprintf(out, "  %d. %s\n", n, s) }
 	if secrets["SKOPOS_API_KEY"] == "" {
-		step("skopos key create --name <this-host> --workspace <workspace-id>   # worker-scoped key")
+		step("skopos key create --name <this-host> --workspace <workspace-id> --worker   # the worker's key")
 		step("put it in skopos-worker.env as SKOPOS_API_KEY=")
 	}
 	if len(repos) == 0 || slices.ContainsFunc(repos, func(r repoInit) bool { return r.Path == "" }) {
@@ -404,7 +405,7 @@ func askWorkerInit(in *bufio.Reader, out io.Writer, o *workerInitOptions, secret
 		}
 	}
 	if o.APIKey == "" {
-		say("\nThe worker's key: mint one with the root key, e.g.\n  skopos key create --name %s --workspace %s\n", hostName(), o.Workspaces[0])
+		say("\nThe worker's key: mint one with the root key, e.g.\n  skopos key create --name %s --workspace %s --worker\n", hostName(), o.Workspaces[0])
 		o.APIKey = secret(in, out, "Worker key (Enter to add it to skopos-worker.env later)")
 	}
 	home, _ := os.UserHomeDir()
@@ -497,9 +498,23 @@ func hostName() string {
 }
 
 // promptSecret reads a line without echoing it at a terminal (stty), and as
-// a plain line otherwise (tests, pipes).
+// a plain line otherwise (tests, pipes). Where the echo cannot be turned
+// off it says so before the value is typed.
 func promptSecret(in *bufio.Reader, out io.Writer, label string) string {
-	_, _ = fmt.Fprintf(out, "%s: ", label)
+	v, err := readSecret(in, out, label, false)
+	if err != nil {
+		return ""
+	}
+	return v
+}
+
+// errEchoStaysOn: the terminal's echo could not be turned off.
+var errEchoStaysOn = errors.New("this terminal's echo cannot be turned off, so the value would show on screen")
+
+// readSecret is promptSecret; with strict set it refuses to read at a
+// terminal that would show the value (no stty: Windows, or a PATH without
+// it) instead of reading it in the open.
+func readSecret(in *bufio.Reader, out io.Writer, label string, strict bool) (string, error) {
 	if stdinIsTerminal() {
 		off := exec.Command("stty", "-echo")
 		off.Stdin = os.Stdin
@@ -510,10 +525,15 @@ func promptSecret(in *bufio.Reader, out io.Writer, label string) string {
 				_ = on.Run()
 				_, _ = fmt.Fprintln(out)
 			}()
+		} else if strict {
+			return "", errEchoStaysOn
+		} else {
+			_, _ = fmt.Fprintln(out, "(this terminal's echo cannot be turned off: what you type next will show)")
 		}
 	}
+	_, _ = fmt.Fprintf(out, "%s: ", label)
 	line, _ := in.ReadString('\n')
-	return strings.TrimSpace(line)
+	return strings.TrimSpace(line), nil
 }
 
 // claudeAccountEnv is the claude account's env line ("" = no env line).

@@ -249,6 +249,17 @@ func (s *Storage) Group(ctx context.Context, ref string) (GroupRef, error) {
 	return g, err
 }
 
+// GroupHasPatterns reports whether a group takes in workspaces by pattern:
+// such a group gains members by itself, whenever a matching workspace
+// registers.
+func (s *Storage) GroupHasPatterns(ctx context.Context, groupID string) (bool, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_group_patterns WHERE group_id = ?`, groupID).Scan(&n); err != nil {
+		return false, fmt.Errorf("reading the patterns of group %s: %w", groupID, err)
+	}
+	return n > 0, nil
+}
+
 // GroupsContaining lists the groups that hold a workspace, as an explicit
 // member or through a pattern, ordered by name.
 func (s *Storage) GroupsContaining(ctx context.Context, ws string) ([]GroupRef, error) {

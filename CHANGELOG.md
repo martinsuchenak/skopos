@@ -106,6 +106,8 @@ versions follow [Semantic Versioning](https://semver.org/).
   levels: a workspace (the key has it in scope), a group (the key reaches
   every workspace in it) and the fleet (the key reaches all workspaces).
   The root key passes every level.
+  A group that takes in workspaces by pattern needs a key that reaches all
+  workspaces: what is set on it also binds the ones that register later.
 - **The dashboard shows where each runner sends code and what contains
   each worker's runs** (Workers view), the policy that applies to a
   workspace (Pipeline dialog), and runs waiting for an allowed runner.
@@ -176,6 +178,13 @@ versions follow [Semantic Versioning](https://semver.org/).
   alone. Every change is checked against the server before anything is
   written, and the apply is recorded as `config.apply` with the file's
   sha256 and git commit.
+  - **`--force`** saves a policy that strands runners, and nothing else.
+  - **`--drop-in-use`** deletes a wrapper or MCP server the file leaves
+    out although a workspace or group outside the file still uses it. An
+    MCP server goes with its stored secrets, and the plan says so.
+  - Each config in the file is checked against what the same file leaves
+    for the other owners it lists, so a field can move between a workspace
+    and its group in one apply.
 - **`skopos workspace config import --from <worker config>`** proposes the
   server config a worker's file describes (and, with `--runners`, its
   runner definitions), shows the difference and applies it with `--yes`.
@@ -256,6 +265,13 @@ versions follow [Semantic Versioning](https://semver.org/).
     the worker writes them into the run's MCP file, keeps the credentials
     out of the run's log and removes the file when the run ends. They are
     not part of the config a worker fetches.
+  - **Only a worker key is given them.** `skopos key create --worker` (or
+    `skopos key edit <id> --worker` for a key a worker already has) marks
+    a pipeline worker's key. Any other key with the workspace in scope
+    gets no runs of a workspace whose MCP servers the server holds, and
+    its worker shows as unhealthy for it with the command to run. A worker
+    key cannot hold the approver or the admin permission. The root key
+    counts as a worker key.
   - **Once a workspace's config sets `mcp`,** its runs get exactly those
     servers and nothing from a worker's own `mcp_config`; without it the
     worker's `mcp_config` applies as before.
@@ -294,6 +310,32 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **The worker's own git commands name the repository themselves** in a
+  run's worktree, and so does the `{gitdir}` a wrapper binds. A run can
+  rewrite the files that tell git where a worktree's repository is; the
+  worker no longer reads them. `checkout = "branch"` is not covered.
+- **A deleted group takes its config, policy, pipeline settings and briefs
+  with it.** Before, its config stayed and the wrappers and MCP servers it
+  named could not be deleted.
+- **A waiting run says why no worker takes it** also when every worker
+  serving its workspace holds off: a release that cannot do what the
+  workspace needs, a key that is not a worker key, a failing preflight.
+- **A QA verdict follows what ran.** A scenario QA reports as failed is a
+  finding whatever the verdict says, and a pass with no scenario that ran
+  is a QA that did not test: it asks.
+- **`skopos workspace config import`** leaves out a workspace the server
+  refuses and imports the others, and notes each `${NAME}` in a stage's
+  env: on the server it is filled in from the worker's `[worker.vars]`,
+  not from its environment.
+- **`skopos mcp-server set-secret`** refuses to read a value at a terminal
+  whose echo cannot be turned off; pipe it in or use `--from-env`.
+- **A server config with a pull request needs a push URL that ends in
+  owner/repository,** and `push.remote_url` may be an `srv+https` URL.
+- **Before upgrading the server:** run `skopos worker check` with the new
+  binary on each worker host. Setup and check commands now run inside a
+  stage's wrapper, and runner temporary directories moved under the state
+  directory; a wrapper image without the repository's toolchain fails the
+  first implement run.
 - **The Workers view is a list.** One row per worker: its state and
   version, the run it holds or when it was last seen, its runners and
   workspaces, its run counts, and anything that needs a person (a pause, a
@@ -490,6 +532,17 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A report whose worker stopped waiting left the item where it was.**
+  When a worker gave up on a report after the server had recorded it (its
+  timeout, a restart), the next stage was not queued and the item did not
+  move. The server now finishes that work whatever becomes of the request.
+- **Rejecting an item while its run reported** could mark a finished run
+  cancelled, or start the next stage of the rejected item. The cancel now
+  touches only runs that are still active, and no stage is queued for an
+  item that is done or discarded.
+- **`*.amazonaws.com` hosts a customer names** (a load balancer or bucket
+  called `bedrock-…`) were taken for Amazon Bedrock. Only Bedrock's own
+  host names are.
 - **QA set without a review stage now runs.** A workspace with a QA
   preference and no review preference sent a finished implementation
   straight to sign-off, and QA never ran. QA now follows the implementation

@@ -293,7 +293,7 @@ func TestOwnRunIsNotHandedToAnotherKeysScope(t *testing.T) {
 		for _, w := range ws {
 			set[w] = struct{}{}
 		}
-		return auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: id, Name: id, Workspaces: set})
+		return auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: id, Name: id, Workspaces: set, Worker: true})
 	}
 	k1, k2 := key("k1", "held"), key("k2", "other")
 	on := true
@@ -307,6 +307,18 @@ func TestOwnRunIsNotHandedToAnotherKeysScope(t *testing.T) {
 		return run
 	}
 	queued := mustQueue(t, s, rootCtx(), "held", "item-1", StagePlan)
+	// A key that has the workspace in scope but is not a worker's — a
+	// developer's, an integration's — can poll the claim too. It is handed
+	// neither the run nor the credentials of its MCP servers, and is told
+	// why.
+	dev := auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: "dev", Name: "dev", Workspaces: map[string]struct{}{"held": {}}})
+	if run, err := s.ClaimNext(dev, ClaimInput{WorkerID: "w-dev", Workspaces: []string{"held"}, Runners: []string{"claude"},
+		RunnerFacts: []policy.Facts{fClaude}, ServerCommands: &on, Features: []string{FeatureRunMCP}}); err != nil || run != nil {
+		t.Fatalf("a key that is not a worker's was handed a run with MCP credentials: %+v %v", run, err)
+	}
+	if why := s.storage.WorkerUnhealthy(rootCtx(), "w-dev")["held"]; !strings.Contains(why, "not a worker key") {
+		t.Fatalf("it shows as unhealthy for the workspace, with the way to fix it: %q", why)
+	}
 	first := claim(k1, "held", FeatureRunMCP)
 	if first == nil || first.MCP == nil {
 		t.Fatalf("the owner's claim: %+v", first)
@@ -331,5 +343,57 @@ func TestOwnRunIsNotHandedToAnotherKeysScope(t *testing.T) {
 	back := claim(k1other, "other", FeatureRunMCP)
 	if back == nil || back.ID != queued.ID || back.MCP == nil || back.MCP.Secrets[0] != secret {
 		t.Fatalf("the owner's own run, from a claim that offers another workspace: %+v", back)
+	}
+}
+
+// A waiting run says why nobody takes it also when the reason is not the
+// policy: every worker that serves its workspace holds off (a release that
+// cannot read the workspace's config, a key that is not a worker key, a
+// failing preflight).
+func TestStrandedReasonNamesWhyWorkersHoldOff(t *testing.T) {
+	r := &Run{ID: "r1", WorkspaceID: "ws", Stage: StagePlan}
+	prefs := &WorkspacePrefs{Stages: map[string]string{}}
+	old := "this worker's release cannot read the workspace's config from the server: upgrade it"
+	held := workerOffer{workspaces: map[string]bool{"ws": true}, facts: newClaimFacts([]string{"claude"}, nil, nil), unhealthy: map[string]string{"ws": old}}
+	if got := strandedReason(r, prefs, []workerOffer{held, held}); !strings.Contains(got, "no worker takes the workspace's work now") || !strings.Contains(got, "upgrade it") {
+		t.Fatalf("every serving worker holds off: %q", got)
+	}
+	// One that can take it: nothing is stranded.
+	able := workerOffer{workspaces: map[string]bool{"ws": true}, facts: newClaimFacts([]string{"claude"}, nil, nil)}
+	if got := strandedReason(r, prefs, []workerOffer{held, able}); got != "" {
+		t.Fatalf("a worker that can take it: %q", got)
+	}
+	// A worker that does not serve the workspace says nothing about it.
+	elsewhere := workerOffer{workspaces: map[string]bool{"other": true}, unhealthy: map[string]string{"other": old}}
+	if got := strandedReason(r, prefs, []workerOffer{elsewhere}); got != "" {
+		t.Fatalf("no worker serves the workspace at all: %q", got)
+	}
+}
+
+// Cancelling an item's runs touches only the runs that are still active
+// when the statement runs: one that finished meanwhile keeps its result.
+func TestCancelItemLeavesFinishedRuns(t *testing.T) {
+	s := testService(t)
+	ctx := rootCtx()
+	done := mustQueue(t, s, ctx, "ws", "item-1", StagePlan)
+	if _, err := s.storage.db.ExecContext(ctx, `UPDATE runs SET status = ? WHERE id = ?`, string(StatusSucceeded), done.ID); err != nil {
+		t.Fatal(err)
+	}
+	waiting := mustQueue(t, s, ctx, "ws", "item-1", StageImplement)
+	ids, err := s.storage.CancelItem(ctx, "item-1", "rejected", time.Now().UTC())
+	if err != nil || len(ids) != 1 || ids[0] != waiting.ID {
+		t.Fatalf("only the run still waiting is cancelled: %v %v", ids, err)
+	}
+	if got, _ := s.Get(ctx, done.ID); got.Status != StatusSucceeded {
+		t.Fatalf("a finished run was overwritten: %s", got.Status)
+	}
+	if got, _ := s.Get(ctx, waiting.ID); got.Status != StatusCancelled || got.FailReason != "rejected" {
+		t.Fatalf("the waiting run: %+v", got)
+	}
+	// No next stage is queued for an item that is closed.
+	s.SetItemClosed(func(context.Context, string) bool { return true })
+	s.advance(ctx, done, "agent")
+	if all, _ := s.storage.List(ctx, "", "item-1"); len(all) != 2 {
+		t.Fatalf("a stage was queued for a closed item: %d runs", len(all))
 	}
 }

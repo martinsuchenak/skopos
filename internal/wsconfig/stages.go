@@ -557,8 +557,11 @@ func NormalizeWrapper(d WrapperDef) (WrapperDef, error) {
 	if len(out.Check) == 0 {
 		out.Check = nil
 	}
-	if ph := rePlaceholder.FindString(strings.Join(out.Check, " ")); ph != "" && slices.Contains(WrapperPlaceholders, ph) {
-		return bad("check uses %s: a check runs outside any run, so it has no run to name", ph)
+	// Every {name} in the check, not only the first: `awk '{print}' … {rundir}`.
+	for _, ph := range rePlaceholder.FindAllString(strings.Join(out.Check, " "), -1) {
+		if slices.Contains(WrapperPlaceholders, ph) {
+			return bad("check uses %s: a check runs outside any run, so it has no run to name", ph)
+		}
 	}
 	return out, nil
 }

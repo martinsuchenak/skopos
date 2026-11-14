@@ -165,13 +165,19 @@ func TestPolicyNeedsAdminAtTheLevel(t *testing.T) {
 		kind, id string
 		ok       bool
 	}{
-		"root, fleet":                         {root(), KindFleetCeiling, "", true},
-		"approver, workspace":                 {approver, KindWorkspace, "fabrikam/api", false},
-		"plain key, workspace":                {key("k", false, "fabrikam/api"), KindWorkspace, "fabrikam/api", false},
-		"admin of the workspace":              {admin(false, "fabrikam/api"), KindWorkspace, "fabrikam/api", true},
-		"admin of another workspace":          {admin(false, "fabrikam/web"), KindWorkspace, "fabrikam/api", false},
-		"admin of one workspace, its group":   {admin(false, "fabrikam/api"), KindGroup, "globex", false},
-		"admin of every workspace in a group": {admin(false, "fabrikam/api", "fabrikam/web"), KindGroup, "globex", true},
+		"root, fleet":                       {root(), KindFleetCeiling, "", true},
+		"approver, workspace":               {approver, KindWorkspace, "fabrikam/api", false},
+		"plain key, workspace":              {key("k", false, "fabrikam/api"), KindWorkspace, "fabrikam/api", false},
+		"admin of the workspace":            {admin(false, "fabrikam/api"), KindWorkspace, "fabrikam/api", true},
+		"admin of another workspace":        {admin(false, "fabrikam/web"), KindWorkspace, "fabrikam/api", false},
+		"admin of one workspace, its group": {admin(false, "fabrikam/api"), KindGroup, "globex", false},
+		// globex takes in workspaces by pattern: what is set on it binds
+		// the ones that register later, so it takes a fleet admin.
+		"admin of today's members, a pattern group": {admin(false, "fabrikam/api", "fabrikam/web"), KindGroup, "globex", false},
+		"admin of all workspaces, a pattern group":  {admin(true), KindGroup, "globex", true},
+		// web-team has explicit members only.
+		"admin of every workspace in a group": {admin(false, "fabrikam/web"), KindGroup, "web-team", true},
+		"admin of none of a group's members":  {admin(false, "fabrikam/api"), KindGroup, "web-team", false},
 		"admin of a group, the fleet":         {admin(false, "fabrikam/api", "fabrikam/web"), KindFleetDefault, "", false},
 		"admin of all workspaces, the fleet":  {admin(true), KindFleetDefault, "", true},
 	} {

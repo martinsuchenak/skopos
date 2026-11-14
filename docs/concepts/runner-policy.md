@@ -153,6 +153,8 @@ A key with the **admin permission** at that level (see
 
 - a workspace: the workspace is in the key's scope;
 - a group: the key reaches every workspace in the group;
+- a group with patterns: the key reaches all workspaces (the group gains
+  members as workspaces register);
 - the fleet: the key reaches all workspaces.
 
 The root key passes every level. An approver key does not.

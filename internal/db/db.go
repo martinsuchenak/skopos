@@ -128,6 +128,11 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "api_keys", "admin", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+	// worker: the key is a pipeline worker's; credentials the server holds
+	// for runs go only to such a key.
+	if err := ensureColumn(db, "api_keys", "worker", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 	if err := ensureColumn(db, "runs", "lease_token_hash", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}

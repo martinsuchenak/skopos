@@ -317,6 +317,35 @@ runner = "claude"
 	if _, ok := c.Stages["plan"]; ok {
 		t.Fatalf("plan has nothing to import: %+v", c.Stages["plan"])
 	}
+	// ${CACHE_DIR} meant the worker's environment in the file; on the
+	// server it is the worker's vars. The import says so.
+	if len(prop.notes) != 1 || !strings.Contains(prop.notes[0], "${CACHE_DIR}") || !strings.Contains(prop.notes[0], "[worker.vars]") || !strings.Contains(prop.notes[0], "stage implement") {
+		t.Fatalf("notes: %v", prop.notes)
+	}
+
+	// A workspace the server would refuse is left out and named; the other
+	// workspaces of the file are still proposed.
+	more := text + `
+[worker.repos."globex/api"]
+path = "/srv/clones/api"
+
+[worker.repos."globex/api".stages.implement]
+wrapper = ["bwrap", "{dir}"]
+env = { NPM_TOKEN = "abc" }
+`
+	if err := os.WriteFile(path, []byte(more), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prop, err = proposeImport([]string{path})
+	if err != nil {
+		t.Fatalf("one workspace the server refuses must not stop the import: %v", err)
+	}
+	if _, ok := prop.workspaces["globex/shop"]; !ok {
+		t.Fatal("the other workspace is still proposed")
+	}
+	if _, ok := prop.workspaces["globex/api"]; ok || len(prop.conflicts) != 1 || !strings.Contains(prop.conflicts[0], "globex/api") {
+		t.Fatalf("the refused workspace is left out and named: %v", prop.conflicts)
+	}
 }
 
 // A misspelt key inside a stage's block is refused, not dropped: dropped,

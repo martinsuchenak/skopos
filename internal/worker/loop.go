@@ -209,6 +209,16 @@ func New(cfg *Config, client *Client, log *slog.Logger) *Worker {
 	w := &Worker{cfg: cfg, client: client, log: log, sessions: map[string]string{}, accounts: map[string]string{}, executors: map[string]string{}, grants: map[string]string{}, costs: map[string]float64{}, health: map[string]preflightResult{}}
 	w.loadSessions()
 	w.ApplyMCPServers()
+	// The worker's own git commands in a run's worktree name the
+	// repository themselves (gitpin.go): which clone the worktrees under
+	// each of these directories belong to.
+	if cfg.StateDir != "" {
+		for _, repo := range cfg.Repos {
+			if repo != nil && repo.Path != "" {
+				registerWorktreeRoot(filepath.Join(cfg.StateDir, "worktrees", filepath.Base(repo.Path)), repo.Path)
+			}
+		}
+	}
 	if client != nil {
 		client.SetServerCommands(cfg.ServerCommands)
 	}

@@ -38,6 +38,10 @@ type Principal struct {
 	// Delegate: the key may name the person it acts for
 	// (X-Skopos-On-Behalf-Of).
 	Delegate bool
+	// Worker: the key is a pipeline worker's. Credentials the server holds
+	// for runs (a workspace's MCP servers) are handed out only to such a
+	// key (MayHoldRunSecrets). It never holds approver or admin.
+	Worker bool
 	// OnBehalfOf is the person a delegate key (or root) named for this
 	// request; the audit log and approvals record it beside the key.
 	OnBehalfOf string
@@ -123,6 +127,7 @@ type KeyInfo struct {
 	Approver      bool
 	Delegate      bool
 	Admin         bool
+	Worker        bool
 	Workspaces    []string
 	Capabilities  []string // nil = full access
 }
@@ -226,6 +231,7 @@ func (a *Authenticator) Authenticate(r *http.Request) *Principal {
 		Approver:      info.Approver,
 		Delegate:      info.Delegate,
 		Admin:         info.Admin,
+		Worker:        info.Worker,
 		Workspaces:    make(map[string]struct{}, len(info.Workspaces)),
 	}
 	for _, w := range info.Workspaces {
@@ -436,6 +442,21 @@ func RequireApprover(ctx context.Context) error {
 		return nil
 	}
 	return ErrApproverRequired
+}
+
+// MayHoldRunSecrets reports whether the caller may be handed the
+// credentials the server holds for a run (its MCP servers' secrets, in a
+// claim answer): the root key, an internal caller, or a worker key. Any
+// other key with the workspace in scope can poll the claim endpoint too —
+// a developer's, an approver's, an integration's — and must not be able to
+// read, that way, a secret the API never gives back. A run's own token
+// never passes.
+func MayHoldRunSecrets(ctx context.Context) bool {
+	p := PrincipalFromContext(ctx)
+	if p == nil || p.Root {
+		return true
+	}
+	return p.Worker && p.Run == nil
 }
 
 // The admin permission gates changes to policy and configuration

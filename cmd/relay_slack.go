@@ -709,7 +709,12 @@ func (r *slackRelay) formatGate(itemID string, from, to inbox.Status) string {
 	if err != nil {
 		return ""
 	}
-	title := item.Title
+	// The title and the branch line are cut to a share of the message's
+	// budget (the notifier cuts at 2800 bytes): with the group summary (900)
+	// and the findings list (maxFindingsBytes) the message always fits. A
+	// message cut by the notifier would lose findings the relay had already
+	// numbered — a reply by number would name one nobody was shown.
+	title := truncate(item.Title, gateTitleBytes)
 	// A gate message replaces what the thread showed before: a findings
 	// list it does not repeat is no longer the one a number refers to.
 	r.forgetFindings(itemID)
@@ -775,6 +780,7 @@ func (r *slackRelay) formatGate(itemID string, from, to inbox.Status) string {
 		if diff != "" {
 			detail = branch + " · " + strings.SplitN(diff, "\n", 2)[0]
 		}
+		detail = truncate(detail, gateDetailBytes)
 		// After a multi-agent review/QA, its summary (members, nits) rides
 		// along; the newest grouped run decides which stage's summary.
 		if runs, err := r.runs.ListRuns(context.Background(), itemID); err == nil {
@@ -1024,6 +1030,13 @@ func sectionOf(content, heading string) string {
 func statusWord(s inbox.Status) string {
 	return strings.ReplaceAll(string(s), "_", " ")
 }
+
+// gateTitleBytes and gateDetailBytes bound an item's title and the branch
+// line in a gate message.
+const (
+	gateTitleBytes  = 200
+	gateDetailBytes = 300
+)
 
 func truncate(s string, n int) string {
 	if len(s) <= n {

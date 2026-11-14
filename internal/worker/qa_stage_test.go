@@ -422,3 +422,46 @@ func TestQARunsRepositoryCommands(t *testing.T) {
 		}
 	}
 }
+
+// A QA verdict follows what ran: only scenarios that ran and passed count
+// as tested, and the ones reported as failed are what the findings are for.
+func TestQAScenarioCounts(t *testing.T) {
+	passed, failed := qaScenarioCounts([]qaScenario{
+		{Name: "add a contact", Result: "pass"}, {Name: "edit it", Result: "Passed"},
+		{Name: "copy it", Result: "fail", Note: "the field is empty"}, {Name: "export", Result: "skipped"},
+	})
+	if passed != 2 || len(failed) != 1 || failed[0].Name != "copy it" {
+		t.Fatalf("counts: %d passed, failed %+v", passed, failed)
+	}
+	if passed, failed := qaScenarioCounts([]qaScenario{{Name: "a", Result: "skipped"}}); passed != 0 || len(failed) != 0 {
+		t.Fatalf("nothing ran: %d %v", passed, failed)
+	}
+	if (reviewResult{Findings: []Finding{{Severity: "nit", Text: "x"}}}).hasBlocking() || !(reviewResult{Findings: []Finding{{Severity: "blocking", Text: "x"}}}).hasBlocking() {
+		t.Fatal("hasBlocking: a nit does not block, a blocking finding does")
+	}
+}
+
+// On a runner without structured output the result is checked against the
+// schema by the worker. What an agent says about earlier findings is read
+// by a decoder that takes any shape, so the check must not refuse a result
+// over it; the rest of the result is still checked.
+func TestAnswerListIsNotSchemaChecked(t *testing.T) {
+	for _, tc := range []struct{ schema, result string }{
+		{reviewSchema, `{"verdict":"pass","summary":"ok","previous":null}`},
+		{reviewSchema, `{"verdict":"pass","summary":"ok","previous":"none"}`},
+		{reviewSchema, `{"verdict":"pass","summary":"ok","previous":[{"id":2,"status":"addressed"}]}`},
+		{qaSchema, `{"verdict":"pass","summary":"ok","previous":{"F1":"addressed"}}`},
+		{implSchema, `{"status":"done","steps_done":[1],"summary":"ok","findings":null}`},
+	} {
+		if _, err := extractStructured(tc.result, tc.schema); err != nil {
+			t.Errorf("%s: %v", tc.result, err)
+		}
+	}
+	// A review's own findings are still checked.
+	if _, err := extractStructured(`{"verdict":"pass","summary":"ok","findings":"none"}`, reviewSchema); err == nil {
+		t.Fatal("a review's findings list is still checked")
+	}
+	if _, err := extractStructured(`{"verdict":"maybe","summary":"ok"}`, reviewSchema); err == nil {
+		t.Fatal("the verdict is still checked")
+	}
+}

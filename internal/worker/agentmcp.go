@@ -75,8 +75,11 @@ func (c *Config) runnerHasSkopos(runner string) bool {
 type whoamiAnswer struct {
 	Root bool `json:"root"`
 	Key  *struct {
-		Approver     bool     `json:"approver"`
-		Admin        bool     `json:"admin"`
+		ID       string `json:"id"`
+		Approver bool   `json:"approver"`
+		Admin    bool   `json:"admin"`
+		// Worker: nil from a server before worker keys.
+		Worker       *bool    `json:"worker"`
 		Capabilities []string `json:"capabilities"`
 	} `json:"key"`
 }
@@ -151,11 +154,15 @@ func CheckWorkerKey(ctx context.Context, base, key string) (warnings []string, e
 	}
 	switch {
 	case who.Root || who.Key == nil:
-		return []string{"the worker runs with the root key; give it a scoped key for its workspaces (skopos key create --workspace <id>)"}, nil
+		return []string{"the worker runs with the root key; give it a scoped key for its workspaces (skopos key create --workspace <id> --worker)"}, nil
 	case who.Key.Admin:
 		return nil, fmt.Errorf("the worker's key holds the admin permission; a worker must not be able to change policy or configuration — remove it (skopos key edit <id> --no-admin) or mint a plain scoped key")
 	case who.Key.Approver:
 		return []string{"the worker's key holds the approver permission; a worker key should not (skopos key edit <id> --no-approver)"}, nil
+	case who.Key.Worker != nil && !*who.Key.Worker:
+		// Runs fine without it, until a workspace's MCP servers are held
+		// on the server: their credentials go to worker keys only.
+		return []string{fmt.Sprintf("the worker's key is not marked as a worker key: it will get no runs of a workspace whose MCP servers the server holds (skopos key edit %s --worker)", who.Key.ID)}, nil
 	}
 	return nil, nil
 }

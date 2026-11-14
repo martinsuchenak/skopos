@@ -61,6 +61,7 @@ type Lookup interface {
 	Group(ctx context.Context, ref string) (pipeline.GroupRef, error)
 	GroupsContaining(ctx context.Context, ws string) ([]pipeline.GroupRef, error)
 	GroupWorkspaces(ctx context.Context, groupID string) ([]string, error)
+	GroupHasPatterns(ctx context.Context, groupID string) (bool, error)
 	AllWorkspaces(ctx context.Context) ([]string, error)
 }
 
@@ -337,6 +338,18 @@ func (s *Service) change(ctx context.Context, kind, id string, next *Config, via
 	if err := requireAdmin(ctx, kind, id, members); err != nil {
 		return nil, err
 	}
+	// A group with patterns gains members by itself: what is set on it
+	// binds workspaces that register later, so it takes a fleet admin
+	// (pipeline.ErrPatternGroup, the rule its policy has).
+	if kind == KindGroup {
+		patterns, err := s.lookup.GroupHasPatterns(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if patterns && auth.RequireFleetAdmin(ctx) != nil {
+			return nil, pipeline.ErrPatternGroup
+		}
+	}
 	owner := ownerOf(kind, id)
 	before, err := s.revs.Head(ctx, KindWorkspaceConfig, owner)
 	if err != nil {
@@ -402,7 +415,16 @@ func (s *Service) change(ctx context.Context, kind, id string, next *Config, via
 		if _, err := s.revs.Clear(ctx, KindWorkspaceConfig, owner); err != nil {
 			return nil, err
 		}
-	} else if after, changed, err = s.revs.Put(ctx, KindWorkspaceConfig, owner, content, confrev.Meta{Actor: actor, ActorKeyID: keyID, Via: via, Note: note}); err != nil {
+	} else if after, changed, err = s.revs.Put(ctx, KindWorkspaceConfig, owner, content, confrev.Meta{Actor: actor, ActorKeyID: keyID, Via: via, Note: note, IfHead: ifRev}); err != nil {
+		// The check above read the head before the checks of this save
+		// ran; someone else's save landed in between.
+		if errors.Is(err, confrev.ErrMoved) {
+			held := "none"
+			if after != nil {
+				held = after.ID
+			}
+			return nil, fmt.Errorf("%w: the config was saved by someone else since it was read (it is at revision %s); read it again", ErrConflict, held)
+		}
 		return nil, err
 	}
 	s.invalidate()
@@ -591,9 +613,19 @@ func (s *Service) record(ctx context.Context, kind, id string, before, after *co
 // checked); it is never persisted.
 func (s *Service) resolve(ctx context.Context, ws, overrideOwner string, override *Config, overrideSet bool) (*Effective, error) {
 	eff := &Effective{Workspace: ws}
+	// A check of one owner's save (overrideSet) also sees what the other
+	// owners of the same change will hold (WithPendingConfigs), not what
+	// they hold now: a field that moves from a workspace to its group in
+	// one file is set in both before and in neither halfway.
+	pending, _ := ctx.Value(pendingConfigsKey{}).(map[string]*Config)
 	load := func(owner string) (*Config, string, error) {
 		if overrideSet && owner == overrideOwner {
 			return override, "pending", nil // nil: the owner would have none
+		}
+		if overrideSet {
+			if c, ok := pending[owner]; ok {
+				return c, "pending", nil
+			}
 		}
 		rev, err := s.revs.Head(ctx, KindWorkspaceConfig, owner)
 		if err != nil || rev == nil {
@@ -620,16 +652,8 @@ func (s *Service) resolve(ctx context.Context, ws, overrideOwner string, overrid
 	sort.SliceStable(groups, func(i, j int) bool { return groups[i].Name < groups[j].Name })
 	fields := map[string]json.RawMessage{}
 	eff.Sources = map[string]string{}
-	for _, g := range groups {
-		c, rev, err := load(confrev.GroupOwner(g.ID))
-		if err != nil {
-			return nil, err
-		}
-		if c == nil {
-			continue
-		}
-		source := "group:" + g.Name
-		eff.Parts = append(eff.Parts, Part{Owner: confrev.GroupOwner(g.ID), Revision: rev, Source: source})
+	layer := func(owner, source string, c *Config, rev string) {
+		eff.Parts = append(eff.Parts, Part{Owner: owner, Revision: rev, Source: source})
 		for k, v := range c.Fields() {
 			if prev, ok := eff.Sources[k]; ok {
 				eff.Conflicts = append(eff.Conflicts, fmt.Sprintf("%s: set by %s and %s", k, prev, source))
@@ -637,6 +661,25 @@ func (s *Service) resolve(ctx context.Context, ws, overrideOwner string, overrid
 			}
 			fields[k], eff.Sources[k] = v, source
 		}
+	}
+	saved := false // the group being saved was among the workspace's groups
+	for _, g := range groups {
+		owner := confrev.GroupOwner(g.ID)
+		saved = saved || owner == overrideOwner
+		c, rev, err := load(owner)
+		if err != nil {
+			return nil, err
+		}
+		if c == nil {
+			continue
+		}
+		layer(owner, "group:"+g.Name, c, rev)
+	}
+	// The save of a group that does not hold the workspace yet — one the
+	// same change creates, or gives this member — is checked for the
+	// members it will have: its config counts for them.
+	if overrideSet && !saved && override != nil && strings.HasPrefix(overrideOwner, KindGroup+":") {
+		layer(overrideOwner, "group:(this save)", override, "pending")
 	}
 	for k, v := range own.Fields() {
 		fields[k], eff.Sources[k] = v, "workspace"
@@ -653,6 +696,18 @@ func (s *Service) resolve(ctx context.Context, ws, overrideOwner string, overrid
 		}
 	}
 	return eff, nil
+}
+
+type pendingConfigsKey struct{}
+
+// WithPendingConfigs makes the checks of a save under ctx read these
+// owners' configs (keyed "workspace:<id>" / "group:<id>"; nil = the owner
+// will have none) in place of the stored ones. For a change that saves
+// several owners in a row: each is checked against the state the whole
+// change leaves, not against a state halfway. Only checks read it; what a
+// workspace's runs get is always read from what is stored.
+func WithPendingConfigs(ctx context.Context, pending map[string]*Config) context.Context {
+	return context.WithValue(ctx, pendingConfigsKey{}, pending)
 }
 
 // revOf names a combination of revisions for a workspace.
@@ -804,6 +859,54 @@ func (s *Service) At(ctx context.Context, ws, rev string) (*Effective, error) {
 
 // DropWorkspace forgets a deleted workspace's config (its revisions stay:
 // they are evidence).
+// DropOrphans clears the config of every workspace and group that no
+// longer exists. A deleted group's config would otherwise stay for good:
+// nothing can clear it (the group is not found), and the wrappers and MCP
+// servers it named could not be deleted while it "used" them.
+func (s *Service) DropOrphans(ctx context.Context) error {
+	heads, err := s.revs.Heads(ctx, KindWorkspaceConfig)
+	if err != nil {
+		return err
+	}
+	dropped := false
+	for owner := range heads {
+		kind, id, ok := strings.Cut(owner, ":")
+		if !ok {
+			continue
+		}
+		exists := true
+		switch kind {
+		case KindWorkspace:
+			exists, err = s.lookup.WorkspaceExists(ctx, id)
+		case KindGroup:
+			_, gerr := s.lookup.Group(ctx, id)
+			exists, err = gerr == nil, nil
+			if gerr != nil && !errors.Is(gerr, pipeline.ErrNotFound) {
+				err = gerr
+			}
+		}
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		was, err := s.revs.Clear(ctx, KindWorkspaceConfig, owner)
+		if err != nil {
+			return err
+		}
+		dropped = true
+		if s.audit != nil && was != nil {
+			_ = s.audit.Record(ctx, audit.RecordInput{Action: "config.delete", EntityType: AuditEntity, EntityID: owner,
+				Notes: "was revision " + was.ID + "; the " + kind + " no longer exists"})
+		}
+	}
+	if dropped {
+		s.invalidate()
+	}
+	return nil
+}
+
 func (s *Service) DropWorkspace(ctx context.Context, ws string) {
 	_, _ = s.revs.Clear(ctx, KindWorkspaceConfig, confrev.WorkspaceOwner(ws))
 	s.invalidate()

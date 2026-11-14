@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -62,6 +64,9 @@ from the server; the fields the server now holds can then go from their files.`,
 			changes := 0
 			for _, c := range prop.conflicts {
 				fmt.Println("conflict: " + c)
+			}
+			for _, n := range prop.notes {
+				fmt.Println("note: " + n)
 			}
 			for _, ws := range sortedNames(prop.workspaces) {
 				if len(only) > 0 && !only[ws] {
@@ -137,7 +142,7 @@ from the server; the fields the server now holds can then go from their files.`,
 				fmt.Println("nothing was changed: pass --yes to apply")
 			}
 			if len(prop.conflicts) > 0 {
-				return fmt.Errorf("%d conflict(s) between the files were not imported: make the files agree, or import one file", len(prop.conflicts))
+				return fmt.Errorf("%d workspace(s) or runner(s) were not imported (see the conflict lines): make the files agree, or fix what the server refuses", len(prop.conflicts))
 			}
 			return nil
 		},
@@ -153,12 +158,18 @@ func sortedNames[V any](m map[string]V) []string {
 	return out
 }
 
+// reImportVar finds a ${NAME} reference in an env value.
+var reImportVar = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+
 // importProposal is what a set of worker files says the server should hold.
 type importProposal struct {
 	workspaces map[string]wsconfig.Config
 	sources    map[string][]string
 	runners    map[string]wsconfig.RunnerDef
 	conflicts  []string
+	// notes: what an imported config needs on the workers to work as the
+	// file did (a ${NAME} a stage's env uses).
+	notes []string
 }
 
 // proposeImport reads worker files and builds the proposal. A workspace or
@@ -183,7 +194,31 @@ func proposeImport(files []string) (*importProposal, error) {
 			}
 			c, err := wsconfig.Normalize(configFromWorker(w, repo))
 			if err != nil {
-				return nil, fmt.Errorf("%s, workspace %s: %w", path, ws, err)
+				// This workspace is left out; the others in the files are
+				// not held up by it.
+				badWS[ws] = true
+				p.conflicts = append(p.conflicts, fmt.Sprintf("workspace %s (%s) cannot be held on the server as it is: %v", ws, path, err))
+				continue
+			}
+			// In a worker file ${NAME} in a profile's env is the process
+			// environment; in a config on the server it is the worker's
+			// own [worker.vars]. Imported as written, the stage would not
+			// run until each worker declares the name.
+			for _, stage := range wsconfig.StageNames {
+				block := c.Stages[stage]
+				if block == nil {
+					continue
+				}
+				keys := make([]string, 0, len(block.Env))
+				for k := range block.Env {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				for _, k := range keys {
+					for _, m := range reImportVar.FindAllStringSubmatch(block.Env[k], -1) {
+						p.notes = append(p.notes, fmt.Sprintf("workspace %s, stage %s: env %s uses ${%s}. On the server that is filled in from each worker's [worker.vars], not from its environment: declare %s there on every worker that serves the workspace, or write the value out", ws, stage, k, m[1], m[1]))
+					}
+				}
 			}
 			if prev, ok := p.workspaces[ws]; ok {
 				if diff := wsconfig.Changed(prev, c); len(diff) > 0 {
@@ -243,6 +278,8 @@ func proposeImport(files []string) (*importProposal, error) {
 		delete(p.runners, name)
 	}
 	sort.Strings(p.conflicts)
+	sort.Strings(p.notes)
+	p.notes = slices.Compact(p.notes)
 	return p, nil
 }
 

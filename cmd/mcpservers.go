@@ -272,7 +272,10 @@ func readSecretValue(fromEnv, label string) (string, error) {
 	}
 	var v string
 	if stdinIsTerminal() {
-		v = promptSecret(bufio.NewReader(os.Stdin), os.Stderr, "Value of "+label)
+		var err error
+		if v, err = readSecret(bufio.NewReader(os.Stdin), os.Stderr, "Value of "+label, true); err != nil {
+			return "", fmt.Errorf("%w: pipe the value in, or pass --from-env <NAME>", err)
+		}
 	} else {
 		b, err := io.ReadAll(io.LimitReader(os.Stdin, secretbox.MaxValueBytes+1))
 		if err != nil {

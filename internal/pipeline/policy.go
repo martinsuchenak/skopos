@@ -159,6 +159,28 @@ func requireSomeAdmin(ctx context.Context, kind, id string) error {
 	return nil
 }
 
+// ErrPatternGroup is the refusal of requireFleetForPatterns.
+var ErrPatternGroup = fmt.Errorf("%w: this group takes in workspaces by pattern, so what is set on it also binds workspaces that register later; that needs a key that reaches every workspace (--all-workspaces)", auth.ErrAdminRequired)
+
+// requireFleetForPatterns asks for a fleet admin to change what a group
+// with patterns sets. Such a group gains members by itself, so an admin of
+// its members of today would decide for workspaces that are not in the
+// key's scope and may not exist yet. A group of explicit members only
+// grows when root adds one.
+func (s *Service) requireFleetForPatterns(ctx context.Context, kind, groupID string) error {
+	if kind != KindGroup {
+		return nil
+	}
+	patterns, err := s.storage.GroupHasPatterns(ctx, groupID)
+	if err != nil {
+		return err
+	}
+	if patterns && auth.RequireFleetAdmin(ctx) != nil {
+		return ErrPatternGroup
+	}
+	return nil
+}
+
 // requirePolicyAdmin enforces the admin permission at the owner's level.
 func requirePolicyAdmin(ctx context.Context, kind, id string, members []string) error {
 	switch kind {
@@ -185,10 +207,18 @@ func (s *Service) GetPolicy(ctx context.Context, kind, id string) (*PolicyView, 
 			return nil, err
 		}
 	}
+	// The scope first: a key that does not have the workspace gets the
+	// same answer whether or not it is registered.
+	asked := strings.TrimSpace(id)
+	if kind == KindWorkspace && asked != "" {
+		if err := auth.RequireWorkspaceQuiet(ctx, asked); err != nil {
+			return nil, fmt.Errorf("%w: workspace %s", ErrNotFound, asked)
+		}
+	}
 	id, members, err := s.resolvePolicyOwner(ctx, kind, id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) && kind == KindWorkspace {
-			return nil, fmt.Errorf("%w: workspace %s", ErrNotFound, strings.TrimSpace(id))
+			return nil, fmt.Errorf("%w: workspace %s", ErrNotFound, asked)
 		}
 		return nil, err
 	}
@@ -264,6 +294,9 @@ func (s *Service) changePolicy(ctx context.Context, kind, id string, next *polic
 		return nil, err
 	}
 	if err := requirePolicyAdmin(ctx, kind, id, members); err != nil {
+		return nil, err
+	}
+	if err := s.requireFleetForPatterns(ctx, kind, id); err != nil {
 		return nil, err
 	}
 	var content []byte

@@ -57,7 +57,16 @@ type Revision struct {
 // Meta is who wrote a revision and how.
 type Meta struct {
 	Actor, ActorKeyID, Via, Note string
+	// IfHead, when set, is the revision the writer read ("" = none): the
+	// write happens only while that is still the owner's current one, and
+	// answers ErrMoved otherwise. Compared inside the write's own
+	// transaction, so two writers that read the same revision cannot both
+	// pass.
+	IfHead *string
 }
+
+// ErrMoved: the owner's current revision is not the one Meta.IfHead names.
+var ErrMoved = errors.New("the current revision is another one")
 
 // Store reads and writes revisions.
 type Store struct {
@@ -112,6 +121,15 @@ func (s *Store) Put(ctx context.Context, kind, owner string, content []byte, met
 	cur, err := headTx(ctx, tx, kind, owner)
 	if err != nil {
 		return nil, false, err
+	}
+	if meta.IfHead != nil {
+		held := ""
+		if cur != nil {
+			held = cur.ID
+		}
+		if held != strings.TrimSpace(*meta.IfHead) {
+			return cur, false, ErrMoved
+		}
 	}
 	if cur != nil && cur.Hash == hash {
 		return cur, false, nil

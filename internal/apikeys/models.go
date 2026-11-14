@@ -16,6 +16,10 @@ type Key struct {
 	// Admin: the key may change policy and configuration within its scope
 	// (auth.RequireAdmin*). Never for agent or worker keys.
 	Admin bool `json:"admin"`
+	// Worker: the key is a pipeline worker's. The credentials the server
+	// holds for runs are handed out only to such a key; it never holds
+	// approver or admin.
+	Worker bool `json:"worker"`
 	// Capabilities limit the key's surfaces and areas (internal/auth
 	// capabilities.go); null = full access.
 	Capabilities []string   `json:"capabilities"`

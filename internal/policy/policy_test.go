@@ -196,8 +196,14 @@ func TestProviderForEndpoint(t *testing.T) {
 		"https://my-resource.openai.azure.com":            "microsoft",
 		"https://my-project.services.ai.azure.com":        "microsoft",
 		// A cloud's customer hosts are anyone's, not the cloud's AI service.
-		"https://ec2-1-2-3-4.compute.amazonaws.com":                       "unknown:ec2-1-2-3-4.compute.amazonaws.com",
-		"https://abc123.execute-api.us-east-1.amazonaws.com":              "unknown:abc123.execute-api.us-east-1.amazonaws.com",
+		"https://ec2-1-2-3-4.compute.amazonaws.com":          "unknown:ec2-1-2-3-4.compute.amazonaws.com",
+		"https://abc123.execute-api.us-east-1.amazonaws.com": "unknown:abc123.execute-api.us-east-1.amazonaws.com",
+		// Names a customer picks: a load balancer or a bucket called bedrock-….
+		"https://bedrock-gw-1234567890.eu-west-1.elb.amazonaws.com":       "unknown:bedrock-gw-1234567890.eu-west-1.elb.amazonaws.com",
+		"https://bedrock.s3.amazonaws.com":                                "unknown:bedrock.s3.amazonaws.com",
+		"https://bedrock-proxy.eu-west-1.amazonaws.com":                   "unknown:bedrock-proxy.eu-west-1.amazonaws.com",
+		"https://bedrock-runtime-fips.us-gov-west-1.amazonaws.com":        "aws",
+		"https://bedrock-agent-runtime.ap-southeast-2.amazonaws.com":      "aws",
 		"https://my-proxy.westeurope.cloudapp.azure.com":                  "unknown:my-proxy.westeurope.cloudapp.azure.com",
 		"https://notbedrock-runtime.us-east-1.amazonaws.com.evil.example": "unknown:notbedrock-runtime.us-east-1.amazonaws.com.evil.example",
 		"http://localhost:11434/v1":                                       "local",
