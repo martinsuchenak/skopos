@@ -285,7 +285,7 @@ func printRunnerList(ctx context.Context, out io.Writer, cfg *worker.Config) {
 	for _, n := range cfg.ExecutorNotes() {
 		pf("\nnote: %s\n", n)
 	}
-	pf("\nPin a stage to a runner on the server: skopos workspace pipeline set --workspace <ws> --stage <stage> --runners <runner>\n(or the dashboard: Workspaces → Pipeline)\n")
+	pf("\nPin a stage to a runner on the server: skopos workspace pipeline set --workspace <ws> --stage <stage> --runners <runner>\n(or the dashboard: Workspaces → Settings)\n")
 }
 
 func envSummary(env map[string]string) string {

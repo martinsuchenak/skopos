@@ -880,27 +880,33 @@
                     <button type="button" @click="openNewWorkspaceModal()" class="btn btn-primary btn-sm" data-role="root" style="display: none"><span aria-hidden="true">+</span> New workspace</button>
                 </div>
                 <p class="empty-state" x-show="registeredWorkspaces.length === 0">No workspaces registered yet. Workspaces appear as agents report sessions, or register one above.</p>
-                <ul class="card divide-y divide-zinc-800" x-show="registeredWorkspaces.length > 0">
-                    <template x-for="ws in registeredWorkspaces" :key="ws.id">
-                        <li class="flex flex-wrap items-start justify-between gap-3 p-4">
+                <div class="mb-3 flex flex-wrap items-center gap-3" x-show="registeredWorkspaces.length > 0">
+                    <label class="sr-only" for="ws-search">Search workspaces</label>
+                    <input id="ws-search" type="search" x-model="wsSearch" class="fld-sm w-64 max-w-full" placeholder="Search by name, id or group" autocomplete="off" />
+                    <span class="text-xs text-zinc-400" role="status" x-text="wsCountText()"></span>
+                </div>
+                <p class="empty-state" x-show="registeredWorkspaces.length > 0 && wsRows().length === 0">No workspace matches the search.</p>
+                <!-- One card per workspace, starred ones first. A star is this
+                     browser's own (kept in its storage), not shared. -->
+                <ul class="space-y-2" x-show="wsRows().length > 0">
+                    <template x-for="r in wsRows()" :key="r.key">
+                        <li class="card flex flex-wrap items-start gap-3 p-3">
+                            <button type="button" @click="toggleWsFav(r.ws.id)" class="mt-0.5 rounded px-1 text-lg leading-none" :class="r.fav ? 'text-amber-400' : 'text-zinc-500 hover:text-zinc-300'" :aria-pressed="r.fav ? 'true' : 'false'" :aria-label="(r.fav ? 'Remove the star from ' : 'Star ') + (r.ws.name || r.ws.id)" :title="r.fav ? 'Starred: listed first' : 'Star to list it first'"><span aria-hidden="true" x-text="r.fav ? '★' : '☆'"></span></button>
                             <div class="min-w-0 flex-1">
-                                <div class="flex flex-wrap items-baseline gap-2">
-                                    <span class="truncate font-medium text-zinc-100" x-text="ws.name || ws.id"></span>
-                                    <span class="text-xs text-zinc-400" x-text="ws.id"></span>
+                                <div class="flex flex-wrap items-baseline gap-x-2">
+                                    <span class="truncate font-medium text-zinc-100" x-text="r.ws.name || r.ws.id"></span>
+                                    <span class="break-all text-xs text-zinc-400" x-show="r.ws.name" x-text="r.ws.id"></span>
                                 </div>
                                 <div class="mt-1.5 flex flex-wrap gap-1.5">
-                                    <template x-for="g in wsGroupsOf(ws.id)" :key="'ws|' + ws.id + '|' + g.id">
+                                    <template x-for="g in wsGroupsOf(r.ws.id)" :key="'ws|' + r.ws.id + '|' + g.id">
                                         <span class="badge tone-accent" x-text="g.name"></span>
                                     </template>
-                                    <template x-for="k in wsKeys(ws.id)" :key="'wsk|' + ws.id + '|' + k.id">
+                                    <template x-for="k in wsKeys(r.ws.id)" :key="'wsk|' + r.ws.id + '|' + k.id">
                                         <span class="badge tone-success" x-text="'🔑 ' + k.name"></span>
                                     </template>
                                 </div>
                             </div>
-                            <div class="flex flex-wrap gap-1">
-                                <button type="button" @click="openPipeline('workspace', ws.id, ws.name || ws.id)" class="btn btn-sm btn-ghost" :aria-label="'Pipeline settings of ' + (ws.name || ws.id)">Pipeline</button>
-                                <button type="button" @click="openEditWorkspaceModal(ws)" x-show="whoamiIsRoot()" x-cloak class="btn btn-sm btn-ghost" :aria-label="'Edit workspace ' + (ws.name || ws.id)">Edit</button>
-                            </div>
+                            <button type="button" @click="openPipeline('workspace', r.ws.id, r.ws.name || r.ws.id)" class="btn btn-sm btn-ghost" :aria-label="'Settings of ' + (r.ws.name || r.ws.id)">Settings</button>
                         </li>
                     </template>
                 </ul>
@@ -940,8 +946,7 @@
                                     </div>
                                 </div>
                                 <div class="flex flex-wrap gap-1" x-show="whoamiIsRoot()" x-cloak>
-                                    <button type="button" @click="openPipeline('group', g.id, g.name)" class="btn btn-sm btn-ghost" :aria-label="'Pipeline settings of group ' + g.name">Pipeline</button>
-                                    <button type="button" @click="openEditGroupModal(g)" class="btn btn-sm btn-ghost" :aria-label="'Edit group ' + g.name">Edit</button>
+                                    <button type="button" @click="openPipeline('group', g.id, g.name)" class="btn btn-sm btn-ghost" :aria-label="'Settings of group ' + g.name">Settings</button>
                                 </div>
                             </div>
                         </li>
@@ -957,7 +962,7 @@
                         <h2 id="mcp-servers-title" class="mb-1 text-lg font-semibold">MCP servers for runs</h2>
                         <p class="max-w-2xl text-sm text-zinc-400">
                             Servers the pipeline's agents can be given. A workspace's config names the ones its runs get
-                            (Pipeline → Server config → MCP). A credential is a secret kept on the server: its value is set
+                            (Settings → Server config → MCP). A credential is a secret kept on the server: its value is set
                             here and never shown again.
                         </p>
                     </div>
@@ -1070,7 +1075,7 @@
          own values override its groups' per stage) or a group (defaults its
          workspaces inherit). Rows re-render via pipe.rev (CSP build). -->
     {{template "modal-open" (dict "ID" "pipe-modal" "Show" "pipe.open" "Close" "closePipeline()" "Size" "max-w-3xl")}}
-            <h2 id="pipe-modal-title" class="modal-title">Pipeline · <span x-text="pipe.label"></span></h2>
+            <h2 id="pipe-modal-title" class="modal-title" x-text="pipeTitle()"></h2>
             <!-- Problems only up here (read-only, conflicts, runners nothing
                  offers or the policy refuses); what merely applies is on the
                  Options tab. -->
@@ -1389,19 +1394,87 @@
                     <button type="button" class="btn btn-primary" @click="savePipeConfig()" :disabled="pipeConfig.saving || !pipeConfigDirty()" x-text="pipeConfigSaveLabel()"></button>
                 </div>
             </section>
+            <!-- The group itself: its name, members and patterns. Root only;
+                 saved on its own. -->
+            <section x-show="pipe.tab === 'group'" id="pipe-panel-group" role="tabpanel" aria-labelledby="pipe-tab-group" class="tab-panel">
+                <form @submit.prevent="saveGroupDetails()" class="space-y-4">
+                    <div>
+                        <label class="lbl" for="grpd-name">Name <span aria-hidden="true">*</span></label>
+                        <input id="grpd-name" type="text" x-model="groupForm.name" class="fld" autocomplete="off" aria-required="true"
+                            :aria-invalid="groupErrors.name ? 'true' : 'false'" :aria-describedby="groupErrors.name ? 'grpd-name-err' : null" />
+                        <p id="grpd-name-err" x-show="groupErrors.name" class="field-error" x-text="groupErrors.name"></p>
+                    </div>
+                    <div>
+                        <label class="lbl" for="grpd-desc">Description (optional)</label>
+                        <input id="grpd-desc" type="text" x-model="groupForm.description" class="fld" autocomplete="off" />
+                    </div>
+                    <div>
+                        <span class="lbl" id="grpd-members-lbl">Member workspaces</span>
+                        {{template "checklist" (dict "LabelID" "grpd-members-lbl" "For" "ws in registeredWorkspaces" "Key" "ws.id" "Value" "ws.id" "Text" "ws.name || ws.id" "Path" "groupForm.members" "Empty" "registeredWorkspaces.length === 0" "EmptyText" "No workspaces registered yet.")}}
+                    </div>
+                    <div>
+                        <label class="lbl" for="grpd-patterns">Patterns (one per line, optional)</label>
+                        <textarea id="grpd-patterns" rows="3" x-model="groupForm.patterns" class="fld font-mono text-xs" placeholder="github.com/acme/*"
+                            aria-describedby="grpd-patterns-help" :aria-invalid="(groupErrors.patterns || groupErrors.form) ? 'true' : 'false'"></textarea>
+                        <p id="grpd-patterns-help" class="mt-1 text-xs text-zinc-400">path.Match — * matches one segment, never crosses /; no **. A group needs at least one member or pattern.</p>
+                        <p x-show="groupErrors.patterns || groupErrors.form" class="field-error" role="alert" x-text="groupErrors.patterns || groupErrors.form"></p>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn" @click="pipeCloseFromTab()">Close</button>
+                        <button type="submit" class="btn btn-primary" :disabled="groupSaving || !groupDetailsDirty()" x-text="groupSaving ? 'Saving…' : 'Save group'"></button>
+                    </div>
+                </form>
+            </section>
+            <!-- The workspace itself: its name, the groups it is in, and
+                 removing it. Root only; saved on its own. -->
+            <section x-show="pipe.tab === 'workspace'" id="pipe-panel-workspace" role="tabpanel" aria-labelledby="pipe-tab-workspace" class="tab-panel">
+                <form @submit.prevent="saveWorkspaceDetails()" class="space-y-4">
+                    <div>
+                        <span class="lbl">Workspace ID</span>
+                        <p class="break-all font-mono text-sm text-zinc-200" x-text="wsForm.id"></p>
+                    </div>
+                    <div>
+                        <label class="lbl" for="wsd-name">Display name (optional)</label>
+                        <input id="wsd-name" type="text" x-model="wsForm.name" class="fld" autocomplete="off" :aria-invalid="wsErrors.id ? 'true' : 'false'" :aria-describedby="wsErrors.id ? 'wsd-err' : null" />
+                        <p id="wsd-err" x-show="wsErrors.id" class="field-error" x-text="wsErrors.id"></p>
+                    </div>
+                    <div>
+                        <label class="lbl" for="wsd-git">Git URL (optional)</label>
+                        <input id="wsd-git" type="text" x-model="wsForm.git_url" class="fld" autocomplete="off" />
+                    </div>
+                    <div>
+                        <span class="lbl" id="wsd-groups-lbl">Group allocation</span>
+                        {{template "checklist" (dict "LabelID" "wsd-groups-lbl" "For" "g in groups" "Key" "g.id" "Value" "g.name" "Text" "g.name" "Path" "wsForm.groups" "Empty" "groups.length === 0" "EmptyText" "No groups yet — create one under Groups first.")}}
+                        <p id="wsd-groups-err" x-show="wsErrors.groups" class="field-error" x-text="wsErrors.groups"></p>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn mr-auto" @click="armRemoveWorkspace()" x-show="!wsRemove.armed">Remove workspace…</button>
+                        <button type="button" class="btn" @click="pipeCloseFromTab()">Close</button>
+                        <button type="submit" class="btn btn-primary" :disabled="wsSaving || !wsDetailsDirty()" x-text="wsSaving ? 'Saving…' : 'Save workspace'"></button>
+                    </div>
+                </form>
+                <div x-show="wsRemove.armed" class="mt-4 rounded-lg border border-rose-800 p-3" role="alert">
+                    <p class="text-sm text-zinc-200">Remove <span class="break-all font-mono" x-text="pipe.id"></span>?</p>
+                    <p class="mt-1 text-xs text-zinc-400">It leaves this list, and its pipeline settings, briefs and server config are deleted. Its items, plans, blackboard entries and sessions are kept. It is listed again when an agent next reports under it.</p>
+                    <div class="mt-3 flex flex-wrap gap-2">
+                        <button type="button" class="btn btn-sm" @click="disarmRemoveWorkspace()">Keep it</button>
+                        <button type="button" class="btn btn-sm btn-danger" @click="removeWorkspace()" :disabled="wsRemove.busy" x-text="wsRemove.busy ? 'Removing…' : 'Remove workspace'"></button>
+                    </div>
+                </div>
+            </section>
     {{template "modal-close"}}
 
     <!-- Workspace create/edit: id, name, git URL, group allocation. The one
          workspace dialog — the header "+" opens it too (selecting the new
          workspace afterwards). -->
     {{template "modal-open" (dict "ID" "ws-modal" "Show" "showWsModal" "Close" "closeWsModal()")}}
-            <h2 id="ws-modal-title" class="modal-title" x-text="wsModalMode === 'create' ? 'New workspace' : 'Edit workspace'"></h2>
-            <p x-show="wsModalMode === 'create'" class="-mt-2 mb-4 text-sm text-zinc-400">A workspace groups sessions, blackboard entries, and plans. Use the id agents report (a repo path or normalized git URL).</p>
+            <h2 id="ws-modal-title" class="modal-title">New workspace</h2>
+            <p class="-mt-2 mb-4 text-sm text-zinc-400">A workspace groups sessions, blackboard entries, and plans. Use the id agents report (a repo path or normalized git URL).</p>
             <form @submit.prevent="saveWorkspace()" class="space-y-4">
                 <div>
                     <label class="lbl" for="ws-id">Workspace ID <span aria-hidden="true">*</span></label>
                     <input id="ws-id" type="text" x-model="wsForm.id" class="fld" placeholder="github.com/owner/repo" autocomplete="off" autofocus aria-required="true"
-                        :disabled="wsModalMode === 'edit'" :aria-invalid="wsErrors.id ? 'true' : 'false'" :aria-describedby="wsErrors.id ? 'ws-id-err' : null" />
+                        :aria-invalid="wsErrors.id ? 'true' : 'false'" :aria-describedby="wsErrors.id ? 'ws-id-err' : null" />
                     <p id="ws-id-err" x-show="wsErrors.id" class="field-error" x-text="wsErrors.id"></p>
                 </div>
                 <div>
@@ -1419,7 +1492,7 @@
                 </div>
                 <div class="modal-actions">
                     <button type="button" @click="closeWsModal()" class="btn">Cancel</button>
-                    <button type="submit" class="btn btn-primary" :disabled="wsSaving" x-text="wsSaving ? 'Saving…' : (wsModalMode === 'create' ? 'Create workspace' : 'Save')"></button>
+                    <button type="submit" class="btn btn-primary" :disabled="wsSaving" x-text="wsSaving ? 'Saving…' : 'Create workspace'"></button>
                 </div>
             </form>
     {{template "modal-close"}}
@@ -1454,7 +1527,7 @@
 
     <!-- Group create/edit: name, description, patterns (members come from workspace allocation). -->
     {{template "modal-open" (dict "ID" "group-modal" "Show" "showGroupModal" "Close" "closeGroupModal()")}}
-            <h2 id="group-modal-title" class="modal-title" x-text="groupModalMode === 'create' ? 'New group' : 'Edit group'"></h2>
+            <h2 id="group-modal-title" class="modal-title">New group</h2>
             <form @submit.prevent="saveGroup()" class="space-y-4">
                 <div>
                     <label class="lbl" for="group-name">Name <span aria-hidden="true">*</span></label>
@@ -1479,7 +1552,7 @@
                 </div>
                 <div class="modal-actions">
                     <button type="button" @click="closeGroupModal()" class="btn">Cancel</button>
-                    <button type="submit" class="btn btn-primary" :disabled="groupSaving" x-text="groupSaving ? 'Saving…' : (groupModalMode === 'create' ? 'Create group' : 'Save')"></button>
+                    <button type="submit" class="btn btn-primary" :disabled="groupSaving" x-text="groupSaving ? 'Saving…' : 'Create group'"></button>
                 </div>
             </form>
     {{template "modal-close"}}

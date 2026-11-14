@@ -54,7 +54,7 @@ skopos workspace config set --workspace github.com/you/repo \
   takes.
 - **`skopos workspace config clear`** removes the config: the workspace is
   no longer managed and its workers go back to their own files.
-- **In the dashboard:** Workspaces → Pipeline → **Server config** is a form
+- **In the dashboard:** Workspaces → Settings → **Server config** is a form
   with one control per field, in folds (branches, the commands the workers
   run, timeouts, push and pull requests, MCP), and a form per stage for
   the stage blocks. The one JSON box left is a stage's sandbox settings.
@@ -132,7 +132,7 @@ operator of a host can always forbid a tool there.
 ## Stages
 
 A stage block says what a stage's agent is given beyond the defaults. In
-the dashboard it is a form, one fold per stage under Pipeline → Server
+the dashboard it is a form, one fold per stage under Workspaces → Settings → Server
 config → **Stage blocks**: extra tools, environment, the wrapper by runner,
 and the permission rules each as fields. Only the agent CLI's own sandbox
 settings are JSON, passed through as they are. From the CLI:
@@ -293,7 +293,7 @@ name, kind (http or command), URL and headers or command and environment,
 and the workspaces that may be given it. A credential is written as
 `${secret:NAME}`; once the server is saved, the form lists the secrets it
 names and takes each value. A value is sent to the server and never shown
-again. A workspace gets a server by naming it under Pipeline → Server
+again. A workspace gets a server by naming it under Settings → Server
 config → MCP.
 
 ```sh

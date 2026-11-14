@@ -174,7 +174,7 @@ skopos workspace pipeline set --workspace github.com/you/repo --stage review \
   --runners security@claude,tests@opencode-glm,conventions@opencode-qwen --policy any-blocks
 ```
 
-In the dashboard: Pipeline → Review → add each runner with its focus.
+In the dashboard: Workspaces → Settings → Review → add each runner with its focus.
 
 - **Members.** Each list entry is `[focus@]runner`. Every member is its own
   run, pinned to its runner; together they form a *group* that is decided
@@ -394,7 +394,7 @@ whether its plan, review and QA stages use it:
 |---|---|
 | `panel` | the repository's list (a group) |
 | `solo` | one run on the list's **first** runner, without its focus brief |
-| (empty) | the workspace default ("Items without their own choice get" in the Pipeline dialog, or its group's), `panel` when not set |
+| (empty) | the workspace default ("Items without their own choice get" in the Settings dialog, or its group's), `panel` when not set |
 
 ```bash
 # panel only where an item asks for it
@@ -457,7 +457,7 @@ from the reviewer.
     an opinion on an older commit whose findings were dealt with since;
   - a line sums up what became of its findings.
 - **Default runner.** Set "Second opinions use" in a workspace's or group's
-  Pipeline dialog, or `skopos workspace|group pipeline set --second-opinion
+  Settings dialog, or `skopos workspace|group pipeline set --second-opinion
   <runner>` (`none` clears it). It resolves like the agents default: the
   workspace wins over its group. Without one, every request must name a
   runner.

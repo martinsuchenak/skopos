@@ -107,7 +107,7 @@ group; a repository overrides only the stages it needs.
   review has passed, or straight after the implementation when only QA is
   set.
 - **Briefs without a commit.** What a focused agent is told can be held on
-  the server (Pipeline → Briefs) instead of in `.skopos/focus/`:
+  the server (Workspaces → Settings → Briefs) instead of in `.skopos/focus/`:
   [Briefs on the server](../configuration.md#briefs-on-the-server).
 - **Review reads the code, QA tests it.** QA runs at the pushed commit after
   the repository's setup, with the instructions you give it in a focus
@@ -147,7 +147,7 @@ group; a repository overrides only the stages it needs.
   dashboard's *Agents* field, `#panel` / `#solo` in a Slack capture (or a
   `panel` / `solo` reply in its thread), `--agents` on the CLI. Items that
   don't choose get the workspace default ("Items without their own choice
-  get" in the Pipeline dialog; `panel` when unset). See
+  get" in the Settings dialog; `panel` when unset). See
   [Per-item switch](../configuration.md#per-item-switch-panel-or-solo).
 
 ## 5. Set up a worker
@@ -252,7 +252,7 @@ choose per item whether it gets that panel or a single agent:
   `skopos inbox update --id <item> --agents solo|panel|default`;
 - **Slack:** add `#panel` or `#solo` to the `new:` message.
 
-Leave it unset to get the workspace default (set in its Pipeline dialog,
+Leave it unset to get the workspace default (set in its Settings dialog,
 `panel` unless you changed it). You can switch an item later; it applies from its
 next plan, review or QA stage.
 
@@ -488,7 +488,7 @@ preview (or `second codex` in Slack).
   log and findings. If it would block, the sign-off card says so.
 - **Also when blocked:** it works when the item is blocked by its review, to
   get a counter-opinion on a disputed finding.
-- **Default runner:** set one in the workspace's Pipeline dialog. See
+- **Default runner:** set one in the workspace's Settings dialog. See
   [Second opinions](../configuration.md#second-opinions-on-demand).
 
 **Blocked?** If an agent needs an answer, the item is `blocked` with its

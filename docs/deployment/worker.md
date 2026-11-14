@@ -415,7 +415,7 @@ The model and the effort belong to the account, and a runner name is any
 label. To run one CLI with different models or efforts, give each its own
 runner name. The wizard does this when you pick a model or an effort. Then
 pin stages to runners in the workspace's pipeline settings (dashboard:
-Workspaces → Pipeline):
+Workspaces → Settings):
 
 ```sh
 skopos workspace pipeline set --workspace github.com/you/repo --stage plan --runners opencode-glm-5-3
@@ -756,7 +756,7 @@ Branch or Reference) queues one `branch_review` run instead of a plan:
    back to its default branch. There are no fix rounds, and nothing is
    committed or pushed.
 3. The branch is reviewed the way the workspace reviews an implementation
-   (its review stage under Workspaces → Pipeline): one runner, one focused
+   (its review stage under Workspaces → Settings): one runner, one focused
    reviewer, or the review panel, each member with its focus brief and the
    panel decided by its policy into one summary. An item set to *one agent*
    gets the panel's first member without its focus. Reviewers review against

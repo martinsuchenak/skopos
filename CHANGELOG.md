@@ -4,6 +4,32 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.34.0] — 2026-11-14
+
+### Added
+
+- **A workspace can be removed in the dashboard** (root): Workspaces →
+  Settings → Workspace → Remove workspace, with a second press to confirm.
+  It leaves the list, and its pipeline settings, briefs and server config
+  are deleted. Its items, plans, blackboard entries and sessions are kept,
+  and it is listed again when an agent next reports under it.
+- **Search and stars on the Workspaces page.** The search box matches a
+  workspace's name, id or group. A starred workspace is listed first, there
+  and in the workspace switcher. Stars are kept in the browser.
+
+### Changed
+
+- **The Workspaces page lists each workspace as a row of its own.**
+- **One Settings dialog for a workspace, and one for a group.** The Edit
+  and Pipeline buttons are one button. The dialog has the Stages, Options,
+  Briefs and Server config tabs as before, and a Workspace tab (name, Git
+  URL, group allocation) or a Group tab (name, description, members,
+  patterns) for the root key. Each tab still saves on its own.
+- **The dashboard no longer registers workspaces itself.** The server
+  registers a workspace when an agent reports under it. Before, an open
+  dashboard registered every workspace in its session list again, which
+  undid a removal.
+
 ## [0.33.0] — 2026-11-14
 
 ### Added

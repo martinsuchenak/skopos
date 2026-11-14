@@ -143,7 +143,7 @@ skopos policy show --fleet ceiling
 skopos policy clear --workspace github.com/acme/shop
 ```
 
-The dashboard's Pipeline dialog shows the policy that applies to a
+The dashboard's Settings dialog (Workspaces → Settings) shows the policy that applies to a
 workspace, read-only.
 
 ## Who may change a policy
@@ -231,7 +231,7 @@ would newly strand, when it would:
 workers seen in the last day count, and only what the change itself causes
 is listed.
 
-**In the Pipeline dialog.** A configured runner the policy allows on no
+**In the Settings dialog.** A configured runner the policy allows on no
 worker is flagged there.
 
 **At a pipeline save, when the server defines the runner.** A save that
@@ -258,7 +258,7 @@ report that they cannot run the stage with it (`none:…`): "Waiting: no
 worker can run …", with what stands in the way.
 
 A run waiting for a runner nobody offers at all is not stranded by the
-policy; the Pipeline dialog already says no worker offers that runner.
+policy; the Settings dialog already says no worker offers that runner.
 
 ## What a worker reports
 

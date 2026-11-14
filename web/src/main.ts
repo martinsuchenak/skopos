@@ -189,6 +189,18 @@ let cfgCheckSeq = 0;
 // one overtook (a second click while the first still loads) stops, so the
 // dialog never shows one owner's stages under another's name.
 let pipeOpenSeq = 0;
+
+// storedList reads a list of strings this browser keeps (storage can be
+// unavailable or hold something else: then the list is empty).
+function storedList(key: string): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
+  } catch { return []; }
+}
+function storeList(key: string, list: string[]) {
+  try { localStorage.setItem(key, JSON.stringify(list)); } catch { /* the page works without it */ }
+}
 let runLogAbort: AbortController | null = null;
 // The run log panel's poll loop is reading (a loop ends with its run), and
 // the timer that looks for the item's next run while the panel follows it.
@@ -356,10 +368,17 @@ const appState = () => ({
   groupsLoading: false,
 
   showWsModal: false,
-  wsModalMode: 'create' as 'create' | 'edit',
   wsSaving: false,
   wsErrors: {} as Record<string, string>,
+  // The New workspace dialog's form, and the Workspace tab's in the settings
+  // dialog (the two are never open together).
   wsForm: { id: '', name: '', git_url: '', groups: [] as string[] },
+  // The Workspace tab's form as it was loaded or last saved.
+  wsDetailsWas: '',
+  wsRemove: { armed: false, busy: false },
+  // The Workspaces view's filter, and this browser's starred workspaces.
+  wsSearch: '',
+  wsFavs: storedList('skopos:favWorkspaces'),
   // opened from the header "+": select the new workspace once it exists
   wsSelectAfterCreate: false,
   // bumped on every dialog open; checklist row keys carry it so :checked
@@ -381,7 +400,8 @@ const appState = () => ({
     // switch), its fields in folds, the stage blocks as JSON, and what a
     // check said that belongs to no field.
     managed: false, groups: [] as CfgGroup[], stageForms: [] as CfgStage[], stagesOpen: false, stagesError: '', wrapperNames: [] as string[], general: '', conflicts: [] as string[], was: '', checking: false, checked: '', view: null as ConfigView | null },
-  groupModalMode: 'create' as 'create' | 'edit',
+  // The Group tab's form as it was loaded or last saved.
+  groupDetailsWas: '',
   groupSaving: false,
   groupErrors: {} as Record<string, string>,
   groupForm: { id: '', name: '', description: '', patterns: '', members: [] as string[] },
@@ -827,7 +847,7 @@ const appState = () => ({
   },
   workspaceFilteredOptions(): { id: string; label: string }[] {
     const q = this.workspaceSearch.trim().toLowerCase();
-    const opts = this.workspaceOptions();
+    const opts = this.starredFirst(this.workspaceOptions());
     if (!q) return opts;
     return opts.filter((o: { id: string; label: string }) => o.label.toLowerCase().includes(q) || o.id.toLowerCase().includes(q));
   },
@@ -873,6 +893,12 @@ const appState = () => ({
     for (const ws of this.workspaces) if (!map.has(ws)) map.set(ws, ws);
     return [...map.entries()].map(([id, label]) => ({ id, label }));
   },
+  // Starred workspaces lead the switcher's list, each part in the order it
+  // had. Only there: the first option is also where a write goes when no
+  // workspace is selected (writeWorkspace), and a star must not move that.
+  starredFirst(list: { id: string; label: string }[]): { id: string; label: string }[] {
+    return [...list.filter((w) => this.wsFavs.includes(w.id)), ...list.filter((w) => !this.wsFavs.includes(w.id))];
+  },
   // writeWorkspace resolves the workspace for a write: the active filter if
   // it is a concrete workspace, else the first option. Writes are
   // workspace-scoped on the server; '' means "block the write".
@@ -904,19 +930,6 @@ const appState = () => ({
     const w = this.registeredWorkspaces.find((r: { id: string; name?: string }) => r.id === id);
     return w?.name || this.compactWorkspace(id);
   },
-  // Auto-register any workspace seen in sessions so it persists in the DB.
-  async autoRegisterWorkspaces() {
-    const registered = new Set(this.registeredWorkspaces.map((w: { id: string }) => w.id));
-    const seen = new Set(this.sessions.map((s: SessionSummary) => s.workspace).filter(Boolean));
-    const newOnes = [...seen].filter((ws) => !registered.has(ws));
-    if (newOnes.length === 0) return;
-    for (const ws of newOnes) {
-      try {
-        await this.authFetch('/api/workspaces', { method: 'POST', body: JSON.stringify({ id: ws }) });
-      } catch { /* non-fatal */ }
-    }
-    await this.fetchWorkspaces();
-  },
   async refresh() {
     this.loading = true;
     try {
@@ -928,7 +941,6 @@ const appState = () => ({
     await this.fetchWhoami();
     this.fetchNeedsYou();
     await this.fetchWorkspaces();
-    await this.autoRegisterWorkspaces();
     this.sanitizeActiveWorkspace();
     this.syncSessionPurge();
     if (!this.selectedSessionId && this.sessions.length > 0) this.selectedSessionId = this.sessions[0].id;
@@ -2204,7 +2216,7 @@ const appState = () => ({
       if (i === 5 && state !== 'run' && state !== 'bad' && !reviews.length && ((state === 'done' && !!impl) || configured === false)) {
         state = 'skip';
         lines = [configured === false
-          ? (qaConfigured ? 'No review stage is configured for this workspace: QA is the only agent stage on the commit.' : 'No review stage is configured for this workspace, so no agent reviews the commit. Set one under Workspaces → Pipeline.')
+          ? (qaConfigured ? 'No review stage is configured for this workspace: QA is the only agent stage on the commit.' : 'No review stage is configured for this workspace, so no agent reviews the commit. Set one under Workspaces → Settings.')
           : 'No agent reviewed this commit'];
       }
       // QA is a step of its own only where it applies: the workspace sets
@@ -2873,6 +2885,8 @@ const appState = () => ({
     // workspace opened after a group had its Save armed with nothing changed.
     if (seq !== pipeOpenSeq) return;
     this.pipe.kind = kind; this.pipe.id = v.owner_id; this.pipe.label = label;
+    this.wsLoadDetails(kind === 'workspace' ? v.owner_id : '');
+    this.groupLoadDetails(kind === 'group' ? v.owner_id : '');
     await this.loadPipeConfig(kind, v.owner_id);
     if (seq !== pipeOpenSeq) return;
     this.pipe.tab = 'stages'; this.pipe.editing = '';
@@ -2929,6 +2943,7 @@ const appState = () => ({
   },
   closePipeline() {
     this.pipe.open = false;
+    this.wsRemove = { armed: false, busy: false };
     // No check of a form that is no longer on screen.
     if (cfgCheckTimer) { clearTimeout(cfgCheckTimer); cfgCheckTimer = null; }
   },
@@ -2949,6 +2964,8 @@ const appState = () => ({
     // Nor past what the other of the two tabs has not saved.
     if (this.pipe.tab !== 'config' && this.pipeConfigDirty()) { this.pipe.tab = 'config'; this.notify('The server config has unsaved changes: Save config, or Undo changes', 'error'); return; }
     if (this.pipe.tab !== 'briefs' && this.pipeBriefs.editing) { this.pipe.tab = 'briefs'; this.notify('A brief is still open: Save it, or Cancel', 'error'); return; }
+    if (this.pipe.tab !== 'workspace' && this.wsDetailsDirty()) { this.pipe.tab = 'workspace'; this.notify('The workspace has unsaved changes: Save workspace, or Close again from here', 'error'); return; }
+    if (this.pipe.tab !== 'group' && this.groupDetailsDirty()) { this.pipe.tab = 'group'; this.notify('The group has unsaved changes: Save group, or Close again from here', 'error'); return; }
     this.closePipeline();
   },
   pipeRow(stage: string): PipeRow | undefined { return this.pipe.rows.find((r: PipeRow) => r.stage === stage); },
@@ -3124,6 +3141,9 @@ const appState = () => ({
     const n = this.pipeBriefs.list.length;
     const tabs = [{ id: 'stages', label: 'Stages' }, { id: 'options', label: 'Options' }, { id: 'briefs', label: n ? 'Briefs (' + n + ')' : 'Briefs' }];
     if (this.pipeConfig.shown) tabs.push({ id: 'config', label: 'Server config' });
+    // The workspace's own details, and removing it: root only, like creating one.
+    if (this.pipe.kind === 'workspace' && this.isRoot && this.wsForm.id === this.pipe.id) tabs.push({ id: 'workspace', label: 'Workspace' });
+    if (this.pipe.kind === 'group' && this.isRoot && this.groupForm.id === this.pipe.id) tabs.push({ id: 'group', label: 'Group' });
     return tabs;
   },
   pipeShowTab(id: string) { this.pipe.tab = id; },
@@ -3346,6 +3366,8 @@ const appState = () => ({
       // not close over what one of them has not saved yet.
       if (this.pipeConfigDirty()) { this.pipe.tab = 'config'; this.notify('The server config has unsaved changes: Save config, or Undo changes', 'info'); return; }
       if (this.pipeBriefs.editing) { this.pipe.tab = 'briefs'; this.notify('A brief is still open: Save it, or Cancel', 'info'); return; }
+      if (this.wsDetailsDirty()) { this.pipe.tab = 'workspace'; this.notify('The workspace has unsaved changes: Save workspace, or Close', 'info'); return; }
+      if (this.groupDetailsDirty()) { this.pipe.tab = 'group'; this.notify('The group has unsaved changes: Save group, or Close', 'info'); return; }
       this.pipe.open = false;
     } finally { this.pipe.saving = false; }
   },
@@ -4531,18 +4553,9 @@ const appState = () => ({
   // ---- api keys ----
   wsGroupsOf(id: string): KeyGroup[] { return this.groups.filter((g: KeyGroup) => (g.members || []).indexOf(id) >= 0); },
   openNewWorkspaceModal(selectAfter = false) {
-    this.wsModalMode = 'create';
     this.wsSelectAfterCreate = selectAfter;
     this.formNonce++;
     this.wsForm = { id: '', name: '', git_url: '', groups: [] };
-    this.wsErrors = {};
-    this.showWsModal = true;
-  },
-  openEditWorkspaceModal(ws: WorkspaceRow) {
-    this.wsModalMode = 'edit';
-    this.wsSelectAfterCreate = false;
-    this.formNonce++;
-    this.wsForm = { id: ws.id, name: ws.name || '', git_url: ws.git_url || '', groups: this.wsGroupsOf(ws.id).map((g: KeyGroup) => g.name) };
     this.wsErrors = {};
     this.showWsModal = true;
   },
@@ -4551,7 +4564,6 @@ const appState = () => ({
     this.wsErrors = {};
     const id = this.wsForm.id.trim();
     if (!id) { this.wsErrors.id = 'Workspace ID is required.'; this.focusFirstError(); return; }
-    const creating = this.wsModalMode === 'create';
     this.wsSaving = true;
     try {
       const res = await this.authFetch('/api/workspaces', {
@@ -4559,9 +4571,8 @@ const appState = () => ({
         body: JSON.stringify({ id, name: this.wsForm.name.trim(), git_url: this.wsForm.git_url.trim() }),
       });
       if (!res.ok) { this.wsErrors.id = await this.extractError(res); this.focusFirstError(); return; }
-      // Group allocation is a separate call; skip it for a new workspace
-      // with no groups picked (nothing to set).
-      if (!creating || this.wsForm.groups.length) {
+      // Group allocation is a separate call; skipped with no groups picked.
+      if (this.wsForm.groups.length) {
         const groupsRes = await this.authFetch('/api/workspaces/' + encodeURIComponent(id) + '/groups', {
           method: 'PUT',
           body: JSON.stringify({ groups: this.wsForm.groups }),
@@ -4569,47 +4580,170 @@ const appState = () => ({
         if (!groupsRes.ok) { this.wsErrors.groups = await this.extractError(groupsRes); return; }
       }
       this.showWsModal = false;
-      this.notify(creating ? 'Workspace created' : 'Workspace saved', 'success');
+      this.notify('Workspace created', 'success');
       await this.fetchWorkspaces();
       await this.fetchGroups();
-      if (creating && this.wsSelectAfterCreate) this.setWorkspace(id);
+      if (this.wsSelectAfterCreate) this.setWorkspace(id);
     } finally { this.wsSaving = false; }
   },
+  // ---- workspaces view ----
+  // The list as shown: what the search matches (every word, in the name,
+  // the id or a group's name), starred workspaces first, then by name.
+  wsRows(): { ws: WorkspaceRow; fav: boolean; key: string }[] {
+    const words = this.wsSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const rows = (this.registeredWorkspaces as WorkspaceRow[]).filter((w: WorkspaceRow) => {
+      if (!words.length) return true;
+      const hay = [w.id, w.name || '', ...this.wsGroupsOf(w.id).map((g: KeyGroup) => g.name)].join(' ').toLowerCase();
+      return words.every((word: string) => hay.includes(word));
+    }).map((w: WorkspaceRow) => {
+      const fav = this.wsFavs.includes(w.id);
+      return { ws: w, fav, key: w.id + '|' + (fav ? 'star' : '') + '|' + (w.name || '') };
+    });
+    const name = (w: WorkspaceRow) => (w.name || w.id).toLowerCase();
+    return rows.sort((a, b) => (a.fav === b.fav ? name(a.ws).localeCompare(name(b.ws)) : a.fav ? -1 : 1));
+  },
+  wsCountText(): string {
+    const all = this.registeredWorkspaces.length;
+    if (this.wsSearch.trim()) return this.wsRows().length + ' of ' + all;
+    const stars = (this.registeredWorkspaces as WorkspaceRow[]).filter((w: WorkspaceRow) => this.wsFavs.includes(w.id)).length;
+    return this.plural(all, 'workspace') + (stars ? ', ' + stars + ' starred' : '');
+  },
+  toggleWsFav(id: string) {
+    this.wsFavs = this.wsFavs.includes(id) ? this.wsFavs.filter((f: string) => f !== id) : [...this.wsFavs, id];
+    storeList('skopos:favWorkspaces', this.wsFavs);
+  },
+  // ---- the settings dialog's Workspace tab ----
+  pipeTitle(): string { return (this.pipe.kind === 'group' ? 'Group · ' : 'Workspace · ') + this.pipe.label; },
+  wsLoadDetails(id: string) {
+    const ws = (this.registeredWorkspaces as WorkspaceRow[]).find((w: WorkspaceRow) => w.id === id);
+    this.formNonce++;
+    this.wsForm = ws
+      ? { id: ws.id, name: ws.name || '', git_url: ws.git_url || '', groups: this.wsGroupsOf(ws.id).map((g: KeyGroup) => g.name) }
+      : { id: '', name: '', git_url: '', groups: [] };
+    this.wsErrors = {};
+    this.wsRemove = { armed: false, busy: false };
+    this.wsDetailsWas = this.wsFingerprint();
+  },
+  wsFingerprint(): string {
+    return JSON.stringify([this.wsForm.id, this.wsForm.name.trim(), this.wsForm.git_url.trim(), [...this.wsForm.groups].sort()]);
+  },
+  wsDetailsDirty(): boolean {
+    return this.pipe.open && this.pipe.kind === 'workspace' && this.wsForm.id === this.pipe.id && this.wsFingerprint() !== this.wsDetailsWas;
+  },
+  async saveWorkspaceDetails() {
+    this.wsErrors = {};
+    const id = this.pipe.id;
+    this.wsSaving = true;
+    try {
+      const res = await this.authFetch('/api/workspaces', {
+        method: 'POST',
+        body: JSON.stringify({ id, name: this.wsForm.name.trim(), git_url: this.wsForm.git_url.trim() }),
+      });
+      if (!res.ok) { this.wsErrors.id = await this.extractError(res); return; }
+      const groupsRes = await this.authFetch('/api/workspaces/' + encodeURIComponent(id) + '/groups', {
+        method: 'PUT',
+        body: JSON.stringify({ groups: this.wsForm.groups }),
+      });
+      if (!groupsRes.ok) { this.wsErrors.groups = await this.extractError(groupsRes); return; }
+      this.pipe.label = this.wsForm.name.trim() || id;
+      this.wsDetailsWas = this.wsFingerprint();
+      this.notify('Workspace saved', 'success');
+      await this.fetchWorkspaces();
+      await this.fetchGroups();
+      // Its groups decide what the other tabs inherit: read them again,
+      // unless one of them has changes of its own that are not saved.
+      if (!this.pipeDirty() && !this.pipeConfigDirty() && !this.pipeBriefs.editing) {
+        await this.openPipeline('workspace', id, this.pipe.label);
+        this.pipe.tab = 'workspace';
+      }
+    } finally { this.wsSaving = false; }
+  },
+  armRemoveWorkspace() { this.wsRemove = { armed: true, busy: false }; },
+  disarmRemoveWorkspace() { this.wsRemove = { armed: false, busy: false }; },
+  async removeWorkspace() {
+    const id = this.pipe.id;
+    this.wsRemove = { armed: true, busy: true };
+    try {
+      const res = await this.authFetch('/api/workspaces/' + encodeURIComponent(id), { method: 'DELETE' });
+      if (!await this.handleBad(res, 'Could not remove the workspace')) return;
+      this.wsDetailsWas = this.wsFingerprint();
+      this.closePipeline();
+      if (this.wsFavs.includes(id)) this.toggleWsFav(id);
+      if (this.activeWorkspace === id) this.setWorkspace('');
+      this.notify('Workspace removed', 'success');
+      await this.fetchWorkspaces();
+      await this.fetchGroups();
+    } finally { this.wsRemove = { armed: false, busy: false }; }
+  },
   openNewGroupModal() {
-    this.groupModalMode = 'create';
     this.formNonce++;
     this.groupForm = { id: '', name: '', description: '', patterns: '', members: [] };
     this.groupErrors = {};
     this.showGroupModal = true;
   },
-  openEditGroupModal(g: KeyGroup) {
-    this.groupModalMode = 'edit';
-    this.formNonce++;
-    this.groupForm = { id: g.id, name: g.name, description: g.description || '', patterns: (g.patterns || []).join('\n'), members: [...(g.members || [])] };
-    this.groupErrors = {};
-    this.showGroupModal = true;
-  },
   closeGroupModal() { this.showGroupModal = false; },
-  async saveGroup() {
+  // The group's fields as the server takes them, or nothing with an error
+  // set on the form.
+  groupBody(): string {
     this.groupErrors = {};
-    if (!this.groupForm.name.trim()) { this.groupErrors.name = 'Name is required.'; this.focusFirstError(); return; }
+    if (!this.groupForm.name.trim()) { this.groupErrors.name = 'Name is required.'; return ''; }
+    const patterns = this.groupForm.patterns.split('\n').map((p: string) => p.trim()).filter(Boolean);
+    return JSON.stringify({ name: this.groupForm.name.trim(), description: this.groupForm.description.trim(), patterns, members: this.groupForm.members });
+  },
+  async groupSaveError(res: Response) {
+    if (res.status === 409) this.groupErrors.name = 'A group with that name already exists';
+    else if (res.status === 403) this.groupErrors.form = 'Group management requires the root key';
+    else this.groupErrors.form = (await res.json().catch(() => ({ error: 'Saving the group failed' }))).error;
+  },
+  async saveGroup() {
+    const body = this.groupBody();
+    if (!body) { this.focusFirstError(); return; }
     this.groupSaving = true;
     try {
-      const patterns = this.groupForm.patterns.split('\n').map((p: string) => p.trim()).filter(Boolean);
-      const body = JSON.stringify({ name: this.groupForm.name.trim(), description: this.groupForm.description.trim(), patterns, members: this.groupForm.members });
-      const res = this.groupModalMode === 'create'
-        ? await this.authFetch('/api/groups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
-        : await this.authFetch('/api/groups/' + encodeURIComponent(this.groupForm.id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body });
-      if (!res.ok) {
-        if (res.status === 409) this.groupErrors.name = 'A group with that name already exists';
-        else if (res.status === 403) this.groupErrors.form = 'Group management requires the root key';
-        else this.groupErrors.form = (await res.json().catch(() => ({ error: 'Saving the group failed' }))).error;
-        return;
-      }
+      const res = await this.authFetch('/api/groups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      if (!res.ok) { await this.groupSaveError(res); return; }
       this.showGroupModal = false;
       // Members may have changed: refresh both sides so badges stay honest.
       await this.fetchGroups();
       await this.fetchWorkspaces();
+    } catch { this.groupErrors.form = 'Network error'; } finally { this.groupSaving = false; }
+  },
+  // ---- the settings dialog's Group tab ----
+  groupLoadDetails(id: string) {
+    const g = (this.groups as KeyGroup[]).find((x: KeyGroup) => x.id === id);
+    this.formNonce++;
+    this.groupForm = g
+      ? { id: g.id, name: g.name, description: g.description || '', patterns: (g.patterns || []).join('\n'), members: [...(g.members || [])] }
+      : { id: '', name: '', description: '', patterns: '', members: [] };
+    this.groupErrors = {};
+    this.groupDetailsWas = this.groupFingerprint();
+  },
+  groupFingerprint(): string {
+    const patterns = this.groupForm.patterns.split('\n').map((p: string) => p.trim()).filter(Boolean);
+    return JSON.stringify([this.groupForm.id, this.groupForm.name.trim(), this.groupForm.description.trim(), patterns, [...this.groupForm.members].sort()]);
+  },
+  groupDetailsDirty(): boolean {
+    return this.pipe.open && this.pipe.kind === 'group' && this.groupForm.id === this.pipe.id && this.groupFingerprint() !== this.groupDetailsWas;
+  },
+  async saveGroupDetails() {
+    const body = this.groupBody();
+    if (!body) return;
+    const id = this.pipe.id;
+    this.groupSaving = true;
+    try {
+      const res = await this.authFetch('/api/groups/' + encodeURIComponent(id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body });
+      if (!res.ok) { await this.groupSaveError(res); return; }
+      this.pipe.label = this.groupForm.name.trim();
+      this.groupDetailsWas = this.groupFingerprint();
+      this.notify('Group saved', 'success');
+      await this.fetchGroups();
+      await this.fetchWorkspaces();
+      // Its members decide what the other tabs apply to: read them again,
+      // unless one of them has changes of its own that are not saved.
+      if (!this.pipeDirty() && !this.pipeConfigDirty() && !this.pipeBriefs.editing) {
+        await this.openPipeline('group', id, this.pipe.label);
+        this.pipe.tab = 'group';
+      }
     } catch { this.groupErrors.form = 'Network error'; } finally { this.groupSaving = false; }
   },
   async fetchGroups() {
