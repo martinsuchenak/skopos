@@ -58,6 +58,10 @@ type AgentRun struct {
 	Env map[string]string
 	// MCPConfig is the only MCP source (--strict-mcp-config); empty = none.
 	MCPConfig string
+	// Secrets are the run's secret values (its token, its MCP servers'
+	// credentials): a runner that must put part of the MCP config on its
+	// command line (codex: a server's address) leaves out what holds one.
+	Secrets []string
 	// Wrapper is the operator's argv prefix (placeholders already
 	// expanded); the agent command is appended to it.
 	Wrapper []string

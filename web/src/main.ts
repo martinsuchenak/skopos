@@ -1866,8 +1866,18 @@ const appState = () => ({
     }
     const since = this.runTime(impl);
     const done = this.previewRuns.filter((r: RunRow) => (r.stage === 'review' || r.stage === 'qa') && (r.status === 'succeeded' || r.status === 'failed') && this.runTime(r) >= since);
+    // A stage can run again on the same commit (QA after its question was
+    // answered): only its newest round counts — the newest finished run and,
+    // in a panel, the other members of its group. The runs come newest first.
+    const newest = (stage: string): RunRow[] => {
+      const of = done.filter((r: RunRow) => r.stage === stage);
+      if (!of.length) return of;
+      const group = of[0].group_id;
+      return group ? of.filter((r: RunRow) => r.group_id === group) : [of[0]];
+    };
+    const round = newest('review').concat(newest('qa'));
     // Blocking results first: a blocked step draws its first line red.
-    return done.filter((r: RunRow) => r.status === 'failed').concat(done.filter((r: RunRow) => r.status !== 'failed'));
+    return round.filter((r: RunRow) => r.status === 'failed').concat(round.filter((r: RunRow) => r.status !== 'failed'));
   },
   findingCount(r: RunRow, severity: string): number { return (r.findings || []).filter(f => f.severity === severity).length; },
   // A review passed: it finished and found nothing blocking. A branch review

@@ -103,14 +103,16 @@ func TestRunGetsTheServersItsClaimCarries(t *testing.T) {
 	if got := redact(w, "calling with Bearer "+secret+" and skr_this-run-only-token"); strings.Contains(got, secret) || strings.Contains(got, "skr_this-run-only-token") {
 		t.Fatalf("not redacted: %s", got)
 	}
-	// claude and opencode runs get the file; a runner without MCP gets
-	// nothing — never the operator's file.
-	cfg.RunnerSpecs = map[string]*RunnerSpec{"codex": {Kind: "codex"}}
-	if p, skopos := w.mcpConfigFor(run, "claude"); p != path || !skopos {
-		t.Fatalf("claude: %q %v", p, skopos)
+	// claude, opencode and codex runs get the file; a runner without MCP
+	// gets nothing — never the operator's file.
+	cfg.RunnerSpecs = map[string]*RunnerSpec{"codex": {Kind: "codex"}, "lan": {Kind: "command"}}
+	for _, runner := range []string{"claude", "codex"} {
+		if p, skopos := w.mcpConfigFor(run, runner); p != path || !skopos {
+			t.Fatalf("%s: %q %v", runner, p, skopos)
+		}
 	}
-	if p, skopos := w.mcpConfigFor(run, "codex"); p != "" || skopos {
-		t.Fatalf("codex: %q %v", p, skopos)
+	if p, skopos := w.mcpConfigFor(run, "lan"); p != "" || skopos {
+		t.Fatalf("a runner without MCP: %q %v", p, skopos)
 	}
 	ar := w.agentRun("/wt", "p", "{}", planTools, 0, &Account{Runner: "claude"}, run, "plan")
 	if ar.MCPConfig != path || !slices.Contains(ar.AllowedTools, "mcp__skopos__code_search") {

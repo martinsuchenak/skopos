@@ -293,6 +293,23 @@ env    = { CODEX_HOME = "~/skopos-workers/accounts/codex-1" }   # or CODEX_API_K
   resumes on its own worker and account.
 - **Usage limits** pause the run and mark the account until the reset Codex
   reports.
+- **MCP servers** reach a Codex run as settings on its command line, since
+  its lockdown ignores the login directory's own config:
+  - It gets the skopos tools and the run's **http** servers. A server that
+    is a command is left out of a Codex run, and the run's log says so:
+    Codex would start it outside its sandbox.
+  - A header's value is never on the command line. It is handed over in a
+    variable of the Codex process that the agent's shell does not get.
+  - A server's address is on the command line, so a server whose address
+    carries user info or one of the run's secrets is left out. Keep
+    credentials in headers.
+  - Codex is told which of a server's tools exist for the run: the ones
+    the stage allows, less `mcp_deny`. A deny pattern (`mcp__router__write_*`)
+    works when the stage allows that server's tools by name; with the whole
+    server allowed (`mcp__router`) the server is left out, because Codex
+    takes names, not patterns.
+  - The agent's shell still has no network: it reaches a server only
+    through that server's tools.
 - **Verified on macOS.** The lockdown rests on Codex's sandbox (Seatbelt on
   macOS, its Linux sandbox elsewhere). Run
   `SKOPOS_LIVE_CODEX=1 go test ./internal/worker -run 'Codex.*Lockdown'` on a
@@ -450,7 +467,8 @@ These hold for every runner, regardless of configuration.
     worktree, the clone's git directory and what a shell needs (not the
     temp directories); nothing is writable and the network is off. The
     shell's environment leaves out the account's env and anything named
-    like a credential. The stage allowlist becomes that read-only sandbox, since Codex reads files
+    like a credential. Its MCP servers are only the run's own, passed as
+    settings (see [Codex](#codex)). The stage allowlist becomes that read-only sandbox, since Codex reads files
     through its shell.
   - **Instructions:** reach the agent only through the stage prompt; see
     [Repo knowledge](#repo-knowledge-agentsmd-skills-verification).
@@ -469,7 +487,7 @@ These hold for every runner, regardless of configuration.
 - **MCP servers only from `mcp_config`** (plus skopos itself, with an agent
   key: see [Skopos tools for agent runs](#skopos-tools-for-agent-runs)). Put
   the servers runs may use in a JSON file (`{"mcpServers": {...}}`, Claude
-  Code's shape; opencode gets it translated), point `worker.mcp_config` at
+  Code's shape; opencode and Codex get it translated), point `worker.mcp_config` at
   it, and allowlist their tool prefixes in `mcp_servers`. A workspace whose
   config on the server names its MCP servers gets those instead, with each
   run: see [MCP servers from the server](#mcp-servers-from-the-server).
@@ -500,7 +518,7 @@ CLI can't do its lockdown (for example, an older Claude Code without
 
 ## Skopos tools for agent runs
 
-Claude and opencode runs reach skopos over MCP: the code index, the
+Claude, opencode and Codex runs reach skopos over MCP: the code index, the
 blackboard, and their plan's steps. There is nothing to set up.
 
 **Each run gets its own token.** The server mints it when the worker claims
@@ -578,7 +596,9 @@ What a run gets:
 - **Server instructions:** a capped key's MCP `initialize` answer describes
   only the tools it may call, not the full skopos instructions. A capped key
   sends one request at a time (no JSON-RPC batches).
-- **Codex** runs get no skopos tools (their network is off).
+- **Codex** runs get the same tools and the same token, as settings on
+  their command line instead of a file (see [Codex](#codex)). The token is
+  in a variable of the Codex process, not in an argument.
 - Neither the run token nor an agent key reaches the agent's environment:
   the token lives only in the run's MCP config, and the scrub drops every
   `*_KEY` variable.
@@ -858,7 +878,7 @@ Every run records its **executor**: what contained the agent.
 | Executor | What it is |
 |---|---|
 | `wrapper:<name>:<hash>` | the stage's wrapper, around the agent and the worker's setup and check commands. `<name>` is the profile's name (`repo` for a repo's own `stages` block), or the name of a wrapper the server defines; the hash covers the wrapper's argv |
-| `runner:<kind>` | a runner whose own lockdown is a sandbox: `runner:codex` on macOS, where that lockdown is verified (read-only, confined to the worktree, no network from the shell). Not for the review of an existing branch, whose setup and checks the worker runs outside it |
+| `runner:<kind>` | a runner whose own lockdown is a sandbox: `runner:codex` on macOS, where that lockdown is verified (read-only, confined to the worktree, no network from the shell; Codex itself reaches the run's MCP servers). Not for the review of an existing branch, whose setup and checks the worker runs outside it |
 | `host:<name>` | the worker's host is a container (`contained_by`) |
 | `sandbox:<hash>` | Claude Code's sandbox, turned on by the stage's `settings`; the hash covers the sandbox settings |
 | `local` | nothing but the agent CLI's own lockdown |

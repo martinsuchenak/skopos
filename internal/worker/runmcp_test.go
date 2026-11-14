@@ -73,9 +73,20 @@ func TestRunTokenMCPConfig(t *testing.T) {
 	if w.skoposPrompt(t.Context(), run, &Account{Runner: "claude"}, "main", "b", "plan", "", nil, "") == nil {
 		t.Fatal("the prompt must describe the skopos tools")
 	}
-	// Codex has no MCP: it gets the operator's file and no skopos tools.
-	if codex := w.agentRun("/wt", "p", "{}", reviewTools, 0, &Account{Runner: "codex"}, run, "review"); codex.MCPConfig != op {
-		t.Fatalf("codex: %v", codex.MCPConfig)
+	// A codex run gets the same file (its runner turns it into settings),
+	// the skopos tools and the run's secrets to keep off its command line.
+	codex := w.agentRun("/wt", "p", "{}", reviewTools, 0, &Account{Runner: "codex"}, run, "review")
+	if codex.MCPConfig != path || !slices.Contains(codex.AllowedTools, "mcp__skopos__code_search") || !slices.Contains(codex.Secrets, "skr_this-run-only-token") {
+		t.Fatalf("codex: %v %v %d secrets", codex.MCPConfig, codex.AllowedTools, len(codex.Secrets))
+	}
+	if w.skoposPrompt(t.Context(), run, &Account{Runner: "codex"}, "main", "b", "review", "", nil, "") == nil {
+		t.Fatal("a codex prompt must describe the skopos tools")
+	}
+	// A runner that takes no MCP config gets the operator's file as before
+	// and no skopos tools.
+	w.cfg.RunnerSpecs = map[string]*RunnerSpec{"lan": {Kind: "command"}}
+	if other := w.agentRun("/wt", "p", "{}", reviewTools, 0, &Account{Runner: "lan"}, run, "review"); other.MCPConfig != op || slices.Contains(other.AllowedTools, "mcp__skopos__code_search") {
+		t.Fatalf("a runner without MCP: %v %v", other.MCPConfig, other.AllowedTools)
 	}
 	// The token never reaches the run log.
 	if got := redact(w, "Authorization: Bearer skr_this-run-only-token"); strings.Contains(got, "skr_this-run-only-token") {

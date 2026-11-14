@@ -97,9 +97,10 @@ func TestWriteAgentMCPConfig(t *testing.T) {
 	}
 }
 
-// With an agent key, claude and opencode runs get the run MCP config and
-// their stage's skopos tools (implement also plan_update_item); codex runs
-// get neither, and without an agent key nothing changes.
+// With an agent key, claude, opencode and codex runs get the run MCP config
+// and their stage's skopos tools (implement also plan_update_item); a runner
+// that takes no MCP config gets neither, and without an agent key nothing
+// changes.
 func TestAgentRunGetsSkoposTools(t *testing.T) {
 	w := New(&Config{StateDir: t.TempDir(), MCPConfig: "/op.json"}, nil, slog.New(slog.DiscardHandler))
 	run := &Run{ID: "r1", WorkspaceID: "ws"}
@@ -126,11 +127,17 @@ func TestAgentRunGetsSkoposTools(t *testing.T) {
 		t.Fatalf("renamed claude runner: %v %v", renamed.MCPConfig, renamed.AllowedTools)
 	}
 	codex := w.agentRun("/wt", "p", "{}", reviewTools, 0, &Account{Runner: "codex"}, run, "review")
-	if codex.MCPConfig != "/op.json" || slices.ContainsFunc(codex.AllowedTools, func(s string) bool { return strings.HasPrefix(s, "mcp__skopos__") }) {
+	if codex.MCPConfig != "/state/agent-mcp.json" || !slices.Contains(codex.AllowedTools, "mcp__skopos__code_search") {
 		t.Fatalf("codex: %+v", codex)
 	}
-	if w.skoposPrompt(t.Context(), run, &Account{Runner: "codex"}, "main", "b", "review", "", nil, "") != nil {
-		t.Fatal("codex prompts get no skopos section")
+	// A runner that takes no MCP config (a command runner) gets neither.
+	w.cfg.RunnerSpecs["lan"] = &RunnerSpec{Kind: "command"}
+	other := w.agentRun("/wt", "p", "{}", reviewTools, 0, &Account{Runner: "lan"}, run, "review")
+	if other.MCPConfig != "/op.json" || slices.ContainsFunc(other.AllowedTools, func(s string) bool { return strings.HasPrefix(s, "mcp__skopos__") }) {
+		t.Fatalf("a runner without MCP: %+v", other)
+	}
+	if w.skoposPrompt(t.Context(), run, &Account{Runner: "lan"}, "main", "b", "review", "", nil, "") != nil {
+		t.Fatal("a runner without MCP gets no skopos section")
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,6 +34,7 @@ import (
 //   - skills.include_instructions=false and the disabled features below: no
 //     skill listings (CODEX_HOME/skills, the repo's .codex / .agents
 //     skills), plugins, apps, hooks or browser/computer use;
+//   - MCP servers: only the run's own, passed with -c (runner_codex_mcp.go);
 //   - a permission profile: reads only from :minimal (what a shell needs,
 //     minus the temp directories), the worktree, the clone's git directory
 //     and codex's own install; no writes; network off; approval_policy never (no escalation). Files
@@ -182,6 +184,27 @@ func (c codexRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 
+	// The run's MCP servers (runner_codex_mcp.go). Header values travel in
+	// variables of the codex process: they join the run's env here, before
+	// the lockdown lists what the agent's shell must not get.
+	var mcpArgs []string
+	if r.MCPConfig != "" {
+		plan, err := codexMCP(r.MCPConfig, r.AllowedTools, settingsDeny(r.Settings), r.Secrets)
+		if err != nil {
+			return AgentResult{Outcome: OutcomeError, Detail: err.Error()}
+		}
+		for _, note := range plan.Notes {
+			runLogFrom(ctx).notef("%s", note)
+		}
+		if len(plan.Env) > 0 {
+			env := make(map[string]string, len(r.Env)+len(plan.Env))
+			maps.Copy(env, r.Env)
+			maps.Copy(env, plan.Env)
+			r.Env = env
+		}
+		mcpArgs = plan.Args
+	}
+
 	args := []string{"exec"}
 	if r.Resume && r.SessionID != "" {
 		args = append(args, "resume") // resume has no --cd: the process cwd is the worktree
@@ -189,6 +212,7 @@ func (c codexRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 		args = append(args, "--cd", r.Dir)
 	}
 	args = append(args, codexLockdownArgs(ctx, c.bin, r)...)
+	args = append(args, mcpArgs...)
 	if r.Model != "" {
 		args = append(args, "-m", r.Model)
 	}

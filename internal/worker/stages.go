@@ -1120,7 +1120,7 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 	if err != nil {
 		return err
 	}
-	log.Info("reviewing", "account", account.Name, "stage", run.Stage, "branch", run.Branch)
+	log.Info("reviewing", "account", account.Name, "branch", run.Branch)
 	res := w.runAgent(ctx, w.agentRun(wt, prompt, schema, reviewTools, timeout, account, run, phase))
 	w.addCost(run, res)
 	if err := w.handleAgentOutcome(ctx, run, res, account, phase); err != nil {

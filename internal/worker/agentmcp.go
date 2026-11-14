@@ -62,13 +62,23 @@ func skoposTools(phase string) []string {
 	return out
 }
 
-// runnerHasSkopos reports whether a runner gets the skopos MCP server, by
-// its kind (a runner named "claude-max" with kind = "claude" does): claude
-// and opencode load the run's MCP config; codex runs with the network off
-// and no MCP (read-only stages, design §2).
+// runnerHasSkopos reports whether a runner gets the run's MCP config — the
+// skopos server and the run's other servers — by its kind (a runner named
+// "claude-max" with kind = "claude" does): claude and opencode load the
+// file, codex is given its http servers on the command line
+// (runner_codex_mcp.go).
 func (c *Config) runnerHasSkopos(runner string) bool {
 	_, kind := c.runnerSpec(runner)
-	return kind == "claude" || kind == "opencode"
+	return kind == "claude" || kind == "opencode" || kind == "codex"
+}
+
+// secretsOf are the secret values of the run in hand: its token and its MCP
+// servers' credentials (nil for another run).
+func (w *Worker) secretsOf(run *Run) []string {
+	if w.tokenRun == "" || w.tokenRun != run.ID {
+		return nil
+	}
+	return slices.Clone(w.runSecrets)
 }
 
 // whoamiAnswer is what GET /api/whoami says about a key.
@@ -431,7 +441,7 @@ func (w *Worker) mcpFor(run *Run) string {
 // runner, and whether it carries the skopos tools.
 //
 //   - The server holds the run's MCP servers: the run's own file, for a
-//     runner that takes one (claude, opencode), or nothing. Never the
+//     runner that takes one (claude, opencode, codex), or nothing. Never the
 //     operator's mcp_config — also when the run's file could not be
 //     written.
 //   - Otherwise: the run's own file (skopos plus the operator's servers),
@@ -477,7 +487,7 @@ func (w *Worker) freshRunMCP() bool {
 	return true
 }
 
-// EnableAgentMCP gives every run of a claude or opencode agent that came
+// EnableAgentMCP gives every run of a claude, opencode or codex agent that came
 // without a run token the MCP config at path (WriteAgentMCPConfig) and the
 // skopos tools of its stage.
 // refresh, when set, rewrites the file before each run (a srv+ server URL:
@@ -487,7 +497,7 @@ func (w *Worker) EnableAgentMCP(path string, refresh func() error) {
 }
 
 // skoposPrompt is what a stage prompt says about skopos: nil when the run
-// has no skopos tools (no run token and no agent key, or a codex run). branch is the item
+// has no skopos tools (no run token and no agent key, or a runner that takes none). branch is the item
 // branch; head is the commit a review stage reviews ("" for plan and
 // implement); planID and steps let implement mark its steps.
 //

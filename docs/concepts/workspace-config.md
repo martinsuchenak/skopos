@@ -361,8 +361,11 @@ skopos group config set --group acme \
   longer holds, a `command` server for a worker without
   `server_commands = true`, a `${NAME}` the worker does not declare. The
   worker's own `mcp_config` never takes its place.
-- **claude and opencode runs get them.** A runner that takes no MCP
-  servers (codex) gets none.
+- **claude, opencode and codex runs get them.** A codex run gets the http
+  servers only: a `command` server is left out of it, and so is a server
+  whose address carries a secret (see the worker reference's
+  [Codex](../deployment/worker.md#codex) section). A runner that takes no
+  MCP servers (antigravity, a `command` runner) gets none.
 - **A worker older than this feature gets no runs of a workspace whose
   config sets `mcp`,** and shows as unhealthy for it until it upgrades.
 - **A secret is for the server it was set for.** Changing an http server's

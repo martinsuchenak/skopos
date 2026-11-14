@@ -738,6 +738,7 @@ func (w *Worker) agentRun(dir, prompt, schema string, tools []string, timeout ti
 		Env:       account.Env,
 		TokenEnvs: w.cfg.TokenEnvs(),
 		MCPConfig: mcpConfig,
+		Secrets:   w.secretsOf(run),
 
 		FileEnvKeys:   w.envFileKeys,
 		TempDir:       w.cfg.runTempDir(run.ID),

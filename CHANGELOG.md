@@ -8,6 +8,19 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Codex runs get the skopos tools and the run's MCP servers.** A Codex
+  planner or reviewer can read the code index and the blackboard, record
+  findings, and call the http MCP servers of its run: the worker's
+  `mcp_config` or the ones the server holds for the workspace.
+  - **http servers only.** A `command` server is left out of a Codex run,
+    and the run's log says so.
+  - **Header values are never on the command line.** A server's address
+    is, so a server whose address carries user info or one of the run's
+    secrets is left out.
+  - **Only the tools the stage allows exist for the run,** less `mcp_deny`.
+    A deny pattern needs that server's tools allowed by name.
+  - The agent's shell is as before: no network, none of those variables.
+  See the worker reference's Codex section.
 - **MCP servers are managed in the dashboard.** Workspaces → MCP servers
   for runs lists the definitions for admins, with whether each secret is
   set and which configs name the server, and creates, edits and deletes
@@ -543,6 +556,7 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The worker's `reviewing` log line carried the `stage` field twice.**
 - **A report whose worker stopped waiting left the item where it was.**
   When a worker gave up on a report after the server had recorded it (its
   timeout, a restart), the next stage was not queued and the item did not

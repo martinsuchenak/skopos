@@ -2,10 +2,16 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -168,7 +174,11 @@ func TestCodexLockdownProbe(t *testing.T) {
 // worktree). SKOPOS_LIVE_CODEX_MODEL picks the model (default: codex's).
 // Same claims as the claude and opencode live tests, for a read-only stage:
 // no AGENTS.md, nothing outside the worktree, no account env in the shell,
-// no network, native structured output, and a resumed session.
+// no network, native structured output, and a resumed session. And the
+// run's MCP servers (runner_codex_mcp.go): an allowed tool runs with the
+// server's headers, a tool outside the stage's list or on the deny list is
+// never called, a command server is never started, and no header value
+// reaches the shell or the log.
 func TestLiveCodexLockdown(t *testing.T) {
 	if os.Getenv("SKOPOS_LIVE_CODEX") != "1" {
 		t.Skip("set SKOPOS_LIVE_CODEX=1 to run against the real codex CLI")
@@ -225,4 +235,143 @@ func TestLiveCodexLockdown(t *testing.T) {
 	if len(again.Structured) == 0 || again.SessionID != res.SessionID {
 		t.Errorf("the session must resume: %q %q→%q", again.Structured, res.SessionID, again.SessionID)
 	}
+
+	// MCP servers (runner_codex_mcp.go). The run's file names two http
+	// servers and a command; the stage allows one tool of the first, all of
+	// the second but one, and the command's.
+	mcp := &liveMCPServer{}
+	srv := httptest.NewServer(mcp)
+	defer srv.Close()
+	outside := filepath.Dir(outsideEnv)
+	marker := filepath.Join(outside, "command-server-started")
+	script := filepath.Join(outside, "server.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ntouch "+marker+"\ncat >/dev/null\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfgFile := filepath.Join(outside, "mcp.json")
+	cfg, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{
+		"probe": map[string]any{"type": "http", "url": srv.URL + "/probe", "headers": map[string]string{"Authorization": "Bearer hdr-cred-93", "X-Probe": "hdr-cred-94"}},
+		"open":  map[string]any{"type": "http", "url": srv.URL + "/open"},
+		"cmd":   map[string]any{"command": script},
+		// A server that does not answer must not cost the run its turn.
+		"down": map[string]any{"type": "http", "url": "http://127.0.0.1:9/mcp"},
+	}})
+	if err := os.WriteFile(cfgFile, cfg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logFile := filepath.Join(logs, "mcp.log")
+	withMCP := cx.Run(context.Background(), AgentRun{
+		Dir: wt, Model: os.Getenv("SKOPOS_LIVE_CODEX_MODEL"),
+		Prompt: "This is a tool check. Do each step and report its result on its own line.\n" +
+			"1. Call the MCP tool probe_echo with text \"ping-123\" and report exactly what it returned.\n" +
+			"2. Call the MCP tool safe with text \"ok-456\" and report exactly what it returned.\n" +
+			"3. If you have a tool named probe_write, call it with text \"x\". If you have a tool named danger, call it with text \"x\". Say which of the two you have.\n" +
+			"4. Run `printenv | grep -c SKOPOS_MCP; printenv SKOPOS_MCP_SECRET_0; echo shell-done` and report its exact output.\n",
+		AllowedTools: append(slices.Clone(reviewTools), "mcp__probe__probe_echo", "mcp__open", "mcp__cmd", "mcp__down"),
+		Settings:     `{"permissions":{"deny":["mcp__open__danger"]}}`,
+		MCPConfig:    cfgFile,
+		Env:          map[string]string{"CODEX_HOME": login},
+		Timeout:      10 * time.Minute, LogFile: logFile,
+	})
+	raw, _ := os.ReadFile(logFile)
+	if withMCP.Outcome != OutcomeOK {
+		t.Fatalf("the run with MCP servers: %s %s\n%s", withMCP.Outcome, withMCP.Detail, raw)
+	}
+	t.Logf("mcp run: %.400s", withMCP.Text)
+	saw := mcp.seen()
+	t.Logf("the servers saw: %v", saw)
+	has := func(want string) bool {
+		return slices.ContainsFunc(saw, func(l string) bool { return strings.Contains(l, want) })
+	}
+	// The control: the servers offered the tools the run must not get.
+	if !has("/probe tools/list") || !has("/open tools/list") {
+		t.Fatalf("control: codex never listed the servers' tools: %v", saw)
+	}
+	if !has(`/probe tools/call probe_echo "ping-123" auth="Bearer hdr-cred-93" x-probe="hdr-cred-94"`) {
+		t.Errorf("an allowed tool must run, with the server's headers: %v", saw)
+	}
+	if !has(`/open tools/call safe "ok-456"`) {
+		t.Errorf("a tool of a server allowed as a whole must run: %v", saw)
+	}
+	if has("tools/call probe_write") || has("tools/call danger") {
+		t.Errorf("a tool outside the stage's list, or a denied one, was called: %v", saw)
+	}
+	if !strings.Contains(withMCP.Text, "echo:ping-123") || !strings.Contains(withMCP.Text, "echo:ok-456") {
+		t.Errorf("the tools' results must reach the model: %q", withMCP.Text)
+	}
+	for _, secret := range []string{"hdr-cred-93", "hdr-cred-94"} {
+		if strings.Contains(withMCP.Text, secret) || strings.Contains(string(raw), secret) {
+			t.Errorf("a header value reached the agent's shell or the run's log: %s", secret)
+		}
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Errorf("a command server was started for a codex run")
+	}
+}
+
+// liveMCPServer is a minimal streamable-http MCP server: /probe offers
+// probe_echo and probe_write, /open offers safe and danger. It records what
+// it was asked, with the headers of each tool call.
+type liveMCPServer struct {
+	mu  sync.Mutex
+	log []string
+}
+
+func (s *liveMCPServer) seen() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.log)
+}
+
+func (s *liveMCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+		Params struct {
+			ProtocolVersion string `json:"protocolVersion"`
+			Name            string `json:"name"`
+			Arguments       struct {
+				Text string `json:"text"`
+			} `json:"arguments"`
+		} `json:"params"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	note := r.URL.Path + " " + req.Method
+	if req.Method == "tools/call" {
+		note += fmt.Sprintf(" %s %q auth=%q x-probe=%q", req.Params.Name, req.Params.Arguments.Text, r.Header.Get("Authorization"), r.Header.Get("X-Probe"))
+	}
+	s.mu.Lock()
+	s.log = append(s.log, note)
+	s.mu.Unlock()
+	if len(req.ID) == 0 {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	tool := func(name string) map[string]any {
+		return map[string]any{"name": name, "description": "Returns the text it is given, prefixed with echo:", "inputSchema": map[string]any{
+			"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}, "required": []string{"text"}}}
+	}
+	var result any = map[string]any{}
+	switch req.Method {
+	case "initialize":
+		result = map[string]any{"protocolVersion": req.Params.ProtocolVersion, "capabilities": map[string]any{"tools": map[string]any{}},
+			"serverInfo": map[string]any{"name": "probe", "version": "0"}}
+	case "tools/list":
+		if r.URL.Path == "/open" {
+			result = map[string]any{"tools": []any{tool("safe"), tool("danger")}}
+		} else {
+			result = map[string]any{"tools": []any{tool("probe_echo"), tool("probe_write")}}
+		}
+	case "tools/call":
+		result = map[string]any{"content": []any{map[string]any{"type": "text", "text": "echo:" + req.Params.Arguments.Text}}}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
 }
