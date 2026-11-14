@@ -39,7 +39,7 @@ func TestIntegrationSecondOpinionRoundTrip(t *testing.T) {
 	planID := plan["id"].(string)
 	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/items", `{"title":"step"}`), 201)
 	mustDo(t, worker.req("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+planID+`"}`), 200)
-	revID := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"d2ce73d"}`), 201).(map[string]any)["id"].(string)
+	revID := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"0a1b2c3"}`), 201).(map[string]any)["id"].(string)
 	mustDo(t, worker.reqH("POST", "/api/runs/"+run["id"].(string)+"/report", `{"worker_id":"w1","status":"succeeded","summary":"plan ready","branch":"agent/so"}`, leases[run["id"].(string)]), 200)
 	// Asking before the review exists is refused.
 	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/second-opinion", `{"runner":"codex"}`), 400, "before review")

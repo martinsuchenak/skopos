@@ -696,7 +696,7 @@ branch_template = "{ref}-{slug}"    # default "{prefix}{tail}-{slug}"
 
 - **Placeholders:** `{prefix}` (`branch_prefix`), `{tail}` (the item id's
   tail), `{slug}` (the title, lowercase with dashes, at most 30 characters)
-  and `{ref}` (the item's **Reference** field, e.g. `JOB203345`). A template
+  and `{ref}` (the item's **Reference** field, e.g. `JOB100234`). A template
   needs `{tail}` or `{ref}`, so two items never share a branch.
 - **A template with `{ref}`** stops an item without a reference at planning
   with "set the item's reference".
@@ -715,7 +715,7 @@ branch_template = "{ref}-{slug}"    # default "{prefix}{tail}-{slug}"
   something nobody approved. The review covers the whole branch and is told
   which commits were already there.
 - **Other branches start with the template's text before `{slug}`**
-  (`JOB203345-api`, `JOB203345-ui`) and none matches exactly: the item stops
+  (`JOB100234-api`, `JOB100234-ui`) and none matches exactly: the item stops
   with a question listing them. Set its Branch field to the one to continue,
   or to a new name, and retry.
 - **Nothing matches:** a new branch, as before.
@@ -1496,17 +1496,16 @@ shell's. A `SKOPOS_API_KEY` exported in your shell doesn't count.
 macOS gates processes that connect to LAN-private addresses, and
 launchd-spawned processes cannot show the consent prompt. A worker against a
 public HTTPS endpoint is unaffected. If your skopos server resolves to a LAN
-address (a split-horizon domain counts), know the hard-won lessons from the
-agent-trial predecessor:
+address (a split-horizon domain counts), know this:
 
 - **Every upgrade resets it.** The permission attaches to the exact binary,
   and each Homebrew Cask version is a new file. After `brew upgrade`, the
   service silently fails to connect until you re-grant it in System Settings
   → Privacy & Security → Local Network.
-- **A bare CLI binary sometimes never gets the grant.** agent-trial ended up
-  with a small, stable **launcher** binary (embedded Info.plist, ad-hoc
-  codesigned, never rebuilt) that holds the permission and execs the real
-  binary. That pattern applies here too if you hit it.
+- **A bare CLI binary sometimes never gets the grant.** A small, stable
+  **launcher** binary (embedded Info.plist, ad-hoc codesigned, never
+  rebuilt) that holds the permission and execs the real binary gets
+  around it.
 
 The robust setups, in order:
 1. Run workers on Linux VMs against the public endpoint.

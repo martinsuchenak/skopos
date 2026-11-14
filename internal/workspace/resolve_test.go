@@ -3,24 +3,24 @@ package workspace
 import "testing"
 
 func TestNormalizeSSH(t *testing.T) {
-	got := Normalize("git@github.com:martinsuchenak/skopos.git")
-	want := "github.com/martinsuchenak/skopos"
+	got := Normalize("git@github.com:globex/shop.git")
+	want := "github.com/globex/shop"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
 func TestNormalizeHTTPS(t *testing.T) {
-	got := Normalize("https://github.com/martinsuchenak/skopos.git")
-	want := "github.com/martinsuchenak/skopos"
+	got := Normalize("https://github.com/globex/shop.git")
+	want := "github.com/globex/shop"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
 func TestNormalizeSSHProtocol(t *testing.T) {
-	got := Normalize("ssh://git@github.com/martinsuchenak/skopos")
-	want := "github.com/martinsuchenak/skopos"
+	got := Normalize("ssh://git@github.com/globex/shop")
+	want := "github.com/globex/shop"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -35,40 +35,40 @@ func TestNormalizeGitLabSubgroup(t *testing.T) {
 }
 
 func TestNormalizeNoGitSuffix(t *testing.T) {
-	got := Normalize("https://github.com/martinsuchenak/skopos")
-	want := "github.com/martinsuchenak/skopos"
+	got := Normalize("https://github.com/globex/shop")
+	want := "github.com/globex/shop"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
 func TestNormalizeTrailingSlash(t *testing.T) {
-	got := Normalize("https://github.com/martinsuchenak/skopos.git/")
-	want := "github.com/martinsuchenak/skopos"
+	got := Normalize("https://github.com/globex/shop.git/")
+	want := "github.com/globex/shop"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
 func TestNormalizeUpperCase(t *testing.T) {
-	got := Normalize("https://GitHub.com/MartinSuchenak/Skopos.git")
-	want := "github.com/martinsuchenak/skopos"
+	got := Normalize("https://GitHub.com/Globex/Shop.git")
+	want := "github.com/globex/shop"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
 func TestNormalizeWhitespace(t *testing.T) {
-	got := Normalize("  git@github.com:martinsuchenak/skopos.git  ")
-	want := "github.com/martinsuchenak/skopos"
+	got := Normalize("  git@github.com:globex/shop.git  ")
+	want := "github.com/globex/shop"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
 func TestNormalizeHTTP(t *testing.T) {
-	got := Normalize("http://github.com/martinsuchenak/skopos.git")
-	want := "github.com/martinsuchenak/skopos"
+	got := Normalize("http://github.com/globex/shop.git")
+	want := "github.com/globex/shop"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

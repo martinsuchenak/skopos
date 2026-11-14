@@ -61,3 +61,5 @@ docs/integrations/agent-builder/build/
 # local files
 tmp/
 .local/
+# Playwright MCP session output
+.playwright-mcp/

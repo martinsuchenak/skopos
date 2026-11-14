@@ -63,8 +63,7 @@ func TestNormalizeBranch(t *testing.T) {
 	}
 }
 
-// Outcome classification: quota vs transient vs auth from raw text (the
-// same classifier that kept agent-trial's quota handling honest).
+// Outcome classification: quota vs transient vs auth from raw text.
 func TestClassifyText(t *testing.T) {
 	cases := []struct {
 		text string

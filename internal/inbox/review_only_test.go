@@ -46,7 +46,7 @@ func mustCreateOnBranch(t *testing.T, svc *Service, title, branch, ref string) *
 }
 
 func TestBranchAndRefValidation(t *testing.T) {
-	for _, ok := range []string{"", "JOB203345-some-feature", "feature/x.y_z", "agent/7614a51fea45-csv"} {
+	for _, ok := range []string{"", "JOB100234-some-feature", "feature/x.y_z", "agent/7614a51fea45-csv"} {
 		if _, err := NormalizeBranch(ok); err != nil {
 			t.Errorf("NormalizeBranch(%q): %v", ok, err)
 		}
@@ -56,12 +56,12 @@ func TestBranchAndRefValidation(t *testing.T) {
 			t.Errorf("NormalizeBranch(%q) = %v, want invalid", bad, err)
 		}
 	}
-	for _, ok := range []string{"", "JOB203345", "JIRA-12", "v1.2"} {
+	for _, ok := range []string{"", "JOB100234", "JIRA-12", "v1.2"} {
 		if _, err := NormalizeRef(ok); err != nil {
 			t.Errorf("NormalizeRef(%q): %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"WR/1", "-x", "a..b", "a b", strings.Repeat("a", 41)} {
+	for _, bad := range []string{"JOB/1", "-x", "a..b", "a b", strings.Repeat("a", 41)} {
 		if _, err := NormalizeRef(bad); !errors.Is(err, ErrInvalidInput) {
 			t.Errorf("NormalizeRef(%q) = %v, want invalid", bad, err)
 		}

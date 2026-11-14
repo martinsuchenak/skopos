@@ -22,7 +22,7 @@ func TestCreateAndStart(t *testing.T) {
 	svc.SetRunQueuer(q)
 	in := func(start string) CreateInput {
 		return CreateInput{WorkspaceID: "ws-a", Title: "job", Content: "do it", AuthorAgentID: "globex",
-			Ref: "JOB110375", ExternalURL: "https://jobs.example.com/job/110375", Start: start}
+			Ref: "JOB100235", ExternalURL: "https://jobs.example.com/job/100235", Start: start}
 	}
 
 	// Refused before the item exists.
@@ -44,7 +44,7 @@ func TestCreateAndStart(t *testing.T) {
 			t.Errorf("external_url %q: %v", bad, err)
 		}
 	}
-	if items, _ := svc.ListItemsFilter(context.Background(), ListFilter{Ref: "JOB110375"}); len(items) != 0 {
+	if items, _ := svc.ListItemsFilter(context.Background(), ListFilter{Ref: "JOB100235"}); len(items) != 0 {
 		t.Fatalf("refused creates left %d items", len(items))
 	}
 
@@ -52,7 +52,7 @@ func TestCreateAndStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if queued.Status != StatusQueued || queued.StartError != "" || queued.ExternalURL != "https://jobs.example.com/job/110375" {
+	if queued.Status != StatusQueued || queued.StartError != "" || queued.ExternalURL != "https://jobs.example.com/job/100235" {
 		t.Fatalf("queued: %+v", queued)
 	}
 	if q.last() == "" {
@@ -71,14 +71,14 @@ func TestCreateAndStart(t *testing.T) {
 	}
 
 	// Found by ref, in any status, within the caller's scope.
-	items, err := svc.ListItemsFilter(agentCtx(), ListFilter{Ref: "JOB110375"})
+	items, err := svc.ListItemsFilter(agentCtx(), ListFilter{Ref: "JOB100235"})
 	if err != nil || len(items) != 3 {
 		t.Fatalf("by ref: %d %v", len(items), err)
 	}
 	if items, _ := svc.ListItemsFilter(agentCtx(), ListFilter{Ref: "JOB1"}); len(items) != 0 {
 		t.Fatalf("ref is an exact match: %d", len(items))
 	}
-	if items, _ := svc.ListItemsFilter(agentCtx(), ListFilter{Ref: "JOB110375", Status: "queued"}); len(items) != 2 {
+	if items, _ := svc.ListItemsFilter(agentCtx(), ListFilter{Ref: "JOB100235", Status: "queued"}); len(items) != 2 {
 		t.Fatalf("by ref and status: %d", len(items))
 	}
 

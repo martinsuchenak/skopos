@@ -607,8 +607,7 @@ func uninstallLaunchd(o installOptions, home string) ([]string, error) {
 	return actions, nil
 }
 
-// launchdPlist is the LaunchAgent definition, modeled on the production-proven
-// agent-trial plist: KeepAlive with a throttle (a broken config must not
+// launchdPlist is the LaunchAgent definition: KeepAlive with a throttle (a broken config must not
 // spin), Background priority, children die via the daemon's own context
 // (AbandonProcessGroup). All values are XML-escaped.
 func launchdPlist(label, exe, configPath, envFile, stateDir, pathEnv string, disabled bool) string {

@@ -237,7 +237,7 @@ func (h *Handler) Approvals(w http.ResponseWriter, r *http.Request) {
 }
 
 // Transition is the executor's system path (worker keys; scope-checked, not
-// approver-gated). In 1a agent-trial calls this; in 1b the worker does.
+// approver-gated). The worker calls it.
 func (h *Handler) Transition(w http.ResponseWriter, r *http.Request) {
 	if !h.authorized(r) {
 		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
@@ -333,31 +333,4 @@ func (h *Handler) Timeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rest.RespondJSON(w, http.StatusOK, entries)
-}
-
-type migrateRequest struct {
-	WorkspaceID string        `json:"workspace_id"`
-	DryRun      bool          `json:"dry_run"`
-	Links       []MigrateLink `json:"links"`
-}
-
-// MigrateWorkflow handles POST /api/inbox/migrate-workflow: the one-time
-// agent-trial tag→status migration (root-only).
-func (h *Handler) MigrateWorkflow(w http.ResponseWriter, r *http.Request) {
-	if !h.authorized(r) {
-		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-	var req migrateRequest
-	_ = rest.DecodeJSON(w, r, &req)
-	report, err := h.service.MigrateWorkflow(r.Context(), MigrateInput(req))
-	if err != nil {
-		if errors.Is(err, auth.ErrRootRequired) {
-			rest.RespondError(w, http.StatusForbidden, err.Error())
-			return
-		}
-		rest.InternalError(w, err)
-		return
-	}
-	rest.RespondJSON(w, http.StatusOK, report)
 }

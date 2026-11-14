@@ -132,7 +132,7 @@ func IsCommandField(name string) bool {
 }
 
 // DefaultProtected are the branches no run pushes to when none are set.
-var DefaultProtected = []string{"PROD", "main", "master", "develop", "release/**", "hotfix/**"}
+var DefaultProtected = []string{"main", "master", "develop", "release/**", "hotfix/**"}
 
 // Defaults is the value of every field nothing sets. A managed workspace
 // gets these, never the local file's values.

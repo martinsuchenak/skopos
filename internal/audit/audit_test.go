@@ -42,7 +42,7 @@ func TestRecordDerivesActor(t *testing.T) {
 	}
 	// Scoped keys render with their name and keep the raw key id.
 	keyCtx := auth.WithPrincipal(ctx, &auth.Principal{KeyID: "k1", Name: "relay", Workspaces: map[string]struct{}{"ws": {}}})
-	if err := svc.Record(keyCtx, RecordInput{EntityType: "inbox_item", EntityID: "i1", Action: "inbox.approve", Via: ViaSlack, Notes: "wr=108900"}); err != nil {
+	if err := svc.Record(keyCtx, RecordInput{EntityType: "inbox_item", EntityID: "i1", Action: "inbox.approve", Via: ViaSlack, Notes: "job=100236"}); err != nil {
 		t.Fatal(err)
 	}
 	// Agent-driven mutations render the agent.

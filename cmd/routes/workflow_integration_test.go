@@ -122,7 +122,7 @@ func TestIntegrationWorkflowRoundTrip(t *testing.T) {
 	}
 	mustStatus(t, worker.do("POST", "/api/plans/"+plan.ID+"/items", `{"title":"step 1"}`), 201, "add step")
 	mustStatus(t, worker.do("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+plan.ID+`"}`), 200, "link plan")
-	revResp := mustStatus(t, worker.do("POST", "/api/plans/"+plan.ID+"/revisions", `{"base_sha":"d2ce73dfdd1"}`), 201, "snapshot revision")
+	revResp := mustStatus(t, worker.do("POST", "/api/plans/"+plan.ID+"/revisions", `{"base_sha":"0a1b2c3d4e5"}`), 201, "snapshot revision")
 	var rev struct {
 		ID string `json:"id"`
 	}
@@ -134,7 +134,7 @@ func TestIntegrationWorkflowRoundTrip(t *testing.T) {
 	mustStatus(t, worker.do("POST", "/api/inbox/"+itemID+"/transition", `{"to":"awaiting_approval","via":"worker"}`), 200, "awaiting approval")
 
 	// Approve with overrides: revision locks, approval records.
-	mustStatus(t, approver.do("POST", "/api/inbox/"+itemID+"/approve", `{"notes":"wr=108900","revision_id":"`+rev.ID+`"}`), 200, "approve")
+	mustStatus(t, approver.do("POST", "/api/inbox/"+itemID+"/approve", `{"notes":"job=100236","revision_id":"`+rev.ID+`"}`), 200, "approve")
 
 	// The plan is locked content now: the worker cannot add steps.
 	if w := worker.do("POST", "/api/plans/"+plan.ID+"/items", `{"title":"sneak"}`); w.StatusCode != 409 || !strings.Contains(w.Body.String(), "locked") {
@@ -152,7 +152,7 @@ func TestIntegrationWorkflowRoundTrip(t *testing.T) {
 	}
 	ap := mustStatus(t, root.do("GET", "/api/inbox/"+itemID+"/approvals", ""), 200, "approvals")
 	body := ap.Body.String()
-	if !strings.Contains(body, `"gate":"plan"`) || !strings.Contains(body, rev.ID+"+d2ce73dfdd1") {
+	if !strings.Contains(body, `"gate":"plan"`) || !strings.Contains(body, rev.ID+"+0a1b2c3d4e5") {
 		t.Fatalf("plan approval missing or wrong subject: %s", body)
 	}
 	if !strings.Contains(body, `"gate":"review"`) || !strings.Contains(body, "abc123") {
@@ -222,34 +222,4 @@ func mustStatus(t *testing.T, r *httpResponse, want int, what string) *httpRespo
 		t.Fatalf("%s: expected %d, got %d: %s", what, want, r.StatusCode, r.Body.String())
 	}
 	return r
-}
-
-// Migration dry-run over REST on a seeded trial-tagged item set.
-func TestIntegrationMigrationDryRun(t *testing.T) {
-	ts := workflowIntegrationSetup(t)
-	root := bearerClient{ts, "root-secret"}
-	mustStatus(t, root.do("POST", "/api/workspaces", `{"id":"ws-a","name":"a"}`), 201, "workspace")
-
-	// Capture the item in the migration's workspace (createItem defaults to
-	// another workspace).
-	created := mustStatus(t, root.do("POST", "/api/inbox", `{"workspace_id":"ws-a","title":"trial item","author_agent_id":"agent-trial"}`), 201, "create item")
-	var item struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(created.Body.Bytes(), &item); err != nil {
-		t.Fatal(err)
-	}
-	ready := item.ID
-	// Tag it like the trial would.
-	mustStatus(t, root.do("PATCH", "/api/inbox/"+ready, `{"tags":["ready"]}`), 204, "tag ready")
-
-	dry := mustStatus(t, root.do("POST", "/api/inbox/migrate-workflow", `{"workspace_id":"ws-a","dry_run":true}`), 200, "dry run")
-	if !strings.Contains(dry.Body.String(), `"ready"`) {
-		t.Fatalf("dry run must report the ready item: %s", dry.Body.String())
-	}
-	// Nothing written.
-	got := mustStatus(t, root.do("GET", "/api/inbox/"+ready, ""), 200, "get item")
-	if !strings.Contains(got.Body.String(), `"status":"open"`) {
-		t.Fatalf("dry run must not write: %s", got.Body.String())
-	}
 }

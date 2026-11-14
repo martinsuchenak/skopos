@@ -21,7 +21,7 @@ func TestNewPRClientDerivesAPI(t *testing.T) {
 	cases := []struct {
 		kind, remote, api, owner, repo string
 	}{
-		{"github", "https://github.com/martinsuchenak/skopos-sandbox.git", "https://api.github.com", "martinsuchenak", "skopos-sandbox"},
+		{"github", "https://github.com/globex/shop.git", "https://api.github.com", "globex", "shop"},
 		{"github", "https://ghe.example.com/org/app", "https://ghe.example.com/api/v3", "org", "app"},
 		{"gitea", "https://gitea.example.com/globex/shop.git", "https://gitea.example.com/api/v1", "globex", "shop"},
 		{"gitea", "https://example.com/git/globex/shop.git", "https://example.com/git/api/v1", "globex", "shop"},

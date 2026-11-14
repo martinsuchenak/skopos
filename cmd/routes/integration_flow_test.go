@@ -49,16 +49,16 @@ func TestIntegrationExternalSystemFlow(t *testing.T) {
 	leases := map[string]string{}
 	worker := workerClient{base: base, key: workerKey, lease: leases}
 
-	create := `{"workspace_id":"` + ws + `","title":"JOB110375 AI configurations","content":"the job","author_agent_id":"globex",` +
-		`"ref":"JOB110375","external_url":"https://jobs.example.com/job/110375","start":"queue"}`
-	idem := map[string]string{"Idempotency-Key": "wr-110375-create"}
+	create := `{"workspace_id":"` + ws + `","title":"JOB100235 AI configurations","content":"the job","author_agent_id":"globex",` +
+		`"ref":"JOB100235","external_url":"https://jobs.example.com/job/100235","start":"queue"}`
+	idem := map[string]string{"Idempotency-Key": "job-100235-create"}
 	code, body, h := hReq(t, base, globex, "POST", "/api/inbox", create, idem)
 	if code != 201 || h.Get("Idempotent-Replayed") != "" {
 		t.Fatalf("create: %d %s", code, body)
 	}
 	item := jsonMap(t, body)
 	itemID := item["id"].(string)
-	if item["status"] != "queued" || item["external_url"] != "https://jobs.example.com/job/110375" {
+	if item["status"] != "queued" || item["external_url"] != "https://jobs.example.com/job/100235" {
 		t.Fatalf("created: %v", item)
 	}
 	code, body, h = hReq(t, base, globex, "POST", "/api/inbox", create, idem)
@@ -71,7 +71,7 @@ func TestIntegrationExternalSystemFlow(t *testing.T) {
 	}
 
 	// Found by ref: exactly the one item.
-	code, body, _ = hReq(t, base, globex, "GET", "/api/inbox?ref=JOB110375", "", nil)
+	code, body, _ = hReq(t, base, globex, "GET", "/api/inbox?ref=JOB100235", "", nil)
 	if code != 200 || strings.Count(body, `"id":`) != 1 || !strings.Contains(body, itemID) {
 		t.Fatalf("by ref: %d %s", code, body)
 	}
@@ -89,7 +89,7 @@ func TestIntegrationExternalSystemFlow(t *testing.T) {
 	planID := plan["id"].(string)
 	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/items", `{"title":"step one"}`), 201)
 	mustDo(t, worker.req("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+planID+`"}`), 200)
-	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"d2ce73d"}`), 201)
+	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"0a1b2c3"}`), 201)
 	mustDo(t, worker.reqH("POST", "/api/runs/"+runID+"/report", `{"worker_id":"w1","status":"succeeded","summary":"plan ready","branch":"agent/x"}`, leases[runID]), 200)
 
 	// At the gate: the plan to approve, with its hash, and the actions.
@@ -108,7 +108,7 @@ func TestIntegrationExternalSystemFlow(t *testing.T) {
 	}
 
 	// Approved on behalf of a person: the audit and the approval name them.
-	person := map[string]string{"X-Skopos-On-Behalf-Of": "alex@globex.example", "Idempotency-Key": "wr-110375-approve-1"}
+	person := map[string]string{"X-Skopos-On-Behalf-Of": "alex@globex.example", "Idempotency-Key": "job-100235-approve-1"}
 	approve := `{"revision_id":"` + rev["revision_id"].(string) + `","content_hash":"` + rev["content_hash"].(string) + `"}`
 	if code, body, _ := hReq(t, base, globex, "POST", "/api/inbox/"+itemID+"/approve", approve, person); code != 200 {
 		t.Fatalf("approve: %d %s", code, body)
@@ -142,7 +142,7 @@ func TestIntegrationExternalSystemFlow(t *testing.T) {
 	var types []string
 	for _, e := range feed.Events {
 		types = append(types, e.Type)
-		if e.Data["item_id"] != itemID || e.Data["ref"] != "JOB110375" {
+		if e.Data["item_id"] != itemID || e.Data["ref"] != "JOB100235" {
 			t.Fatalf("event data: %v", e.Data)
 		}
 	}

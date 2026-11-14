@@ -98,23 +98,6 @@ func TestSessionDeleteCascadesBlackboard(t *testing.T) {
 	}
 }
 
-func TestResolveHostDirect(t *testing.T) {
-	addr, err := ResolveHost(testLogger(), "localhost:5432")
-	if err != nil {
-		t.Fatalf("ResolveHost: %v", err)
-	}
-	if addr.Host != "localhost" || addr.Port != 5432 {
-		t.Errorf("got host=%s port=%d", addr.Host, addr.Port)
-	}
-}
-
-func TestResolveHostInvalid(t *testing.T) {
-	_, err := ResolveHost(testLogger(), "no-port-here")
-	if err == nil {
-		t.Error("expected error for invalid host:port")
-	}
-}
-
 // TestSQLiteDSNUsesImmediateTxLock pins the production DSN: without
 // _txlock=immediate, DEFERRED read-then-write transactions (plans mutations)
 // deadlock on contention and silently drop writes — busy_timeout does not

@@ -54,7 +54,7 @@ const (
 
 // Transition classes: who may perform a status change. Human actions
 // additionally require the approver permission; system transitions are the
-// executor's (runs in 1b, agent-trial in 1a) and record a reason.
+// executor's (runs) and record a reason.
 type TransitionActor string
 
 const (
@@ -208,7 +208,7 @@ func NormalizeBranch(v string) (string, error) {
 	return v, nil
 }
 
-// NormalizeRef validates an external reference (JOB203345): letters,
+// NormalizeRef validates an external reference (JOB100234): letters,
 // digits, '.', '_', '-', at most 40 characters. Empty = none.
 func NormalizeRef(v string) (string, error) {
 	v = strings.TrimSpace(v)

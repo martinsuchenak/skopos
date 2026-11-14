@@ -22,13 +22,12 @@ import (
 	"github.com/martinsuchenak/skopos/internal/runs"
 )
 
-// slackRelay is the Slack command relay, ported from the live-proven
-// agent-trial executor (agent.go applyCommand). It adapts the approver's replies
+// slackRelay is the Slack command relay. It adapts the approver's replies
 // onto the approver-gated inbox workflow actions and formats the outbound
 // gate notifications, one thread per item.
 //
 // Security model (design doc §2): the relay acts as the approver after the Slack
-// provider has checked his user id — the gate rests on his Slack account.
+// provider has checked their user id — the gate rests on their Slack account.
 // Every action is audit-logged via=slack under the slack-relay principal.
 type slackRelay struct {
 	inbox     *inbox.Service
@@ -250,7 +249,7 @@ func (r *slackRelay) Apply(ctx context.Context, itemID, text string) bool {
 		return true
 	}
 	// Mid-run guard: a reply that would pull the worktree out from under a
-	// running agent waits for the run to finish (agent-trial semantics).
+	// running agent waits for the run to finish.
 	if item.Status == inbox.StatusPlanning || item.Status == inbox.StatusImplementing ||
 		item.Status == inbox.StatusQueued || item.Status == inbox.StatusApproved {
 		// Approvals are never buffered: a buffered approve/done would apply
@@ -702,8 +701,8 @@ func candidatesMessage(item *inbox.Item, cands []plans.Revision) (string, []show
 	return b.String(), shown
 }
 
-// formatGate builds the per-status message with command hints (the
-// agent-trial formats; essentials only, capped by the notifier).
+// formatGate builds the per-status message with command hints
+// (essentials only, capped by the notifier).
 func (r *slackRelay) formatGate(itemID string, from, to inbox.Status) string {
 	item, err := r.inbox.GetItem(context.Background(), itemID)
 	if err != nil {

@@ -63,7 +63,7 @@ func mustReadyForApproval(t *testing.T, svc *Service, plansSvc *plans.Service, t
 	if _, err := svc.LinkPlan(root, item.ID, plan.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := plansSvc.CreateRevision(root, plan.ID, "d2ce73dfdd1"); err != nil {
+	if _, err := plansSvc.CreateRevision(root, plan.ID, "0a1b2c3d4e5"); err != nil {
 		t.Fatal(err)
 	}
 	gated, err := svc.SystemTransition(root, item.ID, StatusAwaitingApproval, "", "", "")
@@ -84,7 +84,7 @@ func TestWorkflowHappyPath(t *testing.T) {
 		want Status
 	}{
 		{"approve", func() error {
-			_, err := svc.Approve(approverCtx(), item.ID, ApproveInput{Notes: "wr=108900", Via: audit.ViaSlack})
+			_, err := svc.Approve(approverCtx(), item.ID, ApproveInput{Notes: "job=100236", Via: audit.ViaSlack})
 			return err
 		}, StatusApproved},
 		{"implement", func() error {
@@ -125,7 +125,7 @@ func TestWorkflowHappyPath(t *testing.T) {
 	// Approve notes (overrides) are part of the record.
 	found := false
 	for _, e := range entries {
-		if e.Action == "inbox.approve" && e.Notes == "wr=108900" {
+		if e.Action == "inbox.approve" && e.Notes == "job=100236" {
 			found = true
 		}
 	}

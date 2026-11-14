@@ -53,7 +53,7 @@ func (s *Service) Record(ctx context.Context, input RecordInput) error {
 	case p == nil && e.Via == ViaMigration:
 		e.Actor = ViaMigration
 	case input.AgentID != "":
-		// Agent attribution wins for any principal (the trial's agents run
+		// Agent attribution wins for any principal (agents may run
 		// under the root key — "root" would hide which agent acted).
 		e.Actor = "agent " + input.AgentID
 		if p != nil && !p.Root {

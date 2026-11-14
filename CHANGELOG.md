@@ -310,6 +310,11 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`PROD` is no longer a protected branch by default.** The default
+  `protected_branches` are `main`, `master`, `develop`, `release/**` and
+  `hotfix/**`, and `skopos worker init` writes that list. A repository
+  whose protected branch has another name lists it in `protected_branches`
+  (the worker file or the workspace's config).
 - **The worker's own git commands name the repository themselves** in a
   run's worktree, and so does the `{gitdir}` a wrapper binds. A run can
   rewrite the files that tell git where a worktree's repository is; the
@@ -530,6 +535,12 @@ versions follow [Semantic Versioning](https://semver.org/).
 - **Every worker now has a `worker.facts` audit event** at its first claim
   after the upgrade: it reports whether it takes commands from the server.
 
+### Removed
+
+- **`skopos inbox migrate-workflow` and `POST /api/inbox/migrate-workflow`.**
+  The one-time move of items from workflow tags to workflow statuses is
+  gone.
+
 ### Fixed
 
 - **A report whose worker stopped waiting left the item where it was.**
@@ -581,7 +592,7 @@ versions follow [Semantic Versioning](https://semver.org/).
   for an item's facts. Say where such facts come from in the repository's
   `AGENTS.md` or in a skill.
 - **Examples in the CLI help, the dashboard and the documentation use
-  placeholder names** (`github.com/acme/*`, `JOB203345`).
+  placeholder names** (`github.com/acme/*`, `JOB100234`).
 - **Builds carry no build-machine paths** (`-trimpath`).
 
 ## [0.32.3] — 2026-11-11
@@ -675,7 +686,7 @@ versions follow [Semantic Versioning](https://semver.org/).
   - `POST /api/inbox` takes `start` (`queue` or `review`) to start the item
     in the same call, and `external_url`, a link back to the job, shown on
     the item in the dashboard.
-  - `GET /api/inbox?ref=JOB110375` finds a job's items by its reference.
+  - `GET /api/inbox?ref=JOB100235` finds a job's items by its reference.
   - `GET /api/inbox/{id}/state` returns, in one answer: whose turn it is and
     the gate, the brief, the plan to approve, open questions, the newest
     implementation with its checks and pull request, the latest reviews,
@@ -1256,7 +1267,7 @@ versions follow [Semantic Versioning](https://semver.org/).
     The item comes to you whatever the verdict; Request changes turns it
     into a handover.
 - **Branch templates** per repo: `branch_template = "{ref}-{slug}"` names
-  branches after the item's reference (`JOB203345-some-feature`). When other
+  branches after the item's reference (`JOB100234-some-feature`). When other
   branches of the same reference exist and none matches, the item asks
   which one to continue. Branch names may now contain capitals.
 
@@ -2227,9 +2238,7 @@ versions follow [Semantic Versioning](https://semver.org/).
   workspace from `SKOPOS_SLACK_DEFAULT_WORKSPACE`; `help` lists commands.
   Replies that arrive mid-run are buffered and applied when the run
   finishes. The interim `SKOPOS_APPROVER_KEY` gate is gone — the relay acts
-  in-process as an approver principal. Ported from the live-proven
-  agent-trial executor; the agent-trial launchd job can be retired once
-  this is deployed and verified.
+  in-process as an approver principal.
 
 ## [0.12.3] — 2026-10-15
 
@@ -2381,7 +2390,7 @@ versions follow [Semantic Versioning](https://semver.org/).
 - **`skopos worker`** — the execution plane as a subcommand of the same
   binary (the nomad/consul pattern). Deployment-agnostic daemon: needs only
   skopos over HTTP, a local clone per repo, and the agent CLIs on the host.
-  Extracted from the live-proven agent-trial executor: claude runner with
+  Claude runner with
   quota/transient/auth classification, guarded worktrees, scrubbed agent
   environments (no SSH agent, no tokens, SSH git disabled, deny rules), and
   the only-push path (validated refspec, env-only token, never force).
@@ -2397,8 +2406,7 @@ versions follow [Semantic Versioning](https://semver.org/).
   Socket Mode transport (outbound-only, TLS, the approver's user id only). The
   sending path and reply filtering work; the command relay (replies driving
   approvals) is NOT wired yet — notifications go out, replies are not
-  applied. The interim approver key stays with agent-trial until that
-  lands. Envs `SKOPOS_SLACK_BOT_TOKEN` / `SKOPOS_SLACK_APP_TOKEN` /
+  applied. Envs `SKOPOS_SLACK_BOT_TOKEN` / `SKOPOS_SLACK_APP_TOKEN` /
   `SKOPOS_SLACK_USER_ID`.
 
 ### Upgrade notes (from 0.9.x)
@@ -2447,8 +2455,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 - **Inbox list rejected the workflow statuses as a filter** — `GET /api/inbox?status=queued`
   (and every other workflow phase, plus the dashboard's `status=workflow` chip)
   returned 400: the filter validator still only knew the manual-path statuses.
-  Found live: agent-trial's worker polls `status=queued`, silently saw nothing,
-  and queued items never started. All workflow phases and the aggregate
+  A worker polling `status=queued` saw nothing, and queued items never
+  started. All workflow phases and the aggregate
   `workflow` filter are now accepted.
 
 ## [0.9.1] — 2026-10-09
@@ -2456,7 +2464,7 @@ versions follow [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - **CLI: `skopos inbox migrate-workflow` was missing its `--workspace`
-  flag.** The review-fix that scoped the migration to the trial's workspace
+  flag.** The change that scoped the migration to one workspace
   landed in the server (the endpoint validates and requires
   `workspace_id`) but the CLI patch failed to apply silently — the released
   0.9.0 binary still sent the old request body and rejected `--workspace`.
@@ -2525,13 +2533,13 @@ versions follow [Semantic Versioning](https://semver.org/).
   requires `head_sha`. Planning can block (retry returns to the blocked-from
   phase), request-changes picks its target by status, queued items can be
   rejected and claimed items queued. The migration is workspace-scoped,
-  strips trial tags (idempotent), and can link plans + snapshot revisions.
+  strips the workflow tags (idempotent), and can link plans + snapshot revisions.
   Audit `via` is validated (migration is internal-only, slack requires the
   approver), `actor_key_id` is always kept, and key management enforces
   root at the service layer as well.
-- **One-time agent-trial cutover** — `POST /api/inbox/migrate-workflow` and
+- **One-time cutover from workflow tags** — `POST /api/inbox/migrate-workflow` and
   `skopos inbox migrate-workflow [--dry-run]`: the frozen tag→status table,
-  idempotent, with audit backfill (`via: migration`); discarded trial items
+  idempotent, with audit backfill (`via: migration`); discarded items
   keep their status with backfilled history.
 
 ## [0.8.1] — 2026-09-24
@@ -2686,7 +2694,7 @@ versions follow [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - Kanban workspace badges still clipped longer org names after the
-  host-strip change (`martinsuchenak/s…`): the badge cap is widened to
+  host-strip change (`acme-industries/s…`): the badge cap is widened to
   fit real org/repo pairs; anything longer truncates with the full id
   on hover.
 

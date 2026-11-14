@@ -600,7 +600,7 @@ func gitDefaultBranch(root string) string {
 	if err != nil {
 		return ""
 	}
-	// "origin/PROD" -> "PROD"
+	// "origin/trunk" -> "trunk"
 	return strings.TrimPrefix(strings.TrimSpace(string(out)), "origin/")
 }
 
@@ -613,7 +613,7 @@ func CommitLocal(store *Store, workspace, branch, source string, results []*pars
 		entries = append(entries, FileEntry{Path: strings.TrimPrefix(res.Path, "/"), Hash: res.Hash})
 	}
 	// Record the repo's real trunk (origin/HEAD) so diff-base resolution
-	// never guesses on non-main/master trunks (PROD, develop, ...).
+	// never guesses on non-main/master trunks (trunk, develop, ...).
 	if def := gitDefaultBranch("."); def != "" {
 		if err := store.SetMeta(workspace, "default_branch", def); err != nil {
 			return err

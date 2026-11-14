@@ -20,7 +20,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/srvurl"
 )
 
-// Git helpers, extracted from agent-trial's proven git.go. The push path is
+// Git helpers. The push path is
 // the ONLY code that pushes: explicit refspec, validated destination, token
 // through env-only git config (never argv), never force.
 

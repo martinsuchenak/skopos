@@ -101,7 +101,7 @@ func branchFor(item *Item, repo *Repo) (string, error) {
 }
 
 // branchStem is the part of the template's name before {slug}: other
-// branches of the same reference start with it (JOB203345-). Empty when the
+// branches of the same reference start with it (JOB100234-). Empty when the
 // item names its branch, or the template has no {slug}.
 func branchStem(item *Item, repo *Repo) string {
 	t := repo.template()

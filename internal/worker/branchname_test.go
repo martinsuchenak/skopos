@@ -12,7 +12,7 @@ import (
 )
 
 func TestBranchNames(t *testing.T) {
-	item := &Item{ID: "01a1ae4e-1b41-78a5-9fbb-73e2bd7e5358", Title: "Some feature!", Ref: "JOB203345"}
+	item := &Item{ID: "01a1ae4e-1b41-78a5-9fbb-73e2bd7e5358", Title: "Some feature!", Ref: "JOB100234"}
 	cases := []struct {
 		name   string
 		repo   Repo
@@ -21,10 +21,10 @@ func TestBranchNames(t *testing.T) {
 		err    string
 	}{
 		{"default template", Repo{BranchPrefix: "agent/"}, "", "agent/9fbb-73e2bd7e5358-some-feature", ""},
-		{"ref template", Repo{BranchPrefix: "JOB", BranchTemplate: "{ref}-{slug}"}, "", "JOB203345-some-feature", ""},
-		{"own branch wins", Repo{BranchPrefix: "JOB", BranchTemplate: "{ref}-{slug}"}, "JOB203345-api", "JOB203345-api", ""},
+		{"ref template", Repo{BranchPrefix: "JOB", BranchTemplate: "{ref}-{slug}"}, "", "JOB100234-some-feature", ""},
+		{"own branch wins", Repo{BranchPrefix: "JOB", BranchTemplate: "{ref}-{slug}"}, "JOB100234-api", "JOB100234-api", ""},
 		{"no prefix", Repo{BranchPrefix: "agent/"}, "feature/x", "", "does not start with"},
-		{"protected", Repo{BranchPrefix: "", Protected: []string{"PROD"}}, "PROD", "", "protected"},
+		{"protected", Repo{BranchPrefix: "", Protected: []string{"main"}}, "main", "", "protected"},
 		{"unsafe", Repo{BranchPrefix: ""}, "a..b", "", "not a usable branch name"},
 	}
 	for _, c := range cases {
@@ -52,7 +52,7 @@ func TestBranchNames(t *testing.T) {
 	if _, err := branchFor(&noRef, &Repo{BranchPrefix: "JOB", BranchTemplate: "{ref}-{slug}"}); err == nil || !strings.Contains(err.Error(), "reference") {
 		t.Fatalf("template with {ref} and no ref: %v", err)
 	}
-	if got := branchStem(item, &Repo{BranchPrefix: "JOB", BranchTemplate: "{ref}-{slug}"}); got != "JOB203345-" {
+	if got := branchStem(item, &Repo{BranchPrefix: "JOB", BranchTemplate: "{ref}-{slug}"}); got != "JOB100234-" {
 		t.Fatalf("stem: %q", got)
 	}
 	for _, bad := range []string{"{prefix}{slug}", "{ref}-{title}"} {
@@ -65,7 +65,7 @@ func TestBranchNames(t *testing.T) {
 			t.Errorf("template %q: %v", ok, err)
 		}
 	}
-	for _, ok := range []string{"JOB203345-x", "agent/abc-def", "feature/a.b_c"} {
+	for _, ok := range []string{"JOB100234-x", "agent/abc-def", "feature/a.b_c"} {
 		if !validBranch(ok) {
 			t.Errorf("validBranch(%q) = false", ok)
 		}
@@ -342,7 +342,7 @@ func TestCheckHeadLeavesTheCloneClean(t *testing.T) {
 // review says whose commits are whose.
 func TestHandoverPrompts(t *testing.T) {
 	plan, err := renderPrompt("plan.md", map[string]any{
-		"Workspace": "ws", "Base": "PROD", "Title": "t", "Content": "BRIEF",
+		"Workspace": "ws", "Base": "main", "Title": "t", "Content": "BRIEF",
 		"Handover":   &handover{Branch: "JOB1-x", ForkPoint: "f00d", Commits: "abc start", Diffstat: "1 file", Diff: "+DIFFLINE", Truncated: true},
 		"Changes":    "CHANGE-REQUEST",
 		"LastReview": "## review — claude-1\n\nREVIEW-VERDICT",
@@ -355,17 +355,17 @@ func TestHandoverPrompts(t *testing.T) {
 			t.Errorf("plan prompt missing %q", want)
 		}
 	}
-	if fresh, _ := renderPrompt("plan.md", map[string]any{"Workspace": "ws", "Base": "PROD", "Title": "t", "Content": "BRIEF"}); strings.Contains(fresh, "handover") || !strings.Contains(fresh, "in a fresh git branch") {
+	if fresh, _ := renderPrompt("plan.md", map[string]any{"Workspace": "ws", "Base": "main", "Title": "t", "Content": "BRIEF"}); strings.Contains(fresh, "handover") || !strings.Contains(fresh, "in a fresh git branch") {
 		t.Errorf("an ordinary plan prompt changed")
 	}
-	review, err := renderPrompt("review.md", map[string]any{"Base": "PROD", "Stage": "branch_review", "BranchReview": true, "Brief": "WHAT-IT-IS-FOR"})
+	review, err := renderPrompt("review.md", map[string]any{"Base": "main", "Stage": "branch_review", "BranchReview": true, "Brief": "WHAT-IT-IS-FOR"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(review, "Someone else wrote this branch") || !strings.Contains(review, "WHAT-IT-IS-FOR") || strings.Contains(review, "implement this plan") {
 		t.Errorf("branch review prompt: %s", review)
 	}
-	handed, _ := renderPrompt("review.md", map[string]any{"Base": "PROD", "Stage": "review", "HandoverBase": "beef1234", "Steps": []Step{{Title: "s"}}})
+	handed, _ := renderPrompt("review.md", map[string]any{"Base": "main", "Stage": "review", "HandoverBase": "beef1234", "Steps": []Step{{Title: "s"}}})
 	if !strings.Contains(handed, "commits up to `beef1234` were already on it") || !strings.Contains(handed, "implement this plan") {
 		t.Errorf("handover review prompt: %s", handed)
 	}

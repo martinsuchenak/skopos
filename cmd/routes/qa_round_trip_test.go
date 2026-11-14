@@ -44,7 +44,7 @@ func TestIntegrationQAAsksAndRetests(t *testing.T) {
 	planID := plan["id"].(string)
 	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/items", `{"title":"step"}`), 201)
 	mustDo(t, worker.req("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+planID+`"}`), 200)
-	revID := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"d2ce73d"}`), 201).(map[string]any)["id"].(string)
+	revID := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"0a1b2c3"}`), 201).(map[string]any)["id"].(string)
 	report(run, `"status":"succeeded","summary":"plan ready","branch":"agent/dob"`)
 	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/approve", `{"revision_id":"`+revID+`"}`), 200)
 	report(claimNext(), `"status":"succeeded","summary":"done","head_sha":"aaa111","branch":"agent/dob"`)

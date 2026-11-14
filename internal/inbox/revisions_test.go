@@ -80,11 +80,11 @@ func TestApproveLocksRevisionAndRecordsApproval(t *testing.T) {
 	if _, err := svc.LinkPlan(root, item.ID, planID); err != nil {
 		t.Fatalf("link plan: %v", err)
 	}
-	rev, err := plansSvc.CreateRevision(root, planID, "d2ce73dfdd1")
+	rev, err := plansSvc.CreateRevision(root, planID, "0a1b2c3d4e5")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rev.RevisionNo != 1 || len(rev.Steps) != 2 || rev.BaseSHA != "d2ce73dfdd1" {
+	if rev.RevisionNo != 1 || len(rev.Steps) != 2 || rev.BaseSHA != "0a1b2c3d4e5" {
 		t.Fatalf("revision 1 wrong: %+v", rev)
 	}
 	if _, err := svc.SystemTransition(root, item.ID, StatusAwaitingApproval, "", "", ""); err != nil {
@@ -92,7 +92,7 @@ func TestApproveLocksRevisionAndRecordsApproval(t *testing.T) {
 	}
 
 	// Approve: the revision locks and the approval names it.
-	if _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{Notes: "wr=108900", Via: "slack"}); err != nil {
+	if _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{Notes: "job=100236", Via: "slack"}); err != nil {
 		t.Fatal(err)
 	}
 	latest, err := plansSvc.LatestRevision(root, planID)
@@ -106,10 +106,10 @@ func TestApproveLocksRevisionAndRecordsApproval(t *testing.T) {
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("approvals: %+v err %v", entries, err)
 	}
-	if entries[0].Gate != approvals.GatePlan || entries[0].Subject != rev.ID+"+d2ce73dfdd1" {
+	if entries[0].Gate != approvals.GatePlan || entries[0].Subject != rev.ID+"+0a1b2c3d4e5" {
 		t.Fatalf("approval subject wrong: %+v", entries[0])
 	}
-	if entries[0].Actor != "key relay" || entries[0].Via != "slack" || entries[0].Notes != "wr=108900" {
+	if entries[0].Actor != "key relay" || entries[0].Via != "slack" || entries[0].Notes != "job=100236" {
 		t.Fatalf("approval metadata wrong: %+v", entries[0])
 	}
 

@@ -204,7 +204,7 @@ func TestRelayApprove(t *testing.T) {
 }
 
 // A reply mid-run is buffered, then applied when the item reaches a gate —
-// the agent-trial mid-run guard, socket-safe.
+// the mid-run guard, socket-safe.
 func TestRelayMidRunBuffer(t *testing.T) {
 	svc, _, plansSvc, fake, relay := relayStack(t)
 	root := context.Background()

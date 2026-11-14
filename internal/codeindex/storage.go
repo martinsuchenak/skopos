@@ -832,7 +832,7 @@ func (st *Store) BranchIndexed(workspace, branch string) (bool, error) {
 }
 
 // DefaultBranch returns the diff base: the recorded git default (meta hint
-// captured at build time — handles trunks like PROD/develop), else main,
+// captured at build time — handles trunks like trunk/develop), else main,
 // else master, else the OLDEST built branch (the trunk is built before any
 // feature branch; the newest build is by construction the feature branch).
 func (st *Store) DefaultBranch(workspace string) string {

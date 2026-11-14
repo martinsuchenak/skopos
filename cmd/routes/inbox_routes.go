@@ -47,8 +47,5 @@ func registerInboxRoutes(mux *http.ServeMux, h *inbox.Handler) {
 	mux.HandleFunc("POST /api/inbox/{id}/answers", h.Answer)
 	mux.HandleFunc("GET /api/inbox/{id}/approvals", h.Approvals)
 	mux.HandleFunc("DELETE /api/inbox/{id}", h.DeleteItem)
-	// One-time agent-trial cutover (root-only): tag→status migration per the
-	// frozen table in docs/design/agent-pipeline.md §1.
-	mux.HandleFunc("POST /api/inbox/migrate-workflow", h.MigrateWorkflow)
 	mux.HandleFunc("DELETE /api/inbox", h.Purge)
 }

@@ -74,7 +74,7 @@ func TestIntegrationStubWorkerRoundTrip(t *testing.T) {
 	planID := plan["id"].(string)
 	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/items", `{"title":"do the thing"}`), 201)
 	mustDo(t, worker.req("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+planID+`"}`), 200)
-	snap := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"d2ce73d"}`), 201).(map[string]any)
+	snap := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"0a1b2c3"}`), 201).(map[string]any)
 	revID := snap["id"].(string)
 	mustDo(t, worker.reqH("POST", "/api/runs/"+runID+"/heartbeat", `{"worker_id":"w1"}`, leases[runID]), 204)
 	mustDo(t, worker.reqH("POST", "/api/runs/"+runID+"/report", `{"worker_id":"w1","status":"succeeded","summary":"plan ready","branch":"agent/stub-item"}`, leases[runID]), 200)
@@ -391,8 +391,8 @@ func TestIntegrationReplanSkillsAndExecutor(t *testing.T) {
 	plan := mustJSON(t, worker.req("POST", "/api/plans", `{"workspace_id":"github.com/globex/shop","name":"p","author_agent_id":"worker-1"}`), 201).(map[string]any)
 	planID := plan["id"].(string)
 	mustDo(t, worker.req("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+planID+`"}`), 200)
-	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/replan", `{"base_sha":"d2ce73d","steps":[{"title":"one"}],"skills":["../etc"]}`), 400)
-	rev := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/replan", `{"base_sha":"d2ce73d","steps":[{"title":"one"}],"skills":["php-dto","e2e"]}`), 200).(map[string]any)
+	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/replan", `{"base_sha":"0a1b2c3","steps":[{"title":"one"}],"skills":["../etc"]}`), 400)
+	rev := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/replan", `{"base_sha":"0a1b2c3","steps":[{"title":"one"}],"skills":["php-dto","e2e"]}`), 200).(map[string]any)
 	if sk, _ := rev["skills"].([]any); len(sk) != 2 || sk[0] != "e2e" || sk[1] != "php-dto" {
 		t.Fatalf("replan must bind the skills into the revision: %v", rev["skills"])
 	}
@@ -436,7 +436,7 @@ func TestIntegrationReviewGroupRoundTrip(t *testing.T) {
 	planID := plan["id"].(string)
 	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/items", `{"title":"step"}`), 201)
 	mustDo(t, worker.req("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+planID+`"}`), 200)
-	revID := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"d2ce73d"}`), 201).(map[string]any)["id"].(string)
+	revID := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"0a1b2c3"}`), 201).(map[string]any)["id"].(string)
 	mustDo(t, worker.reqH("POST", "/api/runs/"+runID+"/report", `{"worker_id":"w1","status":"succeeded","summary":"plan ready","branch":"agent/g","cost_usd":0.12}`, leases[runID]), 200)
 	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/approve", `{"revision_id":"`+revID+`"}`), 200)
 	run = claim(t, worker, `{"worker_id":"w1","runners":["claude"],"workspaces":["`+ws+`"]}`)

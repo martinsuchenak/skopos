@@ -160,10 +160,10 @@ func TestWorkerInitKeepsExistingEnvFile(t *testing.T) {
 // branch, sets up the GitHub push with a draft PR, and puts the worker key
 // and the token in the env file, never in the TOML.
 func TestWorkerInitAsksAndFillsIn(t *testing.T) {
-	// A clone whose origin's default branch is PROD, not main.
+	// A clone whose origin's default branch is trunk, not main.
 	src := t.TempDir()
 	for _, args := range [][]string{
-		{"init", "-q", "-b", "PROD"},
+		{"init", "-q", "-b", "trunk"},
 		{"-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"},
 	} {
 		if out, err := exec.Command("git", append([]string{"-C", src}, args...)...).CombinedOutput(); err != nil {
@@ -206,7 +206,7 @@ func TestWorkerInitAsksAndFillsIn(t *testing.T) {
 		t.Fatalf("config must parse: %v\n%s", err, raw)
 	}
 	r := file.Worker.Repos["github.com/you/repo"]
-	if r == nil || r.Path != clone || r.DefaultBranch != "PROD" || r.Push.Kind != "github" ||
+	if r == nil || r.Path != clone || r.DefaultBranch != "trunk" || r.Push.Kind != "github" ||
 		r.Push.RemoteURL != "https://github.com/you/repo.git" || r.Push.TokenEnv != "GH_TOKEN" || r.Push.PullRequest != "draft" {
 		t.Fatalf("repo block: %+v\n%s", r, raw)
 	}

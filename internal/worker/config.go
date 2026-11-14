@@ -708,8 +708,8 @@ type Account struct {
 	// runner (nil = it is the file's own).
 	base *Account `toml:"-"`
 
-	// Quota state is worker-local (learned from usage-limit errors, exactly
-	// as agent-trial does); not part of the config file.
+	// Quota state is worker-local (learned from usage-limit errors);
+	// not part of the config file.
 	exhaustedUntil time.Time `toml:"-"`
 }
 

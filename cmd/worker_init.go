@@ -246,7 +246,7 @@ default_branch = %q
 branch_prefix = "agent/"           # agent branches: agent/<item>-<slug>
 setup = []                        # commands run in every fresh worktree ({clone} expands)
 checks = []                       # verification commands, e.g. ["task test"]
-protected_branches = ["PROD", "main", "master", "develop", "release/**", "hotfix/**"]
+protected_branches = ["main", "master", "develop", "release/**", "hotfix/**"]
 
 [worker.repos.%s.push]
 kind = %q                     # gitea | github | none

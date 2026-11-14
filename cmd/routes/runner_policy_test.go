@@ -107,7 +107,7 @@ func TestIntegrationRunnerPolicy(t *testing.T) {
 	planID := plan["id"].(string)
 	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/items", `{"title":"step"}`), 201)
 	mustDo(t, worker.req("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+planID+`"}`), 200)
-	revID := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"d2ce73d"}`), 201).(map[string]any)["id"].(string)
+	revID := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"0a1b2c3"}`), 201).(map[string]any)["id"].(string)
 	mustDo(t, worker.reqH("POST", "/api/runs/"+runID+"/report", `{"worker_id":"w-claude","status":"succeeded","summary":"plan ready","branch":"agent/p"}`, leases[runID]), 200)
 	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/approve", `{"revision_id":"`+revID+`"}`), 200)
 	impl := claim(t, worker, claimBody("w-claude", `"opencode-glm","claude"`, factsGLM, factsClaude))

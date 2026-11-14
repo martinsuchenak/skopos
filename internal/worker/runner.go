@@ -1,6 +1,6 @@
 // Package worker is the execution plane: a deployment-agnostic daemon that
 // claims run stages from skopos, executes them with an agent CLI, and
-// reports results. Extracted from the live-proven agent-trial executor.
+// reports results.
 package worker
 
 import (
@@ -240,8 +240,7 @@ type claudeJSON struct {
 	APIErrorStatus   *int            `json:"api_error_status"`
 }
 
-// runClaude executes the claude CLI headless with the guards applied. Proven
-// in agent-trial through weeks of live runs; carried over nearly verbatim.
+// runClaude executes the claude CLI headless with the guards applied.
 func runClaude(ctx context.Context, r AgentRun) AgentResult {
 	// stream-json: events as they happen (the run log shows them live); the
 	// result event carries what --output-format json printed alone.

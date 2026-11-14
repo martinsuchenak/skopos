@@ -51,7 +51,7 @@ func TestPushBranchSendsGitHubBasicAuth(t *testing.T) {
 			t.Fatalf("git %v: %v: %s", args, err, out)
 		}
 	}
-	err := pushBranch(context.Background(), dir, srv.URL+"/martinsuchenak/skopos-sandbox.git", "github_pat_abc", "github", "agent/x", "agent/", []string{"main"})
+	err := pushBranch(context.Background(), dir, srv.URL+"/globex/shop.git", "github_pat_abc", "github", "agent/x", "agent/", []string{"main"})
 	if err == nil {
 		t.Fatal("the test server refuses every push")
 	}
