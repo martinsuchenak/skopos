@@ -4,6 +4,51 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.37.0] — 2026-11-15
+
+### Added
+
+- **An item's report: its record as one document.** `GET
+  /api/inbox/{id}/report`, `skopos inbox report --id <item>`, and Report
+  and Copy summary in the dashboard's item preview give, in the order
+  things happened: the brief, the approved plan and who approved it,
+  questions and answers, every decision a person took (start, plan
+  approval, change requests, retries, waived findings, second opinions
+  asked for, sign-off) with its notes, each implementation with its setup
+  and checks, the reviews, what became of each finding, and each run's
+  runner, model, provider, executor, worker and reported cost.
+  - `format=md` (the default), `html` (a fragment of plain elements) or
+    `json`. For Markdown and HTML, `level=full` (the default) holds every
+    plan, review and section verbatim, and `level=summary` is short enough
+    for a comment. JSON is the whole record at either level.
+  - The report is available in any state of the item. It is built from the
+    item's records when asked for and stored nowhere, so a system that
+    keeps reports fetches one when it receives `item.closed`: the server
+    deletes a done or discarded item once it is older than the retention.
+  - A key limited by capabilities needs `plans:read` and `runs:read`
+    beside the inbox, or the answer is `403`; the `integration` preset has
+    both. A run's own token is refused.
+  - A plan that was amended after its approval is shown as the approved
+    plan, with the steps of the revision in force. Runs that recorded no
+    provider are counted beside the provider list.
+  - Copy summary puts the summary on the clipboard as HTML and as Markdown.
+- **Slack: the labels an item needs of a worker.** A line `needs: stock,
+  plant-2` below a `new:` capture's first line sets them; the line is
+  taken out of the item's text, and a list that is not valid creates
+  nothing. In the item's thread, `needs: stock` sets them, `needs: -`
+  clears them and `needs` shows them, applied at once and audited as an
+  edit from Slack. The confirmation warns when no worker serving the
+  workspace has the labels.
+
+### Changed
+
+- **A Slack capture's title is its first line** (was the first 80
+  characters of the whole message).
+- **Dependency updates:** `modernc.org/sqlite` v1.62.0, `gotreesitter`
+  v0.57.0, `paularlott/mcp` v0.35.2. On the dashboard's build side,
+  `tailwindcss` 4.3.5 and `vite` 8.3.7. In the release workflow,
+  `sigstore/cosign-installer` v4.1.3 and `docker/login-action` v4.8.0.
+
 ## [0.36.0] — 2026-11-15
 
 ### Added
