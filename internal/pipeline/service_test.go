@@ -370,6 +370,60 @@ func TestSecondOpinionDefault(t *testing.T) {
 	}
 }
 
+// needs_stages (which stages an item's needed labels bind) resolves like
+// the other defaults: workspace beats group, two groups is a conflict, it is
+// validated and put in order, audited, and handed to the run queue.
+func TestNeedsStages(t *testing.T) {
+	s, _, sink := fixture(t)
+	if p := s.Prefs(root(), "fabrikam/api"); len(p.NeedsStages) != 0 || !p.NeedsBind("plan") {
+		t.Fatalf("nothing set: the labels bind every stage: %+v", p.NeedsStages)
+	}
+	v, err := s.Put(root(), KindGroup, "globex", Settings{NeedsStages: []string{" QA", "implement", "qa"}}, "")
+	if err != nil || strings.Join(v.Own.NeedsStages, ",") != "implement,qa" {
+		t.Fatalf("stored in pipeline order, once each: %+v %v", v, err)
+	}
+	if !strings.Contains(sink.entries[len(sink.entries)-1].Notes, "stages an item's labels bind: not set → implement,qa") {
+		t.Fatalf("audited: %+v", sink.entries[len(sink.entries)-1])
+	}
+	p := s.Prefs(root(), "fabrikam/api")
+	if strings.Join(p.NeedsStages, ",") != "implement,qa" || p.NeedsBind("plan") || p.NeedsBind("second_opinion") || !p.NeedsBind("branch_review") || !p.NeedsBind("qa") {
+		t.Fatalf("the queue gets the group's setting: %+v", p.NeedsStages)
+	}
+	if _, err := s.Put(root(), KindGroup, "web-team", Settings{NeedsStages: []string{"qa"}}, ""); !errors.Is(err, ErrConflict) {
+		t.Fatalf("a second group setting it for a shared workspace: %v", err)
+	}
+	v, err = s.Put(root(), KindWorkspace, "fabrikam/web", Settings{NeedsStages: []string{"plan", "implement", "review", "qa"}}, "")
+	if err != nil || len(v.EffectiveNeedsStages) != 4 || v.NeedsStagesSource != "workspace" {
+		t.Fatalf("a workspace sets every stage over its group: %+v %v", v, err)
+	}
+	if p := s.Prefs(root(), "fabrikam/web"); !p.NeedsBind("plan") {
+		t.Fatalf("the workspace's own setting applies: %+v", p.NeedsStages)
+	}
+	for _, bad := range []string{"deploy", "second_opinion", "branch_review"} {
+		if _, err := s.Put(root(), KindWorkspace, "fabrikam/web", Settings{NeedsStages: []string{bad}}, ""); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("%s is not a stage to name: %v", bad, err)
+		}
+	}
+	// Left out of a save (or "all"), it is cleared and the group's applies
+	// again; another default in the same row survives.
+	if _, err := s.Put(root(), KindWorkspace, "fabrikam/web", Settings{AgentsDefault: "solo", NeedsStages: []string{"qa"}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	v, err = s.Put(root(), KindWorkspace, "fabrikam/web", Settings{AgentsDefault: "solo", NeedsStages: []string{"all"}}, "")
+	if err != nil || len(v.Own.NeedsStages) != 0 || v.Own.AgentsDefault != "solo" ||
+		strings.Join(v.EffectiveNeedsStages, ",") != "implement,qa" || v.NeedsStagesSource != "group:globex" {
+		t.Fatalf("cleared, back to the group's: %+v %v", v, err)
+	}
+	// A document that sets only this has a row of its own, and one that
+	// sets nothing has none.
+	if _, err := s.Put(root(), KindWorkspace, "other/x", Settings{NeedsStages: []string{"implement"}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Get(root(), KindWorkspace, "other/x"); err != nil || strings.Join(got.Own.NeedsStages, ",") != "implement" || got.Own.Empty() {
+		t.Fatalf("read back: %+v %v", got, err)
+	}
+}
+
 // code_index: a workspace switch (groups refuse it), stored, audited, handed
 // to the run queue, and shown with the workers that can index the
 // workspace now.

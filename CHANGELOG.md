@@ -4,6 +4,26 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **A workspace can name the stages in which an item's needed labels
+  bind.** `skopos workspace|group pipeline set --needs-stages implement,qa`
+  (Workspaces → Settings → Options in the dashboard, `needs_stages` in the
+  pipeline settings and in a fleet file) keeps an item that needs a label
+  on a labelled worker for those stages only; its other runs go to any
+  worker serving the workspace. The stages are `plan`, `implement`,
+  `review` and `qa`. Nothing set, or `all`: every stage, as before.
+  - A review of an existing branch counts as `implement` (it runs setup and
+    checks), a second opinion as `review`, and the merge and comparison of
+    a plan round as `plan`.
+  - A workspace's own setting is used in place of its group's; two groups
+    setting it for one workspace is refused, as for the other pipeline
+    defaults. A change is audited with the pipeline's other changes.
+  - A waiting run is marked stranded for a missing label only in a stage
+    the labels bind.
+
 ## [0.35.0] — 2026-11-15
 
 ### Added

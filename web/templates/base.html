@@ -1189,6 +1189,19 @@
                         <input id="pipe-second" type="text" list="pipe-runners" x-model="pipe.secondOpinion" class="fld max-w-xs" placeholder="e.g. codex" autocomplete="off" aria-describedby="pipe-second-hint" />
                         <p id="pipe-second-hint" class="mt-1 text-xs text-zinc-500" x-text="pipeSecondHint()"></p>
                     </div>
+                    <!-- Which stages an item's needed labels bind (worker labels):
+                         stages that only read the repository need no particular
+                         worker. None ticked = every stage. -->
+                    <fieldset aria-describedby="pipe-needs-hint">
+                        <legend class="lbl">An item that needs a labelled worker needs it for</legend>
+                        <div class="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                            <label class="flex items-center gap-2"><input id="pipe-needs-plan" type="checkbox" x-model="pipe.needs.plan" /> Plan</label>
+                            <label class="flex items-center gap-2"><input id="pipe-needs-implement" type="checkbox" x-model="pipe.needs.implement" /> Implement and checks</label>
+                            <label class="flex items-center gap-2"><input id="pipe-needs-review" type="checkbox" x-model="pipe.needs.review" /> Review</label>
+                            <label class="flex items-center gap-2"><input id="pipe-needs-qa" type="checkbox" x-model="pipe.needs.qa" /> QA</label>
+                        </div>
+                        <p id="pipe-needs-hint" class="mt-1 text-xs text-zinc-500" x-text="pipeNeedsHint()"></p>
+                    </fieldset>
                     <!-- Code index switch (workspaces only): idle workers keep the
                          index fresh; it needs a worker that can fetch the repo. -->
                     <div x-show="pipe.kind === 'workspace'">

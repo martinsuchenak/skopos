@@ -433,6 +433,9 @@ type WorkspacePrefs struct {
 	AgentsDefault string `json:"agents_default,omitempty"`
 	// CodeIndex: idle workers keep the workspace's code index fresh.
 	CodeIndex bool `json:"code_index,omitempty"`
+	// NeedsStages: the stages (NeedsStageKeys) in which an item's needed
+	// labels bind its runs to a labelled worker. Empty = every stage.
+	NeedsStages []string `json:"needs_stages,omitempty"`
 	// Policy: which runners may work on the workspace (internal/policy);
 	// nil or no layers = no policy.
 	Policy *policy.Effective `json:"-"`

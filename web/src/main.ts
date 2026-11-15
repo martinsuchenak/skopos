@@ -107,7 +107,7 @@ type PolicyLayer = { source: string; rev: string; policy: { allow: PolicyRule[] 
 // Pipeline settings (which agents run each stage, per workspace or group).
 type PipeMember = { runner: string; focus?: string };
 type PipeStage = { members: PipeMember[]; policy?: string; early_exit?: boolean; timeout_ms?: number };
-type PipeView = { owner_kind: string; owner_id: string; indexable_by?: string[]; own: { stages: Record<string, PipeStage> | null; agents_default?: string; second_opinion_runner?: string; code_index?: boolean }; effective?: Record<string, PipeStage & { source: string }>; effective_agents_default?: string; agents_default_source?: string; effective_second_opinion_runner?: string; second_opinion_source?: string; groups?: { id: string; name: string }[]; conflicts?: string[]; unknown_runners?: string[]; policy?: { allow_all: boolean; rev?: string; layers: PolicyLayer[] }; policy_refused?: string[] };
+type PipeView = { owner_kind: string; owner_id: string; indexable_by?: string[]; own: { stages: Record<string, PipeStage> | null; agents_default?: string; second_opinion_runner?: string; code_index?: boolean; needs_stages?: string[] }; effective?: Record<string, PipeStage & { source: string }>; effective_agents_default?: string; agents_default_source?: string; effective_second_opinion_runner?: string; second_opinion_source?: string; effective_needs_stages?: string[]; needs_stages_source?: string; groups?: { id: string; name: string }[]; conflicts?: string[]; unknown_runners?: string[]; policy?: { allow_all: boolean; rev?: string; layers: PolicyLayer[] }; policy_refused?: string[] };
 // One dialog row per stage. mode: own (set at this level, editable),
 // inherited (from a group; Override copies it here), unset.
 // A brief held on the server for a pipeline member's focus (no text in a
@@ -391,7 +391,7 @@ const appState = () => ({
   // re-evaluates when a dialog reopens for different data (CSP build)
   formNonce: 0,
   showGroupModal: false,
-  pipe: { open: false, kind: 'workspace', id: '', label: '', saving: false, readOnly: false, rev: 0, rows: [] as PipeRow[], agentsDefault: '', agentsInherited: '', agentsInheritedFrom: '', secondOpinion: '', secondInherited: '', codeIndex: false, codeIndexWas: false, indexableBy: [] as string[], notes: [] as { key: string; tone: string; text: string }[], runnerOptions: [] as string[], policyBound: false, tab: 'stages', editing: '', was: '' },
+  pipe: { open: false, kind: 'workspace', id: '', label: '', saving: false, readOnly: false, rev: 0, rows: [] as PipeRow[], agentsDefault: '', agentsInherited: '', agentsInheritedFrom: '', secondOpinion: '', secondInherited: '', needs: { plan: false, implement: false, review: false, qa: false } as Record<string, boolean>, needsInherited: '', codeIndex: false, codeIndexWas: false, indexableBy: [] as string[], notes: [] as { key: string; tone: string; text: string }[], runnerOptions: [] as string[], policyBound: false, tab: 'stages', editing: '', was: '' },
   // MCP servers for runs (Workspaces view, admins): the definitions, and
   // the dialog that edits one and sets its secrets.
   mcpDefs: [] as MCPServerDef[],
@@ -2917,6 +2917,10 @@ const appState = () => ({
     this.pipe.secondOpinion = v.own.second_opinion_runner || '';
     const secondFromGroup = kind === 'workspace' && v.second_opinion_source && v.second_opinion_source !== 'workspace';
     this.pipe.secondInherited = secondFromGroup ? (v.effective_second_opinion_runner || '') + ' (group ' + (v.second_opinion_source || '').replace('group:', '') + ')' : '';
+    const ownNeeds = v.own.needs_stages || [];
+    this.pipe.needs = { plan: ownNeeds.includes('plan'), implement: ownNeeds.includes('implement'), review: ownNeeds.includes('review'), qa: ownNeeds.includes('qa') };
+    const needsFromGroup = kind === 'workspace' && v.needs_stages_source && v.needs_stages_source !== 'workspace';
+    this.pipe.needsInherited = needsFromGroup ? (v.effective_needs_stages || []).join(', ') + ' (group ' + (v.needs_stages_source || '').replace('group:', '') + ')' : '';
     this.pipe.codeIndex = this.pipe.codeIndexWas = !!v.own.code_index;
     this.pipe.indexableBy = v.indexable_by || [];
     const labels: Record<string, string> = { plan: 'Plan', compare: 'Compare (judge)', synthesize: 'Synthesize (merge)', implement: 'Implement', review: 'Review', qa: 'QA' };
@@ -2969,7 +2973,7 @@ const appState = () => ({
   pipeSnapshot(): string {
     const rows = (this.pipe.rows as PipeRow[]).filter((r: PipeRow) => r.mode === 'own')
       .map((r: PipeRow) => [r.stage, r.members.map((m: PipeMember) => (m.focus || '') + '@' + m.runner), r.policy, r.earlyExit, r.timeoutMin.trim()]);
-    return JSON.stringify([rows, this.pipe.agentsDefault, this.pipe.secondOpinion.trim(), this.pipe.codeIndex]);
+    return JSON.stringify([rows, this.pipe.agentsDefault, this.pipe.secondOpinion.trim(), this.pipe.codeIndex, this.pipeNeedsStages()]);
   },
   pipeDirty(): boolean { return !this.pipe.readOnly && this.pipeSnapshot() !== this.pipe.was; },
   pipeDirtyElsewhere(): boolean { return (this.pipe.tab === 'briefs' || this.pipe.tab === 'config') && this.pipeDirty(); },
@@ -3341,6 +3345,15 @@ const appState = () => ({
   },
   pipeCanAdd(r: PipeRow): boolean { return r.multi || r.members.length === 0; },
   pipeShowGroupOptions(r: PipeRow): boolean { return r.multi && r.members.length > 1; },
+  // The stages in which an item's needed labels bind its runs to a labelled
+  // worker (Workers page). None ticked = not set here: every stage, or what
+  // a group sets.
+  pipeNeedsStages(): string[] { return ['plan', 'implement', 'review', 'qa'].filter((k: string) => this.pipe.needs[k]); },
+  pipeNeedsHint(): string {
+    if (this.pipeNeedsStages().length) return 'In an unticked stage the item runs on any worker. A review of an existing branch counts as Implement (it runs setup and checks), a second opinion as Review.';
+    if (this.pipe.needsInherited) return 'Inherited: ' + this.pipe.needsInherited + '. Tick stages to choose for this workspace.';
+    return 'None ticked: every stage of such an item runs on a labelled worker.';
+  },
   pipeSecondHint(): string {
     if (this.pipe.secondOpinion.trim()) return 'A plain second-opinion request (dashboard, Slack `second`) uses this runner.';
     if (this.pipe.secondInherited) return 'Inherited: ' + this.pipe.secondInherited + '.';
@@ -3370,7 +3383,7 @@ const appState = () => ({
     this.pipe.saving = true;
     try {
       const base = this.pipe.kind === 'group' ? '/api/groups/' : '/api/workspaces/';
-      const doc: Record<string, unknown> = { stages, agents_default: this.pipe.agentsDefault, second_opinion_runner: this.pipe.secondOpinion.trim(), via: 'dashboard' };
+      const doc: Record<string, unknown> = { stages, agents_default: this.pipe.agentsDefault, second_opinion_runner: this.pipe.secondOpinion.trim(), needs_stages: this.pipeNeedsStages(), via: 'dashboard' };
       // The settings document is replaced whole: carry the code index switch
       // (workspaces only; groups refuse it).
       if (this.pipe.kind === 'workspace') doc.code_index = this.pipe.codeIndex;

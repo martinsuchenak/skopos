@@ -261,6 +261,11 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "pipeline_defaults", "code_index", "INTEGER CHECK (code_index IS NULL OR code_index IN (0, 1))"); err != nil {
 		return err
 	}
+	// The stages an item's needed labels bind, per workspace/group (NULL =
+	// every stage).
+	if err := ensureColumn(db, "pipeline_defaults", "needs_stages", "TEXT"); err != nil {
+		return err
+	}
 	// Default second-opinion runner per workspace/group (NULL = none).
 	if err := ensureColumn(db, "pipeline_defaults", "second_opinion_runner", "TEXT"); err != nil {
 		return err

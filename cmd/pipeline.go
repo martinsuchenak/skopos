@@ -50,6 +50,7 @@ func pipelineCmd(kind string) *cli.Command {
 					&cli.StringFlag{Name: "agents-default", Usage: "What items without their own switch get: panel, solo or default"},
 					&cli.StringFlag{Name: "second-opinion", Usage: "Default runner for second opinions (none to clear)"},
 					&cli.StringFlag{Name: "code-index", Usage: "Workspaces: on = idle workers keep the code index fresh, off = they don't"},
+					&cli.StringFlag{Name: "needs-stages", Usage: "Stages in which an item's needed labels bind its runs to a labelled worker: plan, implement, review, qa (comma-separated); all = every stage, which is the default"},
 				),
 				Run: func(ctx context.Context, cmd *cli.Command) error {
 					v, err := pipelineGet(ctx, cmd, kind)
@@ -95,8 +96,18 @@ func pipelineCmd(kind string) *cli.Command {
 					default:
 						return fmt.Errorf("--code-index is on or off, not %q", ci)
 					}
+					if ns := strings.TrimSpace(cmd.GetString("needs-stages")); ns != "" {
+						// Checked here too: the server reads an unknown word as
+						// an error, but "all" has to become the empty list.
+						list, err := pipeline.NormalizeNeedsStages(strings.Split(ns, ","))
+						if err != nil {
+							return fmt.Errorf("--needs-stages: %w", err)
+						}
+						own.NeedsStages = list
+						changed = true
+					}
 					if !changed {
-						return fmt.Errorf("nothing to set: pass --stage with --runners, --agents-default, --second-opinion and/or --code-index")
+						return fmt.Errorf("nothing to set: pass --stage with --runners, --agents-default, --second-opinion, --code-index and/or --needs-stages")
 					}
 					return pipelinePut(ctx, cmd, kind, v.OwnerID, own)
 				},
@@ -167,7 +178,7 @@ func pipelinePut(ctx context.Context, cmd *cli.Command, kind, ownerID string, ow
 		return err
 	}
 	body := map[string]any{"stages": own.Stages, "agents_default": own.AgentsDefault,
-		"second_opinion_runner": own.SecondOpinionRunner, "via": audit.ViaCLI}
+		"second_opinion_runner": own.SecondOpinionRunner, "needs_stages": own.NeedsStages, "via": audit.ViaCLI}
 	// The save replaces the owner's settings: a switch left out of it is
 	// cleared, so the code-index switch travels with every save (it was
 	// left out, and each `pipeline set` turned the index off).
@@ -245,6 +256,18 @@ func printPipeline(v *pipeline.View) {
 	line = "second opinion: " + second
 	if secondSource != "" && secondSource != pipeline.KindWorkspace {
 		line += "  ← " + strings.Replace(secondSource, "group:", "group ", 1)
+	}
+	fmt.Println(line)
+	needs, needsSource := v.Own.NeedsStages, ""
+	if v.OwnerKind == pipeline.KindWorkspace {
+		needs, needsSource = v.EffectiveNeedsStages, v.NeedsStagesSource
+	}
+	line = "an item's labels bind: every stage (default)"
+	if len(needs) > 0 {
+		line = "an item's labels bind: " + strings.Join(needs, ", ")
+	}
+	if needsSource != "" && needsSource != pipeline.KindWorkspace {
+		line += "  ← " + strings.Replace(needsSource, "group:", "group ", 1)
 	}
 	fmt.Println(line)
 	if v.OwnerKind == pipeline.KindWorkspace {

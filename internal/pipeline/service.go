@@ -109,6 +109,7 @@ func (s *Service) Prefs(ctx context.Context, ws string) *runs.WorkspacePrefs {
 	}
 	p := ToPrefs(stages, r.agents)
 	p.CodeIndex = r.own.CodeIndex != nil && *r.own.CodeIndex
+	p.NeedsStages = r.needs
 	// The runner policy travels with the routing: the claim applies both.
 	// A policy that cannot be read must not silently become "no policy":
 	// keep the last known routing and policy instead.
@@ -138,6 +139,8 @@ type resolved struct {
 	agentsSource string
 	second       string
 	secondSource string
+	needs        []string
+	needsSource  string
 	groups       []GroupRef
 	conflicts    []string
 }
@@ -207,6 +210,20 @@ func (s *Service) resolve(ctx context.Context, ws string) (*resolved, error) {
 	} else if len(secondSetters) > 1 {
 		r.conflicts = append(r.conflicts, fmt.Sprintf("the second-opinion runner is set by groups %s; using %s", strings.Join(secondSetters, ", "), secondSetters[0]))
 	}
+	var needsSetters []string
+	for i, g := range groups {
+		if len(gsets[i].NeedsStages) > 0 {
+			if len(needsSetters) == 0 {
+				r.needs, r.needsSource = gsets[i].NeedsStages, "group:"+g.Name
+			}
+			needsSetters = append(needsSetters, g.Name)
+		}
+	}
+	if len(own.NeedsStages) > 0 {
+		r.needs, r.needsSource = own.NeedsStages, KindWorkspace
+	} else if len(needsSetters) > 1 {
+		r.conflicts = append(r.conflicts, fmt.Sprintf("the stages an item's labels bind are set by groups %s; using %s", strings.Join(needsSetters, ", "), needsSetters[0]))
+	}
 	return r, nil
 }
 
@@ -231,7 +248,8 @@ func (s *Service) Get(ctx context.Context, kind, id string) (*View, error) {
 	}
 	v := &View{OwnerKind: kind, OwnerID: id, Own: r.own, Effective: r.effective,
 		EffectiveAgentsDefault: r.agents, AgentsDefaultSource: r.agentsSource, Groups: r.groups, Conflicts: r.conflicts,
-		EffectiveSecondOpinionRunner: r.second, SecondOpinionSource: r.secondSource}
+		EffectiveSecondOpinionRunner: r.second, SecondOpinionSource: r.secondSource,
+		EffectiveNeedsStages: r.needs, NeedsStagesSource: r.needsSource}
 	if able, err := s.storage.Indexable(ctx, id, s.now().Add(-indexableWindow).UnixMilli()); err == nil {
 		v.IndexableBy = able
 	}
@@ -426,6 +444,15 @@ func (s *Service) checkGroupConflicts(ctx context.Context, groupID string, next 
 			return err
 		}
 	}
+	if len(next.NeedsStages) > 0 {
+		setters, err := s.storage.GroupsSettingNeedsStages(ctx)
+		if err != nil {
+			return err
+		}
+		if err := check("stages an item's labels bind", setters); err != nil {
+			return err
+		}
+	}
 	if next.AgentsDefault != "" {
 		setters, err := s.storage.GroupsSettingAgentsDefault(ctx)
 		if err != nil {
@@ -493,6 +520,9 @@ func diff(before, after Settings) string {
 	}
 	if before.AgentsDefault != after.AgentsDefault {
 		parts = append(parts, fmt.Sprintf("agents default: %s → %s", orDefault(before.AgentsDefault), orDefault(after.AgentsDefault)))
+	}
+	if b, a := strings.Join(before.NeedsStages, ","), strings.Join(after.NeedsStages, ","); b != a {
+		parts = append(parts, fmt.Sprintf("stages an item's labels bind: %s → %s", orDefault(b), orDefault(a)))
 	}
 	return strings.Join(parts, "; ")
 }

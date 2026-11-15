@@ -501,6 +501,7 @@ CREATE TABLE IF NOT EXISTS pipeline_defaults (
     agents_default  TEXT    CHECK (agents_default IS NULL OR agents_default IN ('panel', 'solo')),
     second_opinion_runner TEXT,   -- default runner for on-demand second opinions (NULL = none)
     code_index      INTEGER CHECK (code_index IS NULL OR code_index IN (0, 1)), -- idle workers index this workspace (workspace owners only)
+    needs_stages    TEXT,   -- stages an item's needed labels bind, comma-separated (NULL = every stage)
     updated_ms      INTEGER NOT NULL,
     updated_by      TEXT    NOT NULL,
     PRIMARY KEY (owner_kind, owner_id)

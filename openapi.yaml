@@ -4255,6 +4255,7 @@ components:
           additionalProperties: { $ref: "#/components/schemas/PipelineStage" }
         agents_default: { type: string, enum: [panel, solo, default, ""], description: What items without their own switch get }
         second_opinion_runner: { type: string, description: "Default runner for second opinions; none or empty clears it" }
+        needs_stages: { type: array, items: { type: string, enum: [plan, implement, review, qa] }, description: "The stages in which an item's needed labels bind its runs to a labelled worker. Empty or left out: not set at this level (nothing set anywhere = every stage). synthesize and compare count as plan, a second opinion as review, a review of an existing branch as implement. The document is replaced whole: send it on every save" }
         code_index: { type: boolean, description: "Workspaces only (groups refuse it): idle workers keep the workspace's code index fresh. The document is replaced whole — send it on every save." }
         via: { type: string, description: Surface label for the audit log }
     PipelineBrief:
@@ -4290,6 +4291,7 @@ components:
             agents_default: { type: string }
             second_opinion_runner: { type: string }
             code_index: { type: boolean }
+            needs_stages: { type: array, items: { type: string } }
         indexable_by: { type: array, items: { type: string }, description: "Workspace only: workers whose recent claims say they can fetch and index this repo" }
         effective:
           type: object
@@ -4303,6 +4305,8 @@ components:
         effective_agents_default: { type: string }
         effective_second_opinion_runner: { type: string }
         second_opinion_source: { type: string }
+        effective_needs_stages: { type: array, items: { type: string }, description: "Workspace only: the stages an item's needed labels bind; empty = every stage" }
+        needs_stages_source: { type: string }
         agents_default_source: { type: string }
         groups:
           type: array
@@ -4520,6 +4524,7 @@ components:
         agents_default: { type: string, enum: [panel, solo] }
         second_opinion_runner: { type: string }
         code_index: { type: boolean }
+        needs_stages: { type: array, items: { type: string, enum: [plan, implement, review, qa] } }
     PolicyRule:
       type: object
       description: "Allows a runner when every field it sets matches what the worker reports about the runner. provider, model and runner are globs (* any run of characters, ? one), compared without regard to case. A rule that sets no provider matches any provider."

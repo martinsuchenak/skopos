@@ -122,6 +122,7 @@ check_timeout = "45m0s"
 
 [groups.globex.pipeline]
 second_opinion_runner = "codex"
+needs_stages = ["implement", "qa"]
 [groups.globex.pipeline.stages]
 review = { members = "security@claude-opus,tests@claude-opus", policy = "any-blocks", timeout = "30m0s" }
 

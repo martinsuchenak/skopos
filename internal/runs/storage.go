@@ -646,7 +646,7 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs func(workspace
 			// Its item needs a label this worker has not got (the label
 			// was taken off it, or the item's needs changed while the run
 			// waited): another worker takes over from the branch.
-			if !labels.Covers(has, r.Needs) {
+			if !labels.Covers(has, boundNeeds(r, prefs(r.WorkspaceID))) {
 				if err := releaseForTakeover(ctx, tx, r.ID, now); err != nil {
 					return nil, err
 				}
@@ -691,7 +691,7 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs func(workspace
 			wsSet[w] = in.Unhealthy[w] == ""
 		}
 		for _, r := range queued {
-			if !wsSet[r.WorkspaceID] || retryWaiting(r, in.WorkerID, now) || !labels.Covers(has, r.Needs) {
+			if !wsSet[r.WorkspaceID] || retryWaiting(r, in.WorkerID, now) || !labels.Covers(has, boundNeeds(r, prefs(r.WorkspaceID))) {
 				continue
 			}
 			if r.PreferWorker != "" && r.PreferWorker != in.WorkerID && now.Before(r.PreferUntil) {
@@ -735,7 +735,7 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs func(workspace
 			wsSet[w] = in.Unhealthy[w] == ""
 		}
 		for _, r := range takeover {
-			if !wsSet[r.WorkspaceID] || !labels.Covers(has, r.Needs) {
+			if !wsSet[r.WorkspaceID] || !labels.Covers(has, boundNeeds(r, prefs(r.WorkspaceID))) {
 				continue
 			}
 			if d := decide(r, prefs(r.WorkspaceID), offer); d.ok {
@@ -1035,7 +1035,7 @@ func workerCanTake(ctx context.Context, tx *sql.Tx, id string, r *Run, prefs *Wo
 	if err != nil {
 		return false, fmt.Errorf("reading worker %s: %w", id, err)
 	}
-	if offlineAt != "" || offers == 0 || healthy == 0 || runs == 0 || paused == 1 || !labels.Covers(labels.Parse(rawLabels), r.Needs) {
+	if offlineAt != "" || offers == 0 || healthy == 0 || runs == 0 || paused == 1 || !labels.Covers(labels.Parse(rawLabels), boundNeeds(r, prefs)) {
 		return false, nil
 	}
 	// The policy too, by what that worker reports: a run must not wait out

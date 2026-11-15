@@ -567,12 +567,13 @@ func strandedReason(r *Run, prefs *WorkspacePrefs, workers []workerOffer) string
 	// every label those workers do have.
 	unlabelled := 0
 	var offered []string
+	needs := boundNeeds(r, prefs)
 	for _, w := range workers {
 		if !w.workspaces[r.WorkspaceID] {
 			continue
 		}
 		serving++
-		if !labels.Covers(w.labels, r.Needs) {
+		if !labels.Covers(w.labels, needs) {
 			unlabelled++
 			offered = append(offered, w.labels...)
 			continue
@@ -599,10 +600,10 @@ func strandedReason(r *Run, prefs *WorkspacePrefs, workers []workerOffer) string
 	case serving > 0 && unlabelled == serving:
 		// Not the policy: the item names what its worker must have, and no
 		// worker serving the workspace has it.
-		if missing := labels.Missing(offered, r.Needs); len(missing) > 0 {
+		if missing := labels.Missing(offered, needs); len(missing) > 0 {
 			return fmt.Sprintf("no worker serving the workspace has the label the item needs: %s", strings.Join(missing, ", "))
 		}
-		return fmt.Sprintf("no worker serving the workspace has all the labels the item needs: %s", strings.Join(r.Needs, ", "))
+		return fmt.Sprintf("no worker serving the workspace has all the labels the item needs: %s", strings.Join(needs, ", "))
 	case refused != "":
 		return fmt.Sprintf("no worker offers an allowed runner for %s: refused by the %s policy", r.Stage, refused)
 	case unavailable != "":

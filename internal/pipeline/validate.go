@@ -3,6 +3,7 @@ package pipeline
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -130,6 +131,32 @@ func ValidateStage(stage string, st StageSetting) error {
 	return nil
 }
 
+// NormalizeNeedsStages checks the stages an item's needed labels bind and
+// returns them in pipeline order, without duplicates. Nothing listed (or
+// "all", "default") = not set.
+func NormalizeNeedsStages(in []string) ([]string, error) {
+	want := map[string]bool{}
+	for _, v := range in {
+		v = strings.ToLower(strings.TrimSpace(v))
+		switch {
+		case v == "":
+		case v == "all" || v == "default":
+			return nil, nil
+		case slices.Contains(runs.NeedsStageKeys, v):
+			want[v] = true
+		default:
+			return nil, fmt.Errorf("%w: needs_stages: %q is not one of %s", ErrInvalidInput, v, strings.Join(runs.NeedsStageKeys, ", "))
+		}
+	}
+	var out []string
+	for _, k := range runs.NeedsStageKeys {
+		if want[k] {
+			out = append(out, k)
+		}
+	}
+	return out, nil
+}
+
 // Normalize trims and validates a whole settings document.
 func Normalize(in Settings) (Settings, error) {
 	out := Settings{Stages: map[string]StageSetting{}, CodeIndex: in.CodeIndex}
@@ -148,6 +175,11 @@ func Normalize(in Settings) (Settings, error) {
 		}
 		out.SecondOpinionRunner = r
 	}
+	needs, err := NormalizeNeedsStages(in.NeedsStages)
+	if err != nil {
+		return out, err
+	}
+	out.NeedsStages = needs
 	for stage, st := range in.Stages {
 		stage = strings.ToLower(strings.TrimSpace(stage))
 		members := make([]runs.Member, 0, len(st.Members))

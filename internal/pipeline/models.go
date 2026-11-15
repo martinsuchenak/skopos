@@ -48,6 +48,16 @@ type Settings struct {
 	// (tmp/agent-mcp-and-indexing — design.md §3). Workspace owners only;
 	// nil = off.
 	CodeIndex *bool `json:"code_index,omitempty"`
+	// NeedsStages: the stages in which an item's needed labels bind its
+	// runs to a labelled worker (runs.NeedsStageKeys: plan, implement,
+	// review, qa). Empty = not set at this level; nothing set anywhere =
+	// every stage.
+	NeedsStages []string `json:"needs_stages,omitempty"`
+}
+
+// Empty reports whether the document sets nothing.
+func (st Settings) Empty() bool {
+	return len(st.Stages) == 0 && st.AgentsDefault == "" && st.SecondOpinionRunner == "" && st.CodeIndex == nil && len(st.NeedsStages) == 0
 }
 
 // EffectiveStage is a resolved stage with where it came from:
@@ -74,10 +84,14 @@ type View struct {
 	EffectiveAgentsDefault string                    `json:"effective_agents_default,omitempty"`
 	AgentsDefaultSource    string                    `json:"agents_default_source,omitempty"`
 	// Effective default second-opinion runner, and where it comes from.
-	EffectiveSecondOpinionRunner string     `json:"effective_second_opinion_runner,omitempty"`
-	SecondOpinionSource          string     `json:"second_opinion_source,omitempty"`
-	Groups                       []GroupRef `json:"groups,omitempty"`
-	Conflicts                    []string   `json:"conflicts,omitempty"`
+	EffectiveSecondOpinionRunner string `json:"effective_second_opinion_runner,omitempty"`
+	SecondOpinionSource          string `json:"second_opinion_source,omitempty"`
+	// The stages an item's needed labels bind, and where the setting comes
+	// from. Empty = every stage (nothing sets it).
+	EffectiveNeedsStages []string   `json:"effective_needs_stages,omitempty"`
+	NeedsStagesSource    string     `json:"needs_stages_source,omitempty"`
+	Groups               []GroupRef `json:"groups,omitempty"`
+	Conflicts            []string   `json:"conflicts,omitempty"`
 	// UnknownRunners: effective runners no worker serving this workspace
 	// offers yet — their runs wait until one does.
 	UnknownRunners []string `json:"unknown_runners,omitempty"`

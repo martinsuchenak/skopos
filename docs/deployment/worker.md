@@ -1496,6 +1496,27 @@ skopos inbox add --workspace github.com/acme/shop --title "Stock count rounding"
   every label it names. That holds for each of its runs: plan, implement,
   checks, review, QA and a second opinion. An item without `needs` goes to
   any worker serving the workspace.
+- **Only some stages:** a workspace or group can name the stages in which
+  the labels bind. In the other stages the item's runs go to any worker
+  serving the workspace. Planning and review only read the repository, so
+  where the label stands for data or a configured system, naming
+  implement and QA keeps the labelled workers free for the work that needs
+  them:
+
+  ```sh
+  skopos workspace pipeline set --workspace github.com/acme/shop --needs-stages implement,qa
+  ```
+
+  The stages are `plan`, `implement`, `review` and `qa`; `all` goes back to
+  every stage, which is what applies when nothing is set. The dashboard has
+  the same under Workspaces → Settings → Options, and a fleet file as
+  `needs_stages` in a `pipeline` section. A workspace's own setting is used
+  in place of its group's.
+  - `implement` covers the checks that follow the implementation, and a
+    review of an existing branch (it runs the repository's setup and checks
+    before it reviews).
+  - `plan` covers the merge and the comparison of a plan round.
+  - `review` covers a second opinion.
 - **Where the labels are held:** on the server, per worker id. The worker's
   config file has no setting for them and the worker reports none, so the
   same config can be rolled out to every machine. They count for the key

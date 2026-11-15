@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/dbtime"
@@ -46,14 +47,17 @@ func (s *Storage) Get(ctx context.Context, kind, id string) (Settings, error) {
 	if err := rows.Err(); err != nil {
 		return out, err
 	}
-	var agents, second sql.NullString
+	var agents, second, needs sql.NullString
 	var codeIndex sql.NullInt64
-	err = s.db.QueryRowContext(ctx, `SELECT agents_default, second_opinion_runner, code_index FROM pipeline_defaults WHERE owner_kind = ? AND owner_id = ?`, kind, id).Scan(&agents, &second, &codeIndex)
+	err = s.db.QueryRowContext(ctx, `SELECT agents_default, second_opinion_runner, code_index, needs_stages FROM pipeline_defaults WHERE owner_kind = ? AND owner_id = ?`, kind, id).Scan(&agents, &second, &codeIndex, &needs)
 	if err != nil && err != sql.ErrNoRows {
 		return out, fmt.Errorf("reading pipeline defaults: %w", err)
 	}
 	out.AgentsDefault = agents.String
 	out.SecondOpinionRunner = second.String
+	if needs.String != "" {
+		out.NeedsStages = strings.Split(needs.String, ",")
+	}
 	if codeIndex.Valid {
 		on := codeIndex.Int64 == 1
 		out.CodeIndex = &on
@@ -77,7 +81,7 @@ func (s *Storage) Replace(ctx context.Context, kind, id string, st Settings, by 
 			return err
 		}
 	}
-	if err := writeDefaults(ctx, tx, kind, id, st.AgentsDefault, st.SecondOpinionRunner, st.CodeIndex, by, ms); err != nil {
+	if err := writeDefaults(ctx, tx, kind, id, st, by, ms); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -146,16 +150,21 @@ func insertStage(ctx context.Context, tx *sql.Tx, kind, id, stage string, set St
 	return nil
 }
 
-func writeDefaults(ctx context.Context, tx *sql.Tx, kind, id, agents, second string, codeIndex *bool, by string, ms int64) error {
-	if agents == "" && second == "" && codeIndex == nil {
+// writeDefaults stores what a settings document holds besides its stages;
+// a document that holds none of it has no row.
+func writeDefaults(ctx context.Context, tx *sql.Tx, kind, id string, st Settings, by string, ms int64) error {
+	needs := strings.Join(st.NeedsStages, ",")
+	if st.AgentsDefault == "" && st.SecondOpinionRunner == "" && st.CodeIndex == nil && needs == "" {
 		_, err := tx.ExecContext(ctx, `DELETE FROM pipeline_defaults WHERE owner_kind = ? AND owner_id = ?`, kind, id)
 		return err
 	}
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO pipeline_defaults (owner_kind, owner_id, agents_default, second_opinion_runner, code_index, updated_ms, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO pipeline_defaults (owner_kind, owner_id, agents_default, second_opinion_runner, code_index, needs_stages, updated_ms, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (owner_kind, owner_id) DO UPDATE SET agents_default = excluded.agents_default,
 			second_opinion_runner = excluded.second_opinion_runner, code_index = excluded.code_index,
-			updated_ms = excluded.updated_ms, updated_by = excluded.updated_by`, kind, id, nullable(agents), nullable(second), boolArg(codeIndex), ms, by)
+			needs_stages = excluded.needs_stages,
+			updated_ms = excluded.updated_ms, updated_by = excluded.updated_by`,
+		kind, id, nullable(st.AgentsDefault), nullable(st.SecondOpinionRunner), boolArg(st.CodeIndex), nullable(needs), ms, by)
 	return err
 }
 
@@ -175,6 +184,25 @@ func nullable(s string) any {
 		return nil
 	}
 	return s
+}
+
+// GroupsSettingNeedsStages lists the groups that set the stages an item's
+// needed labels bind.
+func (s *Storage) GroupsSettingNeedsStages(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT owner_id FROM pipeline_defaults WHERE owner_kind = 'group' AND needs_stages IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }
 
 // GroupsSettingSecondOpinion lists the groups that set a default

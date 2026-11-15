@@ -83,7 +83,7 @@ func workerLabelCmd() *cli.Command {
 
 func labelLine(id string, list []string) string {
 	if len(list) == 0 {
-		return id + " has no labels: it takes no run of an item that needs one."
+		return id + " has no labels: a run that needs a labelled worker is not handed to it."
 	}
 	if len(list) == 1 {
 		return id + " has the label " + list[0] + "."

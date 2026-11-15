@@ -243,6 +243,104 @@ func TestStrandedForLabels(t *testing.T) {
 	}
 }
 
+// A workspace says which stages an item's needed labels bind: in the
+// others its runs go to any worker. Without the setting they bind every
+// stage.
+func TestNeedsBindOnlyTheStagesTheWorkspaceNames(t *testing.T) {
+	s := testService(t)
+	s.SetPrefs(map[string]*WorkspacePrefs{"ws": {Stages: map[string]string{}, NeedsStages: []string{StageImplement, StageQA}}})
+	now := time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	ctx := rootCtx()
+	claimWS(t, s, "w-plain")
+	for i, stage := range []string{StagePlan, StageImplement, StageReview, StageQA} {
+		item := "item-" + string(rune('1'+i))
+		needsItem(t, s, item, "stock")
+		mustQueue(t, s, ctx, "ws", item, stage)
+	}
+	opinion, err := s.QueueSecondOpinion(ctx, "item-1", "ws", "codex", "abc123", "b", "base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	take := func(worker string, runners ...string) string {
+		t.Helper()
+		var got []string
+		for {
+			r, err := s.ClaimNext(ctx, ClaimInput{WorkerID: worker, Workspaces: []string{"ws"}, Runners: runners})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r == nil {
+				break
+			}
+			got = append(got, r.Stage)
+			if _, err := s.Report(ctx, r.ID, ReportInput{WorkerID: worker, Status: StatusSucceeded}, r.LeaseToken); err != nil {
+				t.Fatal(err)
+			}
+		}
+		slices.Sort(got)
+		return strings.Join(got, ",")
+	}
+	// No labelled worker yet: the stages that only read the repository are
+	// worked all the same, and only the bound ones are stranded.
+	if got := take("w-plain", "codex"); got != "plan,review,second_opinion" {
+		t.Fatalf("an unlabelled worker takes %q, want plan, review and the second opinion", got)
+	}
+	if r, _ := s.Get(ctx, opinion); r.Status != StatusSucceeded {
+		t.Fatalf("the second opinion counts as review: %+v", r)
+	}
+	now = now.Add(strandedAfter + time.Second)
+	s.SweepStranded(ctx)
+	waiting, err := s.storage.WaitingRuns(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stranded []string
+	for _, r := range waiting {
+		if r.Stranded != "no worker serving the workspace has the label the item needs: stock" {
+			t.Fatalf("%s: stranded %q", r.Stage, r.Stranded)
+		}
+		stranded = append(stranded, r.Stage)
+	}
+	slices.Sort(stranded)
+	if got := strings.Join(stranded, ","); got != "implement,qa" {
+		t.Fatalf("stranded: %s, want implement and qa", got)
+	}
+	claimWS(t, s, "w-stock")
+	labelWorker(t, s, "w-stock", "stock")
+	if got := take("w-stock"); got != "implement,qa" {
+		t.Fatalf("the labelled worker takes %q, want implement and qa", got)
+	}
+}
+
+// Which key each stage counts under, and what binds without a setting.
+func TestNeedsStageKeys(t *testing.T) {
+	for stage, want := range map[string]string{
+		StagePlan: StagePlan, StageSynthesize: StagePlan, StageCompare: StagePlan,
+		StageImplement: StageImplement, StageBranchReview: StageImplement,
+		StageReview: StageReview, StageSecondOpinion: StageReview, StageQA: StageQA,
+	} {
+		if got := NeedsStageKey(stage); got != want {
+			t.Errorf("%s counts as %s, want %s", stage, got, want)
+		}
+		if !slices.Contains(NeedsStageKeys, want) {
+			t.Errorf("%s is not a key a workspace can name", want)
+		}
+	}
+	var none *WorkspacePrefs
+	if !none.NeedsBind(StagePlan) || !(&WorkspacePrefs{}).NeedsBind(StageReview) {
+		t.Fatal("without a setting, and without prefs, the labels bind every stage")
+	}
+	p := &WorkspacePrefs{NeedsStages: []string{StageImplement}}
+	if p.NeedsBind(StagePlan) || !p.NeedsBind(StageBranchReview) {
+		t.Fatal("implement binds a review of an existing branch, not the plan")
+	}
+	run := &Run{Stage: StagePlan, Needs: []string{"stock"}}
+	if got := boundNeeds(run, p); got != nil {
+		t.Fatalf("a plan run requires %v of its worker, want nothing", got)
+	}
+}
+
 // A worker's labels belong to the key its row was written by: another key
 // polling under the same worker id gets no run that needs them.
 func TestLabelsAreNotBorrowedByWorkerID(t *testing.T) {

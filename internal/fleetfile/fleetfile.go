@@ -94,6 +94,7 @@ type PipelineDoc struct {
 	AgentsDefault       string              `json:"agents_default,omitempty" toml:"agents_default,omitempty"`
 	SecondOpinionRunner string              `json:"second_opinion_runner,omitempty" toml:"second_opinion_runner,omitempty"`
 	CodeIndex           *bool               `json:"code_index,omitempty" toml:"code_index,omitempty"`
+	NeedsStages         []string            `json:"needs_stages,omitempty" toml:"needs_stages,omitempty"`
 }
 
 // StageDoc is one stage: its members as "[focus@]runner,…" and, for a
@@ -106,10 +107,10 @@ type StageDoc struct {
 }
 
 func pipelineDoc(st pipeline.Settings) *PipelineDoc {
-	if len(st.Stages) == 0 && st.AgentsDefault == "" && st.SecondOpinionRunner == "" && st.CodeIndex == nil {
+	if st.Empty() {
 		return nil
 	}
-	d := &PipelineDoc{AgentsDefault: st.AgentsDefault, SecondOpinionRunner: st.SecondOpinionRunner, CodeIndex: st.CodeIndex}
+	d := &PipelineDoc{AgentsDefault: st.AgentsDefault, SecondOpinionRunner: st.SecondOpinionRunner, CodeIndex: st.CodeIndex, NeedsStages: st.NeedsStages}
 	for stage, s := range st.Stages {
 		if d.Stages == nil {
 			d.Stages = map[string]StageDoc{}
@@ -128,7 +129,7 @@ func (d *PipelineDoc) settings() (pipeline.Settings, error) {
 	if d == nil {
 		return st, nil
 	}
-	st.AgentsDefault, st.SecondOpinionRunner, st.CodeIndex = d.AgentsDefault, d.SecondOpinionRunner, d.CodeIndex
+	st.AgentsDefault, st.SecondOpinionRunner, st.CodeIndex, st.NeedsStages = d.AgentsDefault, d.SecondOpinionRunner, d.CodeIndex, d.NeedsStages
 	for stage, sd := range d.Stages {
 		members, err := pipeline.ParseMembers(sd.Members)
 		if err != nil {
@@ -829,7 +830,7 @@ func (s *Service) steps(ctx context.Context, in Input) ([]step, []string, error)
 			plan: func(ctx context.Context) (string, string, []string, error) {
 				if o.fresh {
 					norm, err := pipeline.Normalize(st)
-					if err != nil || len(norm.Stages) == 0 && norm.AgentsDefault == "" && norm.SecondOpinionRunner == "" && norm.CodeIndex == nil {
+					if err != nil || norm.Empty() {
 						return "", "", nil, err
 					}
 					return "create", describePipeline(norm), []string{noteFresh}, nil
@@ -1074,6 +1075,9 @@ func describePipeline(st pipeline.Settings) string {
 	}
 	if st.CodeIndex != nil {
 		parts = append(parts, fmt.Sprintf("code index %v", *st.CodeIndex))
+	}
+	if len(st.NeedsStages) > 0 {
+		parts = append(parts, "labels bind "+strings.Join(st.NeedsStages, ", "))
 	}
 	return strings.Join(parts, "; ")
 }
