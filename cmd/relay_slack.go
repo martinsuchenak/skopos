@@ -8,6 +8,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/qa"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/integrations"
 	"github.com/martinsuchenak/skopos/internal/itemtext"
+	"github.com/martinsuchenak/skopos/internal/labels"
 	"github.com/martinsuchenak/skopos/internal/notify"
 	"github.com/martinsuchenak/skopos/internal/runs"
 )
@@ -100,6 +102,64 @@ var reSelector = regexp.MustCompile(`(?s)^([A-Za-z0-9._/~+-]+):\s+(.+)$`)
 // hints the planner unions into its selection (capability profiles §3).
 var reHashtag = regexp.MustCompile(`(?:^|\s)#([a-z0-9][a-z0-9._-]{0,63})\b`)
 
+// reNeeds: a `needs: <label>[, <label>…]` line of its own in a capture names
+// the labels the item needs of a worker.
+var reNeeds = regexp.MustCompile(`(?im)^[ \t]*needs[ \t]*:[ \t]*(.*?)[ \t]*$`)
+
+// captureNeeds takes the `needs:` lines out of a capture, below its first
+// line (the title). It returns the text without them and the labels named;
+// found says a line was there, so an empty or invalid list is refused and
+// never read as "no requirement": an item that lost its needs would run
+// on a worker it was meant to avoid.
+func captureNeeds(text string) (rest string, needs []string, found bool, err error) {
+	first, below, _ := strings.Cut(text, "\n")
+	var named []string
+	below = reNeeds.ReplaceAllStringFunc(below, func(line string) string {
+		found = true
+		named = append(named, labels.Split(reNeeds.FindStringSubmatch(line)[1])...)
+		return ""
+	})
+	if !found {
+		return text, nil, false, nil
+	}
+	if needs, err = inbox.NormalizeNeeds(named); err != nil {
+		return "", nil, true, err
+	}
+	if len(needs) == 0 {
+		return "", nil, true, fmt.Errorf("the `needs:` line names no label")
+	}
+	return strings.TrimSpace(first + "\n" + below), needs, true, nil
+}
+
+// needsWords lists labels for a message: `stock`, `plant-2`.
+func needsWords(list []string) string {
+	out := make([]string, 0, len(list))
+	for _, l := range list {
+		out = append(out, "`"+l+"`")
+	}
+	return strings.Join(out, ", ")
+}
+
+// needsWarning says when no worker that serves the workspace has every
+// label the item needs: a label nobody holds (a typo is a valid label)
+// would leave the item waiting without a word. "" = some worker has them,
+// or the workers could not be read.
+func (r *slackRelay) needsWarning(ws string, needs []string) string {
+	if len(needs) == 0 || r.runs == nil {
+		return ""
+	}
+	workers, err := r.runs.ListWorkers(relayCtx())
+	if err != nil {
+		return ""
+	}
+	for _, w := range workers {
+		if slices.Contains(w.Workspaces, ws) && labels.Covers(w.Labels, needs) {
+			return ""
+		}
+	}
+	return "⚠️ No worker serving `" + ws + "` has " + needsWords(needs) + " now: the stages that need it wait until one does (`skopos worker label`)."
+}
+
 // captureTags is slack-new plus the capture's hashtags (lowercased, unique).
 // #panel and #solo are the item's agents switch (captureAgents), not tags.
 func captureTags(text string) []string {
@@ -149,7 +209,8 @@ const slackHelp = "*skopos commands* — reply in an item's thread:\n" +
 	"• `second` / `second <runner>` — an advisory second opinion on the finished branch (`force` re-runs a runner on the same head)\n" +
 	"• `findings` — the review findings, numbered; `changes 2,3: <notes>` / `retry 2: <answer>` send findings back to be fixed, `waive 2: <why>` accepts one\n" +
 	"• `panel` / `solo` / `default` — the item's plan, review and QA stages use the repository's agent panel, one agent, or the repository default (from the next stage)\n" +
-	"Top-level: `new: <what to do>` creates and queues an item; add `#panel` or `#solo` to choose its agents."
+	"• `needs: <label>, <label>` — only a worker with these labels works on the item; `needs: -` clears it, `needs` shows it\n" +
+	"Top-level: `new: <what to do>` creates and queues an item; add `#panel` or `#solo` to choose its agents, and a line `needs: <label>` below it for a worker with that label."
 
 // TopLevel handles threadless DMs: capture and help. ts is the approver's own
 // message — a created item's thread binds to it, so his next reply in that
@@ -179,12 +240,20 @@ func (r *slackRelay) TopLevel(ctx context.Context, text, ts string) bool {
 		r.post(ctx, "", "⚠️ Capture is disabled: SKOPOS_SLACK_DEFAULT_WORKSPACE is not set on the server.")
 		return true
 	}
+	what, needs, _, err := captureNeeds(what)
+	if err != nil {
+		r.post(ctx, "", "⚠️ Nothing created: "+firstLine(err.Error())+". A `needs:` line names labels, comma-separated: `needs: stock, plant-2`.")
+		return true
+	}
 	item, err := r.inbox.CreateItem(relayCtx(), inbox.CreateInput{
-		WorkspaceID: ws, Title: truncate(what, 80),
+		// The title is the capture's first line: with a `needs:` line the
+		// capture has several.
+		WorkspaceID: ws, Title: truncate(firstLine(what), 80),
 		Content:       what + "\n\n_Created from Slack (`new:`), " + time.Now().UTC().Format("2006-01-02 15:04") + " UTC._",
 		Tags:          captureTags(what),
 		AuthorAgentID: "slack",
 		Agents:        captureAgents(what),
+		Needs:         needs,
 	})
 	if err != nil {
 		r.post(ctx, "", "⚠️ Could not create the item: "+firstLine(err.Error()))
@@ -198,7 +267,14 @@ func (r *slackRelay) TopLevel(ctx context.Context, text, ts string) bool {
 	if item.Agents != "" {
 		agentsNote = " · " + agentsWord(item.Agents)
 	}
-	r.post(ctx, ts, "📥 Queued in `"+ws+"`"+agentsNote+" · planning starts within a minute. The plan will come back in this thread.")
+	if len(item.Needs) > 0 {
+		agentsNote = " · needs " + needsWords(item.Needs) + agentsNote
+	}
+	msg := "📥 Queued in `" + ws + "`" + agentsNote + " · planning starts within a minute. The plan will come back in this thread."
+	if warn := r.needsWarning(ws, item.Needs); warn != "" {
+		msg += "\n" + warn
+	}
+	r.post(ctx, ts, msg)
 	return true
 }
 
@@ -212,9 +288,10 @@ func (r *slackRelay) Apply(ctx context.Context, itemID, text string) bool {
 		// Not a command; leave un-acked. When it LEADS with a command word
 		// ("done with lunch", "approve? ..."), say how to issue the real
 		// one rather than silently ignoring what may have been meant.
-		// `findings` and `waive` are ordinary words at the start of a
-		// sentence ("findings look fine"): no hint for those.
-		if w := reWord.FindStringSubmatch(text); w != nil && isCommand(strings.ToLower(w[1])) && !isFindingCommand(strings.ToLower(w[1])) {
+		// `findings`, `waive` and `needs` are ordinary words at the start
+		// of a sentence ("findings look fine", "needs a rebase first"): no
+		// hint for those.
+		if w := reWord.FindStringSubmatch(text); w != nil && isCommand(strings.ToLower(w[1])) && !isFindingCommand(strings.ToLower(w[1])) && strings.ToLower(w[1]) != "needs" {
 			if item, err := r.inbox.GetItem(relayCtx(), itemID); err == nil {
 				word := strings.ToLower(w[1])
 				r.post(ctx, item.SlackThreadTS, "🤔 Not applied — a command is the bare word (`"+word+"`) or `"+word+": <notes>` on its own.")
@@ -238,6 +315,10 @@ func (r *slackRelay) Apply(ctx context.Context, itemID, text string) bool {
 	// at once (never buffered) and takes effect at the next stage.
 	if isAgentsCommand(cmd) {
 		return r.setAgents(ctx, item, cmd)
+	}
+	// So are the labels the item needs of a worker.
+	if cmd == "needs" {
+		return r.setNeeds(ctx, item, arg)
 	}
 	// Listing findings and waiving one are no workflow action either: they
 	// apply at once, whatever the item is doing.
@@ -499,6 +580,42 @@ func (r *slackRelay) setAgents(ctx context.Context, item *inbox.Item, cmd string
 		msg += " A stage already running keeps its agents."
 	}
 	r.post(ctx, item.SlackThreadTS, msg)
+	return true
+}
+
+// setNeeds applies a `needs: <labels>` reply: the labels the item needs of
+// a worker. `needs: -` clears them; the bare word shows them.
+func (r *slackRelay) setNeeds(ctx context.Context, item *inbox.Item, arg string) bool {
+	thread := item.SlackThreadTS
+	named, set := labels.Arg(arg)
+	if !set {
+		if len(item.Needs) == 0 {
+			r.post(ctx, thread, "🏷️ This item needs no label: any worker serving `"+item.WorkspaceID+"` may work on it. Set one with `needs: <label>`.")
+		} else {
+			r.post(ctx, thread, "🏷️ This item needs a worker with "+needsWords(item.Needs)+". `needs: -` clears it.")
+		}
+		return true
+	}
+	needs, err := inbox.NormalizeNeeds(named)
+	if err == nil {
+		if needs == nil {
+			needs = []string{}
+		}
+		err = r.inbox.UpdateItem(relayCtx(), item.ID, inbox.UpdateInput{Needs: &needs, Via: audit.ViaSlack})
+	}
+	if err != nil {
+		r.post(ctx, thread, "⚠️ Not applied: "+truncate(err.Error(), 300))
+		return true
+	}
+	if len(needs) == 0 {
+		r.post(ctx, thread, "🏷️ This item needs no label now: any worker serving `"+item.WorkspaceID+"` may work on it.")
+		return true
+	}
+	msg := "🏷️ This item now needs a worker with " + needsWords(needs) + ". Runs that still wait follow it; a run in progress keeps its worker."
+	if warn := r.needsWarning(item.WorkspaceID, needs); warn != "" {
+		msg += "\n" + warn
+	}
+	r.post(ctx, thread, msg)
 	return true
 }
 
@@ -872,7 +989,7 @@ func (r *slackRelay) drainAll(ctx context.Context) {
 // isCommand: the thread-reply vocabulary.
 func isCommand(w string) bool {
 	switch w {
-	case "approve", "approved", "lgtm", "revise", "changes", "done", "retry", "reject", "second", "answer", "waive", "findings":
+	case "approve", "approved", "lgtm", "revise", "changes", "done", "retry", "reject", "second", "answer", "waive", "findings", "needs":
 		return true
 	}
 	return isAgentsCommand(w)

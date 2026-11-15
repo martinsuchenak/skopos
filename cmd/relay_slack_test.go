@@ -817,3 +817,132 @@ func TestRelaySecondOpinion(t *testing.T) {
 		t.Fatalf("force: %q", fake.last().text)
 	}
 }
+
+// A `needs:` line in a capture names the labels the item needs of a worker;
+// a `needs:` reply in the item's thread sets or clears them.
+func TestRelayNeeds(t *testing.T) {
+	rest, needs, found, err := captureNeeds("recount the bins\nafter the import\n  Needs: Stock , plant-2\nneeds: stock\nit needs: care")
+	if err != nil || !found || strings.Join(needs, ",") != "plant-2,stock" || rest != "recount the bins\nafter the import\n\n\nit needs: care" {
+		t.Fatalf("captureNeeds: %q %v %v %v", rest, needs, found, err)
+	}
+	// The first line is the title, whatever it says.
+	if rest, needs, found, _ := captureNeeds("needs: a new index"); found || needs != nil || rest != "needs: a new index" {
+		t.Fatalf("a first line is never a needs line: %q %v %v", rest, needs, found)
+	}
+	for _, bad := range []string{"x\nneeds:", "x\nneeds: -", "x\nneeds: two words", "x\nneeds: a,b,c,d,e,f,g,h,i"} {
+		if _, _, found, err := captureNeeds(bad); !found || err == nil {
+			t.Fatalf("%q must be refused: found %v err %v", bad, found, err)
+		}
+	}
+
+	svc, runsSvc, _, fake, relay := relayStack(t)
+	root := context.Background()
+	captured := func() []inbox.Item {
+		t.Helper()
+		items, err := svc.ListItems(root, "ws-a", "", "slack-new", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return items
+	}
+
+	// A list that does not pass creates nothing, and says why.
+	if !relay.TopLevel(root, "new: recount the bins\nneeds: two words", "900.1") {
+		t.Fatal("capture must be handled")
+	}
+	if n := len(captured()); n != 0 || !strings.Contains(fake.last().text, "Nothing created") {
+		t.Fatalf("an invalid needs line: %d items, %q", n, fake.last().text)
+	}
+
+	// No worker holds the label: the item is created, with a warning.
+	if !relay.TopLevel(root, "new: recount the bins\nneeds: Stock\nafter the import #solo", "900.2") {
+		t.Fatal("capture must be handled")
+	}
+	items := captured()
+	if len(items) != 1 || strings.Join(items[0].Needs, ",") != "stock" || items[0].Title != "recount the bins" || items[0].Agents != inbox.AgentsSolo {
+		t.Fatalf("captured: %+v", items)
+	}
+	if full, _ := svc.GetItem(root, items[0].ID); strings.Contains(strings.ToLower(full.Content), "needs:") || !strings.Contains(full.Content, "recount the bins\n\nafter the import #solo") {
+		t.Fatalf("the needs line is taken out of the content: %q", full.Content)
+	}
+	msg := fake.last().text
+	if !strings.Contains(msg, "Queued in `ws-a` · needs `stock` · one agent") || !strings.Contains(msg, "No worker serving `ws-a` has `stock`") {
+		t.Fatalf("confirmation: %q", msg)
+	}
+	id := items[0].ID
+
+	// A worker that serves the workspace gets the label: no warning.
+	if _, err := runsSvc.ClaimNext(root, runs.ClaimInput{WorkerID: "w-plain", Workspaces: []string{"ws-a"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runsSvc.ClaimNext(root, runs.ClaimInput{WorkerID: "w-stock", Workspaces: []string{"ws-a"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runsSvc.SetWorkerLabels(approverCtx(), "w-stock", runs.LabelsInput{Labels: []string{"stock"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !relay.TopLevel(root, "new: count again\nneeds: stock", "900.3") {
+		t.Fatal("capture must be handled")
+	}
+	if msg := fake.last().text; !strings.Contains(msg, "needs `stock`") || strings.Contains(msg, "No worker") {
+		t.Fatalf("a labelled worker serves the workspace: %q", msg)
+	}
+
+	// In the thread: show, set (at once, mid-run too), refuse, clear.
+	if !relay.Apply(root, id, "needs") || !strings.Contains(fake.last().text, "needs a worker with `stock`") {
+		t.Fatalf("needs shows the labels: %q", fake.last().text)
+	}
+	if !relay.Apply(root, id, "needs: plant-2, Stock") {
+		t.Fatal("a needs reply must be handled")
+	}
+	if got, _ := svc.GetItem(root, id); strings.Join(got.Needs, ",") != "plant-2,stock" {
+		t.Fatalf("needs applies at once: %v", got.Needs)
+	}
+	if msg := fake.last().text; !strings.Contains(msg, "now needs a worker with `plant-2`, `stock`") || !strings.Contains(msg, "No worker serving `ws-a` has `plant-2`, `stock`") {
+		t.Fatalf("set: %q", msg)
+	}
+	if !relay.Apply(root, id, "needs: two words") || !strings.Contains(fake.last().text, "Not applied") {
+		t.Fatalf("an invalid list: %q", fake.last().text)
+	}
+	if got, _ := svc.GetItem(root, id); strings.Join(got.Needs, ",") != "plant-2,stock" {
+		t.Fatalf("a refused list changes nothing: %v", got.Needs)
+	}
+	if !relay.Apply(root, id, "needs: -") || !strings.Contains(fake.last().text, "needs no label now") {
+		t.Fatalf("clear: %q", fake.last().text)
+	}
+	if got, _ := svc.GetItem(root, id); len(got.Needs) != 0 {
+		t.Fatalf("needs: - clears: %v", got.Needs)
+	}
+	if !relay.Apply(root, id, "needs") || !strings.Contains(fake.last().text, "needs no label:") {
+		t.Fatalf("needs shows none: %q", fake.last().text)
+	}
+
+	// The change is the approver's, audited as an edit from Slack.
+	entries, err := svc.Timeline(approverCtx(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edits := 0
+	for _, e := range entries {
+		if e.Action == "inbox.edit" && e.Via == audit.ViaSlack && strings.Contains(e.Notes, "needs") {
+			edits++
+		}
+	}
+	if edits != 2 {
+		t.Fatalf("two audited needs edits from Slack, got %d: %+v", edits, entries)
+	}
+
+	// "needs" at the start of a sentence is conversation: no change, no hint.
+	sent := len(fake.texts())
+	for _, prose := range []string{"needs a rebase first", "needs review", "needs more thought: the import is slow"} {
+		if relay.Apply(root, id, prose) {
+			t.Fatalf("%q is conversation", prose)
+		}
+	}
+	if got := len(fake.texts()); got != sent {
+		t.Fatalf("conversation gets no reply: %v", fake.texts()[sent:])
+	}
+	if !strings.Contains(slackHelp, "`needs: <label>") {
+		t.Fatal("help names the needs reply")
+	}
+}

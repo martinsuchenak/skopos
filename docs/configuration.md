@@ -597,12 +597,19 @@ Commands (replies in an item's thread): `approve` [`: <notes>`], `revise:
 <answer>` (the [review findings](#review-findings) by their number in the
 list, applied at once for `findings` and `waive`), and
 `panel` / `solo` / `default` (the item's [agents switch](#per-item-switch-panel-or-solo),
-applied at once, even mid-run). A command is
+applied at once, even mid-run), and `needs: <label>, <label>` (the
+[labels the item needs of a worker](deployment/worker.md#worker-labels),
+applied at once; `needs: -` clears them, `needs` alone shows them). A command is
 the bare word or `word: <text>` on its own — "done with lunch" is not `done`
 (a reply that leads with a command word gets a syntax hint instead).
 Top-level: `new: <what to do>` or `new <workspace>: <what>` (exact id or a
 unique `/suffix`), `help`; `#panel` or `#solo` in a capture sets the item's
-agents switch (other hashtags become tags). Non-approving replies (`revise`, `changes`,
+agents switch (other hashtags become tags). A line `needs: <label>, <label>`
+below the capture's first line sets the labels the item needs of a worker:
+the line is taken out of the item's text, a list that is not valid creates
+nothing, and the confirmation warns when no worker serving the workspace
+has the labels. The capture's first line is the item's title.
+Non-approving replies (`revise`, `changes`,
 `retry`, `reject`) that arrive mid-run are buffered and applied when the run
 finishes (in-memory; a restart drops unapplied ones); `approve` and `done`
 are refused mid-run — they answer the gate message they approve.

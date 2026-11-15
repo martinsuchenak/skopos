@@ -553,10 +553,13 @@ the current plan and asks again. You reply with:
   or `retry 2: answer` to send findings back by number, `waive 2: why` to
   accept one;
 - `panel`, `solo` or `default` to switch the item's agents (applied at once,
-  even mid-run; it takes effect from the next stage).
+  even mid-run; it takes effect from the next stage);
+- `needs: stock` to have only a worker with that label work on the item
+  (`needs: -` clears it, `needs` shows it).
 
 Start an item with `new: …`, or `new <workspace>: …` for another repo; add
-`#panel` or `#solo` to choose its agents. See
+`#panel` or `#solo` to choose its agents, and a line `needs: stock` below
+it for a worker with that label. See
 [Slack relay](../configuration.md#slack-relay-server).
 
 ## 8. Scale out

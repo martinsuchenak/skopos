@@ -1534,10 +1534,13 @@ skopos inbox add --workspace github.com/acme/shop --title "Stock count rounding"
   starting with a letter or digit; at most 8 per worker and per item.
   Upper case is stored as lower case.
 - **On an item:** `needs` is set at capture (`--needs`, the item form's
-  "Needs a worker labelled" field, `needs` on `POST /api/inbox`) and changed
+  "Needs a worker labelled" field, `needs` on `POST /api/inbox`, a
+  `needs: a, b` line below a Slack capture's first line) and changed
   with `skopos inbox update --id <item> --needs a,b` (`--needs -` for any
-  worker again) or `PATCH /api/inbox/{id}`. Once the item is in the agent
-  workflow only an approver changes it, and the change is audited.
+  worker again), `PATCH /api/inbox/{id}`, or a `needs: a, b` reply in the
+  item's Slack thread (`needs: -` for any worker again). Once the item is
+  in the agent workflow only an approver changes it, and the change is
+  audited.
 - **When a label or an item's needs change:** the new state applies to
   every run that is still waiting. A run in progress finishes where it is.
   An interrupted run whose worker no longer has the labels is taken over by
