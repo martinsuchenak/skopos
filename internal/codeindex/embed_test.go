@@ -116,17 +116,25 @@ func TestEmbeddingManagerEnqueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The pass goes on after the first embeddings appear (it reads once more
+	// to see nothing is left, then records its success): wait for it to
+	// end, or it is still writing when the test's directory is removed.
+	running := func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return len(m.jobs) > 0
+	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		var n int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM embeddings`).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
-		if n > 0 {
+		if n > 0 && !running() {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("embedding worker did not run")
+			t.Fatalf("embedding worker did not finish: %d embeddings, running %v", n, running())
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
