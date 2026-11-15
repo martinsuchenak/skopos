@@ -248,6 +248,9 @@ const appState = () => ({
   needsYouCount: 0,
   baseTitle: '',
   inboxTagFilter: '',
+  // The labels the list is narrowed to ("stock,plant-2"): items that need
+  // every one of them. Set from an item's "needs …" badge.
+  inboxNeedsFilter: '',
   inboxQuery: '',
   inboxSort: (['newest', 'oldest'].includes(localStorage.getItem('skopos:inboxSort') || '') ? localStorage.getItem('skopos:inboxSort') : 'priority') as 'priority' | 'newest' | 'oldest',
   workspaceMenuOpen: false,
@@ -1142,6 +1145,7 @@ const appState = () => ({
       // list layout (the chip selection is kept and restored on switch-back).
       if (this.inboxLayout === 'list' && this.inboxStatus) p.set('status', this.inboxStatus);
       if (this.inboxTagFilter) p.set('tag', this.inboxTagFilter);
+      if (this.inboxNeedsFilter) p.set('needs', this.inboxNeedsFilter);
       const q = this.inboxQuery.trim();
       if (q) p.set('q', q);
       const qs = p.size ? '?' + p.toString() : '';
@@ -1164,6 +1168,15 @@ const appState = () => ({
   },
   setInboxStatus(s: string) { this.inboxStatus = s as typeof this.inboxStatus; this.fetchInbox(); },
   setInboxTagFilter(t: string) { this.inboxTagFilter = this.inboxTagFilter === t ? '' : t; this.fetchInbox(); },
+  // An item's "needs …" badge narrows the inbox to the items that need the
+  // same labels; pressing it again (or the chip in the toolbar) clears it.
+  toggleInboxNeedsFilter(it?: InboxItem | null) {
+    const want = it && it.needs ? it.needs.join(',') : '';
+    this.inboxNeedsFilter = this.inboxNeedsFilter === want ? '' : want;
+    this.fetchInbox();
+  },
+  clearInboxNeedsFilter() { this.inboxNeedsFilter = ''; this.fetchInbox(); },
+  inboxNeedsFilterText(): string { return this.inboxNeedsFilter ? 'needs ' + this.inboxNeedsFilter.split(',').join(', ') + ' ×' : ''; },
   // The toolbar tag <select> keeps a plain value (no toggle — picking the
   // already-active option fires no change event anyway); item chips keep the
   // toggle behavior and x-model syncs the select either way.
@@ -4021,7 +4034,7 @@ const appState = () => ({
   },
   needsTitle(it?: InboxItem | null): string {
     if (!it || !it.needs || !it.needs.length) return '';
-    return 'Worked only by a worker labelled ' + it.needs.join(' and ') + ' (Workers page)';
+    return 'Worked only by a worker labelled ' + it.needs.join(' and ') + ' (Workers page). Press to list only the items that need the same.';
   },
   async resumeWorker(w: WorkerRow) {
     if (this.workerBusy) return;

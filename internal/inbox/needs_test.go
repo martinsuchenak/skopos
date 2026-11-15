@@ -79,3 +79,61 @@ func TestNeedsEditRules(t *testing.T) {
 		t.Fatalf("the change is audited once: %d in %+v", n, entries)
 	}
 }
+
+// The list is filtered by what items need: every named label must be
+// among an item's needs, "*" finds every item that needs a label, and a
+// label is matched whole ('_' is not a wildcard, "stock" is not "stock-2").
+func TestListFilterByNeeds(t *testing.T) {
+	svc, _, _ := fullStack(t)
+	root := context.Background()
+	add := func(title string, needs ...string) string {
+		t.Helper()
+		item, err := svc.CreateItem(root, CreateInput{WorkspaceID: "ws-a", Title: title, AuthorAgentID: "author", Needs: needs})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return item.ID
+	}
+	add("free")
+	add("stock", "stock")
+	add("both", "stock", "plant-2")
+	add("stock-2", "stock-2")
+	add("underscore", "a_b")
+	add("no underscore", "axb")
+	titles := func(needs string) string {
+		t.Helper()
+		rows, err := svc.ListItemsFilter(root, ListFilter{WorkspaceID: "ws-a", Needs: needs})
+		if err != nil {
+			t.Fatalf("needs=%q: %v", needs, err)
+		}
+		var out []string
+		for _, r := range rows {
+			out = append(out, r.Title)
+		}
+		slices.Sort(out)
+		return strings.Join(out, "|")
+	}
+	for needs, want := range map[string]string{
+		"":               "both|free|no underscore|stock|stock-2|underscore",
+		"stock":          "both|stock",
+		" Stock ":        "both|stock",
+		"plant-2,stock":  "both",
+		"stock, plant-2": "both",
+		"stock-2":        "stock-2",
+		"a_b":            "underscore",
+		"missing":        "",
+		"*":              "both|no underscore|stock|stock-2|underscore",
+	} {
+		if got := titles(needs); got != want {
+			t.Errorf("needs=%q: %s, want %s", needs, got, want)
+		}
+	}
+	if _, err := svc.ListItemsFilter(root, ListFilter{WorkspaceID: "ws-a", Needs: "has space"}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("an invalid label: %v", err)
+	}
+	// With the other filters, and for a scoped key without a workspace named.
+	rows, err := svc.ListItemsFilter(agentCtx(), ListFilter{Needs: "stock", Query: "both"})
+	if err != nil || len(rows) != 1 || rows[0].Title != "both" {
+		t.Fatalf("scoped, with a query: %+v %v", rows, err)
+	}
+}

@@ -314,14 +314,26 @@ type CreateInput struct {
 }
 
 // ListFilter selects items for ListItemsFilter. Empty fields match
-// anything; Ref is an exact match.
+// anything; Ref is an exact match. Needs is a comma-separated list of
+// worker labels: the items that need every one of them ("stock" also finds
+// an item that needs stock and plant-2); NeedsAny ("*") finds every item
+// that needs a label at all.
 type ListFilter struct {
 	WorkspaceID string
 	Status      string
 	Tag         string
 	Query       string
 	Ref         string
+	Needs       string
+
+	// needs is Needs normalised by the service (ListItemsFilter): the
+	// storage reads only this and needsAny.
+	needs    []string
+	needsAny bool
 }
+
+// NeedsAny is the Needs filter for "needs a label, whichever".
+const NeedsAny = "*"
 
 // UpdateInput is the enrichment patch. Tags is a pointer so an explicit empty
 // array clears the tags while an absent field leaves them unchanged. Priority

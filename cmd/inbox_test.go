@@ -59,7 +59,7 @@ func TestInboxLifecycleAgainstServer(t *testing.T) {
 	}
 
 	// List (open only) carries excerpts, not content.
-	items, err := inboxGetList(ctx, ts.URL, "rootkey1", string(inbox.StatusOpen), "", ws)
+	items, err := inboxGetList(ctx, ts.URL, "rootkey1", string(inbox.StatusOpen), "", ws, "")
 	if err != nil || len(items) != 1 {
 		t.Fatalf("list: %v %d", err, len(items))
 	}
@@ -68,9 +68,17 @@ func TestInboxLifecycleAgainstServer(t *testing.T) {
 	}
 
 	// Tag filter via the server (normalized to lowercase).
-	tagged, err := inboxGetList(ctx, ts.URL, "rootkey1", "", "AUTH", ws)
+	tagged, err := inboxGetList(ctx, ts.URL, "rootkey1", "", "AUTH", ws, "")
 	if err != nil || len(tagged) != 1 {
 		t.Fatalf("tag filter: %v %d", err, len(tagged))
+	}
+
+	// Needs filter via the server: nothing needs a label yet.
+	if labelled, err := inboxGetList(ctx, ts.URL, "rootkey1", "", "", ws, "stock"); err != nil || len(labelled) != 0 {
+		t.Fatalf("needs filter: %v %d", err, len(labelled))
+	}
+	if _, err := inboxGetList(ctx, ts.URL, "rootkey1", "", "", ws, "not a label"); err == nil {
+		t.Fatal("an invalid label in the needs filter must be refused")
 	}
 
 	// Detail read renders HTML.

@@ -272,6 +272,16 @@ func (s *Storage) ListFiltered(ctx context.Context, f ListFilter) ([]Item, error
 		conds = append(conds, "i.ref = ?")
 		args = append(args, f.Ref)
 	}
+	// Needs is stored like the tags: a JSON array of normalised labels
+	// ("" for none), matched with its quotes. '_' is a label character and
+	// a LIKE wildcard, so it is escaped.
+	if f.needsAny {
+		conds = append(conds, "i.needs != ''")
+	}
+	for _, l := range f.needs {
+		conds = append(conds, `i.needs LIKE ? ESCAPE '\'`)
+		args = append(args, `%"`+likeEscape(l)+`"%`)
+	}
 	q := `SELECT ` + itemColumns + `
 		FROM inbox_items i LEFT JOIN plans p ON p.id = i.plan_id`
 	if len(conds) > 0 {

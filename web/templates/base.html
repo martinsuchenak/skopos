@@ -41,7 +41,7 @@
                 <button type="button" @click="switchView('inbox')" class="nav-item pr-12" :aria-current="activeView === 'inbox' ? 'page' : null">
                     <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 3h1a2 2 0 012 2v12a2 2 0 002 2h12a2 2 0 002-2v-6M2 3v0zm20 0h-6m6 0v6m0-6L13 12"/></svg>
                     Inbox
-                    <span x-show="activeView === 'inbox' && !inboxTagFilter && (inboxLayout === 'lanes' || inboxStatus === 'open') && inboxOpenCount() > 0" class="badge ml-auto tone-muted" title="Open items in view"><span x-text="inboxOpenCount()"></span><span class="sr-only"> open</span></span>
+                    <span x-show="activeView === 'inbox' && !inboxTagFilter && !inboxNeedsFilter && (inboxLayout === 'lanes' || inboxStatus === 'open') && inboxOpenCount() > 0" class="badge ml-auto tone-muted" title="Open items in view"><span x-text="inboxOpenCount()"></span><span class="sr-only"> open</span></span>
                 </button>
                 <button type="button" x-show="needsYouCount > 0" @click="openNeedsYou()" class="nav-count tone-warn" :aria-label="needsYouCount + ' waiting for you (plan approval, sign-off or blocked): show them'" :title="needsYouCount + ' waiting for you: plan approval, sign-off or blocked'" x-text="needsYouCount"></button>
             </div><button type="button" @click="switchView('index')" class="nav-item" :aria-current="activeView === 'index' ? 'page' : null">
@@ -454,6 +454,7 @@
                         </select>
                     </div>
                     <button type="button" x-show="inboxTagFilter" class="badge tone-accent min-h-6" @click="setInboxTagFilter(inboxTagFilter)" :aria-label="'Clear tag filter ' + inboxTagFilter" x-text="'#' + inboxTagFilter + ' ×'"></button>
+                    <button type="button" x-show="inboxNeedsFilter" style="display: none" class="badge tone-accent min-h-6" @click="clearInboxNeedsFilter()" :aria-label="'Clear the filter on needed labels ' + inboxNeedsFilter" x-text="inboxNeedsFilterText()"></button>
                     <span x-show="inboxLoading" class="text-xs text-zinc-500" role="status" aria-live="polite">Loading…</span>
                     <span x-show="!inboxLoading" class="text-xs text-zinc-500" x-text="inboxItems.length + ' items'"></span>
                     <button type="button" @click="openInboxCreateModal()" class="btn btn-primary btn-sm ml-auto">
@@ -536,7 +537,7 @@
                                                 {{template "ws-badge" (dict "V" "item" "Missing" "unfiled")}}
                                                 <span x-show="item.agents" class="badge tone-accent" x-text="agentsLabel(item.agents)" :title="agentsTitle(item.agents)"></span>
                                                 <span x-show="branchLabel(item)" class="badge max-w-40 truncate tone-neutral font-mono" x-text="branchLabel(item)" :title="branchTitle(item)"></span>
-                                                <span x-show="needsLabel(item)" class="badge max-w-40 truncate tone-accent" x-text="needsLabel(item)" :title="needsTitle(item)"></span>
+                                                <button type="button" x-show="needsLabel(item)" @click.stop="toggleInboxNeedsFilter(item)" class="badge max-w-40 truncate tone-accent" x-text="needsLabel(item)" :title="needsTitle(item)" :aria-label="'List only items that ' + needsLabel(item)"></button>
                                                 <span x-show="item.claimed_by_agent_id" class="truncate max-w-28" x-text="item.claimed_by_agent_id"></span>
                                                 <span x-show="item.plan_id" class="badge max-w-32 truncate tone-accent" x-text="item.plan && item.plan.name ? '→ ' + item.plan.name : '→ plan'"></span>
                                                 <span class="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap">
@@ -590,7 +591,7 @@
                                         {{template "ws-badge" (dict "V" "item" "Missing" "unfiled")}}
                                         <span x-show="item.agents" class="badge tone-accent" x-text="agentsLabel(item.agents)" :title="agentsTitle(item.agents)"></span>
                                         <span x-show="branchLabel(item)" class="badge max-w-48 truncate tone-neutral font-mono" x-text="branchLabel(item)" :title="branchTitle(item)"></span>
-                                        <span x-show="needsLabel(item)" class="badge max-w-48 truncate tone-accent" x-text="needsLabel(item)" :title="needsTitle(item)"></span>
+                                        <button type="button" x-show="needsLabel(item)" @click.stop="toggleInboxNeedsFilter(item)" class="badge max-w-48 truncate tone-accent" x-text="needsLabel(item)" :title="needsTitle(item)" :aria-label="'List only items that ' + needsLabel(item)"></button>
                                     </div>
                                     <div class="mt-1.5 flex flex-wrap items-center gap-2">
                                         <template x-for="tag in item.tags || []" :key="item.id + tag">

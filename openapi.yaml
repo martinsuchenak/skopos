@@ -2294,6 +2294,7 @@ paths:
         - { name: tag, in: query, schema: { type: string } }
         - { name: q, in: query, schema: { type: string, description: Substring match on title and content } }
         - { name: ref, in: query, schema: { type: string }, description: "Exact external reference: the items of one job, in any status unless status is given" }
+        - { name: needs, in: query, schema: { type: string }, description: "Worker labels, comma-separated: the items that need every one of them. `*` for every item that needs a label" }
       responses:
         "200":
           description: Inbox items
@@ -2302,7 +2303,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/InboxItem" }
-        "400": { description: Invalid status filter }
+        "400": { description: Invalid status or needs filter }
         "401": { description: Unauthorized }
         "403": { description: "Workspace out of scope for this credential" }
     delete:

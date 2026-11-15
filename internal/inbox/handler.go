@@ -71,7 +71,7 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	tag := r.URL.Query().Get("tag")
 	query := r.URL.Query().Get("q")
-	items, err := h.service.ListItemsFilter(r.Context(), ListFilter{WorkspaceID: workspace, Status: status, Tag: tag, Query: query, Ref: r.URL.Query().Get("ref")})
+	items, err := h.service.ListItemsFilter(r.Context(), ListFilter{WorkspaceID: workspace, Status: status, Tag: tag, Query: query, Ref: r.URL.Query().Get("ref"), Needs: r.URL.Query().Get("needs")})
 	if err != nil {
 		if errors.Is(err, auth.ErrOutOfScope) {
 			rest.RespondError(w, http.StatusForbidden, err.Error())

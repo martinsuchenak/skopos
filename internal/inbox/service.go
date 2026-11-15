@@ -366,6 +366,18 @@ func (s *Service) ListItemsFilter(ctx context.Context, f ListFilter) ([]Item, er
 	f.Tag = strings.ToLower(strings.TrimSpace(f.Tag))
 	f.Query = strings.TrimSpace(f.Query)
 	f.Ref = strings.TrimSpace(f.Ref)
+	f.needs, f.needsAny = nil, false
+	switch f.Needs = strings.TrimSpace(f.Needs); f.Needs {
+	case "":
+	case NeedsAny:
+		f.needsAny = true
+	default:
+		list, err := NormalizeNeeds(strings.Split(f.Needs, ","))
+		if err != nil {
+			return nil, fmt.Errorf("%w (or %s for every item that needs a label)", err, NeedsAny)
+		}
+		f.needs = list
+	}
 	if f.WorkspaceID != "" {
 		if err := auth.RequireWorkspace(ctx, f.WorkspaceID); err != nil {
 			return nil, err

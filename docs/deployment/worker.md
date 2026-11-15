@@ -1522,6 +1522,13 @@ skopos inbox add --workspace github.com/acme/shop --title "Stock count rounding"
   An interrupted run whose worker no longer has the labels is taken over by
   a worker that has them, from the pushed branch. A retry does not wait for
   the worker that ran the stage before when that worker lacks them.
+- **Finding the items:** `skopos inbox list --needs stock` lists the items
+  that need the label (several, comma-separated: the items that need every
+  one of them; `--needs '*'`: every item that needs a label). The API takes
+  the same as `GET /api/inbox?needs=stock`, and the `inbox_list` tool as
+  `needs`. In the dashboard, press an item's "needs …" badge to list only
+  the items that need the same labels; press the chip above the list to
+  clear it.
 - **When no worker has the labels:** after two minutes the waiting run is
   marked stranded, and the item shows "Waiting: no worker serving the
   workspace has the label the item needs: stock". The mark goes when a

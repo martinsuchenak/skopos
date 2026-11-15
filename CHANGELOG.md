@@ -34,6 +34,12 @@ versions follow [Semantic Versioning](https://semver.org/).
   - `GET /api/workers` carries each worker's `labels`; items, runs and
     `GET /api/inbox/{id}/state` carry `needs`. The Workers page shows a
     worker's labels on its row, and items show a "needs …" badge.
+  - The inbox list is filtered by what items need: `skopos inbox list
+    --needs stock`, `GET /api/inbox?needs=stock` and `needs` on the
+    `inbox_list` tool return the items that need every label named (`*`:
+    every item that needs a label). In the dashboard, pressing an item's
+    "needs …" badge lists only the items that need the same labels. The
+    CLI list shows each item's needs.
 - **`skopos impact` and `skopos call-tree` take `--depth`** (1 to 10,
   default 3). The documentation gave the flag, and the commands refused it.
 - **`skopos worker pause` and `skopos worker resume` take `--server-url`

@@ -102,6 +102,7 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 			mcplib.String("status", "Filter: open (default), in_progress, converted, done, discarded, needs_you (waiting for an approver), or all"),
 			mcplib.String("tag", "Filter by tag"),
 			mcplib.String("q", "Substring search over title and content"),
+			mcplib.String("needs", "Only items that need these worker labels, comma-separated (every one of them); * for every item that needs a label"),
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 			// resolveWorkspace demands an explicit workspace from root too;
@@ -123,7 +124,8 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 			if status == "all" {
 				status = ""
 			}
-			items, err := service.ListItems(ctx, workspace, status, req.StringOr("tag", ""), req.StringOr("q", ""))
+			items, err := service.ListItemsFilter(ctx, inbox.ListFilter{WorkspaceID: workspace, Status: status,
+				Tag: req.StringOr("tag", ""), Query: req.StringOr("q", ""), Needs: req.StringOr("needs", "")})
 			if err != nil {
 				return nil, toolError(err)
 			}
@@ -134,6 +136,7 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 					"title":      flattenText(it.Title),
 					"status":     string(it.Status),
 					"tags":       it.Tags,
+					"needs":      it.Needs,
 					"priority":   it.Priority,
 					"plan_id":    it.PlanID,
 					"excerpt":    flattenText(it.Excerpt),

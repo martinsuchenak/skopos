@@ -124,11 +124,12 @@ func inboxListCmd() *cli.Command {
 			&cli.StringFlag{Name: "api-key", Usage: "Skopos API key", EnvVars: []string{"SKOPOS_API_KEY"}, ConfigPath: []string{"client.api_key"}},
 			&cli.StringFlag{Name: "status", Usage: "Filter by status: open, in_progress, converted, done, discarded", DefaultValue: "open"},
 			&cli.StringFlag{Name: "tag", Usage: "Filter by tag"},
+			&cli.StringFlag{Name: "needs", Usage: "Only items that need these worker labels, comma-separated (every one of them); '*' for every item that needs a label"},
 			&cli.StringFlag{Name: "workspace", Usage: "Workspace ID"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			items, err := inboxGetList(ctx, cmd.GetString("server-url"), cmd.GetString("api-key"),
-				cmd.GetString("status"), cmd.GetString("tag"), cmd.GetString("workspace"))
+				cmd.GetString("status"), cmd.GetString("tag"), cmd.GetString("workspace"), cmd.GetString("needs"))
 			if err != nil {
 				return err
 			}
@@ -153,7 +154,11 @@ func inboxListCmd() *cli.Command {
 				if it.WorkspaceID == "" {
 					rank += "[unfiled] "
 				}
-				fmt.Printf("%-36s  %-11s  %-6s  %s%s%s\n", it.ID, it.Status, age(it.CreatedAt), rank, it.Title, plan)
+				needs := ""
+				if len(it.Needs) > 0 {
+					needs = "  [needs " + strings.Join(it.Needs, ", ") + "]"
+				}
+				fmt.Printf("%-36s  %-11s  %-6s  %s%s%s%s\n", it.ID, it.Status, age(it.CreatedAt), rank, it.Title, plan, needs)
 			}
 			return nil
 		},
@@ -570,7 +575,7 @@ func inboxPost(ctx context.Context, serverURL, apiKey string, input inbox.Create
 	return &item, nil
 }
 
-func inboxGetList(ctx context.Context, serverURL, apiKey, status, tag, workspaceID string) ([]inbox.Item, error) {
+func inboxGetList(ctx context.Context, serverURL, apiKey, status, tag, workspaceID, needs string) ([]inbox.Item, error) {
 	q := url.Values{}
 	if status != "" && status != "all" {
 		q.Set("status", status)
@@ -580,6 +585,9 @@ func inboxGetList(ctx context.Context, serverURL, apiKey, status, tag, workspace
 	}
 	if workspaceID != "" {
 		q.Set("workspace", workspaceID)
+	}
+	if needs != "" {
+		q.Set("needs", needs)
 	}
 	u := strings.TrimRight(serverURL, "/") + "/api/inbox"
 	if len(q) > 0 {
