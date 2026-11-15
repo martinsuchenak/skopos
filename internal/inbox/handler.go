@@ -14,6 +14,21 @@ type Handler struct {
 	// state serves GET /api/inbox/{id}/state (internal/itemstate, which
 	// reads the inbox, plans, runs and questions; nil = not served).
 	state http.HandlerFunc
+	// report serves GET /api/inbox/{id}/report (internal/itemreport, which
+	// reads the same records and the approvals; nil = not served).
+	report http.HandlerFunc
+}
+
+// SetReportHandler wires GET /api/inbox/{id}/report.
+func (h *Handler) SetReportHandler(fn http.HandlerFunc) { h.report = fn }
+
+// Report handles GET /api/inbox/{id}/report through the wired handler.
+func (h *Handler) Report(w http.ResponseWriter, r *http.Request) {
+	if h.report == nil {
+		rest.RespondError(w, http.StatusNotFound, "not found")
+		return
+	}
+	h.report(w, r)
 }
 
 // SetStateHandler wires GET /api/inbox/{id}/state.

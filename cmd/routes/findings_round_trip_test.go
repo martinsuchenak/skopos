@@ -275,6 +275,74 @@ func TestIntegrationFindingsRoundTrip(t *testing.T) {
 			t.Fatalf("the sign-off's audit entry lacks %q: %q", want, signedOff)
 		}
 	}
+
+	// The item's report puts the same record into one document, for the
+	// approver and for another system that fetches it when the item closes.
+	full := mustDo(t, plain.req("GET", "/api/inbox/"+itemID+"/report", ""), 200).body
+	for _, want := range []string{
+		"# rate limit", "_Item report · generated ", "- **Status:** done", "`agent/rl` at `ddd444`",
+		"## Outcome", "- Signed off by key alex on ", "## Plan", "Approved by key alex on ", "1. step",
+		"## Decisions", "· Started by key alex", "· Plan approved by key alex", "· Changes requested by key alex", "· Finding waived by key alex", "· Signed off by key alex",
+		"## Implementation", "### Implementation 4 · ", "## Reviews and QA", "Verdict: ",
+		"## Findings", "| # | Severity | Raised by | Finding | What became of it |", "waived by key alex", "still open: a review found it again",
+		"## Who worked on it", "| Stage | Runner | Model |",
+	} {
+		if !strings.Contains(full, want) {
+			t.Fatalf("the full report lacks %q:\n%s", want, full)
+		}
+	}
+	summary := mustDo(t, plain.req("GET", "/api/inbox/"+itemID+"/report?level=summary", ""), 200).body
+	for _, want := range []string{"_Item report, summary · generated ", "- Signed off by key alex on ", "1. step", "The newest of 4 implementation runs:", "## Findings", "waived by key alex"} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("the summary lacks %q:\n%s", want, summary)
+		}
+	}
+	for _, not := range []string{"### Implementation", "| # | Severity |", "| Stage | Runner |"} {
+		if strings.Contains(summary, not) {
+			t.Fatalf("the summary holds %q, which belongs to the full report:\n%s", not, summary)
+		}
+	}
+	if len(summary) >= len(full) {
+		t.Fatalf("the summary (%d bytes) is not shorter than the full report (%d)", len(summary), len(full))
+	}
+	html := mustDo(t, plain.req("GET", "/api/inbox/"+itemID+"/report?format=html", ""), 200).body
+	for _, want := range []string{"<h1>rate limit</h1>", "<h2>Findings</h2>", "<table>", "<code>agent/rl</code>"} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("the HTML report lacks %q:\n%s", want, html)
+		}
+	}
+	rep := mustJSON(t, plain.req("GET", "/api/inbox/"+itemID+"/report?format=json&level=summary", ""), 200).(map[string]any)
+	if got := rep["item"].(map[string]any); got["status"] != "done" || got["head_sha"] != "ddd444" || got["branch"] != "agent/rl" {
+		t.Fatalf("the report's item: %v", got)
+	}
+	if n := len(rep["implementations"].([]any)); n != 4 {
+		t.Fatalf("the report's implementations: %d", n)
+	}
+	if n := len(rep["decisions"].([]any)); n < 6 {
+		t.Fatalf("the report's decisions: %v", rep["decisions"])
+	}
+	states := map[string]int{}
+	for _, f := range rep["findings"].([]any) {
+		states[f.(map[string]any)["state"].(string)]++
+	}
+	if states["waived"] != 1 || states["still_open"] != 1 {
+		t.Fatalf("the report's findings by state: %v", states)
+	}
+
+	// Who may read it: the item's readers with the plan and the runs. A
+	// key limited to the inbox gets a refusal, not a report with parts
+	// left out; another workspace's key does not learn the item exists.
+	capped := workerClient{base: baseURL, key: mint(t, root, `{"name":"inbox-only","workspaces":["`+ws+`"],"capabilities":["rest","inbox:read"]}`)}
+	if resp := mustDo(t, capped.req("GET", "/api/inbox/"+itemID+"/report", ""), 403); !strings.Contains(resp.body, "plans:read") {
+		t.Fatalf("a key without plans:read and runs:read: %s", resp.body)
+	}
+	integration := workerClient{base: baseURL, key: mint(t, root, `{"name":"jobs","workspaces":["`+ws+`"],"capabilities":["rest","inbox:write","plans:read","runs:read","events:read"]}`)}
+	mustDo(t, integration.req("GET", "/api/inbox/"+itemID+"/report?level=summary&format=html", ""), 200)
+	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"github.com/fabrikam/site"}`), 201)
+	foreign := workerClient{base: baseURL, key: mint(t, root, `{"name":"elsewhere","workspaces":["github.com/fabrikam/site"]}`)}
+	mustDo(t, foreign.req("GET", "/api/inbox/"+itemID+"/report", ""), 404)
+	mustDo(t, plain.req("GET", "/api/inbox/"+itemID+"/report?format=pdf", ""), 400)
+	mustDo(t, plain.req("GET", "/api/inbox/"+itemID+"/report?level=short", ""), 400)
 }
 
 // Findings with a review panel, and who may see them:

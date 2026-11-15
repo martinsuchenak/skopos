@@ -2917,6 +2917,31 @@ paths:
         "401": { description: Unauthorized }
         "404": { description: Not found, or the item has no plan yet }
 
+  /api/inbox/{id}/report:
+    get:
+      summary: The item's report
+      description: "The item's record as one document, in the order things happened: the brief, the approved plan and who approved it, questions and answers, the decisions at each gate, the implementation with its checks, the reviews, what became of each finding, and the runs with their runner, model, provider and cost. Available in any state of the item; it is put together from the records at the time of the request and stored nowhere, so a system that keeps reports fetches it when the item closes (the item.closed event). format=md (the default) and format=html answer with a document as a file to save, at level=full (the default: every plan, review and section verbatim) or level=summary (short enough for a comment); the HTML is a fragment of plain elements. format=json answers with the whole record at either level. A capped key needs plans:read and runs:read beside inbox:read; a run's own token is refused."
+      operationId: inboxItemReport
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/InboxItemId" }
+        - { name: format, in: query, schema: { type: string, enum: [md, html, json], default: md }, description: "md: Markdown; html: an HTML fragment; json: the record as a structure" }
+        - { name: level, in: query, schema: { type: string, enum: [full, summary], default: full }, description: "For md and html: full, or summary" }
+      responses:
+        "200":
+          description: The report
+          content:
+            text/markdown:
+              schema: { type: string }
+            text/html:
+              schema: { type: string }
+            application/json:
+              schema: { $ref: "#/components/schemas/ItemReport" }
+        "400": { description: An unknown format or level }
+        "401": { description: Unauthorized }
+        "403": { description: "The key lacks plans:read or runs:read, or it is a run's token" }
+        "404": { description: Not found }
+
   /api/inbox/{id}/findings:
     get:
       summary: The item's review findings
@@ -5010,6 +5035,204 @@ components:
         heading: { type: string }
         markdown: { type: string }
         html: { type: string }
+
+    ItemReport:
+      type: object
+      description: An item's record as one structure. Every list is oldest first.
+      properties:
+        generated_at: { type: string, format: date-time }
+        item:
+          type: object
+          properties:
+            id: { type: string }
+            workspace_id: { type: string }
+            title: { type: string }
+            ref: { type: string }
+            external_url: { type: string }
+            status: { type: string }
+            flow: { type: string }
+            branch: { type: string }
+            head_sha: { type: string, description: The newest implemented (or, for a review-only item, reviewed) commit }
+            pull_request: { type: string }
+            needs: { type: array, items: { type: string } }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+        outcome: { type: array, items: { type: string }, description: "Where the item stands, in sentences put together from the records" }
+        brief: { type: string, description: "The author's text" }
+        plan:
+          type: object
+          description: Left out for an item nobody planned
+          properties:
+            approved: { $ref: "#/components/schemas/ItemReportPlan" }
+            approval: { $ref: "#/components/schemas/ItemReportDecision" }
+            revision_id: { type: string }
+            revision_no: { type: integer }
+            base_sha: { type: string }
+            amended: { type: boolean, description: "The approval in force names a later revision than the approved plan's text: an amendment the person approved" }
+            steps: { type: array, items: { type: string }, description: "The step titles of the revision in force" }
+            rounds: { type: integer }
+            others: { type: array, items: { $ref: "#/components/schemas/ItemReportPlan" }, description: Every plan that was not approved }
+            notes:
+              type: array
+              description: Comparisons and round summaries
+              items:
+                type: object
+                properties:
+                  round: { type: integer }
+                  heading: { type: string }
+                  markdown: { type: string }
+        questions:
+          type: array
+          items:
+            type: object
+            properties:
+              asked: { type: string, description: '"the planner", a plan candidate''s label, "the implementer" or "QA"' }
+              stage: { type: string }
+              at: { type: string, format: date-time }
+              blocking: { type: boolean }
+              questions:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    n: { type: integer }
+                    text: { type: string }
+                    options: { type: array, items: { type: string } }
+                    state: { type: string, enum: [open, answered, answered_free_text, skipped, superseded] }
+                    answer: { $ref: "#/components/schemas/ItemReportAnswer" }
+                    replaced: { type: array, items: { $ref: "#/components/schemas/ItemReportAnswer" }, description: Answers a later one corrected }
+              general: { type: array, items: { $ref: "#/components/schemas/ItemReportAnswer" }, description: Text given to the questions as a whole }
+        free_answers: { type: array, items: { $ref: "#/components/schemas/ItemReportAnswer" }, description: Text given when no question was open }
+        decisions: { type: array, items: { $ref: "#/components/schemas/ItemReportDecision" } }
+        decisions_cut: { type: boolean, description: "The item has more decisions than a report reads; the oldest are left out" }
+        implementations:
+          type: array
+          items:
+            type: object
+            properties:
+              run_id: { type: string }
+              runner: { type: string }
+              status: { type: string }
+              at: { type: string, format: date-time }
+              head_sha: { type: string }
+              diffstat: { type: string }
+              summary: { type: string }
+              fail_reason: { type: string }
+              setup: { type: array, items: { $ref: "#/components/schemas/ItemReportCheck" } }
+              checks: { type: array, items: { $ref: "#/components/schemas/ItemReportCheck" } }
+              fix_rounds: { type: integer }
+              pushed: { type: boolean }
+              pr_url: { type: string }
+        reviews:
+          type: array
+          description: Finished reviews, QA runs and second opinions
+          items:
+            type: object
+            properties:
+              run_id: { type: string }
+              stage: { type: string, enum: [review, branch_review, qa, second_opinion] }
+              runner: { type: string }
+              focus: { type: string }
+              at: { type: string, format: date-time }
+              head_sha: { type: string }
+              status: { type: string }
+              passed: { type: boolean, description: It succeeded with no blocking finding }
+              advisory: { type: boolean, description: "A second opinion, which never decides" }
+              blocking: { type: integer }
+              still_open: { type: integer }
+              nits: { type: integer }
+              summary: { type: string }
+              fail_reason: { type: string }
+              findings:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string }
+                    severity: { type: string, enum: [blocking, nit] }
+                    text: { type: string }
+                    file: { type: string }
+        findings:
+          type: array
+          items:
+            type: object
+            properties:
+              n: { type: integer }
+              id: { type: string }
+              severity: { type: string, enum: [blocking, nit] }
+              by: { type: string }
+              text: { type: string }
+              file: { type: string }
+              head_sha: { type: string }
+              state: { type: string, enum: [open, fixed, addressed, still_open, waived, noted] }
+              outcome: { type: string, description: "The state in words, with who waived it and why" }
+              earlier: { type: boolean, description: "From a run of before findings were recorded" }
+        sections:
+          type: array
+          description: "What the reviewers, QA and the implementer's amendments wrote on the item, as written"
+          items:
+            type: object
+            properties:
+              kind: { type: string, enum: [review, qa, second_opinion, amendment] }
+              heading: { type: string }
+              markdown: { type: string }
+        runs:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              stage: { type: string }
+              focus: { type: string }
+              runner: { type: string }
+              kind: { type: string }
+              model: { type: string }
+              provider: { type: string, description: Who received the code }
+              executor: { type: string, description: What contained the run }
+              worker_id: { type: string }
+              status: { type: string }
+              queued_at: { type: string, format: date-time }
+              updated_at: { type: string, format: date-time, description: "A run records no start time: the time since queued_at includes the wait for a worker" }
+              cost_usd: { type: number }
+        cost_usd: { type: number, description: "The sum of what the runners reported; left out when none did" }
+
+    ItemReportPlan:
+      type: object
+      properties:
+        round: { type: integer }
+        title: { type: string }
+        revision_id: { type: string }
+        markdown: { type: string }
+
+    ItemReportAnswer:
+      type: object
+      properties:
+        text: { type: string }
+        by: { type: string }
+        via: { type: string }
+        at: { type: string, format: date-time }
+
+    ItemReportDecision:
+      type: object
+      description: Something a person decided on the item
+      properties:
+        at: { type: string, format: date-time }
+        action:
+          type: string
+          enum: [queue, review, approve, request_changes, retry, reject, mark_done, second_opinion, finding_waive, answer]
+          description: "queue: started the pipeline; review: sent a branch for review only; approve: approved a plan; request_changes: sent a plan or a branch back; retry: started a blocked or failed item again; reject: discarded the item; mark_done: signed the branch off; second_opinion: asked another runner for an opinion; finding_waive: accepted a finding as it is; answer: answered questions without moving the item"
+        subject: { type: string, description: "For approve, the plan revision and its base commit (<revision>+<base>); for mark_done, the commit signed off" }
+        by: { type: string }
+        via: { type: string }
+        notes: { type: string }
+
+    ItemReportCheck:
+      type: object
+      properties:
+        name: { type: string }
+        passed: { type: boolean }
+        stopped: { type: boolean }
+        output: { type: string, description: "The end of a failed command's output" }
 
     ReviewFinding:
       type: object

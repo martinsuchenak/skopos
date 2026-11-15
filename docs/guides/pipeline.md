@@ -505,6 +505,22 @@ started, and pushes or reports nothing more. Its live log ends with
 Every transition, approval and edit is in the item's timeline
 (`GET /api/inbox/{id}/timeline`), labelled with who acted and from where.
 
+**The item's report.** The preview's **Report** button downloads the item's
+record as one Markdown document: the brief, the approved plan, questions
+and answers, every decision you took, the implementation with its checks,
+the reviews, what became of each finding, and which runner, model and
+provider worked on it.
+- **Copy summary** puts a short form on the clipboard, formatted for a rich
+  editor and as Markdown for a plain one, to paste into a comment.
+- `skopos inbox report --id <item>` writes the same document: `--level
+  summary` for the short form, `--format html` or `json` for another
+  format, `--out report.md` for a file.
+- It works in any state of the item.
+- A done or discarded item is deleted once it is older than the server's
+  retention, so take the report before then. Another system can fetch it
+  from `GET /api/inbox/{id}/report` when the item closes: see
+  [Keep the item's report](external-systems.md#keep-the-items-report).
+
 ## 7. Optional: drive it from Slack
 
 Set these on `skopos serve` (a Socket Mode app, so no public URL is needed):

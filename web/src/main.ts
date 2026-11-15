@@ -327,6 +327,7 @@ const appState = () => ({
   logFrom: '',
   workflowNote: '',
   workflowBusy: false,
+  reportBusy: false, // the item report is being fetched (Report, Copy summary)
   expandedInbox: null as InboxDetail | null,
   // id of the card being dragged (HTML5 DnD; same-window only, so state is
   // the transport — dataTransfer.setData exists for Firefox's sake)
@@ -2482,9 +2483,8 @@ const appState = () => ({
     const named = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '');
     return { text: await res.text(), name: named ? named[1] : 'plans.md' };
   },
-  async downloadPlans() {
-    const doc = await this.plansMarkdown();
-    if (!doc) return;
+  // saveText hands a document to the browser as a file to save.
+  saveText(doc: { text: string; name: string }) {
     const url = URL.createObjectURL(new Blob([doc.text], { type: 'text/markdown;charset=utf-8' }));
     const a = document.createElement('a');
     a.href = url;
@@ -2494,6 +2494,64 @@ const appState = () => ({
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     this.notify('Saved ' + doc.name, 'success');
+  },
+  async downloadPlans() {
+    const doc = await this.plansMarkdown();
+    if (doc) this.saveText(doc);
+  },
+  // The item's report (GET /api/inbox/{id}/report): the previewed item's
+  // record as one document, built by the server.
+  async itemReport(level: string, format: string): Promise<{ text: string; name: string } | null> {
+    const it = this.previewItem;
+    if (!it) return null;
+    const res = await this.authFetch('/api/inbox/' + encodeURIComponent(it.id) + '/report?level=' + level + '&format=' + format);
+    if (!await this.handleBad(res, 'Could not build the report')) return null;
+    const named = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '');
+    return { text: await res.text(), name: named ? named[1] : 'report.' + format };
+  },
+  async downloadReport() {
+    if (this.reportBusy) return;
+    this.reportBusy = true;
+    try {
+      const doc = await this.itemReport('full', 'md');
+      if (doc) this.saveText(doc);
+    } finally {
+      this.reportBusy = false;
+    }
+  },
+  // The summary goes on the clipboard as HTML and as Markdown together: it
+  // pastes formatted into a rich editor and as text anywhere else. The
+  // clipboard item is made in the click itself, with the fetches as its
+  // values: a browser that wants the write to start inside the click
+  // (Safari) refuses one made after the answers arrived.
+  async copyReportSummary() {
+    if (this.reportBusy) return;
+    this.reportBusy = true;
+    let fetched = true;
+    const part = (format: string, type: string) => this.itemReport('summary', format).then((doc: { text: string; name: string } | null) => {
+      if (!doc) { fetched = false; throw new Error('no report'); }
+      return new Blob([doc.text], { type });
+    });
+    // One after the other: a server that refuses says so once, not once
+    // per format. Each is caught here too: when the browser refuses the
+    // write first, nobody else waits for them.
+    const html = part('html', 'text/html');
+    const text = html.then(() => part('md', 'text/plain'));
+    html.catch(() => {});
+    text.catch(() => {});
+    try {
+      if (typeof ClipboardItem !== 'undefined' && navigator.clipboard && navigator.clipboard.write) {
+        await navigator.clipboard.write([new ClipboardItem({ 'text/html': html, 'text/plain': text })]);
+      } else {
+        await navigator.clipboard.writeText(await (await text).text());
+      }
+      this.notify('Summary copied', 'success');
+    } catch {
+      // A failed fetch has said so itself.
+      if (fetched) this.notify('The browser did not allow copying; use Report instead', 'error');
+    } finally {
+      this.reportBusy = false;
+    }
   },
   async copyPlans() {
     const doc = await this.plansMarkdown();

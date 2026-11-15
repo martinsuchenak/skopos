@@ -35,6 +35,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/idempotency"
 	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/integrations"
+	"github.com/martinsuchenak/skopos/internal/itemreport"
 	"github.com/martinsuchenak/skopos/internal/itemstate"
 	"github.com/martinsuchenak/skopos/internal/itemtext"
 	"github.com/martinsuchenak/skopos/internal/notify"
@@ -746,6 +747,11 @@ func serveCmd() *cli.Command {
 			// systems (tmp/integrations — design.md §4).
 			inboxHandler.SetStateHandler(itemstate.NewHandler(&itemstate.Service{
 				Items: inboxService, Plans: plansService, Runs: runsService, Questions: qaService, Findings: findingsService,
+			}).Get)
+			// GET /api/inbox/{id}/report: the item's record as one
+			// document, for a person to keep and another system to fetch.
+			inboxHandler.SetReportHandler(itemreport.NewHandler(&itemreport.Service{
+				Items: inboxService, Plans: plansService, Runs: runsService, Questions: qaService, Findings: findingsService, Approvals: approvalsService, Audit: auditService,
 			}).Get)
 			runsHandler := runs.NewHandler(runsService)
 

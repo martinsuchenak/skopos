@@ -235,6 +235,53 @@ Each action names the endpoint to POST: `/api/inbox/{id}/<action>`.
 | `failed` | `retry`, `answers`, `reject` |
 | agent working | `reject` |
 
+## Keep the item's report
+
+`GET /api/inbox/{id}/report` returns the item's record as one document, in
+the order things happened:
+
+| Part | What it holds |
+|---|---|
+| Header | title, workspace, `ref` and `external_url`, status, branch and head commit, pull request |
+| Outcome | where the item stands: who signed it off and when, the commit, the findings and questions in numbers |
+| Brief | the item's own text |
+| Plan | the approved plan in full, who approved it, the revision and its base commit; the plans not chosen |
+| Questions and answers | each question, the answer in force, who gave it; corrected and passed-over ones marked |
+| Decisions | every action a person took: start, plan approval, change requests, retries, waived findings, second opinions asked for, sign-off, with the notes |
+| Implementation | each implement run: commit, diffstat, setup and checks, fix rounds, pull request |
+| Reviews and QA | each review, QA run and second opinion: verdict, summary, findings |
+| Findings | every finding and what became of it: fixed and confirmed, waived (by whom, why), still open |
+| Who worked on it | each run's stage, runner, model, provider, executor and worker, and the cost the runners reported. Runs that recorded no provider are counted |
+
+| Parameter | Values |
+|---|---|
+| `format` | `md` (the default), `html`, `json` |
+| `level` | `full` (the default): every plan, review and section verbatim. `summary`: short enough for a comment |
+
+- `md` and `html` answer with a file to save. The HTML is a fragment of
+  plain elements (headings, lists, tables, code), with no styles or scripts.
+- `json` is the whole record as a structure, at either level.
+- The report is available in any state of the item. Before sign-off, the
+  outcome says where the item stands.
+
+Skopos builds the report from the item's records when it is asked for and
+stores it nowhere. The server deletes a done or discarded item once it is
+older than the retention (`cleanup.retention_days`), and from then on
+there is no report of it. A system that keeps reports fetches one when it
+receives `item.closed`:
+
+```sh
+curl -sS -H "Authorization: Bearer $SKOPOS_KEY" \
+  "https://skopos.example.com/api/inbox/$ITEM/report?format=html&level=summary"
+```
+
+A key limited by capabilities needs `plans:read` and `runs:read` beside the
+inbox; with one missing the answer is `403`. The `integration` preset has
+both.
+
+From the command line: `skopos inbox report --id <item> [--level summary]
+[--format html] [--out report.md]`.
+
 ## Act on behalf of a person
 
 A key with the delegate permission names the person deciding:

@@ -25,6 +25,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/idempotency"
 	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/integrations"
+	"github.com/martinsuchenak/skopos/internal/itemreport"
 	"github.com/martinsuchenak/skopos/internal/itemstate"
 	"github.com/martinsuchenak/skopos/internal/itemtext"
 	"github.com/martinsuchenak/skopos/internal/pipeline"
@@ -340,6 +341,9 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	pl := plans.NewHandler(plansService, authn)
 	ib := inbox.NewHandler(inboxService, authn)
 	ib.SetStateHandler(itemstate.NewHandler(&itemstate.Service{Items: inboxService, Plans: plansService, Runs: runsService, Findings: findingsService}).Get)
+	ib.SetReportHandler(itemreport.NewHandler(&itemreport.Service{
+		Items: inboxService, Plans: plansService, Runs: runsService, Questions: qaService, Findings: findingsService, Approvals: approvalsService, Audit: auditService,
+	}).Get)
 	ws := workspaces.NewHandler(workspaces.NewService(workspaces.NewStorage(sqlDB)), authn)
 	ak := apikeys.NewHandler(apikeys.NewService(apikeys.NewStorage(sqlDB)), workspaces.NewService(workspaces.NewStorage(sqlDB)))
 	rh := runs.NewHandler(runsService)

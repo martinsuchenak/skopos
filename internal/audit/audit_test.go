@@ -113,6 +113,16 @@ func TestListFiltersAndPagination(t *testing.T) {
 		t.Fatalf("action prefix: %+v err %v", entries, err)
 	}
 
+	// A list of actions: exactly those, nothing by prefix.
+	entries, err = svc.List(ctx, ListFilter{Actions: []string{"key.create", "inbox.queue"}})
+	if err != nil || len(entries) != 1 || entries[0].Action != "key.create" {
+		t.Fatalf("actions: %+v err %v", entries, err)
+	}
+	entries, err = svc.List(ctx, ListFilter{EntityID: "item-a", Actions: []string{"inbox.transition", "key.create"}})
+	if err != nil || len(entries) != 5 {
+		t.Fatalf("actions with an entity: %d entries, err %v", len(entries), err)
+	}
+
 	// Pagination: page one at limit 3, then continue before the last id.
 	page1, err := svc.List(ctx, ListFilter{EntityType: "inbox_item", EntityID: "item-a", Limit: 3})
 	if err != nil || len(page1) != 3 {

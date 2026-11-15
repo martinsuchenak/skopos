@@ -1605,8 +1605,8 @@
             <div x-show="previewLoading" class="text-sm text-zinc-500">Loading&hellip;</div>
             <template x-if="previewItem">
                 <div class="flex min-h-0 flex-1 flex-col">
-                    <div class="mb-3 flex items-start justify-between gap-3 pr-10">
-                        <div class="min-w-0">
+                    <div class="mb-3 flex items-start justify-between gap-3 pr-10 max-sm:flex-col max-sm:pr-0">
+                        <div class="min-w-0 max-sm:pr-10">
                             <h2 id="preview-modal-title" class="text-lg font-semibold leading-tight" x-text="previewItem.title"></h2>
                             <!-- The full item ID, to reference the item (CLI, MCP, notes). -->
                             <div class="item-id mt-1 flex items-center gap-1 text-[11px] text-zinc-500">
@@ -1639,7 +1639,9 @@
                                 </template>
                             </div>
                         </div>
-                        <div class="flex shrink-0 items-center gap-2">
+                        <div class="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+                            <button type="button" @click="downloadReport()" :disabled="reportBusy" class="btn btn-sm" title="Download the item's report as Markdown: the brief, the approved plan, questions and answers, decisions, the implementation, the reviews and what became of each finding">Report</button>
+                            <button type="button" @click="copyReportSummary()" :disabled="reportBusy" class="btn btn-sm" title="Copy a short summary of the item's report, to paste into a comment">Copy summary</button>
                             <button type="button" x-show="inboxContentEditable(previewItem)" @click="editFromPreview()" class="btn btn-sm" :aria-label="'Edit item ' + previewItem.title">Edit</button>
                         </div>
                     </div>

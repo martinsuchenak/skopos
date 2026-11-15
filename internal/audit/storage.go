@@ -56,8 +56,10 @@ type ListFilter struct {
 	EntityType   string
 	EntityID     string
 	ActionPrefix string // e.g. "inbox." matches inbox.queue, inbox.approve, …
-	Before       string // return entries with id strictly before this one
-	Limit        int
+	// Actions: only entries with one of these actions (empty = any).
+	Actions []string
+	Before  string // return entries with id strictly before this one
+	Limit   int
 }
 
 // List returns entries newest-first.
@@ -79,6 +81,12 @@ func (s *Storage) List(ctx context.Context, f ListFilter) ([]Entry, error) {
 	if f.ActionPrefix != "" {
 		where = append(where, "action LIKE ? ESCAPE '\\'")
 		args = append(args, escapeLike(f.ActionPrefix)+"%")
+	}
+	if len(f.Actions) > 0 {
+		where = append(where, "action IN (?"+strings.Repeat(", ?", len(f.Actions)-1)+")")
+		for _, a := range f.Actions {
+			args = append(args, a)
+		}
 	}
 	if f.Before != "" {
 		where = append(where, "id < ?")

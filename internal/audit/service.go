@@ -128,7 +128,7 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]Entry, error) {
 		}
 		out := []Entry{}
 		for _, ws := range p.WorkspaceList() {
-			entries, err := s.storage.List(ctx, ListFilter{WorkspaceID: ws, EntityType: f.EntityType, EntityID: f.EntityID, ActionPrefix: f.ActionPrefix, Before: f.Before, Limit: f.Limit})
+			entries, err := s.storage.List(ctx, ListFilter{WorkspaceID: ws, EntityType: f.EntityType, EntityID: f.EntityID, ActionPrefix: f.ActionPrefix, Actions: f.Actions, Before: f.Before, Limit: f.Limit})
 			if err != nil {
 				return nil, err
 			}
