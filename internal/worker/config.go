@@ -619,7 +619,7 @@ func (c *Config) checkReason(ws, stage string) string {
 		if why := bad[checkPush]; stage == "implement" && why != "" {
 			parts = append(parts, why)
 		}
-		return strings.Join(parts, "; ")
+		return clip(strings.Join(parts, "; "), 2*maxCheckReason)
 	}
 	var all []string
 	for _, why := range bad {
@@ -628,7 +628,7 @@ func (c *Config) checkReason(ws, stage string) string {
 		}
 	}
 	slices.Sort(all)
-	return strings.Join(all, "; ")
+	return clip(strings.Join(all, "; "), 2*maxCheckReason)
 }
 
 // fileProfile resolves a workspace's profile for a stage from the worker's

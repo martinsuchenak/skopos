@@ -249,7 +249,7 @@ func sanitizeExecutors(in map[string][]policy.ExecutorFact, offered map[string]b
 	// default, and one entry per stage and runner that differs from it (64
 	// runners, 8 stages). Smaller, a correctly contained worker with many
 	// runners had its whole list dropped and read as reporting none.
-	const maxFacts, maxLen, maxReason = 1 + 64*8, 200, 500
+	const maxFacts, maxLen, maxReason = 1 + 64*8, 200, 1000
 	out := map[string][]policy.ExecutorFact{}
 	for ws, facts := range in {
 		if !offered[ws] || len(facts) > maxFacts {

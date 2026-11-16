@@ -287,7 +287,7 @@ func (w *Worker) runStageCheck(ctx context.Context, plan checkPlan) stageCheck {
 			}
 		}
 		if len(missing) > 0 {
-			reasons = append(reasons, fmt.Sprintf("not on the PATH runs get: %s — install them, or link them into a folder on the PATH of the worker's service (a grant matches the command's first word, so a program called by its full path is refused)", strings.Join(missing, ", ")))
+			reasons = append(reasons, fmt.Sprintf("not on the PATH runs get: %s (install, or link into a folder on the service's PATH)", strings.Join(missing, ", ")))
 		}
 		for _, d := range need.Write {
 			if err := os.MkdirAll(d, 0o755); err != nil {
@@ -373,7 +373,7 @@ func linuxSandboxProblem(ctx context.Context, nested bool) string {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Sprintf("Claude Code's sandbox needs %s, which this host does not have (on Debian and Ubuntu: apt-get install bubblewrap socat)", strings.Join(missing, " and "))
+		return fmt.Sprintf("Claude Code's sandbox needs %s (apt-get install bubblewrap socat)", strings.Join(missing, " and "))
 	}
 	args := []string{"--ro-bind", "/", "/", "--dev", "/dev", "--unshare-pid"}
 	if nested {
@@ -394,9 +394,9 @@ func linuxSandboxProblem(ctx context.Context, nested bool) string {
 	// bubblewrap's own words for the refused mount: "Can't mount proc on
 	// /newroot/proc: Operation not permitted".
 	if !nested && strings.Contains(text, "mount proc") {
-		return "Claude Code's sandbox cannot start here: bubblewrap cannot mount /proc (" + tail(text, 200) + "), which an unprivileged container refuses. Set sandbox_nested = true under [worker] in this worker's file to use the sandbox's nested mode (weaker: commands in the sandbox see the host's processes), then restart the worker"
+		return "Claude Code's sandbox cannot start: this container refuses bubblewrap a /proc mount; set sandbox_nested = true under [worker] and restart the worker"
 	}
-	return fmt.Sprintf("Claude Code's sandbox cannot start here: bubblewrap failed: %v: %s", err, tail(text, 300))
+	return fmt.Sprintf("Claude Code's sandbox cannot start: bubblewrap failed: %s", tail(outputOr(text, err), 160))
 }
 
 // pushTokenProblem says why the remote would refuse the run's push ("" =
@@ -406,7 +406,7 @@ func linuxSandboxProblem(ctx context.Context, nested bool) string {
 func pushTokenProblem(ctx context.Context, plan checkPlan) string {
 	token := os.Getenv(plan.tokenEnv)
 	if plan.tokenEnv == "" || token == "" {
-		return fmt.Sprintf("the push token's variable %s is empty on this worker: an implementation could not be pushed", plan.tokenEnv)
+		return fmt.Sprintf("the push token's variable %s is empty on this worker", plan.tokenEnv)
 	}
 	if fi, err := os.Stat(plan.repoPath); plan.repoPath == "" || err != nil || !fi.IsDir() {
 		return "" // no clone yet: the worker's own checks say so
@@ -424,7 +424,30 @@ func pushTokenProblem(ctx context.Context, plan checkPlan) string {
 		"GIT_CONFIG_KEY_2=core.hooksPath", "GIT_CONFIG_VALUE_2=/dev/null",
 	}, "push", "--dry-run", "--porcelain", remote, "HEAD:refs/heads/"+plan.prefix+"skopos-push-check")
 	if pushAuthRefused(err) {
-		return fmt.Sprintf("the remote refuses the push token (%s) for %s: it is wrong, expired, or may not write to the repository (%s)", plan.tokenEnv, plan.pushURL, tail(err.Error(), 200))
+		return fmt.Sprintf("the remote refuses the push token (%s): wrong, expired, or no write access (%s)", plan.tokenEnv, gitSays(err))
 	}
 	return ""
+}
+
+// gitSays is the line of a failed git command that says why: the remote's
+// own words, else git's, shortened.
+func gitSays(err error) string {
+	lines := strings.Split(err.Error(), "\n")
+	for _, prefix := range []string{"remote:", "fatal:"} {
+		for _, l := range lines {
+			if i := strings.Index(l, prefix); i >= 0 {
+				return clip(strings.TrimSpace(l[i:]), 120)
+			}
+		}
+	}
+	return clip(strings.TrimSpace(lines[len(lines)-1]), 120)
+}
+
+// outputOr joins a command's output into one line, or names its error when
+// it printed nothing.
+func outputOr(text string, err error) string {
+	if text = strings.Join(strings.Fields(text), " "); text != "" {
+		return text
+	}
+	return err.Error()
 }

@@ -526,12 +526,12 @@ func TestUnavailableExecutorInEveryScan(t *testing.T) {
 // is dropped from any other; a stranded run says it.
 func TestExecutorReasons(t *testing.T) {
 	offered := map[string]bool{"ws": true}
-	long := strings.Repeat("x", 900)
+	long := strings.Repeat("x", 1500)
 	got := sanitizeExecutors(map[string][]policy.ExecutorFact{"ws": {
 		{Executor: "local", Reason: "not kept"},
 		{Stage: "implement", Executor: "none:check", Reason: long},
 	}}, offered)
-	if len(got["ws"]) != 2 || got["ws"][0].Reason != "" || len(got["ws"][1].Reason) > 510 || got["ws"][1].Reason == "" {
+	if len(got["ws"]) != 2 || got["ws"][0].Reason != "" || len(got["ws"][1].Reason) > 1010 || got["ws"][1].Reason == "" {
 		t.Fatalf("reasons: %+v", got["ws"])
 	}
 	if f := policy.ResolveExecutorFact(got["ws"], "implement", "claude"); f.Executor != "none:check" || f.Reason == "" {

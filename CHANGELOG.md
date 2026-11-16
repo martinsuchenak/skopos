@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.39.1] — 2026-11-16
+
+### Fixed
+
+- The key dialog lists the workspace groups when it is opened from the
+  Keys view; they appeared only after visiting the Workspaces view.
+- The stage check's reasons are shorter, and the server keeps up to 1,000
+  bytes of a worker's reason: a stage held back for two reasons (the
+  sandbox and the push token) shows both in full on the Workers page.
+
 ## [0.39.0] — 2026-11-16
 
 ### Added

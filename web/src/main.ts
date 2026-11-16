@@ -801,7 +801,8 @@ const appState = () => ({
     if (v === 'plans') this.fetchPlans();
     if (v === 'inbox') this.fetchInbox();
     if (v === 'index') this.fetchIndexStatus();
-    if (v === 'keys') this.fetchKeys();
+    // The key dialog lists the groups a key may be scoped to.
+    if (v === 'keys') { this.fetchKeys(); this.fetchGroups(); }
     if (v === 'workspaces') { this.fetchWorkspaces(); this.fetchGroups(); this.fetchMcpDefs(); this.fetchSchedules(); if (this.whoamiIsRoot()) this.fetchKeys(); }
     if (v === 'workers') this.fetchWorkers();
     if (v === 'webhooks') { this.fetchWebhooks(); if (this.whoamiIsRoot()) this.fetchGroups(); }
@@ -974,7 +975,7 @@ const appState = () => ({
     else if (this.activeView === 'plans') await this.fetchPlans();
     else if (this.activeView === 'inbox') await this.fetchInbox();
     else if (this.activeView === 'index') await this.fetchIndexStatus();
-    else if (this.activeView === 'keys') await this.fetchKeys();
+    else if (this.activeView === 'keys') { await this.fetchKeys(); await this.fetchGroups(); }
     else if (this.activeView === 'workspaces') { await this.fetchWorkspaces(); await this.fetchGroups(); await this.fetchMcpDefs(); await this.fetchSchedules(); if (this.whoamiIsRoot()) await this.fetchKeys(); }
     else if (this.activeView === 'workers') await this.fetchWorkers();
     else if (this.activeView === 'webhooks') { await this.fetchWebhooks(); if (this.whoamiIsRoot()) await this.fetchGroups(); }
@@ -5214,6 +5215,8 @@ const appState = () => ({
     this.keyErrors = {};
     this.formNonce++;
     this.showApiKeyModal = true;
+    // Its group list, wherever the dialog is opened from.
+    void this.fetchGroups();
   },
   openEditKeyModal(k: ApiKey) {
     this.keyModalMode = 'edit';
@@ -5224,6 +5227,8 @@ const appState = () => ({
     this.keyErrors = {};
     this.formNonce++;
     this.showApiKeyModal = true;
+    // Its group list, wherever the dialog is opened from.
+    void this.fetchGroups();
   },
   closeApiKeyModal() { this.showApiKeyModal = false; },
   // A worker key holds neither approver nor admin.
