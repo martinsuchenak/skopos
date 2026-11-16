@@ -6,12 +6,15 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/martinsuchenak/skopos/internal/wsconfig"
 )
 
 // A planner result with risks and questions (the planner's schema): the
@@ -158,5 +161,57 @@ func TestPlanNothingToDo(t *testing.T) {
 	}
 	if !strings.Contains(content, "## Enrichment — skopos worker\n\n**Nothing to do.** Every dependency is already current.") {
 		t.Fatalf("the reason on the item:\n%s", content)
+	}
+}
+
+// A planner the workspace gives commands (here a kit) plans in a detached
+// worktree, never in the clone itself, which later runs start from.
+func TestPlanWithGrantsRunsInAWorktree(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	kitHome(t)
+	dir, _ := gitRepo(t)
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	for _, args := range [][]string{{"clone", "-q", "--bare", dir, origin}, {"-C", dir, "remote", "add", "origin", origin}} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	const itemID = "01a19700-0000-7000-8000-0000000000bb"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/inbox/"+itemID && r.Method == http.MethodGet:
+			b, _ := json.Marshal(map[string]any{"id": itemID, "workspace_id": "ws", "title": "Cache", "content": "Add a cache.", "status": "planning"})
+			_, _ = w.Write(b)
+		case r.URL.Path == "/api/plans" && r.Method == http.MethodPost:
+			_, _ = io.WriteString(w, `{"id":"plan-1"}`)
+		case r.URL.Path == "/api/plans/plan-1/replan":
+			_, _ = io.WriteString(w, `{"id":"rev-1"}`)
+		default:
+			_, _ = io.WriteString(w, `{}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	where := filepath.Join(t.TempDir(), "pwd")
+	planner := "pwd > '" + where + "'\n" + fakePlanner
+	cfg := &Config{
+		ID: "worker-test", Bin: fakeCLI(t, planner), StateDir: t.TempDir(), PlanTimeout: time.Minute, ServerCommands: true,
+		Repos:    map[string]*Repo{"ws": {Path: dir, DefaultBranch: "main", BranchPrefix: "agent/"}},
+		Accounts: []*Account{{Name: "a1", Runner: "claude"}},
+	}
+	cfg.setStages("ws", map[string]*wsconfig.StageCaps{"plan": {Kits: []string{"task"}}})
+	w := New(cfg, NewClient(srv.URL, "k"), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err := w.stagePlan(t.Context(), &Run{ID: "run-2", WorkspaceID: "ws", ItemID: itemID, Stage: "plan", Runner: "claude"}, w.log); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(where)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The worktree is gone by now (removed after the run): its path says.
+	ran := strings.TrimSpace(string(got))
+	if !strings.Contains(ran, filepath.Join("worktrees", filepath.Base(dir), "plan-")) {
+		t.Fatalf("the planner ran in %s (the clone is %s)", ran, dir)
 	}
 }

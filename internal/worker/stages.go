@@ -83,6 +83,20 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 			dir, baseSHA = wt, pinned
 		}
 	}
+	// A planner the workspace gives commands (kits, tools) could change
+	// files where it runs: never in the clone itself, which later runs
+	// start from. It plans in a detached worktree at the base.
+	if dir == repo.Path {
+		if prof, _ := w.cfg.stageProfileFor(run.WorkspaceID, "plan", run.Runner); prof.grants() {
+			wt := filepath.Join(w.cfg.StateDir, "worktrees", filepath.Base(repo.Path), "plan-"+shortID(run.ID))
+			removeWorktree(ctx, repo.Path, wt)
+			if err := createDetached(ctx, repo.Path, wt, baseSHA); err != nil {
+				return fmt.Errorf("plan worktree at %s: %w", shortSHA(baseSHA), err)
+			}
+			defer removeWorktree(ctx, repo.Path, wt)
+			dir = wt
+		}
+	}
 	var ho *handover
 	if choice.Exists {
 		if dir == repo.Path {
@@ -150,7 +164,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 		"Handover": ho, "Changes": changes, "LastReview": review,
 		"Instructions": repoInstructions(ctx, repo.Path, kbase),
 		"SkillIndex":   skillIndex(skills), "Requested": tagHints(skills, item.Tags),
-		"ImplCommands": w.stageCommands(run.WorkspaceID, "implement", implTools), "Checks": repo.Checks,
+		"ImplCommands": w.stageCommands(run.WorkspaceID, "implement", "", implTools), "Checks": repo.Checks,
 		"Focus": focus, "Seed": seedSteps,
 		"Skopos": w.skoposPrompt(ctx, run, account, repo.DefaultBranch, branch, "plan", "", nil, ""),
 	})
@@ -562,7 +576,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			"ApprovalNotes": newestBody(secs, "Approval notes"),
 			"Resumed":       len(resumed) > 0, "Leftover": leftover,
 			"Instructions": instructions, "Skills": skillBodies,
-			"Commands": w.stageCommands(run.WorkspaceID, "implement", implTools), "Checks": repo.Checks,
+			"Commands": w.stageCommands(run.WorkspaceID, "implement", run.Runner, implTools), "Checks": repo.Checks,
 			"Skopos": w.skoposPrompt(ctx, run, account, repo.DefaultBranch, branch, "implement", item.PlanID, steps, ""),
 		})
 		if err != nil {
@@ -668,7 +682,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			// The remote refused the token: a retry pushes with the same
 			// one. Only a person can fix it.
 			if pushAuthRefused(err) {
-				return needsPerson(fmt.Errorf("push: the remote refused the push token (%s): %w", repo.Push.TokenEnv, err))
+				return needsPerson(fmt.Errorf("push: the remote refused the push token (%s) — it is wrong, expired, may not write to the repository, or lacks a scope the change needs (GitHub's workflow scope for .github/workflows): %w", repo.Push.TokenEnv, err))
 			}
 			// Rejected (origin moved on) or unreachable: the retry pulls first.
 			return retryable(fmt.Errorf("push: %w", err))
@@ -731,7 +745,7 @@ func (w *Worker) fixChecksRound(ctx context.Context, run *Run, item *Item, repo 
 	prompt, err := renderPrompt("fix_checks.md", map[string]any{
 		"Title": item.Title, "Branch": branch, "Base": repo.DefaultBranch,
 		"Failed": failed, "Round": round, "Rounds": repo.FixRounds(),
-		"Commands": w.stageCommands(run.WorkspaceID, "implement", implTools),
+		"Commands": w.stageCommands(run.WorkspaceID, "implement", run.Runner, implTools),
 	})
 	if err != nil {
 		return nil, err
@@ -1123,7 +1137,7 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 	tmpl, schema, timeout := "review.md", reviewSchema, w.planTimeout(run.WorkspaceID)
 	if qa {
 		tmpl, schema, timeout = "qa.md", qaSchema, w.qaTimeout(run.WorkspaceID)
-		commands, tools := w.stageCommands(run.WorkspaceID, "qa", nil), w.stageTools(run.WorkspaceID, "qa")
+		commands, tools := w.stageCommands(run.WorkspaceID, "qa", run.Runner, nil), w.stageTools(run.WorkspaceID, "qa", run.Runner)
 		for k, v := range map[string]any{
 			"Title": itemTitle, "Item": itemBrief, "Branch": run.Branch, "Head": shortSHA(reviewed), "InClone": inClone,
 			"Setup": qaSetup, "SetupConfigured": len(repo.Setup) > 0,

@@ -94,6 +94,9 @@ func workerCmd() *cli.Command {
 			if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
 				return err
 			}
+			// What a kit's sandboxed commands may not read: this worker's
+			// own env file and config.
+			cfg.SetSecretFiles(workerEnvFileFlag(cmd), configFileFor(cmd))
 
 			// The log output (--log-output-url): the worker's own lines and
 			// every run's log go there too. Read through the env file, like

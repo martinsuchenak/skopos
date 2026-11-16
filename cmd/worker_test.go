@@ -129,6 +129,7 @@ runners = ["claude", "oc"]
 workspaces = ["ws-file"]
 poll_every = "7s"
 contained_by = "knot"
+sandbox_nested = true
 server_commands = true
 auto_upgrade = false
 upgrade_url = "https://releases.example.test"

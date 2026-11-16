@@ -188,6 +188,11 @@ func (c *Config) stageProfileFor(workspace, stage, runner string) (prof *StagePr
 	}
 	blocks, fromServer := c.srvStages[workspace]
 	if !fromServer {
+		if c.SandboxNested && file.sandboxed() {
+			nested := *file
+			nested.Settings = withNested(file.Settings)
+			return &nested, ""
+		}
 		return file, ""
 	}
 	p := &StageProfile{server: true}
@@ -228,10 +233,53 @@ func (c *Config) stageProfileFor(workspace, stage, runner string) (prof *StagePr
 		}
 	}
 	p.Settings = withContainment(p.Settings, sandbox, deny)
+	// Kits come last (kitsFor).
+	if block := blocks[stage]; block != nil && len(block.Kits) > 0 {
+		if tools, settings, ok := c.kitsFor(block.Kits, p, file, sandbox, runner); ok {
+			p.Tools = slices.Clone(p.Tools)
+			for _, t := range tools {
+				if !slices.Contains(p.Tools, t) {
+					p.Tools = append(p.Tools, t)
+				}
+			}
+			p.Settings = settings
+		}
+	}
+	if c.SandboxNested && p.sandboxed() {
+		p.Settings = withNested(p.Settings)
+	}
 	if len(p.Wrapper) == 0 && len(p.Tools) == 0 && len(p.Env) == 0 && p.Settings == "" {
 		return nil, problem
 	}
 	return p, problem
+}
+
+// kitsFor says what a stage's kits add to a run of runner (ok false: they
+// add nothing). Kits are for Claude Code's sandbox:
+//   - where a wrapper or the host itself (contained_by: a knot space, a
+//     container) already contains the run, they give only their tools: that
+//     is the boundary, and the sandbox seldom starts inside one;
+//   - where this host's file sets the stage's sandbox, they give only their
+//     tools too: the operator's sandbox is kept as it is, never widened by
+//     the server;
+//   - for a runner that ignores sandbox settings (codex, opencode) and is
+//     not contained otherwise, they give nothing: the stage runs as it
+//     would without them, instead of not at all;
+//   - otherwise the tools, and the sandbox with the kits' hosts, cache
+//     folders and credential rules added to the stage's settings.
+//
+// runner "" is any runner that honours the sandbox.
+func (c *Config) kitsFor(names []string, p, file *StageProfile, fileSandbox, runner string) (tools []string, settings string, ok bool) {
+	k := c.kitParts(names)
+	if p.wraps() || c.hostContainer(file) != "" || fileSandbox != "" {
+		return k.Tools, p.Settings, true
+	}
+	if runner != "" {
+		if r, err := c.RunnerFor(runner); err != nil || !r.HonorsSettings() {
+			return nil, p.Settings, false
+		}
+	}
+	return k.Tools, withKits(p.Settings, k), true
 }
 
 // withContainment lays what this host's file says about containment over

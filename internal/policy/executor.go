@@ -70,6 +70,10 @@ const (
 	// used on the worker at all (they name a variable it does not declare,
 	// or hold something it refuses).
 	NoneConfig = "config"
+	// NoneCheck: the worker's stage check fails for the stage there (the
+	// sandbox cannot start, a command it is given is missing, the remote
+	// refuses the push token); the fact's reason says which.
+	NoneCheck = "check"
 )
 
 // NoExecutor is what a worker reports where it cannot run a stage with a
@@ -88,6 +92,8 @@ func UnavailableReason(executor string) string {
 		return "the stage is given capabilities and nothing contains its runs there"
 	case NoneConfig:
 		return "the workspace's stage blocks cannot be used there"
+	case NoneCheck:
+		return "its stage check fails for the stage there (the Workers page says why)"
 	}
 	return "it reports that it cannot run there (" + executor + ")"
 }
@@ -174,13 +180,22 @@ type ExecutorFact struct {
 	Stage    string `json:"stage,omitempty"`
 	Runner   string `json:"runner,omitempty"`
 	Executor string `json:"executor"`
+	// Reason: why, in words, for an executor the worker cannot offer
+	// (none:check); shown, never matched.
+	Reason string `json:"reason,omitempty"`
 }
 
 // ResolveExecutor finds the executor a run of stage on runner gets, from a
 // worker's facts for the run's workspace ("" when it reports none that
 // applies).
 func ResolveExecutor(facts []ExecutorFact, stage, runner string) string {
-	best, bestRank := "", -1
+	return ResolveExecutorFact(facts, stage, runner).Executor
+}
+
+// ResolveExecutorFact is ResolveExecutor's fact, with its reason.
+func ResolveExecutorFact(facts []ExecutorFact, stage, runner string) ExecutorFact {
+	var best ExecutorFact
+	bestRank := -1
 	for _, f := range facts {
 		if (f.Stage != "" && f.Stage != stage) || (f.Runner != "" && f.Runner != runner) {
 			continue
@@ -193,7 +208,7 @@ func ResolveExecutor(facts []ExecutorFact, stage, runner string) string {
 			rank += 2
 		}
 		if rank > bestRank {
-			best, bestRank = f.Executor, rank
+			best, bestRank = f, rank
 		}
 	}
 	return best

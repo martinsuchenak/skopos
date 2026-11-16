@@ -48,4 +48,6 @@ func RegisterConfigRoutes(mux *http.ServeMux, h *wsconfig.Handler, f *fleetfile.
 	mux.HandleFunc("GET /api/fleet/wrappers", h.ListWrappers)
 	mux.HandleFunc("PUT /api/fleet/wrappers/{name}", h.PutWrapper)
 	mux.HandleFunc("DELETE /api/fleet/wrappers/{name}", h.DeleteWrapper)
+	// Kits: the catalogue of toolchain parts a stage block may name.
+	mux.HandleFunc("GET /api/fleet/kits", h.ListKits)
 }

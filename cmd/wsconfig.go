@@ -27,6 +27,7 @@ func init() {
 	Register(serverConfigCmd())
 	Register(runnerDefCmd())
 	Register(wrapperDefCmd())
+	Register(kitCmd())
 }
 
 func configCall(ctx context.Context, cmd *cli.Command, via, method, path string, body, out any) error {
@@ -533,6 +534,46 @@ func optField(name, value string) string {
 
 // wrapperDefCmd is `skopos wrapper …`: wrapper definitions on the server
 // (phase 2d).
+func kitCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "kit",
+		Usage: "Kits: ready-made toolchain parts a stage block names (stages.<stage>.kits)",
+		Commands: []*cli.Command{
+			{
+				Name:  "list",
+				Usage: "List the kits, with the tools, hosts and cache folders each one adds",
+				Description: `A stage block names kits:
+
+  skopos workspace config set --set 'stages.implement={"kits":["go","golangci-lint","task"]}'
+
+The worker gives the stage each kit's tools inside Claude Code's sandbox,
+with the kit's hosts and cache folders, and checks before it takes the
+workspace's work that the commands are on the PATH runs get.`,
+				Flags: keyClientFlags(),
+				Run: func(ctx context.Context, cmd *cli.Command) error {
+					var out struct {
+						Kits []wsconfig.Kit `json:"kits"`
+					}
+					if err := configCall(ctx, cmd, audit.ViaCLI, http.MethodGet, "/api/fleet/kits", nil, &out); err != nil {
+						return err
+					}
+					for _, k := range out.Kits {
+						fmt.Printf("%s  %s\n", k.Name, k.Title)
+						fmt.Printf("  tools  %s\n", strings.Join(k.Tools, " "))
+						if len(k.Hosts) > 0 {
+							fmt.Printf("  hosts  %s\n", strings.Join(k.Hosts, " "))
+						}
+						if len(k.Write) > 0 {
+							fmt.Printf("  writes %s\n", strings.Join(k.Write, " "))
+						}
+					}
+					return nil
+				},
+			},
+		},
+	}
+}
+
 func wrapperDefCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "wrapper",

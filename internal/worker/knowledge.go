@@ -31,9 +31,9 @@ const (
 // should type them. Prompts carry it: under the lockdown the agent sees no
 // settings that would tell it, and a single denied compound command once
 // made an implementer conclude Bash was off entirely (end-to-end run).
-func (w *Worker) stageCommands(workspace, stage string, base []string) []string {
+func (w *Worker) stageCommands(workspace, stage, runner string, base []string) []string {
 	tools := append([]string{}, base...)
-	if p := w.cfg.StageProfile(workspace, stage); p != nil {
+	if p, _ := w.cfg.stageProfileFor(workspace, stage, runner); p != nil {
 		tools = append(tools, p.Tools...)
 	}
 	seen := map[string]bool{}
@@ -57,8 +57,8 @@ func (w *Worker) stageCommands(workspace, stage string, base []string) []string 
 
 // stageTools lists the tools a stage's profile grants beyond shell
 // commands (MCP servers and their tools), as the agent names them.
-func (w *Worker) stageTools(workspace, stage string) []string {
-	p := w.cfg.StageProfile(workspace, stage)
+func (w *Worker) stageTools(workspace, stage, runner string) []string {
+	p, _ := w.cfg.stageProfileFor(workspace, stage, runner)
 	if p == nil {
 		return nil
 	}

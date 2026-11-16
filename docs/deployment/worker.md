@@ -1211,6 +1211,48 @@ env = { CLAUDE_CONFIG_DIR = "/var/lib/skopos/accounts/claude-1" }
   to create new namespace". A wrapper's `check` shows that at the claim,
   before any run.
 
+## The stage check
+
+Before the worker claims a workspace's work it tries what the workspace's
+runs will need on this host. A failure holds back only what it concerns,
+the stage it was found for (the push token: the implement stage), on this
+worker: its executor for that stage is `none:check`, with the reason on
+the Workers page, in the worker's log and on a run that waits for it. The
+workspace's other stages go on. No item is spent finding it.
+
+- **Claude Code's sandbox can start,** for a stage the sandbox contains (a
+  stage with [kits](../concepts/workspace-config.md#kits), or sandbox
+  settings). On Linux it needs `bubblewrap` and `socat`, and bubblewrap
+  must be able to mount `/proc`. An unprivileged container (an LXC on
+  Proxmox, a Docker container) refuses that mount even with nesting on;
+  the check then says to set `sandbox_nested`:
+
+  ```toml
+  [worker]
+  sandbox_nested = true   # Claude Code's sandbox in its nested mode
+  ```
+
+  The nested mode binds the host's `/proc` instead of mounting a new one.
+  It is weaker: commands in the sandbox see the host's processes. Restart
+  the worker after changing it.
+- **Every command a stage is given is on the PATH runs get** (also on a
+  host that is a container, where kits give only their tools): a kit's
+  commands, and the program of each `Bash(…)` tool the block lists. A tool
+  pattern matches the command's first word, so a program has to be on the
+  PATH by its name; one installed in a home folder (`~/.bun/bin/bun`) needs
+  a link in a folder on the PATH of the worker's service.
+- **The kits' cache folders exist.** The worker creates them: the sandbox
+  opens only a folder that already exists.
+- **The remote takes the push token,** for a workspace that pushes. The
+  worker asks the remote to receive a push without sending one
+  (`git push --dry-run`); a token that is wrong, expired or may not write
+  is refused there. An empty token variable is reported too. A remote that
+  cannot be reached is not counted against the token.
+
+The check runs again when what it depends on changes (the workspace's
+stage blocks, the push settings, the token, the PATH), every 2 minutes
+while it fails, and every 6 hours while it passes.
+
 ## Self-healing
 
 A worker is meant to finish work without anyone fixing it. Four things keep
@@ -1228,7 +1270,9 @@ the worker's own problems from blocking items:
   agent saying it is blocked, a merge conflict, a branch rewritten since
   the plan was approved, and a push the remote refused for its credentials
   (401 or 403, "Permission … denied", "Authentication failed": the token is
-  wrong, expired, or may not write to the repository).
+  wrong, expired, or may not write to the repository; or a GitHub token
+  without the `workflow` scope for a change under `.github/workflows`). A
+  403 for GitHub's rate limits is retried.
 - **Preflight.** `preflight` lists commands that say whether this worker can
   take the repo's work right now (its database, queue, services):
 

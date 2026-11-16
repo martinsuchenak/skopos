@@ -304,6 +304,10 @@ func pushAuthRefused(err error) bool {
 		return false
 	}
 	s := strings.ToLower(err.Error())
+	// GitHub answers 403 for its rate limits too: that passes.
+	if strings.Contains(s, "rate limit") || strings.Contains(s, "abuse detection") {
+		return false
+	}
 	for _, m := range []string{
 		"the requested url returned error: 401",
 		"the requested url returned error: 403",
@@ -311,6 +315,15 @@ func pushAuthRefused(err error) bool {
 		"invalid username or password",
 		"invalid credentials",
 		"could not read username",
+		// GitHub: a token without the workflow scope may not change
+		// .github/workflows ("refusing to allow a Personal Access Token to
+		// create or update workflow … without `workflow` scope"; the same
+		// for an OAuth or GitHub App token).
+		"without `workflow` scope",
+		"without 'workflow' scope",
+		"refusing to allow a personal access token",
+		"refusing to allow an oauth app",
+		"refusing to allow a github app",
 	} {
 		if strings.Contains(s, m) {
 			return true

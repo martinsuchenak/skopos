@@ -346,15 +346,15 @@ func TestStageCommands(t *testing.T) {
 		"plain":   {},
 		"wrapped": {Stages: map[string]*StageProfile{"implement": {Wrapper: []string{"env"}, Tools: []string{"Bash(go test:*)", "Bash(git add:*)"}}}},
 	}}}
-	plain := strings.Join(w.stageCommands("plain", "implement", baseImplTools), ",")
+	plain := strings.Join(w.stageCommands("plain", "implement", "", baseImplTools), ",")
 	if !strings.Contains(plain, "git add,git commit") || !strings.Contains(plain, "pwd") || strings.Contains(plain, "go test") {
 		t.Fatalf("plain implement commands: %s", plain)
 	}
-	wrapped := w.stageCommands("wrapped", "implement", baseImplTools)
+	wrapped := w.stageCommands("wrapped", "implement", "", baseImplTools)
 	if last := wrapped[len(wrapped)-1]; last != "go test" {
 		t.Fatalf("profile tools must be listed (deduped): %v", wrapped)
 	}
-	if got := w.stageCommands("plain", "plan", basePlanTools); len(got) != 0 {
+	if got := w.stageCommands("plain", "plan", "", basePlanTools); len(got) != 0 {
 		t.Fatalf("plan stage has no shell: %v", got)
 	}
 }

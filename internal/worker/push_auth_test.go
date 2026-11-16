@@ -79,6 +79,7 @@ func TestPushAuthRefused(t *testing.T) {
 		"git push: exit status 128: remote: invalid credentials",
 		"git push: exit status 128: fatal: could not read Username for 'https://github.com': terminal prompts disabled",
 		"git push: exit status 128: fatal: unable to access '…': The requested URL returned error: 401",
+		"git push: exit status 1: ! [remote rejected] agent/x -> agent/x (refusing to allow a Personal Access Token to create or update workflow `.github/workflows/ci.yml` without `workflow` scope)",
 	}
 	for _, s := range refused {
 		if !pushAuthRefused(errors.New(s)) {
@@ -89,6 +90,7 @@ func TestPushAuthRefused(t *testing.T) {
 		"git push: exit status 1: ! [rejected] agent/x -> agent/x (fetch first)",
 		"git push: exit status 128: fatal: unable to access '…': Could not resolve host: github.com",
 		"git push: exit status 128: fatal: unable to access '…': The requested URL returned error: 500",
+		"git push: exit status 128: remote: You have exceeded a secondary rate limit.\nfatal: unable to access '…': The requested URL returned error: 403",
 	}
 	for _, s := range other {
 		if pushAuthRefused(errors.New(s)) {

@@ -3,6 +3,7 @@ package wsconfig
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -353,5 +354,30 @@ func TestSettingsForms(t *testing.T) {
 	}
 	if _, err := Normalize(stages(map[string]*StageCaps{"review": {Settings: `"just text"`}})); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("settings that are not an object: %v", err)
+	}
+}
+
+// A block names kits from the catalogue: known names are kept (lower case,
+// once each), an unknown one is refused, and kits count as a grant.
+func TestStageKits(t *testing.T) {
+	got, err := NormalizeStage("implement", &StageCaps{Kits: []string{" Go", "bun", "go", ""}})
+	if err != nil || !slices.Equal(got.Kits, []string{"go", "bun"}) {
+		t.Fatalf("kits: %v, %v", got, err)
+	}
+	if !got.Grants() {
+		t.Fatal("kits are a grant")
+	}
+	if _, err := NormalizeStage("implement", &StageCaps{Kits: []string{"cobol"}}); err == nil || !strings.Contains(err.Error(), `"cobol" is not a kit`) {
+		t.Fatalf("unknown kit: %v", err)
+	}
+	for _, k := range Kits() {
+		if len(k.Tools) == 0 || len(k.Commands) == 0 || k.Title == "" {
+			t.Errorf("kit %s is incomplete", k.Name)
+		}
+		for _, w := range k.Write {
+			if !strings.HasPrefix(w, "~/") && !strings.HasPrefix(w, "{") {
+				t.Errorf("kit %s: write folder %q is neither ~/… nor a {placeholder}", k.Name, w)
+			}
+		}
 	}
 }

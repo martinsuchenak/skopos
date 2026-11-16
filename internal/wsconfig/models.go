@@ -92,6 +92,11 @@ type Config struct {
 	// not set at any level, each worker's mcp_config applies.
 	MCP *[]string `json:"mcp,omitempty" toml:"mcp,omitempty"`
 
+	// Kits: the repository's toolchain (kits.go), given to every stage —
+	// plan, implement, review, qa — inside Claude Code's sandbox. A stage
+	// block's own kits add to these.
+	Kits *[]string `json:"kits,omitempty" toml:"kits,omitempty"`
+
 	// Stages: what each stage's agent is given and which wrapper goes
 	// around it (stages.go). A stage with a block is set — an empty block
 	// sets it to nothing; a stage without one is not set at this level.
@@ -123,7 +128,7 @@ var ShellFields = []string{"setup", "checks", "preflight"}
 // — the tools and env its agent is given and the wrapper it starts behind
 // are commands under another name. A worker takes them from the server only
 // with worker.server_commands.
-var CommandFields = append(slices.Clone(ShellFields), StageFields()...)
+var CommandFields = append(append(slices.Clone(ShellFields), "kits"), StageFields()...)
 
 // IsCommandField reports whether a field (as Fields names it) decides what
 // executes on a worker's host.
@@ -147,6 +152,7 @@ func Defaults() Config {
 		QATimeout: new(Duration(30 * time.Minute)),
 		Push:      &Push{Kind: new("none"), RemoteURL: new(""), PullRequest: new("none"), Steps: new(true)},
 		MCPDeny:   new([]string{}), MCPServers: new([]string{}),
+		Kits: new([]string{}),
 	}
 }
 
@@ -366,6 +372,16 @@ func Normalize(in Config) (Config, error) {
 			}
 		}
 		*l.p = &list
+	}
+	if c.Kits != nil {
+		k, err := normalizeKits(*c.Kits)
+		if err != nil {
+			return bad("kits: %v", err)
+		}
+		if k == nil {
+			k = []string{}
+		}
+		c.Kits = &k
 	}
 	if c.MCPServers != nil {
 		for _, e := range *c.MCPServers {

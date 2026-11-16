@@ -885,6 +885,32 @@ paths:
         "403": { description: Requires the root key }
         "409": { description: The server has no secret key, or a stored value is under a key it does not hold (nothing was changed) }
 
+  /api/fleet/kits:
+    get:
+      summary: List the kits a stage block may name (any key)
+      operationId: listKits
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: The catalogue
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kits:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        title: { type: string }
+                        tools: { type: array, items: { type: string } }
+                        commands: { type: array, items: { type: string }, description: "Checked on the PATH runs get before the worker takes the workspace's work" }
+                        hosts: { type: array, items: { type: string }, description: "What the sandbox lets the commands reach" }
+                        write: { type: array, items: { type: string }, description: "Cache folders outside the worktree; ~ is the home folder, {cache} the user's cache folder, {gopath} and {gocache} what go env says" }
+        "401": { description: Unauthorized }
+
   /api/fleet/wrappers:
     get:
       summary: List the wrapper definitions (any key)
@@ -4673,6 +4699,7 @@ components:
       type: object
       description: One stage's block. An empty block sets the stage to nothing
       properties:
+        kits: { type: array, items: { type: string }, description: "Kits from GET /api/fleet/kits (go, golangci-lint, node, bun, php, python, dotnet, scriptling, task, make, github). Each adds its tools, and turns on Claude Code's sandbox with the kit's hosts and cache folders, resolved by the worker for its host" }
         tools: { type: array, items: { type: string }, description: "Extra allowed tools, e.g. Bash(npm run:*)" }
         env:
           type: object

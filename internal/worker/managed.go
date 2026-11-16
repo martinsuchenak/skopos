@@ -127,8 +127,8 @@ func (c *Config) mergeManaged(ws string, eff *wsconfig.Effective) (*managedWS, e
 		// nothing here, not left for the default.
 		setup, checks, preflight := append([]string{}, local.Setup...), append([]string{}, local.Checks...), append([]string{}, local.Preflight...)
 		set.Setup, set.Checks, set.Preflight = &setup, &checks, &preflight
-		// The stage blocks too: the file's profiles keep applying.
-		set.Stages = nil
+		// The stage blocks and kits too: the file's profiles keep applying.
+		set.Stages, set.Kits = nil, nil
 	}
 	full := wsconfig.Complete(set)
 	r := *local
@@ -165,7 +165,7 @@ func (c *Config) mergeManaged(ws string, eff *wsconfig.Effective) (*managedWS, e
 	if c.ServerCommands {
 		// The server says what each stage is given — nothing, for a stage
 		// without a block.
-		stages, err := c.prepareStages(set.Stages)
+		stages, err := c.prepareStages(withWorkspaceKits(set.Stages, set.Kits))
 		if err != nil {
 			m.stagesBad = err.Error()
 			return m, err
@@ -174,6 +174,9 @@ func (c *Config) mergeManaged(ws string, eff *wsconfig.Effective) (*managedWS, e
 		for stage, block := range stages {
 			buf, _ := json.Marshal(block)
 			m.commands["stages."+stage] = string(buf)
+		}
+		if set.Kits != nil {
+			m.commands["kits"] = strings.Join(*set.Kits, ",")
 		}
 	}
 
@@ -195,6 +198,35 @@ func (c *Config) mergeManaged(ws string, eff *wsconfig.Effective) (*managedWS, e
 		}
 	}
 	return m, nil
+}
+
+// withWorkspaceKits gives every stage the workspace's kits: a stage's own
+// block keeps its fields, and its kits follow the workspace's. A stage
+// without a block gets one holding only the kits.
+func withWorkspaceKits(blocks map[string]*wsconfig.StageCaps, kits *[]string) map[string]*wsconfig.StageCaps {
+	if kits == nil || len(*kits) == 0 {
+		return blocks
+	}
+	out := make(map[string]*wsconfig.StageCaps, len(wsconfig.StageNames))
+	for k, v := range blocks {
+		out[k] = v
+	}
+	for _, stage := range wsconfig.StageNames {
+		b := &wsconfig.StageCaps{}
+		if have := out[stage]; have != nil {
+			copied := *have
+			b = &copied
+		}
+		merged := slices.Clone(*kits)
+		for _, k := range b.Kits {
+			if !slices.Contains(merged, k) {
+				merged = append(merged, k)
+			}
+		}
+		b.Kits = merged
+		out[stage] = b
+	}
+	return out
 }
 
 // repo is the workspace's repo as runs and idle work see it: the server's

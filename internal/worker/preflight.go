@@ -51,6 +51,12 @@ func (w *Worker) checkHealth(ctx context.Context) map[string]string {
 			out[ws] = why
 			continue
 		}
+		// What the workspace's runs need on this host: the sandbox, the
+		// commands its stages run, the push token (stagecheck.go). A
+		// failure holds back only the stages it concerns.
+		if w.checkStages(ctx, ws) {
+			w.resetFacts()
+		}
 		repo := w.repo(ws)
 		if repo == nil || len(repo.Preflight) == 0 {
 			continue

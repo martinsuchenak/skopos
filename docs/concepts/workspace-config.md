@@ -18,6 +18,7 @@ one keeps using each worker's file.
 | `setup_timeout`, `check_timeout`, `quiet_timeout`, `plan_timeout`, `impl_timeout`, `qa_timeout` | accounts: name, kind, credentials, priority |
 | `push.kind`, `push.remote_url`, `push.pull_request`, `push.steps` | `contained_by`, `server_commands`, `auto_upgrade` |
 | `mcp_deny`, `mcp_servers`; `mcp`: which MCP servers the runs get | `mcp_config`, for workspaces whose config sets no `mcp` |
+| `kits`: the repository's toolchain, for every stage | `sandbox_nested`, and the toolchain itself installed on the host |
 | `stages`: each stage's tools, env and settings, and which wrapper goes around it | what contains a stage on this host: `contained_by`, a profile's `wrapper` and sandbox settings; `vars` |
 | runner definitions, wrapper definitions, MCP server definitions and their secrets | |
 
@@ -156,6 +157,7 @@ tools = ["Bash(mago:*)"]
 - **Stages:** `plan`, `implement`, `review`, `qa`. A second opinion and a
   branch review run as a review. Compare and synthesize runs have no block:
   they are given nothing and no rule wraps them.
+- **`kits`:** ready-made toolchain parts; see [Kits](#kits).
 - **`tools`:** extra allowed tools, such as `Bash(npm run:*)`.
 - **`env`:** extra variables for the agent. `${NAME}` is filled in on each
   worker from its `[worker.vars]` table, and from nothing else. A worker
@@ -219,6 +221,70 @@ These refusals catch a block that would quietly change which model, login
 or provider a run uses. They are not what keeps a server admin out of a
 worker: whoever may edit a managed workspace's config can already run
 commands on every worker with `server_commands` on.
+
+### Kits
+
+A kit is a ready-made part of a stage block for one toolchain: the commands
+the stage may run, the hosts they download from, and the cache folders they
+write. Name the repository's toolchain once, for the workspace (or a
+group), instead of writing tools and sandbox settings by hand:
+
+```sh
+skopos workspace config set --set 'kits=["go","golangci-lint","task","github"]'
+skopos kit list
+```
+
+- **The workspace's `kits` reach every stage:** plan, implement, review and
+  QA. The planner can then look up versions and the reviewer run the tests,
+  all inside the sandbox.
+- **A stage block's own `kits` add to them** for that stage only:
+  `--set 'stages.qa={"kits":["node"]}'`.
+- In the dashboard: Server config → Toolchain → Kits for the workspace, and
+  the tick boxes in each stage's form.
+
+| Kit | Tools | Hosts | Cache folders |
+|---|---|---|---|
+| `go` | go, gofmt | the Go module proxy and checksum database, golang.org, go.dev, gopkg.in, GitHub | `go env GOPATH`/pkg, `go env GOCACHE` |
+| `golangci-lint` | golangci-lint | — | its cache in the user's cache folder |
+| `node` | node, npm, npx | registry.npmjs.org | `~/.npm` |
+| `bun` | bun, bunx | registry.npmjs.org | `~/.bun/install/cache` |
+| `php` | php, composer, `vendor/bin/*` | Packagist, GitHub | composer's cache |
+| `python` | uv, uvx, python, python3, pip, pip3, pytest, ruff, mypy | PyPI | `~/.cache/uv`, pip's cache |
+| `dotnet` | dotnet | NuGet, the .NET download hosts | `~/.nuget/packages`, `~/.dotnet`, `~/.local/share/NuGet` |
+| `scriptling` | scriptling | — | — |
+| `task` | task | — | — |
+| `make` | make | — | — |
+| `github` | `git ls-remote` | GitHub (actions, release downloads) | — |
+
+- **Kits turn on Claude Code's sandbox** for the stage. Its commands can
+  reach only the kits' hosts and the hosts in the block's own sandbox
+  settings, and none can run outside the sandbox. Credential files under
+  the home folder (`~/.ssh`, `~/.config/skopos`, the agent CLIs' logins,
+  `~/.config/gh`, `~/.netrc`, `~/.docker`, `~/.aws`, …) are unreadable to
+  them.
+- **Where the run is already contained, kits give only their tools:** on a
+  worker whose host is a container (`contained_by`, such as a knot space)
+  or under a wrapper, the container is the boundary and the sandbox is not
+  switched on (it seldom starts inside one). The network is then whatever
+  the container allows.
+- **The worker resolves them for its host:** the real cache folders, which
+  it creates, since the sandbox opens only a folder that exists.
+- **The block's own fields add to them:** extra tools (a repository's
+  script, such as `Bash(./tests/run_tests.sh:*)`), extra hosts and folders in
+  its sandbox settings.
+- **Kits are for claude:** the sandbox contains only a runner that honours
+  its settings. A codex or opencode run of the stage gets no kits and runs
+  as it would without them; to give those runners the toolchain, use a
+  [wrapper](#wrappers).
+- **A sandbox the worker's own file sets for the stage is kept as it is:**
+  the kits add their tools, never hosts or folders to the operator's
+  sandbox.
+- **A planner given commands plans in its own worktree,** never in the
+  clone the later runs start from.
+- **The worker checks before it takes the workspace's work** that the
+  sandbox can start, that every command the stage is given is on the PATH
+  runs get, and that the remote takes the push token. See
+  [The stage check](../deployment/worker.md#the-stage-check).
 
 ### Wrappers
 

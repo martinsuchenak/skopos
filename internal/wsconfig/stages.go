@@ -69,6 +69,10 @@ func (r WrapRule) String() string {
 // wrapper goes around it. A workspace's block for a stage replaces its
 // group's for that stage whole: what a stage gets is always one block.
 type StageCaps struct {
+	// Kits: ready-made toolchain parts (kits.go). Each adds tools, and
+	// with them Claude Code's sandbox with the kit's hosts and cache
+	// folders, resolved by the worker for its host.
+	Kits []string `json:"kits,omitempty" toml:"kits,omitempty"`
 	// Tools: extra allowed tools (Bash(cmd:*) patterns and the like).
 	Tools []string `json:"tools,omitempty" toml:"tools,omitempty"`
 	// Env: extra variables for the agent. ${NAME} takes the value the
@@ -118,7 +122,7 @@ func (s *StageCaps) Grants() bool {
 	if s == nil {
 		return false
 	}
-	if len(s.Tools) > 0 || len(s.Env) > 0 {
+	if len(s.Kits) > 0 || len(s.Tools) > 0 || len(s.Env) > 0 {
 		return true
 	}
 	var settings map[string]json.RawMessage
@@ -339,6 +343,11 @@ func NormalizeStage(stage string, in *StageCaps) (*StageCaps, error) {
 	if in == nil {
 		return out, nil
 	}
+	kits, err := normalizeKits(in.Kits)
+	if err != nil {
+		return bad("kits: %v", err)
+	}
+	out.Kits = kits
 	for _, t := range in.Tools {
 		t = strings.TrimSpace(t)
 		if t == "" || slices.Contains(out.Tools, t) {

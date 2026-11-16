@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -38,6 +40,40 @@ var (
 // scrub keeps them from every agent run, so they say nothing about where
 // an agent's requests go.
 func (c *Config) SetEnvFileKeys(keys []string) { c.envFileKeys = keys }
+
+// SetSecretFiles names the worker's own env file and config file, and takes
+// the list of this worker's secret files and folders a kit's sandboxed
+// commands may not read: those, the agent key's MCP file in the state
+// folder, and the accounts' login folders — the ones that exist. Called
+// once at start, after Default.
+func (c *Config) SetSecretFiles(paths ...string) {
+	own := []string{}
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		if abs, err := filepath.Abs(p); err == nil {
+			own = append(own, abs)
+		}
+	}
+	if c.StateDir != "" {
+		own = append(own, filepath.Join(c.StateDir, "agent-mcp.json"))
+	}
+	for _, a := range c.FileAccounts() {
+		own = append(own, a.LoginDir)
+	}
+	c.ownDeny = nil
+	for _, p := range own {
+		if p == "" || slices.Contains(c.ownDeny, p) {
+			continue
+		}
+		// Only what exists: a rule for a missing path could stop the
+		// sandbox from starting.
+		if _, err := os.Lstat(p); err == nil {
+			c.ownDeny = append(c.ownDeny, p)
+		}
+	}
+}
 
 // agentEnv is the environment an agent run of this account really gets:
 // the daemon's own, scrubbed exactly as the runners scrub it, with the

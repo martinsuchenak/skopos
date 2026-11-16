@@ -33,6 +33,12 @@ type Config struct {
 	// the host is confined — not that runs are kept apart from each other:
 	// inside it a run still sees every clone on the worker.
 	ContainedBy string `toml:"contained_by"`
+	// SandboxNested runs Claude Code's sandbox in its nested mode on this
+	// host (sandbox.enableWeakerNestedSandbox): it binds the host's /proc
+	// instead of mounting a new one, which an unprivileged container (an
+	// LXC on Proxmox, a Docker container) refuses. Weaker: commands in the
+	// sandbox see the host's processes. The sandbox check suggests it.
+	SandboxNested bool `toml:"sandbox_nested"`
 	// Vars are this host's values for ${NAME} in what the server supplies
 	// (a stage's env, a wrapper's argv): host paths, mostly. Only these
 	// are ever filled in — never the worker's environment, which holds its
@@ -90,6 +96,14 @@ type Config struct {
 
 	// envFileKeys: the variables the worker's env file provided (facts.go).
 	envFileKeys []string
+	// checkBad: per workspace, what its last stage check found (stagecheck.go):
+	// a reason per stage, and under "push" the push token's.
+	checkBad map[string]map[string]string
+	// ownDeny: this worker's own secret files and folders that exist — its
+	// env file and config, the agent key's MCP file, the accounts' login
+	// folders — taken once (SetSecretFiles), so what a kit's sandbox denies
+	// stays the same from a claim to the run it starts.
+	ownDeny []string
 
 	// Runner definitions from the server (defs.go). fileAccounts: the
 	// accounts as the file has them; Accounts is rebuilt from them and
@@ -410,6 +424,10 @@ func (c *Config) ExecutorFor(workspace, stage, runner string) string {
 		// only a runner that honours them).
 		return policy.NoExecutor(policy.NoneUncontained)
 	}
+	if c.checkProblem(workspace, stage, prof) != "" {
+		// The stage check found what this run would need missing here.
+		return policy.NoExecutor(policy.NoneCheck)
+	}
 	return c.executorOf(prof, stage, runner)
 }
 
@@ -578,9 +596,39 @@ func (c *Config) ExecutorFacts() map[string][]policy.ExecutorFact {
 				}
 			}
 		}
+		// Why the stage check holds a stage back, said with its fact.
+		for i, f := range facts {
+			if f.Executor == policy.NoExecutor(policy.NoneCheck) {
+				facts[i].Reason = c.checkReason(ws, f.Stage)
+			}
+		}
 		out[ws] = facts
 	}
 	return out
+}
+
+// checkReason is what the stage check found for a run stage of ws ("" =
+// every reason, for the workspace's default).
+func (c *Config) checkReason(ws, stage string) string {
+	bad := c.checkBad[ws]
+	if stage != "" {
+		var parts []string
+		if why := bad[stagePhase(stage)]; why != "" {
+			parts = append(parts, why)
+		}
+		if why := bad[checkPush]; stage == "implement" && why != "" {
+			parts = append(parts, why)
+		}
+		return strings.Join(parts, "; ")
+	}
+	var all []string
+	for _, why := range bad {
+		if !slices.Contains(all, why) {
+			all = append(all, why)
+		}
+	}
+	slices.Sort(all)
+	return strings.Join(all, "; ")
 }
 
 // fileProfile resolves a workspace's profile for a stage from the worker's

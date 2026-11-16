@@ -132,6 +132,8 @@ type Worker struct {
 	phases sync.Map
 	// health: each repo's last preflight (workspace → result).
 	health map[string]preflightResult
+	// stageChecks: each workspace's last stage check (stagecheck.go).
+	stageChecks map[string]stageCheck
 	// Workspace config from the server (managed.go): what the worker holds
 	// per managed workspace, why one cannot be used here, and the claim
 	// answer's digest it was last refreshed for. cfgMu guards the two maps:
@@ -1044,8 +1046,11 @@ func (w *Worker) refuseExecutor(run *Run) string {
 		// run is not run.
 		if here := w.cfg.ExecutorFor(run.WorkspaceID, run.Stage, run.Runner); policy.Unavailable(here) {
 			why := policy.UnavailableReason(here)
-			if _, problem := w.cfg.stageProfileFor(run.WorkspaceID, stagePhase(run.Stage), run.Runner); problem != "" {
+			prof, problem := w.cfg.stageProfileFor(run.WorkspaceID, stagePhase(run.Stage), run.Runner)
+			if problem != "" {
 				why = problem
+			} else if check := w.cfg.checkProblem(run.WorkspaceID, run.Stage, prof); check != "" {
+				why = check
 			}
 			return fmt.Sprintf("this worker cannot run %s on %s here: %s", run.Stage, run.Runner, why)
 		}

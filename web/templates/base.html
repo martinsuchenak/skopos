@@ -1462,6 +1462,14 @@
                                                 <template x-for="o in row.options" :key="row.key + '|' + o.value"><option :value="o.value" x-text="o.label" :selected="o.value === row.value"></option></template>
                                             </select>
                                             <textarea x-show="row.kind === 'lines'" :id="'cfg-lines-' + row.key" x-model="row.value" :disabled="!row.set || !pipeConfig.canEdit" @input="cfgTouched()" :rows="cfgRowsOf(row)" class="fld font-mono text-xs" spellcheck="false" :aria-label="row.label + ', one per line'" :aria-invalid="row.error ? 'true' : 'false'" :aria-describedby="'cfg-note-' + row.key" :placeholder="row.placeholder"></textarea>
+                                            <div x-show="row.kind === 'kits'" class="grid gap-1 sm:grid-cols-2" role="group" :aria-label="row.label">
+                                                <template x-for="k in pipeConfig.kits" :key="row.key + '|kit|' + k.name">
+                                                    <label class="flex items-start gap-2 text-xs" :for="'cfg-kit-' + k.name">
+                                                        <input type="checkbox" class="mt-0.5" :id="'cfg-kit-' + k.name" :checked="cfgRowKitOn(row, k.name)" :disabled="!row.set || !pipeConfig.canEdit" @change="cfgRowKitToggle(row.key, k.name)" />
+                                                        <span><span class="font-mono text-zinc-200" x-text="k.name"></span> <span class="text-zinc-500" x-text="k.title"></span></span>
+                                                    </label>
+                                                </template>
+                                            </div>
                                             <p :id="'cfg-note-' + row.key" class="mt-0.5 text-[11px]" :class="row.error ? 'text-rose-400' : 'text-zinc-500'" x-text="cfgNote(row)"></p>
                                         </div>
                                     </div>
@@ -1495,6 +1503,18 @@
                                         <label class="flex items-center gap-2 text-sm" :for="'cfg-st-set-' + st.stage"><input type="checkbox" :id="'cfg-st-set-' + st.stage" x-model="st.set" :disabled="!pipeConfig.canEdit" @change="cfgTouched()" /> Set the <span x-text="st.label"></span> block here</label>
                                         <p class="text-[11px]" :class="st.error ? 'text-rose-400' : 'text-zinc-500'" :role="st.error ? 'alert' : null" x-text="st.error || cfgStageNote(st)"></p>
                                         <div x-show="st.set" class="space-y-3">
+                                            <fieldset x-show="pipeConfig.kits.length > 0">
+                                                <legend class="lbl">Kits</legend>
+                                                <div class="grid gap-1 sm:grid-cols-2">
+                                                    <template x-for="k in pipeConfig.kits" :key="st.stage + '|kit|' + k.name">
+                                                        <label class="flex items-start gap-2 text-xs" :for="'cfg-st-kit-' + st.stage + '-' + k.name">
+                                                            <input type="checkbox" class="mt-0.5" :id="'cfg-st-kit-' + st.stage + '-' + k.name" :checked="cfgKitOn(st, k.name)" :disabled="!pipeConfig.canEdit" @change="cfgKitToggle(st.stage, k.name)" />
+                                                            <span><span class="font-mono text-zinc-200" x-text="k.name"></span> <span class="text-zinc-500" x-text="k.title"></span></span>
+                                                        </label>
+                                                    </template>
+                                                </div>
+                                                <p class="mt-1 text-[11px] text-zinc-500">A kit gives the stage its tools inside Claude Code's sandbox, with the kit's hosts and cache folders. Workers check the commands are on their PATH before they take the workspace's work.</p>
+                                            </fieldset>
                                             <div>
                                                 <label class="lbl" :for="'cfg-st-tools-' + st.stage">Extra tools (one per line)</label>
                                                 <textarea :id="'cfg-st-tools-' + st.stage" x-model="st.tools" rows="2" class="fld font-mono text-xs" spellcheck="false" :disabled="!pipeConfig.canEdit" @input="cfgTouched()" placeholder="Bash(make test:*)&#10;mcp__browser"></textarea>

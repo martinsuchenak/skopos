@@ -443,6 +443,7 @@ func TestTokenOnlyPushNeedsAManagedWorkspace(t *testing.T) {
 	c := &Config{ID: "worker-a", StateDir: t.TempDir(), ServerCommands: true, Repos: map[string]*Repo{"ws": {Path: "/clones/ws"}},
 		Accounts: []*Account{{Name: "c1", Runner: "claude"}}}
 	c.Repos["ws"].Push.TokenEnv = "PUSH_TOKEN"
+	t.Setenv("PUSH_TOKEN", "tok-for-the-test") // the stage check reports an empty one
 	if err := c.Default(t.TempDir()); err != nil {
 		t.Fatalf("a push block with only the token's variable must load: %v", err)
 	}

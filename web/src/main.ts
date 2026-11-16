@@ -61,14 +61,15 @@ type ConfigView = { owner_kind: string; owner_id: string; config: Record<string,
 // that has a control of its own. kind picks the control; a row is part of
 // the saved config only when it is set.
 type CfgOption = { value: string; label: string };
-type CfgField = { key: string; label: string; group: string; kind: 'text' | 'duration' | 'number' | 'select' | 'lines'; options?: CfgOption[]; hint: string; placeholder?: string };
+type CfgField = { key: string; label: string; group: string; kind: 'text' | 'duration' | 'number' | 'select' | 'lines' | 'kits'; options?: CfgOption[]; hint: string; placeholder?: string };
 type CfgRow = CfgField & { set: boolean; value: string; applies: string; from: string; error: string; options: CfgOption[]; placeholder: string };
 type CfgGroup = { name: string; open: boolean; rows: CfgRow[] };
 type CfgProblem = { field: string; message: string };
 // A stage's block as the form holds it: lists as one entry per line, the
 // wrapper rules as rows, the sandbox settings as JSON text.
 type CfgWrap = { id: number; wrapper: string; runner: string; kind: string; provider: string; model: string };
-type CfgStage = { stage: string; label: string; open: boolean; set: boolean; tools: string; env: string; allow: string; deny: string; dirs: string; sandbox: string; wraps: CfgWrap[]; error: string; from: string };
+type CfgKit = { name: string; title: string; tools: string[] };
+type CfgStage = { stage: string; label: string; open: boolean; set: boolean; kits: string[]; tools: string; env: string; allow: string; deny: string; dirs: string; sandbox: string; wraps: CfgWrap[]; error: string; from: string };
 const CFG_STAGES: [string, string][] = [['plan', 'Plan'], ['implement', 'Implement'], ['review', 'Review'], ['qa', 'QA']];
 let cfgWrapSeq = 0;
 // Every config field with a control. What is not here (the stage blocks)
@@ -94,13 +95,14 @@ const CFG_FIELDS: CfgField[] = [
   { key: 'push.remote_url', label: 'Remote URL', group: 'Push and pull requests', kind: 'text', hint: 'An http(s) URL without credentials.', placeholder: 'https://github.com/you/repo.git' },
   { key: 'push.pull_request', label: 'Pull request', group: 'Push and pull requests', kind: 'select', options: [{ value: 'none', label: 'none' }, { value: 'draft', label: 'open as a draft' }, { value: 'ready', label: 'open ready for review' }], hint: 'Opened or reused for the item\'s branch. Workers never merge.' },
   { key: 'push.steps', label: 'Push as it goes', group: 'Push and pull requests', kind: 'select', options: [{ value: 'true', label: 'yes: each step\'s commits' }, { value: 'false', label: 'no: only at the end' }], hint: 'Pushing the implementer\'s commits while it works keeps them if the worker dies.' },
+  { key: 'kits', label: 'Kits', group: 'Toolchain', kind: 'kits', hint: 'The repository\'s toolchain, given to every stage inside Claude Code\'s sandbox with the kits\' hosts and cache folders. A stage block\'s own kits add to these.' },
   { key: 'mcp', label: 'MCP servers for runs', group: 'MCP', kind: 'lines', hint: 'Names of MCP server definitions on the server, one per line. Set (also to nothing), runs get exactly these and no worker\'s own mcp_config.' },
   { key: 'mcp_servers', label: 'Allowed MCP tools', group: 'MCP', kind: 'lines', hint: 'Tool prefixes plan and implement runs may call, one per line: mcp__<server>.', placeholder: 'mcp__router' },
   { key: 'mcp_deny', label: 'Denied MCP tools', group: 'MCP', kind: 'lines', hint: 'Tools no run may call, one per line.', placeholder: 'mcp__router__delete_thing' },
 ];
 type RunnerDef = { name: string; kind: string; model?: string; effort?: string; provider?: string };
 type PolicyRule = { provider?: string; model?: string; kind?: string; runner?: string; stages?: string[]; executor?: string };
-type ExecutorFact = { stage?: string; runner?: string; executor: string };
+type ExecutorFact = { stage?: string; runner?: string; executor: string; reason?: string };
 type WrapperDef = { name: string; argv: string[]; check?: string[]; executor?: string };
 type MCPServerDef = { name: string; type: string; url?: string; headers?: Record<string, string>; command?: string[]; env?: Record<string, string>; workspaces?: string[]; secrets?: { name: string; set: boolean }[]; used_by?: string[]; rev?: string };
 type PolicyLayer = { source: string; rev: string; policy: { allow: PolicyRule[] | null } };
@@ -417,7 +419,7 @@ const appState = () => ({
     // The form: whether the owner has a config at all (a workspace's
     // switch), its fields in folds, the stage blocks as JSON, and what a
     // check said that belongs to no field.
-    managed: false, groups: [] as CfgGroup[], stageForms: [] as CfgStage[], stagesOpen: false, stagesError: '', wrapperNames: [] as string[], general: '', conflicts: [] as string[], was: '', checking: false, checked: '', view: null as ConfigView | null },
+    managed: false, groups: [] as CfgGroup[], stageForms: [] as CfgStage[], stagesOpen: false, stagesError: '', wrapperNames: [] as string[], kits: [] as CfgKit[], general: '', conflicts: [] as string[], was: '', checking: false, checked: '', view: null as ConfigView | null },
   // The Group tab's form as it was loaded or last saved.
   groupDetailsWas: '',
   groupSaving: false,
@@ -3805,6 +3807,12 @@ const appState = () => ({
         c.wrapperNames = defs.map((w: WrapperDef) => w.name);
       }
     } catch { /* the list is extra */ }
+    // The kits a stage block can name (a server from before them has no
+    // such route).
+    try {
+      const kres = await this.authFetch('/api/fleet/kits');
+      if (kres.ok) c.kits = ((await kres.json()) as { kits?: CfgKit[] }).kits || [];
+    } catch { /* the list is extra */ }
     // The MCP servers a config can name (admins only; older servers have
     // no such route). Never a secret's value: only whether it is set.
     c.mcp = [];
@@ -3858,7 +3866,7 @@ const appState = () => ({
   // typed: the server's check says what is wrong with it.
   cfgValue(row: CfgRow): unknown {
     const text = row.value;
-    if (row.kind === 'lines') return text.split('\n').map((l: string) => l.trim()).filter((l: string) => l !== '');
+    if (row.kind === 'lines' || row.kind === 'kits') return text.split('\n').map((l: string) => l.trim()).filter((l: string) => l !== '');
     if (row.kind === 'number') return /^\d+$/.test(text.trim()) ? parseInt(text.trim(), 10) : text.trim();
     if (row.key === 'push.steps') return text === 'true';
     return text.trim();
@@ -3960,6 +3968,7 @@ const appState = () => ({
   cfgStageBlock(st: CfgStage): { block: Record<string, unknown>; problem: string } {
     const block: Record<string, unknown> = {};
     let problem = '';
+    if (st.kits.length) block.kits = st.kits.slice();
     const tools = this.boxLines(st.tools);
     if (tools.length) block.tools = tools;
     const env = this.boxPairs(st.env, '=');
@@ -3997,11 +4006,33 @@ const appState = () => ({
     const list = (v: unknown): string => (Array.isArray(v) ? v.join('\n') : '');
     return {
       stage, label, open, from, set: raw !== undefined && raw !== null, error: '',
+      kits: Array.isArray(block.kits) ? (block.kits as string[]).slice() : [],
       tools: list(block.tools), env: this.pairsBox(block.env as Record<string, string> | undefined, '='),
       allow: list(perms.allow), deny: list(perms.deny), dirs: list(perms.additionalDirectories),
       sandbox: set.sandbox ? JSON.stringify(set.sandbox, null, 2) : '',
       wraps: ((block.wrap || []) as Record<string, string>[]).map((w: Record<string, string>) => ({ id: ++cfgWrapSeq, wrapper: w.wrapper || '', runner: w.runner || '', kind: w.kind || '', provider: w.provider || '', model: w.model || '' })),
     };
+  },
+  // Kits in the workspace's Kits row (its value is one name per line).
+  cfgRowKitOn(row: CfgRow, name: string): boolean { return row.value.split('\n').includes(name); },
+  cfgRowKitToggle(key: string, name: string) {
+    const row = this.cfgRows().find((r: CfgRow) => r.key === key);
+    if (!row) return;
+    const order = (this.pipeConfig.kits as CfgKit[]).map((k: CfgKit) => k.name);
+    const have = row.value.split('\n').filter((l: string) => l.trim() !== '');
+    const on = have.includes(name) ? have.filter((k: string) => k !== name) : have.concat([name]);
+    row.value = on.sort((a: string, b: string) => order.indexOf(a) - order.indexOf(b)).join('\n');
+    this.cfgTouched();
+  },
+  // Kits in a stage's form: ticked in the catalogue's order.
+  cfgKitOn(st: CfgStage, name: string): boolean { return st.kits.includes(name); },
+  cfgKitToggle(stage: string, name: string) {
+    const st = this.cfgStage(stage);
+    if (!st) return;
+    const order = (this.pipeConfig.kits as CfgKit[]).map((k: CfgKit) => k.name);
+    const on = st.kits.includes(name) ? st.kits.filter((k: string) => k !== name) : st.kits.concat([name]);
+    st.kits = on.sort((a: string, b: string) => order.indexOf(a) - order.indexOf(b));
+    this.cfgTouched();
   },
   cfgStage(stage: string): CfgStage | undefined { return (this.pipeConfig.stageForms as CfgStage[]).find((x: CfgStage) => x.stage === stage); },
   cfgWrapAdd(stage: string) {
@@ -4024,6 +4055,7 @@ const appState = () => ({
     if (!st.set) return st.from ? 'from ' + st.from : 'not set here';
     const block = this.cfgStageBlock(st).block;
     const parts: string[] = [];
+    if (block.kits) parts.push('kits ' + (block.kits as string[]).join(', '));
     if (block.tools) parts.push(this.plural((block.tools as string[]).length, 'tool'));
     if (block.env) parts.push(this.plural(Object.keys(block.env as object).length, 'variable'));
     if (block.wrap) parts.push('wrapper ' + (block.wrap as Record<string, string>[]).map((w: Record<string, string>) => w.wrapper).join(', '));
@@ -4202,7 +4234,7 @@ const appState = () => ({
   // stages and runners that differ.
   executorsLine(ws: string, facts: ExecutorFact[]): string {
     const parts = (facts || []).map((f: ExecutorFact) => {
-      const e = this.executorText(f.executor);
+      const e = f.reason ? 'cannot run: ' + f.reason : this.executorText(f.executor);
       if (f.stage && f.runner) return f.stage + '/' + f.runner + ': ' + e;
       if (f.stage) return f.stage + ': ' + e;
       if (f.runner) return f.runner + ': ' + e;
@@ -4214,6 +4246,7 @@ const appState = () => ({
   executorText(e: string): string {
     if (e === 'none:wrapper') return 'cannot run (the wrapper its config asks for is not usable on this worker)';
     if (e === 'none:uncontained') return 'cannot run (the stage is given tools or env and nothing contains it on this worker)';
+    if (e === 'none:check') return 'cannot run (its stage check fails on this worker)';
     if (e.startsWith('none:')) return 'cannot run (' + e + ')';
     return e;
   },

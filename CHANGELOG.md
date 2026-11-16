@@ -4,13 +4,42 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.39.0] — 2026-11-16
+
+### Added
+
+- Kits: ready-made toolchain parts, named once for a workspace or group
+  (`kits = ["go", "golangci-lint", "task"]`, given to every stage) or in a
+  stage block (added for that stage): go,
+  golangci-lint, node, bun, php, python, dotnet, scriptling, task, make and
+  github. Each gives the stage its tools inside Claude Code's sandbox, with
+  the kit's hosts and cache folders; credential files under the home
+  folder are unreadable to the sandboxed commands, as are the worker's own
+  env file and config. On a worker whose host is a container
+  (`contained_by`, a knot space), under a wrapper or under the worker
+  file's own sandbox, kits give only their tools; a codex or opencode run
+  gets none of them. A planner given commands plans in a worktree of its
+  own, never in the clone. `skopos kit list`,
+  `GET /api/fleet/kits`, and tick boxes in the dashboard (Server config →
+  Toolchain, and each stage's form).
+- The stage check: before a worker takes a workspace's work it checks that
+  Claude Code's sandbox can start (bubblewrap, socat, a `/proc` mount on
+  Linux), that the commands a stage is given are on the PATH runs get,
+  that the kits' cache folders exist (it creates them), and that the
+  remote takes the push token. A failure holds back only the stage it
+  concerns on that worker (executor `none:check`), with the reason on the
+  Workers page and on a run that waits for it.
+- `worker.sandbox_nested`: Claude Code's sandbox in its nested mode, for a
+  worker in an unprivileged container (an LXC on Proxmox) that refuses a
+  new `/proc` mount.
 
 ### Changed
 
 - A push the remote refused for its credentials (401, 403, "Permission …
-  denied", "Authentication failed") is no longer retried: the item blocks
-  at once with the reason, naming the token's variable.
+  denied", "Authentication failed", or a GitHub token without the
+  `workflow` scope for a change to `.github/workflows`) is no longer
+  retried: the item blocks at once with the reason, naming the token's
+  variable. GitHub's rate limits are still retried.
 - From the second retry on, the worker that failed a run is kept off it for
   5 minutes, not 30. On a workspace with one worker, the last attempt comes
   10 minutes after the second failure.

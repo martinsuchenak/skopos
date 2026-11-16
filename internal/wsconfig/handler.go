@@ -265,6 +265,15 @@ func (h *Handler) ListWrappers(w http.ResponseWriter, r *http.Request) {
 	rest.RespondJSON(w, http.StatusOK, map[string]any{"wrappers": out})
 }
 
+// ListKits handles GET /api/fleet/kits: the catalogue of kits a stage
+// block may name.
+func (h *Handler) ListKits(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(w, r) {
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, map[string]any{"kits": Kits()})
+}
+
 // PutWrapper handles PUT /api/fleet/wrappers/{name}.
 func (h *Handler) PutWrapper(w http.ResponseWriter, r *http.Request) {
 	if !h.authorized(w, r) {

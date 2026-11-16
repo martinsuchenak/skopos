@@ -489,7 +489,7 @@ func TestAgentRunWithServerStage(t *testing.T) {
 	if got := w.executors["r1"]; !strings.HasPrefix(got, "wrapper:box:") || w.grants["r1"] == "" {
 		t.Fatalf("recorded executor %q grants %q", got, w.grants["r1"])
 	}
-	if cmds := w.stageCommands("ws", "review", nil); !slices.Contains(cmds, "phpstan") {
+	if cmds := w.stageCommands("ws", "review", "", nil); !slices.Contains(cmds, "phpstan") {
 		t.Fatalf("the prompt's commands: %v", cmds)
 	}
 	// The worker's setup and check commands of the stage start behind it too.

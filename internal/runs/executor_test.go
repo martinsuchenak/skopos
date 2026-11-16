@@ -521,3 +521,20 @@ func TestUnavailableExecutorInEveryScan(t *testing.T) {
 		t.Fatalf("the run waits for a preferred worker that cannot run it (prefer %q): %+v", again.PreferWorker, run)
 	}
 }
+
+// A worker's reason travels with an executor it cannot offer, bounded, and
+// is dropped from any other; a stranded run says it.
+func TestExecutorReasons(t *testing.T) {
+	offered := map[string]bool{"ws": true}
+	long := strings.Repeat("x", 900)
+	got := sanitizeExecutors(map[string][]policy.ExecutorFact{"ws": {
+		{Executor: "local", Reason: "not kept"},
+		{Stage: "implement", Executor: "none:check", Reason: long},
+	}}, offered)
+	if len(got["ws"]) != 2 || got["ws"][0].Reason != "" || len(got["ws"][1].Reason) > 510 || got["ws"][1].Reason == "" {
+		t.Fatalf("reasons: %+v", got["ws"])
+	}
+	if f := policy.ResolveExecutorFact(got["ws"], "implement", "claude"); f.Executor != "none:check" || f.Reason == "" {
+		t.Fatalf("resolved: %+v", f)
+	}
+}
