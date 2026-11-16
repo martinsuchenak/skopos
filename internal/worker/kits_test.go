@@ -203,7 +203,7 @@ func TestStageCheck(t *testing.T) {
 	w.checkStages(ctx, "bare")
 	if runtime.GOOS == "linux" {
 		// On Linux the sandbox's own runtime is checked too.
-		if why := reason("implement"); strings.Contains(why, "bun") || strings.Contains(why, "push") {
+		if why := reason("implement"); strings.Contains(why, "not on the PATH") || strings.Contains(why, "push token") {
 			t.Fatalf("fixed, only the sandbox may remain: %q", why)
 		}
 		return
