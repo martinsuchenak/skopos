@@ -1,7 +1,8 @@
 {{define "skopos"}}# Skopos (shared memory{{if .IndexBranch}} and the code index{{end}})
 
 You have the skopos MCP tools for workspace `{{.Workspace}}`. Pass `workspace_id: "{{.Workspace}}"`
-to every call.
+to every call. A tool named here that is not in your tool list is still there: find it with
+`tool_search` and call it through `execute_tool`.
 
 - First read what earlier agents and people recorded: `blackboard_read`{{if .Branch}} with
   `branch: "{{.Branch}}"`{{end}}. Decisions there hold unless the item says otherwise.

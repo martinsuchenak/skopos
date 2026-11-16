@@ -528,7 +528,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	// fix rounds it has used.
 	var ir implResult
 	if rec.ImplementedRun == run.ID {
-		ir = implResult{Status: "done", Summary: rec.ImplementedSummary}
+		ir = implResult{Status: "done", Summary: rec.ImplementedSummary, Notes: rec.ImplementedNotes}
 		log.Info("resuming the check fixes", "fix_rounds_used", rec.FixRounds)
 	} else {
 		// An earlier run of this implementation that was cut off (its
@@ -605,7 +605,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		if commitCount(ctx, worktree, baseRef) == 0 {
 			return fmt.Errorf("agent reported done but made no commits")
 		}
-		rec.ImplementedRun, rec.ImplementedSummary, rec.FixRounds = run.ID, ir.Summary, 0
+		rec.ImplementedRun, rec.ImplementedSummary, rec.ImplementedNotes, rec.FixRounds = run.ID, ir.Summary, ir.Notes, 0
 		said := resolveAnswers(toFix, ir.Findings, findings.KindFixed, findings.KindNotFixed)
 		rec.FindingAnswers = wireAnswers(said)
 		if len(toFix) > 0 {
@@ -668,9 +668,14 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 
 	// The push: validated refspec, env-only token, never force. A branch
 	// whose checks still fail is pushed too, so it can be looked at.
+	// The summary is about the change: the pull request's text. The notes
+	// are about the run, for the approver: on the item only.
 	summary := ir.Summary
 	if rounds > 0 && len(failed) == 0 {
 		summary += fmt.Sprintf("\n\nThe checks failed at first and were fixed in %s.", plural(rounds, "fix round"))
+	}
+	if notes := strings.TrimSpace(ir.Notes); notes != "" {
+		summary += "\n\n**Notes on the run:**\n\n" + notes
 	}
 	stopSteps() // the final push is the one that counts
 	if repo.Push.Kind != "none" {
@@ -1357,9 +1362,13 @@ type planResult struct {
 }
 
 type implResult struct {
-	Status       string `json:"status"`
-	Reason       string `json:"reason"`
-	Summary      string `json:"summary"`
+	Status  string `json:"status"`
+	Reason  string `json:"reason"`
+	Summary string `json:"summary"`
+	// Notes: what only the approver needs to know about the run (a tool it
+	// could not use, a command refused, how it committed). On the item,
+	// never in the pull request.
+	Notes        string `json:"notes"`
 	AmendedSteps []Step `json:"amended_steps"`
 	// Questions for the approver with an amendment or a block; Question is the
 	// single-string shape the schema had before.

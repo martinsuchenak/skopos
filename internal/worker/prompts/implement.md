@@ -27,7 +27,7 @@ half done:
 Read them (`git diff`, `git status`) before you start. Keep and finish what is right for the step.
 Undo changes to tracked files you do not keep with `git restore <file>`. You cannot delete files:
 if the earlier run added a file that does not belong, leave it out of your commits (stage files by
-name with `git add <file>` instead of `git add -A`) and say so in your summary.
+name with `git add <file>`) and say so in your notes.
 {{end}}
 {{if .ApprovalNotes}}
 # The approver's notes with the approval (answers to open questions; they take precedence over the plan where they differ)
@@ -74,8 +74,9 @@ about in words: the people who read them never see these numbers.
   If one fails, you get its output back to fix. If you cannot run a verification command
   yourself, skip it — do not block on it.
 {{end}}
-- After finishing each step, commit it with two separate commands: `git add -A`, then
-  `git commit -m "agent: step N - <step title>"`. Leave `$`, backticks, `>`, `~`, `..` and paths
+- After finishing each step, commit it with separate commands: stage the files you changed by name
+  (`git add <file>`, one or more), then `git commit -m "agent: step N - <step title>"`. Check
+  `git status` first, and never stage files you did not mean to change. Leave `$`, backticks, `>`, `~`, `..` and paths
   starting with `/` out of the message (write `api/inbox`, `a to b`): the shell may refuse them.
 - Never push, never change remotes, upstreams, branches or git config. The tool pushes for you.
 - Verify each step as the plan says, with the commands you have. Repository-specific verification
@@ -94,4 +95,11 @@ about in words: the people who read them never see these numbers.
   in a document you commit: a step that depends on an answer says "depends on question N".
 
 When all steps are committed, return status "done". Always list the numbers of the steps that
-are completed and committed in steps_done. Return only the structured result.
+are completed and committed in steps_done.
+
+`summary` is the description of the change for the people who read the pull request: what changed,
+why, and how it was verified. Write it about the repository only — nothing about this tool, the
+tools or commands you were allowed or refused, a sandbox, the blackboard, plan items or how you
+staged your commits. Put what only the approver needs to know about this run in `notes` (a tool
+you could not use, a command that was refused, something you could not verify, something you
+recorded for later); leave `notes` empty when there is nothing. Return only the structured result.

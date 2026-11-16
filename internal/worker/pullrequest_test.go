@@ -376,3 +376,29 @@ func TestNotPushedMarkerMatchesDashboard(t *testing.T) {
 		t.Fatalf("web/src/main.ts unpushed() must match the worker's %q", notPushedMarker)
 	}
 }
+
+// The pull request's text is about the change: the implementer's summary
+// and the plan's steps, then one line naming the item — how the worker
+// knows its own pull request again. Nothing about skopos or the run.
+func TestPullRequestBody(t *testing.T) {
+	forge := &fakeForge{}
+	srv := httptest.NewServer(forge)
+	defer srv.Close()
+	w := &Worker{cfg: &Config{ID: "worker-a"}}
+	repo := &Repo{DefaultBranch: "main"}
+	repo.Push.Kind, repo.Push.RemoteURL = "gitea", srv.URL+"/o/r.git"
+	item := &Item{ID: "01a1e375-0000-7000-8000-000000000001", Title: "Update the dependencies"}
+	pr, _, err := w.ensurePullRequest(context.Background(), repo, "tok", "agent/x", item, []Step{{Title: "Bump the modules"}}, "Bumped the Go modules; task check passes.", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := forge.created[0]["body"].(string)
+	want := "Bumped the Go modules; task check passes.\n\n### Plan\n\n1. Bump the modules\n\n---\ninbox item `" + item.ID + "`\n"
+	if body != want {
+		t.Fatalf("body:\n%s\nwant:\n%s", body, want)
+	}
+	if !ownsPullRequest(&PullRequest{Body: body}, item.ID) {
+		t.Fatal("the worker knows its own pull request by the last line")
+	}
+	_ = pr
+}

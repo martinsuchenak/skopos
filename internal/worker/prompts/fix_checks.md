@@ -21,8 +21,8 @@ The shell commands you can run are exactly: {{range $i, $c := .Commands}}{{if $i
 Run them one at a time. You may not be able to run the checks yourself: the worker runs them again
 after this round.
 {{end}}
-Commit the fix with two separate commands: `git add -A`, then
-`git commit -m "agent: fix checks - <what you fixed>"` (leave `$`, backticks, `>`, `~`, `..` and
+Commit the fix with separate commands: stage the files you changed by name (`git add <file>`),
+then `git commit -m "agent: fix checks - <what you fixed>"` (leave `$`, backticks, `>`, `~`, `..` and
 paths starting with `/` out of the message: the shell may refuse them). Never push, never change
 remotes, branches or git config.
 

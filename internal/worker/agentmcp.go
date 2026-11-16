@@ -53,14 +53,23 @@ func AgentToolNames(phase string) []string {
 // skoposTools are the mcp__skopos__* names a stage may call: every stage
 // reads the index and the blackboard and records findings; implement also
 // marks its plan's steps.
+//
+// tool_search and execute_tool are allowed too: a server with the lean
+// toolset lists only its core tools and reaches the rest through them
+// (plan_update_item among them). The server lets a run's execute_tool call
+// only the run's own tools.
 func skoposTools(phase string) []string {
-	names := AgentToolNames(phase)
+	names := append(AgentToolNames(phase), leanMetaTools...)
 	out := make([]string, len(names))
 	for i, n := range names {
 		out[i] = "mcp__" + agentMCPServer + "__" + n
 	}
 	return out
 }
+
+// leanMetaTools are the MCP tools a lean server reaches its other tools
+// through.
+var leanMetaTools = []string{"tool_search", "execute_tool"}
 
 // runnerHasSkopos reports whether a runner gets the run's MCP config — the
 // skopos server and the run's other servers — by its kind (a runner named

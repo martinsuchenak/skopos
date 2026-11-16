@@ -4,6 +4,23 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.39.2] — 2026-11-16
+
+### Changed
+
+- A pull request's text is about the change only: the implementer's summary
+  and the plan's steps, then one line naming the item. What the implementer
+  notes about the run itself goes on the item, under "Notes on the run",
+  never into the pull request.
+- The implementer and the check-fixing round stage the files they changed
+  by name instead of `git add -A`.
+
+### Fixed
+
+- On a server with the lean MCP tool list (`lean_tools`), a run's agent can
+  reach its stage's other tools through `tool_search` and `execute_tool`: an
+  implementer could not mark its plan's steps done.
+
 ## [0.39.1] — 2026-11-16
 
 ### Fixed

@@ -338,3 +338,20 @@ func TestWorkspaceKitsReachEveryStage(t *testing.T) {
 		t.Fatalf("kits stay off without server_commands: %+v, %v", m2, err)
 	}
 }
+
+// A run may reach the server's other tools through the lean toolset's
+// search tools: the server checks each execute_tool target against the
+// run's own tools.
+func TestSkoposToolsReachTheLeanToolset(t *testing.T) {
+	for _, phase := range []string{"plan", "implement", "review"} {
+		got := skoposTools(phase)
+		for _, want := range []string{"mcp__skopos__tool_search", "mcp__skopos__execute_tool"} {
+			if !slices.Contains(got, want) {
+				t.Fatalf("%s: %v lacks %s", phase, got, want)
+			}
+		}
+	}
+	if !slices.Contains(skoposTools("implement"), "mcp__skopos__plan_update_item") {
+		t.Fatal("implement marks its plan's steps")
+	}
+}

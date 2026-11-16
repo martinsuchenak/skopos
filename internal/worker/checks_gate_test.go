@@ -41,7 +41,7 @@ case "$prompt" in
   esac ;;
 *)
   echo impl >> "$CALLS"
-  echo bad > state; git add -A; c commit -qm "agent: step 1"; done_json "implemented" ;;
+  echo bad > state; git add -A; c commit -qm "agent: step 1"; printf '{"type":"result","session_id":"s1","structured_output":{"status":"done","steps_done":[1],"summary":"implemented","notes":"a tool was refused"}}' ;;
 esac
 `
 
@@ -270,6 +270,10 @@ func TestImplementChecksGate(t *testing.T) {
 		rep := g.lastReport(t)
 		if rep["status"] != "succeeded" || !strings.Contains(rep["summary"].(string), "implemented") {
 			t.Fatalf("report: %v", rep)
+		}
+		// The implementer's notes reach the item, also across the pause.
+		if !strings.Contains(rep["summary"].(string), "**Notes on the run:**\n\na tool was refused") {
+			t.Fatalf("notes: %v", rep["summary"])
 		}
 		if setup, _ := rep["setup"].([]any); len(setup) != 1 {
 			t.Fatalf("the resumed run must still report the setup it ran: %v", rep["setup"])

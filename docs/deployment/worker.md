@@ -670,6 +670,12 @@ pull_request = "draft"                           # draft | ready | none (default
   still succeeds and its summary says why. The token then also needs
   pull-request write access: for a fine-grained GitHub token, **Contents** and
   **Pull requests**, both read and write.
+- **What the pull request says:** the item's title, the implementer's summary
+  of the change and the plan's steps, then one line naming the item
+  (`inbox item <id>`), which is how the worker knows its own pull request
+  again. What the implementer notes about the run itself (a tool it could
+  not use, a command refused) goes on the item only, under "Notes on the
+  run".
 - **The worker never merges.** Mark done records your sign-off; merging the
   pull request (or the branch) is yours.
 

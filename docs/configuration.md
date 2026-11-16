@@ -748,7 +748,8 @@ hides non-core MCP tools from `tools/list`, keeping only the workhorses
 natively visible (code_search, code_find, code_symbol, code_callers,
 code_impact, skopos_context, blackboard_read/write, report_status). Hidden
 tools remain fully callable via the `tool_search` / `execute_tool`
-meta-tools the server exposes automatically. This roughly halves the
+meta-tools the server exposes automatically; a pipeline run's agent may use
+them too, and reaches only its stage's tools through them. This roughly halves the
 per-step schema weight agents re-send every turn — the measured step-level
 token cost in the index-effectiveness benchmarks. Default: off (all tools
 listed).

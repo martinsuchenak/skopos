@@ -217,8 +217,10 @@ func (c *prClient) call(ctx context.Context, method, path string, in, out any) e
 }
 
 // ensurePullRequest opens (or finds) the item's pull request into the
-// default branch: the item title, then the implementer's summary, the
-// approved plan's steps and where the sign-off happens.
+// default branch: the item title, then the implementer's summary of the
+// change and the approved plan's steps, and a last line naming the item
+// (how the worker knows its own pull request again). Nothing about the
+// run itself: the implementer's notes stay on the item.
 func (w *Worker) ensurePullRequest(ctx context.Context, repo *Repo, token, branch string, item *Item, steps []Step, summary string, draft bool) (*PullRequest, string, error) {
 	c, err := newPRClient(repo.Push.Kind, repo.Push.RemoteURL, token)
 	if err != nil {
@@ -235,7 +237,7 @@ func (w *Worker) ensurePullRequest(ctx context.Context, repo *Repo, token, branc
 		}
 		b.WriteString("\n")
 	}
-	fmt.Fprintf(&b, "---\nOpened by the skopos worker `%s` for %s. Sign off in skopos (Mark done), then merge here: skopos never merges.\n", w.cfg.ID, prMarker(item.ID))
+	fmt.Fprintf(&b, "---\n%s\n", prMarker(item.ID))
 	return c.Ensure(ctx, branch, repo.DefaultBranch, item.Title, b.String(), draft, func(pr *PullRequest) bool {
 		return ownsPullRequest(pr, item.ID)
 	})

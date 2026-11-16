@@ -37,6 +37,7 @@ type branchRecord struct {
 	// a fix round resumes that run straight at the checks.
 	ImplementedRun     string `json:"implemented_run,omitempty"`
 	ImplementedSummary string `json:"implemented_summary,omitempty"`
+	ImplementedNotes   string `json:"implemented_notes,omitempty"`
 	FixRounds          int    `json:"fix_rounds,omitempty"`
 	// FindingAnswers: what that implement turn said about the review
 	// findings it was given, kept for the run's report.
