@@ -151,7 +151,7 @@ The receiver:
 | `checks.finished` | an implementation's checks ran (`passed`, `failed_names`) |
 | `review.finished` | a review or second opinion reported (`passed`, `blocking`, `nits`) |
 | `pr.opened` | an implement run opened or reused a pull request (`url`) |
-| `item.closed` | done or discarded (`outcome`) |
+| `item.closed` | done or discarded (`outcome`: `done`, `discarded`, or `nothing_to_do` with a `reason` when the planner found nothing to do) |
 | `run.started` / `run.finished` | a run started / reported (only when named) |
 
 ### Failures and retries

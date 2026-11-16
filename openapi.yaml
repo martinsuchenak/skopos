@@ -5395,8 +5395,8 @@ components:
         at: { type: string, format: date-time }
         action:
           type: string
-          enum: [queue, review, approve, request_changes, retry, reject, mark_done, second_opinion, finding_waive, answer, auto_approve_held]
-          description: "queue: started the pipeline; review: sent a branch for review only; approve: approved a plan; request_changes: sent a plan or a branch back; retry: started a blocked or failed item again; reject: discarded the item; mark_done: signed the branch off; second_opinion: asked another runner for an opinion; finding_waive: accepted a finding as it is; answer: answered questions without moving the item; auto_approve_held: the item asked for its plan to be approved automatically and something kept it for the approver (the notes say what). An approve with via auto is the server's automatic approval"
+          enum: [queue, review, approve, request_changes, retry, reject, mark_done, second_opinion, finding_waive, answer, auto_approve_held, nothing_to_do]
+          description: "queue: started the pipeline; review: sent a branch for review only; approve: approved a plan; request_changes: sent a plan or a branch back; retry: started a blocked or failed item again; reject: discarded the item; mark_done: signed the branch off; second_opinion: asked another runner for an opinion; finding_waive: accepted a finding as it is; answer: answered questions without moving the item; auto_approve_held: the item asked for its plan to be approved automatically and something kept it for the approver (the notes say what). nothing_to_do: the server closed the item because the planner found nothing to do (the notes say why). An approve with via auto is the server's automatic approval"
         subject: { type: string, description: "For approve, the plan revision and its base commit (<revision>+<base>); for mark_done, the commit signed off" }
         reason: { type: string, description: "For approve: why the approver chose this plan" }
         by: { type: string }

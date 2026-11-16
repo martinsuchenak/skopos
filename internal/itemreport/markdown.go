@@ -317,7 +317,7 @@ func (d *doc) decisions(r *Report) {
 // automatic approval, who switched it on.
 func decisionBy(d Decision) string {
 	switch {
-	case d.Action == ActionAutoHeld:
+	case d.Action == ActionAutoHeld, d.Action == ActionNothingToDo:
 		return ""
 	case d.Via == audit.ViaAuto:
 		if set := strings.TrimSuffix(strings.TrimPrefix(d.By, "auto (set by "), ")"); set != d.By {
@@ -355,6 +355,8 @@ func decisionWords(d Decision) string {
 		return "Questions answered"
 	case ActionAutoHeld:
 		return "Not approved automatically"
+	case ActionNothingToDo:
+		return "Closed: nothing to do"
 	}
 	return words(d.Action)
 }

@@ -688,6 +688,7 @@ func serveCmd() *cli.Command {
 			runsService.SetPlanHooks(planRoundStartHook(inboxService, plansService), ensurePlanHook(inboxService, plansService))
 			// A plan approved automatically (an item's auto_approve_plan).
 			runsService.SetPlanGate(inboxService.PlanGate, inboxService.HoldPlanGate)
+			runsService.SetNothingToDo(inboxService.NothingToDo)
 			runsService.SetItemTransition(func(ctx context.Context, itemID, to, reason, agentID string) error {
 				toStatus := inbox.Status(to)
 				if !inbox.IsWorkflowStatus(toStatus) {

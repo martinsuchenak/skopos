@@ -93,3 +93,70 @@ func TestPlanWritesQuestionsAndRisks(t *testing.T) {
 		t.Errorf("questions:\n%q\nwant\n%q", secs[1].Body, want)
 	}
 }
+
+// The planner finds nothing to do: no plan is written, the reason goes on
+// the item, and the run reports nothing_to_do with it.
+func TestPlanNothingToDo(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	dir, _ := gitRepo(t)
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	for _, args := range [][]string{{"clone", "-q", "--bare", dir, origin}, {"-C", dir, "remote", "add", "origin", origin}} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	const itemID = "01a19700-0000-7000-8000-0000000000ab"
+	var mu sync.Mutex
+	content := "Update the dependencies."
+	var reports []map[string]any
+	planned := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.URL.Path == "/api/inbox/"+itemID && r.Method == http.MethodGet:
+			b, _ := json.Marshal(map[string]any{"id": itemID, "workspace_id": "ws", "title": "Deps", "content": content, "status": "planning"})
+			_, _ = w.Write(b)
+		case r.URL.Path == "/api/inbox/"+itemID && r.Method == http.MethodPatch:
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			content = body["content"]
+			_, _ = io.WriteString(w, `{}`)
+		case strings.HasPrefix(r.URL.Path, "/api/plans"):
+			planned = true
+			http.NotFound(w, r)
+		case r.URL.Path == "/api/runs/run-1/report":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			reports = append(reports, body)
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	const nothing = `printf '%s' '{"type":"result","session_id":"s1","structured_output":{"title":"Deps","summary":"Every dependency is already current.","size":"s","needs_clarification":false,"nothing_to_do":true,"steps":[],"risks":[],"questions":[]}}'
+`
+	cfg := &Config{
+		ID: "worker-test", Bin: fakeCLI(t, nothing), StateDir: t.TempDir(), PlanTimeout: time.Minute,
+		Repos:    map[string]*Repo{"ws": {Path: dir, DefaultBranch: "main", BranchPrefix: "agent/"}},
+		Accounts: []*Account{{Name: "a1", Runner: "claude"}},
+	}
+	w := New(cfg, NewClient(srv.URL, "k"), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err := w.stagePlan(t.Context(), &Run{ID: "run-1", WorkspaceID: "ws", ItemID: itemID, Stage: "plan"}, w.log); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if planned {
+		t.Error("no plan is written when there is nothing to do")
+	}
+	if len(reports) != 1 || reports[0]["status"] != "succeeded" || reports[0]["nothing_to_do"] != true || reports[0]["summary"] != "Every dependency is already current." {
+		t.Fatalf("reports: %v", reports)
+	}
+	if !strings.Contains(content, "## Enrichment — skopos worker\n\n**Nothing to do.** Every dependency is already current.") {
+		t.Fatalf("the reason on the item:\n%s", content)
+	}
+}

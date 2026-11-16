@@ -209,6 +209,9 @@ const (
 	// automatically and something kept it for the person (the notes say
 	// what). Recorded by the server, not a person's action.
 	ActionAutoHeld = "auto_approve_held"
+	// ActionNothingToDo: the server closed the item because the planner
+	// found nothing to do (the notes say why).
+	ActionNothingToDo = "nothing_to_do"
 )
 
 // Decision is something a person decided on the item.
@@ -461,7 +464,7 @@ var personActions = map[string]string{
 	"inbox.request_changes": ActionRequestChange, "inbox.retry": ActionRetry, "inbox.reject": ActionReject,
 	"inbox.mark_done": ActionMarkDone, "inbox.second_opinion": ActionSecondOpinion,
 	"inbox.finding_waive": ActionWaive, "inbox.answer": ActionAnswer,
-	"inbox.auto_approve_held": ActionAutoHeld,
+	"inbox.auto_approve_held": ActionAutoHeld, "inbox.nothing_to_do": ActionNothingToDo,
 }
 
 // subjectWindow is how far apart an action's audit entry and its approval
@@ -870,6 +873,8 @@ func outcome(r *Report) []string {
 	switch {
 	case r.Item.Status == string(inbox.StatusDone) && signOff != nil:
 		out = append(out, fmt.Sprintf("Signed off by %s on %s%s.", signOff.By, day(signOff.At), through(signOff.Via)))
+	case r.Item.Status == string(inbox.StatusDone) && r.closedNothingToDo() != nil:
+		out = append(out, "Closed without changes: the planner found nothing to do ("+oneLineOf(r.closedNothingToDo().Notes)+").")
 	case r.Item.Status == string(inbox.StatusDone):
 		out = append(out, "Done.")
 	case r.Item.Status == string(inbox.StatusDiscarded):
@@ -913,6 +918,18 @@ func outcome(r *Report) []string {
 	}
 	return out
 }
+
+// closedNothingToDo is the server's closing of the item for nothing to do.
+func (r *Report) closedNothingToDo() *Decision {
+	for i := len(r.Decisions) - 1; i >= 0; i-- {
+		if d := r.Decisions[i]; d.Action == ActionNothingToDo {
+			return &d
+		}
+	}
+	return nil
+}
+
+func oneLineOf(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 // signOff is the newest sign-off, nil when there is none.
 func (r *Report) signOff() *Decision {

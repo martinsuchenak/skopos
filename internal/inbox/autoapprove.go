@@ -28,7 +28,42 @@ type gateKey int
 const (
 	quietGateKey gateKey = iota
 	heldReasonKey
+	nothingToDoKey
 )
+
+// NothingToDoReason is why the planner found nothing to do, when the item
+// moving (closed, or at the gate) is moving for that reason ("" = not).
+func NothingToDoReason(ctx context.Context) string {
+	v, _ := ctx.Value(nothingToDoKey).(string)
+	return v
+}
+
+// ActionNothingToDo is the audit action of an item the server closed because
+// the planner found nothing to do.
+const ActionNothingToDo = "inbox.nothing_to_do"
+
+// NothingToDo handles a plan round whose planner found nothing to do (a
+// routine update with nothing to update). An item whose plan the server may
+// approve is closed as done, with the reason; any other waits at the plan
+// gate with the reason, for the person to discard or send back. open opens
+// the gate. Internal caller (the run chain).
+func (s *Service) NothingToDo(ctx context.Context, itemID, reason string, open func(context.Context)) {
+	reason = firstLineOf(reason)
+	if reason == "" {
+		reason = "the planner found nothing to do"
+	}
+	nctx := context.WithValue(ctx, nothingToDoKey, reason)
+	item, err := s.store.GetItem(ctx, strings.TrimSpace(itemID))
+	if err != nil || !item.AutoApprovePlan || item.Status != StatusPlanning {
+		open(nctx)
+		return
+	}
+	sys := auth.WithPrincipal(context.WithoutCancel(nctx), nil)
+	if _, err := s.transition(sys, item.ID, StatusDone, ActorSystem, ActionNothingToDo, audit.ViaSystem, reason, ""); err != nil {
+		s.recordHeld(ctx, item.ID, "closing it failed: "+firstLineOf(err.Error()))
+		open(nctx)
+	}
+}
 
 // quietGate reports a plan gate the server approves at once: it is neither
 // announced nor sent to other systems as waiting.

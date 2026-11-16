@@ -161,6 +161,9 @@ func (s *Service) transitionWith(ctx context.Context, itemID string, to Status, 
 		if err := reviewOnlyEdge(item, to); err != nil {
 			return err
 		}
+		if item.Status == StatusPlanning && to == StatusDone && NothingToDoReason(ctx) == "" {
+			return fmt.Errorf("%w: planning → done only when the planner found nothing to do", ErrInvalidInput)
+		}
 		if mutate != nil {
 			if err := mutate(tx, item); err != nil {
 				return err

@@ -44,6 +44,10 @@ type Service struct {
 	// server never approves for the person. Nil = open is called as is.
 	planGate func(ctx context.Context, itemID string, open func(context.Context))
 	planHold func(ctx context.Context, itemID, reason string, open func(context.Context))
+	// nothingToDo takes a plan round whose planner found nothing to do
+	// (inbox.NothingToDo: closes the item, or opens the gate with the
+	// reason). Nil = the gate opens as for a plan.
+	nothingToDo func(ctx context.Context, itemID, reason string, open func(context.Context))
 	// itemAppend writes a section into the item (a stage group's summary) —
 	// wired to inbox.AppendSection. Nil skips the summary.
 	itemAppend func(ctx context.Context, itemID, heading, body string) error
@@ -197,6 +201,12 @@ func (s *Service) SetItemAppend(fn func(ctx context.Context, itemID, heading, bo
 // inbox.HoldPlanGate).
 func (s *Service) SetPlanGate(gate func(ctx context.Context, itemID string, open func(context.Context)), hold func(ctx context.Context, itemID, reason string, open func(context.Context))) {
 	s.planGate, s.planHold = gate, hold
+}
+
+// SetNothingToDo wires what happens to a plan round whose planner found
+// nothing to do (inbox.NothingToDo).
+func (s *Service) SetNothingToDo(fn func(ctx context.Context, itemID, reason string, open func(context.Context))) {
+	s.nothingToDo = fn
 }
 
 // SetItemTransition wires the inbox system-transition callback.
@@ -911,9 +921,12 @@ func (s *Service) chain(ctx context.Context, run *Run, in ReportInput) {
 					}
 				}
 			}
-			if s.planGate != nil {
+			switch {
+			case in.NothingToDo && s.nothingToDo != nil:
+				s.nothingToDo(ctx, run.ItemID, firstLine(in.Summary), open)
+			case s.planGate != nil:
 				s.planGate(ctx, run.ItemID, open)
-			} else {
+			default:
 				open(ctx)
 			}
 		case StageImplement, StageReview, StageQA:

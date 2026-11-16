@@ -213,6 +213,8 @@ type Run struct {
 	Setup []Check `json:"setup,omitempty"`
 	// FixRounds: implement only — the check fix rounds the run used.
 	FixRounds int `json:"fix_rounds,omitempty"`
+	// NothingToDo: a plan run whose planner found nothing to do.
+	NothingToDo bool `json:"nothing_to_do,omitempty"`
 	// Phase: what a running implement run is doing past its first turn
 	// (PhaseChecks / PhaseFixing), from its heartbeats; '' otherwise.
 	Phase string `json:"phase,omitempty"`
@@ -408,6 +410,9 @@ type ReportInput struct {
 	Setup []Check `json:"setup,omitempty"`
 	// FixRounds: implement only — the check fix rounds used.
 	FixRounds int `json:"fix_rounds,omitempty"`
+	// NothingToDo: plan only — the planner found nothing to do (a routine
+	// update with nothing to update); Summary says why. No plan is written.
+	NothingToDo bool `json:"nothing_to_do,omitempty"`
 	// Verdict: a second opinion's pass/fail. It reports succeeded either
 	// way (the review itself ran); the verdict is advisory.
 	Verdict string `json:"verdict,omitempty"`

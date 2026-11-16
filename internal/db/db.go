@@ -150,6 +150,10 @@ func RunMigrations(db *sql.DB) error {
 	}
 	// The check fix rounds an implement run used, and what a running one is
 	// doing past its first turn (checks / fixing, from its heartbeats).
+	// nothing_to_do: a plan run whose planner found nothing to do (1).
+	if err := ensureColumn(db, "runs", "nothing_to_do", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 	if err := ensureColumn(db, "runs", "fix_rounds", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}

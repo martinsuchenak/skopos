@@ -47,7 +47,7 @@ const runColumns = `id, workspace_id, item_id, plan_rev_id, stage, runner, worke
 	resume_kind, lease_expires_at, resume_after, attempt, branch, base_sha, head_sha,
 	result_summary, diffstat, checks, log_ref, fail_reason, lease_token_hash, claimed_key_id, created_at, updated_at, executor,
 	group_id, focus, cost_usd, findings, pushed, pr_url, setup, fix_rounds, phase, retries, retry_after, avoid_worker,
-	prefer_worker, prefer_until, runner_picked, policy_rev, facts, stranded_reason, grants, config_rev, still_open,
+	prefer_worker, prefer_until, runner_picked, policy_rev, facts, stranded_reason, grants, config_rev, still_open, nothing_to_do,
 	COALESCE((SELECT needs FROM inbox_items WHERE inbox_items.id = runs.item_id), '')`
 
 func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
@@ -57,19 +57,20 @@ func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	var groupID, focus, findings sql.NullString
 	var cost sql.NullFloat64
 	var pushed sql.NullBool
-	var picked int
+	var picked, nothing int
 	var facts, needs string
 	if err := row.Scan(&r.ID, &r.WorkspaceID, &r.ItemID, &r.PlanRevID, &r.Stage, &r.Runner, &r.WorkerID, &r.Status,
 		&r.ResumeKind, &lease, &resumeAfter, &r.Attempt, &r.Branch, &r.BaseSHA, &r.HeadSHA,
 		&r.ResultSummary, &r.Diffstat, &checks, &r.LogRef, &r.FailReason, &r.LeaseTokenHash, &r.ClaimedKeyID, &createdAt, &updatedAt, &r.Executor,
 		&groupID, &focus, &cost, &findings, &pushed, &r.PRURL, &setup, &r.FixRounds, &r.Phase, &r.Retries, &retryAfter, &r.AvoidWorker,
-		&r.PreferWorker, &preferUntil, &picked, &r.PolicyRev, &facts, &r.Stranded, &r.Grants, &r.ConfigRev, &r.StillOpen, &needs); err != nil {
+		&r.PreferWorker, &preferUntil, &picked, &r.PolicyRev, &facts, &r.Stranded, &r.Grants, &r.ConfigRev, &r.StillOpen, &nothing, &needs); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("scanning run: %w", err)
 	}
 	r.RunnerPicked = picked != 0
+	r.NothingToDo = nothing != 0
 	r.Needs = labels.Parse(needs)
 	if facts != "" {
 		r.Facts = json.RawMessage(facts)
@@ -915,12 +916,12 @@ func (s *Storage) Report(ctx context.Context, id, workerID, keyID, tokenHash str
 			executor = CASE WHEN ? != '' THEN ? ELSE executor END,
 			grants = CASE WHEN ? != '' THEN ? ELSE grants END,
 			pr_url = CASE WHEN ? != '' THEN ? ELSE pr_url END,
-			setup = CASE WHEN ? != '' THEN ? ELSE setup END, fix_rounds = ?, phase = '',
+			setup = CASE WHEN ? != '' THEN ? ELSE setup END, fix_rounds = ?, phase = '', nothing_to_do = ?,
 			cost_usd = `+addCost+`, findings = COALESCE(?, findings), pushed = COALESCE(?, pushed),
 			lease_expires_at = '', resume_after = '', updated_at = ?
 		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
 		string(in.Status), in.Summary, in.HeadSHA, in.HeadSHA, in.Diffstat, string(checks),
-		in.LogRef, in.Reason, in.Branch, in.Branch, in.BaseSHA, in.BaseSHA, in.Executor, in.Executor, in.Grants, in.Grants, in.PRURL, in.PRURL, setupJSON, setupJSON, in.FixRounds,
+		in.LogRef, in.Reason, in.Branch, in.Branch, in.BaseSHA, in.BaseSHA, in.Executor, in.Executor, in.Grants, in.Grants, in.PRURL, in.PRURL, setupJSON, setupJSON, in.FixRounds, boolInt(in.NothingToDo && in.Status == StatusSucceeded),
 		costArg(in.CostUSD), costArg(in.CostUSD), findingsJSON(in.Findings), boolArg(in.Pushed),
 		formatTime(now), id, workerID, keyID, tokenHash, string(StatusClaimed), string(StatusRunning), string(StatusPaused))
 	if err != nil {

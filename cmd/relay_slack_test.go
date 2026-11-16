@@ -106,6 +106,7 @@ func relayStack(t *testing.T) (*inbox.Service, *runs.Service, *plans.Service, *f
 	runsSvc.SetFindings(findingsSvc)
 	inboxSvc.SetFindingLog(findingsSvc)
 	runsSvc.SetPlanGate(inboxSvc.PlanGate, inboxSvc.HoldPlanGate)
+	runsSvc.SetNothingToDo(inboxSvc.NothingToDo)
 	runsSvc.SetItemTransition(func(ctx context.Context, itemID, to, reason, agentID string) error {
 		_, err := inboxSvc.SystemTransition(ctx, itemID, inbox.Status(to), reason, agentID, audit.ViaWorker)
 		return err

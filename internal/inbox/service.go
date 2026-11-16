@@ -142,7 +142,11 @@ func (s *Service) emitStatus(ctx context.Context, tx Store, item *Item, to Statu
 	case StatusFailed:
 		gate = "failed"
 	case StatusDone, StatusDiscarded:
-		evs = append(evs, integrations.Event{Type: integrations.TypeItemClosed, ItemID: item.ID, Data: map[string]any{"outcome": string(to)}})
+		closed := map[string]any{"outcome": string(to)}
+		if why := NothingToDoReason(ctx); why != "" && to == StatusDone {
+			closed["outcome"], closed["reason"] = "nothing_to_do", why
+		}
+		evs = append(evs, integrations.Event{Type: integrations.TypeItemClosed, ItemID: item.ID, Data: closed})
 	}
 	if gate != "" {
 		nd := map[string]any{"gate": gate}

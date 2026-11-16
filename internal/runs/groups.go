@@ -296,12 +296,24 @@ func (s *Service) applyGroupDecision(ctx context.Context, g *Group, members []Ru
 		s.advance(ctx, &rep, agent)
 	case OutcomeCandidates:
 		// Two or more candidates: the optional merge and judge run first
-		// (synthesize → compare → gate); with one, straight to the gate.
-		passed := 0
+		// (synthesize → compare → gate); with one, straight to the gate. A
+		// member that found nothing to do wrote no candidate; when no
+		// member wrote one, the round found nothing to do.
+		passed, nothing, why := 0, 0, ""
 		for _, m := range members {
-			if m.Status == StatusSucceeded {
+			switch {
+			case m.Status == StatusSucceeded && m.NothingToDo:
+				nothing++
+				if why == "" {
+					why = firstLine(m.ResultSummary)
+				}
+			case m.Status == StatusSucceeded:
 				passed++
 			}
+		}
+		if passed == 0 && nothing > 0 && s.nothingToDo != nil {
+			s.nothingToDo(ctx, g.ItemID, why, func(ctx context.Context) { s.openPlanGate(ctx, g.ItemID, agent) })
+			return
 		}
 		if passed >= 2 {
 			s.afterAdvisory(ctx, StagePlan, g.ItemID, g.WorkspaceID, agent)

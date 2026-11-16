@@ -74,7 +74,10 @@ var workflowEdges = map[Status]map[Status]TransitionActor{
 	StatusQueued: {StatusPlanning: ActorSystem, StatusImplementing: ActorSystem, StatusDiscarded: ActorHuman},
 	// Planning runs block too (review fix 5): a planner needing clarification
 	// pauses exactly like an implementer.
-	StatusPlanning:         {StatusAwaitingApproval: ActorSystem, StatusBlocked: ActorSystem, StatusFailed: ActorSystem, StatusDiscarded: ActorHuman},
+	// planning → done: the planner found nothing to do on an item whose
+	// plan the approver lets the server approve (NothingToDo only; the
+	// transition endpoint refuses it).
+	StatusPlanning:         {StatusAwaitingApproval: ActorSystem, StatusBlocked: ActorSystem, StatusFailed: ActorSystem, StatusDiscarded: ActorHuman, StatusDone: ActorSystem},
 	StatusAwaitingApproval: {StatusApproved: ActorHuman, StatusPlanning: ActorHuman, StatusDiscarded: ActorHuman},
 	StatusApproved:         {StatusImplementing: ActorSystem, StatusDiscarded: ActorHuman},
 	StatusImplementing:     {StatusAwaitingApproval: ActorSystem, StatusInReview: ActorSystem, StatusBlocked: ActorSystem, StatusFailed: ActorSystem, StatusDiscarded: ActorHuman},

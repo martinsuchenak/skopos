@@ -772,6 +772,12 @@ func (r *slackRelay) NotifyItem(ctx context.Context, itemID string, from, to inb
 		r.drain(ctx, itemID)
 		return
 	}
+	if why := inbox.NothingToDoReason(ctx); why != "" && to == inbox.StatusDone {
+		if item, err := r.inbox.GetItem(context.Background(), itemID); err == nil {
+			r.postInThread(ctx, itemID, "✅ *Nothing to do* · "+truncate(item.Title, gateTitleBytes)+"\n\n"+slackText(truncate(why, 600))+"\n\nClosed without changes.")
+		}
+		return
+	}
 	msg := r.formatGate(itemID, from, to)
 	if msg == "" {
 		return
@@ -801,6 +807,14 @@ func (r *slackRelay) postInThread(ctx context.Context, itemID, msg string) bool 
 // prose scraped from the item — and records which revision was shown, so
 // the `approve` reply binds to exactly it.
 func (r *slackRelay) postPlanReady(ctx context.Context, itemID string) {
+	// The planner found nothing to do: there is no plan to approve.
+	if why := inbox.NothingToDoReason(ctx); why != "" {
+		if item, err := r.inbox.GetItem(context.Background(), itemID); err == nil {
+			r.postInThread(ctx, itemID, "🧭 *Nothing to do* · "+truncate(item.Title, gateTitleBytes)+"\n\nThe planner found nothing to do: "+slackText(truncate(why, 600))+
+				"\n`reject` closes it · `revise: <notes>` asks for a plan anyway")
+		}
+		return
+	}
 	msg, shown := r.planReadyMessage(itemID)
 	if msg == "" {
 		return

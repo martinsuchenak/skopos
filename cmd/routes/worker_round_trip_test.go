@@ -256,6 +256,7 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	inboxService.SetFindingLog(findingsService)
 	runsService.SetAuditRecorder(auditService)
 	runsService.SetPlanGate(inboxService.PlanGate, inboxService.HoldPlanGate)
+	runsService.SetNothingToDo(inboxService.NothingToDo)
 	runsService.SetItemTransition(func(ctx context.Context, itemID, to, reason, agentID string) error {
 		_, err := inboxService.SystemTransition(ctx, itemID, inbox.Status(to), reason, agentID, audit.ViaWorker)
 		return err

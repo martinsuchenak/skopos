@@ -57,3 +57,18 @@ trail.
 The item records which template, and which revision of it, it came from.
 Starting from a template that approves plans automatically needs the
 approver permission.
+
+## Nothing to do
+
+Routine work often finds nothing to do: every dependency is already
+current. The planner then says so instead of writing a plan, with what it
+checked.
+
+- **An item whose plan is approved automatically** is closed as done
+  without changes. Slack says "Nothing to do" with the reason, and other
+  systems get `item.closed` with `outcome: nothing_to_do` and the `reason`.
+- **Any other item** waits at the plan gate with the reason. Reject it to
+  close it, or request changes to ask for a plan anyway.
+
+The item report says "Closed without changes: the planner found nothing to
+do".

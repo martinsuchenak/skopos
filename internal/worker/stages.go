@@ -165,8 +165,19 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	}
 
 	var pr planResult
-	if err := json.Unmarshal(res.Structured, &pr); err != nil || (!pr.NeedsClarification && len(pr.Steps) == 0) {
+	if err := json.Unmarshal(res.Structured, &pr); err != nil || (!pr.NeedsClarification && !pr.NothingToDo && len(pr.Steps) == 0) {
 		return fmt.Errorf("planner returned no usable plan: %s", firstLine(res.Text))
+	}
+	// Nothing to do: no plan is written; the server closes the item when
+	// the approver lets it approve the plan, else the gate shows why.
+	if pr.NothingToDo && !pr.NeedsClarification {
+		why := strings.TrimSpace(pr.Summary)
+		if why == "" {
+			why = "the planner found nothing to do"
+		}
+		_ = w.client.AppendSection(ctx, run.ItemID, "Enrichment — skopos worker", "**Nothing to do.** "+why)
+		log.Info("nothing to do", "reason", firstLine(why))
+		return w.report(ctx, run, true, map[string]any{"summary": why, "nothing_to_do": true, "base_sha": baseSHA})
 	}
 	label := candidateLabel(run, account)
 	if pr.NeedsClarification {
@@ -1313,14 +1324,17 @@ type Step struct {
 }
 
 type planResult struct {
-	Skills             []string            `json:"skills"`
-	Title              string              `json:"title"`
-	Summary            string              `json:"summary"`
-	Size               string              `json:"size"`
-	NeedsClarification bool                `json:"needs_clarification"`
-	Steps              []Step              `json:"steps"`
-	Risks              []string            `json:"risks"`
-	Questions          []itemtext.Question `json:"questions"`
+	Skills             []string `json:"skills"`
+	Title              string   `json:"title"`
+	Summary            string   `json:"summary"`
+	Size               string   `json:"size"`
+	NeedsClarification bool     `json:"needs_clarification"`
+	// NothingToDo: the item asks for routine work and none is needed now
+	// (every dependency already current); Summary says why.
+	NothingToDo bool                `json:"nothing_to_do"`
+	Steps       []Step              `json:"steps"`
+	Risks       []string            `json:"risks"`
+	Questions   []itemtext.Question `json:"questions"`
 }
 
 type implResult struct {

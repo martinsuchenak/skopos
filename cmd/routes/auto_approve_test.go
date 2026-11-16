@@ -2,6 +2,7 @@ package routes
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -186,5 +187,64 @@ func TestIntegrationAutoApprovePlan(t *testing.T) {
 	plan(offID, claimNext())
 	if got := item(offID)["status"]; got != "awaiting_approval" || entry(offID, "inbox.auto_approve_held") != nil {
 		t.Fatalf("an item without it waits at the gate as always: %v", got)
+	}
+}
+
+// The planner finds nothing to do: an item whose plan the server may
+// approve is closed without changes (outcome nothing_to_do for other
+// systems); any other waits at the gate with the reason. Only that path
+// moves planning → done.
+func TestIntegrationNothingToDo(t *testing.T) {
+	const ws = "github.com/globex/shop"
+	db, baseURL := workerStackWith(t, func(*runs.Service) {})
+	root := workerClient{base: baseURL, key: "root-secret"}
+	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`"}`), 201)
+	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"alex","workspaces":["`+ws+`"],"approver":true}`)}
+	leases := map[string]string{}
+	worker := workerClient{base: baseURL, key: mint(t, root, `{"name":"worker-1","workspaces":["`+ws+`"]}`), lease: leases}
+	n := 0
+	planRun := func() map[string]any {
+		t.Helper()
+		n++
+		return claim(t, worker, fmt.Sprintf(`{"worker_id":"w%d","runners":["claude"],"workspaces":["%s"]}`, n, ws))
+	}
+	report := func(run map[string]any, body string) {
+		t.Helper()
+		id := run["id"].(string)
+		mustDo(t, worker.reqH("POST", "/api/runs/"+id+"/report", `{"worker_id":"`+run["worker_id"].(string)+`",`+body+`}`, leases[id]), 200, "report")
+	}
+	status := func(id string) string {
+		t.Helper()
+		return mustJSON(t, approver.req("GET", "/api/inbox/"+id, ""), 200).(map[string]any)["status"].(string)
+	}
+
+	auto := mustJSON(t, approver.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"Update the dependencies","author_agent_id":"alex","auto_approve_plan":true,"start":"queue"}`), 201).(map[string]any)["id"].(string)
+	report(planRun(), `"status":"succeeded","summary":"Every dependency is already current.","nothing_to_do":true`)
+	if got := status(auto); got != "done" {
+		t.Fatalf("an item that approves its plan closes when there is nothing to do: %s", got)
+	}
+	var outcome, reason string
+	if err := db.QueryRow(`SELECT json_extract(data, '$.outcome'), json_extract(data, '$.reason') FROM integration_events WHERE item_id = ? AND type = 'item.closed'`, auto).Scan(&outcome, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if outcome != "nothing_to_do" || reason != "Every dependency is already current." {
+		t.Fatalf("the closing event: %s %q", outcome, reason)
+	}
+	if rep := mustDo(t, approver.req("GET", "/api/inbox/"+auto+"/report?level=summary", ""), 200).body; !strings.Contains(rep, "Closed without changes: the planner found nothing to do (Every dependency is already current.).") {
+		t.Fatalf("the report's outcome:\n%s", rep)
+	}
+
+	byHand := mustJSON(t, approver.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"Update the dependencies","author_agent_id":"alex","start":"queue"}`), 201).(map[string]any)["id"].(string)
+	report(planRun(), `"status":"succeeded","summary":"Nothing is out of date.","nothing_to_do":true`)
+	if got := status(byHand); got != "awaiting_approval" {
+		t.Fatalf("without the automatic approval it waits for the person: %s", got)
+	}
+	mustDo(t, approver.req("POST", "/api/inbox/"+byHand+"/reject", `{"reason":"nothing to do"}`), 200)
+
+	// The transition endpoint never closes a planning item.
+	other := mustJSON(t, approver.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"x","author_agent_id":"alex","start":"queue"}`), 201).(map[string]any)["id"].(string)
+	planRun()
+	if r := worker.req("POST", "/api/inbox/"+other+"/transition", `{"to":"done","reason":"skip it"}`); r.code != 400 {
+		t.Fatalf("planning → done through the transition endpoint: %d %s", r.code, r.body)
 	}
 }

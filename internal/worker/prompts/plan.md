@@ -89,6 +89,10 @@ The item is tagged with these skills; they are always included: {{range $i, $n :
 4. List risks (what could break, what you could not verify) and open questions for the approver.
 5. If the item is too ambiguous to plan responsibly, set needs_clarification to true, return no
    steps, and put the questions in questions.
+6. If the item asks for routine work that is not needed now (for example, it asks to update the
+   dependencies and every one is already current), set nothing_to_do to true, return no steps,
+   and say in summary what you checked and why nothing needs doing. Only when you checked it:
+   never because the work looks large or hard.
 
 Keep the plan within what the item asks. Do not add refactors, cleanups or extra features.
 
