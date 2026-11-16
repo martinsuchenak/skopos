@@ -4,6 +4,13 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.38.2] — 2026-11-16
+
+### Fixed
+
+- The Workers view lists under Workspaces only what a worker serves now;
+  workspaces it ran work in before are listed apart, as "Earlier runs in".
+
 ## [0.38.1] — 2026-11-16
 
 ### Added

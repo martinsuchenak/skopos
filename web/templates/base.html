@@ -741,6 +741,11 @@
                                         <span x-show="w.workspaces.length === 0">none reported</span>
                                         <ul class="space-y-0.5"><template x-for="ws in w.workspaces" :key="ws"><li class="break-all" x-text="ws"></li></template></ul>
                                     </dd>
+                                    <dt x-show="w.pastWorkspaces.length">Earlier runs in</dt>
+                                    <dd x-show="w.pastWorkspaces.length">
+                                        <ul class="space-y-0.5"><template x-for="ws in w.pastWorkspaces" :key="ws"><li class="break-all" x-text="ws"></li></template></ul>
+                                        <p class="mt-0.5 text-zinc-500">Workspaces it ran work in that it no longer serves.</p>
+                                    </dd>
                                     <dt>Runners</dt>
                                     <dd>
                                         <span x-show="w.runners.length === 0">none reported</span>

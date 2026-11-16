@@ -51,7 +51,7 @@ function keyIsAgentPreset(caps: string[]): boolean {
 
 // A worker's pause (an operator stopped it taking work); until "" = until resumed.
 type WorkerPause = { at: string; until?: string; by?: string; reason?: string };
-type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string; state: string; version: string; lastSeen: string; unhealthy: string[]; indexable: string[]; paused: WorkerPause | null; facts: string[]; executors: string[]; factsWarning: string; serverConfig: string; labels: string[]; otherKey: string };
+type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string; state: string; version: string; lastSeen: string; unhealthy: string[]; indexable: string[]; paused: WorkerPause | null; facts: string[]; executors: string[]; factsWarning: string; serverConfig: string; labels: string[]; otherKey: string; pastWorkspaces: string[] };
 type RunnerFacts = { name: string; kind?: string; model?: string; effort?: string; provider?: string; endpoint?: string; stages?: string[] };
 type WorkerSeen = { id: string; runners: string[]; workspaces: string[]; last_seen: string; version?: string; state?: string; unhealthy?: Record<string, string>; indexable?: string[]; paused?: WorkerPause; runner_facts?: RunnerFacts[]; executors?: Record<string, ExecutorFact[]>; server_commands?: boolean; fleet_rev?: string; labels?: string[]; other_seen?: string; other_key_id?: string };
 // Workspace config held on the server (internal/wsconfig).
@@ -3676,15 +3676,19 @@ const appState = () => ({
     const byWorker = new Map<string, WorkerRow>();
     for (const entry of registered) {
       const reg = entry[1];
-      byWorker.set(entry[0], { id: entry[0], workspaces: [...(reg.workspaces || [])], stages: [], runners: [...(reg.runners || [])], active: 0, succeeded: 0, failed: 0, lastActive: '', currentLabel: '', state: reg.state || '', version: reg.version || '', lastSeen: reg.last_seen || '', unhealthy: Object.entries(reg.unhealthy || {}).map(([ws, why]) => ws + ': ' + why), indexable: [...(reg.indexable || [])], paused: reg.paused || null, facts: (reg.runner_facts || []).map((f: RunnerFacts) => this.runnerFactsLine(f)), executors: Object.entries(reg.executors || {}).sort((a, b) => a[0] < b[0] ? -1 : 1).map(([ws, facts]) => this.executorsLine(ws, facts as ExecutorFact[])), factsWarning: '', serverConfig: this.workerConfigLine(reg), labels: [...(reg.labels || [])], otherKey: this.workerOtherKey(reg) });
+      byWorker.set(entry[0], { id: entry[0], workspaces: [...(reg.workspaces || [])], stages: [], runners: [...(reg.runners || [])], active: 0, succeeded: 0, failed: 0, lastActive: '', currentLabel: '', state: reg.state || '', version: reg.version || '', lastSeen: reg.last_seen || '', unhealthy: Object.entries(reg.unhealthy || {}).map(([ws, why]) => ws + ': ' + why), indexable: [...(reg.indexable || [])], paused: reg.paused || null, facts: (reg.runner_facts || []).map((f: RunnerFacts) => this.runnerFactsLine(f)), executors: Object.entries(reg.executors || {}).sort((a, b) => a[0] < b[0] ? -1 : 1).map(([ws, facts]) => this.executorsLine(ws, facts as ExecutorFact[])), factsWarning: '', serverConfig: this.workerConfigLine(reg), labels: [...(reg.labels || [])], otherKey: this.workerOtherKey(reg), pastWorkspaces: [] });
     }
     for (const run of runs) {
       if (!run.worker_id) continue; // queued, never claimed
       let w = byWorker.get(run.worker_id);
-      if (!w) { w = { id: run.worker_id, workspaces: [], stages: [], runners: [], active: 0, succeeded: 0, failed: 0, lastActive: run.updated_at, currentLabel: '', state: '', version: '', lastSeen: '', unhealthy: [], indexable: [], paused: null, facts: [], executors: [], factsWarning: '', serverConfig: '', labels: [], otherKey: '' }; byWorker.set(run.worker_id, w); }
-      const reg = registered.get(run.worker_id);
-      if (reg) { for (const ws of reg.workspaces || []) if (!w.workspaces.includes(ws)) w.workspaces.push(ws); }
-      if (run.workspace_id && !w.workspaces.includes(run.workspace_id)) w.workspaces.push(run.workspace_id);
+      if (!w) { w = { id: run.worker_id, workspaces: [], stages: [], runners: [], active: 0, succeeded: 0, failed: 0, lastActive: run.updated_at, currentLabel: '', state: '', version: '', lastSeen: '', unhealthy: [], indexable: [], paused: null, facts: [], executors: [], factsWarning: '', serverConfig: '', labels: [], otherKey: '', pastWorkspaces: [] }; byWorker.set(run.worker_id, w); }
+      // Workspaces are what the worker serves now (its registry row); a
+      // workspace it only ran work in before is listed apart. A worker
+      // without a row is known only from its runs.
+      if (run.workspace_id && !w.workspaces.includes(run.workspace_id)) {
+        if (!registered.has(run.worker_id)) w.workspaces.push(run.workspace_id);
+        else if (!w.pastWorkspaces.includes(run.workspace_id)) w.pastWorkspaces.push(run.workspace_id);
+      }
       if (run.stage && !w.stages.includes(run.stage)) w.stages.push(run.stage);
       if (run.status === 'claimed' || run.status === 'running' || run.status === 'paused') { w.active++; w.currentLabel = run.stage + ' \u00b7 ' + run.status + (run.workspace_id ? ' \u00b7 ' + run.workspace_id : '') + ' \u00b7 ' + this.timeAgo(run.updated_at); }
       if (run.status === 'succeeded') w.succeeded++;
