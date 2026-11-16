@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- The dashboard shows a date with the time where it showed only the time:
+  API keys (created, last used), blackboard entries, webhooks and their
+  deliveries, and code index builds. The year shows for dates outside the
+  current one.
+
 ## [0.40.1] — 2026-11-16
 
 ### Added

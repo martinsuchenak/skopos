@@ -309,7 +309,7 @@
                                                 {{template "ws-badge" (dict "V" "entry" "Missing" "no workspace")}}
                                             </div>
                                             <div class="flex items-center gap-1">
-                                                <span class="text-xs text-zinc-600" x-text="formatTime(entry.created_at)"></span>
+                                                <span class="text-xs text-zinc-600" x-text="formatDateTime(entry.created_at)"></span>
                                                 <button x-show="entry.scope !== 'project'" type="button" @click.stop="promoteEntry(entry.id)" class="btn btn-sm btn-ghost" :aria-label="'Promote entry ' + entry.title + ' to a wider scope'">Promote</button>
                                                 <button type="button" @click.stop="requestDelete('entry', entry.id, entry.title)" class="btn btn-sm btn-ghost btn-bad" :aria-label="'Delete entry ' + entry.title">Delete</button>
                                             </div>
@@ -808,7 +808,7 @@
                                     <dl class="mt-2 space-y-0.5 text-xs text-zinc-400">
                                         <div><dt class="inline text-zinc-300">workspaces:</dt> <dd class="inline break-all" x-text="webhookScope(w)"></dd></div>
                                         <div><dt class="inline text-zinc-300">events:</dt> <dd class="inline" x-text="webhookTypesLabel(w)"></dd></div>
-                                        <div><dt class="inline text-zinc-300">created:</dt> <dd class="inline"><span x-text="formatTime(w.created_at)"></span> by <span x-text="w.created_by"></span></dd></div>
+                                        <div><dt class="inline text-zinc-300">created:</dt> <dd class="inline"><span x-text="formatDateTime(w.created_at)"></span> by <span x-text="w.created_by"></span></dd></div>
                                     </dl>
                                     <p x-show="webhookNote(w)" class="mt-2 break-words text-xs" :class="w.enabled ? 'text-amber-300' : 'text-rose-300'" x-text="webhookNote(w)"></p>
                                 </div>
@@ -834,7 +834,7 @@
                                         <li class="flex flex-wrap items-center gap-2 py-1.5">
                                             <span class="badge" :class="deliveryStateClass(d)" x-text="d.state"></span>
                                             <span class="font-mono text-zinc-200" x-text="d.event_type || 'event no longer kept'"></span>
-                                            <span class="text-zinc-400" x-text="formatTime(d.created_at)"></span>
+                                            <span class="text-zinc-400" x-text="formatDateTime(d.created_at)"></span>
                                             <span class="min-w-0 flex-1 break-words text-zinc-400" x-text="deliveryDetail(d)"></span>
                                             <button type="button" x-show="d.state !== 'pending'" @click="redeliverWebhook(w, d)" :disabled="hookBusy !== ''" class="btn btn-sm btn-ghost" :aria-label="'Deliver ' + (d.event_type || 'this event') + ' again'">Send again</button>
                                         </li>
@@ -873,8 +873,8 @@
                                     <span x-show="k.revoked_at" class="chip tone-danger">revoked</span>
                                 </div>
                                 <div class="mt-0.5 text-xs text-zinc-400">
-                                    created <span x-text="formatTime(k.created_at)"></span>
-                                    <span x-show="k.last_used_at"> · last used <span x-text="formatTime(k.last_used_at || '')"></span></span>
+                                    created <span x-text="formatDateTime(k.created_at)"></span>
+                                    <span x-show="k.last_used_at"> · last used <span x-text="formatDateTime(k.last_used_at || '')"></span></span>
                                 </div>
                             </div>
                             <div class="flex flex-wrap items-center gap-1">

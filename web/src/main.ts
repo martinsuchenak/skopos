@@ -4307,9 +4307,13 @@ const appState = () => ({
     if (p.reason) t += ': ' + p.reason;
     return t;
   },
+  // formatDateTime: "16 Nov, 14:53"; the year too when it is not this one.
   formatDateTime(v: string): string {
     if (!v) return '';
-    return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(v));
+    const d = new Date(v);
+    const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+    if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+    return new Intl.DateTimeFormat(undefined, opts).format(d);
   },
   openPauseWorker(w: WorkerRow) { this.pausingWorker = w.id; this.pauseForm = { for: '2h', reason: '' }; },
   closePauseWorker() { this.pausingWorker = ''; },
