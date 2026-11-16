@@ -1788,6 +1788,152 @@ paths:
         "403": { description: Requires the approver permission and the workspace in scope }
         "404": { description: Not found or out of scope }
 
+  /api/workspaces/{id}/templates:
+    get:
+      summary: The item templates held for a workspace
+      description: >-
+        A template is a request that repeats, from which an item is started
+        (POST /api/inbox with template). For a workspace the list holds its own templates and the ones it gets from a group, each with its source.
+      operationId: listWorkspaceTemplates
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The templates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  templates: { type: array, items: { $ref: "#/components/schemas/ItemTemplate" } }
+                  max_brief_bytes: { type: integer }
+        "401": { description: Unauthorized }
+        "403": { description: Out of scope }
+        "404": { description: Not found or out of scope }
+  /api/workspaces/{id}/templates/{name}:
+    get:
+      summary: "One template (for a workspace, the one in force: its own, else its group's)"
+      operationId: getWorkspaceTemplate
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The template
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ItemTemplate" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+    put:
+      summary: "Save a template (an approver in the workspace's scope); an unchanged save adds no revision"
+      operationId: putWorkspaceTemplate
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: name, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9][a-z0-9_-]{0,63}$" } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ItemTemplateFields" }
+      responses:
+        "200":
+          description: The saved template
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ItemTemplate" }
+        "400": { description: Invalid template or unknown field }
+        "401": { description: Unauthorized }
+        "403": { description: Not allowed }
+        "409": { description: Another group holds a template of this name for a shared workspace }
+    delete:
+      summary: Remove a template held here (an approver in the workspace's scope)
+      operationId: deleteWorkspaceTemplate
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Removed }
+        "401": { description: Unauthorized }
+        "403": { description: Not allowed }
+        "404": { description: No such template here }
+  /api/groups/{id}/templates:
+    get:
+      summary: The item templates held for a group
+      description: >-
+        A template is a request that repeats, from which an item is started
+        (POST /api/inbox with template). 
+      operationId: listGroupTemplates
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The templates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  templates: { type: array, items: { $ref: "#/components/schemas/ItemTemplate" } }
+                  max_brief_bytes: { type: integer }
+        "401": { description: Unauthorized }
+        "403": { description: Out of scope }
+        "404": { description: Not found or out of scope }
+  /api/groups/{id}/templates/{name}:
+    get:
+      summary: One template
+      operationId: getGroupTemplate
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The template
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ItemTemplate" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+    put:
+      summary: Save a template (root); an unchanged save adds no revision
+      operationId: putGroupTemplate
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: name, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9][a-z0-9_-]{0,63}$" } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ItemTemplateFields" }
+      responses:
+        "200":
+          description: The saved template
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ItemTemplate" }
+        "400": { description: Invalid template or unknown field }
+        "401": { description: Unauthorized }
+        "403": { description: Not allowed }
+        "409": { description: Another group holds a template of this name for a shared workspace }
+    delete:
+      summary: Remove a template held here (root)
+      operationId: deleteGroupTemplate
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Removed }
+        "401": { description: Unauthorized }
+        "403": { description: Not allowed }
+        "404": { description: No such template here }
   /api/workspaces/{id}/pipeline/briefs:
     get:
       summary: The briefs held on the server for a workspace's pipeline members, without their text
@@ -2257,10 +2403,10 @@ paths:
           application/json:
             schema:
               type: object
-              required: [title, author_agent_id]
+              required: [author_agent_id]
               properties:
                 workspace_id: { type: string, description: "Omit for an UNFILED capture (root only — unfiled items are invisible to scoped keys until filed); required for scoped keys" }
-                title: { type: string }
+                title: { type: string, description: "Required unless template gives it" }
                 content: { type: string, description: Markdown (source of truth) }
                 tags: { type: array, items: { type: string } }
                 priority: { type: integer, description: "1+ prioritizes (smaller first; unprioritized sort last); omit or 0 for none" }
@@ -2271,6 +2417,8 @@ paths:
                 external_url: { type: string, description: "https link to the item's job in another system" }
                 needs: { type: array, maxItems: 8, items: { type: string }, description: "Labels the item needs of its worker: its runs go only to a worker with all of them (PUT /api/workers/{id}/labels). Omit for any worker serving the workspace" }
                 auto_approve_plan: { type: boolean, description: "Approve the plan automatically when the planner asks no question, the round has one plan and it is not a re-plan the approver asked for; the branch still waits for sign-off. Needs the approver permission (403 otherwise)" }
+                template: { type: string, description: "Start the item from a template held for the workspace (its own, else its group's): the fields the request leaves empty (title included) come from it, placeholders filled in. A template that approves plans automatically needs the approver permission" }
+                extra: { type: string, description: "With template: text appended to the template's brief" }
                 start: { type: string, enum: [queue, review], description: "Start the item right after creating it: queue (the pipeline) or review (review-only; needs branch or ref). Needs the approver permission and workspace_id. A start that fails leaves the item open and sets start_error" }
       parameters:
         - { name: Idempotency-Key, in: header, schema: { type: string }, description: "Makes a retry safe (see the API description)" }
@@ -5199,6 +5347,31 @@ components:
               cost_usd: { type: number }
         cost_usd: { type: number, description: "The sum of what the runners reported; left out when none did" }
 
+    ItemTemplateFields:
+      type: object
+      additionalProperties: false
+      required: [title]
+      properties:
+        title: { type: string, maxLength: 200, description: "The item's title; {date}, {month}, {year} and {workspace} are filled in when an item is started" }
+        brief: { type: string, description: "The item's text (at most 16 KB), with the same placeholders" }
+        tags: { type: array, items: { type: string } }
+        needs: { type: array, maxItems: 8, items: { type: string }, description: Worker labels the items need }
+        agents: { type: string, enum: ["", panel, solo] }
+        auto_approve_plan: { type: boolean, description: "The items' plans are approved automatically when the planner asks no question; starting an item from the template then needs the approver permission" }
+
+    ItemTemplate:
+      allOf:
+        - { $ref: "#/components/schemas/ItemTemplateFields" }
+        - type: object
+          properties:
+            rev: { type: string }
+            owner_kind: { type: string, enum: [workspace, group] }
+            owner_id: { type: string }
+            name: { type: string }
+            created_at: { type: string, format: date-time }
+            created_by: { type: string }
+            source: { type: string, description: 'For a workspace: "workspace" or "group:<name>"' }
+
     ItemReportPlan:
       type: object
       properties:
@@ -5628,6 +5801,8 @@ components:
         needs: { type: array, items: { type: string }, description: "Labels the item needs of its worker; absent = any worker serving the workspace" }
         auto_approve_plan: { type: boolean, description: "The plan is approved automatically when the planner asks no question (absent = it waits for the approver)" }
         auto_approve_by: { type: string, description: "Who switched the automatic plan approval on" }
+        template: { type: string, description: "The template the item was started from" }
+        template_rev: { type: string, description: "The template's revision it was started from" }
         start_error: { type: string, description: "On a create with start: why the item was created but not started" }
         plan_id: { type: string }
         plan:

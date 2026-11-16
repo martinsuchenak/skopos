@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -327,6 +328,17 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	})
 	runsService.SetBriefSource(pipelineService.RunBrief, pipelineService.HoldsBriefs)
 	inboxService.SetSecondOpinionDefault(pipelineService.SecondOpinionRunner)
+	// Items started from a template (pipeline item templates).
+	inboxService.SetTemplates(func(ctx context.Context, ws, name string) (*inbox.ItemTemplate, error) {
+		t, notFound, err := pipelineService.ItemTemplate(ctx, ws, name)
+		if notFound {
+			return nil, fmt.Errorf("%w: %v", inbox.ErrTemplateNotFound, err)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &inbox.ItemTemplate{Name: t.Name, Rev: t.Rev, Title: t.Title, Brief: t.Brief, Tags: t.Tags, Needs: t.Needs, Agents: t.Agents, AutoApprovePlan: t.AutoApprovePlan}, nil
+	})
 	inboxService.SetRunnerPolicy(pipelineService.RunnerAllowed)
 	inboxService.SetRunLister(testRunLister{runsService})
 	emitter := integrations.NewEmitter()

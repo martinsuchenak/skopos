@@ -82,6 +82,9 @@ func inboxAddCmd() *cli.Command {
 			&cli.StringFlag{Name: "agents", Usage: "Multi-agent stages for this item: panel or solo (omit for the repository default)"},
 			&cli.StringFlag{Name: "needs", Usage: "Labels the item needs of its worker, comma-separated: only a worker with all of them takes its runs (skopos worker label)"},
 			&cli.BoolFlag{Name: "auto-approve", Usage: "Approve the item's plan automatically when the planner asks no question; the branch still comes to you at sign-off (approver only)"},
+			&cli.StringFlag{Name: "template", Usage: "Start the item from a template held for the workspace (skopos workspace template list); --title, --content and the rest override its fields"},
+			&cli.StringFlag{Name: "extra", Usage: "With --template: text appended to the template's brief"},
+			&cli.BoolFlag{Name: "queue", Usage: "Queue the item at once: its plan run starts (approver only)"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			content, err := inboxContent(cmd.GetString("content"), cmd.GetString("file"))
@@ -103,6 +106,9 @@ func inboxAddCmd() *cli.Command {
 				Agents:          cmd.GetString("agents"),
 				Needs:           needs,
 				AutoApprovePlan: cmd.GetBool("auto-approve"),
+				Template:        cmd.GetString("template"),
+				Extra:           cmd.GetString("extra"),
+				Start:           map[bool]string{true: inbox.StartQueue}[cmd.GetBool("queue")],
 			})
 			if err != nil {
 				return err

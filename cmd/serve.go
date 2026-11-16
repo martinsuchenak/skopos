@@ -603,6 +603,17 @@ func serveCmd() *cli.Command {
 			// Second opinions: a plain request uses the workspace's default
 			// runner from the pipeline settings.
 			inboxService.SetSecondOpinionDefault(pipelineService.SecondOpinionRunner)
+			// Items started from a template (pipeline item templates).
+			inboxService.SetTemplates(func(ctx context.Context, ws, name string) (*inbox.ItemTemplate, error) {
+				t, notFound, err := pipelineService.ItemTemplate(ctx, ws, name)
+				if notFound {
+					return nil, fmt.Errorf("%w: %v", inbox.ErrTemplateNotFound, err)
+				}
+				if err != nil {
+					return nil, err
+				}
+				return &inbox.ItemTemplate{Name: t.Name, Rev: t.Rev, Title: t.Title, Brief: t.Brief, Tags: t.Tags, Needs: t.Needs, Agents: t.Agents, AutoApprovePlan: t.AutoApprovePlan}, nil
+			})
 			inboxService.SetRunnerPolicy(pipelineService.RunnerAllowed)
 			// The embeddings endpoint under the policy (see the gate above).
 			if embeddingsFacts != nil {

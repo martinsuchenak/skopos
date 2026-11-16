@@ -617,6 +617,9 @@ below the capture's first line sets the labels the item needs of a worker:
 the line is taken out of the item's text, a list that is not valid creates
 nothing, and the confirmation warns when no worker serving the workspace
 has the labels. The capture's first line is the item's title.
+`new <workspace>: template <name>` starts the item from a
+[template](guides/templates-schedules.md); what follows the name is added
+to its text.
 Non-approving replies (`revise`, `changes`,
 `retry`, `reject`) that arrive mid-run are buffered and applied when the run
 finishes (in-memory; a restart drops unapplied ones); `approve` and `done`

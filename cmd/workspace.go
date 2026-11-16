@@ -29,6 +29,7 @@ func workspaceCmd() *cli.Command {
 		},
 		Commands: []*cli.Command{
 			pipelineCmd(pipeline.KindWorkspace),
+			templateCmd(pipeline.KindWorkspace),
 			configCmd(pipeline.KindWorkspace),
 			{
 				Name:  "add",

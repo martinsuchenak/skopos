@@ -107,6 +107,10 @@ var reHashtag = regexp.MustCompile(`(?:^|\s)#([a-z0-9][a-z0-9._-]{0,63})\b`)
 // the labels the item needs of a worker.
 var reNeeds = regexp.MustCompile(`(?im)^[ \t]*needs[ \t]*:[ \t]*(.*?)[ \t]*$`)
 
+// reTemplateCapture: `template <name>` opening a capture starts the item
+// from that template; the rest of the message is added to its text.
+var reTemplateCapture = regexp.MustCompile(`(?is)^\s*template\s+([a-z0-9][a-z0-9_-]{0,63})\b[ \t]*(.*)$`)
+
 // captureNeeds takes the `needs:` lines out of a capture, below its first
 // line (the title). It returns the text without them and the labels named;
 // found says a line was there, so an empty or invalid list is refused and
@@ -226,7 +230,7 @@ const slackHelp = "*skopos commands* — reply in an item's thread:\n" +
 	"• `panel` / `solo` / `default` — the item's plan, review and QA stages use the repository's agent panel, one agent, or the repository default (from the next stage)\n" +
 	"• `needs: <label>, <label>` — only a worker with these labels works on the item; `needs: -` clears it, `needs` shows it\n" +
 	"• `auto: on` / `auto: off` — approve the plan automatically when the planner asks no question (the branch still comes to you); `auto` shows it\n" +
-	"Top-level: `new: <what to do>` creates and queues an item; add `#panel` or `#solo` to choose its agents, `#auto` to approve its plan automatically, and a line `needs: <label>` below it for a worker with that label."
+	"Top-level: `new: <what to do>` creates and queues an item; add `#panel` or `#solo` to choose its agents, `#auto` to approve its plan automatically, and a line `needs: <label>` below it for a worker with that label. `new <workspace>: template <name>` starts one from a template (anything after the name is added to its text)."
 
 // TopLevel handles threadless DMs: capture and help. ts is the approver's own
 // message — a created item's thread binds to it, so his next reply in that
@@ -261,17 +265,30 @@ func (r *slackRelay) TopLevel(ctx context.Context, text, ts string) bool {
 		r.post(ctx, "", "⚠️ Nothing created: "+firstLine(err.Error())+". A `needs:` line names labels, comma-separated: `needs: stock, plant-2`.")
 		return true
 	}
-	item, err := r.inbox.CreateItem(relayCtx(), inbox.CreateInput{
+	stamp := "_Created from Slack (`new:`), " + time.Now().UTC().Format("2006-01-02 15:04") + " UTC._"
+	in := inbox.CreateInput{
 		// The title is the capture's first line: with a `needs:` line the
 		// capture has several.
 		WorkspaceID: ws, Title: truncate(firstLine(what), 80),
-		Content:         what + "\n\n_Created from Slack (`new:`), " + time.Now().UTC().Format("2006-01-02 15:04") + " UTC._",
+		Content:         what + "\n\n" + stamp,
 		Tags:            captureTags(what),
 		AuthorAgentID:   "slack",
 		Agents:          captureAgents(what),
 		Needs:           needs,
 		AutoApprovePlan: captureAuto(what),
-	})
+	}
+	// `new <ws>: template <name>`: the item is the template's, and what
+	// follows the name is added to its text.
+	if m := reTemplateCapture.FindStringSubmatch(what); m != nil {
+		in.Template, in.Title, in.Content = strings.ToLower(m[1]), "", ""
+		in.Extra = strings.TrimSpace(strings.TrimSpace(m[2]) + "\n\n" + stamp)
+		if tags := captureTags(what); len(tags) > 1 {
+			in.Tags = tags
+		} else {
+			in.Tags = nil
+		}
+	}
+	item, err := r.inbox.CreateItem(relayCtx(), in)
 	if err != nil {
 		r.post(ctx, "", "⚠️ Could not create the item: "+firstLine(err.Error()))
 		return true
@@ -289,6 +306,9 @@ func (r *slackRelay) TopLevel(ctx context.Context, text, ts string) bool {
 	}
 	if item.AutoApprovePlan {
 		agentsNote += " · plan approved automatically when it has no questions"
+	}
+	if item.Template != "" {
+		agentsNote = " · from template `" + item.Template + "`" + agentsNote
 	}
 	msg := "📥 Queued in `" + ws + "`" + agentsNote + " · planning starts within a minute. The plan will come back in this thread."
 	if warn := r.needsWarning(ws, item.Needs); warn != "" {

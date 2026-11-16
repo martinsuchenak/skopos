@@ -1096,3 +1096,37 @@ func TestRelayAutoApprove(t *testing.T) {
 		t.Fatal("help names the switch")
 	}
 }
+
+// `new: template <name>` starts the item from a template; what follows the
+// name is added to its text.
+func TestRelayTemplateCapture(t *testing.T) {
+	svc, _, _, fake, relay := relayStack(t)
+	svc.SetTemplates(func(_ context.Context, ws, name string) (*inbox.ItemTemplate, error) {
+		if name != "deps" {
+			return nil, fmt.Errorf("%w: %s", inbox.ErrTemplateNotFound, name)
+		}
+		return &inbox.ItemTemplate{Name: "deps", Rev: "r1", Title: "Update the dependencies ({year})", Brief: "Bump them.", Needs: []string{"stock"}, AutoApprovePlan: true}, nil
+	})
+	root := context.Background()
+	if !relay.TopLevel(root, "new: template deps the router stays on 4\nneeds: plant-2", "960.1") {
+		t.Fatal("capture must be handled")
+	}
+	items, _ := svc.ListItems(root, "ws-a", "", "", "")
+	if len(items) != 1 {
+		t.Fatalf("one item: %+v", items)
+	}
+	it, _ := svc.GetItem(root, items[0].ID)
+	if it.Template != "deps" || !strings.HasPrefix(it.Title, "Update the dependencies (") || !it.AutoApprovePlan ||
+		strings.Join(it.Needs, ",") != "plant-2" || !strings.HasPrefix(it.Content, "Bump them.\n\nthe router stays on 4") {
+		t.Fatalf("from the template, the needs line the capture's own: %+v\n%s", it, it.Content)
+	}
+	if !strings.Contains(fake.last().text, "from template `deps`") {
+		t.Fatalf("the confirmation names the template: %q", fake.last().text)
+	}
+	if !relay.TopLevel(root, "new: template nope", "960.2") || !strings.Contains(fake.last().text, `no template "nope"`) {
+		t.Fatalf("an unknown template: %q", fake.last().text)
+	}
+	if !strings.Contains(slackHelp, "template <name>") {
+		t.Fatal("help names it")
+	}
+}

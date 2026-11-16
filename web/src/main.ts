@@ -112,6 +112,7 @@ type PipeView = { owner_kind: string; owner_id: string; indexable_by?: string[];
 // inherited (from a group; Override copies it here), unset.
 // A brief held on the server for a pipeline member's focus (no text in a
 // listing), and one row of the Briefs tab.
+type TemplateInfo = { rev: string; owner_kind: string; owner_id: string; name: string; title: string; brief?: string; tags?: string[]; needs?: string[]; agents?: string; auto_approve_plan?: boolean; created_at: string; created_by: string; source?: string };
 type BriefInfo = { rev: string; owner_kind: string; owner_id: string; name: string; body?: string; deleted?: boolean; bytes: number; created_at: string; created_by: string; source?: string };
 type BriefRow = { key: string; name: string; where: string; tone: string; detail: string; action: string; held: boolean; own: boolean };
 type PipeRow = { stage: string; label: string; multi: boolean; rule: boolean; mode: string; members: PipeMember[]; policy: string; earlyExit: boolean; timeoutMin: string; inherited: PipeStage | null; inheritedFrom: string; addRunner: string; addFocus: string };
@@ -145,7 +146,7 @@ type FindingGroupView = { key: string; id: string; title: string; hint: string; 
 type AuditEntry = { id: string; action: string; actor: string; via?: string; notes?: string; created_at: string };
 // wsLocked: a workflow item cannot move workspace (its runs, plan and
 // branch live there) — the server refuses it; the modal hides the picker.
-type InboxForm = { id: string; title: string; tags: string; workspace: string; agents: string; branch: string; ref: string; needs: string; auto: boolean; wsLocked: boolean };
+type InboxForm = { id: string; title: string; tags: string; workspace: string; agents: string; branch: string; ref: string; needs: string; auto: boolean; template: string; wsLocked: boolean };
 
 const UI_AUTHOR = 'ui';
 type View = 'sessions' | 'blackboard' | 'plans' | 'inbox' | 'index' | 'keys' | 'workspaces' | 'workers' | 'webhooks';
@@ -400,6 +401,10 @@ const appState = () => ({
   mcpForm: { open: false, editing: false, name: '', type: 'http', url: '', headers: '', command: '', env: '', workspaces: '', error: '', saving: false, confirm: false, rev: 0, secrets: [] as { name: string; set: boolean; value: string }[] },
   // The Briefs tab of the pipeline dialog: the briefs held for this owner
   // (and, for a workspace, the ones a group gives it), and the editor.
+  // Item templates of the workspace the item form files into (the picker).
+  inboxTemplates: [] as TemplateInfo[], inboxTemplatesFor: '',
+  // Item templates held for the dialog's workspace or group.
+  pipeTemplates: { list: [] as TemplateInfo[], failed: false, editing: false, name: '', nameLocked: false, title: '', brief: '', tags: '', needs: '', agents: '', auto: false, was: '', from: '', saving: false, confirm: '' },
   pipeBriefs: { list: [] as BriefInfo[], failed: false, editing: false, name: '', nameLocked: false, body: '', was: '', from: '', history: [] as BriefInfo[], saving: false, confirm: '', rev: 0 },
   // The workspace's (or group's) config on the server, in the pipeline
   // dialog: what applies, and for an admin the stored config as JSON.
@@ -2969,7 +2974,9 @@ const appState = () => ({
     if (seq !== pipeOpenSeq) return;
     this.pipe.tab = 'stages'; this.pipe.editing = '';
     this.pipeBriefs.editing = false; this.pipeBriefs.confirm = '';
+    this.pipeTemplates.editing = false; this.pipeTemplates.confirm = '';
     await this.loadPipeBriefs();
+    await this.loadPipeTemplates();
     if (seq !== pipeOpenSeq) return;
     this.pipe.runnerOptions = runners.sort();
     this.pipe.agentsDefault = v.own.agents_default || '';
@@ -3046,6 +3053,7 @@ const appState = () => ({
     // Nor past what the other of the two tabs has not saved.
     if (this.pipe.tab !== 'config' && this.pipeConfigDirty()) { this.pipe.tab = 'config'; this.notify('The server config has unsaved changes: Save config, or Undo changes', 'error'); return; }
     if (this.pipe.tab !== 'briefs' && this.pipeBriefs.editing) { this.pipe.tab = 'briefs'; this.notify('A brief is still open: Save it, or Cancel', 'error'); return; }
+    if (this.pipe.tab !== 'templates' && this.pipeTemplates.editing) { this.pipe.tab = 'templates'; this.notify('A template is still open: Save it, or go Back', 'error'); return; }
     if (this.pipe.tab !== 'workspace' && this.wsDetailsDirty()) { this.pipe.tab = 'workspace'; this.notify('The workspace has unsaved changes: Save workspace, or Close again from here', 'error'); return; }
     if (this.pipe.tab !== 'group' && this.groupDetailsDirty()) { this.pipe.tab = 'group'; this.notify('The group has unsaved changes: Save group, or Close again from here', 'error'); return; }
     this.closePipeline();
@@ -3221,7 +3229,8 @@ const appState = () => ({
   // ---- tabs ----
   pipeTabs(): { id: string; label: string }[] {
     const n = this.pipeBriefs.list.length;
-    const tabs = [{ id: 'stages', label: 'Stages' }, { id: 'options', label: 'Options' }, { id: 'briefs', label: n ? 'Briefs (' + n + ')' : 'Briefs' }];
+    const nt = this.pipeTemplates.list.length;
+    const tabs = [{ id: 'stages', label: 'Stages' }, { id: 'options', label: 'Options' }, { id: 'briefs', label: n ? 'Briefs (' + n + ')' : 'Briefs' }, { id: 'templates', label: nt ? 'Templates (' + nt + ')' : 'Templates' }];
     if (this.pipeConfig.shown) tabs.push({ id: 'config', label: 'Server config' });
     // The workspace's own details, and removing it: root only, like creating one.
     if (this.pipe.kind === 'workspace' && this.isRoot && this.wsForm.id === this.pipe.id) tabs.push({ id: 'workspace', label: 'Workspace' });
@@ -3364,6 +3373,84 @@ const appState = () => ({
     this.notify('Brief ' + name + ' removed', 'success');
     await this.loadPipeBriefs();
   },
+  // ---- item templates held on the server ----
+  pipeTemplateBase(): string { return (this.pipe.kind === 'group' ? '/api/groups/' : '/api/workspaces/') + encodeURIComponent(this.pipe.id) + '/templates'; },
+  async loadPipeTemplates() {
+    this.pipeTemplates.list = [];
+    this.pipeTemplates.failed = false;
+    const res = await this.authFetch(this.pipeTemplateBase());
+    if (res.ok) this.pipeTemplates.list = ((await res.json()) as { templates?: TemplateInfo[] }).templates || [];
+    else if (res.status !== 404) { this.pipeTemplates.failed = true; this.notify('The templates could not be loaded: open the dialog again before changing one', 'error'); }
+  },
+  pipeTemplateRows(): { key: string; name: string; title: string; where: string; tone: string; detail: string; own: boolean; action: string }[] {
+    const group = this.pipe.kind === 'group';
+    return this.pipeTemplates.list.map((t: TemplateInfo) => {
+      const own = group || t.source === 'workspace';
+      const notes: string[] = [];
+      if (t.auto_approve_plan) notes.push('plan approved automatically');
+      if (t.needs && t.needs.length) notes.push('needs ' + t.needs.join(', '));
+      if (t.agents) notes.push(t.agents === 'solo' ? 'one agent' : 'agent panel');
+      notes.push('saved ' + this.timeAgo(t.created_at) + ' by ' + t.created_by);
+      return {
+        key: t.name + '|' + t.rev + '|' + this.pipe.readOnly, name: t.name, title: t.title, own,
+        where: own ? 'held here' : 'from ' + (t.source || '').replace('group:', 'group '), tone: own ? 'tone-accent' : 'tone-info',
+        detail: notes.join(' · '), action: this.pipe.readOnly ? 'View' : (own ? 'Edit' : 'Override here'),
+      };
+    });
+  },
+  pipeTemplateFingerprint(): string {
+    const t = this.pipeTemplates;
+    return JSON.stringify([t.name.trim(), t.title.trim(), t.brief.trim(), labelList(t.tags), labelList(t.needs), t.agents, t.auto]);
+  },
+  pipeTemplateDirty(): boolean {
+    const t = this.pipeTemplates;
+    return t.name.trim() !== '' && t.title.trim() !== '' && this.pipeTemplateFingerprint() !== t.was;
+  },
+  async pipeTemplateOpen(name: string) {
+    if (!name && this.pipe.readOnly) return;
+    if (this.pipeTemplates.failed) { this.notify('The templates could not be loaded: open the dialog again', 'error'); return; }
+    const t = this.pipeTemplates;
+    t.name = name; t.nameLocked = !!name; t.title = ''; t.brief = ''; t.tags = ''; t.needs = ''; t.agents = ''; t.auto = false; t.from = ''; t.confirm = '';
+    if (name) {
+      const res = await this.authFetch(this.pipeTemplateBase() + '/' + encodeURIComponent(name));
+      if (!await this.handleBad(res, 'Could not load the template')) return;
+      const v = (await res.json()) as TemplateInfo;
+      t.title = v.title || ''; t.brief = v.brief || ''; t.tags = (v.tags || []).join(', '); t.needs = (v.needs || []).join(', ');
+      t.agents = v.agents || ''; t.auto = !!v.auto_approve_plan;
+      const own = this.pipe.kind === 'group' || v.source === 'workspace';
+      t.from = own ? '' : (v.source || '').replace('group:', 'group ');
+    }
+    // A group's template opened in a workspace: saving it makes a copy here.
+    t.was = t.from ? '' : this.pipeTemplateFingerprint();
+    t.editing = true;
+    this.$nextTick(() => document.getElementById(name ? 'pipe-template-title' : 'pipe-template-name')?.focus());
+  },
+  pipeTemplateCancel() { this.pipeTemplates.editing = false; },
+  async pipeTemplateSave() {
+    const t = this.pipeTemplates;
+    if (t.saving || this.pipe.readOnly || !this.pipeTemplateDirty()) return;
+    const name = t.name.trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(name)) { this.notify('A template\'s name is lowercase letters, digits, - and _', 'error'); return; }
+    t.saving = true;
+    try {
+      const body = { title: t.title.trim(), brief: t.brief, tags: labelList(t.tags), needs: labelList(t.needs), agents: t.agents, auto_approve_plan: t.auto };
+      const res = await this.authFetch(this.pipeTemplateBase() + '/' + encodeURIComponent(name), { method: 'PUT', headers: { 'X-Skopos-Via': 'dashboard' }, body: JSON.stringify(body) });
+      if (!await this.handleBad(res, 'Template not saved')) return;
+      this.notify('Template ' + name + ' saved', 'success');
+      t.editing = false;
+      await this.loadPipeTemplates();
+    } finally { t.saving = false; }
+  },
+  async pipeTemplateDelete(name: string) {
+    const t = this.pipeTemplates;
+    if (this.pipe.readOnly) return;
+    if (t.confirm !== name) { t.confirm = name; this.notify('Press Remove again to remove the template ' + name + ' held here', 'info'); return; }
+    t.confirm = '';
+    const res = await this.authFetch(this.pipeTemplateBase() + '/' + encodeURIComponent(name), { method: 'DELETE', headers: { 'X-Skopos-Via': 'dashboard' } });
+    if (!await this.handleBad(res, 'Template not removed')) return;
+    this.notify('Template ' + name + ' removed', 'success');
+    await this.loadPipeTemplates();
+  },
   // Back to the group's value (or to not set when no group sets it).
   pipeClearStage(stage: string) {
     const r = this.pipeRow(stage);
@@ -3457,6 +3544,7 @@ const appState = () => ({
       // not close over what one of them has not saved yet.
       if (this.pipeConfigDirty()) { this.pipe.tab = 'config'; this.notify('The server config has unsaved changes: Save config, or Undo changes', 'info'); return; }
       if (this.pipeBriefs.editing) { this.pipe.tab = 'briefs'; this.notify('A brief is still open: Save it, or Cancel', 'info'); return; }
+      if (this.pipeTemplates.editing) { this.pipe.tab = 'templates'; this.notify('A template is still open: Save it, or go Back', 'info'); return; }
       if (this.wsDetailsDirty()) { this.pipe.tab = 'workspace'; this.notify('The workspace has unsaved changes: Save workspace, or Close', 'info'); return; }
       if (this.groupDetailsDirty()) { this.pipe.tab = 'group'; this.notify('The group has unsaved changes: Save group, or Close', 'info'); return; }
       this.pipe.open = false;
@@ -4403,6 +4491,31 @@ const appState = () => ({
     this.showInboxItemModal = true;
     this.syncInboxWsField();
     this.mountInboxEditor('');
+    this.inboxTemplatesFor = '';
+    void this.loadInboxTemplates();
+  },
+  // The templates of the workspace the new item is filed into, for the
+  // picker; read again when the workspace changes.
+  async loadInboxTemplates() {
+    const ws = this.inboxForm.workspace;
+    if (this.inboxForm.id || !ws || ws === 'unfiled') { this.inboxTemplates = []; this.inboxTemplatesFor = ws; return; }
+    if (this.inboxTemplatesFor === ws) return;
+    this.inboxTemplatesFor = ws;
+    const res = await this.authFetch('/api/workspaces/' + encodeURIComponent(ws) + '/templates');
+    if (this.inboxForm.workspace !== ws) return;
+    this.inboxTemplates = res.ok ? (((await res.json()) as { templates?: TemplateInfo[] }).templates || []) : [];
+    if (!this.inboxTemplates.some((t: TemplateInfo) => t.name === this.inboxForm.template)) this.inboxForm.template = '';
+  },
+  inboxTemplate(): TemplateInfo | null {
+    return this.inboxTemplates.find((t: TemplateInfo) => t.name === this.inboxForm.template) || null;
+  },
+  inboxTemplateHint(): string {
+    const t = this.inboxTemplate();
+    if (!t) return '';
+    const parts = ['Title and text come from the template unless you write your own title; text you write below is added to its text.'];
+    if (t.auto_approve_plan) parts.push('Its plan is approved automatically when the planner asks no question.');
+    if (t.needs && t.needs.length) parts.push('It needs a worker labelled ' + t.needs.join(', ') + '.');
+    return parts.join(' ');
   },
   async openInboxEditModal(item: InboxItem) {
     // Edit needs the full content: fetch the detail even if already expanded.
@@ -4411,7 +4524,7 @@ const appState = () => ({
     const detail = (await res.json()) as InboxDetail;
     this.inboxForm = {
       id: detail.id, title: detail.title, tags: (detail.tags || []).join(', '), workspace: detail.workspace_id || '',
-      agents: detail.agents || '', branch: detail.branch || '', ref: detail.ref || '', needs: (detail.needs || []).join(', '), auto: !!detail.auto_approve_plan, wsLocked: this.isWorkflowStatus(detail.status),
+      agents: detail.agents || '', branch: detail.branch || '', ref: detail.ref || '', needs: (detail.needs || []).join(', '), auto: !!detail.auto_approve_plan, template: '', wsLocked: this.isWorkflowStatus(detail.status),
     };
     this.inboxBaseline = { title: detail.title, tags: this.inboxForm.tags, content: detail.content, workspace: detail.workspace_id || '', agents: detail.agents || '', branch: detail.branch || '', ref: detail.ref || '', needs: this.inboxForm.needs, auto: this.inboxForm.auto };
     this.inboxErrors = {};
@@ -4482,7 +4595,7 @@ const appState = () => ({
   async submitInboxItem() {
     if (this.inboxItemSaving) return; // Mod-Enter can double-fire
     const f = this.inboxForm, e: Record<string, string> = {};
-    if (!f.title.trim()) e.title = 'Title is required.';
+    if (!f.title.trim() && !(f.template && !f.id)) e.title = 'Title is required.';
     if (!f.id && !f.workspace) e.workspace = 'Choose a workspace — or “Unfiled” to decide later.';
     this.inboxErrors = e;
     if (Object.keys(e).length) return;
@@ -4494,6 +4607,9 @@ const appState = () => ({
       let opened: InboxItem | null = null;
       if (!editing) {
         const body: Record<string, unknown> = { title: f.title.trim(), content, tags, author_agent_id: UI_AUTHOR };
+        // From a template: what is typed is added to its text, and empty
+        // fields take its values.
+        if (f.template) { body.template = f.template; delete body.content; if (content.trim()) body.extra = content; if (!tags.length) delete body.tags; }
         if (f.agents) body.agents = f.agents;
         if (f.branch.trim()) body.branch = f.branch.trim();
         if (f.ref.trim()) body.ref = f.ref.trim();
@@ -4786,7 +4902,7 @@ const appState = () => ({
       await this.fetchGroups();
       // Its groups decide what the other tabs inherit: read them again,
       // unless one of them has changes of its own that are not saved.
-      if (!this.pipeDirty() && !this.pipeConfigDirty() && !this.pipeBriefs.editing) {
+      if (!this.pipeDirty() && !this.pipeConfigDirty() && !this.pipeBriefs.editing && !this.pipeTemplates.editing) {
         await this.openPipeline('workspace', id, this.pipe.label);
         this.pipe.tab = 'workspace';
       }
@@ -4874,7 +4990,7 @@ const appState = () => ({
       await this.fetchWorkspaces();
       // Its members decide what the other tabs apply to: read them again,
       // unless one of them has changes of its own that are not saved.
-      if (!this.pipeDirty() && !this.pipeConfigDirty() && !this.pipeBriefs.editing) {
+      if (!this.pipeDirty() && !this.pipeConfigDirty() && !this.pipeBriefs.editing && !this.pipeTemplates.editing) {
         await this.openPipeline('group', id, this.pipe.label);
         this.pipe.tab = 'group';
       }
@@ -5507,7 +5623,7 @@ function labelList(v: string): string[] {
   }
   return out.sort();
 }
-function emptyInboxForm(): InboxForm { return { id: '', title: '', tags: '', workspace: '', agents: '', branch: '', ref: '', needs: '', auto: false, wsLocked: false }; }
+function emptyInboxForm(): InboxForm { return { id: '', title: '', tags: '', workspace: '', agents: '', branch: '', ref: '', needs: '', auto: false, template: '', wsLocked: false }; }
 function emptyInboxBaseline() { return { title: '', tags: '', content: '', workspace: '', agents: '', branch: '', ref: '', needs: '', auto: false }; }
 
 Alpine.plugin(focus);

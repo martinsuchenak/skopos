@@ -523,6 +523,23 @@ CREATE TABLE IF NOT EXISTS pipeline_briefs (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS idx_pipeline_briefs_owner ON pipeline_briefs(owner_kind, owner_id, name, id);
 
+-- Item templates (tmp/templates-schedules — design.md, part 2): a request
+-- that repeats, held for a workspace or a group, from which an item is
+-- started. Append-only like pipeline_briefs: the newest row of an owner's
+-- name is the template, deleted = 1 says there is none. body is the
+-- template's fields as JSON ('' with deleted = 1).
+CREATE TABLE IF NOT EXISTS item_templates (
+    id          TEXT    PRIMARY KEY,
+    owner_kind  TEXT    NOT NULL CHECK (owner_kind IN ('workspace', 'group')),
+    owner_id    TEXT    NOT NULL,
+    name        TEXT    NOT NULL,
+    body        TEXT    NOT NULL,
+    deleted     INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
+    created_ms  INTEGER NOT NULL,
+    created_by  TEXT    NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_item_templates_owner ON item_templates(owner_kind, owner_id, name, id);
+
 -- Questions and answers (tmp/questions-and-answers — design.md): the record
 -- of what the planner and the implementer asked and what the approver answered.
 -- Append-only: rows are never updated or deleted (answers.used_by_run is

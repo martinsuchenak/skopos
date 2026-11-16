@@ -75,6 +75,7 @@ See [Agent integration](docs/getting-started.md#connecting-an-agent) and [Integr
 | Guide: remote/central workflow | [docs/guides/remote.md](docs/guides/remote.md) |
 | **Tutorial: the agent pipeline (server + workers, end to end)** | [docs/guides/pipeline.md](docs/guides/pipeline.md) |
 | Guide: connecting another system (create, follow, decide over REST) | [docs/guides/external-systems.md](docs/guides/external-systems.md) |
+| Guide: templates and schedules (work that repeats) | [docs/guides/templates-schedules.md](docs/guides/templates-schedules.md) |
 | Deployment (Docker, Nomad) | [docs/deployment/](docs/deployment/) |
 | Workers (runners, lockdown, profiles, service install) | [docs/deployment/worker.md](docs/deployment/worker.md) |
 | Integration guides (7 agents) | [docs/integrations/](docs/integrations/) |

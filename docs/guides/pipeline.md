@@ -256,6 +256,9 @@ Leave it unset to get the workspace default (set in its Settings dialog,
 `panel` unless you changed it). You can switch an item later; it applies from its
 next plan, review or QA stage.
 
+**Work that repeats** can be held as a template and started from it: see
+[Templates and schedules](templates-schedules.md).
+
 **Queue it.** Open the item in the dashboard and click **Queue**, or run
 `skopos inbox queue --id <item>`. A worker claims the plan run within a poll
 interval.

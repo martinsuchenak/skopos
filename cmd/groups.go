@@ -25,6 +25,7 @@ func groupCmd() *cli.Command {
 			groupListCmd(),
 			groupAddCmd(),
 			pipelineCmd(pipeline.KindGroup),
+			templateCmd(pipeline.KindGroup),
 			configCmd(pipeline.KindGroup),
 		},
 	}

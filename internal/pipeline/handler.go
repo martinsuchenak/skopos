@@ -343,3 +343,89 @@ func respondPolicyError(w http.ResponseWriter, err error) {
 		respondError(w, err)
 	}
 }
+
+// --- item templates (templates.go) ---
+
+func (h *Handler) ListWorkspaceTemplates(w http.ResponseWriter, r *http.Request) {
+	h.listTemplates(w, r, KindWorkspace)
+}
+func (h *Handler) GetWorkspaceTemplate(w http.ResponseWriter, r *http.Request) {
+	h.getTemplate(w, r, KindWorkspace)
+}
+func (h *Handler) PutWorkspaceTemplate(w http.ResponseWriter, r *http.Request) {
+	h.putTemplate(w, r, KindWorkspace)
+}
+func (h *Handler) DeleteWorkspaceTemplate(w http.ResponseWriter, r *http.Request) {
+	h.deleteTemplate(w, r, KindWorkspace)
+}
+func (h *Handler) ListGroupTemplates(w http.ResponseWriter, r *http.Request) {
+	h.listTemplates(w, r, KindGroup)
+}
+func (h *Handler) GetGroupTemplate(w http.ResponseWriter, r *http.Request) {
+	h.getTemplate(w, r, KindGroup)
+}
+func (h *Handler) PutGroupTemplate(w http.ResponseWriter, r *http.Request) {
+	h.putTemplate(w, r, KindGroup)
+}
+func (h *Handler) DeleteGroupTemplate(w http.ResponseWriter, r *http.Request) {
+	h.deleteTemplate(w, r, KindGroup)
+}
+
+func (h *Handler) listTemplates(w http.ResponseWriter, r *http.Request, kind string) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	out, err := h.service.Templates(r.Context(), kind, r.PathValue("id"))
+	if err != nil {
+		respondError(w, err)
+		return
+	}
+	if out == nil {
+		out = []Template{}
+	}
+	rest.RespondJSON(w, http.StatusOK, map[string]any{"templates": out, "max_brief_bytes": MaxTemplateBrief})
+}
+
+func (h *Handler) getTemplate(w http.ResponseWriter, r *http.Request, kind string) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	t, err := h.service.Template(r.Context(), kind, r.PathValue("id"), r.PathValue("name"))
+	if err != nil {
+		respondError(w, err)
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, t)
+}
+
+func (h *Handler) putTemplate(w http.ResponseWriter, r *http.Request, kind string) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var in TemplateFields
+	if err := rest.DecodeJSONStrict(w, r, &in); err != nil {
+		rest.RespondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	t, err := h.service.SetTemplate(r.Context(), kind, r.PathValue("id"), r.PathValue("name"), in, viaOf(r, ""))
+	if err != nil {
+		respondError(w, err)
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, t)
+}
+
+func (h *Handler) deleteTemplate(w http.ResponseWriter, r *http.Request, kind string) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if err := h.service.DeleteTemplate(r.Context(), kind, r.PathValue("id"), r.PathValue("name"), viaOf(r, "")); err != nil {
+		respondError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

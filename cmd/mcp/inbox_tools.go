@@ -69,7 +69,7 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 		mcplib.NewTool("inbox_create",
 			"Capture a new inbox item: unprocessed work, a rough idea, or a task not yet ready to action. Content is markdown — rough notes, pointers to code/files are fine. workspace_id may be omitted ONLY with the root key (UNFILED capture, visible to root until filed); scoped keys must pass it.",
 			mcplib.String("workspace_id", "Workspace ID to scope the item to (root may omit it to capture an UNFILED item — invisible to scoped keys until filed)"),
-			mcplib.String("title", "Short item title", mcplib.Required()),
+			mcplib.String("title", "Short item title (optional with template)"),
 			mcplib.String("content", "Markdown body: rough description, pointers to code/files, links"),
 			mcplib.StringArray("tags", "Optional tags (lowercase alphanumerics with . _ / -)"),
 			mcplib.Integer("priority", "Optional explicit priority (>= 1; smaller first). Unprioritized items always sort after prioritized ones — set it only on the few items that matter."),
@@ -77,6 +77,8 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 			mcplib.String("agents", "Multi-agent stages for this item: panel (the repository's configured agents), solo (one agent), or omit for the repository default"),
 			mcplib.String("needs", "Labels the item needs of its worker, comma-separated (e.g. \"stock\"): only a worker an operator gave all of them takes its runs. Omit for any worker."),
 			mcplib.Boolean("auto_approve_plan", "Approve the plan automatically when the planner asks no question; the branch still comes to the approver at sign-off. Needs the approver permission."),
+			mcplib.String("template", "Start the item from a template held for the workspace; title, content and the other fields given here override the template's (title may then be omitted)"),
+			mcplib.String("extra", "With template: text appended to the template's brief"),
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 			needs, _ := labels.Arg(req.StringOr("needs", ""))
@@ -90,6 +92,8 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 				Agents:          req.StringOr("agents", ""),
 				Needs:           needs,
 				AutoApprovePlan: toolBool(req, "auto_approve_plan"),
+				Template:        req.StringOr("template", ""),
+				Extra:           req.StringOr("extra", ""),
 			})
 			if err != nil {
 				return nil, toolError(err)

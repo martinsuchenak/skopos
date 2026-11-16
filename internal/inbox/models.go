@@ -150,6 +150,10 @@ type Item struct {
 	// the approver. AutoApproveBy is who switched it on.
 	AutoApprovePlan bool   `json:"auto_approve_plan,omitempty"`
 	AutoApproveBy   string `json:"auto_approve_by,omitempty"`
+	// Template is the template the item was started from, TemplateRev the
+	// revision ("" = typed by hand).
+	Template    string `json:"template,omitempty"`
+	TemplateRev string `json:"template_rev,omitempty"`
 	// Flow is "review" for a review-only item (the agent reviews an
 	// existing branch; nothing is planned or implemented), "" otherwise.
 	Flow      string    `json:"flow,omitempty"`
@@ -312,6 +316,11 @@ type CreateInput struct {
 	// AutoApprovePlan approves the plan automatically when the planner
 	// asks no question (an approver only).
 	AutoApprovePlan bool `json:"auto_approve_plan,omitempty"`
+	// Template starts the item from a template held for its workspace
+	// (pipeline item templates): the fields the request leaves empty come
+	// from it, and Extra is appended to its brief.
+	Template string `json:"template,omitempty"`
+	Extra    string `json:"extra,omitempty"`
 	// Start: "queue" (the pipeline) or "review" (review-only) starts the
 	// item right after creating it, as POST /api/inbox/{id}/queue or
 	// /review would (approver permission). Empty = the item stays open.

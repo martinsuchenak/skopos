@@ -32,9 +32,12 @@ type Service struct {
 	runnerPolicy RunnerPolicy
 	runLister    RunLister
 	itemNotifier ItemNotifier
-	events       *integrations.Emitter
-	questions    QuestionLog
-	findings     FindingLog
+	// templates resolves the template an item is started from (nil = no
+	// templates on this server).
+	templates TemplateSource
+	events    *integrations.Emitter
+	questions QuestionLog
+	findings  FindingLog
 }
 
 func NewService(store Store) *Service {
@@ -175,9 +178,18 @@ func (s *Service) publishItem(ctx context.Context, itemID string) {
 }
 
 func (s *Service) CreateItem(ctx context.Context, input CreateInput) (*Item, error) {
-	input.Title = strings.TrimSpace(input.Title)
 	input.AuthorAgentID = strings.TrimSpace(input.AuthorAgentID)
 	input.WorkspaceID = strings.TrimSpace(input.WorkspaceID)
+	if input.WorkspaceID != "" {
+		if err := auth.RequireWorkspace(ctx, input.WorkspaceID); err != nil {
+			return nil, err
+		}
+	}
+	tmpl, err := s.applyTemplate(ctx, &input)
+	if err != nil {
+		return nil, err
+	}
+	input.Title = strings.TrimSpace(input.Title)
 	if input.Title == "" {
 		return nil, fmt.Errorf("%w: title is required", ErrInvalidInput)
 	}
@@ -263,6 +275,9 @@ func (s *Service) CreateItem(ctx context.Context, input CreateInput) (*Item, err
 		AutoApproveBy: autoBy,
 		CreatedAt:     now,
 		UpdatedAt:     now,
+	}
+	if tmpl != nil {
+		item.Template, item.TemplateRev = tmpl.Name, tmpl.Rev
 	}
 	item.AutoApprovePlan = autoBy != ""
 	err = s.store.RunInTx(ctx, func(tx Store) error {
