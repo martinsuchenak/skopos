@@ -6115,6 +6115,15 @@ components:
         template_rev: { type: string, description: "The template's revision it was started from" }
         start_error: { type: string, description: "On a create with start: why the item was created but not started" }
         status_since: { type: string, format: date-time, description: "When the item entered its status: how long it has waited at a gate. status=needs_you lists the longest wait first" }
+        outcome:
+          type: object
+          description: "What became of the item's branch after sign-off, as the worker reported it (GET /api/inbox/{id}/outcome has the full record)"
+          properties:
+            state: { type: string, enum: [merged, closed, open] }
+            pr_url: { type: string }
+            merge_sha: { type: string }
+            merged_at: { type: string, format: date-time }
+            closed_at: { type: string, format: date-time }
         plan_id: { type: string }
         plan:
           type: object

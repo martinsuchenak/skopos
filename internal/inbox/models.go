@@ -165,6 +165,9 @@ type Item struct {
 	// StatusSince: when the item entered its status (kept by the database
 	// on every status change): how long it has waited at a gate.
 	StatusSince *time.Time `json:"status_since,omitempty"`
+	// Outcome: what became of the item's branch after sign-off, when the
+	// worker reported it (outcome.go).
+	Outcome *BranchOutcome `json:"outcome,omitempty"`
 
 	// Read-path hydration. List rows carry only Excerpt (content is dropped);
 	// GetItem fills ContentHTML (dashboard-safe rendering) and, when the item

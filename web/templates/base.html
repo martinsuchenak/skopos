@@ -587,6 +587,7 @@
                                         <span x-show="item.priority != null" class="chip tone-warn font-mono" x-text="'#' + item.priority" :aria-label="'Rank ' + item.priority"></span>
                                         <span class="font-medium text-zinc-100" x-text="item.title"></span>
                                         <span class="badge" :class="toneOf('status', item.status)" x-text="statusText(item.status)"></span>
+                                        <span x-show="outcomeLabel(item)" class="badge" :class="outcomeTone(item)" title="What became of the branch after sign-off" x-text="outcomeLabel(item)"></span>
                                         <span x-show="waitLabel(item)" class="badge" :class="waitLong(item) ? 'tone-warn' : 'tone-neutral'" x-text="waitLabel(item)" :title="'In this status since ' + (item.status_since || '')"></span>
                                         <span x-show="item.claimed_by_agent_id" class="badge tone-neutral" x-text="'claimed: ' + item.claimed_by_agent_id"></span>
                                         {{template "ws-badge" (dict "V" "item" "Missing" "unfiled")}}
@@ -1790,7 +1791,8 @@
                                 <template x-for="sp in stageSummary()" :key="sp.key">
                                     <span class="badge font-medium" :class="sp.tone" x-text="sp.text"></span>
                                 </template>
-                                <span class="badge" :class="toneOf('status', previewItem.status)" x-text="statusText(previewItem.status)"></span>
+                                <!-- The raw status only where no step summary says it. -->
+                                <span x-show="stageSummary().length === 0" class="badge" :class="toneOf('status', previewItem.status)" x-text="statusText(previewItem.status)"></span>
                                 <template x-for="c in previewCost()" :key="c.key">
                                     <span class="badge tone-muted font-mono" title="What the agent runs on this item cost" x-text="c.text"></span>
                                 </template>

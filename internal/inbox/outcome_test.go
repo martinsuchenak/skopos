@@ -46,6 +46,13 @@ func TestRecordOutcome(t *testing.T) {
 	if err != nil || got == nil || got.State != OutcomeMerged || got.MergeSHA != "abc123" || got.MergedAt == nil || !got.MergedAt.Equal(merged) || got.ReportedBy != "worker-1" {
 		t.Fatalf("the newest report: %+v, %v", got, err)
 	}
+	// The item carries it, in a read and in a list.
+	if it, _ := svc.GetItem(root, item.ID); it.Outcome == nil || it.Outcome.State != OutcomeMerged || it.Outcome.MergeSHA != "abc123" || it.Outcome.MergedAt == nil {
+		t.Fatalf("the item carries its outcome: %+v", it.Outcome)
+	}
+	if list, _ := svc.ListItems(root, "ws-a", "", "", ""); len(list) != 1 || list[0].Outcome == nil {
+		t.Fatal("a listed item carries its outcome")
+	}
 	entries, err := svc.Timeline(root, item.ID)
 	if err != nil {
 		t.Fatal(err)

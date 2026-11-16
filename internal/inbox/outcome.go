@@ -26,6 +26,15 @@ type Outcome struct {
 	ReportedBy string     `json:"reported_by,omitempty"`
 }
 
+// BranchOutcome is the outcome as an item carries it (Item.Outcome).
+type BranchOutcome struct {
+	State    string     `json:"state"`
+	PRURL    string     `json:"pr_url,omitempty"`
+	MergeSHA string     `json:"merge_sha,omitempty"`
+	MergedAt *time.Time `json:"merged_at,omitempty"`
+	ClosedAt *time.Time `json:"closed_at,omitempty"`
+}
+
 // Outcome states.
 const (
 	OutcomeMerged = "merged"

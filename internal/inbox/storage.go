@@ -124,8 +124,13 @@ func (s *Storage) RunInTx(ctx context.Context, fn func(Store) error) error {
 const itemColumns = `
 	i.id, i.workspace_id, i.title, i.content, i.tags, i.status, i.priority,
 	i.claimed_by_agent_id, i.author_agent_id, i.plan_id, i.slack_thread_ts, i.agents, i.branch, i.ref, i.flow, i.external_url, i.needs, i.auto_approve_by, i.template, i.template_rev, i.created_at, i.updated_at, i.status_since_ms,
-	p.name, p.status
+	p.name, p.status,
+	o.state, o.pr_url, o.merge_sha, o.merged_ms, o.closed_ms
 `
+
+// itemFrom is the FROM of every item read: the linked plan's summary and
+// what became of the item's branch (item_outcomes).
+const itemFrom = `FROM inbox_items i LEFT JOIN plans p ON p.id = i.plan_id LEFT JOIN item_outcomes o ON o.item_id = i.id`
 
 // itemOrder is the partial-order contract: prioritized items first (ascending
 // priority), the unprioritized tail after them (newest first) — the board and
@@ -153,7 +158,7 @@ func (s *Storage) CreateItem(ctx context.Context, item Item) error {
 func (s *Storage) ItemForSlackThread(ctx context.Context, ts string) (*Item, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT `+itemColumns+`
-		FROM inbox_items i LEFT JOIN plans p ON p.id = i.plan_id
+		`+itemFrom+`
 		WHERE i.slack_thread_ts = ?
 	`, ts)
 	item, err := scanItem(row)
@@ -225,7 +230,7 @@ func (s *Storage) SetSlackThread(ctx context.Context, id, ts string) error {
 func (s *Storage) GetItem(ctx context.Context, id string) (*Item, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT `+itemColumns+`
-		FROM inbox_items i LEFT JOIN plans p ON p.id = i.plan_id
+		`+itemFrom+`
 		WHERE i.id = ?
 	`, id)
 	item, err := scanItem(row)
@@ -295,7 +300,7 @@ func (s *Storage) ListFiltered(ctx context.Context, f ListFilter) ([]Item, error
 		args = append(args, `%"`+likeEscape(l)+`"%`)
 	}
 	q := `SELECT ` + itemColumns + `
-		FROM inbox_items i LEFT JOIN plans p ON p.id = i.plan_id`
+		` + itemFrom
 	if len(conds) > 0 {
 		q += " WHERE " + strings.Join(conds, " AND ")
 	}
@@ -328,7 +333,7 @@ func (s *Storage) ListFiltered(ctx context.Context, f ListFilter) ([]Item, error
 func (s *Storage) ItemsByPriority(ctx context.Context, workspaceID string, priority int) ([]Item, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+itemColumns+`
-		FROM inbox_items i LEFT JOIN plans p ON p.id = i.plan_id
+		`+itemFrom+`
 		WHERE i.workspace_id = ? AND i.priority = ? AND i.status IN ('open', 'in_progress')
 	`, workspaceID, priority)
 	if err != nil {
@@ -478,7 +483,7 @@ func (s *Storage) SetItemPlan(ctx context.Context, id, planID string, updatedAt 
 func (s *Storage) ItemsByPlan(ctx context.Context, planID string) ([]Item, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+itemColumns+`
-		FROM inbox_items i LEFT JOIN plans p ON p.id = i.plan_id
+		`+itemFrom+`
 		WHERE i.plan_id = ? ORDER BY i.id`, planID)
 	if err != nil {
 		return nil, fmt.Errorf("listing items by plan: %w", err)
@@ -601,8 +606,11 @@ func scanItem(row rowScanner) (Item, error) {
 	var tags, needs string
 	var createdAt, updatedAt string
 	var statusSince sql.NullInt64
+	var outState, outPR, outSHA sql.NullString
+	var outMerged, outClosed sql.NullInt64
 	if err := row.Scan(&item.ID, &workspace, &item.Title, &item.Content, &tags, &item.Status, &priority,
-		&claimedBy, &item.AuthorAgentID, &planID, &item.SlackThreadTS, &agents, &item.Branch, &item.Ref, &item.Flow, &item.ExternalURL, &needs, &item.AutoApproveBy, &item.Template, &item.TemplateRev, &createdAt, &updatedAt, &statusSince, &planName, &planStatus); err != nil {
+		&claimedBy, &item.AuthorAgentID, &planID, &item.SlackThreadTS, &agents, &item.Branch, &item.Ref, &item.Flow, &item.ExternalURL, &needs, &item.AutoApproveBy, &item.Template, &item.TemplateRev, &createdAt, &updatedAt, &statusSince, &planName, &planStatus,
+		&outState, &outPR, &outSHA, &outMerged, &outClosed); err != nil {
 		return item, fmt.Errorf("scanning inbox item: %w", err)
 	}
 	if workspace.Valid {
@@ -633,6 +641,16 @@ func scanItem(row rowScanner) (Item, error) {
 	if statusSince.Valid {
 		t := time.UnixMilli(statusSince.Int64).UTC()
 		item.StatusSince = &t
+	}
+	if outState.Valid {
+		at := func(v sql.NullInt64) *time.Time {
+			if !v.Valid {
+				return nil
+			}
+			t := time.UnixMilli(v.Int64).UTC()
+			return &t
+		}
+		item.Outcome = &BranchOutcome{State: outState.String, PRURL: outPR.String, MergeSHA: outSHA.String, MergedAt: at(outMerged), ClosedAt: at(outClosed)}
 	}
 	return item, nil
 }

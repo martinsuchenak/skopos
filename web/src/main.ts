@@ -27,7 +27,9 @@ type EntryForm = { scope: 'project' | 'branch' | 'session'; entry_type: 'finding
 type PlanForm = { name: string; description: string; branch_name: string };
 type ItemForm = { title: string; description: string; phase: string; depends_on: string };
 type InboxPlanSummary = { id: string; name: string; status: string };
-type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; agents?: string; branch?: string; ref?: string; external_url?: string; flow?: string; needs?: string[]; auto_approve_plan?: boolean; auto_approve_by?: string; created_at: string; updated_at: string; status_since?: string; excerpt?: string };
+// What became of a signed-off item's branch (the worker reports it).
+type ItemOutcome = { state: 'merged' | 'closed' | 'open'; pr_url?: string; merge_sha?: string; merged_at?: string; closed_at?: string };
+type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; agents?: string; branch?: string; ref?: string; external_url?: string; flow?: string; needs?: string[]; auto_approve_plan?: boolean; auto_approve_by?: string; created_at: string; updated_at: string; status_since?: string; outcome?: ItemOutcome; excerpt?: string };
 // The detail view's content, cut server-side (internal/inbox/parts.go):
 // The author's text, then the pipeline's sections in rounds.
 type ItemQuestion = { text: string; options?: string[] };
@@ -2333,7 +2335,36 @@ const appState = () => ({
     if (m.current < 0) return [];
     const head = m.current >= 8 ? m.rows : m.rows.slice(0, m.current + 1);
     const out = m.current > 6 ? head.slice(0, 7).concat(this.secondOpinionStage(), head.slice(7)) : head;
-    return out.filter((s: StageRow) => !s.hidden);
+    // Signed off: what became of the branch follows the sign-off.
+    return out.concat(m.current >= 8 ? this.mergeStage() : []).filter((s: StageRow) => !s.hidden);
+  },
+  // mergeStage: the step after sign-off, what became of the branch's pull
+  // request (the worker watches it and reports): merged, closed without
+  // merging, still open 30 days later, or not reported yet. None for an
+  // item without a pull request.
+  mergeStage(): StageRow[] {
+    const item = this.previewItem;
+    if (!item || item.status !== 'done') return [];
+    const o = item.outcome;
+    const pr = (o && o.pr_url) || (this.previewRuns.find((r: RunRow) => r.stage === 'implement' && !!r.pr_url) || { pr_url: '' }).pr_url || '';
+    if (!o && !pr) return [];
+    const links: LinkRow[] = pr ? [{ key: 'pr|' + pr, href: pr, text: 'Pull request' }] : [];
+    let state = 'up', when = '', lines: string[];
+    if (!o) {
+      lines = ['Not merged yet, as far as skopos knows: the worker that implemented the item checks the pull request hourly and records when it is merged or closed.'];
+    } else if (o.state === 'merged') {
+      state = 'done';
+      when = o.merged_at ? this.timeAgo(o.merged_at) : '';
+      lines = ['Merged' + (o.merged_at ? ' ' + this.formatDateTime(o.merged_at) : '') + (o.merge_sha ? ', merge commit ' + o.merge_sha.slice(0, 7) : '') + '.'];
+    } else if (o.state === 'closed') {
+      state = 'flag';
+      when = o.closed_at ? this.timeAgo(o.closed_at) : '';
+      lines = ['The pull request was closed without merging' + (o.closed_at ? ' ' + this.formatDateTime(o.closed_at) : '') + '.'];
+    } else {
+      state = 'flag';
+      lines = ['The pull request was still open 30 days after sign-off; skopos no longer watches it.'];
+    }
+    return [{ key: 'merge|' + state + '|' + lines.join('/') + '|' + pr, name: 'Merge', who: 'you', state, when, round: '', lines, links, more: [], moreLabel: '', warn: '', logs: [], plans: false }];
   },
   stageTrackTail(): StageRow[] {
     const m = this.stageModel();
@@ -2958,6 +2989,20 @@ const appState = () => ({
   runQuickWorkflowAction(item: InboxItem) {
     if (item.status === 'open') this.queueInboxItem(item.id);
     else if (this.waitGate(item)) this.openInboxPreview(item);
+  },
+  // outcomeLabel: what became of the item's branch after sign-off ('' =
+  // nothing reported).
+  outcomeLabel(item: InboxItem | null): string {
+    const o = item && item.outcome;
+    if (!o) return '';
+    if (o.state === 'merged') return 'Merged' + (o.merged_at ? ' ' + this.formatDateTime(o.merged_at) : '') + (o.merge_sha ? ' · ' + o.merge_sha.slice(0, 7) : '');
+    if (o.state === 'closed') return 'Closed unmerged' + (o.closed_at ? ' ' + this.formatDateTime(o.closed_at) : '');
+    return 'Pull request still open 30 days after sign-off';
+  },
+  outcomeTone(item: InboxItem | null): string {
+    const o = item && item.outcome;
+    if (!o) return '';
+    return o.state === 'merged' ? 'tone-success' : o.state === 'closed' ? 'tone-warn' : 'tone-muted';
   },
   // waitGate: what an item that waits for a person waits for ('' = it does
   // not wait for one).

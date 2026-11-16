@@ -603,3 +603,16 @@ func TestSummary(t *testing.T) {
 		t.Fatalf("rows: %+v", s.Rows)
 	}
 }
+
+// What became of the branch is part of where the item stands.
+func TestOutcomeNamesTheMerge(t *testing.T) {
+	merged := time.Date(2026, 11, 16, 14, 53, 13, 0, time.UTC)
+	r := &Report{Item: Item{Status: string(inbox.StatusDone), Merge: &inbox.BranchOutcome{State: inbox.OutcomeMerged, MergeSHA: "f2c033863b4a7c633f7c44aadfe10d53ade3a890", MergedAt: &merged}}}
+	if got := strings.Join(outcome(r), " "); !strings.Contains(got, "The pull request was merged on 2026-11-16 (merge commit f2c033863b).") {
+		t.Fatalf("outcome: %q", got)
+	}
+	r.Item.Merge = &inbox.BranchOutcome{State: inbox.OutcomeClosed}
+	if got := strings.Join(outcome(r), " "); !strings.Contains(got, "closed without merging.") {
+		t.Fatalf("outcome: %q", got)
+	}
+}

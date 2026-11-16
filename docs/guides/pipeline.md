@@ -648,7 +648,9 @@ Your decisions at each gate are in the audit log, and each item's
 `status_since` says how long it has waited at its gate. After you sign an
 item off, the worker that implemented it watches its pull request and
 records what became of it: merged (with the merge commit), closed without
-merging, or still open 30 days later (`GET /api/inbox/{id}/outcome`).
+merging, or still open 30 days later (`GET /api/inbox/{id}/outcome`). The
+item preview shows it as the Merge step after your sign-off, the done list
+as a badge, and the item report in where the item stands.
 
 ## Troubleshooting
 

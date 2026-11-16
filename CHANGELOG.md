@@ -4,9 +4,21 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.40.2] — 2026-11-16
+
+### Added
+
+- The item preview's tracker ends with a Merge step once the item is
+  signed off: merged (with the date, the merge commit and a link to the
+  pull request), closed without merging, or still open 30 days later; until
+  the worker reports, it says the pull request is watched. The done list
+  shows the same as a badge, items carry it as `outcome`, and the item
+  report says what became of the pull request.
 
 ### Fixed
+
+- The item preview showed the status twice ("Done" and "done"); the raw
+  status now shows only where no step summary says it.
 
 - The dashboard shows a date with the time where it showed only the time:
   API keys (created, last used), blackboard entries, webhooks and their

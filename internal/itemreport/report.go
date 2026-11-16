@@ -111,19 +111,22 @@ type Report struct {
 
 // Item is the report's header.
 type Item struct {
-	ID          string    `json:"id"`
-	WorkspaceID string    `json:"workspace_id"`
-	Title       string    `json:"title"`
-	Ref         string    `json:"ref,omitempty"`
-	ExternalURL string    `json:"external_url,omitempty"`
-	Status      string    `json:"status"`
-	Flow        string    `json:"flow,omitempty"`
-	Branch      string    `json:"branch,omitempty"`
-	HeadSHA     string    `json:"head_sha,omitempty"`
-	PullRequest string    `json:"pull_request,omitempty"`
-	Needs       []string  `json:"needs,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
+	Title       string `json:"title"`
+	Ref         string `json:"ref,omitempty"`
+	ExternalURL string `json:"external_url,omitempty"`
+	Status      string `json:"status"`
+	Flow        string `json:"flow,omitempty"`
+	Branch      string `json:"branch,omitempty"`
+	HeadSHA     string `json:"head_sha,omitempty"`
+	PullRequest string `json:"pull_request,omitempty"`
+	// Merge: what became of the branch after sign-off, as the worker
+	// reported it (nil = nothing reported).
+	Merge     *inbox.BranchOutcome `json:"merge,omitempty"`
+	Needs     []string             `json:"needs,omitempty"`
+	CreatedAt time.Time            `json:"created_at"`
+	UpdatedAt time.Time            `json:"updated_at"`
 }
 
 // Plan is the approved plan and the others written for the item.
@@ -345,7 +348,7 @@ func (s *Service) Build(ctx context.Context, itemID string) (*Report, error) {
 		GeneratedAt: now().UTC(),
 		Item: Item{
 			ID: item.ID, WorkspaceID: item.WorkspaceID, Title: strings.TrimSpace(item.Title), Ref: item.Ref, ExternalURL: item.ExternalURL,
-			Status: string(item.Status), Flow: item.Flow, Branch: item.Branch, Needs: item.Needs,
+			Status: string(item.Status), Flow: item.Flow, Branch: item.Branch, Needs: item.Needs, Merge: item.Outcome,
 			CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
 		},
 		Brief:           strings.TrimSpace(brief),
@@ -889,6 +892,9 @@ func outcome(r *Report) []string {
 		}
 		out = append(out, line+".")
 	}
+	if line := mergeLine(r.Item.Merge); line != "" {
+		out = append(out, line)
+	}
 	if line := findingCounts(r.Findings); line != "" {
 		out = append(out, line)
 	}
@@ -917,6 +923,33 @@ func outcome(r *Report) []string {
 		out = append(out, fmt.Sprintf("%s asked: %s.", plural(asked, "question"), strings.Join(parts, ", ")))
 	}
 	return out
+}
+
+// mergeLine says what became of the branch's pull request after sign-off.
+func mergeLine(o *inbox.BranchOutcome) string {
+	if o == nil {
+		return ""
+	}
+	switch o.State {
+	case inbox.OutcomeMerged:
+		line := "The pull request was merged"
+		if o.MergedAt != nil {
+			line += " on " + day(*o.MergedAt)
+		}
+		if o.MergeSHA != "" {
+			line += " (merge commit " + short(o.MergeSHA) + ")"
+		}
+		return line + "."
+	case inbox.OutcomeClosed:
+		line := "The pull request was closed without merging"
+		if o.ClosedAt != nil {
+			line += " on " + day(*o.ClosedAt)
+		}
+		return line + "."
+	case inbox.OutcomeOpen:
+		return "The pull request was still open 30 days after sign-off."
+	}
+	return ""
 }
 
 // closedNothingToDo is the server's closing of the item for nothing to do.
