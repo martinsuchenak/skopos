@@ -87,6 +87,11 @@ The item is tagged with these skills; they are always included: {{range $i, $n :
    individually.
 3. Estimate size: "s" (under ~50 changed lines, one area), "m", or "l".
 4. List risks (what could break, what you could not verify) and open questions for the approver.
+   Declare the plan's impact, each entry a short phrase, an empty list when there is none:
+   irreversible (a step whose effect reverting the commit does not undo: data deleted or
+   rewritten, a message sent, something published or released), behaviour_change (what users or
+   other systems will see behave differently) and outside_brief (anything the plan does that the
+   item did not ask for).
 5. If the item is too ambiguous to plan responsibly, set needs_clarification to true, return no
    steps, and put the questions in questions.
 6. If the item asks for routine work that is not needed now (for example, it asks to update the

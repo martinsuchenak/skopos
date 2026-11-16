@@ -65,7 +65,7 @@
   (inbox: "unfiled" — not yet assigned; blackboard/plans: "no workspace" —
   visible everywhere).
 */}}
-{{define "ws-badge"}}<span x-show="!activeWorkspace && {{.V}}.workspace_id" class="badge tone-info max-w-48 truncate" :title="{{.V}}.workspace_id" x-text="workspaceLabel({{.V}}.workspace_id)"></span>
+{{define "ws-badge"}}<span x-show="{{.V}}.workspace_id && {{.V}}.workspace_id !== activeWorkspace" class="badge tone-info max-w-48 truncate" :title="{{.V}}.workspace_id" x-text="workspaceLabel({{.V}}.workspace_id)"></span>
                                         <span x-show="!{{.V}}.workspace_id" class="badge {{if eq .Missing "unfiled"}}tone-warn{{else}}tone-muted{{end}}" title="{{if eq .Missing "unfiled"}}Not yet assigned to a workspace{{else}}Not assigned to any workspace — visible in every workspace{{end}}">{{.Missing}}</span>{{end}}
 
 {{/* index-branch: one row of the code-index list (B = the branch variable). */}}

@@ -27,7 +27,7 @@ type EntryForm = { scope: 'project' | 'branch' | 'session'; entry_type: 'finding
 type PlanForm = { name: string; description: string; branch_name: string };
 type ItemForm = { title: string; description: string; phase: string; depends_on: string };
 type InboxPlanSummary = { id: string; name: string; status: string };
-type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; agents?: string; branch?: string; ref?: string; external_url?: string; flow?: string; needs?: string[]; auto_approve_plan?: boolean; auto_approve_by?: string; created_at: string; updated_at: string; excerpt?: string };
+type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; agents?: string; branch?: string; ref?: string; external_url?: string; flow?: string; needs?: string[]; auto_approve_plan?: boolean; auto_approve_by?: string; created_at: string; updated_at: string; status_since?: string; excerpt?: string };
 // The detail view's content, cut server-side (internal/inbox/parts.go):
 // The author's text, then the pipeline's sections in rounds.
 type ItemQuestion = { text: string; options?: string[] };
@@ -1155,7 +1155,9 @@ const appState = () => ({
     this.inboxLoading = true;
     try {
       const p = new URLSearchParams();
-      if (this.activeWorkspace) p.set('workspace', this.activeWorkspace);
+      // Needs you is one queue across every workspace in the key's scope:
+      // what waits for a person anywhere, the longest wait first.
+      if (this.activeWorkspace && !this.inboxQueue()) p.set('workspace', this.activeWorkspace);
       // The board shows every lane at once; the status chips only filter the
       // list layout (the chip selection is kept and restored on switch-back).
       if (this.inboxLayout === 'list' && this.inboxStatus) p.set('status', this.inboxStatus);
@@ -1211,8 +1213,11 @@ const appState = () => ({
     // markdown, so an expanded item is re-fetched and re-injected.
     this.$nextTick(() => { if (this.expandedInboxId) this.reloadInboxItem(this.expandedInboxId); });
   },
+  // inboxQueue: the list shows the Needs you queue (every workspace, the
+  // longest wait first; no sort lens, no ranking).
+  inboxQueue(): boolean { return this.inboxLayout === 'list' && this.inboxStatus === 'needs_you'; },
   sortInbox(items: InboxItem[]): InboxItem[] {
-    if (this.inboxSort === 'priority') return items;
+    if (this.inboxSort === 'priority' || this.inboxQueue()) return items;
     // RFC3339Nano strings do NOT compare lexicographically (truncated
     // fractions: ".5Z" > ".512345678Z") — parse to ms and tie-break on the
     // UUIDv7 id, same fix as the server-side ordering.
@@ -1243,14 +1248,11 @@ const appState = () => ({
     ];
   },
   // Items waiting for an approver (plan gate, sign-off, blocked/failed) in
-  // the active workspace (all of the key's scope when none is picked), for
-  // the sidebar badge and the tab title.
+  // every workspace of the key's scope, whichever workspace is picked: the
+  // sidebar badge and the tab title count the one queue the badge opens.
   async fetchNeedsYou() {
     try {
-      // The same scope as the list the badge opens: the active workspace,
-      // or every workspace in the key's scope under "All workspaces".
       const p = new URLSearchParams({ status: 'needs_you' });
-      if (this.activeWorkspace) p.set('workspace', this.activeWorkspace);
       const res = await this.authFetch('/api/inbox?' + p.toString());
       if (!res.ok) return;
       this.needsYouCount = (((await res.json()) as InboxItem[]) ?? []).length;
@@ -2949,11 +2951,29 @@ const appState = () => ({
   workflowQuickAction(item: InboxItem): string {
     if (item.status === 'open' && item.workspace_id) return 'Queue';
     if (item.status === 'awaiting_approval') return 'Review plan';
+    if (item.status === 'in_review') return 'Review branch';
+    if (item.status === 'blocked' || item.status === 'failed') return 'See why';
     return '';
   },
   runQuickWorkflowAction(item: InboxItem) {
     if (item.status === 'open') this.queueInboxItem(item.id);
-    else if (item.status === 'awaiting_approval') this.openInboxPreview(item);
+    else if (this.waitGate(item)) this.openInboxPreview(item);
+  },
+  // waitGate: what an item that waits for a person waits for ('' = it does
+  // not wait for one).
+  waitGate(item: InboxItem): string {
+    return ({ awaiting_approval: 'Plan approval', in_review: 'Sign-off', blocked: 'Blocked', failed: 'Failed' } as Record<string, string>)[item.status] || '';
+  },
+  // waitLabel: "Sign-off · waiting 3h", for the Needs you queue's rows.
+  waitLabel(item: InboxItem): string {
+    const gate = this.waitGate(item);
+    if (!gate || !item.status_since) return '';
+    const age = this.timeAgo(item.status_since);
+    return gate + ' · waiting ' + (age === 'just now' ? 'under a minute' : age.replace(/ ago$/, ''));
+  },
+  // A wait past a day is called out.
+  waitLong(item: InboxItem): boolean {
+    return !!item.status_since && Date.now() - Date.parse(item.status_since) > 86_400_000;
   },
 
   // ---- pipeline settings dialog ----

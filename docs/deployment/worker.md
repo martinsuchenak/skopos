@@ -1259,6 +1259,29 @@ The check runs again when what it depends on changes (the workspace's
 stage blocks, the push settings, the token, the PATH), every 2 minutes
 while it fails, and every 6 hours while it passes.
 
+`skopos worker check` and `skopos worker install` run the same check, with
+the PATH, home folder and env file the service gets, after reading the
+workspaces' config from the server. They list what the worker would hold
+back under the problems that keep it from starting:
+
+```
+config OK — the worker can start
+
+The worker holds these back until they pass (it checks again every 2 minutes; a change under [worker] needs a restart):
+  - workspace github.com/acme/shop, stage implement: not on the PATH runs get: bun (install, or link into a folder on the service's PATH)
+  - workspace github.com/acme/shop, implement (push): the remote refuses the push token (GH_TOKEN): wrong, expired, or no write access (remote: Permission to acme/shop.git denied to acme-bot.)
+```
+
+A stage held back does not keep the service from starting: `install`
+starts it, and the worker takes those runs once the check passes. `check`
+exits non-zero while anything is held back. A check by hand creates no
+cache folder (the worker does when it starts). It does not run as root for
+a worker that runs as another user (`install --system` under sudo): git
+refuses that user's clone to root, and bubblewrap may start for root where
+it would not for the user. It says so; run it as that user
+(`sudo -u <user> skopos worker check --config …`). When the server's config
+could not be read, it says it covered the worker's file only.
+
 ## Self-healing
 
 A worker is meant to finish work without anyone fixing it. Four things keep

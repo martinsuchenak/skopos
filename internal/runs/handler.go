@@ -267,7 +267,7 @@ func (h *Handler) Log(w http.ResponseWriter, r *http.Request) {
 
 // Get handles GET /api/runs/{id}.
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
-	run, err := h.service.Get(r.Context(), r.PathValue("id"))
+	run, err := h.service.GetFull(r.Context(), r.PathValue("id"))
 	if err != nil {
 		h.respondRunError(w, err, "get")
 		return

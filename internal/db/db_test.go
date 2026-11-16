@@ -3,10 +3,13 @@ package db
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/martinsuchenak/skopos/internal/dbtime"
 	"github.com/paularlott/logger"
 	logslog "github.com/paularlott/logger/slog"
 	_ "modernc.org/sqlite"
@@ -152,6 +155,72 @@ func TestHotQueriesUseIndexes(t *testing.T) {
 		_ = rows.Close()
 		if p := strings.Join(plan, " | "); !strings.Contains(p, c.index) {
 			t.Errorf("%s must use %s; plan: %s", c.caller, c.index, p)
+		}
+	}
+}
+
+// The backfill of inbox_items.status_since_ms reads a stored timestamp
+// (internal/dbtime's fixed-width text) as Unix ms.
+func TestStatusSinceBackfillReadsStoredTimes(t *testing.T) {
+	db, err := sql.Open("sqlite", sqliteDSN(":memory:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	at := time.Date(2026, 11, 16, 8, 0, 16, 666_000_000, time.UTC)
+	var ms int64
+	if err := db.QueryRow(`SELECT CAST((julianday(?) - 2440587.5) * 86400000 AS INTEGER)`, dbtime.Format(at)).Scan(&ms); err != nil {
+		t.Fatal(err)
+	}
+	if d := ms - at.UnixMilli(); d < -1 || d > 1 {
+		t.Fatalf("%d ms, want %d", ms, at.UnixMilli())
+	}
+}
+
+// Rows from before status_since_ms start at their newest status change in
+// the event feed, not at updated_at (which every edit moves); without one,
+// at updated_at.
+func TestStatusSinceBackfillPrefersStatusEvents(t *testing.T) {
+	db, err := sql.Open("sqlite", sqliteDSN(":memory:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := RunMigrations(db); err != nil {
+		t.Fatal(err)
+	}
+	changed := time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
+	edited := time.Date(2026, 11, 16, 7, 0, 0, 0, time.UTC)
+	for _, id := range []string{"gated", "quiet"} {
+		if _, err := db.Exec(`INSERT INTO inbox_items (id, title, status, author_agent_id, created_at, updated_at) VALUES (?, 't', 'in_review', 'a', ?, ?)`,
+			id, dbtime.Format(changed.Add(-time.Hour)), dbtime.Format(edited)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, ev := range []struct {
+		typ string
+		at  time.Time
+	}{{"item.status_changed", changed.Add(-time.Hour)}, {"item.status_changed", changed}, {"item.needs_you", edited}} {
+		if _, err := db.Exec(`INSERT INTO integration_events (id, type, item_id, occurred_ms, data) VALUES (?, ?, 'gated', ?, '{}')`,
+			fmt.Sprint("e", i), ev.typ, ev.at.UnixMilli()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// As a database from before the column: nothing set yet.
+	if _, err := db.Exec(`UPDATE inbox_items SET status_since_ms = NULL`); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunMigrations(db); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int64{"gated": changed.UnixMilli(), "quiet": edited.UnixMilli()}
+	for id, ms := range want {
+		var got int64
+		if err := db.QueryRow(`SELECT status_since_ms FROM inbox_items WHERE id = ?`, id).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if d := got - ms; d < -1 || d > 1 {
+			t.Fatalf("%s: %d, want %d", id, got, ms)
 		}
 	}
 }

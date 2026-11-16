@@ -120,7 +120,7 @@ func (s *Storage) RunInTx(ctx context.Context, fn func(Store) error) error {
 // they became, and a deleted plan leaves the summary NULL (dangling plan_id).
 const itemColumns = `
 	i.id, i.workspace_id, i.title, i.content, i.tags, i.status, i.priority,
-	i.claimed_by_agent_id, i.author_agent_id, i.plan_id, i.slack_thread_ts, i.agents, i.branch, i.ref, i.flow, i.external_url, i.needs, i.auto_approve_by, i.template, i.template_rev, i.created_at, i.updated_at,
+	i.claimed_by_agent_id, i.author_agent_id, i.plan_id, i.slack_thread_ts, i.agents, i.branch, i.ref, i.flow, i.external_url, i.needs, i.auto_approve_by, i.template, i.template_rev, i.created_at, i.updated_at, i.status_since_ms,
 	p.name, p.status
 `
 
@@ -296,7 +296,12 @@ func (s *Storage) ListFiltered(ctx context.Context, f ListFilter) ([]Item, error
 	if len(conds) > 0 {
 		q += " WHERE " + strings.Join(conds, " AND ")
 	}
-	q += itemOrder
+	if status == string(StatusNeedsYou) {
+		// The queue of what waits for a person: the longest wait first.
+		q += ` ORDER BY i.status_since_ms ASC, i.id ASC`
+	} else {
+		q += itemOrder
+	}
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing inbox items: %w", err)
@@ -592,8 +597,9 @@ func scanItem(row rowScanner) (Item, error) {
 	var planName, planStatus sql.NullString
 	var tags, needs string
 	var createdAt, updatedAt string
+	var statusSince sql.NullInt64
 	if err := row.Scan(&item.ID, &workspace, &item.Title, &item.Content, &tags, &item.Status, &priority,
-		&claimedBy, &item.AuthorAgentID, &planID, &item.SlackThreadTS, &agents, &item.Branch, &item.Ref, &item.Flow, &item.ExternalURL, &needs, &item.AutoApproveBy, &item.Template, &item.TemplateRev, &createdAt, &updatedAt, &planName, &planStatus); err != nil {
+		&claimedBy, &item.AuthorAgentID, &planID, &item.SlackThreadTS, &agents, &item.Branch, &item.Ref, &item.Flow, &item.ExternalURL, &needs, &item.AutoApproveBy, &item.Template, &item.TemplateRev, &createdAt, &updatedAt, &statusSince, &planName, &planStatus); err != nil {
 		return item, fmt.Errorf("scanning inbox item: %w", err)
 	}
 	if workspace.Valid {
@@ -621,6 +627,10 @@ func scanItem(row rowScanner) (Item, error) {
 	item.AutoApprovePlan = item.AutoApproveBy != ""
 	item.CreatedAt = parseTime(createdAt)
 	item.UpdatedAt = parseTime(updatedAt)
+	if statusSince.Valid {
+		t := time.UnixMilli(statusSince.Int64).UTC()
+		item.StatusSince = &t
+	}
 	return item, nil
 }
 

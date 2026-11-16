@@ -162,6 +162,9 @@ type Item struct {
 	Flow      string    `json:"flow,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// StatusSince: when the item entered its status (kept by the database
+	// on every status change): how long it has waited at a gate.
+	StatusSince *time.Time `json:"status_since,omitempty"`
 
 	// Read-path hydration. List rows carry only Excerpt (content is dropped);
 	// GetItem fills ContentHTML (dashboard-safe rendering) and, when the item

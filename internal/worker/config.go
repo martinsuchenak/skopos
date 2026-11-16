@@ -99,6 +99,12 @@ type Config struct {
 	// checkBad: per workspace, what its last stage check found (stagecheck.go):
 	// a reason per stage, and under "push" the push token's.
 	checkBad map[string]map[string]string
+	// checkRepos: a managed workspace's repository as CheckServerConfig
+	// merged it, for StageCheck (the running worker reads Worker.repo).
+	checkRepos map[string]*Repo
+	// serverUnread: the workspaces whose config CheckServerConfig could not
+	// read ("*" = none could be), so StageCheck can say what it left out.
+	serverUnread map[string]bool
 	// ownDeny: this worker's own secret files and folders that exist — its
 	// env file and config, the agent key's MCP file, the accounts' login
 	// folders — taken once (SetSecretFiles), so what a kit's sandbox denies

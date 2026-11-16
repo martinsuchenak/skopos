@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
@@ -370,5 +371,47 @@ func TestWorkflowItemsEditable(t *testing.T) {
 	}
 	if err := svc.UpdateItem(root, done.ID, UpdateInput{Content: "x"}); err == nil {
 		t.Fatal("done item must stay frozen")
+	}
+}
+
+// The Needs you queue is ordered by how long each item has waited at its
+// gate (status_since), longest first, and every item says since when.
+func TestNeedsYouOldestWaitFirst(t *testing.T) {
+	svc, _, _ := fullStack(t)
+	root := context.Background()
+	first := mustCreate(t, svc, root, "gated first")
+	second := mustCreate(t, svc, root, "gated second")
+	gate := func(it *Item) {
+		if _, err := svc.Queue(approverCtx(), it.ID, ""); err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range []Status{StatusPlanning, StatusAwaitingApproval} {
+			if _, err := svc.SystemTransition(root, it.ID, s, "", "", ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	gate(first)
+	time.Sleep(5 * time.Millisecond)
+	gate(second)
+	items, err := svc.ListItems(root, "ws-a", "needs_you", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || items[0].ID != first.ID || items[1].ID != second.ID {
+		t.Fatalf("needs_you order: %v, want the longest wait first", []string{items[0].Title, items[1].Title})
+	}
+	for _, it := range items {
+		if it.StatusSince == nil || time.Since(*it.StatusSince) > time.Minute {
+			t.Fatalf("%s: status_since %v", it.Title, it.StatusSince)
+		}
+	}
+	if !items[0].StatusSince.Before(*items[1].StatusSince) {
+		t.Fatal("the first gated has waited longer")
+	}
+	// Any other list keeps its own order (newest first).
+	all, _ := svc.ListItems(root, "ws-a", "", "", "")
+	if all[0].ID != second.ID {
+		t.Fatalf("the plain list is newest first: %s", all[0].Title)
 	}
 }

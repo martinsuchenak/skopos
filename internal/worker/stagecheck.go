@@ -58,7 +58,7 @@ func (r stageCheck) failing() bool { return len(r.stages) > 0 || r.push != "" }
 // checkStages runs the workspace's stage check when it is due and records
 // what it found for ExecutorFor. It reports whether that changed.
 func (w *Worker) checkStages(ctx context.Context, ws string) (changed bool) {
-	plan := w.stageCheckPlan(ws)
+	plan := w.cfg.stageCheckPlan(ws, w.repo(ws))
 	if w.stageChecks == nil {
 		w.stageChecks = map[string]stageCheck{}
 	}
@@ -74,7 +74,7 @@ func (w *Worker) checkStages(ctx context.Context, ws string) (changed bool) {
 	if !due {
 		return false
 	}
-	res := w.runStageCheck(ctx, plan)
+	res := runStageCheck(ctx, plan, w.cfg.SandboxNested, w.redacted, true)
 	if ctx.Err() != nil {
 		return false // shutting down: not a verdict
 	}
@@ -177,12 +177,14 @@ type stageNeeds struct {
 
 func (p checkPlan) empty() bool { return len(p.stages) == 0 && p.pushKind == "" }
 
-// stageCheckPlan works out what to check for ws from what its runs would get.
-func (w *Worker) stageCheckPlan(ws string) checkPlan {
+// stageCheckPlan works out what to check for ws from what its runs would
+// get; repo is the workspace's repository as the runs see it (the server's
+// fields laid over the file's for a managed workspace).
+func (c *Config) stageCheckPlan(ws string, repo *Repo) checkPlan {
 	plan := checkPlan{stages: map[string]*stageNeeds{}}
-	blocks := w.cfg.srvStages[ws]
+	blocks := c.srvStages[ws]
 	for _, stage := range wsconfig.StageNames {
-		prof := w.cfg.StageProfile(ws, stage)
+		prof := c.StageProfile(ws, stage)
 		// Inside a wrapper the commands are the wrapper's to provide.
 		if prof == nil || prof.wraps() || (!prof.sandboxed() && !prof.grants()) {
 			continue
@@ -195,7 +197,7 @@ func (w *Worker) stageCheckPlan(ws string) checkPlan {
 		}
 		var kitTools []string
 		if b := blocks[stage]; b != nil && len(b.Kits) > 0 {
-			k := w.cfg.kitParts(b.Kits)
+			k := c.kitParts(b.Kits)
 			kitTools = k.Tools
 			for _, c := range k.Commands {
 				add(&need.Commands, c)
@@ -216,12 +218,12 @@ func (w *Worker) stageCheckPlan(ws string) checkPlan {
 		slices.Sort(need.Commands)
 		plan.stages[stage] = need
 	}
-	if repo := w.repo(ws); repo != nil && repo.Push.Kind != "" && repo.Push.Kind != "none" {
+	if repo != nil && repo.Push.Kind != "" && repo.Push.Kind != "none" {
 		plan.pushKind, plan.pushURL, plan.tokenEnv = repo.Push.Kind, repo.Push.RemoteURL, repo.Push.TokenEnv
 		plan.prefix, plan.repoPath = repo.BranchPrefix, repo.Path
 	}
 	// What the check depends on: when it changes the check runs again.
-	keyParts := map[string]any{"stages": plan.stages, "nested": w.cfg.SandboxNested, "path": os.Getenv("PATH")}
+	keyParts := map[string]any{"stages": plan.stages, "nested": c.SandboxNested, "path": os.Getenv("PATH")}
 	if plan.pushKind != "" {
 		keyParts["push"] = []string{plan.pushKind, plan.pushURL, plan.tokenEnv, tokenFingerprint(os.Getenv(plan.tokenEnv))}
 	}
@@ -262,13 +264,15 @@ func bashProgram(tool string) string {
 }
 
 // runStageCheck runs the checks of plan: what fails, per stage, and for the
-// push.
-func (w *Worker) runStageCheck(ctx context.Context, plan checkPlan) stageCheck {
+// push. redact takes the worker's secrets out of a reason; create says
+// whether a missing cache folder is made (the worker does; a check run by
+// hand, perhaps as another user under sudo, only looks).
+func runStageCheck(ctx context.Context, plan checkPlan, nested bool, redact func(string) string, create bool) stageCheck {
 	res := stageCheck{stages: map[string]string{}}
 	runtimeWhy := ""
 	for _, need := range plan.stages {
 		if need.Sandboxed {
-			runtimeWhy = sandboxRuntimeProblem(ctx, w.cfg.SandboxNested)
+			runtimeWhy = sandboxRuntimeProblem(ctx, nested)
 			break
 		}
 	}
@@ -290,18 +294,69 @@ func (w *Worker) runStageCheck(ctx context.Context, plan checkPlan) stageCheck {
 			reasons = append(reasons, fmt.Sprintf("not on the PATH runs get: %s (install, or link into a folder on the service's PATH)", strings.Join(missing, ", ")))
 		}
 		for _, d := range need.Write {
+			if !create {
+				continue // the worker makes it when it starts
+			}
 			if err := os.MkdirAll(d, 0o755); err != nil {
 				reasons = append(reasons, fmt.Sprintf("the cache folder %s cannot be created: %v", d, err))
 			}
 		}
 		if len(reasons) > 0 {
-			res.stages[stage] = clip(w.redacted(strings.Join(reasons, "; ")), maxCheckReason)
+			res.stages[stage] = clip(redact(strings.Join(reasons, "; ")), maxCheckReason)
 		}
 	}
 	if plan.pushKind != "" {
-		res.push = clip(w.redacted(pushTokenProblem(ctx, plan)), maxCheckReason)
+		res.push = clip(redact(pushTokenProblem(ctx, plan)), maxCheckReason)
 	}
 	return res
+}
+
+// StageCheck runs every workspace's stage check now, as the worker would
+// before taking its runs, and says what it would hold back: one line per
+// stage (and the push) that fails. For `skopos worker check` and `worker
+// install`; call it after CheckServerConfig, which sets the server's stage
+// blocks and its repository fields for managed workspaces. notes name the
+// workspaces whose server config could not be read: their check covers this
+// file's settings only.
+func (c *Config) StageCheck(ctx context.Context) (held, notes []string) {
+	var vals []string
+	for _, k := range append(c.TokenEnvs(), c.envFileKeys...) {
+		if v := strings.TrimSpace(os.Getenv(k)); len(v) >= 8 {
+			vals = append(vals, v, "[redacted]")
+		}
+	}
+	redact := func(s string) string { return s }
+	if len(vals) > 0 {
+		redact = strings.NewReplacer(vals...).Replace
+	}
+	ids := slices.Clone(c.Workspaces)
+	slices.Sort(ids)
+	if c.serverUnread["*"] {
+		notes = append(notes, "the server's config could not be read: the stage check covered this file's settings only, not the stage blocks, kits or push a workspace's config on the server holds")
+	}
+	for _, ws := range ids {
+		if c.serverUnread[ws] {
+			notes = append(notes, fmt.Sprintf("workspace %s: its config on the server could not be read, so its stage check covered this file's settings only", ws))
+		}
+		repo := c.Repos[ws]
+		if r := c.checkRepos[ws]; r != nil {
+			repo = r
+		}
+		plan := c.stageCheckPlan(ws, repo)
+		if plan.empty() {
+			continue
+		}
+		res := runStageCheck(ctx, plan, c.SandboxNested, redact, false)
+		for _, stage := range wsconfig.StageNames {
+			if why := res.stages[stage]; why != "" {
+				held = append(held, fmt.Sprintf("workspace %s, stage %s: %s", ws, stage, why))
+			}
+		}
+		if res.push != "" {
+			held = append(held, fmt.Sprintf("workspace %s, implement (push): %s", ws, res.push))
+		}
+	}
+	return held, notes
 }
 
 // redacted is s with every secret the worker knows taken out.

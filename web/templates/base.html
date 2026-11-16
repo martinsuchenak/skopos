@@ -447,7 +447,7 @@
                                 <option :value="t" x-text="'# ' + t"></option>
                             </template>
                         </select>
-                        <select x-model="inboxSort" @change="setInboxSort($event.target.value)" class="fld-sm" aria-label="Sort items" title="Priority: ranked items first (drag to rank). Date sorts are a display lens — rank drops are disabled until you switch back.">
+                        <select x-show="!inboxQueue()" x-model="inboxSort" @change="setInboxSort($event.target.value)" class="fld-sm" aria-label="Sort items" title="Priority: ranked items first (drag to rank). Date sorts are a display lens — rank drops are disabled until you switch back.">
                             <option value="priority">Sort: priority</option>
                             <option value="newest">Sort: newest first</option>
                             <option value="oldest">Sort: oldest first</option>
@@ -587,6 +587,7 @@
                                         <span x-show="item.priority != null" class="chip tone-warn font-mono" x-text="'#' + item.priority" :aria-label="'Rank ' + item.priority"></span>
                                         <span class="font-medium text-zinc-100" x-text="item.title"></span>
                                         <span class="badge" :class="toneOf('status', item.status)" x-text="statusText(item.status)"></span>
+                                        <span x-show="waitLabel(item)" class="badge" :class="waitLong(item) ? 'tone-warn' : 'tone-neutral'" x-text="waitLabel(item)" :title="'In this status since ' + (item.status_since || '')"></span>
                                         <span x-show="item.claimed_by_agent_id" class="badge tone-neutral" x-text="'claimed: ' + item.claimed_by_agent_id"></span>
                                         {{template "ws-badge" (dict "V" "item" "Missing" "unfiled")}}
                                         <span x-show="item.agents" class="badge tone-accent" x-text="agentsLabel(item.agents)" :title="agentsTitle(item.agents)"></span>
@@ -609,8 +610,8 @@
                                 <div class="flex flex-wrap items-center gap-1">
                                     <button type="button" x-show="!item.workspace_id && inboxItemEditable(item)" @click.stop="openFileModal(item)" class="btn btn-sm btn-ghost" :aria-label="'File item ' + item.title + ' into a workspace'">File into…</button>
                                     <!-- Rank without dragging (WCAG 2.5.7): the board's drag-to-rank, one step at a time. -->
-                                    <button type="button" x-show="item.priority != null && inboxSort === 'priority' && inboxCanRank(item)" :disabled="item.priority === 1" @click.stop="moveInboxItem(item.id, -1)" class="btn btn-sm btn-ghost" :aria-label="'Move item ' + item.title + ' up'" title="Move up">↑</button>
-                                    <button type="button" x-show="item.priority != null && inboxSort === 'priority' && inboxCanRank(item)" @click.stop="moveInboxItem(item.id, 1)" class="btn btn-sm btn-ghost" :aria-label="'Move item ' + item.title + ' down'" title="Move down">↓</button>
+                                    <button type="button" x-show="item.priority != null && inboxSort === 'priority' && !inboxQueue() && inboxCanRank(item)" :disabled="item.priority === 1" @click.stop="moveInboxItem(item.id, -1)" class="btn btn-sm btn-ghost" :aria-label="'Move item ' + item.title + ' up'" title="Move up">↑</button>
+                                    <button type="button" x-show="item.priority != null && inboxSort === 'priority' && !inboxQueue() && inboxCanRank(item)" @click.stop="moveInboxItem(item.id, 1)" class="btn btn-sm btn-ghost" :aria-label="'Move item ' + item.title + ' down'" title="Move down">↓</button>
                                     <button type="button" @click.stop="openInboxPreview(item)" class="btn btn-sm btn-ghost" :aria-label="'Preview item ' + item.title">View</button>
                                     <button type="button" x-show="workflowQuickAction(item)" x-text="workflowQuickAction(item)" @click.stop="runQuickWorkflowAction(item)" class="btn btn-sm btn-ghost btn-info" :aria-label="'Workflow action for item ' + item.title"></button>
                                     <button type="button" x-show="item.status === 'discarded'" @click.stop="restoreInboxItem(item.id)" class="btn btn-sm btn-ghost" :aria-label="'Restore item ' + item.title + ' to open'">Restore</button>

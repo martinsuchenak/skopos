@@ -523,6 +523,7 @@ func (w *Worker) holdConfig(ctx context.Context, run *Run) error {
 func CheckServerConfig(ctx context.Context, cfg *Config, client *Client) (problems, notes []string) {
 	f, err := client.FleetConfig(ctx)
 	if err != nil {
+		cfg.serverUnread = map[string]bool{"*": true}
 		return nil, []string{"the server could not be asked for its runner definitions and workspace config: " + err.Error()}
 	}
 	notes = append(notes, cfg.ApplyRunnerDefs(f)...)
@@ -535,6 +536,10 @@ func CheckServerConfig(ctx context.Context, cfg *Config, client *Client) (proble
 		eff, err := client.EffectiveConfig(ctx, ws)
 		if err != nil {
 			notes = append(notes, fmt.Sprintf("workspace %s: its config on the server could not be read: %v", ws, err))
+			if cfg.serverUnread == nil {
+				cfg.serverUnread = map[string]bool{}
+			}
+			cfg.serverUnread[ws] = true
 			continue
 		}
 		if eff == nil || !eff.Managed {
@@ -549,6 +554,10 @@ func CheckServerConfig(ctx context.Context, cfg *Config, client *Client) (proble
 			continue
 		}
 		cfg.setStages(ws, m.stages)
+		if cfg.checkRepos == nil {
+			cfg.checkRepos = map[string]*Repo{}
+		}
+		cfg.checkRepos[ws] = m.repo
 		line := fmt.Sprintf("workspace %s is managed by the server (revision %s)", ws, eff.Rev)
 		if len(m.local) > 0 {
 			line += "; " + strings.Join(m.local, ", ") + " stay this file's (worker.server_commands is off)"

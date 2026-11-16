@@ -71,6 +71,54 @@ skopos workspace config set --workspace github.com/you/repo \
   - **A config someone else changed** since the form was loaded is not
     overwritten: the save is refused and says so.
 
+### Proposed from the repository
+
+`skopos workspace config propose` reads a checkout of the repository and
+proposes the config its workers need, with the file each field comes from:
+
+```sh
+skopos workspace config propose --workspace github.com/you/repo --dir ~/src/repo
+```
+
+- **Kits** for the toolchains it finds: `go.mod`, a golangci-lint config,
+  `package.json` with its lockfile (bun, npm, pnpm, yarn), `composer.json`,
+  `mago.toml` (the kit only: add `mago lint` to the checks yourself),
+  `pyproject.toml` with `uv.lock` or `requirements.txt`, a .NET solution or
+  project, scripts that import scriptling's libraries, a Taskfile or a
+  Makefile, GitHub workflows. A tool the task runner's file calls
+  (golangci-lint, bun, npm, composer, uv, dotnet, scriptling) adds its kit.
+- **Setup** that installs the dependencies by the lockfile (`go mod
+  download`, `bun install --frozen-lockfile`, `npm ci`, `composer install`,
+  `uv sync`, `dotnet restore`), in the folder the project is in
+  (`cd web && …`).
+- **Checks** from the repository's own task runner: its `check` task (or
+  `ci`), else its `vet`, `lint` and `test` tasks. Without one, each
+  toolchain's own: `go build`, `vet` and `test`; a package's `lint`,
+  `typecheck`, `test` and `build` scripts; `composer test`, PHPUnit,
+  PHPStan; ruff and pytest; `dotnet build` and `dotnet test`.
+- **Push**, for a workspace on github.com: its https address and draft pull
+  requests. Each worker still sets the token's variable (`push.token_env`
+  in its file).
+
+What it cannot decide is listed under notes (a project in a subfolder,
+two lockfiles, scripts with no checks). It reads the files git tracks, as
+a worker's clone holds them (a downloaded copy or generated folder in your
+checkout is not read), three folders deep, and skips dependencies, build
+output and hidden folders. A manifest counts at the root, one folder down,
+or in a folder the task runner works in (`cd embed/web && bun install`);
+examples, fixtures, tests and documentation sites are left out.
+
+Nothing is saved without `--save`, and `--save` adds only the fields
+neither the workspace nor its groups set: it never replaces a field someone
+chose. A workspace with no config on the server still takes its fields from
+its workers' files, so `--save` refuses it: a config of its own makes the
+workspace managed, and the files' fields (default branch, checkout,
+timeouts) would no longer apply. Take them over first with
+[`skopos workspace config import`](#moving-a-workers-settings-to-the-server),
+or pass `--manage` to start the config from the proposal alone. Read the proposal first: a kit gives the stages' agents its tools
+and network hosts. Then `skopos worker check` on a worker shows whether the
+host has what the proposal needs.
+
 ### Groups
 
 A group can hold a config too: `skopos group config set --group acme …`.
@@ -249,6 +297,7 @@ skopos kit list
 | `node` | node, npm, npx | registry.npmjs.org | `~/.npm` |
 | `bun` | bun, bunx | registry.npmjs.org | `~/.bun/install/cache` |
 | `php` | php, composer, `vendor/bin/*` | Packagist, GitHub | composer's cache |
+| `mago` | mago | — | — |
 | `python` | uv, uvx, python, python3, pip, pip3, pytest, ruff, mypy | PyPI | `~/.cache/uv`, pip's cache |
 | `dotnet` | dotnet | NuGet, the .NET download hosts | `~/.nuget/packages`, `~/.dotnet`, `~/.local/share/NuGet` |
 | `scriptling` | scriptling | — | — |

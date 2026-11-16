@@ -203,7 +203,7 @@ from a worker's own mcp_config.`,
 		},
 	}
 	if kind == pipeline.KindWorkspace {
-		commands = append(commands, configImportCmd())
+		commands = append(commands, configImportCmd(), configProposeCmd())
 	}
 	return &cli.Command{
 		Name:     "config",

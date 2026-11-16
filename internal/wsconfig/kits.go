@@ -76,6 +76,11 @@ var kits = []Kit{
 		Write:    []string{"{cache}/composer"},
 	},
 	{
+		Name: "mago", Title: "Mago: the mago PHP linter, formatter and analyzer",
+		Tools:    []string{"Bash(mago:*)"},
+		Commands: []string{"mago"},
+	},
+	{
 		Name: "python", Title: "Python: uv, pip, python, pytest, ruff and mypy, PyPI and the uv and pip caches",
 		Tools:    []string{"Bash(uv:*)", "Bash(uvx:*)", "Bash(python:*)", "Bash(python3:*)", "Bash(pip:*)", "Bash(pip3:*)", "Bash(pytest:*)", "Bash(ruff:*)", "Bash(mypy:*)"},
 		Commands: []string{"python3"},

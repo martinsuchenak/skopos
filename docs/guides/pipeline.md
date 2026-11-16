@@ -479,10 +479,14 @@ sign-off.
   report it. On a phone the preview fills the screen.
 
 **What's waiting for you.** Beside the Inbox entry in the sidebar, a count
-shows how many items in the selected workspace (all of them under "All
-workspaces") wait for you: plan approval, sign-off, or blocked. The browser
-tab title carries the same number. Click the count, or the **Needs you**
-chip in the list, to see just those. Board cards show the seven steps as dots.
+shows how many items wait for you in every workspace you can reach: plan
+approval, sign-off, blocked or failed. The browser tab title carries the
+same number. Click the count, or the **Needs you** chip in the list, to see
+them as one queue across workspaces, whichever workspace is picked: the
+longest wait first, each row saying what it waits for and since when
+("Sign-off · waiting 3h"; amber past a day), with the workspace named
+when it is not the one picked and a button for the next step (Review plan,
+Review branch, See why). Board cards show the seven steps as dots.
 
 **Review and finish.** At `in_review`, look at the branch (or its pull
 request), the review verdicts and the run history. Then:
@@ -624,6 +628,24 @@ label. See
   Every run of such an item goes to a worker with the label; other items
   still go to any worker. See
   [Worker labels](../deployment/worker.md#worker-labels).
+
+## What the runs record
+
+Besides their results, runs record facts nothing decides on yet: the data
+rules that let an item through without you will be designed from. Each
+run's `observed` (in `GET /api/runs/{id}`; lists leave it out) holds:
+
+- **for an implementation or a branch review,** the change against its
+  base: each file with git's status (added, changed, deleted, renamed) and
+  its line counts, the totals and the number of commits;
+- **for a plan,** its size, its number of steps and the impact the planner
+  declares: steps whose effect reverting the commit does not undo (data
+  deleted or rewritten, a message sent, a release), what users or other
+  systems will see behave differently, and what the plan does that the
+  item did not ask for.
+
+Your decisions at each gate are in the audit log, and each item's
+`status_since` says how long it has waited at its gate.
 
 ## Troubleshooting
 

@@ -138,6 +138,10 @@ type Run struct {
 	RunnerPicked bool            `json:"runner_picked,omitempty"`
 	PolicyRev    string          `json:"policy_rev,omitempty"`
 	Facts        json.RawMessage `json:"facts,omitempty"`
+	// Observed: what the run saw, recorded for later rules and analyses
+	// (observed.go): an implementation's change, a plan's size and impact.
+	// Read only by GetFull (GET /api/runs/{id}); lists leave it out.
+	Observed *Observed `json:"observed,omitempty"`
 	// ConfigRev: the workspace's effective config the claim named
 	// (internal/wsconfig; "" = the workspace is not managed, the worker
 	// uses its own file). The worker fetches exactly this revision and runs
@@ -398,6 +402,8 @@ type ReportInput struct {
 	// implement run's "fixed" / "not_fixed", a review's "addressed" /
 	// "still_open" (internal/findings).
 	FindingAnswers []findings.Answer `json:"finding_answers,omitempty"`
+	// Observed: what the run saw (observed.go); nil keeps what is stored.
+	Observed *Observed `json:"observed,omitempty"`
 	// FindingsListed: how many earlier findings the run's prompt listed
 	// for it to answer (0 when the worker could not read them). Absent
 	// from a worker that does not list them by name; only then does a

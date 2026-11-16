@@ -4,6 +4,44 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.40.0] — 2026-11-16
+
+### Added
+
+- `skopos worker check` and `skopos worker install` run the stage check
+  with the service's PATH, home folder and env file, and list what the
+  worker would hold back (a sandbox that cannot start, a command not on
+  the PATH, a push token the remote refuses) apart from the problems that
+  keep it from starting. Run as root for a worker that runs as another
+  user (`install --system` under sudo), it says to run the check as that
+  user instead; when the server's config could not be read, it says it
+  covered the worker's file only.
+- `skopos workspace config propose` reads a checkout of the repository and
+  proposes the workspace's kits, setup, checks and (on github.com) push
+  block, with the file each one comes from. `--save` adds only the fields
+  neither the workspace nor its groups set. It refuses a workspace with no
+  config on the server, whose fields still come from its workers' files,
+  unless `--manage` is given (import the files' fields first). It reads
+  the files git tracks, as a worker's clone holds them; examples,
+  fixtures, tests, documentation sites and hidden folders are not read as
+  the repository's project.
+- A `mago` kit (the mago PHP linter); a repository with `mago.toml` is
+  proposed it. Its check is left to you.
+
+### Changed
+
+- **Needs you** is one queue across every workspace the key reaches,
+  whichever workspace is picked, and so is its count. It lists the longest
+  wait first; each row says what it waits for and since when ("Sign-off ·
+  waiting 3h") and has a button for the next step. Items carry
+  `status_since`, when they entered their status.
+- Runs record what they observed (`observed`), for rules and analyses to
+  come; nothing decides on it yet. An implementation or a branch review
+  records its change: each file with its git status and line counts. A
+  plan records its size, its step count and the impact the planner now
+  declares: irreversible steps, changes of behaviour, and work the item
+  did not ask for.
+
 ## [0.39.2] — 2026-11-16
 
 ### Changed

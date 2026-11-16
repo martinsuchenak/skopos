@@ -5286,6 +5286,35 @@ components:
         runner_picked: { type: boolean, description: "The server chose the runner of a run nothing pinned (a requeue clears the choice)" }
         policy_rev: { type: string, description: "The effective policy the claim decided with (EffectivePolicy.rev); empty when none applied" }
         config_rev: { type: string, description: "The workspace's effective config the claim named (EffectiveConfig.rev): the worker fetches it and runs under exactly that one. Empty when the server does not manage the workspace" }
+        observed:
+          type: object
+          description: "Only on GET /api/runs/{id}; lists leave it out. What the run saw, recorded for later rules and analyses and decided on by nothing: an implementation's or branch review's change (each file with git's status letter and line counts, -1 for a binary file; past 1000 files only counted), a plan's size, step count and the impact the planner declares"
+          properties:
+            change:
+              type: object
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      path: { type: string }
+                      status: { type: string, description: "A, M, D, R, C or T" }
+                      added: { type: integer }
+                      removed: { type: integer }
+                      from: { type: string, description: "A rename's or copy's source" }
+                truncated: { type: integer }
+                added: { type: integer }
+                removed: { type: integer }
+                commits: { type: integer }
+            plan:
+              type: object
+              properties:
+                size: { type: string }
+                steps: { type: integer }
+                irreversible: { type: array, items: { type: string }, description: "Steps whose effect reverting the commit does not undo" }
+                behaviour_change: { type: array, items: { type: string }, description: "What users or other systems will see behave differently" }
+                outside_brief: { type: array, items: { type: string }, description: "What the plan does that the item did not ask for" }
         facts:
           type: object
           description: "What the claiming worker reported about the runner (RunnerFacts fields) and the executor it reported for the run's workspace, stage and runner, plus policy (the layers' revisions, in order), rules (per layer, the index of the rule that allowed it) and picked"
@@ -6029,6 +6058,7 @@ components:
         template: { type: string, description: "The template the item was started from" }
         template_rev: { type: string, description: "The template's revision it was started from" }
         start_error: { type: string, description: "On a create with start: why the item was created but not started" }
+        status_since: { type: string, format: date-time, description: "When the item entered its status: how long it has waited at a gate. status=needs_you lists the longest wait first" }
         plan_id: { type: string }
         plan:
           type: object

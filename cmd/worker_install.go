@@ -72,19 +72,27 @@ func workerCheckCmd() *cli.Command {
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			cfgPath := configFileFor(cmd)
 			home, _ := os.UserHomeDir()
-			problems, err := runWorkerChecks(cfgPath, defaultWorkerEnvFile(cfgPath, cmd.GetString("env-file")), os.Getenv("PATH"), home)
+			problems, held, notes, err := workerChecks(cfgPath, defaultWorkerEnvFile(cfgPath, cmd.GetString("env-file")), os.Getenv("PATH"), home, true)
 			if err != nil {
 				return err
 			}
-			if len(problems) == 0 {
-				fmt.Println("config OK — the worker can start")
-				return nil
+			for _, n := range notes {
+				fmt.Println("note: " + n)
 			}
-			fmt.Println("config not ready:")
-			for _, p := range problems {
-				fmt.Println("  - " + p)
+			if len(problems) > 0 {
+				fmt.Println("config not ready:")
+				for _, p := range problems {
+					fmt.Println("  - " + p)
+				}
+				printHeld(os.Stdout, held)
+				return fmt.Errorf("%d problem(s) — fix them before starting the worker", len(problems))
 			}
-			return fmt.Errorf("%d problem(s) — fix them before starting the worker", len(problems))
+			fmt.Println("config OK — the worker can start")
+			if len(held) > 0 {
+				printHeld(os.Stdout, held)
+				return fmt.Errorf("%d stage check(s) fail — the worker holds those runs back until they pass", len(held))
+			}
+			return nil
 		},
 	}
 }
@@ -196,9 +204,12 @@ func runWorkerInstall(out io.Writer, o installOptions) error {
 			checkHome = u.HomeDir
 		}
 	}
-	problems, err := runWorkerChecks(o.config, defaultWorkerEnvFile(o.config, serviceEnvFile), pathEnv, checkHome)
+	problems, held, checkNotes, err := workerChecks(o.config, defaultWorkerEnvFile(o.config, serviceEnvFile), pathEnv, checkHome, true)
 	if err != nil {
 		return err
+	}
+	for _, n := range checkNotes {
+		_, _ = fmt.Fprintln(out, "NOTE: "+n)
 	}
 
 	var actions []string
@@ -221,9 +232,11 @@ func runWorkerInstall(out io.Writer, o installOptions) error {
 		for _, p := range problems {
 			_, _ = fmt.Fprintln(out, "  - "+p)
 		}
+		printHeld(out, held)
 		_, _ = fmt.Fprint(out, "\nNOT STARTED — the service is written DISABLED (it will not start at login/boot either). Fix the above, verify with 'skopos worker check', then re-run 'skopos worker install' with the same flags. A previously running instance keeps running its old definition until then.\n")
 		return nil
 	}
+	printHeld(out, held)
 	restart := "systemctl --user restart " + o.label
 	if runtime.GOOS == "darwin" {
 		restart = "launchctl kickstart -k gui/" + strconv.Itoa(os.Getuid()) + "/" + o.label
@@ -317,6 +330,54 @@ var checkServerConfig = func(ctx context.Context, cfg *worker.Config, serverURL,
 // remain, an account exists, and the agent CLI is on PATH. It mirrors the
 // daemon's resolution order exactly.
 func runWorkerChecks(configPath, envFile, pathEnv, home string) ([]string, error) {
+	problems, _, _, err := workerChecks(configPath, envFile, pathEnv, home, false)
+	return problems, err
+}
+
+// configOwner is otherOwner (swapped in tests, which do not run as root).
+var configOwner = otherOwner
+
+// stageCheck runs the worker's stage check on the checked config (swapped in
+// tests: it starts bubblewrap and asks the remote about the push token).
+var stageCheck = func(ctx context.Context, cfg *worker.Config) (held, notes []string) { return cfg.StageCheck(ctx) }
+
+// workerChecks is runWorkerChecks plus, with stages, the stage check the
+// worker runs before it takes a workspace's runs: what it would hold back
+// (held). The worker starts with those and takes them up once they pass,
+// so they are not problems that keep the service from starting.
+//
+// notes say what the stage check could not cover. It does not run as root
+// for a worker that runs as another user (install --system under sudo): git
+// refuses that user's clone to root and bubblewrap may start for root where
+// it would not for the user, so the result would not be the worker's.
+func workerChecks(configPath, envFile, pathEnv, home string, stages bool) (problems, held, notes []string, err error) {
+	problems, ws, err := baseWorkerChecks(configPath, envFile, pathEnv, home)
+	if err != nil || ws == nil || !stages {
+		return problems, nil, nil, err
+	}
+	if uid, other := configOwner(configPath); other {
+		name := strconv.Itoa(uid)
+		if u, uerr := user.LookupId(name); uerr == nil {
+			name = u.Username
+		}
+		return problems, nil, []string{fmt.Sprintf("the stage check did not run: it would run as root, and the worker runs as %s. Run it as that user: sudo -u %s skopos worker check --config %s", name, name, configPath)}, nil
+	}
+	restore := isolateEnv(map[string]string{"PATH": pathEnv, "HOME": home})
+	defer restore()
+	if envFile != "" {
+		if _, _, err := loadWorkerEnvFile(envFile); err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	held, notes = stageCheck(ctx, ws)
+	return problems, held, notes, nil
+}
+
+// baseWorkerChecks is runWorkerChecks; it also hands back the checked
+// config (nil without a [worker] section).
+func baseWorkerChecks(configPath, envFile, pathEnv, home string) ([]string, *worker.Config, error) {
 	// Check in the environment the SERVICE gets — PATH, HOME and the env
 	// file — never the installer's shell: an exported SKOPOS_API_KEY (normal
 	// for anyone using skopos in remote mode) made the check pass while the
@@ -328,7 +389,7 @@ func runWorkerChecks(configPath, envFile, pathEnv, home string) ([]string, error
 	if envFile != "" {
 		keys, _, err := loadWorkerEnvFile(envFile)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		fileKeys = keys
 	}
@@ -340,7 +401,7 @@ func runWorkerChecks(configPath, envFile, pathEnv, home string) ([]string, error
 		Worker *worker.Config
 	}
 	if _, err := toml.DecodeFile(configPath, &file); err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", configPath, err)
+		return nil, nil, fmt.Errorf("parsing %s: %w", configPath, err)
 	}
 	var problems []string
 
@@ -375,7 +436,7 @@ func runWorkerChecks(configPath, envFile, pathEnv, home string) ([]string, error
 
 	ws := file.Worker
 	if ws == nil {
-		return append(problems, "no [worker] section — run 'skopos worker init'"), nil
+		return append(problems, "no [worker] section — run 'skopos worker init'"), nil, nil
 	}
 	if err := ws.Default(home); err != nil {
 		problems = append(problems, err.Error())
@@ -481,7 +542,18 @@ func runWorkerChecks(configPath, envFile, pathEnv, home string) ([]string, error
 			checkWrapper("repo "+id+" stage "+stage, p)
 		}
 	}
-	return problems, nil
+	return problems, ws, nil
+}
+
+// printHeld lists what the stage check would hold back.
+func printHeld(out io.Writer, held []string) {
+	if len(held) == 0 {
+		return
+	}
+	_, _ = fmt.Fprint(out, "\nThe worker holds these back until they pass (it checks again every 2 minutes; a change under [worker] needs a restart):\n")
+	for _, h := range held {
+		_, _ = fmt.Fprintln(out, "  - "+h)
+	}
 }
 
 // isolateEnv replaces the process environment with exactly vars and returns

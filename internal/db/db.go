@@ -322,6 +322,37 @@ func RunMigrations(db *sql.DB) error {
 	if err := normalizeTimestamps(db); err != nil {
 		return err
 	}
+	// runs.observed: what a run saw (internal/runs/observed.go), JSON.
+	if err := ensureColumn(db, "runs", "observed", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	// inbox_items.status_since_ms: when the item entered its status (Unix
+	// ms). Triggers keep it on every write path, so no status change can
+	// miss it. A row from before starts at its newest status change the
+	// event feed still holds (updated_at moves with every edit, so it would
+	// make a long wait look short), else at its updated_at.
+	if err := ensureColumn(db, "inbox_items", "status_since_ms", "INTEGER"); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`
+WITH changed AS MATERIALIZED (
+  SELECT item_id, MAX(occurred_ms) AS ms FROM integration_events
+  WHERE type IN ('item.status_changed', 'item.created') AND item_id <> '' GROUP BY item_id
+)
+UPDATE inbox_items SET status_since_ms = COALESCE(
+  (SELECT ms FROM changed WHERE changed.item_id = inbox_items.id),
+  CAST((julianday(updated_at) - 2440587.5) * 86400000 AS INTEGER))
+WHERE status_since_ms IS NULL;
+CREATE TRIGGER IF NOT EXISTS inbox_status_since_insert AFTER INSERT ON inbox_items WHEN NEW.status_since_ms IS NULL
+BEGIN
+  UPDATE inbox_items SET status_since_ms = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) WHERE id = NEW.id;
+END;
+CREATE TRIGGER IF NOT EXISTS inbox_status_since_update AFTER UPDATE OF status ON inbox_items WHEN NEW.status IS NOT OLD.status
+BEGIN
+  UPDATE inbox_items SET status_since_ms = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) WHERE id = NEW.id;
+END;`); err != nil {
+		return fmt.Errorf("keeping inbox_items.status_since_ms: %w", err)
+	}
 	// After the column exists (schema.sql runs before ensureColumn).
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_runs_group ON runs(group_id) WHERE group_id IS NOT NULL`); err != nil {
 		return fmt.Errorf("indexing runs.group_id: %w", err)

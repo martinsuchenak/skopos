@@ -1201,6 +1201,19 @@ func (s *Service) Get(ctx context.Context, id string) (*Run, error) {
 	return r, nil
 }
 
+// GetFull is Get with what the run observed (Run.Observed), which lists
+// and other reads leave out: GET /api/runs/{id}.
+func (s *Service) GetFull(ctx context.Context, id string) (*Run, error) {
+	r, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if r.Observed, err = s.storage.Observed(ctx, r.ID); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
 func (s *Service) List(ctx context.Context, status Status, itemID string) ([]Run, error) {
 	if auth.ScopedContext(ctx) {
 		// Scoped keys see their slice: filter after read (runs are few).

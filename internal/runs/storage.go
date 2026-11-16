@@ -537,6 +537,27 @@ func (s *Storage) Get(ctx context.Context, id string) (*Run, error) {
 	return scanRun(row)
 }
 
+// Observed reads what a run observed (observed.go). Not part of
+// runColumns: an implementation's change lists up to 1000 files, and runs
+// are listed and polled where nothing shows it.
+func (s *Storage) Observed(ctx context.Context, id string) (*Observed, error) {
+	var raw string
+	if err := s.db.QueryRowContext(ctx, `SELECT observed FROM runs WHERE id = ?`, id).Scan(&raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if raw == "" {
+		return nil, nil
+	}
+	var o Observed
+	if err := json.Unmarshal([]byte(raw), &o); err != nil {
+		return nil, nil
+	}
+	return &o, nil
+}
+
 // List returns runs filtered by status and/or item; newest first.
 func (s *Storage) List(ctx context.Context, status Status, itemID string) ([]Run, error) {
 	q := `SELECT ` + runColumns + ` FROM runs WHERE 1=1`
@@ -974,11 +995,13 @@ func (s *Storage) Report(ctx context.Context, id, workerID, keyID, tokenHash str
 			pr_url = CASE WHEN ? != '' THEN ? ELSE pr_url END,
 			setup = CASE WHEN ? != '' THEN ? ELSE setup END, fix_rounds = ?, phase = '', nothing_to_do = ?,
 			cost_usd = `+addCost+`, findings = COALESCE(?, findings), pushed = COALESCE(?, pushed),
+			observed = COALESCE(?, observed),
 			lease_expires_at = '', resume_after = '', updated_at = ?
 		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
 		string(in.Status), in.Summary, in.HeadSHA, in.HeadSHA, in.Diffstat, string(checks),
 		in.LogRef, in.Reason, in.Branch, in.Branch, in.BaseSHA, in.BaseSHA, in.Executor, in.Executor, in.Grants, in.Grants, in.PRURL, in.PRURL, setupJSON, setupJSON, in.FixRounds, boolInt(in.NothingToDo && in.Status == StatusSucceeded),
 		costArg(in.CostUSD), costArg(in.CostUSD), findingsJSON(in.Findings), boolArg(in.Pushed),
+		observedArg(in.Observed),
 		formatTime(now), id, workerID, keyID, tokenHash, string(StatusClaimed), string(StatusRunning), string(StatusPaused))
 	if err != nil {
 		return nil, fmt.Errorf("reporting run: %w", err)

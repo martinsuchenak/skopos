@@ -355,3 +355,74 @@ func TestSkoposToolsReachTheLeanToolset(t *testing.T) {
 		t.Fatal("implement marks its plan's steps")
 	}
 }
+
+// `skopos worker check` runs the same stage check by hand: it says what the
+// worker would hold back, reads a managed workspace's push from the server's
+// fields (checkRepos), keeps the token out, and creates no folder (it may
+// run as another user under sudo).
+func TestStageCheckByHand(t *testing.T) {
+	home := kitHome(t)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\nexec "+mustLook(t, "git")+" \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	refused := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, "Permission to acme/shop.git denied to someone.\n")
+	}))
+	t.Cleanup(refused.Close)
+	clone := t.TempDir()
+	for _, args := range [][]string{{"init", "-q", "-b", "main"}, {"-c", "user.email=a@b", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x"}} {
+		cmd := exec.Command(mustLook(t, "git"), args...)
+		cmd.Dir = clone
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+
+	c := executorConfig(t)
+	c.ServerCommands = true
+	c.Repos["bare"].Path = clone
+	serverStages(t, c, "bare", map[string]*wsconfig.StageCaps{"implement": {Kits: []string{"bun"}}})
+	// The file sets no push; the server's merged fields do.
+	merged := *c.Repos["bare"]
+	merged.Push.Kind, merged.Push.RemoteURL, merged.Push.TokenEnv = "github", refused.URL+"/acme/shop.git", "SHOP_PUSH_TOKEN"
+	c.checkRepos = map[string]*Repo{"bare": &merged}
+	t.Setenv("SHOP_PUSH_TOKEN", "tok-1234567890")
+	c.SetEnvFileKeys([]string{"SHOP_PUSH_TOKEN"})
+
+	held, notes := c.StageCheck(context.Background())
+	if len(notes) != 0 {
+		t.Fatalf("nothing was left unread: %v", notes)
+	}
+	joined := strings.Join(held, "\n")
+	for _, want := range []string{"workspace bare, stage implement: ", "not on the PATH runs get: bun", "workspace bare, implement (push): the remote refuses the push token (SHOP_PUSH_TOKEN)"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("held %q lacks %q", joined, want)
+		}
+	}
+	if strings.Contains(joined, "tok-1234567890") {
+		t.Fatalf("the token shows: %q", joined)
+	}
+	if strings.Contains(joined, "stage plan") {
+		t.Fatalf("plan needs nothing here: %q", joined)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".bun/install/cache")); err == nil {
+		t.Fatal("a check by hand creates no folder")
+	}
+	if c.checkBad != nil {
+		t.Fatal("a check by hand holds nothing back in this config")
+	}
+
+	// A server whose config could not be read: the check says it covered
+	// the file only.
+	c.serverUnread = map[string]bool{"bare": true}
+	if _, notes = c.StageCheck(context.Background()); len(notes) != 1 || !strings.Contains(notes[0], "workspace bare: its config on the server could not be read") {
+		t.Fatalf("notes: %v", notes)
+	}
+	c.serverUnread = map[string]bool{"*": true}
+	if _, notes = c.StageCheck(context.Background()); len(notes) != 1 || !strings.Contains(notes[0], "this file's settings only") {
+		t.Fatalf("notes: %v", notes)
+	}
+}

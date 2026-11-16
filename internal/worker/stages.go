@@ -245,6 +245,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	log.Info("plan ready", "plan", planID, "revision", rev.ID, "steps", len(pr.Steps), "cost_usd", res.CostUSD)
 	return w.report(ctx, run, true, map[string]any{
 		"summary": "plan ready: " + pr.Summary, "branch": branch, "base_sha": baseSHA,
+		"observed": planObserved(pr),
 	})
 }
 
@@ -363,6 +364,7 @@ func (w *Worker) submitCandidate(ctx context.Context, run *Run, item *Item, pr p
 	log.Info("candidate ready", "plan", planID, "revision", rev.ID, "label", label, "steps", len(pr.Steps), "cost_usd", res.CostUSD)
 	return w.report(ctx, run, true, map[string]any{
 		"summary": "candidate ready: " + pr.Summary, "branch": branch, "base_sha": baseSHA,
+		"observed": planObserved(pr),
 	})
 }
 
@@ -716,6 +718,9 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		"summary": summary, "head_sha": head, "branch": branch,
 		"diffstat": diffStat(ctx, worktree, baseRef), "checks": checks,
 		"pushed": repo.Push.Kind != "none", "pr_url": rec.PRURL, "setup": setup, "fix_rounds": rounds,
+	}
+	if c := changeFacts(ctx, worktree, baseRef); c != nil {
+		fields["observed"] = map[string]any{"change": c}
 	}
 	if rec.ImplementedRun == run.ID && len(rec.FindingAnswers) > 0 {
 		fields["finding_answers"] = rec.FindingAnswers
@@ -1225,7 +1230,7 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 		return w.report(ctx, run, true, map[string]any{
 			"summary": rr.Summary, "findings": rr.Findings, "verdict": rr.Verdict, "finding_answers": answers, "findings_listed": len(recheck),
 			"head_sha": br.Head, "branch": run.Branch, "checks": br.Checks, "setup": br.Setup,
-			"diffstat": diffStat(ctx, wt, base),
+			"diffstat": diffStat(ctx, wt, base), "observed": map[string]any{"change": changeFacts(ctx, wt, base)},
 		})
 	}
 	passed := rr.Verdict == "pass"
@@ -1359,6 +1364,9 @@ type planResult struct {
 	Steps       []Step              `json:"steps"`
 	Risks       []string            `json:"risks"`
 	Questions   []itemtext.Question `json:"questions"`
+	// Impact: what the planner declares about the plan (observed.go);
+	// recorded with the run, not shown or decided on yet.
+	Impact planImpact `json:"impact"`
 }
 
 type implResult struct {
