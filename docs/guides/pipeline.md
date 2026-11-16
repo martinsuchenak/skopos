@@ -359,6 +359,31 @@ Markdown, as does `skopos inbox plans --id <item>`.
 The approval binds to that revision. If the planner wrote a newer one
 meanwhile, the server refuses and the preview reloads with the current plan.
 
+#### Approve the plan automatically
+
+For work that rarely needs your input after the plan, such as a dependency
+update, an item can have its plan approved by the server. The branch still
+comes to you at sign-off.
+
+- **Switch it on:** tick "Approve the plan when it has no questions" in the
+  item form, add `#auto` to a Slack capture or reply `auto: on` in the
+  item's thread, `skopos inbox add --auto-approve`, `skopos inbox update
+  --id <item> --auto-approve on|off`, or `auto_approve_plan` in the API.
+  Only an approver switches it, and the change is audited.
+- **When it applies:** when the plan run finishes and all of these hold:
+  - the planner asked no question;
+  - the round has one plan, not a panel's candidates to choose from;
+  - the plan is not a re-plan you asked for with Request changes.
+- **What happens:** the plan is approved as "auto (set by <you>)", via
+  `auto`, and the implementation starts. Slack says so with the plan's
+  steps, and the preview shows the approval. You can still reject the item
+  while it is being implemented.
+- **When something holds it:** the item waits at the gate as usual, and
+  the gate message says why ("Not approved automatically: the planner
+  asked 1 question"). The hold is recorded in the item's timeline as
+  `inbox.auto_approve_held`, and the item report lists it.
+- An amendment from the implementer always comes back to you.
+
 **What the agents read.** The item keeps its whole history: every plan, your
 notes, the answers and the reviews, in the order they happened. The agents
 get your own text, the planner's questions with your answers, and only the
@@ -555,11 +580,14 @@ the current plan and asks again. You reply with:
 - `panel`, `solo` or `default` to switch the item's agents (applied at once,
   even mid-run; it takes effect from the next stage);
 - `needs: stock` to have only a worker with that label work on the item
-  (`needs: -` clears it, `needs` shows it).
+  (`needs: -` clears it, `needs` shows it);
+- `auto: on` or `auto: off` for the item's automatic plan approval (`auto`
+  shows it).
 
 Start an item with `new: …`, or `new <workspace>: …` for another repo; add
-`#panel` or `#solo` to choose its agents, and a line `needs: stock` below
-it for a worker with that label. See
+`#panel` or `#solo` to choose its agents, `#auto` to approve its plan
+automatically, and a line `needs: stock` below it for a worker with that
+label. See
 [Slack relay](../configuration.md#slack-relay-server).
 
 ## 8. Scale out

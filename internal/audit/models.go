@@ -59,4 +59,7 @@ const (
 	// workspace config import).
 	ViaApply  = "apply"
 	ViaImport = "import"
+	// ViaAuto: a plan approved automatically (an item's auto_approve_plan);
+	// only the server's own approver principal records it.
+	ViaAuto = "auto"
 )

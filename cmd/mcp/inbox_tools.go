@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/audit"
@@ -75,23 +76,25 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 			mcplib.String("author_agent_id", "Identifier of the capturing agent", mcplib.Required()),
 			mcplib.String("agents", "Multi-agent stages for this item: panel (the repository's configured agents), solo (one agent), or omit for the repository default"),
 			mcplib.String("needs", "Labels the item needs of its worker, comma-separated (e.g. \"stock\"): only a worker an operator gave all of them takes its runs. Omit for any worker."),
+			mcplib.Boolean("auto_approve_plan", "Approve the plan automatically when the planner asks no question; the branch still comes to the approver at sign-off. Needs the approver permission."),
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 			needs, _ := labels.Arg(req.StringOr("needs", ""))
 			item, err := service.CreateItem(ctx, inbox.CreateInput{
-				WorkspaceID:   req.StringOr("workspace_id", ""),
-				Title:         req.StringOr("title", ""),
-				Content:       req.StringOr("content", ""),
-				Tags:          req.StringSliceOr("tags", nil),
-				Priority:      req.IntOr("priority", 0),
-				AuthorAgentID: req.StringOr("author_agent_id", ""),
-				Agents:        req.StringOr("agents", ""),
-				Needs:         needs,
+				WorkspaceID:     req.StringOr("workspace_id", ""),
+				Title:           req.StringOr("title", ""),
+				Content:         req.StringOr("content", ""),
+				Tags:            req.StringSliceOr("tags", nil),
+				Priority:        req.IntOr("priority", 0),
+				AuthorAgentID:   req.StringOr("author_agent_id", ""),
+				Agents:          req.StringOr("agents", ""),
+				Needs:           needs,
+				AutoApprovePlan: toolBool(req, "auto_approve_plan"),
 			})
 			if err != nil {
 				return nil, toolError(err)
 			}
-			return mcplib.NewToolResponseJSON(map[string]any{"id": item.ID, "status": string(item.Status), "title": item.Title, "priority": item.Priority, "workspace_id": item.WorkspaceID, "agents": item.Agents, "needs": item.Needs}), nil
+			return mcplib.NewToolResponseJSON(map[string]any{"id": item.ID, "status": string(item.Status), "title": item.Title, "priority": item.Priority, "workspace_id": item.WorkspaceID, "agents": item.Agents, "needs": item.Needs, "auto_approve_plan": item.AutoApprovePlan}), nil
 		},
 	)
 
@@ -178,6 +181,10 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 			if len(item.Needs) > 0 {
 				out["needs"] = item.Needs
 			}
+			if item.AutoApprovePlan {
+				out["auto_approve_plan"] = true
+				out["auto_approve_by"] = item.AutoApproveBy
+			}
 			if item.PlanID != "" {
 				out["plan_id"] = item.PlanID
 				if item.Plan != nil {
@@ -199,6 +206,7 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 			mcplib.String("workspace_id", "File (or re-file) an unfiled/misfiled item into this workspace; open/in_progress items only. Omit to keep the current workspace."),
 			mcplib.String("agents", "Multi-agent stages for this item: panel, solo, or default (back to the repository default); omit to keep. Approver-only once the item is in the agent workflow."),
 			mcplib.String("needs", "Labels the item needs of its worker, comma-separated; \"-\" for any worker again; omit to keep. Approver-only once the item is in the agent workflow."),
+			mcplib.String("auto_approve_plan", "on: approve the plan automatically when the planner asks no question; off: the plan waits for the approver; omit to keep. Needs the approver permission."),
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 			input := inbox.UpdateInput{
@@ -228,6 +236,17 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 			// Absent leaves the needed labels unchanged; "-" clears them.
 			if needs, set := labels.Arg(req.StringOr("needs", "")); set {
 				input.Needs = &needs
+			}
+			switch v := strings.ToLower(strings.TrimSpace(req.StringOr("auto_approve_plan", ""))); v {
+			case "":
+			case "on", "true":
+				on := true
+				input.AutoApprovePlan = &on
+			case "off", "false":
+				off := false
+				input.AutoApprovePlan = &off
+			default:
+				return nil, toolError(fmt.Errorf("%w: auto_approve_plan is on or off, not %q", inbox.ErrInvalidInput, v))
 			}
 			if err := service.UpdateItem(ctx, req.StringOr("item_id", ""), input); err != nil {
 				return nil, toolError(err)
@@ -361,4 +380,10 @@ func coarseAge(t time.Time) string {
 	default:
 		return fmt.Sprintf("%dd", int(d.Hours()/24))
 	}
+}
+
+// toolBool reads a boolean parameter; absent or not a boolean = false.
+func toolBool(req *mcplib.ToolRequest, name string) bool {
+	v, err := req.Bool(name)
+	return err == nil && v
 }

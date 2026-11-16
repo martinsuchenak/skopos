@@ -278,7 +278,9 @@ func RunMigrations(db *sql.DB) error {
 	// the branch the item works on, its external reference for branch
 	// templates, and 'review' for a review-only item.
 	// external_url: the item's job in another system (integrations).
-	for _, col := range []string{"branch", "ref", "flow", "external_url"} {
+	// auto_approve_by: who switched the item's automatic plan approval on
+	// ('' = off).
+	for _, col := range []string{"branch", "ref", "flow", "external_url", "auto_approve_by"} {
 		if err := ensureColumn(db, "inbox_items", col, "TEXT NOT NULL DEFAULT ''"); err != nil {
 			return err
 		}

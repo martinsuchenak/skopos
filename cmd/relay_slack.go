@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/martinsuchenak/skopos/internal/approvals"
 	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/inbox"
@@ -164,7 +165,7 @@ func (r *slackRelay) needsWarning(ws string, needs []string) string {
 // #panel and #solo are the item's agents switch (captureAgents), not tags.
 func captureTags(text string) []string {
 	tags := []string{"slack-new"}
-	seen := map[string]bool{"slack-new": true, inbox.AgentsPanel: true, inbox.AgentsSolo: true}
+	seen := map[string]bool{"slack-new": true, inbox.AgentsPanel: true, inbox.AgentsSolo: true, autoTag: true}
 	for _, m := range reHashtag.FindAllStringSubmatch(strings.ToLower(text), -1) {
 		if !seen[m[1]] {
 			seen[m[1]] = true
@@ -184,6 +185,20 @@ func captureAgents(text string) string {
 		}
 	}
 	return agents
+}
+
+// autoTag: `#auto` in a capture approves the item's plan automatically when
+// the planner asks no question.
+const autoTag = "auto"
+
+// captureAuto reports `#auto` in a capture.
+func captureAuto(text string) bool {
+	for _, m := range reHashtag.FindAllStringSubmatch(strings.ToLower(text), -1) {
+		if m[1] == autoTag {
+			return true
+		}
+	}
+	return false
 }
 
 // agentsWord describes an agents switch for messages.
@@ -210,7 +225,8 @@ const slackHelp = "*skopos commands* — reply in an item's thread:\n" +
 	"• `findings` — the review findings, numbered; `changes 2,3: <notes>` / `retry 2: <answer>` send findings back to be fixed, `waive 2: <why>` accepts one\n" +
 	"• `panel` / `solo` / `default` — the item's plan, review and QA stages use the repository's agent panel, one agent, or the repository default (from the next stage)\n" +
 	"• `needs: <label>, <label>` — only a worker with these labels works on the item; `needs: -` clears it, `needs` shows it\n" +
-	"Top-level: `new: <what to do>` creates and queues an item; add `#panel` or `#solo` to choose its agents, and a line `needs: <label>` below it for a worker with that label."
+	"• `auto: on` / `auto: off` — approve the plan automatically when the planner asks no question (the branch still comes to you); `auto` shows it\n" +
+	"Top-level: `new: <what to do>` creates and queues an item; add `#panel` or `#solo` to choose its agents, `#auto` to approve its plan automatically, and a line `needs: <label>` below it for a worker with that label."
 
 // TopLevel handles threadless DMs: capture and help. ts is the approver's own
 // message — a created item's thread binds to it, so his next reply in that
@@ -249,11 +265,12 @@ func (r *slackRelay) TopLevel(ctx context.Context, text, ts string) bool {
 		// The title is the capture's first line: with a `needs:` line the
 		// capture has several.
 		WorkspaceID: ws, Title: truncate(firstLine(what), 80),
-		Content:       what + "\n\n_Created from Slack (`new:`), " + time.Now().UTC().Format("2006-01-02 15:04") + " UTC._",
-		Tags:          captureTags(what),
-		AuthorAgentID: "slack",
-		Agents:        captureAgents(what),
-		Needs:         needs,
+		Content:         what + "\n\n_Created from Slack (`new:`), " + time.Now().UTC().Format("2006-01-02 15:04") + " UTC._",
+		Tags:            captureTags(what),
+		AuthorAgentID:   "slack",
+		Agents:          captureAgents(what),
+		Needs:           needs,
+		AutoApprovePlan: captureAuto(what),
 	})
 	if err != nil {
 		r.post(ctx, "", "⚠️ Could not create the item: "+firstLine(err.Error()))
@@ -269,6 +286,9 @@ func (r *slackRelay) TopLevel(ctx context.Context, text, ts string) bool {
 	}
 	if len(item.Needs) > 0 {
 		agentsNote = " · needs " + needsWords(item.Needs) + agentsNote
+	}
+	if item.AutoApprovePlan {
+		agentsNote += " · plan approved automatically when it has no questions"
 	}
 	msg := "📥 Queued in `" + ws + "`" + agentsNote + " · planning starts within a minute. The plan will come back in this thread."
 	if warn := r.needsWarning(ws, item.Needs); warn != "" {
@@ -291,7 +311,7 @@ func (r *slackRelay) Apply(ctx context.Context, itemID, text string) bool {
 		// `findings`, `waive` and `needs` are ordinary words at the start
 		// of a sentence ("findings look fine", "needs a rebase first"): no
 		// hint for those.
-		if w := reWord.FindStringSubmatch(text); w != nil && isCommand(strings.ToLower(w[1])) && !isFindingCommand(strings.ToLower(w[1])) && strings.ToLower(w[1]) != "needs" {
+		if w := reWord.FindStringSubmatch(text); w != nil && isCommand(strings.ToLower(w[1])) && !isFindingCommand(strings.ToLower(w[1])) && !isSettingWord(strings.ToLower(w[1])) {
 			if item, err := r.inbox.GetItem(relayCtx(), itemID); err == nil {
 				word := strings.ToLower(w[1])
 				r.post(ctx, item.SlackThreadTS, "🤔 Not applied — a command is the bare word (`"+word+"`) or `"+word+": <notes>` on its own.")
@@ -316,9 +336,13 @@ func (r *slackRelay) Apply(ctx context.Context, itemID, text string) bool {
 	if isAgentsCommand(cmd) {
 		return r.setAgents(ctx, item, cmd)
 	}
-	// So are the labels the item needs of a worker.
+	// So are the labels the item needs of a worker, and the automatic plan
+	// approval.
 	if cmd == "needs" {
 		return r.setNeeds(ctx, item, arg)
+	}
+	if cmd == autoTag {
+		return r.setAuto(ctx, item, arg)
 	}
 	// Listing findings and waiving one are no workflow action either: they
 	// apply at once, whatever the item is doing.
@@ -619,6 +643,74 @@ func (r *slackRelay) setNeeds(ctx context.Context, item *inbox.Item, arg string)
 	return true
 }
 
+// isSettingWord: item settings whose word also starts ordinary sentences
+// ("needs a rebase", "auto deploy is down"): no syntax hint for those.
+func isSettingWord(w string) bool { return w == "needs" || w == autoTag }
+
+// setAuto applies an `auto: on|off` reply: the item's automatic plan
+// approval. The bare word shows it.
+func (r *slackRelay) setAuto(ctx context.Context, item *inbox.Item, arg string) bool {
+	thread := item.SlackThreadTS
+	if strings.TrimSpace(arg) == "" {
+		if item.AutoApprovePlan {
+			r.post(ctx, thread, "🤖 This item's plan is approved automatically when the planner asks no question (set by "+item.AutoApproveBy+"). `auto: off` stops it.")
+		} else {
+			r.post(ctx, thread, "🤖 This item's plan waits for you. `auto: on` approves it automatically when the planner asks no question.")
+		}
+		return true
+	}
+	on, err := onOff(arg)
+	if err != nil {
+		r.post(ctx, thread, "⚠️ Not applied: `auto: on` or `auto: off`.")
+		return true
+	}
+	if err := r.inbox.UpdateItem(relayCtx(), item.ID, inbox.UpdateInput{AutoApprovePlan: &on, Via: audit.ViaSlack}); err != nil {
+		r.post(ctx, thread, "⚠️ Not applied: "+truncate(err.Error(), 300))
+		return true
+	}
+	switch {
+	case !on:
+		r.post(ctx, thread, "🤖 This item's plan waits for you now.")
+	case item.Status == inbox.StatusAwaitingApproval:
+		r.post(ctx, thread, "🤖 Set. The plan waiting now is still yours to approve; the next one is approved automatically when it has no questions.")
+	default:
+		r.post(ctx, thread, "🤖 This item's plan is approved automatically when the planner asks no question. The branch still comes to you.")
+	}
+	return true
+}
+
+// postAutoApproved says that the server approved the item's plan: the plan
+// it approved, and that the implementation starts. False when the newest
+// plan approval is not an automatic one.
+func (r *slackRelay) postAutoApproved(ctx context.Context, itemID string) bool {
+	entries, err := r.inbox.Approvals(relayCtx(), itemID) // newest first
+	if err != nil {
+		return false
+	}
+	auto := false
+	for _, e := range entries {
+		if e.Gate == approvals.GatePlan {
+			auto = e.Via == audit.ViaAuto
+			break
+		}
+	}
+	if !auto {
+		return false
+	}
+	msg, _ := r.planReadyMessage(itemID)
+	if msg == "" {
+		return false
+	}
+	// The plan as the gate would have shown it, under its own heading and
+	// without the gate's replies.
+	msg = strings.Replace(msg, "🧭 *Plan ready*", "✅ *Plan approved automatically*", 1)
+	if i := strings.LastIndex(msg, "\n`approve`"); i >= 0 {
+		msg = msg[:i]
+	}
+	r.postInThread(ctx, itemID, msg+"\n\nThe planner asked no question, so the implementation starts now. The branch comes to you at sign-off. `reject` stops it.")
+	return true
+}
+
 // ItemForThread re-resolves a thread after a restart (the provider's
 // in-memory map is empty then; the binding persists on the item).
 func (r *slackRelay) ItemForThread(parent string) string {
@@ -636,6 +728,10 @@ func (r *slackRelay) ItemForThread(parent string) string {
 func (r *slackRelay) NotifyItem(ctx context.Context, itemID string, from, to inbox.Status) {
 	if to == inbox.StatusAwaitingApproval {
 		r.postPlanReady(ctx, itemID)
+		r.drain(ctx, itemID)
+		return
+	}
+	if to == inbox.StatusApproved && r.postAutoApproved(ctx, itemID) {
 		r.drain(ctx, itemID)
 		return
 	}
@@ -671,6 +767,11 @@ func (r *slackRelay) postPlanReady(ctx context.Context, itemID string) {
 	msg, shown := r.planReadyMessage(itemID)
 	if msg == "" {
 		return
+	}
+	// The item asked for its plan to be approved automatically, and
+	// something kept it for the person: say what.
+	if held := inbox.AutoApproveHeld(ctx); held != "" {
+		msg += "\n_Not approved automatically: " + held + "._"
 	}
 	if r.postInThread(ctx, itemID, msg) && len(shown) > 0 {
 		r.mu.Lock()
@@ -989,7 +1090,7 @@ func (r *slackRelay) drainAll(ctx context.Context) {
 // isCommand: the thread-reply vocabulary.
 func isCommand(w string) bool {
 	switch w {
-	case "approve", "approved", "lgtm", "revise", "changes", "done", "retry", "reject", "second", "answer", "waive", "findings", "needs":
+	case "approve", "approved", "lgtm", "revise", "changes", "done", "retry", "reject", "second", "answer", "waive", "findings", "needs", autoTag:
 		return true
 	}
 	return isAgentsCommand(w)

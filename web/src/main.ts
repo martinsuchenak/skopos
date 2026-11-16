@@ -27,7 +27,7 @@ type EntryForm = { scope: 'project' | 'branch' | 'session'; entry_type: 'finding
 type PlanForm = { name: string; description: string; branch_name: string };
 type ItemForm = { title: string; description: string; phase: string; depends_on: string };
 type InboxPlanSummary = { id: string; name: string; status: string };
-type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; agents?: string; branch?: string; ref?: string; external_url?: string; flow?: string; needs?: string[]; created_at: string; updated_at: string; excerpt?: string };
+type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; agents?: string; branch?: string; ref?: string; external_url?: string; flow?: string; needs?: string[]; auto_approve_plan?: boolean; auto_approve_by?: string; created_at: string; updated_at: string; excerpt?: string };
 // The detail view's content, cut server-side (internal/inbox/parts.go):
 // The author's text, then the pipeline's sections in rounds.
 type ItemQuestion = { text: string; options?: string[] };
@@ -145,7 +145,7 @@ type FindingGroupView = { key: string; id: string; title: string; hint: string; 
 type AuditEntry = { id: string; action: string; actor: string; via?: string; notes?: string; created_at: string };
 // wsLocked: a workflow item cannot move workspace (its runs, plan and
 // branch live there) — the server refuses it; the modal hides the picker.
-type InboxForm = { id: string; title: string; tags: string; workspace: string; agents: string; branch: string; ref: string; needs: string; wsLocked: boolean };
+type InboxForm = { id: string; title: string; tags: string; workspace: string; agents: string; branch: string; ref: string; needs: string; auto: boolean; wsLocked: boolean };
 
 const UI_AUTHOR = 'ui';
 type View = 'sessions' | 'blackboard' | 'plans' | 'inbox' | 'index' | 'keys' | 'workspaces' | 'workers' | 'webhooks';
@@ -4100,6 +4100,12 @@ const appState = () => ({
     await this.fetchWorkers();
   },
   // The labels an item needs of its worker: badge text and its explanation.
+  // The automatic plan approval: the badge's explanation.
+  autoTitle(it?: InboxItem | null): string {
+    if (!it || !it.auto_approve_plan) return '';
+    return 'The plan is approved automatically when the planner asks no question; the branch still comes to you at sign-off'
+      + (it.auto_approve_by ? '. Switched on by ' + it.auto_approve_by : '');
+  },
   needsLabel(it?: InboxItem | null): string {
     return it && it.needs && it.needs.length ? 'needs ' + it.needs.join(', ') : '';
   },
@@ -4389,7 +4395,7 @@ const appState = () => ({
     // explicitly (an inline field error, not a silent toast).
     this.inboxForm.workspace = this.activeWorkspace;
     this.inboxErrors = {};
-    this.inboxBaseline = { title: '', tags: '', content: '', workspace: this.activeWorkspace, agents: '', branch: '', ref: '', needs: '' };
+    this.inboxBaseline = { title: '', tags: '', content: '', workspace: this.activeWorkspace, agents: '', branch: '', ref: '', needs: '', auto: false };
     this.showInboxItemModal = true;
     this.syncInboxWsField();
     this.mountInboxEditor('');
@@ -4401,9 +4407,9 @@ const appState = () => ({
     const detail = (await res.json()) as InboxDetail;
     this.inboxForm = {
       id: detail.id, title: detail.title, tags: (detail.tags || []).join(', '), workspace: detail.workspace_id || '',
-      agents: detail.agents || '', branch: detail.branch || '', ref: detail.ref || '', needs: (detail.needs || []).join(', '), wsLocked: this.isWorkflowStatus(detail.status),
+      agents: detail.agents || '', branch: detail.branch || '', ref: detail.ref || '', needs: (detail.needs || []).join(', '), auto: !!detail.auto_approve_plan, wsLocked: this.isWorkflowStatus(detail.status),
     };
-    this.inboxBaseline = { title: detail.title, tags: this.inboxForm.tags, content: detail.content, workspace: detail.workspace_id || '', agents: detail.agents || '', branch: detail.branch || '', ref: detail.ref || '', needs: this.inboxForm.needs };
+    this.inboxBaseline = { title: detail.title, tags: this.inboxForm.tags, content: detail.content, workspace: detail.workspace_id || '', agents: detail.agents || '', branch: detail.branch || '', ref: detail.ref || '', needs: this.inboxForm.needs, auto: this.inboxForm.auto };
     this.inboxErrors = {};
     this.showInboxItemModal = true;
     this.syncInboxWsField();
@@ -4436,7 +4442,8 @@ const appState = () => ({
       || this.inboxForm.agents !== this.inboxBaseline.agents
       || this.inboxForm.branch !== this.inboxBaseline.branch
       || this.inboxForm.ref !== this.inboxBaseline.ref
-      || this.inboxForm.needs !== this.inboxBaseline.needs;
+      || this.inboxForm.needs !== this.inboxBaseline.needs
+      || this.inboxForm.auto !== this.inboxBaseline.auto;
   },
   // Per-item multi-agent switch: badge text and its explanation.
   agentsLabel(agents?: string): string {
@@ -4487,6 +4494,7 @@ const appState = () => ({
         if (f.branch.trim()) body.branch = f.branch.trim();
         if (f.ref.trim()) body.ref = f.ref.trim();
         if (labelList(f.needs).length) body.needs = labelList(f.needs);
+        if (f.auto) body.auto_approve_plan = true;
         // 'unfiled' (root-only option) captures without a workspace; the
         // server rejects it for scoped keys with an actionable error.
         if (f.workspace !== 'unfiled') body.workspace_id = f.workspace;
@@ -4507,6 +4515,7 @@ const appState = () => ({
         if (f.ref.trim() !== this.inboxBaseline.ref) body.ref = f.ref.trim();
         // Only a changed list is sent ([] = any worker again).
         if (labelList(f.needs).join(',') !== labelList(this.inboxBaseline.needs).join(',')) body.needs = labelList(f.needs);
+        if (f.auto !== this.inboxBaseline.auto) body.auto_approve_plan = f.auto;
         const res = await this.authFetch('/api/inbox/' + encodeURIComponent(f.id), { method: 'PATCH', body: JSON.stringify(body) });
         if (!await this.handleBad(res, 'Item not updated')) return;
         this.notify('Item updated', 'success');
@@ -5494,8 +5503,8 @@ function labelList(v: string): string[] {
   }
   return out.sort();
 }
-function emptyInboxForm(): InboxForm { return { id: '', title: '', tags: '', workspace: '', agents: '', branch: '', ref: '', needs: '', wsLocked: false }; }
-function emptyInboxBaseline() { return { title: '', tags: '', content: '', workspace: '', agents: '', branch: '', ref: '', needs: '' }; }
+function emptyInboxForm(): InboxForm { return { id: '', title: '', tags: '', workspace: '', agents: '', branch: '', ref: '', needs: '', auto: false, wsLocked: false }; }
+function emptyInboxBaseline() { return { title: '', tags: '', content: '', workspace: '', agents: '', branch: '', ref: '', needs: '', auto: false }; }
 
 Alpine.plugin(focus);
 // Register as a named component: the CSP Alpine build cannot resolve globals

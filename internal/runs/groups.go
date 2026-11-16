@@ -544,8 +544,17 @@ func (s *Service) openPlanGate(ctx context.Context, itemID, agent string) {
 	if s.itemTransition == nil {
 		return
 	}
-	_ = s.itemTransition(ctx, itemID, "planning", "", agent)
-	if err := s.itemTransition(ctx, itemID, "awaiting_approval", "", agent); err != nil {
-		slog.Warn("opening the plan gate", "item", itemID, "err", err)
+	open := func(ctx context.Context) {
+		_ = s.itemTransition(ctx, itemID, "planning", "", agent)
+		if err := s.itemTransition(ctx, itemID, "awaiting_approval", "", agent); err != nil {
+			slog.Warn("opening the plan gate", "item", itemID, "err", err)
+		}
 	}
+	// A panel's round is the person's to choose from: never approved for
+	// them, even on an item that asks for it.
+	if s.planHold != nil {
+		s.planHold(ctx, itemID, "the plans came from a panel of planners", open)
+		return
+	}
+	open(ctx)
 }

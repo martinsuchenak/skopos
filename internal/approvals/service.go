@@ -47,8 +47,11 @@ func (s *Service) Record(ctx context.Context, input RecordInput) (Entry, error) 
 	}
 	p := auth.PrincipalFromContext(ctx)
 	via := strings.TrimSpace(input.Via)
-	if via != "" && via != "slack" && via != "dashboard" && via != "cli" && via != "api" {
+	if via != "" && via != "slack" && via != "dashboard" && via != "cli" && via != "api" && via != "auto" {
 		via = "" // closed set (review fix 8); slack means an approver acted
+	}
+	if via == "auto" && (p == nil || p.AutoFor == "") {
+		via = "" // auto: only the server's automatic plan approval
 	}
 	if via == "slack" && p != nil && !p.Root && !p.Approver {
 		via = ""

@@ -60,6 +60,10 @@ Idempotency-Key: job-100235-create
 - `needs` (optional, e.g. `["stock"]`) names the
   [labels](../deployment/worker.md#worker-labels) the item needs of its
   worker: its runs go only to a worker with all of them.
+- `auto_approve_plan` (optional, `true`) approves the plan automatically
+  when the planner asks no question; the branch still waits for sign-off.
+  The key needs the approver permission. See
+  [Approve the plan automatically](pipeline.md#approve-the-plan-automatically).
 - The answer is `201` with the item. If it was created but couldn't start,
   it's open and `start_error` says why; `POST /api/inbox/{id}/queue` (or
   `/review`) starts it later.

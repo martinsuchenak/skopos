@@ -28,6 +28,9 @@ type Store interface {
 	SetNeeds(ctx context.Context, id string, needs []string, updatedAt time.Time) error
 	// SetFlow marks a review-only item ('review') or clears the mark.
 	SetFlow(ctx context.Context, id, flow string, updatedAt time.Time) error
+	// SetAutoApprove records who switched the automatic plan approval on
+	// ("" = off).
+	SetAutoApprove(ctx context.Context, id, by string, updatedAt time.Time) error
 	// ItemForSlackThread resolves an item by its Slack thread root.
 	ItemForSlackThread(ctx context.Context, ts string) (*Item, error)
 	ListItems(ctx context.Context, workspaceID, status, tag, query string) ([]Item, error)
@@ -117,7 +120,7 @@ func (s *Storage) RunInTx(ctx context.Context, fn func(Store) error) error {
 // they became, and a deleted plan leaves the summary NULL (dangling plan_id).
 const itemColumns = `
 	i.id, i.workspace_id, i.title, i.content, i.tags, i.status, i.priority,
-	i.claimed_by_agent_id, i.author_agent_id, i.plan_id, i.slack_thread_ts, i.agents, i.branch, i.ref, i.flow, i.external_url, i.needs, i.created_at, i.updated_at,
+	i.claimed_by_agent_id, i.author_agent_id, i.plan_id, i.slack_thread_ts, i.agents, i.branch, i.ref, i.flow, i.external_url, i.needs, i.auto_approve_by, i.created_at, i.updated_at,
 	p.name, p.status
 `
 
@@ -132,10 +135,10 @@ const itemOrder = ` ORDER BY (i.priority IS NULL) ASC, i.priority ASC, i.id DESC
 func (s *Storage) CreateItem(ctx context.Context, item Item) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO inbox_items
-		    (id, workspace_id, title, content, tags, status, priority, claimed_by_agent_id, author_agent_id, plan_id, agents, branch, ref, external_url, needs, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+		    (id, workspace_id, title, content, tags, status, priority, claimed_by_agent_id, author_agent_id, plan_id, agents, branch, ref, external_url, needs, auto_approve_by, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, item.ID, item.WorkspaceID, item.Title, item.Content, tagsJSON(item.Tags), string(item.Status),
-		nullableInt(item.Priority), nullableString(item.AuthorAgentID), nullableString(item.Agents), item.Branch, item.Ref, item.ExternalURL, labels.JSON(item.Needs), formatTime(item.CreatedAt), formatTime(item.UpdatedAt))
+		nullableInt(item.Priority), nullableString(item.AuthorAgentID), nullableString(item.Agents), item.Branch, item.Ref, item.ExternalURL, labels.JSON(item.Needs), item.AutoApproveBy, formatTime(item.CreatedAt), formatTime(item.UpdatedAt))
 	if err != nil {
 		return fmt.Errorf("inserting inbox item: %w", err)
 	}
@@ -171,6 +174,12 @@ func (s *Storage) SetExternalURL(ctx context.Context, id, externalURL string, up
 // SetNeeds records the labels the item needs of a worker (nil = none).
 func (s *Storage) SetNeeds(ctx context.Context, id string, needs []string, updatedAt time.Time) error {
 	return s.setColumns(ctx, id, `needs = ?`, updatedAt, labels.JSON(needs))
+}
+
+// SetAutoApprove records who switched the item's automatic plan approval
+// on ("" = off).
+func (s *Storage) SetAutoApprove(ctx context.Context, id, by string, updatedAt time.Time) error {
+	return s.setColumns(ctx, id, `auto_approve_by = ?`, updatedAt, by)
 }
 
 // SetFlow marks a review-only item ("review") or clears the mark ("").
@@ -584,7 +593,7 @@ func scanItem(row rowScanner) (Item, error) {
 	var tags, needs string
 	var createdAt, updatedAt string
 	if err := row.Scan(&item.ID, &workspace, &item.Title, &item.Content, &tags, &item.Status, &priority,
-		&claimedBy, &item.AuthorAgentID, &planID, &item.SlackThreadTS, &agents, &item.Branch, &item.Ref, &item.Flow, &item.ExternalURL, &needs, &createdAt, &updatedAt, &planName, &planStatus); err != nil {
+		&claimedBy, &item.AuthorAgentID, &planID, &item.SlackThreadTS, &agents, &item.Branch, &item.Ref, &item.Flow, &item.ExternalURL, &needs, &item.AutoApproveBy, &createdAt, &updatedAt, &planName, &planStatus); err != nil {
 		return item, fmt.Errorf("scanning inbox item: %w", err)
 	}
 	if workspace.Valid {
@@ -609,6 +618,7 @@ func scanItem(row rowScanner) (Item, error) {
 	}
 	item.Tags = parseTags(tags)
 	item.Needs = labels.Parse(needs)
+	item.AutoApprovePlan = item.AutoApproveBy != ""
 	item.CreatedAt = parseTime(createdAt)
 	item.UpdatedAt = parseTime(updatedAt)
 	return item, nil

@@ -45,6 +45,10 @@ type Principal struct {
 	// OnBehalfOf is the person a delegate key (or root) named for this
 	// request; the audit log and approvals record it beside the key.
 	OnBehalfOf string
+	// AutoFor marks the server approving a plan automatically for the
+	// person who switched an item's auto_approve_plan on (their actor
+	// rendering): the actor reads "auto (set by <AutoFor>)".
+	AutoFor string
 	// Capabilities limit the key's surfaces and areas (capabilities.go);
 	// nil = not capped (full access).
 	Capabilities map[string]struct{}
@@ -355,6 +359,8 @@ func Actor(ctx context.Context) (actor, keyID string) {
 	switch {
 	case p == nil:
 		return "system", ""
+	case p.AutoFor != "":
+		return "auto (set by " + p.AutoFor + ")", ""
 	case p.Root:
 		if p.OnBehalfOf != "" {
 			return p.OnBehalfOf + " (root)", ""

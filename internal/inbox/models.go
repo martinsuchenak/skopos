@@ -145,6 +145,11 @@ type Item struct {
 	// its runs, in every stage, go only to a worker an operator gave all of
 	// them. Empty = any worker serving the workspace.
 	Needs []string `json:"needs,omitempty"`
+	// AutoApprovePlan: a plan the planner wrote without a question is
+	// approved by the server (autoapprove.go); the branch still comes to
+	// the approver. AutoApproveBy is who switched it on.
+	AutoApprovePlan bool   `json:"auto_approve_plan,omitempty"`
+	AutoApproveBy   string `json:"auto_approve_by,omitempty"`
 	// Flow is "review" for a review-only item (the agent reviews an
 	// existing branch; nothing is planned or implemented), "" otherwise.
 	Flow      string    `json:"flow,omitempty"`
@@ -304,6 +309,9 @@ type CreateInput struct {
 	ExternalURL string `json:"external_url,omitempty"`
 	// Needs: see Item.
 	Needs []string `json:"needs,omitempty"`
+	// AutoApprovePlan approves the plan automatically when the planner
+	// asks no question (an approver only).
+	AutoApprovePlan bool `json:"auto_approve_plan,omitempty"`
 	// Start: "queue" (the pipeline) or "review" (review-only) starts the
 	// item right after creating it, as POST /api/inbox/{id}/queue or
 	// /review would (approver permission). Empty = the item stays open.
@@ -356,6 +364,8 @@ type UpdateInput struct {
 	ExternalURL *string `json:"external_url,omitempty"`
 	// Needs: nil = unchanged, an empty list = any worker again.
 	Needs *[]string `json:"needs,omitempty"`
+	// AutoApprovePlan: nil = unchanged (an approver only).
+	AutoApprovePlan *bool `json:"auto_approve_plan,omitempty"`
 	// Via labels the surface for the audit log of workflow-item edits
 	// (dashboard, slack, cli, mcp); the REST handler defaults it.
 	Via string `json:"via,omitempty"`

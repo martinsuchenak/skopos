@@ -38,6 +38,12 @@ type Service struct {
 	// itemTransition moves the inbox item (system edge) — wired to
 	// inbox.SystemTransition. Nil disables chaining (tests, partial wiring).
 	itemTransition func(ctx context.Context, itemID, to, reason, agentID string) error
+	// planGate opens the plan gate of a single plan (inbox.PlanGate: it
+	// approves the plan automatically when the item asks for it and
+	// nothing holds it) and planHold that of a panel round, which the
+	// server never approves for the person. Nil = open is called as is.
+	planGate func(ctx context.Context, itemID string, open func(context.Context))
+	planHold func(ctx context.Context, itemID, reason string, open func(context.Context))
 	// itemAppend writes a section into the item (a stage group's summary) —
 	// wired to inbox.AppendSection. Nil skips the summary.
 	itemAppend func(ctx context.Context, itemID, heading, body string) error
@@ -185,6 +191,12 @@ func (s *Service) SetItemAgents(fn func(ctx context.Context, itemID string) stri
 // SetItemAppend wires the inbox section-append callback (group summaries).
 func (s *Service) SetItemAppend(fn func(ctx context.Context, itemID, heading, body string) error) {
 	s.itemAppend = fn
+}
+
+// SetPlanGate wires the plan gate's openers (inbox.PlanGate and
+// inbox.HoldPlanGate).
+func (s *Service) SetPlanGate(gate func(ctx context.Context, itemID string, open func(context.Context)), hold func(ctx context.Context, itemID, reason string, open func(context.Context))) {
+	s.planGate, s.planHold = gate, hold
 }
 
 // SetItemTransition wires the inbox system-transition callback.
@@ -889,9 +901,20 @@ func (s *Service) chain(ctx context.Context, run *Run, in ReportInput) {
 			// walk is queued -> planning -> awaiting_approval. Trying the
 			// gate first keeps a false "move failed" note off a good run.
 			agent := "worker:" + run.WorkerID
-			if s.itemTransition(ctx, run.ItemID, "awaiting_approval", "", agent) != nil {
-				move("planning", "")
-				move("awaiting_approval", "")
+			open := func(ctx context.Context) {
+				if s.itemTransition(ctx, run.ItemID, "awaiting_approval", "", agent) == nil {
+					return
+				}
+				for _, to := range []string{"planning", "awaiting_approval"} {
+					if err := s.itemTransition(ctx, run.ItemID, to, "", agent); err != nil {
+						s.chainNote(ctx, run, "item move to "+to+" failed: "+err.Error())
+					}
+				}
+			}
+			if s.planGate != nil {
+				s.planGate(ctx, run.ItemID, open)
+			} else {
+				open(ctx)
 			}
 		case StageImplement, StageReview, StageQA:
 			s.advance(ctx, run, "worker:"+run.WorkerID)

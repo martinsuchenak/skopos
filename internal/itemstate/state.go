@@ -90,19 +90,22 @@ type State struct {
 }
 
 type ItemView struct {
-	ID          string    `json:"id"`
-	WorkspaceID string    `json:"workspace_id"`
-	Title       string    `json:"title"`
-	Ref         string    `json:"ref,omitempty"`
-	ExternalURL string    `json:"external_url,omitempty"`
-	Branch      string    `json:"branch,omitempty"`
-	Flow        string    `json:"flow,omitempty"`
-	Agents      string    `json:"agents,omitempty"`
-	Needs       []string  `json:"needs,omitempty"`
-	Status      string    `json:"status"`
-	PlanID      string    `json:"plan_id,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          string   `json:"id"`
+	WorkspaceID string   `json:"workspace_id"`
+	Title       string   `json:"title"`
+	Ref         string   `json:"ref,omitempty"`
+	ExternalURL string   `json:"external_url,omitempty"`
+	Branch      string   `json:"branch,omitempty"`
+	Flow        string   `json:"flow,omitempty"`
+	Agents      string   `json:"agents,omitempty"`
+	Needs       []string `json:"needs,omitempty"`
+	// AutoApprovePlan: the plan is approved by the server when the planner
+	// asks no question.
+	AutoApprovePlan bool      `json:"auto_approve_plan,omitempty"`
+	Status          string    `json:"status"`
+	PlanID          string    `json:"plan_id,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // PlanView: the revisions at the gate (the open candidates of the current
@@ -231,7 +234,7 @@ func (s *Service) Get(ctx context.Context, itemID string) (*State, error) {
 	st := &State{
 		Item: ItemView{
 			ID: item.ID, WorkspaceID: item.WorkspaceID, Title: item.Title, Ref: item.Ref, ExternalURL: item.ExternalURL,
-			Branch: item.Branch, Flow: item.Flow, Agents: item.Agents, Needs: item.Needs, Status: string(item.Status), PlanID: item.PlanID,
+			Branch: item.Branch, Flow: item.Flow, Agents: item.Agents, Needs: item.Needs, AutoApprovePlan: item.AutoApprovePlan, Status: string(item.Status), PlanID: item.PlanID,
 			CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
 		},
 		Brief:     strings.TrimSpace(brief),

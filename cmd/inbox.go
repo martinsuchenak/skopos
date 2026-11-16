@@ -81,6 +81,7 @@ func inboxAddCmd() *cli.Command {
 			&cli.BoolFlag{Name: "unfiled", Usage: "Capture without a workspace (decide later; root key only)"},
 			&cli.StringFlag{Name: "agents", Usage: "Multi-agent stages for this item: panel or solo (omit for the repository default)"},
 			&cli.StringFlag{Name: "needs", Usage: "Labels the item needs of its worker, comma-separated: only a worker with all of them takes its runs (skopos worker label)"},
+			&cli.BoolFlag{Name: "auto-approve", Usage: "Approve the item's plan automatically when the planner asks no question; the branch still comes to you at sign-off (approver only)"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			content, err := inboxContent(cmd.GetString("content"), cmd.GetString("file"))
@@ -93,14 +94,15 @@ func inboxAddCmd() *cli.Command {
 			}
 			needs, _ := labels.Arg(cmd.GetString("needs"))
 			item, err := inboxPost(ctx, cmd.GetString("server-url"), cmd.GetString("api-key"), inbox.CreateInput{
-				Title:         cmd.GetString("title"),
-				Content:       content,
-				Tags:          cmd.GetStringSlice("tag"),
-				Priority:      cmd.GetInt("priority"),
-				AuthorAgentID: cmd.GetString("agent-id"),
-				WorkspaceID:   ws,
-				Agents:        cmd.GetString("agents"),
-				Needs:         needs,
+				Title:           cmd.GetString("title"),
+				Content:         content,
+				Tags:            cmd.GetStringSlice("tag"),
+				Priority:        cmd.GetInt("priority"),
+				AuthorAgentID:   cmd.GetString("agent-id"),
+				WorkspaceID:     ws,
+				Agents:          cmd.GetString("agents"),
+				Needs:           needs,
+				AutoApprovePlan: cmd.GetBool("auto-approve"),
 			})
 			if err != nil {
 				return err
@@ -232,6 +234,7 @@ func inboxUpdateCmd() *cli.Command {
 			&cli.StringFlag{Name: "priority", Usage: "Set priority: a number >= 1, or 'clear' to unpin (smaller first; unprioritized items sort last)"},
 			&cli.StringFlag{Name: "agents", Usage: "Multi-agent stages for this item: panel, solo, or default (the repository default)"},
 			&cli.StringFlag{Name: "needs", Usage: "Labels the item needs of its worker, comma-separated; '-' for any worker again. Approver-only once the item is in the agent workflow"},
+			&cli.StringFlag{Name: "auto-approve", Usage: "on: approve the item's plan automatically when the planner asks no question; off: the plan waits for you (approver only)"},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			id := strings.TrimSpace(cmd.GetString("id"))
@@ -264,6 +267,13 @@ func inboxUpdateCmd() *cli.Command {
 			}
 			if needs, set := labels.Arg(cmd.GetString("needs")); set {
 				input.Needs = &needs
+			}
+			if v := strings.TrimSpace(cmd.GetString("auto-approve")); v != "" {
+				on, err := onOff(v)
+				if err != nil {
+					return fmt.Errorf("--auto-approve: %w", err)
+				}
+				input.AutoApprovePlan = &on
 			}
 			if err := inboxPatch(ctx, cmd.GetString("server-url"), cmd.GetString("api-key"), id, input); err != nil {
 				return err
@@ -740,4 +750,15 @@ func inboxDelete(ctx context.Context, serverURL, apiKey, id string) error {
 		return fmt.Errorf("%s", apiErrorMessage("deleting item", resp))
 	}
 	return nil
+}
+
+// onOff reads a switch given as on/off (or true/false, yes/no).
+func onOff(v string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "on", "true", "yes":
+		return true, nil
+	case "off", "false", "no":
+		return false, nil
+	}
+	return false, fmt.Errorf("on or off, not %q", v)
 }

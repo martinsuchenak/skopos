@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/findings"
 	"github.com/martinsuchenak/skopos/internal/qa"
 	"github.com/martinsuchenak/skopos/internal/runs"
@@ -284,7 +285,7 @@ func (d *doc) decisions(r *Report) {
 		d.w("The item has more decisions than a report reads; the oldest are not shown.\n\n")
 	}
 	for _, dec := range r.Decisions {
-		line := fmt.Sprintf("%s · %s by %s%s", stamp(dec.At), decisionWords(dec), dec.By, through(dec.Via))
+		line := stamp(dec.At) + " · " + decisionWords(dec) + decisionBy(dec)
 		if s := subjectWords(dec); s != "" {
 			line += ", " + s
 		}
@@ -303,7 +304,25 @@ func (d *doc) decisions(r *Report) {
 	d.w("\n")
 }
 
+// decisionBy names who decided: " by <actor> (<via>)"; for the server's
+// automatic approval, who switched it on.
+func decisionBy(d Decision) string {
+	switch {
+	case d.Action == ActionAutoHeld:
+		return ""
+	case d.Via == audit.ViaAuto:
+		if set := strings.TrimSuffix(strings.TrimPrefix(d.By, "auto (set by "), ")"); set != d.By {
+			return ", switched on by " + set
+		}
+		return ""
+	}
+	return " by " + d.By + through(d.Via)
+}
+
 func decisionWords(d Decision) string {
+	if d.Action == ActionApprove && d.Via == audit.ViaAuto {
+		return "Plan approved automatically"
+	}
 	switch d.Action {
 	case ActionQueue:
 		return "Started"
@@ -325,6 +344,8 @@ func decisionWords(d Decision) string {
 		return "Finding waived"
 	case ActionAnswer:
 		return "Questions answered"
+	case ActionAutoHeld:
+		return "Not approved automatically"
 	}
 	return words(d.Action)
 }

@@ -599,12 +599,16 @@ list, applied at once for `findings` and `waive`), and
 `panel` / `solo` / `default` (the item's [agents switch](#per-item-switch-panel-or-solo),
 applied at once, even mid-run), and `needs: <label>, <label>` (the
 [labels the item needs of a worker](deployment/worker.md#worker-labels),
-applied at once; `needs: -` clears them, `needs` alone shows them). A command is
+applied at once; `needs: -` clears them, `needs` alone shows them), and
+`auto: on` / `auto: off` (the item's
+[automatic plan approval](guides/pipeline.md#approve-the-plan-automatically);
+`auto` alone shows it). A command is
 the bare word or `word: <text>` on its own — "done with lunch" is not `done`
 (a reply that leads with a command word gets a syntax hint instead).
 Top-level: `new: <what to do>` or `new <workspace>: <what>` (exact id or a
 unique `/suffix`), `help`; `#panel` or `#solo` in a capture sets the item's
-agents switch (other hashtags become tags). A line `needs: <label>, <label>`
+agents switch and `#auto` approves its plan automatically when the planner
+asks no question (other hashtags become tags). A line `needs: <label>, <label>`
 below the capture's first line sets the labels the item needs of a worker:
 the line is taken out of the item's text, a list that is not valid creates
 nothing, and the confirmation warns when no worker serving the workspace

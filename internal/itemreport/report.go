@@ -205,6 +205,10 @@ const (
 	ActionSecondOpinion = "second_opinion"  // asked another runner for an opinion
 	ActionWaive         = "finding_waive"   // accepted a finding as it is
 	ActionAnswer        = "answer"          // answered questions without moving the item
+	// ActionAutoHeld: the item asked for its plan to be approved
+	// automatically and something kept it for the person (the notes say
+	// what). Recorded by the server, not a person's action.
+	ActionAutoHeld = "auto_approve_held"
 )
 
 // Decision is something a person decided on the item.
@@ -455,6 +459,7 @@ var personActions = map[string]string{
 	"inbox.request_changes": ActionRequestChange, "inbox.retry": ActionRetry, "inbox.reject": ActionReject,
 	"inbox.mark_done": ActionMarkDone, "inbox.second_opinion": ActionSecondOpinion,
 	"inbox.finding_waive": ActionWaive, "inbox.answer": ActionAnswer,
+	"inbox.auto_approve_held": ActionAutoHeld,
 }
 
 // subjectWindow is how far apart an action's audit entry and its approval

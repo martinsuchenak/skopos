@@ -124,6 +124,12 @@ func (s *Service) emitStatus(ctx context.Context, tx Store, item *Item, to Statu
 	gate := ""
 	switch to {
 	case StatusAwaitingApproval:
+		// A gate the server approves at once waits for nobody: no
+		// plan.ready and no needs_you (gateEvents sends them if the
+		// approval fails).
+		if quietGate(ctx) {
+			break
+		}
 		gate = "plan_approval"
 		evs = append(evs, integrations.Event{Type: integrations.TypePlanReady, ItemID: item.ID, Data: map[string]any{"plan_id": item.PlanID}})
 	case StatusInReview:
@@ -213,6 +219,14 @@ func (s *Service) CreateItem(ctx context.Context, input CreateInput) (*Item, err
 	if err != nil {
 		return nil, err
 	}
+	// Approving a plan automatically hands over the approver's gate.
+	autoBy := ""
+	if input.AutoApprovePlan {
+		if err := auth.RequireApprover(ctx); err != nil {
+			return nil, fmt.Errorf("%w: approving the plan automatically", err)
+		}
+		autoBy, _ = auth.Actor(ctx)
+	}
 	start := strings.ToLower(strings.TrimSpace(input.Start))
 	switch start {
 	case "":
@@ -246,9 +260,11 @@ func (s *Service) CreateItem(ctx context.Context, input CreateInput) (*Item, err
 		Ref:           ref,
 		ExternalURL:   externalURL,
 		Needs:         needs,
+		AutoApproveBy: autoBy,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
+	item.AutoApprovePlan = autoBy != ""
 	err = s.store.RunInTx(ctx, func(tx Store) error {
 		if err := tx.CreateItem(ctx, item); err != nil {
 			return err
@@ -490,6 +506,7 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 	var item *Item
 	var changed []string
 	appended := "" // what an append-only content edit added
+	autoEdit := false
 	err := s.store.RunInTx(ctx, func(tx Store) error {
 		var err error
 		item, err = tx.GetItem(ctx, itemID)
@@ -540,6 +557,25 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 		needsChanged := input.Needs != nil && !slices.Equal(*input.Needs, item.Needs)
 		if needsChanged {
 			changed = append(changed, "needs")
+		}
+		// The automatic plan approval hands over the approver's gate: an
+		// approver's call on every item, in the workflow or not.
+		autoChanged := input.AutoApprovePlan != nil && *input.AutoApprovePlan != item.AutoApprovePlan
+		if autoChanged {
+			autoEdit = true
+			if approverErr != nil {
+				return fmt.Errorf("%w: approving the plan automatically", approverErr)
+			}
+			by := ""
+			if *input.AutoApprovePlan {
+				by, _ = auth.Actor(ctx)
+				changed = append(changed, "auto_approve_plan (on)")
+			} else {
+				changed = append(changed, "auto_approve_plan (off)")
+			}
+			if err := tx.SetAutoApprove(ctx, itemID, by, s.now().UTC()); err != nil {
+				return err
+			}
 		}
 		if IsWorkflowStatus(item.Status) {
 			if workspace != item.WorkspaceID {
@@ -595,7 +631,9 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 		return err
 	}
 	s.publishItem(ctx, itemID)
-	if IsWorkflowStatus(item.Status) && len(changed) > 0 {
+	// A change of the automatic plan approval is audited on any item: it
+	// is who handed over the gate.
+	if (IsWorkflowStatus(item.Status) || autoEdit) && len(changed) > 0 {
 		s.auditItem(ctx, itemID, "inbox.edit", input.Via, "edited "+strings.Join(changed, ", "), "")
 	}
 	// An older worker appends its questions by editing the item instead of

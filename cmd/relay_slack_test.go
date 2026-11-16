@@ -15,6 +15,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/db"
 	"github.com/martinsuchenak/skopos/internal/findings"
 	"github.com/martinsuchenak/skopos/internal/inbox"
+	"github.com/martinsuchenak/skopos/internal/itemtext"
 	"github.com/martinsuchenak/skopos/internal/notify"
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/qa"
@@ -104,6 +105,7 @@ func relayStack(t *testing.T) (*inbox.Service, *runs.Service, *plans.Service, *f
 	findingsSvc := findings.NewService(findings.NewStorage(sqlDB))
 	runsSvc.SetFindings(findingsSvc)
 	inboxSvc.SetFindingLog(findingsSvc)
+	runsSvc.SetPlanGate(inboxSvc.PlanGate, inboxSvc.HoldPlanGate)
 	runsSvc.SetItemTransition(func(ctx context.Context, itemID, to, reason, agentID string) error {
 		_, err := inboxSvc.SystemTransition(ctx, itemID, inbox.Status(to), reason, agentID, audit.ViaWorker)
 		return err
@@ -944,5 +946,141 @@ func TestRelayNeeds(t *testing.T) {
 	}
 	if !strings.Contains(slackHelp, "`needs: <label>") {
 		t.Fatal("help names the needs reply")
+	}
+}
+
+// `#auto` in a capture and `auto: on|off` in the thread switch the item's
+// automatic plan approval; a plan approved automatically is announced as
+// such (never as a gate waiting for the approver), and a held one says why.
+func TestRelayAutoApprove(t *testing.T) {
+	if !captureAuto("bump the deps #Auto") || captureAuto("auto mode") {
+		t.Fatal("captureAuto reads the hashtag only")
+	}
+	if tags := captureTags("bump #auto #php"); strings.Join(tags, ",") != "slack-new,php" {
+		t.Fatalf("#auto is not a tag: %v", tags)
+	}
+	svc, runsSvc, plansSvc, fake, relay := relayStack(t)
+	root := context.Background()
+	if !relay.TopLevel(root, "new: bump the dependencies #auto", "950.1") {
+		t.Fatal("capture must be handled")
+	}
+	items, err := svc.ListItems(root, "ws-a", "", "slack-new", "")
+	if err != nil || len(items) != 1 || !items[0].AutoApprovePlan {
+		t.Fatalf("captured with #auto: %+v %v", items, err)
+	}
+	if !strings.Contains(fake.last().text, "plan approved automatically when it has no questions") {
+		t.Fatalf("the confirmation says it: %q", fake.last().text)
+	}
+	id := items[0].ID
+
+	// The planner writes a plan without a question: approved, announced as
+	// approved, and the gate's "Plan ready" never posted.
+	sent := len(fake.texts())
+	workers := 0
+	planRun := func(itemID string, ask bool) {
+		t.Helper()
+		// A worker of its own per claim: another item's implementation may
+		// be queued first, and stays with the worker that took it.
+		var claimed *runs.Run
+		for range 4 {
+			workers++
+			c, err := runsSvc.ClaimNext(root, runs.ClaimInput{WorkerID: fmt.Sprintf("w%d", workers), Workspaces: []string{"ws-a"}})
+			if err != nil || c == nil {
+				t.Fatalf("plan run: %+v %v", c, err)
+			}
+			if c.ItemID == itemID && c.Stage == runs.StagePlan {
+				claimed = c
+				break
+			}
+		}
+		if claimed == nil {
+			t.Fatal("no plan run for the item")
+		}
+		cur, _ := svc.GetItem(root, itemID)
+		planID := cur.PlanID
+		if planID == "" {
+			plan, err := plansSvc.CreatePlan(root, plans.CreatePlanInput{WorkspaceID: "ws-a", Name: "p", AuthorAgentID: "w"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			planID = plan.ID
+			if _, err := plansSvc.AddItem(root, planID, plans.CreateItemInput{Title: "bump the router"}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := svc.LinkPlan(root, itemID, planID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := plansSvc.CreateRevision(root, planID, "base1"); err != nil {
+			t.Fatal(err)
+		}
+		if ask {
+			if _, err := relayQAs[svc].Ask(root, qa.AskInput{WorkspaceID: "ws-a", ItemID: itemID, RunID: claimed.ID, Asker: qa.AskerPlanner,
+				SubjectKind: "base", Subject: "base1", Questions: []itemtext.Question{{Text: "Take the new major?", Options: []string{"yes", "no"}}}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := runsSvc.Report(root, claimed.ID, runs.ReportInput{WorkerID: claimed.WorkerID, Status: runs.StatusSucceeded, Branch: "agent/deps"}, claimed.LeaseToken); err != nil {
+			t.Fatal(err)
+		}
+	}
+	planRun(id, false)
+	if got, _ := svc.GetItem(root, id); got.Status != inbox.StatusApproved {
+		t.Fatalf("approved automatically: %s", got.Status)
+	}
+	posted := strings.Join(fake.texts()[sent:], "\n---\n")
+	if !strings.Contains(posted, "✅ *Plan approved automatically*") || !strings.Contains(posted, "bump the router") ||
+		!strings.Contains(posted, "the implementation starts now") || strings.Contains(posted, "Plan ready") || strings.Contains(posted, "`approve`") {
+		t.Fatalf("announced as approved, never as a waiting gate:\n%s", posted)
+	}
+
+	// The thread switch: shown, off, refused word, on, and prose left alone.
+	other := mustRelayItem(t, svc, "another")
+	if err := svc.UpdateItem(approverCtx(), other.ID, inbox.UpdateInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if !relay.Apply(root, other.ID, "auto") || !strings.Contains(fake.last().text, "waits for you") {
+		t.Fatalf("auto shows it: %q", fake.last().text)
+	}
+	if !relay.Apply(root, other.ID, "auto: on") {
+		t.Fatal("auto: on must be handled")
+	}
+	if got, _ := svc.GetItem(root, other.ID); !got.AutoApprovePlan {
+		t.Fatal("auto: on switches it on")
+	}
+	if !relay.Apply(root, other.ID, "auto: maybe") || !strings.Contains(fake.last().text, "Not applied") {
+		t.Fatalf("a word that is not on or off: %q", fake.last().text)
+	}
+	if !relay.Apply(root, other.ID, "auto: off") || !strings.Contains(fake.last().text, "waits for you now") {
+		t.Fatalf("auto: off: %q", fake.last().text)
+	}
+	if got, _ := svc.GetItem(root, other.ID); got.AutoApprovePlan {
+		t.Fatal("auto: off switches it off")
+	}
+	before := len(fake.texts())
+	if relay.Apply(root, other.ID, "auto deploy is down") || len(fake.texts()) != before {
+		t.Fatal("a sentence that starts with auto is conversation")
+	}
+
+	// The planner asks: the gate is posted, and says why it was not
+	// approved automatically.
+	if !relay.TopLevel(root, "new: bump again #auto", "950.2") {
+		t.Fatal("capture must be handled")
+	}
+	all, _ := svc.ListItems(root, "ws-a", "", "slack-new", "")
+	asked := ""
+	for _, it := range all {
+		if it.Title == "bump again #auto" {
+			asked = it.ID
+		}
+	}
+	sent = len(fake.texts())
+	planRun(asked, true)
+	posted = strings.Join(fake.texts()[sent:], "\n---\n")
+	if !strings.Contains(posted, "🧭 *Plan ready*") || !strings.Contains(posted, "_Not approved automatically: the planner asked 1 question._") {
+		t.Fatalf("the gate says why it waits:\n%s", posted)
+	}
+	if !strings.Contains(slackHelp, "`auto: on`") || !strings.Contains(slackHelp, "`#auto`") {
+		t.Fatal("help names the switch")
 	}
 }

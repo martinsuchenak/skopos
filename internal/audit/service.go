@@ -75,7 +75,7 @@ func (s *Service) Record(ctx context.Context, input RecordInput) error {
 // reserved for internal callers and system for the server itself.
 func validVia(v string) bool {
 	switch v {
-	case ViaDashboard, ViaSlack, ViaCLI, ViaMCP, ViaAPI, ViaWorker, ViaSystem, ViaApply, ViaImport, "":
+	case ViaDashboard, ViaSlack, ViaCLI, ViaMCP, ViaAPI, ViaWorker, ViaSystem, ViaApply, ViaImport, ViaAuto, "":
 		return true
 	}
 	return false
@@ -85,7 +85,7 @@ func validVia(v string) bool {
 // log knows, else "api": what other records of a change (a revision's
 // metadata) keep.
 func CleanVia(via string) string {
-	if via = strings.TrimSpace(via); via != "" && via != ViaMigration && validVia(via) {
+	if via = strings.TrimSpace(via); via != "" && via != ViaMigration && via != ViaAuto && validVia(via) {
 		return via
 	}
 	return ViaAPI
@@ -107,6 +107,10 @@ func sanitizeVia(via string, p *auth.Principal) string {
 		return ""
 	}
 	if via == ViaSlack && p != nil && !p.Root && !p.Approver {
+		return ""
+	}
+	// auto names the server's automatic plan approval; nobody else claims it.
+	if via == ViaAuto && (p == nil || p.AutoFor == "") {
 		return ""
 	}
 	return via

@@ -2270,6 +2270,7 @@ paths:
                 ref: { type: string, description: "External reference (e.g. a ticket or job number) for the repository's branch template ({ref}); GET /api/inbox?ref= finds the item by it" }
                 external_url: { type: string, description: "https link to the item's job in another system" }
                 needs: { type: array, maxItems: 8, items: { type: string }, description: "Labels the item needs of its worker: its runs go only to a worker with all of them (PUT /api/workers/{id}/labels). Omit for any worker serving the workspace" }
+                auto_approve_plan: { type: boolean, description: "Approve the plan automatically when the planner asks no question, the round has one plan and it is not a re-plan the approver asked for; the branch still waits for sign-off. Needs the approver permission (403 otherwise)" }
                 start: { type: string, enum: [queue, review], description: "Start the item right after creating it: queue (the pipeline) or review (review-only; needs branch or ref). Needs the approver permission and workspace_id. A start that fails leaves the item open and sets start_error" }
       parameters:
         - { name: Idempotency-Key, in: header, schema: { type: string }, description: "Makes a retry safe (see the API description)" }
@@ -2389,6 +2390,7 @@ paths:
                 ref: { type: string, description: "External reference for the branch template; \"\" clears it. Approver-only once the item is in the agent workflow" }
                 external_url: { type: string, description: "https link to the item's job elsewhere; \"\" clears it" }
                 needs: { type: array, maxItems: 8, items: { type: string }, description: "Labels the item needs of its worker; [] for any worker again; omit to keep. Applies to runs still waiting. Approver-only once the item is in the agent workflow" }
+                auto_approve_plan: { type: boolean, description: "Switch the automatic plan approval on or off; omit to keep. Approver-only on every item; audited" }
       responses:
         "204": { description: Updated }
         "403": { description: "Filing target workspace out of scope for this credential" }
@@ -5219,8 +5221,8 @@ components:
         at: { type: string, format: date-time }
         action:
           type: string
-          enum: [queue, review, approve, request_changes, retry, reject, mark_done, second_opinion, finding_waive, answer]
-          description: "queue: started the pipeline; review: sent a branch for review only; approve: approved a plan; request_changes: sent a plan or a branch back; retry: started a blocked or failed item again; reject: discarded the item; mark_done: signed the branch off; second_opinion: asked another runner for an opinion; finding_waive: accepted a finding as it is; answer: answered questions without moving the item"
+          enum: [queue, review, approve, request_changes, retry, reject, mark_done, second_opinion, finding_waive, answer, auto_approve_held]
+          description: "queue: started the pipeline; review: sent a branch for review only; approve: approved a plan; request_changes: sent a plan or a branch back; retry: started a blocked or failed item again; reject: discarded the item; mark_done: signed the branch off; second_opinion: asked another runner for an opinion; finding_waive: accepted a finding as it is; answer: answered questions without moving the item; auto_approve_held: the item asked for its plan to be approved automatically and something kept it for the approver (the notes say what). An approve with via auto is the server's automatic approval"
         subject: { type: string, description: "For approve, the plan revision and its base commit (<revision>+<base>); for mark_done, the commit signed off" }
         by: { type: string }
         via: { type: string }
@@ -5477,6 +5479,7 @@ components:
             flow: { type: string }
             agents: { type: string }
             needs: { type: array, items: { type: string }, description: Labels the item needs of its worker }
+            auto_approve_plan: { type: boolean, description: The plan is approved automatically when the planner asks no question }
             status: { type: string }
             plan_id: { type: string }
             created_at: { type: string, format: date-time }
@@ -5620,6 +5623,8 @@ components:
         flow: { type: string, enum: [review], description: "review = a review-only item" }
         external_url: { type: string, description: "Link to the item's job in another system" }
         needs: { type: array, items: { type: string }, description: "Labels the item needs of its worker; absent = any worker serving the workspace" }
+        auto_approve_plan: { type: boolean, description: "The plan is approved automatically when the planner asks no question (absent = it waits for the approver)" }
+        auto_approve_by: { type: string, description: "Who switched the automatic plan approval on" }
         start_error: { type: string, description: "On a create with start: why the item was created but not started" }
         plan_id: { type: string }
         plan:

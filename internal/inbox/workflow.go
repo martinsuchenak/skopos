@@ -180,7 +180,9 @@ func (s *Service) transitionWith(ctx context.Context, itemID string, to Status, 
 	}
 	s.publishItem(ctx, itemID)
 	s.auditItem(ctx, itemID, action, via, notes, agentID)
-	if s.itemNotifier != nil {
+	// A plan gate the server approves at once is not announced: the
+	// approval that follows is (autoapprove.go).
+	if s.itemNotifier != nil && (to != StatusAwaitingApproval || !quietGate(ctx)) {
 		s.itemNotifier.NotifyItem(ctx, itemID, from, to)
 	}
 	return s.store.GetItem(ctx, itemID)
