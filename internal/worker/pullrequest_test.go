@@ -265,6 +265,12 @@ func TestSweepBranches(t *testing.T) {
 	if present(local) || !branchExists("agent/d") {
 		t.Fatal("done: an unpushed local branch is the only copy and stays")
 	}
+	if _, err := os.Stat(filepath.Join(w.outcomesDir(), approved+".json")); err != nil {
+		t.Fatal("done with a pull request: its outcome is watched")
+	}
+	if _, err := os.Stat(filepath.Join(w.outcomesDir(), local+".json")); err == nil {
+		t.Fatal("done without a pull request: nothing to watch")
+	}
 	for _, id := range []string{rejected, live, gone} {
 		if !present(id) {
 			t.Fatalf("%s: nothing happens on the first sight", id)

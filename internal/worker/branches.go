@@ -118,6 +118,7 @@ func (w *Worker) maybeSweep(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, sweepBudget)
 	defer cancel()
 	w.sweepBranches(ctx, time.Now())
+	w.sweepOutcomes(ctx, time.Now())
 }
 
 // sweepBranches cleans up after finished items:
@@ -128,6 +129,8 @@ func (w *Worker) maybeSweep(ctx context.Context) {
 //   - discarded for over discardGrace: close the pull request unmerged,
 //     then clean up as for done.
 //   - missing (404) for over missingGrace: remove the worktree only.
+//
+// A done item's pull request is then watched (outcomes.go).
 //
 // A lookup or close that fails for a transient reason keeps the record for
 // the next sweep.
@@ -210,6 +213,10 @@ func (w *Worker) sweepBranches(ctx context.Context, now time.Time) {
 		}
 		w.dropBranch(rec.ItemID)
 		w.dropBranchIndex(ctx, rec.WorkspaceID, rec.Branch)
+		if status == "done" {
+			// Signed off: watch what becomes of its pull request.
+			w.watchOutcome(rec, now)
+		}
 		log.Info("cleaned up the finished item's worktree", "worktree", rec.Worktree, "local_branch_deleted", deleteBranch)
 	}
 }

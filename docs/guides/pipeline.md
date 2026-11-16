@@ -645,7 +645,10 @@ run's `observed` (in `GET /api/runs/{id}`; lists leave it out) holds:
   item did not ask for.
 
 Your decisions at each gate are in the audit log, and each item's
-`status_since` says how long it has waited at its gate.
+`status_since` says how long it has waited at its gate. After you sign an
+item off, the worker that implemented it watches its pull request and
+records what became of it: merged (with the merge commit), closed without
+merging, or still open 30 days later (`GET /api/inbox/{id}/outcome`).
 
 ## Troubleshooting
 

@@ -684,7 +684,11 @@ worker looks up the items it implemented:
 
 - **Done:** it removes the item's worktree, and the local branch too if the
   last round pushed it. An unpushed branch is the only copy of the work, so
-  it stays. The pull request stays for you to merge.
+  it stays. The pull request stays for you to merge. The worker then
+  watches it: when it is merged or closed it reports that to skopos (with
+  the merge commit and time), looking it up at most once an hour; one still
+  open 30 days after sign-off is reported as open and no longer watched.
+  `GET /api/inbox/{id}/outcome` reads what was reported.
 - **Rejected:** a run still in progress stops at its next heartbeat (every
   30s): skopos answers 410, and the worker ends the run's context, which
   kills the agent's process group. Nothing more is pushed or reported, and a

@@ -637,6 +637,23 @@ CREATE TABLE IF NOT EXISTS qa_imports (
     version  INTEGER NOT NULL CHECK (version >= 1)
 ) STRICT;
 
+-- What became of an item's branch after sign-off (internal/inbox/outcome.go):
+-- the worker that implemented it watches the pull request and reports
+-- merged, closed (without merging), or still open when it stops watching.
+-- One row per item, the newest report; recorded for later rules, decided on
+-- by nothing.
+CREATE TABLE IF NOT EXISTS item_outcomes (
+    item_id      TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    state        TEXT NOT NULL CHECK (state IN ('merged', 'closed', 'open')),
+    pr_url       TEXT NOT NULL DEFAULT '',
+    merge_sha    TEXT NOT NULL DEFAULT '',
+    merged_ms    INTEGER,
+    closed_ms    INTEGER,
+    reported_ms  INTEGER NOT NULL,
+    reported_by  TEXT NOT NULL DEFAULT ''
+) STRICT;
+
 -- Review findings as records (internal/findings): what a review, QA run,
 -- review-only run or second opinion found, one row each, never changed.
 -- source: 'run' = recorded when the run reported; 'imported' = taken from

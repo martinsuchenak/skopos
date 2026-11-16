@@ -35,6 +35,10 @@ func (s *noopInboxStore) SetBranchRef(context.Context, string, string, string, t
 	return nil
 }
 func (s *noopInboxStore) SetFlow(context.Context, string, string, time.Time) error { return nil }
+func (s *noopInboxStore) PutOutcome(context.Context, string, inbox.Outcome) error  { return nil }
+func (s *noopInboxStore) GetOutcome(context.Context, string) (*inbox.Outcome, error) {
+	return nil, nil
+}
 func (s *noopInboxStore) SetAutoApprove(context.Context, string, string, time.Time) error {
 	return nil
 }

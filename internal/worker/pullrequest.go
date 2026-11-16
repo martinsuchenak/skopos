@@ -36,6 +36,10 @@ type PullRequest struct {
 	// Merged: GitHub reports merged_at, Gitea a merged flag.
 	MergedAt *string `json:"merged_at"`
 	Merged   bool    `json:"merged"`
+	// MergeCommitSHA and ClosedAt: read for the branch's outcome
+	// (outcomes.go).
+	MergeCommitSHA string  `json:"merge_commit_sha"`
+	ClosedAt       *string `json:"closed_at"`
 	// Body tells skopos's pull requests from someone else's on a branch
 	// taken over (prMarker).
 	Body string `json:"body"`

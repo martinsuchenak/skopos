@@ -2,6 +2,7 @@ package inbox
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -254,6 +255,44 @@ func (h *Handler) Transition(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := h.service.SystemTransition(r.Context(), r.PathValue("id"), req.To, req.Reason, "", viaFrom(r, ""))
 	h.respondTransition(w, item, err)
+}
+
+// PutOutcome handles PUT /api/inbox/{id}/outcome: the worker reports what
+// became of the item's branch after sign-off (outcome.go).
+func (h *Handler) PutOutcome(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var in OutcomeInput
+	if err := rest.DecodeJSON(w, r, &in); err != nil {
+		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	out, err := h.service.RecordOutcome(r.Context(), r.PathValue("id"), in)
+	if err != nil {
+		h.respondTransition(w, nil, err)
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, out)
+}
+
+// GetOutcome handles GET /api/inbox/{id}/outcome: what became of the item's
+// branch, or 404 when nothing was reported.
+func (h *Handler) GetOutcome(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	out, err := h.service.GetOutcome(r.Context(), r.PathValue("id"))
+	if err == nil && out == nil {
+		err = fmt.Errorf("%w: no outcome reported for item %s", ErrNotFound, r.PathValue("id"))
+	}
+	if err != nil {
+		h.respondTransition(w, nil, err)
+		return
+	}
+	rest.RespondJSON(w, http.StatusOK, out)
 }
 
 // AmendPlan handles POST /api/inbox/{id}/amend-plan: pause the run and

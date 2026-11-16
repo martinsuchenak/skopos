@@ -4,6 +4,17 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.40.1] — 2026-11-16
+
+### Added
+
+- What became of a signed-off item's branch: the worker that implemented
+  it watches the pull request and reports when it is merged (with the
+  merge commit and time) or closed without merging, or that it is still
+  open 30 days after sign-off. `GET /api/inbox/{id}/outcome` reads it;
+  `PUT` is the worker's report (never a run's token). Recorded for the
+  rules and analyses to come; nothing decides on it.
+
 ## [0.40.0] — 2026-11-16
 
 ### Added

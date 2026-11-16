@@ -15,6 +15,9 @@ import (
 
 type Store interface {
 	CreateItem(ctx context.Context, item Item) error
+	// PutOutcome / GetOutcome: what became of the item's branch (outcome.go).
+	PutOutcome(ctx context.Context, workspaceID string, o Outcome) error
+	GetOutcome(ctx context.Context, itemID string) (*Outcome, error)
 	GetItem(ctx context.Context, id string) (*Item, error)
 	// SetSlackThread records the item's Slack notification thread root.
 	SetSlackThread(ctx context.Context, id, ts string) error
