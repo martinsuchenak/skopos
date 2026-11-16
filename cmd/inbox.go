@@ -40,7 +40,7 @@ func inboxCmd() *cli.Command {
 			inboxReopenCmd(),
 			inboxPurgeCmd(),
 			inboxDeleteCmd(),
-		}, append(append(append(append(inboxWorkflowCmds(), inboxQuestionCmds()...), inboxFindingCmds()...), inboxPlansCmds()...), inboxReportCmds()...)...),
+		}, append(append(append(append(append(inboxWorkflowCmds(), inboxQuestionCmds()...), inboxFindingCmds()...), inboxPlansCmds()...), inboxReportCmds()...), inboxSummaryCmds()...)...),
 	}
 }
 

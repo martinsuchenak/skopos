@@ -765,9 +765,11 @@ func serveCmd() *cli.Command {
 			}).Get)
 			// GET /api/inbox/{id}/report: the item's record as one
 			// document, for a person to keep and another system to fetch.
-			inboxHandler.SetReportHandler(itemreport.NewHandler(&itemreport.Service{
+			reportHandler := itemreport.NewHandler(&itemreport.Service{
 				Items: inboxService, Plans: plansService, Runs: runsService, Questions: qaService, Findings: findingsService, Approvals: approvalsService, Audit: auditService,
-			}).Get)
+			})
+			inboxHandler.SetReportHandler(reportHandler.Get)
+			inboxHandler.SetSummaryHandler(reportHandler.Summary)
 			runsHandler := runs.NewHandler(runsService)
 
 			// What a schedule did, for the person (the Slack relay when one

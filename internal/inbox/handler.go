@@ -17,6 +17,25 @@ type Handler struct {
 	// report serves GET /api/inbox/{id}/report (internal/itemreport, which
 	// reads the same records and the approvals; nil = not served).
 	report http.HandlerFunc
+	// summary serves GET /api/inbox/summary: the count of plans approved
+	// automatically (internal/itemreport; nil = not served).
+	summary http.HandlerFunc
+}
+
+// SetSummaryHandler wires GET /api/inbox/summary.
+func (h *Handler) SetSummaryHandler(fn http.HandlerFunc) { h.summary = fn }
+
+// Summary handles GET /api/inbox/summary through the wired handler.
+func (h *Handler) Summary(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if h.summary == nil {
+		rest.RespondError(w, http.StatusNotFound, "not found")
+		return
+	}
+	h.summary(w, r)
 }
 
 // SetReportHandler wires GET /api/inbox/{id}/report.
@@ -24,6 +43,10 @@ func (h *Handler) SetReportHandler(fn http.HandlerFunc) { h.report = fn }
 
 // Report handles GET /api/inbox/{id}/report through the wired handler.
 func (h *Handler) Report(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	if h.report == nil {
 		rest.RespondError(w, http.StatusNotFound, "not found")
 		return

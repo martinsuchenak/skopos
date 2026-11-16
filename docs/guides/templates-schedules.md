@@ -118,3 +118,17 @@ checked.
 
 The item report says "Closed without changes: the planner found nothing to
 do".
+
+## How often it needed you
+
+`skopos inbox summary` (or `GET /api/inbox/summary`) counts, per workspace
+and template over a period (`--since 30d` by default):
+
+| Column | What it counts |
+|---|---|
+| AUTO | items whose plan the server approved |
+| NO INPUT | of those, signed off with nothing from you between the approval and the sign-off (no change request, retry, answer, waiver or second opinion) |
+| INPUT | signed off after something from you |
+| OPEN | not signed off yet |
+| HELD | plans kept for you, by reason: `questions`, `replan`, `panel`, `failed` |
+| NOTHING | items closed because the planner found nothing to do |

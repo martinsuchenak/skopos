@@ -356,9 +356,11 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	pl := plans.NewHandler(plansService, authn)
 	ib := inbox.NewHandler(inboxService, authn)
 	ib.SetStateHandler(itemstate.NewHandler(&itemstate.Service{Items: inboxService, Plans: plansService, Runs: runsService, Findings: findingsService}).Get)
-	ib.SetReportHandler(itemreport.NewHandler(&itemreport.Service{
+	reportHandler := itemreport.NewHandler(&itemreport.Service{
 		Items: inboxService, Plans: plansService, Runs: runsService, Questions: qaService, Findings: findingsService, Approvals: approvalsService, Audit: auditService,
-	}).Get)
+	})
+	ib.SetReportHandler(reportHandler.Get)
+	ib.SetSummaryHandler(reportHandler.Summary)
 	ws := workspaces.NewHandler(workspaces.NewService(workspaces.NewStorage(sqlDB)), authn)
 	ak := apikeys.NewHandler(apikeys.NewService(apikeys.NewStorage(sqlDB)), workspaces.NewService(workspaces.NewStorage(sqlDB)))
 	rh := runs.NewHandler(runsService)

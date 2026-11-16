@@ -93,9 +93,13 @@ func TestIntegrationAutoApprovePlan(t *testing.T) {
 	}
 	// Another worker takes it: w1's next poll would give back a run it
 	// still holds.
-	if impl := claim(t, worker, `{"worker_id":"w2","runners":["claude"],"workspaces":["`+ws+`"]}`); impl["stage"] != "implement" || impl["item_id"] != autoID {
+	impl := claim(t, worker, `{"worker_id":"w2","runners":["claude"],"workspaces":["`+ws+`"]}`)
+	if impl["stage"] != "implement" || impl["item_id"] != autoID {
 		t.Fatalf("the implementation is queued: %v", impl)
 	}
+	// Implemented and signed off with nothing from the person in between.
+	mustDo(t, worker.reqH("POST", "/api/runs/"+impl["id"].(string)+"/report", `{"worker_id":"w2","status":"succeeded","summary":"bumped","head_sha":"abc1234","branch":"agent/deps"}`, leases[impl["id"].(string)]), 200)
+	mustDo(t, approver.req("POST", "/api/inbox/"+autoID+"/mark-done", `{"head_sha":"abc1234"}`), 200)
 
 	// The planner asks: held at the gate, with the reason on record.
 	asked := mustJSON(t, approver.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"Update the dependencies","author_agent_id":"alex","start":"queue"}`), 201).(map[string]any)
@@ -188,6 +192,19 @@ func TestIntegrationAutoApprovePlan(t *testing.T) {
 	if got := item(offID)["status"]; got != "awaiting_approval" || entry(offID, "inbox.auto_approve_held") != nil {
 		t.Fatalf("an item without it waits at the gate as always: %v", got)
 	}
+
+	// The count: one approved automatically and signed off without input,
+	// and why plans were held.
+	sum := mustJSON(t, approver.req("GET", "/api/inbox/summary?since=1d", ""), 200).(map[string]any)
+	total := sum["total"].(map[string]any)
+	held := total["held"].(map[string]any)
+	if total["auto_approved"] != 1.0 || total["no_input_after"] != 1.0 || total["open"] != 0.0 ||
+		held["questions"] != 1.0 || held["replan"] != 1.0 || held["failed"] != 1.0 {
+		t.Fatalf("the count: %v", total)
+	}
+	if r := approver.req("GET", "/api/inbox/summary?since=soon", ""); r.code != 400 {
+		t.Fatalf("a period that does not parse: %d", r.code)
+	}
 }
 
 // The planner finds nothing to do: an item whose plan the server may
@@ -240,6 +257,9 @@ func TestIntegrationNothingToDo(t *testing.T) {
 		t.Fatalf("without the automatic approval it waits for the person: %s", got)
 	}
 	mustDo(t, approver.req("POST", "/api/inbox/"+byHand+"/reject", `{"reason":"nothing to do"}`), 200)
+	if total := mustJSON(t, approver.req("GET", "/api/inbox/summary", ""), 200).(map[string]any)["total"].(map[string]any); total["nothing_to_do"] != 1.0 {
+		t.Fatalf("the count of items with nothing to do: %v", total)
+	}
 
 	// The transition endpoint never closes a planning item.
 	other := mustJSON(t, approver.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"x","author_agent_id":"alex","start":"queue"}`), 201).(map[string]any)["id"].(string)

@@ -3187,6 +3187,29 @@ paths:
         "401": { description: Unauthorized }
         "404": { description: Not found, or the item has no plan yet }
 
+  /api/inbox/summary:
+    get:
+      summary: The count of plans approved automatically
+      description: "Per workspace and template, from the audit trail: items whose plan the server approved (auto_approve_plan), how many of those were then signed off with no action of a person in between, signed off after one, or not yet signed off; the plans the server held for the person, by reason; and items closed because the planner found nothing to do. Over the items the key may read."
+      operationId: inboxSummary
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: since, in: query, schema: { type: string }, description: "30d, 12h, or a date (2026-03-01 or RFC 3339); default 30d" }
+        - { name: workspace, in: query, schema: { type: string }, description: One workspace }
+      responses:
+        "200":
+          description: The count
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  since: { type: string, format: date-time }
+                  rows: { type: array, items: { $ref: "#/components/schemas/AutoApprovalCount" } }
+                  total: { $ref: "#/components/schemas/AutoApprovalCount" }
+                  cut: { type: boolean, description: The period holds more entries than one summary reads; the oldest are left out }
+        "400": { description: A period that does not parse }
+        "401": { description: Unauthorized }
   /api/inbox/{id}/report:
     get:
       summary: The item's report
@@ -5465,6 +5488,18 @@ components:
               updated_at: { type: string, format: date-time, description: "A run records no start time: the time since queued_at includes the wait for a worker" }
               cost_usd: { type: number }
         cost_usd: { type: number, description: "The sum of what the runners reported; left out when none did" }
+
+    AutoApprovalCount:
+      type: object
+      properties:
+        workspace_id: { type: string }
+        template: { type: string, description: '"" for items not started from a template' }
+        auto_approved: { type: integer }
+        no_input_after: { type: integer, description: Signed off with no action of a person after the automatic approval }
+        input_after: { type: integer }
+        open: { type: integer, description: Not signed off (yet) }
+        held: { type: object, additionalProperties: { type: integer }, description: "Plans held for the person, by reason: questions, replan, panel, failed, other" }
+        nothing_to_do: { type: integer }
 
     ScheduleInput:
       type: object
