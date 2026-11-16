@@ -102,3 +102,68 @@ func TestIntegrationItemTemplates(t *testing.T) {
 		t.Fatalf("after the workspace's is removed: %v", got)
 	}
 }
+
+// Schedules over the API: an approver holds one for a workspace, a plain
+// key may read it but not hold or run one, a run by hand starts an item
+// from the template and queues it, and the firings say what each did.
+func TestIntegrationSchedules(t *testing.T) {
+	const ws = "github.com/globex/shop"
+	_, baseURL := workerStackWith(t, func(*runs.Service) {})
+	root := workerClient{base: baseURL, key: "root-secret"}
+	wsPath := "/api/workspaces/" + strings.ReplaceAll(ws, "/", "%2F")
+	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"`+ws+`"}`), 201)
+	mustDo(t, root.req("POST", "/api/workspaces", `{"id":"github.com/globex/web"}`), 201)
+	approver := workerClient{base: baseURL, key: mint(t, root, `{"name":"alex","workspaces":["`+ws+`"],"approver":true}`)}
+	plain := workerClient{base: baseURL, key: mint(t, root, `{"name":"agent","workspaces":["`+ws+`"]}`)}
+	other := workerClient{base: baseURL, key: mint(t, root, `{"name":"web","workspaces":["github.com/globex/web"],"approver":true}`)}
+	mustDo(t, approver.req("PUT", wsPath+"/templates/deps", `{"title":"Update the dependencies ({month})","brief":"Bump them."}`), 200)
+
+	body := `{"name":"deps","owner_kind":"workspace","owner_id":"` + ws + `","template":"deps","rhythm":"monthly","timezone":"Europe/London"}`
+	if r := plain.req("POST", "/api/schedules", body); r.code != 403 {
+		t.Fatalf("a plain key holds no schedule: %d %s", r.code, r.body)
+	}
+	if r := approver.req("POST", "/api/schedules", strings.Replace(body, "monthly", "now and then", 1)); r.code != 400 {
+		t.Fatalf("a rhythm that does not parse: %d %s", r.code, r.body)
+	}
+	sc := mustJSON(t, approver.req("POST", "/api/schedules", body), 201).(map[string]any)
+	id := sc["id"].(string)
+	if sc["enabled"] != true || sc["next"] == nil || sc["created_by"] != "key alex" {
+		t.Fatalf("the schedule: %v", sc)
+	}
+	list := mustJSON(t, plain.req("GET", "/api/schedules", ""), 200).(map[string]any)["schedules"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("a key with the workspace reads it: %v", list)
+	}
+	if got := mustJSON(t, other.req("GET", "/api/schedules", ""), 200).(map[string]any)["schedules"].([]any); len(got) != 0 {
+		t.Fatalf("another workspace's key does not see it: %v", got)
+	}
+	mustDo(t, other.req("GET", "/api/schedules/"+id, ""), 404)
+	if r := plain.req("POST", "/api/schedules/"+id+"/run", ""); r.code != 403 {
+		t.Fatalf("a plain key does not run it: %d", r.code)
+	}
+	fired := mustJSON(t, approver.req("POST", "/api/schedules/"+id+"/run", ""), 200).(map[string]any)["firings"].([]any)
+	if len(fired) != 1 || fired[0].(map[string]any)["outcome"] != "created" {
+		t.Fatalf("run by hand: %v", fired)
+	}
+	item := mustJSON(t, approver.req("GET", "/api/inbox/"+fired[0].(map[string]any)["item_id"].(string), ""), 200).(map[string]any)
+	if item["status"] != "queued" || item["template"] != "deps" || !strings.HasPrefix(item["title"].(string), "Update the dependencies (") || item["author_agent_id"] != "schedule:deps" {
+		t.Fatalf("the item it started: %v", item)
+	}
+	// Run again: the item is still open, so none is added.
+	again := mustJSON(t, approver.req("POST", "/api/schedules/"+id+"/run", ""), 200).(map[string]any)["firings"].([]any)
+	if len(again) != 1 || again[0].(map[string]any)["outcome"] != "skipped" {
+		t.Fatalf("a second run while the item is open: %v", again)
+	}
+	if fs := mustJSON(t, plain.req("GET", "/api/schedules/"+id+"/firings", ""), 200).(map[string]any)["firings"].([]any); len(fs) != 2 {
+		t.Fatalf("firings: %v", fs)
+	}
+	paused := mustJSON(t, approver.req("PUT", "/api/schedules/"+id, `{"enabled":false,"rhythm":"0 7 * * mon"}`), 200).(map[string]any)
+	if paused["enabled"] != false || paused["rhythm"] != "0 7 * * mon" {
+		t.Fatalf("paused and moved: %v", paused)
+	}
+	if r := approver.req("PUT", "/api/schedules/"+id, `{"owner_id":"elsewhere"}`); r.code != 400 {
+		t.Fatalf("a schedule keeps its owner: %d", r.code)
+	}
+	mustDo(t, approver.req("DELETE", "/api/schedules/"+id, ""), 204)
+	mustDo(t, approver.req("GET", "/api/schedules/"+id, ""), 404)
+}

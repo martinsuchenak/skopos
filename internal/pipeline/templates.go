@@ -417,3 +417,30 @@ func (s *Service) ItemTemplate(ctx context.Context, ws, name string) (t *Templat
 	}
 	return t, false, err
 }
+
+// ScheduleOwner checks the caller may read (write = false) or hold
+// (write = true) something for a workspace or group, as for templates, and
+// returns the owner's id (a group named by its name or id).
+func (s *Service) ScheduleOwner(ctx context.Context, kind, ref string, write bool) (string, error) {
+	var id string
+	var err error
+	if write {
+		_, id, err = s.authorizeBriefWrite(ctx, kind, ref)
+	} else {
+		_, id, err = s.authorizeRead(ctx, kind, ref)
+	}
+	return id, err
+}
+
+// OwnerWorkspaces lists the workspaces an owner stands for: a workspace
+// itself, or a group's members (explicit and by pattern). Internal caller.
+func (s *Service) OwnerWorkspaces(ctx context.Context, kind, id string) ([]string, error) {
+	if kind == KindWorkspace {
+		ok, err := s.storage.WorkspaceExists(ctx, id)
+		if err != nil || !ok {
+			return nil, err
+		}
+		return []string{id}, nil
+	}
+	return s.storage.GroupWorkspaces(ctx, id)
+}

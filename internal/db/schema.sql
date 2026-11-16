@@ -540,6 +540,40 @@ CREATE TABLE IF NOT EXISTS item_templates (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS idx_item_templates_owner ON item_templates(owner_kind, owner_id, name, id);
 
+-- Schedules (tmp/templates-schedules — design.md, part 3): an item
+-- template started on a rhythm for a workspace or each workspace of a
+-- group. next_ms is the next occurrence (UTC ms); a firing records what one
+-- occurrence did in one workspace, at most once (the unique index).
+CREATE TABLE IF NOT EXISTS schedules (
+    id          TEXT    PRIMARY KEY,
+    name        TEXT    NOT NULL,
+    owner_kind  TEXT    NOT NULL CHECK (owner_kind IN ('workspace', 'group')),
+    owner_id    TEXT    NOT NULL,
+    template    TEXT    NOT NULL,
+    rhythm      TEXT    NOT NULL,
+    timezone    TEXT    NOT NULL DEFAULT 'UTC',
+    enabled     INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    next_ms     INTEGER NOT NULL,
+    last_ms     INTEGER,
+    created_ms  INTEGER NOT NULL,
+    created_by  TEXT    NOT NULL,
+    updated_ms  INTEGER NOT NULL,
+    updated_by  TEXT    NOT NULL
+) STRICT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_schedules_owner_name ON schedules(owner_kind, owner_id, name);
+CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(enabled, next_ms);
+CREATE TABLE IF NOT EXISTS schedule_firings (
+    id             TEXT    PRIMARY KEY,
+    schedule_id    TEXT    NOT NULL,
+    occurrence_ms  INTEGER NOT NULL,
+    workspace_id   TEXT    NOT NULL,
+    item_id        TEXT    NOT NULL DEFAULT '',
+    outcome        TEXT    NOT NULL CHECK (outcome IN ('creating', 'created', 'skipped', 'failed')),
+    reason         TEXT    NOT NULL DEFAULT '',
+    created_ms     INTEGER NOT NULL
+) STRICT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_schedule_firings_once ON schedule_firings(schedule_id, occurrence_ms, workspace_id);
+
 -- Questions and answers (tmp/questions-and-answers — design.md): the record
 -- of what the planner and the implementer asked and what the approver answered.
 -- Append-only: rows are never updated or deleted (answers.used_by_run is

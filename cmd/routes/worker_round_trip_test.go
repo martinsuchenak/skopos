@@ -34,6 +34,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/qa"
 	"github.com/martinsuchenak/skopos/internal/rest"
 	"github.com/martinsuchenak/skopos/internal/runs"
+	"github.com/martinsuchenak/skopos/internal/schedules"
 	"github.com/martinsuchenak/skopos/internal/secretbox"
 	"github.com/martinsuchenak/skopos/internal/status"
 	"github.com/martinsuchenak/skopos/internal/workspaces"
@@ -366,6 +367,9 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	apiMux := http.NewServeMux()
 	RegisterRoutes(webMux, apiMux, st, bb, pl, ib, ws, nil, ak, rh)
 	RegisterPipelineRoutes(apiMux, pipeline.NewHandler(pipelineService, authn))
+	schedulesService := schedules.NewService(sqlDB, pipelineService, inboxService)
+	schedulesService.SetAuditRecorder(auditService)
+	RegisterScheduleRoutes(apiMux, schedules.NewHandler(schedulesService, authn))
 	fleetService := fleetfile.NewService(apikeys.NewService(apikeys.NewStorage(sqlDB)), workspaces.NewService(workspaces.NewStorage(sqlDB)), pipelineService, configService)
 	fleetService.SetAuditSink(auditService)
 	RegisterConfigRoutes(apiMux, wsconfig.NewHandler(configService, authn), fleetfile.NewHandler(fleetService, authn), secretbox.NewHandler(keyRotator, authn))

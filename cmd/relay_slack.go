@@ -1326,3 +1326,22 @@ func short(sha string) string {
 	}
 	return sha
 }
+
+// ScheduleStarted says in the item's thread (opening one) that a schedule
+// started it.
+func (r *slackRelay) ScheduleStarted(ctx context.Context, itemID, schedule string) {
+	item, err := r.inbox.GetItem(context.Background(), itemID)
+	if err != nil {
+		return
+	}
+	msg := "📅 *Started by schedule* `" + schedule + "` · " + truncate(item.Title, gateTitleBytes) + " in `" + item.WorkspaceID + "`"
+	if item.AutoApprovePlan {
+		msg += "\nIts plan is approved automatically when the planner asks no question."
+	}
+	r.postInThread(ctx, itemID, msg)
+}
+
+// ScheduleNote posts what a schedule did when it started no item.
+func (r *slackRelay) ScheduleNote(ctx context.Context, text string) {
+	r.post(ctx, "", slackText(text))
+}

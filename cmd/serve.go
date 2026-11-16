@@ -45,6 +45,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/qa"
 	"github.com/martinsuchenak/skopos/internal/rest"
 	"github.com/martinsuchenak/skopos/internal/runs"
+	"github.com/martinsuchenak/skopos/internal/schedules"
 	"github.com/martinsuchenak/skopos/internal/secretbox"
 	"github.com/martinsuchenak/skopos/internal/status"
 	"github.com/martinsuchenak/skopos/internal/workspaces"
@@ -769,6 +770,9 @@ func serveCmd() *cli.Command {
 			}).Get)
 			runsHandler := runs.NewHandler(runsService)
 
+			// What a schedule did, for the person (the Slack relay when one
+			// runs).
+			var scheduleNotifier schedules.Notifier
 			// Slack relay: Socket Mode when tokens are configured; absent =
 			// disabled. The relay acts as the approver (user-id checked by the
 			// provider) with via=slack on every workflow action; outbound
@@ -811,6 +815,7 @@ func serveCmd() *cli.Command {
 					return match, match != ""
 				}}
 				notifySvc := notify.New(notify.NewSlack(botTok, appTok, userID, log), relay)
+				scheduleNotifier = relay
 				relay.SetNotifier(notifySvc)
 				// Async: a Slack post (and the buffered replies it drains)
 				// must never ride a request goroutine (review M3).
@@ -836,6 +841,14 @@ func serveCmd() *cli.Command {
 			apiMux := http.NewServeMux()
 			routes.RegisterRoutes(webMux, apiMux, statusHandler, blackboardHandler, plansHandler, inboxHandler, workspacesHandler, codeIndexHandler, apiKeysHandler, runsHandler)
 			routes.RegisterPipelineRoutes(apiMux, pipeline.NewHandler(pipelineService, authn))
+			// Schedules: an item template started on a rhythm.
+			schedulesService := schedules.NewService(sqlDB, pipelineService, inboxService)
+			schedulesService.SetAuditRecorder(auditService)
+			if scheduleNotifier != nil {
+				schedulesService.SetNotifier(scheduleNotifier)
+			}
+			schedulesService.Start(ctx)
+			routes.RegisterScheduleRoutes(apiMux, schedules.NewHandler(schedulesService, authn))
 			fleetService := fleetfile.NewService(apiKeysService, workspacesService, pipelineService, configService)
 			fleetService.SetAuditSink(auditService)
 			routes.RegisterConfigRoutes(apiMux, wsconfig.NewHandler(configService, authn), fleetfile.NewHandler(fleetService, authn), secretbox.NewHandler(keyRotator, authn))

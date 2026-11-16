@@ -158,6 +158,8 @@ var restAreas = []struct{ prefix, area string }{
 	{"/api/codeindex", AreaCode},
 	{"/api/plans", AreaPlans},
 	{"/api/inbox", AreaInbox},
+	// Schedules start items.
+	{"/api/schedules", AreaInbox},
 	{"/api/sessions", AreaStatus},
 	{"/api/reports", AreaStatus},
 	{"/api/runs", AreaRuns},

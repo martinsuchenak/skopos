@@ -1788,6 +1788,125 @@ paths:
         "403": { description: Requires the approver permission and the workspace in scope }
         "404": { description: Not found or out of scope }
 
+  /api/schedules:
+    get:
+      summary: The schedules the key may see
+      description: A schedule starts an item from a template on a rhythm, for a workspace or each workspace of a group. A key sees the schedules of the workspaces in its scope; a group's are root's.
+      operationId: listSchedules
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: The schedules
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  schedules: { type: array, items: { $ref: "#/components/schemas/Schedule" } }
+        "401": { description: Unauthorized }
+    post:
+      summary: Hold a schedule (an approver in the workspace's scope; root for a group)
+      operationId: createSchedule
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ScheduleInput" }
+      responses:
+        "201":
+          description: The schedule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Schedule" }
+        "400": { description: "Invalid name, template, rhythm or timezone" }
+        "401": { description: Unauthorized }
+        "403": { description: Not allowed }
+        "409": { description: A schedule of this name is already held for the owner }
+  /api/schedules/{id}:
+    get:
+      summary: One schedule
+      operationId: getSchedule
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The schedule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Schedule" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found or out of scope }
+    put:
+      summary: Change a schedule (its owner stays); enabled false pauses it
+      operationId: updateSchedule
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ScheduleInput" }
+      responses:
+        "200":
+          description: The schedule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Schedule" }
+        "400": { description: Invalid input, or an owner given }
+        "401": { description: Unauthorized }
+        "403": { description: Not allowed }
+        "404": { description: Not found }
+    delete:
+      summary: Remove a schedule
+      operationId: deleteSchedule
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Removed }
+        "401": { description: Unauthorized }
+        "403": { description: Not allowed }
+        "404": { description: Not found }
+  /api/schedules/{id}/run:
+    post:
+      summary: Fire a schedule now (its rhythm is unchanged)
+      operationId: runSchedule
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: What it did in each workspace
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  firings: { type: array, items: { $ref: "#/components/schemas/ScheduleFiring" } }
+        "401": { description: Unauthorized }
+        "403": { description: Not allowed }
+        "404": { description: Not found }
+  /api/schedules/{id}/firings:
+    get:
+      summary: The schedule's newest firings (at most 100)
+      operationId: listScheduleFirings
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The firings, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  firings: { type: array, items: { $ref: "#/components/schemas/ScheduleFiring" } }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
   /api/workspaces/{id}/templates:
     get:
       summary: The item templates held for a workspace
@@ -5346,6 +5465,48 @@ components:
               updated_at: { type: string, format: date-time, description: "A run records no start time: the time since queued_at includes the wait for a worker" }
               cost_usd: { type: number }
         cost_usd: { type: number, description: "The sum of what the runners reported; left out when none did" }
+
+    ScheduleInput:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, pattern: "^[a-z0-9][a-z0-9_-]{0,63}$" }
+        owner_kind: { type: string, enum: [workspace, group], description: On create only }
+        owner_id: { type: string, description: "On create only: the workspace id, or the group's id or name" }
+        template: { type: string, description: The template the items are started from (resolved for each workspace when it fires) }
+        rhythm: { type: string, description: "Five-field cron (minute hour day month weekday), or hourly, daily, weekly (Monday 06:00), monthly (the 1st, 06:00)" }
+        timezone: { type: string, description: "IANA name, default UTC" }
+        enabled: { type: boolean }
+
+    Schedule:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        owner_kind: { type: string, enum: [workspace, group] }
+        owner_id: { type: string }
+        template: { type: string }
+        rhythm: { type: string }
+        timezone: { type: string }
+        enabled: { type: boolean }
+        next: { type: string, format: date-time }
+        last: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        created_by: { type: string }
+        updated_at: { type: string, format: date-time }
+        updated_by: { type: string }
+
+    ScheduleFiring:
+      type: object
+      properties:
+        id: { type: string }
+        schedule_id: { type: string }
+        occurrence: { type: string, format: date-time }
+        workspace_id: { type: string }
+        item_id: { type: string }
+        outcome: { type: string, enum: [creating, created, skipped, failed] }
+        reason: { type: string, description: "Why it started no item (the last one still open, no such template), or why the item was not queued" }
+        created_at: { type: string, format: date-time }
 
     ItemTemplateFields:
       type: object

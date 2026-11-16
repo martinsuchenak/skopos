@@ -58,6 +58,52 @@ The item records which template, and which revision of it, it came from.
 Starting from a template that approves plans automatically needs the
 approver permission.
 
+## Schedules
+
+A schedule starts an item from a template on a rhythm and queues it, for a
+workspace or for every workspace of a group (one item each).
+
+| Field | Notes |
+|---|---|
+| `name` | unique per workspace or group |
+| `template` | the template's name; each workspace uses its own, else its group's |
+| `rhythm` | `monthly` (the 1st, 06:00), `weekly` (Monday 06:00), `daily` (06:00), `hourly`, or five cron fields: minute hour day month weekday (`0 6 1 * *`, `30 9 * * mon-fri`) |
+| `timezone` | the rhythm's timezone, such as `Europe/London`; UTC when left out |
+| `enabled` | off pauses it without removing it |
+
+- **Dashboard:** Workspaces → Schedules: New schedule, Run now, Pause,
+  Edit, Remove.
+- **CLI:**
+
+  ```sh
+  skopos schedule set --workspace github.com/acme/shop --name deps --template deps --rhythm monthly --timezone Europe/London
+  skopos schedule list
+  skopos schedule run --workspace github.com/acme/shop --name deps
+  skopos schedule pause --workspace github.com/acme/shop --name deps
+  ```
+
+- **API:** `POST /api/schedules`, `PUT|DELETE /api/schedules/{id}`, `POST
+  /api/schedules/{id}/run`, `GET /api/schedules/{id}/firings`.
+
+An approver in the workspace's scope holds a workspace's schedules; root
+holds a group's. The items are started in the schedule's name and queued
+at once, so a template that approves plans automatically goes straight to
+implementation when the planner asks no question.
+
+**When it fires:**
+
+- Each occurrence creates at most one item per workspace, even across a
+  restart.
+- While the item a schedule started last time in a workspace is still
+  open, it adds no new one there and says so (in Slack and in the firings).
+- A workspace with no template of that name gets no item, and that is
+  reported the same way.
+- Occurrences missed while the server was down fire once when it is back,
+  not once each.
+- A time that does not exist on the day the clocks go forward is passed
+  over that day.
+- Slack says in the new item's thread that a schedule started it.
+
 ## Nothing to do
 
 Routine work often finds nothing to do: every dependency is already

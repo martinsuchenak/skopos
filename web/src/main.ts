@@ -112,6 +112,7 @@ type PipeView = { owner_kind: string; owner_id: string; indexable_by?: string[];
 // inherited (from a group; Override copies it here), unset.
 // A brief held on the server for a pipeline member's focus (no text in a
 // listing), and one row of the Briefs tab.
+type ScheduleInfo = { id: string; name: string; owner_kind: string; owner_id: string; template: string; rhythm: string; timezone: string; enabled: boolean; next?: string; last?: string };
 type TemplateInfo = { rev: string; owner_kind: string; owner_id: string; name: string; title: string; brief?: string; tags?: string[]; needs?: string[]; agents?: string; auto_approve_plan?: boolean; created_at: string; created_by: string; source?: string };
 type BriefInfo = { rev: string; owner_kind: string; owner_id: string; name: string; body?: string; deleted?: boolean; bytes: number; created_at: string; created_by: string; source?: string };
 type BriefRow = { key: string; name: string; where: string; tone: string; detail: string; action: string; held: boolean; own: boolean };
@@ -401,6 +402,10 @@ const appState = () => ({
   mcpForm: { open: false, editing: false, name: '', type: 'http', url: '', headers: '', command: '', env: '', workspaces: '', error: '', saving: false, confirm: false, rev: 0, secrets: [] as { name: string; set: boolean; value: string }[] },
   // The Briefs tab of the pipeline dialog: the briefs held for this owner
   // (and, for a workspace, the ones a group gives it), and the editor.
+  // Schedules: a template started on a rhythm (Workspaces view).
+  schedules: [] as ScheduleInfo[],
+  scheduleForm: { open: false, id: '', name: '', owner: '', template: '', rhythm: 'monthly', timezone: '', enabled: true, saving: false },
+  scheduleConfirm: '',
   // Item templates of the workspace the item form files into (the picker).
   inboxTemplates: [] as TemplateInfo[], inboxTemplatesFor: '',
   // Item templates held for the dialog's workspace or group.
@@ -795,7 +800,7 @@ const appState = () => ({
     if (v === 'inbox') this.fetchInbox();
     if (v === 'index') this.fetchIndexStatus();
     if (v === 'keys') this.fetchKeys();
-    if (v === 'workspaces') { this.fetchWorkspaces(); this.fetchGroups(); this.fetchMcpDefs(); if (this.whoamiIsRoot()) this.fetchKeys(); }
+    if (v === 'workspaces') { this.fetchWorkspaces(); this.fetchGroups(); this.fetchMcpDefs(); this.fetchSchedules(); if (this.whoamiIsRoot()) this.fetchKeys(); }
     if (v === 'workers') this.fetchWorkers();
     if (v === 'webhooks') { this.fetchWebhooks(); if (this.whoamiIsRoot()) this.fetchGroups(); }
   },
@@ -968,7 +973,7 @@ const appState = () => ({
     else if (this.activeView === 'inbox') await this.fetchInbox();
     else if (this.activeView === 'index') await this.fetchIndexStatus();
     else if (this.activeView === 'keys') await this.fetchKeys();
-    else if (this.activeView === 'workspaces') { await this.fetchWorkspaces(); await this.fetchGroups(); await this.fetchMcpDefs(); if (this.whoamiIsRoot()) await this.fetchKeys(); }
+    else if (this.activeView === 'workspaces') { await this.fetchWorkspaces(); await this.fetchGroups(); await this.fetchMcpDefs(); await this.fetchSchedules(); if (this.whoamiIsRoot()) await this.fetchKeys(); }
     else if (this.activeView === 'workers') await this.fetchWorkers();
     else if (this.activeView === 'webhooks') { await this.fetchWebhooks(); if (this.whoamiIsRoot()) await this.fetchGroups(); }
   },
@@ -3086,6 +3091,90 @@ const appState = () => ({
   // ---- MCP servers for runs (Workspaces view; admins) ----
   // The definitions are the fleet's; a workspace's config names the ones its
   // runs get. A secret's value is only ever sent, never read.
+  // ---- schedules ----
+  async fetchSchedules() {
+    const res = await this.authFetch('/api/schedules');
+    if (res.ok) this.schedules = ((await res.json()) as { schedules?: ScheduleInfo[] }).schedules || [];
+    else if (res.status === 404) this.schedules = [];
+  },
+  scheduleOwnerLabel(s: ScheduleInfo): string {
+    if (s.owner_kind === 'group') {
+      const g = this.groups.find((x: KeyGroup) => x.id === s.owner_id);
+      return 'group ' + (g ? g.name : s.owner_id);
+    }
+    return this.workspaceLabel(s.owner_id);
+  },
+  scheduleRows(): { key: string; id: string; name: string; enabled: boolean; what: string; when: string }[] {
+    return this.schedules.map((s: ScheduleInfo) => ({
+      key: s.id + '|' + s.enabled + '|' + (s.next || '') + '|' + s.rhythm + '|' + s.template,
+      id: s.id, name: s.name, enabled: s.enabled,
+      what: 'Template ' + s.template + ' for ' + this.scheduleOwnerLabel(s),
+      when: s.rhythm + ' (' + s.timezone + ')' + (s.enabled && s.next ? ' · next ' + new Date(s.next).toLocaleString() : '') + (s.last ? ' · last ' + this.timeAgo(s.last) : ''),
+    }));
+  },
+  scheduleOwnerOptions(): { value: string; label: string }[] {
+    const out = this.workspaceOptions().map((o: { id: string; label: string }) => ({ value: 'workspace:' + o.id, label: o.label }));
+    if (this.isRoot) for (const g of this.groups as KeyGroup[]) out.push({ value: 'group:' + g.id, label: 'Group ' + g.name + ' (one item per workspace)' });
+    return out;
+  },
+  openScheduleModal(id: string | null) {
+    const s = id ? this.schedules.find((x: ScheduleInfo) => x.id === id) : null;
+    let tz = 'UTC';
+    try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { /* the default stays */ }
+    this.scheduleForm = s
+      ? { open: true, id: s.id, name: s.name, owner: s.owner_kind + ':' + s.owner_id, template: s.template, rhythm: s.rhythm, timezone: s.timezone, enabled: s.enabled, saving: false }
+      : { open: true, id: '', name: '', owner: this.activeWorkspace ? 'workspace:' + this.activeWorkspace : '', template: '', rhythm: 'monthly', timezone: tz, enabled: true, saving: false };
+  },
+  closeScheduleModal() { this.scheduleForm.open = false; },
+  async saveSchedule() {
+    const f = this.scheduleForm;
+    if (f.saving) return;
+    if (!f.id && !f.owner) { this.notify('Choose the workspace or group the schedule is for', 'error'); return; }
+    f.saving = true;
+    try {
+      const body: Record<string, unknown> = { name: f.name.trim(), template: f.template.trim(), rhythm: f.rhythm.trim(), timezone: f.timezone.trim(), enabled: f.enabled };
+      let res: Response;
+      if (f.id) {
+        res = await this.authFetch('/api/schedules/' + encodeURIComponent(f.id), { method: 'PUT', headers: { 'X-Skopos-Via': 'dashboard' }, body: JSON.stringify(body) });
+      } else {
+        const i = f.owner.indexOf(':');
+        body.owner_kind = f.owner.slice(0, i); body.owner_id = f.owner.slice(i + 1);
+        res = await this.authFetch('/api/schedules', { method: 'POST', headers: { 'X-Skopos-Via': 'dashboard' }, body: JSON.stringify(body) });
+      }
+      if (!await this.handleBad(res, 'Schedule not saved')) return;
+      const saved = (await res.json()) as ScheduleInfo;
+      this.notify('Schedule ' + saved.name + ' saved' + (saved.enabled && saved.next ? ' — next ' + new Date(saved.next).toLocaleString() : ''), 'success');
+      f.open = false;
+      await this.fetchSchedules();
+    } finally { f.saving = false; }
+  },
+  async toggleSchedule(id: string) {
+    const s = this.schedules.find((x: ScheduleInfo) => x.id === id);
+    if (!s) return;
+    const res = await this.authFetch('/api/schedules/' + encodeURIComponent(id), { method: 'PUT', headers: { 'X-Skopos-Via': 'dashboard' }, body: JSON.stringify({ enabled: !s.enabled }) });
+    if (!await this.handleBad(res, 'Schedule not changed')) return;
+    await this.fetchSchedules();
+  },
+  async runSchedule(id: string) {
+    const res = await this.authFetch('/api/schedules/' + encodeURIComponent(id) + '/run', { method: 'POST', headers: { 'X-Skopos-Via': 'dashboard' } });
+    if (!await this.handleBad(res, 'Schedule not run')) return;
+    const out = ((await res.json()) as { firings?: { workspace_id: string; outcome: string; reason?: string }[] }).firings || [];
+    const created = out.filter((f) => f.outcome === 'created').length;
+    const other = out.filter((f) => f.outcome !== 'created').map((f) => this.workspaceLabel(f.workspace_id) + ': ' + (f.reason || f.outcome));
+    this.notify(created + ' item' + (created === 1 ? '' : 's') + ' started' + (other.length ? '; ' + other.join('; ') : ''), other.length && !created ? 'error' : 'success');
+    await this.fetchSchedules();
+  },
+  // Two presses: the first arms, the second removes.
+  async deleteSchedule(id: string) {
+    const s = this.schedules.find((x: ScheduleInfo) => x.id === id);
+    if (!s) return;
+    if (this.scheduleConfirm !== id) { this.scheduleConfirm = id; this.notify('Press Remove again to remove the schedule ' + s.name, 'info'); return; }
+    this.scheduleConfirm = '';
+    const res = await this.authFetch('/api/schedules/' + encodeURIComponent(id), { method: 'DELETE', headers: { 'X-Skopos-Via': 'dashboard' } });
+    if (!await this.handleBad(res, 'Schedule not removed')) return;
+    this.notify('Schedule ' + s.name + ' removed', 'success');
+    await this.fetchSchedules();
+  },
   async fetchMcpDefs() {
     if (!this.canAdmin()) { this.mcpDefs = []; return; }
     const res = await this.authFetch('/api/fleet/mcp-servers');

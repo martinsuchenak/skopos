@@ -1004,7 +1004,85 @@
                     </template>
                 </ul>
             </section>
+            <!-- Schedules: a template started on a rhythm. Approvers hold
+                 a workspace's; root a group's. -->
+            <section class="mt-10" data-role="approver" style="display: none" aria-labelledby="schedules-title">
+                <div class="mb-4 flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <h2 id="schedules-title" class="mb-1 text-lg font-semibold">Schedules</h2>
+                        <p class="max-w-2xl text-sm text-zinc-400">
+                            A schedule starts an item from a template on a rhythm, for a workspace or for each workspace of a group,
+                            and queues it. While the item it started last time is still open, none is added.
+                        </p>
+                    </div>
+                    <button type="button" @click="openScheduleModal(null)" class="btn btn-primary btn-sm"><span aria-hidden="true">+</span> New schedule</button>
+                </div>
+                <p x-show="schedules.length === 0" class="empty-state">No schedules. Hold a template first (Settings → Templates), then start it on a rhythm here.</p>
+                <ul class="space-y-3" x-show="schedules.length > 0">
+                    <template x-for="s in scheduleRows()" :key="s.key">
+                        <li class="card p-4">
+                            <div class="flex flex-wrap items-start justify-between gap-2">
+                                <div class="min-w-0">
+                                    <div class="flex flex-wrap items-baseline gap-2">
+                                        <span class="font-mono font-medium text-zinc-100" x-text="s.name"></span>
+                                        <span class="badge" :class="s.enabled ? 'tone-success' : 'tone-muted'" x-text="s.enabled ? 'on' : 'paused'"></span>
+                                    </div>
+                                    <p class="mt-1 text-xs text-zinc-300" x-text="s.what"></p>
+                                    <p class="mt-1 text-xs text-zinc-400" x-text="s.when"></p>
+                                </div>
+                                <div class="flex flex-wrap gap-1">
+                                    <button type="button" @click="runSchedule(s.id)" class="btn btn-sm btn-ghost" :aria-label="'Run the schedule ' + s.name + ' now'" title="Starts its items now; the rhythm is unchanged">Run now</button>
+                                    <button type="button" @click="toggleSchedule(s.id)" class="btn btn-sm btn-ghost" :aria-label="(s.enabled ? 'Pause' : 'Resume') + ' the schedule ' + s.name" x-text="s.enabled ? 'Pause' : 'Resume'"></button>
+                                    <button type="button" @click="openScheduleModal(s.id)" class="btn btn-sm btn-ghost" :aria-label="'Edit the schedule ' + s.name">Edit</button>
+                                    <button type="button" @click="deleteSchedule(s.id)" class="btn btn-sm btn-ghost btn-bad" :aria-label="'Remove the schedule ' + s.name">Remove</button>
+                                </div>
+                            </div>
+                        </li>
+                    </template>
+                </ul>
             </section>
+            </section>
+
+    <!-- A schedule: which template, for whom, and when. -->
+    {{template "modal-open" (dict "ID" "schedule-modal" "Show" "scheduleForm.open" "Close" "closeScheduleModal()" "Size" "max-w-lg")}}
+            <h2 id="schedule-modal-title" class="modal-title" x-text="scheduleForm.id ? 'Edit schedule' : 'New schedule'"></h2>
+            <form @submit.prevent="saveSchedule()" class="space-y-3">
+                <div>
+                    <label class="lbl" for="schedule-name">Name</label>
+                    <input id="schedule-name" type="text" x-model="scheduleForm.name" class="fld font-mono" placeholder="deps" autocomplete="off" />
+                </div>
+                <div x-show="!scheduleForm.id">
+                    <label class="lbl" for="schedule-owner">For</label>
+                    <select id="schedule-owner" x-model="scheduleForm.owner" class="fld">
+                        <option value="">Choose a workspace or group…</option>
+                        <template x-for="o in scheduleOwnerOptions()" :key="o.value">
+                            <option :value="o.value" x-text="o.label"></option>
+                        </template>
+                    </select>
+                </div>
+                <div>
+                    <label class="lbl" for="schedule-template">Template</label>
+                    <input id="schedule-template" type="text" x-model="scheduleForm.template" class="fld font-mono" placeholder="deps" autocomplete="off" aria-describedby="schedule-template-help" />
+                    <p id="schedule-template-help" class="mt-1 text-xs text-zinc-500">The name of a template held for the workspace or its group (Settings → Templates).</p>
+                </div>
+                <div class="grid gap-3 sm:grid-cols-2">
+                    <div>
+                        <label class="lbl" for="schedule-rhythm">When</label>
+                        <input id="schedule-rhythm" type="text" x-model="scheduleForm.rhythm" class="fld font-mono" placeholder="monthly" autocomplete="off" aria-describedby="schedule-rhythm-help" />
+                    </div>
+                    <div>
+                        <label class="lbl" for="schedule-timezone">Timezone</label>
+                        <input id="schedule-timezone" type="text" x-model="scheduleForm.timezone" class="fld" placeholder="UTC" autocomplete="off" />
+                    </div>
+                </div>
+                <p id="schedule-rhythm-help" class="text-xs text-zinc-500"><code class="font-mono">monthly</code> (the 1st, 06:00), <code class="font-mono">weekly</code> (Monday 06:00), <code class="font-mono">daily</code> (06:00), or five fields: minute hour day month weekday, e.g. <code class="font-mono">0 6 1 * *</code>.</p>
+                <label class="flex items-center gap-2 text-sm" for="schedule-enabled"><input id="schedule-enabled" type="checkbox" x-model="scheduleForm.enabled" /> On</label>
+                <div class="modal-actions">
+                    <button type="button" class="btn" @click="closeScheduleModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary" :disabled="scheduleForm.saving" x-text="scheduleForm.saving ? 'Saving…' : 'Save schedule'"></button>
+                </div>
+            </form>
+    {{template "modal-close"}}
 
 
     <!-- An MCP server definition: where it is, which workspaces may be given
