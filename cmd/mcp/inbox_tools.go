@@ -76,7 +76,7 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 			mcplib.String("author_agent_id", "Identifier of the capturing agent", mcplib.Required()),
 			mcplib.String("agents", "Multi-agent stages for this item: panel (the repository's configured agents), solo (one agent), or omit for the repository default"),
 			mcplib.String("needs", "Labels the item needs of its worker, comma-separated (e.g. \"stock\"): only a worker an operator gave all of them takes its runs. Omit for any worker."),
-			mcplib.Boolean("auto_approve_plan", "Approve the plan automatically when the planner asks no question; the branch still comes to the approver at sign-off. Needs the approver permission."),
+			mcplib.Boolean("auto_approve_plan", "Approve the plan automatically when the planner asks no question; the branch still comes to the approver at sign-off. Needs the approver permission. Omit to follow the template's setting; false keeps it off."),
 			mcplib.String("template", "Start the item from a template held for the workspace; title, content and the other fields given here override the template's (title may then be omitted)"),
 			mcplib.String("extra", "With template: text appended to the template's brief"),
 		),
@@ -91,7 +91,7 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 				AuthorAgentID:   req.StringOr("author_agent_id", ""),
 				Agents:          req.StringOr("agents", ""),
 				Needs:           needs,
-				AutoApprovePlan: toolBool(req, "auto_approve_plan"),
+				AutoApprovePlan: toolBoolSet(req, "auto_approve_plan"),
 				Template:        req.StringOr("template", ""),
 				Extra:           req.StringOr("extra", ""),
 			})
@@ -386,8 +386,11 @@ func coarseAge(t time.Time) string {
 	}
 }
 
-// toolBool reads a boolean parameter; absent or not a boolean = false.
-func toolBool(req *mcplib.ToolRequest, name string) bool {
+// toolBoolSet reads a boolean parameter; nil when it is absent.
+func toolBoolSet(req *mcplib.ToolRequest, name string) *bool {
 	v, err := req.Bool(name)
-	return err == nil && v
+	if err != nil {
+		return nil
+	}
+	return &v
 }

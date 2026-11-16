@@ -56,7 +56,11 @@ trail.
 
 The item records which template, and which revision of it, it came from.
 Starting from a template that approves plans automatically needs the
-approver permission.
+approver permission. To start one item from it whose plan waits for you,
+pass `--auto-approve off` (`"auto_approve_plan": false` in the API).
+
+In Slack, `template <name>` is read as a template only when the workspace
+holds one of that name; otherwise the message is an ordinary capture.
 
 ## Schedules
 
@@ -90,6 +94,11 @@ holds a group's. The items are started in the schedule's name and queued
 at once, so a template that approves plans automatically goes straight to
 implementation when the planner asks no question.
 
+A schedule fires only while the key of whoever last saved it is still an
+approver for the workspace. If that key is revoked or loses the workspace,
+the schedule starts nothing and says why; whoever may hold it saves it
+again to take it over.
+
 **When it fires:**
 
 - Each occurrence creates at most one item per workspace, even across a
@@ -114,7 +123,8 @@ checked.
   without changes. Slack says "Nothing to do" with the reason, and other
   systems get `item.closed` with `outcome: nothing_to_do` and the `reason`.
 - **Any other item** waits at the plan gate with the reason. Reject it to
-  close it, or request changes to ask for a plan anyway.
+  close it, or request changes to ask for a plan anyway. There is no plan
+  to approve: an approval is refused, even when an earlier round left one.
 
 The item report says "Closed without changes: the planner found nothing to
 do".

@@ -361,6 +361,11 @@ func (s *Service) Approve(ctx context.Context, itemID string, input ApproveInput
 	if input.prepared, err = s.prepareAnswers(ctx, item, qa.ActionApprove, answers, true); err != nil {
 		return nil, err
 	}
+	// The newest round found nothing to do: there is no plan to approve
+	// (the plan revision still on record is an earlier round's).
+	if newestRoundNothingToDo(item.Content) {
+		return nil, fmt.Errorf("%w: the planner found nothing to do this round: reject the item, or request changes to ask for a plan", ErrInvalidInput)
+	}
 	// A multi-agent plan round: approve names one candidate.
 	if input.RevisionID != "" {
 		if cand, cerr := s.plans.GetRevision(ctx, input.RevisionID); cerr == nil && cand.PlanID == item.PlanID && cand.GroupID != "" {

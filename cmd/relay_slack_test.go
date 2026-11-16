@@ -1124,8 +1124,12 @@ func TestRelayTemplateCapture(t *testing.T) {
 	if !strings.Contains(fake.last().text, "from template `deps`") {
 		t.Fatalf("the confirmation names the template: %q", fake.last().text)
 	}
-	if !relay.TopLevel(root, "new: template nope", "960.2") || !strings.Contains(fake.last().text, `no template "nope"`) {
-		t.Fatalf("an unknown template: %q", fake.last().text)
+	// A template the workspace does not hold: an ordinary capture.
+	if !relay.TopLevel(root, "new: template literals break the build", "960.2") || !strings.Contains(fake.last().text, "Queued") || strings.Contains(fake.last().text, "from template") {
+		t.Fatalf("an ordinary capture that starts with the word: %q", fake.last().text)
+	}
+	if items, _ := svc.ListItems(root, "ws-a", "", "", ""); len(items) != 2 {
+		t.Fatalf("both captures are items: %d", len(items))
 	}
 	if !strings.Contains(slackHelp, "template <name>") {
 		t.Fatal("help names it")

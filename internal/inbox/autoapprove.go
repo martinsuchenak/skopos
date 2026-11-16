@@ -166,7 +166,22 @@ func (s *Service) replanAsked(ctx context.Context, itemID string) (replan, known
 	if s.auditSink == nil {
 		return false, false
 	}
-	entries, err := s.auditSink.Timeline(ctx, auditEntityItem, itemID) // newest first
+	planStarts := []string{"inbox.request_changes", "inbox.queue", "inbox.review", "inbox.retry", "inbox.approve"}
+	var entries []audit.Entry
+	var err error
+	// Only the actions that start a plan, when the audit log can filter:
+	// an item's full timeline holds every edit and transition.
+	if lister, ok := s.auditSink.(interface {
+		List(ctx context.Context, f audit.ListFilter) ([]audit.Entry, error)
+	}); ok {
+		ws, werr := s.store.ItemWorkspace(ctx, itemID)
+		if werr != nil {
+			return false, false
+		}
+		entries, err = lister.List(ctx, audit.ListFilter{WorkspaceID: ws, EntityType: auditEntityItem, EntityID: itemID, Actions: planStarts, Limit: 1})
+	} else {
+		entries, err = s.auditSink.Timeline(ctx, auditEntityItem, itemID) // newest first
+	}
 	if err != nil {
 		return false, false
 	}
@@ -225,4 +240,24 @@ func plural(n int, word string) string {
 func firstLineOf(s string) string {
 	s, _, _ = strings.Cut(strings.TrimSpace(s), "\n")
 	return s
+}
+
+// nothingToDoMark opens the enrichment a planner that found nothing to do
+// writes.
+const nothingToDoMark = "**Nothing to do.**"
+
+// newestRoundNothingToDo reports that the item's newest planning round
+// found nothing to do: every plan section of it is the planner's "nothing
+// to do", none names a revision.
+func newestRoundNothingToDo(content string) bool {
+	v, err := PlansOf("", "", content, 0)
+	if err != nil || len(v.Plans) == 0 {
+		return false
+	}
+	for _, p := range v.Plans {
+		if p.RevisionID != "" || !strings.HasPrefix(strings.TrimSpace(p.Markdown), nothingToDoMark) {
+			return false
+		}
+	}
+	return true
 }

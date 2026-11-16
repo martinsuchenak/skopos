@@ -192,6 +192,35 @@ func TestFireDue(t *testing.T) {
 	if err != nil || len(ran) != 3 || len(items.created) != 4 || ran[1].Outcome != OutcomeSkipped {
 		t.Fatalf("run by hand: %+v %v (%d created)", ran, err, len(items.created))
 	}
+	// Run by hand after the due time: the next due occurrence sees that
+	// item and adds none.
+	on := true
+	if _, err := svc.Update(approver, sc.ID, Input{Enabled: &on}, ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range items.items {
+		it.Status = inbox.StatusDone
+	}
+	clock = time.Date(2026, 8, 1, 5, 0, 10, 0, time.UTC) // the occurrence was 05:00, the loop not yet run
+	if _, err := svc.RunNow(approver, sc.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	before := len(items.created)
+	svc.FireDue(context.Background())
+	if len(items.created) != before {
+		t.Fatalf("an item started by hand after the due time is the open one: %d → %d", before, len(items.created))
+	}
+
+	// The key that holds the schedule no longer approves: nothing starts.
+	for _, it := range items.items {
+		it.Status = inbox.StatusDone
+	}
+	svc.SetHolderCheck(func(_ context.Context, keyID, ws string) bool { return keyID != "k" })
+	clock = clock.Add(time.Minute)
+	ran, err = svc.RunNow(approver, sc.ID, "")
+	if err != nil || len(ran) != 3 || ran[0].Outcome != OutcomeSkipped || !strings.Contains(ran[0].Reason, "no longer approves") {
+		t.Fatalf("a holder that lost the workspace: %+v %v", ran, err)
+	}
 	if err := svc.Delete(approver, sc.ID, ""); err != nil {
 		t.Fatal(err)
 	}

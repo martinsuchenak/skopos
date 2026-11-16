@@ -317,8 +317,9 @@ type CreateInput struct {
 	// Needs: see Item.
 	Needs []string `json:"needs,omitempty"`
 	// AutoApprovePlan approves the plan automatically when the planner
-	// asks no question (an approver only).
-	AutoApprovePlan bool `json:"auto_approve_plan,omitempty"`
+	// asks no question (an approver only). nil = the template's setting, or
+	// off; false keeps it off even from a template that sets it.
+	AutoApprovePlan *bool `json:"auto_approve_plan,omitempty"`
 	// Template starts the item from a template held for its workspace
 	// (pipeline item templates): the fields the request leaves empty come
 	// from it, and Extra is appended to its brief.

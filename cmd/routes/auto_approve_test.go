@@ -261,10 +261,34 @@ func TestIntegrationNothingToDo(t *testing.T) {
 		t.Fatalf("the count of items with nothing to do: %v", total)
 	}
 
+	// A round that found nothing to do after an earlier plan: there is no
+	// plan to approve, though the earlier round's revision is on record.
+	again := mustJSON(t, approver.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"Tidy","author_agent_id":"alex","start":"queue"}`), 201).(map[string]any)["id"].(string)
+	first := planRun()
+	p := mustJSON(t, worker.req("POST", "/api/plans", `{"workspace_id":"`+ws+`","name":"p","author_agent_id":"worker-1"}`), 201).(map[string]any)["id"].(string)
+	mustDo(t, worker.req("POST", "/api/plans/"+p+"/items", `{"title":"tidy"}`), 201)
+	mustDo(t, worker.req("POST", "/api/inbox/"+again+"/link-plan", `{"plan_id":"`+p+`"}`), 200)
+	rev := mustJSON(t, worker.req("POST", "/api/plans/"+p+"/revisions", `{"base_sha":"0a1b2c3"}`), 201).(map[string]any)["id"].(string)
+	mustDo(t, worker.req("PATCH", "/api/inbox/"+again, `{"content":"Tidy.\n\n## Enrichment — skopos worker\n\n**Revision:** `+rev+`\n\nThe plan."}`), 204)
+	report(first, `"status":"succeeded","summary":"plan ready"`)
+	mustDo(t, approver.req("POST", "/api/inbox/"+again+"/request-changes", `{"notes":"check again"}`), 200)
+	second := planRun()
+	cur := mustJSON(t, approver.req("GET", "/api/inbox/"+again, ""), 200).(map[string]any)["content"].(string)
+	mustDo(t, worker.req("PATCH", "/api/inbox/"+again, `{"content":`+jsonString(cur+"\n\n## Enrichment — skopos worker\n\n**Nothing to do.** Already tidy.")+`}`), 204)
+	report(second, `"status":"succeeded","summary":"Already tidy.","nothing_to_do":true`)
+	if r := approver.req("POST", "/api/inbox/"+again+"/approve", `{"revision_id":"`+rev+`"}`); r.code != 400 || !strings.Contains(r.body, "nothing to do") {
+		t.Fatalf("approving the earlier round's plan after nothing to do: %d %s", r.code, r.body)
+	}
+
 	// The transition endpoint never closes a planning item.
 	other := mustJSON(t, approver.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","title":"x","author_agent_id":"alex","start":"queue"}`), 201).(map[string]any)["id"].(string)
 	planRun()
 	if r := worker.req("POST", "/api/inbox/"+other+"/transition", `{"to":"done","reason":"skip it"}`); r.code != 400 {
 		t.Fatalf("planning → done through the transition endpoint: %d %s", r.code, r.body)
 	}
+}
+
+func jsonString(v string) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }

@@ -62,6 +62,10 @@ type Schedule struct {
 	CreatedBy string    `json:"created_by"`
 	UpdatedAt time.Time `json:"updated_at"`
 	UpdatedBy string    `json:"updated_by"`
+	// HolderKey is the key of the person who last created or changed it
+	// ("" = root): the schedule fires only while that key still approves
+	// for the workspace.
+	HolderKey string `json:"-"`
 }
 
 // Firing is what one occurrence did in one workspace.
@@ -100,6 +104,10 @@ type Items interface {
 	ReadItem(ctx context.Context, id string) (*inbox.Item, error)
 }
 
+// HolderCheck reports whether the key that holds a schedule may still start
+// items in a workspace as an approver ("" = root: always).
+type HolderCheck func(ctx context.Context, keyID, ws string) bool
+
 // Notifier tells the person what a firing did: Started for an item it
 // created, Note for one it did not.
 type Notifier interface {
@@ -119,6 +127,7 @@ type Service struct {
 	items    Items
 	audit    AuditRecorder
 	notifier Notifier
+	holder   HolderCheck
 	now      func() time.Time
 	mu       sync.Mutex // one firing pass at a time
 }
@@ -130,9 +139,13 @@ func NewService(db *sql.DB, owners Owners, items Items) *Service {
 func (s *Service) SetAuditRecorder(a AuditRecorder) { s.audit = a }
 func (s *Service) SetNotifier(n Notifier)           { s.notifier = n }
 
+// SetHolderCheck wires the check of the holder's key at every firing (nil =
+// none: tests).
+func (s *Service) SetHolderCheck(fn HolderCheck) { s.holder = fn }
+
 // --- storage ---
 
-const columns = `id, name, owner_kind, owner_id, template, rhythm, timezone, enabled, next_ms, last_ms, created_ms, created_by, updated_ms, updated_by`
+const columns = `id, name, owner_kind, owner_id, template, rhythm, timezone, enabled, next_ms, last_ms, created_ms, created_by, updated_ms, updated_by, holder_key`
 
 func scan(row interface{ Scan(...any) error }) (*Schedule, error) {
 	var sc Schedule
@@ -140,7 +153,7 @@ func scan(row interface{ Scan(...any) error }) (*Schedule, error) {
 	var next, created, updated int64
 	var last sql.NullInt64
 	if err := row.Scan(&sc.ID, &sc.Name, &sc.OwnerKind, &sc.OwnerID, &sc.Template, &sc.Rhythm, &sc.Timezone, &enabled,
-		&next, &last, &created, &sc.CreatedBy, &updated, &sc.UpdatedBy); err != nil {
+		&next, &last, &created, &sc.CreatedBy, &updated, &sc.UpdatedBy, &sc.HolderKey); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -192,13 +205,13 @@ func (s *Service) save(ctx context.Context, sc *Schedule, create bool) error {
 	}
 	var err error
 	if create {
-		_, err = s.db.ExecContext(ctx, `INSERT INTO schedules (`+columns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		_, err = s.db.ExecContext(ctx, `INSERT INTO schedules (`+columns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			sc.ID, sc.Name, sc.OwnerKind, sc.OwnerID, sc.Template, sc.Rhythm, sc.Timezone, enabled, sc.Next.UnixMilli(), msOrNil(sc.Last),
-			sc.CreatedAt.UnixMilli(), sc.CreatedBy, sc.UpdatedAt.UnixMilli(), sc.UpdatedBy)
+			sc.CreatedAt.UnixMilli(), sc.CreatedBy, sc.UpdatedAt.UnixMilli(), sc.UpdatedBy, sc.HolderKey)
 	} else {
 		_, err = s.db.ExecContext(ctx, `UPDATE schedules SET name = ?, template = ?, rhythm = ?, timezone = ?, enabled = ?, next_ms = ?,
-			updated_ms = ?, updated_by = ? WHERE id = ?`,
-			sc.Name, sc.Template, sc.Rhythm, sc.Timezone, enabled, sc.Next.UnixMilli(), sc.UpdatedAt.UnixMilli(), sc.UpdatedBy, sc.ID)
+			updated_ms = ?, updated_by = ?, holder_key = ? WHERE id = ?`,
+			sc.Name, sc.Template, sc.Rhythm, sc.Timezone, enabled, sc.Next.UnixMilli(), sc.UpdatedAt.UnixMilli(), sc.UpdatedBy, sc.HolderKey, sc.ID)
 	}
 	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
 		return fmt.Errorf("%w: a schedule named %s is already held here", ErrConflict, sc.Name)
@@ -265,10 +278,10 @@ func (s *Service) Create(ctx context.Context, in Input, via string) (*Schedule, 
 	if err != nil {
 		return nil, err
 	}
-	actor, _ := auth.Actor(ctx)
+	actor, keyID := auth.Actor(ctx)
 	now := s.now().UTC()
 	sc := &Schedule{ID: ids.New(), Name: in.Name, OwnerKind: kind, OwnerID: owner, Template: in.Template, Rhythm: in.Rhythm, Timezone: in.Timezone,
-		Enabled: in.Enabled == nil || *in.Enabled, CreatedAt: now, CreatedBy: actor, UpdatedAt: now, UpdatedBy: actor}
+		Enabled: in.Enabled == nil || *in.Enabled, CreatedAt: now, CreatedBy: actor, UpdatedAt: now, UpdatedBy: actor, HolderKey: keyID}
 	if err := normalize(sc); err != nil {
 		return nil, err
 	}
@@ -315,7 +328,8 @@ func (s *Service) Update(ctx context.Context, id string, in Input, via string) (
 		return nil, err
 	}
 	sc.UpdatedAt = now
-	sc.UpdatedBy, _ = auth.Actor(ctx)
+	// Who changes it holds it from then on.
+	sc.UpdatedBy, sc.HolderKey = auth.Actor(ctx)
 	if err := s.save(ctx, sc, false); err != nil {
 		return nil, err
 	}
@@ -508,11 +522,19 @@ func (s *Service) fire(ctx context.Context, sc *Schedule, occurrence time.Time) 
 }
 
 func (s *Service) fireOne(ctx context.Context, sc *Schedule, ws string, occurrence time.Time) (outcome, itemID, reason string) {
+	// The person behind the schedule must still be allowed to start the
+	// work: a revoked key, or one no longer an approver for the workspace,
+	// stops it here.
+	if s.holder != nil && !s.holder(ctx, sc.HolderKey, ws) {
+		return OutcomeSkipped, "", "the key that holds the schedule no longer approves for this workspace: whoever may, saves the schedule again to hold it"
+	}
 	// The item it started last time here is still open: none is added.
 	var prev string
+	// By creation, not occurrence: an item started by hand after the due
+	// time is the newest one too.
 	err := s.db.QueryRowContext(ctx, `SELECT item_id FROM schedule_firings
-		WHERE schedule_id = ? AND workspace_id = ? AND outcome = ? AND item_id != '' AND occurrence_ms < ?
-		ORDER BY occurrence_ms DESC LIMIT 1`, sc.ID, ws, OutcomeCreated, occurrence.UnixMilli()).Scan(&prev)
+		WHERE schedule_id = ? AND workspace_id = ? AND outcome = ? AND item_id != ''
+		ORDER BY created_ms DESC, id DESC LIMIT 1`, sc.ID, ws, OutcomeCreated).Scan(&prev)
 	if err == nil && prev != "" {
 		if it, err := s.items.ReadItem(ctx, prev); err == nil && it.Status != inbox.StatusDone && it.Status != inbox.StatusDiscarded {
 			return OutcomeSkipped, "", fmt.Sprintf("the item it started before (%s) is still %s", prev, strings.ReplaceAll(string(it.Status), "_", " "))

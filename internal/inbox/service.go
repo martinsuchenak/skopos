@@ -237,7 +237,7 @@ func (s *Service) CreateItem(ctx context.Context, input CreateInput) (*Item, err
 	}
 	// Approving a plan automatically hands over the approver's gate.
 	autoBy := ""
-	if input.AutoApprovePlan {
+	if input.AutoApprovePlan != nil && *input.AutoApprovePlan {
 		if err := auth.RequireApprover(ctx); err != nil {
 			return nil, fmt.Errorf("%w: approving the plan automatically", err)
 		}

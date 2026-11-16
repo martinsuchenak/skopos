@@ -569,3 +569,37 @@ func TestHandler(t *testing.T) {
 		}
 	}
 }
+
+// The count: an automatic approval followed by the person's own approval
+// (an amendment) counts as input before the sign-off; holds are sorted by
+// reason; entries before the period are left out.
+func TestSummary(t *testing.T) {
+	e := func(id, item, action, via, notes string, minute int) audit.Entry {
+		return audit.Entry{ID: id, WorkspaceID: "ws", EntityType: "inbox_item", EntityID: item, Action: action, Via: via, Notes: notes, CreatedAt: at(minute)}
+	}
+	log := fakeAudit{
+		e("a01", "old", "inbox.approve", "auto", "", 1), // before the period
+		e("a02", "i1", "inbox.approve", "auto", "", 10),
+		e("a03", "i1", "inbox.mark_done", "", "", 11),
+		e("a04", "i2", "inbox.approve", "auto", "", 12),
+		e("a05", "i2", "inbox.approve", "dashboard", "", 13), // an amendment approved by the person
+		e("a06", "i2", "inbox.mark_done", "", "", 14),
+		e("a07", "i3", "inbox.auto_approve_held", "system", "the planner asked 2 questions", 15),
+		e("a08", "i3", "inbox.auto_approve_held", "system", "you asked for this plan again", 16),
+		e("a09", "i4", "inbox.approve", "auto", "", 17),
+		e("a10", "i5", "inbox.nothing_to_do", "system", "current", 18),
+		e("a11", "i6", "inbox.edit", "", "", 19),
+	}
+	s, err := (&Service{Audit: log}).Summary(context.Background(), at(5), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tot := s.Total
+	if tot.AutoApproved != 3 || tot.NoInputAfter != 1 || tot.InputAfter != 1 || tot.Open != 1 || tot.NothingToDo != 1 ||
+		tot.Held["questions"] != 1 || tot.Held["replan"] != 1 {
+		t.Fatalf("total: %+v", tot)
+	}
+	if len(s.Rows) != 1 || s.Rows[0].WorkspaceID != "ws" {
+		t.Fatalf("rows: %+v", s.Rows)
+	}
+}

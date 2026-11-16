@@ -558,7 +558,8 @@ CREATE TABLE IF NOT EXISTS schedules (
     created_ms  INTEGER NOT NULL,
     created_by  TEXT    NOT NULL,
     updated_ms  INTEGER NOT NULL,
-    updated_by  TEXT    NOT NULL
+    updated_by  TEXT    NOT NULL,
+    holder_key  TEXT    NOT NULL DEFAULT ''  -- the key that last saved it ('' = root)
 ) STRICT;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_schedules_owner_name ON schedules(owner_kind, owner_id, name);
 CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(enabled, next_ms);

@@ -64,6 +64,11 @@ func TestIntegrationItemTemplates(t *testing.T) {
 	if r := plain.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","author_agent_id":"a","template":"deps"}`); r.code != 403 {
 		t.Fatalf("a plain key starting from a template that approves plans: %d %s", r.code, r.body)
 	}
+	// Kept off by the request: no approver needed, the plan waits.
+	kept := mustJSON(t, plain.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","author_agent_id":"a","template":"deps","auto_approve_plan":false}`), 201).(map[string]any)
+	if kept["auto_approve_plan"] != nil || kept["template"] != "deps" {
+		t.Fatalf("a request that keeps the automatic approval off: %v", kept)
+	}
 	item := mustJSON(t, approver.req("POST", "/api/inbox", `{"workspace_id":"`+ws+`","author_agent_id":"alex","template":"deps","extra":"The router stays on 4."}`), 201).(map[string]any)
 	month := time.Now().UTC().Format("2006-01")
 	if item["title"] != "Update the dependencies of shop ("+month+")" {

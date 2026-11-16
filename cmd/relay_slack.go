@@ -275,11 +275,13 @@ func (r *slackRelay) TopLevel(ctx context.Context, text, ts string) bool {
 		AuthorAgentID:   "slack",
 		Agents:          captureAgents(what),
 		Needs:           needs,
-		AutoApprovePlan: captureAuto(what),
+		AutoApprovePlan: onlyTrue(captureAuto(what)),
 	}
 	// `new <ws>: template <name>`: the item is the template's, and what
 	// follows the name is added to its text.
-	if m := reTemplateCapture.FindStringSubmatch(what); m != nil {
+	// Only a template the workspace holds: "template literals break the
+	// build" is an ordinary capture.
+	if m := reTemplateCapture.FindStringSubmatch(what); m != nil && r.inbox.HasTemplate(relayCtx(), ws, strings.ToLower(m[1])) {
 		in.Template, in.Title, in.Content = strings.ToLower(m[1]), "", ""
 		in.Extra = strings.TrimSpace(strings.TrimSpace(m[2]) + "\n\n" + stamp)
 		if tags := captureTags(what); len(tags) > 1 {
@@ -1344,4 +1346,12 @@ func (r *slackRelay) ScheduleStarted(ctx context.Context, itemID, schedule strin
 // ScheduleNote posts what a schedule did when it started no item.
 func (r *slackRelay) ScheduleNote(ctx context.Context, text string) {
 	r.post(ctx, "", slackText(text))
+}
+
+// onlyTrue is a set switch for true, else nil (left to the template).
+func onlyTrue(b bool) *bool {
+	if !b {
+		return nil
+	}
+	return &b
 }

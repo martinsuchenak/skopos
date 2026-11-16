@@ -846,6 +846,23 @@ func serveCmd() *cli.Command {
 			// Schedules: an item template started on a rhythm.
 			schedulesService := schedules.NewService(sqlDB, pipelineService, inboxService)
 			schedulesService.SetAuditRecorder(auditService)
+			// A schedule fires only while the key that holds it still
+			// approves for the workspace (root's always).
+			schedulesService.SetHolderCheck(func(ctx context.Context, keyID, ws string) bool {
+				if keyID == "" {
+					return true
+				}
+				reach, err := apiKeysService.WhoCan(auth.WithPrincipal(ctx, &auth.Principal{Root: true}), ws)
+				if err != nil {
+					return false
+				}
+				for _, r := range reach {
+					if r.Key.ID == keyID && r.Key.Approver {
+						return true
+					}
+				}
+				return false
+			})
 			if scheduleNotifier != nil {
 				schedulesService.SetNotifier(scheduleNotifier)
 			}

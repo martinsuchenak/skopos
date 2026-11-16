@@ -375,7 +375,7 @@ comes to you at sign-off.
 
 - **Switch it on:** tick "Approve the plan when it has no questions" in the
   item form, add `#auto` to a Slack capture or reply `auto: on` in the
-  item's thread, `skopos inbox add --auto-approve`, `skopos inbox update
+  item's thread, `skopos inbox add --auto-approve on`, `skopos inbox update
   --id <item> --auto-approve on|off`, or `auto_approve_plan` in the API.
   Only an approver switches it, and the change is audited.
 - **When it applies:** when the plan run finishes and all of these hold:

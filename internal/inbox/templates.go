@@ -33,6 +33,16 @@ var ErrTemplateNotFound = errors.New("no such template")
 // SetTemplates wires the template source.
 func (s *Service) SetTemplates(fn TemplateSource) { s.templates = fn }
 
+// HasTemplate reports whether a workspace holds a template of the name (its
+// own or its group's). Internal caller (the Slack relay).
+func (s *Service) HasTemplate(ctx context.Context, ws, name string) bool {
+	if s.templates == nil || strings.TrimSpace(ws) == "" {
+		return false
+	}
+	t, err := s.templates(ctx, ws, strings.TrimSpace(name))
+	return err == nil && t != nil
+}
+
 // expandTemplate fills a template's placeholders for a workspace at a time:
 // {date} 2026-03-04, {month} 2026-03, {year} 2026, {workspace} the
 // repository's last path element. Other braces stay as they are.
@@ -94,11 +104,13 @@ func (s *Service) applyTemplate(ctx context.Context, in *CreateInput) (*ItemTemp
 	if in.Agents == "" {
 		in.Agents = t.Agents
 	}
-	if t.AutoApprovePlan {
+	// The template's automatic approval, unless the request says otherwise.
+	if t.AutoApprovePlan && in.AutoApprovePlan == nil {
 		if err := auth.RequireApprover(ctx); err != nil {
 			return nil, fmt.Errorf("%w: template %s approves plans automatically", err, t.Name)
 		}
-		in.AutoApprovePlan = true
+		on := true
+		in.AutoApprovePlan = &on
 	}
 	return t, nil
 }

@@ -93,29 +93,37 @@ func (s *Service) Summary(ctx context.Context, since time.Time, workspace string
 	}
 	sort.Strings(actions)
 	out := &Summary{Since: since.UTC()}
+	// A scoped key's list is merged from one page per workspace, which
+	// cannot be paged as one: each workspace is read on its own.
+	scopes := []string{workspace}
+	if workspace == "" && auth.ScopedContext(ctx) {
+		scopes = auth.PrincipalFromContext(ctx).WorkspaceList()
+	}
 	var entries []audit.Entry
-	before := ""
-	for n := 0; ; n++ {
-		if n == maxSummaryPages {
-			out.Cut = true
-			break
-		}
-		page, err := s.Audit.List(ctx, audit.ListFilter{WorkspaceID: workspace, EntityType: "inbox_item", Actions: actions, Before: before, Limit: auditPage})
-		if err != nil {
-			return nil, err
-		}
-		done := len(page) < auditPage
-		for _, e := range page {
-			if e.CreatedAt.Before(since) {
-				done = true
+	for _, ws := range scopes {
+		before := ""
+		for n := 0; ; n++ {
+			if n == maxSummaryPages {
+				out.Cut = true
 				break
 			}
-			entries = append(entries, e)
+			page, err := s.Audit.List(ctx, audit.ListFilter{WorkspaceID: ws, EntityType: "inbox_item", Actions: actions, Before: before, Limit: auditPage})
+			if err != nil {
+				return nil, err
+			}
+			done := len(page) < auditPage
+			for _, e := range page {
+				if e.CreatedAt.Before(since) {
+					done = true
+					break
+				}
+				entries = append(entries, e)
+			}
+			if done {
+				break
+			}
+			before = page[len(page)-1].ID
 		}
-		if done {
-			break
-		}
-		before = page[len(page)-1].ID
 	}
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].ID < entries[j].ID })
 
@@ -140,9 +148,11 @@ func (s *Service) Summary(ctx context.Context, since time.Time, workspace string
 		case e.Action == "inbox.approve" && e.Via == audit.ViaAuto:
 			st.autoAt, st.input, st.signedOff = e.ID, false, false
 		case e.Action == "inbox.approve":
-			// A plan approved by a person after an automatic one: the
-			// automatic one no longer stands for the item.
-			st.autoAt = ""
+			// A plan approved by a person after an automatic one (an
+			// amendment): input before the sign-off.
+			if st.autoAt != "" && !st.signedOff {
+				st.input = true
+			}
 		case e.Action == inbox.ActionAutoApproveHeld:
 			st.held = append(st.held, heldKind(e.Notes))
 		case e.Action == inbox.ActionNothingToDo:
