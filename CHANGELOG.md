@@ -4,6 +4,22 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.38.1] — 2026-11-16
+
+### Added
+
+- The dashboard's key dialog sets the Worker, Approver, Admin and Delegate
+  permissions.
+- The Workers view says when another API key polls under a worker's id,
+  and the worker logs it once.
+
+### Changed
+
+- A worker's row passes to the key polling under its id once the key it
+  belongs to is revoked or deleted (audit `worker.adopt`). A worker moved
+  to a new key no longer shows stale and offline in the Workers view, and
+  its labels apply again.
+
 ## [0.38.0] — 2026-11-16
 
 ### Added

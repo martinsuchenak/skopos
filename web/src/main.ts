@@ -51,9 +51,9 @@ function keyIsAgentPreset(caps: string[]): boolean {
 
 // A worker's pause (an operator stopped it taking work); until "" = until resumed.
 type WorkerPause = { at: string; until?: string; by?: string; reason?: string };
-type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string; state: string; version: string; lastSeen: string; unhealthy: string[]; indexable: string[]; paused: WorkerPause | null; facts: string[]; executors: string[]; factsWarning: string; serverConfig: string; labels: string[] };
+type WorkerRow = { id: string; workspaces: string[]; stages: string[]; runners: string[]; active: number; succeeded: number; failed: number; lastActive: string; currentLabel: string; state: string; version: string; lastSeen: string; unhealthy: string[]; indexable: string[]; paused: WorkerPause | null; facts: string[]; executors: string[]; factsWarning: string; serverConfig: string; labels: string[]; otherKey: string };
 type RunnerFacts = { name: string; kind?: string; model?: string; effort?: string; provider?: string; endpoint?: string; stages?: string[] };
-type WorkerSeen = { id: string; runners: string[]; workspaces: string[]; last_seen: string; version?: string; state?: string; unhealthy?: Record<string, string>; indexable?: string[]; paused?: WorkerPause; runner_facts?: RunnerFacts[]; executors?: Record<string, ExecutorFact[]>; server_commands?: boolean; fleet_rev?: string; labels?: string[] };
+type WorkerSeen = { id: string; runners: string[]; workspaces: string[]; last_seen: string; version?: string; state?: string; unhealthy?: Record<string, string>; indexable?: string[]; paused?: WorkerPause; runner_facts?: RunnerFacts[]; executors?: Record<string, ExecutorFact[]>; server_commands?: boolean; fleet_rev?: string; labels?: string[]; other_seen?: string; other_key_id?: string };
 // Workspace config held on the server (internal/wsconfig).
 type ConfigEffective = { workspace: string; managed: boolean; rev?: string; config: Record<string, unknown>; sources?: Record<string, string>; conflicts?: string[] };
 type ConfigView = { owner_kind: string; owner_id: string; config: Record<string, unknown> | null; rev?: string; updated_by?: string; effective?: ConfigEffective; changed?: string[]; defaults?: Record<string, unknown> };
@@ -427,7 +427,7 @@ const appState = () => ({
   showApiKeyModal: false, keyModalMode: 'create' as 'create' | 'edit', keySaving: false,
   // access: 'full' (no capability limits), 'agent' (the agent preset: MCP
   // only) or 'keep' (edit: leave a custom set as it is).
-  keyForm: { id: '', name: '', all: false, workspaces: [] as string[], groups: [] as string[], access: 'full', accessWas: 'full', custom: '' },
+  keyForm: { id: '', name: '', all: false, workspaces: [] as string[], groups: [] as string[], access: 'full', accessWas: 'full', custom: '', approver: false, admin: false, delegate: false, worker: false, was: { approver: false, admin: false, delegate: false, worker: false } },
   keyErrors: {} as Record<string, string>,
   showSecretModal: false, newSecret: '', newSecretName: '', secretCopied: false,
   // The secret dialog serves API keys and webhook signing secrets.
@@ -3676,12 +3676,12 @@ const appState = () => ({
     const byWorker = new Map<string, WorkerRow>();
     for (const entry of registered) {
       const reg = entry[1];
-      byWorker.set(entry[0], { id: entry[0], workspaces: [...(reg.workspaces || [])], stages: [], runners: [...(reg.runners || [])], active: 0, succeeded: 0, failed: 0, lastActive: '', currentLabel: '', state: reg.state || '', version: reg.version || '', lastSeen: reg.last_seen || '', unhealthy: Object.entries(reg.unhealthy || {}).map(([ws, why]) => ws + ': ' + why), indexable: [...(reg.indexable || [])], paused: reg.paused || null, facts: (reg.runner_facts || []).map((f: RunnerFacts) => this.runnerFactsLine(f)), executors: Object.entries(reg.executors || {}).sort((a, b) => a[0] < b[0] ? -1 : 1).map(([ws, facts]) => this.executorsLine(ws, facts as ExecutorFact[])), factsWarning: '', serverConfig: this.workerConfigLine(reg), labels: [...(reg.labels || [])] });
+      byWorker.set(entry[0], { id: entry[0], workspaces: [...(reg.workspaces || [])], stages: [], runners: [...(reg.runners || [])], active: 0, succeeded: 0, failed: 0, lastActive: '', currentLabel: '', state: reg.state || '', version: reg.version || '', lastSeen: reg.last_seen || '', unhealthy: Object.entries(reg.unhealthy || {}).map(([ws, why]) => ws + ': ' + why), indexable: [...(reg.indexable || [])], paused: reg.paused || null, facts: (reg.runner_facts || []).map((f: RunnerFacts) => this.runnerFactsLine(f)), executors: Object.entries(reg.executors || {}).sort((a, b) => a[0] < b[0] ? -1 : 1).map(([ws, facts]) => this.executorsLine(ws, facts as ExecutorFact[])), factsWarning: '', serverConfig: this.workerConfigLine(reg), labels: [...(reg.labels || [])], otherKey: this.workerOtherKey(reg) });
     }
     for (const run of runs) {
       if (!run.worker_id) continue; // queued, never claimed
       let w = byWorker.get(run.worker_id);
-      if (!w) { w = { id: run.worker_id, workspaces: [], stages: [], runners: [], active: 0, succeeded: 0, failed: 0, lastActive: run.updated_at, currentLabel: '', state: '', version: '', lastSeen: '', unhealthy: [], indexable: [], paused: null, facts: [], executors: [], factsWarning: '', serverConfig: '', labels: [] }; byWorker.set(run.worker_id, w); }
+      if (!w) { w = { id: run.worker_id, workspaces: [], stages: [], runners: [], active: 0, succeeded: 0, failed: 0, lastActive: run.updated_at, currentLabel: '', state: '', version: '', lastSeen: '', unhealthy: [], indexable: [], paused: null, facts: [], executors: [], factsWarning: '', serverConfig: '', labels: [], otherKey: '' }; byWorker.set(run.worker_id, w); }
       const reg = registered.get(run.worker_id);
       if (reg) { for (const ws of reg.workspaces || []) if (!w.workspaces.includes(ws)) w.workspaces.push(ws); }
       if (run.workspace_id && !w.workspaces.includes(run.workspace_id)) w.workspaces.push(run.workspace_id);
@@ -3751,6 +3751,18 @@ const appState = () => ({
       parts.push((w.workspaces.length === 1 ? 'workspace ' : 'workspaces ') + (w.workspaces.length > 3 ? shown + ' and ' + (w.workspaces.length - 3) + ' more' : shown));
     }
     return parts.join(' \u00b7 ');
+  },
+  // Another API key, still valid, polls under this worker's id: the
+  // server keeps the row for the key the id was first used with, so what
+  // the row shows is that key's worker (rowMine). Root sees which key.
+  workerOtherKey(w: WorkerSeen): string {
+    if (!w.other_seen) return '';
+    let key = 'another API key';
+    if (w.other_key_id) {
+      const k = this.keys.find(x => x.id === w.other_key_id);
+      key = 'API key ' + (k ? k.name + ' (' + k.id + ')' : w.other_key_id);
+    }
+    return key + ' also polls under this worker id (last ' + this.timeAgo(w.other_seen) + '). Its polls do not update this row: the id was first used with a key that is still valid. Give that worker its own id, or revoke the key this row belongs to.';
   },
   workerWhen(v: string): string { return v ? this.timeAgo(v) + ' (' + this.formatDateTime(v) + ')' : ''; },
   toggleWorker(w: WorkerRow) { this.workerFold[w.id] = !this.workerFold[w.id]; },
@@ -5161,7 +5173,7 @@ const appState = () => ({
   },
   openNewKeyModal() {
     this.keyModalMode = 'create';
-    this.keyForm = { id: '', name: '', all: false, workspaces: [], groups: [], access: 'full', accessWas: 'full', custom: '' };
+    this.keyForm = { id: '', name: '', all: false, workspaces: [], groups: [], access: 'full', accessWas: 'full', custom: '', approver: false, admin: false, delegate: false, worker: false, was: { approver: false, admin: false, delegate: false, worker: false } };
     this.keyErrors = {};
     this.formNonce++;
     this.showApiKeyModal = true;
@@ -5170,12 +5182,15 @@ const appState = () => ({
     this.keyModalMode = 'edit';
     const caps = k.capabilities;
     const access = !caps ? 'full' : (keyIsAgentPreset(caps) ? 'agent' : 'keep');
-    this.keyForm = { id: k.id, name: k.name, all: k.all_workspaces, workspaces: [...(k.workspaces || [])], groups: [...(k.groups || [])], access, accessWas: access, custom: access === 'keep' ? (caps || []).join(', ') : '' };
+    const perms = { approver: !!k.approver, admin: !!k.admin, delegate: !!k.delegate, worker: !!k.worker };
+    this.keyForm = { id: k.id, name: k.name, all: k.all_workspaces, workspaces: [...(k.workspaces || [])], groups: [...(k.groups || [])], access, accessWas: access, custom: access === 'keep' ? (caps || []).join(', ') : '', ...perms, was: { ...perms } };
     this.keyErrors = {};
     this.formNonce++;
     this.showApiKeyModal = true;
   },
   closeApiKeyModal() { this.showApiKeyModal = false; },
+  // A worker key holds neither approver nor admin.
+  keyWorkerToggled() { if (this.keyForm.worker) { this.keyForm.approver = false; this.keyForm.admin = false; } },
   async submitApiKey() {
     const f = this.keyForm;
     const errs: Record<string, string> = {};
@@ -5193,6 +5208,13 @@ const appState = () => ({
       // custom set is left alone ('keep').
       // Capabilities: sent only when the access choice changed (an edit that
       // sends them re-shapes the key and drops its live streams).
+      // Permissions: all of them on a create, the changed ones on an edit.
+      // A worker key holds neither approver nor admin (the server refuses
+      // the pair), so a ticked worker sends those off.
+      for (const p of ['approver', 'admin', 'delegate', 'worker'] as const) {
+        const v = (p === 'approver' || p === 'admin') && f.worker ? false : f[p];
+        if (creating ? v : v !== f.was[p]) body[p] = v;
+      }
       if (creating) { if (f.access === 'agent') body.preset = 'agent'; }
       else if (f.access !== f.accessWas) {
         if (f.access === 'agent') { body.preset = 'agent'; body.capabilities = []; }

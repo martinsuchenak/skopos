@@ -258,6 +258,14 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "workers", "labels", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	// Another live key polling under a worker's id (its row stays its
+	// owner's): which key and when it last did, for the Workers view. NULL
+	// = none since the row's key last changed.
+	for _, col := range [][2]string{{"other_key_id", "TEXT"}, {"other_seen", "TEXT"}} {
+		if err := ensureColumn(db, "workers", col[0], col[1]); err != nil {
+			return err
+		}
+	}
 	if err := ensureColumn(db, "inbox_items", "needs", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}

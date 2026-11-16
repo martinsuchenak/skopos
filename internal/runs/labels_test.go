@@ -345,6 +345,7 @@ func TestNeedsStageKeys(t *testing.T) {
 // polling under the same worker id gets no run that needs them.
 func TestLabelsAreNotBorrowedByWorkerID(t *testing.T) {
 	s := testService(t)
+	liveKeys(t, s, "k-owner", "k-other")
 	key := func(id string) context.Context {
 		return auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: id, Name: id, Workspaces: map[string]struct{}{"ws": {}}})
 	}

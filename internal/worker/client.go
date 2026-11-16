@@ -39,6 +39,9 @@ type Client struct {
 	indexEnabled, indexDefault []string
 	// paused: the last claim answer's Skopos-Paused ("" = not paused).
 	paused string
+	// otherKey: the last claim answer said the worker's registry row
+	// belongs to another key (Skopos-Worker-Row).
+	otherKey bool
 	// factsUsed: the last claim sent runner facts to a server that reads
 	// them — every run it hands back then names its runner.
 	factsUsed bool
@@ -186,6 +189,7 @@ func (c *Client) Claim(ctx context.Context, workerID string, runners, workspaces
 	c.mu.Lock()
 	c.indexEnabled, c.indexDefault = splitList(hdr.Get("Skopos-Index-Enabled")), splitList(hdr.Get("Skopos-Index-Default"))
 	c.paused = hdr.Get("Skopos-Paused")
+	c.otherKey = hdr.Get("Skopos-Worker-Row") == "other-key"
 	c.factsUsed = len(facts) > 0 && hdr.Get("Skopos-Runner-Facts") != ""
 	c.configDigest, c.fleetRev = hdr.Get("Skopos-Config-Rev"), hdr.Get("Skopos-Fleet-Rev")
 	c.mu.Unlock()
@@ -388,6 +392,15 @@ func (c *Client) FactsUsed() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.factsUsed
+}
+
+// RowOfOtherKey: the last claim answer said the worker's registry row
+// belongs to another API key that is still valid, so the server keeps it
+// unchanged (the Workers view shows it stale; runs are unaffected).
+func (c *Client) RowOfOtherKey() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.otherKey
 }
 
 // Paused is what the last claim answer said about a pause: "" (none),

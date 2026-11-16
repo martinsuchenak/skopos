@@ -198,6 +198,11 @@ type WorkerSeen struct {
 	// run of an item that needs labels goes only to a worker with all of
 	// them.
 	Labels []string `json:"labels,omitempty"`
+	// OtherSeen: when another API key, still valid, last polled under this
+	// worker's id (its polls leave the row unchanged: rowMine); "" = not
+	// lately. OtherKeyID names that key, for root only.
+	OtherSeen  string `json:"other_seen,omitempty"`
+	OtherKeyID string `json:"other_key_id,omitempty"`
 }
 
 // unhealthyJSON stores a health map (nil when all healthy).
@@ -325,15 +330,25 @@ func (s *Storage) WorkerFacts(ctx context.Context, workerID string) (workerFacts
 // by idle polls and heartbeats (presence without a write per poll).
 const presenceRefresh = 30 * time.Second
 
+// rowMine is the SQL condition "the worker row whose key column is col may
+// be written by the key caller": the row belongs to the key that first
+// wrote it (an empty key = root), and passes to the next writer when it
+// has none (NULL: a row from before keys were recorded) or when its key was
+// revoked or deleted — a worker given a new key keeps its row. Root's rows
+// never pass. Another live key reusing the worker id cannot overwrite the
+// row (review H4).
+func rowMine(col, caller string) string {
+	return "(" + col + " IS NULL OR " + col + " = " + caller + " OR (" + col + " != '' AND NOT EXISTS (SELECT 1 FROM api_keys ak WHERE ak.id = " + col + " AND ak.revoked_at IS NULL)))"
+}
+
 // recordWorker is the registry write of every claim poll: what the worker
 // offers and serves, its version and poll interval; it also clears a
-// goodbye. The row belongs to the key that first wrote it (” = root; NULL
-// = a row from before keys were recorded, adopted by its next writer):
-// another key reusing the worker id cannot overwrite it (review H4); its
-// claims are unaffected (runs are fenced by claimed_key_id). force (a
-// successful claim) always writes; an idle poll writes only when something
-// changed or the row is older than presenceRefresh. The row's labels are the
-// server's (SetWorkerLabels): no poll writes them.
+// goodbye. Only a key the row passes to writes it (rowMine); another key's
+// claims are unaffected (runs are fenced by claimed_key_id), and its poll
+// is noted on the row (other_key_id, other_seen) so the Workers view can
+// say so. force (a successful claim) always writes; an idle poll writes
+// only when something changed or the row is older than presenceRefresh. The
+// row's labels are the server's (SetWorkerLabels): no poll writes them.
 func recordWorker(ctx context.Context, tx *sql.Tx, in ClaimInput, now time.Time, force bool) error {
 	var version, poll any
 	if in.Version != "" {
@@ -358,9 +373,11 @@ func recordWorker(ctx context.Context, tx *sql.Tx, in ClaimInput, now time.Time,
 			last_seen = excluded.last_seen, updated_at = excluded.updated_at, key_id = excluded.key_id,
 			version = excluded.version, poll_ms = excluded.poll_ms, offline_at = NULL, unhealthy = excluded.unhealthy,
 			indexable = excluded.indexable, runner_info = excluded.runner_info, executor_info = excluded.executor_info,
-			server_commands = excluded.server_commands, fleet_rev = excluded.fleet_rev
-		WHERE (workers.key_id IS NULL OR workers.key_id = excluded.key_id)
-			AND (? = 1 OR workers.runners != excluded.runners OR workers.workspaces != excluded.workspaces
+			server_commands = excluded.server_commands, fleet_rev = excluded.fleet_rev,
+			other_key_id = CASE WHEN workers.key_id IS excluded.key_id THEN workers.other_key_id END,
+			other_seen = CASE WHEN workers.key_id IS excluded.key_id THEN workers.other_seen END
+		WHERE `+rowMine("workers.key_id", "excluded.key_id")+`
+			AND (? = 1 OR workers.key_id IS NOT excluded.key_id OR workers.runners != excluded.runners OR workers.workspaces != excluded.workspaces
 				OR COALESCE(workers.version, '') != COALESCE(excluded.version, '')
 				OR COALESCE(workers.poll_ms, 0) != COALESCE(excluded.poll_ms, 0)
 				OR COALESCE(workers.unhealthy, '') != COALESCE(excluded.unhealthy, '')
@@ -375,24 +392,63 @@ func recordWorker(ctx context.Context, tx *sql.Tx, in ClaimInput, now time.Time,
 	if err != nil {
 		return fmt.Errorf("recording worker: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 && force {
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
+	}
+	// Nothing written: an idle poll with nothing new, or the row is another
+	// live key's. Note the other key's poll (at most every presenceRefresh).
+	res, err = tx.ExecContext(ctx, `UPDATE workers SET other_key_id = ?, other_seen = ?
+		WHERE id = ? AND NOT `+rowMine("key_id", "?")+`
+			AND (other_key_id IS NOT ? OR other_seen IS NULL OR other_seen < ?)`,
+		in.KeyID, formatTime(now), in.WorkerID, in.KeyID, in.KeyID, formatTime(now.Add(-presenceRefresh)))
+	if err != nil {
+		return fmt.Errorf("noting another key's poll: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 && force {
 		slog.Warn("worker id is registered to another API key; registry row left unchanged", "worker", in.WorkerID)
 	}
 	return nil
+}
+
+// WorkerRow is how a worker's registry row stands for a key: Exists
+// whether there is one, Owner the key it belongs to (nil = none recorded),
+// Mine whether the key may write it (rowMine; true when there is none).
+type WorkerRow struct {
+	Exists bool
+	Owner  *string
+	Mine   bool
+}
+
+// WorkerRowFor reads how the worker's row stands for the key.
+func (s *Storage) WorkerRowFor(ctx context.Context, workerID, keyID string) (WorkerRow, error) {
+	var out WorkerRow
+	var owner sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT key_id, `+rowMine("key_id", "?")+` FROM workers WHERE id = ?`, keyID, workerID).Scan(&owner, &out.Mine)
+	if errors.Is(err, sql.ErrNoRows) {
+		return WorkerRow{Mine: true}, nil
+	}
+	if err != nil {
+		return out, err
+	}
+	out.Exists = true
+	if owner.Valid {
+		out.Owner = &owner.String
+	}
+	return out, nil
 }
 
 // TouchWorker refreshes a busy worker's presence on a run heartbeat.
 func (s *Storage) TouchWorker(ctx context.Context, workerID, keyID string, now time.Time) {
 	_, _ = s.db.ExecContext(ctx, `
 		UPDATE workers SET last_seen = ?, offline_at = NULL
-		WHERE id = ? AND (key_id IS NULL OR key_id = ?) AND (last_seen < ? OR offline_at IS NOT NULL)`,
+		WHERE id = ? AND `+rowMine("key_id", "?")+` AND (last_seen < ? OR offline_at IS NOT NULL)`,
 		formatTime(now), workerID, keyID, formatTime(now.Add(-presenceRefresh)))
 }
 
 // WorkerOffline records a worker's clean-shutdown goodbye; false when the
 // row does not exist or belongs to another key.
 func (s *Storage) WorkerOffline(ctx context.Context, workerID, keyID string, now time.Time) (bool, error) {
-	res, err := s.db.ExecContext(ctx, `UPDATE workers SET offline_at = ? WHERE id = ? AND (key_id IS NULL OR key_id = ?)`,
+	res, err := s.db.ExecContext(ctx, `UPDATE workers SET offline_at = ? WHERE id = ? AND `+rowMine("key_id", "?"),
 		formatTime(now), workerID, keyID)
 	if err != nil {
 		return false, fmt.Errorf("marking worker offline: %w", err)
@@ -423,7 +479,7 @@ func (s *Storage) BusyWorkers(ctx context.Context) (map[string]bool, error) {
 func (st *Storage) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
 	rows, err := st.db.QueryContext(ctx, `SELECT id, runners, workspaces, last_seen, COALESCE(version, ''), COALESCE(poll_ms, 0), COALESCE(offline_at, ''), COALESCE(unhealthy, ''), indexable,
 		COALESCE(paused_at, ''), COALESCE(paused_until, ''), COALESCE(paused_by, ''), COALESCE(pause_reason, ''), COALESCE(runner_info, ''), COALESCE(executor_info, ''),
-		server_commands, fleet_rev, labels FROM workers ORDER BY last_seen DESC`)
+		server_commands, fleet_rev, labels, COALESCE(other_key_id, ''), COALESCE(other_seen, '') FROM workers ORDER BY last_seen DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("listing workers: %w", err)
 	}
@@ -434,7 +490,7 @@ func (st *Storage) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
 		var runners, workspaces, unhealthy, indexable, pausedAt, pausedUntil, pausedBy, pauseReason, facts, executors, rawLabels string
 		var commands sql.NullBool
 		if err := rows.Scan(&w.ID, &runners, &workspaces, &w.LastSeen, &w.Version, &w.PollMS, &w.OfflineAt, &unhealthy, &indexable,
-			&pausedAt, &pausedUntil, &pausedBy, &pauseReason, &facts, &executors, &commands, &w.FleetRev, &rawLabels); err != nil {
+			&pausedAt, &pausedUntil, &pausedBy, &pauseReason, &facts, &executors, &commands, &w.FleetRev, &rawLabels, &w.OtherKeyID, &w.OtherSeen); err != nil {
 			return nil, err
 		}
 		w.Labels = labels.Parse(rawLabels)
@@ -595,11 +651,11 @@ func (s *Storage) Claim(ctx context.Context, in ClaimInput, prefs func(workspace
 	// The labels the server holds for this worker: a run of an item that
 	// needs labels is handed only to a worker with all of them, in every
 	// scan below. A worker without a row yet (its first poll) has none, and
-	// neither has another key polling under a labelled worker's id: the id
-	// is the caller's word, the row belongs to the key that wrote it
-	// (recordWorker's rule).
+	// neither has another live key polling under a labelled worker's id:
+	// the id is the caller's word, the row belongs to the key that wrote it
+	// (rowMine).
 	var rawLabels string
-	if err := tx.QueryRowContext(ctx, `SELECT labels FROM workers WHERE id = ? AND (key_id IS NULL OR key_id = ?)`, in.WorkerID, in.KeyID).Scan(&rawLabels); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err := tx.QueryRowContext(ctx, `SELECT labels FROM workers WHERE id = ? AND `+rowMine("key_id", "?"), in.WorkerID, in.KeyID).Scan(&rawLabels); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("reading the worker's labels: %w", err)
 	}
 	has := labels.Parse(rawLabels)

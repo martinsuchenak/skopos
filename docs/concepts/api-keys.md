@@ -85,7 +85,8 @@ dialog offers full access or the agent preset.
 
 Four flags sit beside scope and capabilities. Only the root key grants
 them, each on `key create` and `key edit` (`--approver` / `--no-approver`
-and so on). Key listings and the dashboard's Keys view show them.
+and so on), or with the Permissions boxes of the dashboard's key dialog.
+Key listings and the dashboard's Keys view show them.
 
 | Flag | Lets the key | Give it to |
 |---|---|---|
@@ -112,6 +113,15 @@ a workspace's MCP servers only to a key with this flag. The server refuses
 `--worker` together with `--approver` or `--admin`. A worker with an
 unmarked key still runs; it gets no runs of a workspace whose MCP servers
 the server holds, and the Workers view says why.
+
+Give each worker its own key. A worker's row in the Workers view belongs
+to the key it was first used with: another key polling under the same
+worker id still gets runs, but its polls leave the row as it was, and the
+row and the worker's log say so. The row passes to the next key that polls
+under the id once its key is revoked or deleted (audit `worker.adopt`), so
+a worker moved to a new key keeps its row: put the new key in its
+`skopos-worker.env`, restart it, then revoke the old key. A row the root
+key wrote never passes.
 
 ```sh
 skopos key create --name ops --group acme --admin

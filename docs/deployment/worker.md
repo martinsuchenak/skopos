@@ -1449,6 +1449,14 @@ warns about a runner no worker serving the workspace offers yet.
 
 Each row also shows the worker's [labels](#worker-labels).
 
+A row belongs to the API key the worker id was first used with. When
+another key that is still valid polls under the same id, the row says so,
+and that worker logs once that the server keeps its row for another key.
+Its runs are not affected, but the row, its labels and its presence stay
+the first key's. Give each worker its own id and key; when a worker moves
+to a new key, revoke the old one and the row passes to the new key
+([Permissions](../concepts/api-keys.md#permissions)).
+
 ## Pausing a worker
 
 To work on a worker's machine yourself (an editor connected over SSH, your

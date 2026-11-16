@@ -43,6 +43,17 @@ func testService(t *testing.T) *Service {
 	return s
 }
 
+// liveKeys records API keys as valid: a worker's registry row stays with
+// its key only while that key is valid (rowMine).
+func liveKeys(t *testing.T, s *Service, ids ...string) {
+	t.Helper()
+	for _, id := range ids {
+		if _, err := s.storage.db.Exec(`INSERT INTO api_keys (id, name, key_hash, key_prefix, created_at) VALUES (?, ?, ?, 'sk_', '2026-01-01T00:00:00.000000000Z')`, id, id, "hash-"+id); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // shortLeaseService leases runs for 50ms, for the tests that let a lease run
 // out by sleeping.
 func shortLeaseService(t *testing.T) *Service {
@@ -819,6 +830,9 @@ func TestPlanSuccessNoFalseMoveNote(t *testing.T) {
 // (no key recorded) is adopted by its next writer.
 func TestWorkerRegistryScopedAndBound(t *testing.T) {
 	s := testService(t)
+	liveKeys(t, s, "ka", "kb", "kc")
+	spy := &auditSpy{}
+	s.SetAuditRecorder(spy)
 	keyA := auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: "ka", Workspaces: map[string]struct{}{"ws-a": {}, "ws-shared": {}}})
 	keyB := auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: "kb", Workspaces: map[string]struct{}{"ws-b": {}, "ws-shared": {}}})
 	keyC := auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: "kc", Workspaces: map[string]struct{}{"ws-c": {}}})
@@ -863,10 +877,76 @@ func TestWorkerRegistryScopedAndBound(t *testing.T) {
 			t.Fatalf("another key overwrote the row: %+v", w)
 		}
 	}
+	// The other key's polls are on the row: root sees which key, a scoped
+	// key only that one polls; the poller is told.
+	seen := func(ctx context.Context, id string) WorkerSeen {
+		t.Helper()
+		ws, _ := s.ListWorkers(ctx)
+		for _, w := range ws {
+			if w.ID == id {
+				return w
+			}
+		}
+		t.Fatalf("no row %s", id)
+		return WorkerSeen{}
+	}
+	if w := seen(rootCtx(), "wa"); w.OtherSeen == "" || w.OtherKeyID != "kc" {
+		t.Fatalf("root sees the other key: %+v", w)
+	}
+	if w := seen(keyA, "wa"); w.OtherSeen == "" || w.OtherKeyID != "" {
+		t.Fatalf("a scoped key sees that another key polls, not which: %+v", w)
+	}
+	if !s.WorkerRowRefused(keyC, "wa") || s.WorkerRowRefused(keyA, "wa") || s.WorkerRowRefused(keyC, "new-worker") {
+		t.Fatal("WorkerRowRefused: only for a row another valid key holds")
+	}
+	if err := s.WorkerOffline(keyC, "wa"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("another valid key cannot say goodbye for wa: %v", err)
+	}
+
+	// Its key revoked, the row passes to the key polling under its id now
+	// (a worker given a new key), and the other-key note goes with it.
+	if _, err := s.storage.db.Exec(`UPDATE api_keys SET revoked_at = '2026-02-01T00:00:00.000000000Z' WHERE id = 'ka'`); err != nil {
+		t.Fatal(err)
+	}
+	if s.WorkerRowRefused(keyC, "wa") {
+		t.Fatal("a revoked key's row is the next writer's")
+	}
+	claim(keyC, "wa", []string{"codex"}, "ws-c")
+	if w := seen(rootCtx(), "wa"); strings.Join(w.Runners, "+") != "codex" || w.OtherSeen != "" {
+		t.Fatalf("the row passed to the new key: %+v", w)
+	}
+	if !s.WorkerRowRefused(keyA, "wa") {
+		t.Fatal("the row is the new key's now")
+	}
+	var adopted []string
+	for _, e := range spy.got {
+		if e.Action == "worker.adopt" {
+			adopted = append(adopted, e.EntityID+": "+e.Notes)
+		}
+	}
+	if len(adopted) != 1 || !strings.HasPrefix(adopted[0], "wa: ") || !strings.Contains(adopted[0], "key ka") {
+		t.Fatalf("the row passing is audited once: %q", adopted)
+	}
+	// A deleted key's row passes the same way.
+	if _, err := s.storage.db.Exec(`DELETE FROM api_keys WHERE id = 'kb'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WorkerOffline(keyC, "wb"); err != nil {
+		t.Fatalf("a deleted key's row is the next writer's: %v", err)
+	}
+	// Root's rows never pass.
+	if _, err := s.ClaimNext(rootCtx(), ClaimInput{WorkerID: "wr", Runners: []string{"claude"}, Workspaces: []string{"ws-a"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !s.WorkerRowRefused(keyA, "wr") {
+		t.Fatal("root's row stays root's")
+	}
+
 	// Legacy row (written before key_id existed) is adopted by its next writer.
 	if _, err := s.storage.db.Exec(`UPDATE workers SET key_id = NULL WHERE id = 'wc'`); err != nil {
 		t.Fatal(err)
 	}
+	liveKeys(t, s, "kb")
 	claim(keyB, "wc", []string{"glm"}, "ws-b")
 	var owner string
 	if err := s.storage.db.QueryRow(`SELECT key_id FROM workers WHERE id = 'wc'`).Scan(&owner); err != nil || owner != "kb" {
@@ -880,6 +960,7 @@ func TestWorkerRegistryScopedAndBound(t *testing.T) {
 // silence beyond three poll intervals (min 2m) is offline; a held run is busy.
 func TestWorkerPresence(t *testing.T) {
 	s := testService(t)
+	liveKeys(t, s, "k1", "k2")
 	clock := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return clock }
 	k := auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: "k1", Workspaces: map[string]struct{}{"ws-a": {}}})

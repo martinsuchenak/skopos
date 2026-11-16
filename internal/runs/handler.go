@@ -64,6 +64,11 @@ func (h *Handler) Claim(w http.ResponseWriter, r *http.Request) {
 		h.respondRunError(w, err, "claim")
 		return
 	}
+	// The worker's row belongs to another live key: its polls do not
+	// update it, so the Workers view shows it stale. The worker says so.
+	if h.service.WorkerRowRefused(r.Context(), in.WorkerID) {
+		w.Header().Set("Skopos-Worker-Row", "other-key")
+	}
 	if run == nil {
 		// A paused worker skips its idle work too (indexing, cleanup):
 		// someone is using its machine.

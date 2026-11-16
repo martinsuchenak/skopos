@@ -460,6 +460,17 @@ func (s *Service) ClaimNext(ctx context.Context, in ClaimInput) (*Run, error) {
 				s.recordFacts(fctx, in.WorkerID, before, after, known)
 			}
 		}()
+		// A row passing from a revoked or deleted key to this one
+		// (rowMine) is in the trail: who holds a worker's id changed.
+		if row, err := s.storage.WorkerRowFor(ctx, in.WorkerID, in.KeyID); err == nil && row.Mine && row.Owner != nil && *row.Owner != in.KeyID {
+			from := *row.Owner
+			defer func() {
+				actx := context.WithoutCancel(ctx)
+				if after, err := s.storage.WorkerRowFor(actx, in.WorkerID, in.KeyID); err == nil && after.Owner != nil && *after.Owner == in.KeyID {
+					s.recordAudit(actx, in.WorkerID, "worker.adopt", "", "the worker's row passed from key "+from+" (revoked or deleted) to the key polling under its id")
+				}
+			}()
+		}
 	}
 	if s.healthNotify != nil {
 		// What the registry held before and after this poll: a row this
@@ -728,8 +739,15 @@ func (s *Service) Heartbeat(ctx context.Context, id, workerID, leaseToken, phase
 	return nil
 }
 
-// WorkerOffline records a worker's clean-shutdown goodbye. Only the key
-// that owns the registry row may say it (others get not-found).
+// WorkerRowRefused: the worker's registry row belongs to another live key
+// (rowMine), so this key's polls leave it unchanged.
+func (s *Service) WorkerRowRefused(ctx context.Context, workerID string) bool {
+	row, err := s.storage.WorkerRowFor(ctx, strings.TrimSpace(workerID), callerKeyID(ctx))
+	return err == nil && !row.Mine
+}
+
+// WorkerOffline records a worker's clean-shutdown goodbye. Only a key the
+// registry row passes to (rowMine) may say it (others get not-found).
 func (s *Service) WorkerOffline(ctx context.Context, workerID string) error {
 	workerID = strings.TrimSpace(workerID)
 	if workerID == "" {
@@ -1042,6 +1060,10 @@ func (s *Service) ResumeItem(ctx context.Context, itemID string) error {
 	return nil
 }
 
+// otherKeyWindow: how long the Workers view says another key polls under a
+// worker's id after it last did.
+const otherKeyWindow = 15 * time.Minute
+
 // ListWorkers is the worker registry (capabilities recorded at claim).
 // Root and "*" keys see every worker; a scoped key sees only workers that
 // serve at least one of its workspaces, with the workspace list cut to its
@@ -1061,8 +1083,19 @@ func (s *Service) ListWorkers(ctx context.Context) ([]WorkerSeen, error) {
 			all[i].Paused = nil
 		}
 		all[i].State = workerState(all[i], busy[all[i].ID], now)
+		// Another key's polls are worth showing while they go on.
+		if all[i].OtherSeen == "" || parseTime(all[i].OtherSeen).Before(now.Add(-otherKeyWindow)) {
+			all[i].OtherSeen, all[i].OtherKeyID = "", ""
+		}
 	}
 	p := auth.PrincipalFromContext(ctx)
+	if !p.IsRoot() {
+		// Keys are root's to manage: others learn that a key polls, not
+		// which.
+		for i := range all {
+			all[i].OtherKeyID = ""
+		}
+	}
 	if p.IsRoot() || p.AllWorkspaces {
 		return all, nil
 	}

@@ -200,6 +200,9 @@ type Worker struct {
 	// paused: the pause the last claim answer named ("" = none), logged
 	// when it changes.
 	paused string
+	// otherKey: the server keeps the worker's row for another key (logged
+	// when it changes).
+	otherKey bool
 }
 
 // SetLogOutput sends every run's log lines to the log output too.
@@ -248,6 +251,7 @@ func (w *Worker) Loop(ctx context.Context) error {
 			}
 			continue
 		}
+		w.noteRowOwner(w.client.RowOfOtherKey())
 		if run == nil {
 			if w.maybeUpgrade(ctx) {
 				w.stopIndexing()
@@ -284,6 +288,24 @@ func (w *Worker) Loop(ctx context.Context) error {
 
 // notePause logs a change of pause and reports whether the worker is
 // paused: until is "" (not paused), "resume" (until resumed) or the end.
+// noteRowOwner logs, when it changes, that the server keeps this worker's
+// registry row for another API key: the worker id was first used with a
+// key that is still valid. Runs still reach the worker; the Workers view
+// and everything that reads the registry (labels, presence, the index
+// duty) do not see this worker.
+func (w *Worker) noteRowOwner(other bool) {
+	if other == w.otherKey {
+		return
+	}
+	w.otherKey = other
+	if other {
+		w.log.Warn("the server keeps this worker's row for another API key: the worker id was first used with a key that is still valid. "+
+			"Give this worker its own id, or revoke the key the id was first used with; until then the Workers view shows the worker stale and its labels do not apply", "worker", w.cfg.ID)
+		return
+	}
+	w.log.Info("the server records this worker's row under its key again", "worker", w.cfg.ID)
+}
+
 func (w *Worker) notePause(until string) bool {
 	if until != w.paused {
 		switch until {

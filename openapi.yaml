@@ -3908,6 +3908,8 @@ paths:
                     server_commands: { type: boolean, description: "It takes commands from the server; absent for a worker that does not say" }
                     fleet_rev: { type: string, description: The runner definitions it holds }
                     labels: { type: array, items: { type: string }, description: "The worker's labels (PUT /api/workers/{id}/labels). A run of an item that needs labels goes only to a worker with all of them" }
+                    other_seen: { type: string, format: date-time, description: "When another API key, still valid, last polled under this worker's id (within the last 15 minutes): its polls leave the row unchanged. The row passes to the next key that polls once its own key is revoked or deleted" }
+                    other_key_id: { type: string, description: "That key's id (root only)" }
                     state:
                       type: string
                       enum: [busy, idle, paused, offline]
