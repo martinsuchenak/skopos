@@ -313,6 +313,9 @@ type ApproveInput struct {
 	Via         string
 	RevisionID  string
 	ContentHash string
+	// Reason: why the approver chose this plan (optional). Kept with the
+	// approval and in the audit trail; the implementer never reads it.
+	Reason string
 
 	prepared   *qa.Prepared // the answers, checked before any bookkeeping
 	approvalID string       // the approval record the answers go with
@@ -343,6 +346,10 @@ func (s *Service) Approve(ctx context.Context, itemID string, input ApproveInput
 	}
 	if item.Status != StatusAwaitingApproval {
 		return nil, fmt.Errorf("%w: only awaiting_approval items can be approved (item is %s)", ErrInvalidInput, statusLabel(item.Status))
+	}
+	input.Reason = strings.TrimSpace(input.Reason)
+	if len(input.Reason) > maxReasonLen {
+		return nil, fmt.Errorf("%w: the reason is %d bytes; the limit is %d", ErrInvalidInput, len(input.Reason), maxReasonLen)
 	}
 	// The answers are checked before anything is locked or recorded: a
 	// refused answer leaves the item as it was.
@@ -395,6 +402,7 @@ func (s *Service) Approve(ctx context.Context, itemID string, input ApproveInput
 			Decision:    approvals.DecisionApproved,
 			Via:         input.Via,
 			Notes:       input.auditNotes(),
+			Reason:      input.Reason,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("recording approval: %w", err)
@@ -429,6 +437,7 @@ func (s *Service) approveCandidate(ctx context.Context, item *Item, cand *plans.
 			Decision:    approvals.DecisionApproved,
 			Via:         input.Via,
 			Notes:       input.auditNotes(),
+			Reason:      input.Reason,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("recording approval: %w", err)
@@ -470,7 +479,11 @@ func (s *Service) finishApprove(ctx context.Context, item *Item, rev *plans.Revi
 	if nerr != nil {
 		return nil, nerr
 	}
-	item, terr := s.transitionWith(ctx, item.ID, StatusApproved, ActorHuman, "inbox.approve", input.Via, input.auditNotes(), "", chainMutations(appendAnswers, appendApproval))
+	auditNotes := input.auditNotes()
+	if input.Reason != "" {
+		auditNotes = joinNotes(auditNotes, "Why this plan: "+input.Reason)
+	}
+	item, terr := s.transitionWith(ctx, item.ID, StatusApproved, ActorHuman, "inbox.approve", input.Via, auditNotes, "", chainMutations(appendAnswers, appendApproval))
 	if terr != nil && s.runQueuer != nil && queuedRun != "" {
 		_ = s.runQueuer.CancelRun(ctx, queuedRun, "approve transition failed")
 	}
@@ -480,6 +493,9 @@ func (s *Service) finishApprove(ctx context.Context, item *Item, rev *plans.Revi
 	s.commitAnswers(ctx, item, input.prepared, input.approvalID, input.Via)
 	return item, nil
 }
+
+// maxReasonLen bounds the reason given for a chosen plan.
+const maxReasonLen = 2000
 
 // auditNotes is what the audit trail and the approval record keep: the
 // answers, then the notes.

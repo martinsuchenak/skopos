@@ -285,6 +285,10 @@ func RunMigrations(db *sql.DB) error {
 			return err
 		}
 	}
+	// approvals.reason: why the approver chose the plan (optional).
+	if err := ensureColumn(db, "approvals", "reason", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	// webhooks.last_failure_ms (the failure run's newest failure) came
 	// after the table; a database from before it gets the column.
 	if err := ensureColumn(db, "webhooks", "last_failure_ms", "INTEGER"); err != nil {

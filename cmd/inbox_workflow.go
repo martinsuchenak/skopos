@@ -60,6 +60,7 @@ func inboxWorkflowCmds() []*cli.Command {
 			Flags: workflowFlags(
 				&cli.StringFlag{Name: "revision", Usage: "Revision ID you reviewed (required without a terminal; see 'inbox plan')"},
 				&cli.StringFlag{Name: "notes", Usage: "Notes for the implementer (answers to the planner's questions, overrides)"},
+				&cli.StringFlag{Name: "reason", Usage: "Why you chose this plan (optional; kept with the approval and in the item report, not given to the implementer)"},
 			),
 			Run: func(ctx context.Context, cmd *cli.Command) error {
 				c, id, err := workflowClient(cmd)
@@ -96,6 +97,9 @@ func inboxWorkflowCmds() []*cli.Command {
 				body := map[string]string{"revision_id": revID}
 				if n := cmd.GetString("notes"); n != "" {
 					body["notes"] = n
+				}
+				if r := strings.TrimSpace(cmd.GetString("reason")); r != "" {
+					body["reason"] = r
 				}
 				return c.action(ctx, id, "approve", body, "approved — the implement run is queued")
 			},

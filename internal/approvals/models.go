@@ -20,17 +20,20 @@ const (
 // a new commit after a review approval makes that review stale (the subject
 // no longer matches the head), exactly like GitHub stale-review dismissal.
 type Entry struct {
-	ID          string    `json:"id"`
-	WorkspaceID string    `json:"workspace_id"`
-	ItemID      string    `json:"item_id"`
-	Gate        string    `json:"gate"`
-	Subject     string    `json:"subject"`
-	Decision    string    `json:"decision"`
-	Actor       string    `json:"actor"`
-	ActorKeyID  string    `json:"actor_key_id,omitempty"`
-	Via         string    `json:"via,omitempty"`
-	Notes       string    `json:"notes,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
+	ItemID      string `json:"item_id"`
+	Gate        string `json:"gate"`
+	Subject     string `json:"subject"`
+	Decision    string `json:"decision"`
+	Actor       string `json:"actor"`
+	ActorKeyID  string `json:"actor_key_id,omitempty"`
+	Via         string `json:"via,omitempty"`
+	Notes       string `json:"notes,omitempty"`
+	// Reason: why the approver chose this plan (optional; a plan approval
+	// only). Kept with the decision, never given to the implementer.
+	Reason    string    `json:"reason,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // RecordInput is the caller-facing write shape; the actor is derived from
@@ -43,4 +46,5 @@ type RecordInput struct {
 	Decision    string
 	Via         string
 	Notes       string
+	Reason      string
 }

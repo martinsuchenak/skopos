@@ -371,7 +371,9 @@ questions, the synthesis and the comparison.
 - Hide and show columns with the chips above them, to put two plans next to
   each other.
 - **Approve** on a candidate's column approves that candidate, with the
-  notes and answers typed in the preview.
+  notes and answers typed in the preview, and the reason typed under "Why
+  this plan" (optional; kept with the approval and in the item report, not
+  given to the implementer).
 - An item planned more than once has a round switcher: a re-plan after
   "request changes" starts a new round.
 - It works for a single planner's plan too, and after the gate.
@@ -589,7 +591,9 @@ scopes and the `message.im` event subscription.
 | `SKOPOS_SLACK_USER_ID` | The only user whose replies are honored |
 | `SKOPOS_SLACK_DEFAULT_WORKSPACE` | Workspace for `new: <what>` capture (unset disables capture) |
 
-Commands (replies in an item's thread): `approve` [`: <notes>`], `revise:
+Commands (replies in an item's thread): `approve` [`: <notes>`] (a line
+`why: <reason>` in it is kept as the reason for the choice, not given to
+the implementer), `revise:
 <notes>`, `changes: <notes>`, `done`, `retry: <answer>`, `reject`,
 `second` / `second <runner>` (an advisory [second opinion](#second-opinions-on-demand),
 `force` to repeat a runner on the same head),

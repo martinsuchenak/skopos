@@ -326,6 +326,7 @@ const appState = () => ({
   // What the panel moved on from ('' = opened by hand).
   logFrom: '',
   workflowNote: '',
+  workflowReason: '', // why this plan, when choosing between candidates (kept with the approval)
   workflowBusy: false,
   reportBusy: false, // the item report is being fetched (Report, Copy summary)
   expandedInbox: null as InboxDetail | null,
@@ -1325,6 +1326,7 @@ const appState = () => ({
     this.waive = { id: '', note: '', busy: false };
     this.injectPreviewContent();
     this.workflowNote = '';
+    this.workflowReason = '';
     this.previewStatusSeen = '';
     this.previewPipe = null;
     this.syncPreviewSections();
@@ -1560,7 +1562,7 @@ const appState = () => ({
       await this.fetchPreviewRuns(item.id);
     } finally { this.secondOpinion.busy = false; }
   },
-  closeInboxPreview() { if (this.planView.open || Date.now() - plansClosedAt < 150) return; this.closeRunLog(); if (previewPoll) { clearInterval(previewPoll); previewPoll = null; } this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.previewCandidates = []; this.previewApprovedRev = null; this.previewPipe = null; this.previewStatusSeen = ''; this.previewWorkers = []; this.previewTimeline = []; this.previewQuestions = []; this.workflowNote = ''; this.questionAnswers = {}; this.previewRoundOpen = {}; this.workflowBusy = false; },
+  closeInboxPreview() { if (this.planView.open || Date.now() - plansClosedAt < 150) return; this.closeRunLog(); if (previewPoll) { clearInterval(previewPoll); previewPoll = null; } this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.previewCandidates = []; this.previewApprovedRev = null; this.previewPipe = null; this.previewStatusSeen = ''; this.previewWorkers = []; this.previewTimeline = []; this.previewQuestions = []; this.workflowNote = ''; this.workflowReason = ''; this.questionAnswers = {}; this.previewRoundOpen = {}; this.workflowBusy = false; },
   // The newest revision of the previewed item's plan, while it waits at the
   // gate (revisions list newest first).
   async fetchPreviewRevision() {
@@ -1608,6 +1610,7 @@ const appState = () => ({
     if (!item || !t) return;
     const body: Record<string, unknown> = { revision_id: t.id, content_hash: t.hash };
     if (this.workflowNote.trim()) body.notes = this.workflowNote;
+    if (this.workflowReason.trim()) body.reason = this.workflowReason.trim();
     const answers = this.answerItems();
     if (answers.length > 0) body.answers = answers;
     this.postWorkflowAction(item.id, 'approve', body, t.toast);
@@ -2891,6 +2894,7 @@ const appState = () => ({
     }
     this.notify(okMessage, 'success');
     this.workflowNote = '';
+    this.workflowReason = '';
     this.questionAnswers = {};
     this.findingPicks = {};
     await this.fetchInbox();

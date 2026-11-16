@@ -65,6 +65,7 @@ func (s *Service) Record(ctx context.Context, input RecordInput) (Entry, error) 
 		Decision:    input.Decision,
 		Via:         via,
 		Notes:       input.Notes,
+		Reason:      strings.TrimSpace(input.Reason),
 		CreatedAt:   s.now().UTC(),
 	}
 	e.Actor, e.ActorKeyID = auth.Actor(ctx)

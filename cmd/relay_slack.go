@@ -404,7 +404,8 @@ func (r *slackRelay) applyCommand(ctx context.Context, item *inbox.Item, cmd, se
 			r.post(ctx, thread, "⚠️ "+msg)
 			return true
 		}
-		approved, err := r.inbox.Approve(relayCtx, item.ID, inbox.ApproveInput{Notes: arg, Via: audit.ViaSlack, RevisionID: revID})
+		notes, reason := splitWhy(arg)
+		approved, err := r.inbox.Approve(relayCtx, item.ID, inbox.ApproveInput{Notes: notes, Reason: reason, Via: audit.ViaSlack, RevisionID: revID})
 		if err != nil {
 			if errors.Is(err, inbox.ErrStaleRevision) || errors.Is(err, plans.ErrStaleRevision) {
 				r.post(ctx, thread, "⚠️ The plan changed since the message you replied to. The current plan follows — approve that one.")
@@ -641,6 +642,22 @@ func (r *slackRelay) setNeeds(ctx context.Context, item *inbox.Item, arg string)
 	}
 	r.post(ctx, thread, msg)
 	return true
+}
+
+// reWhy: a `why: <reason>` line in an approval says why that plan was
+// chosen; it is kept with the approval, not given to the implementer.
+var reWhy = regexp.MustCompile(`(?im)^[ \t]*why[ \t]*:[ \t]*(.*?)[ \t]*$`)
+
+// splitWhy takes the `why:` lines out of an approval's notes.
+func splitWhy(arg string) (notes, reason string) {
+	var why []string
+	notes = reWhy.ReplaceAllStringFunc(arg, func(line string) string {
+		if r := strings.TrimSpace(reWhy.FindStringSubmatch(line)[1]); r != "" {
+			why = append(why, r)
+		}
+		return ""
+	})
+	return strings.TrimSpace(notes), strings.Join(why, " ")
 }
 
 // isSettingWord: item settings whose word also starts ordinary sentences
@@ -915,7 +932,7 @@ func candidatesMessage(item *inbox.Item, cands []plans.Revision) (string, []show
 	if q := questionsText(item.Content, "*"); q != "" {
 		b.WriteString("\n*Questions for you* (answer in the notes: `approve <n>: 1) a, 2) …`):\n" + q)
 	}
-	b.WriteString("\n`approve <n>` · `approve <n>: <notes>` · `revise <n>: <notes>` (one planner reworks it) · `revise: <notes>` (re-plan all) · `reject`")
+	b.WriteString("\n`approve <n>` · `approve <n>: <notes>` (a line `why: …` records why you chose it) · `revise <n>: <notes>` (one planner reworks it) · `revise: <notes>` (re-plan all) · `reject`")
 	return b.String(), shown
 }
 

@@ -758,11 +758,23 @@ func TestRelayCandidatesGate(t *testing.T) {
 	if !relay.Apply(root, item.ID, "approve 3") || !strings.Contains(fake.last().text, "No candidate 3") {
 		t.Fatalf("unknown number: %q", fake.last().text)
 	}
-	if !relay.Apply(root, item.ID, "approve glm: go with the rewrite") {
+	if !relay.Apply(root, item.ID, "approve glm: go with the rewrite\nwhy: it removes the global state") {
 		t.Fatal("approve glm must be handled")
 	}
-	if got, _ := svc.GetItem(root, item.ID); got.Status != inbox.StatusApproved {
+	got, _ := svc.GetItem(root, item.ID)
+	if got.Status != inbox.StatusApproved {
 		t.Fatalf("approve glm: %s (%q)", got.Status, fake.last().text)
+	}
+	// The `why:` line is the reason, kept with the approval; the notes go
+	// to the implementer without it.
+	if !strings.Contains(got.Content, "go with the rewrite") || strings.Contains(got.Content, "global state") {
+		t.Fatalf("the reason is not for the implementer:\n%s", got.Content)
+	}
+	if es, _ := svc.Approvals(approverCtx(), item.ID); len(es) == 0 || es[0].Reason != "it removes the global state" || es[0].Notes != "go with the rewrite" {
+		t.Fatalf("the approval keeps the reason apart from the notes: %+v", es)
+	}
+	if n, r := splitWhy("why: a\nkeep it\n  Why:  b "); n != "keep it" || r != "a b" {
+		t.Fatalf("splitWhy: %q %q", n, r)
 	}
 	plan, _ := plansSvc.GetPlan(root, item.PlanID)
 	if len(plan.Items) != 3 || plan.Items[0].Title != "rewrite module" {

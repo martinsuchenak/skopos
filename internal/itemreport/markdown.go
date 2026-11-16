@@ -123,6 +123,9 @@ func (d *doc) plan(p *Plan) {
 			line += ", on base commit " + code(short(p.BaseSHA))
 		}
 		d.w("%s.\n\n", line)
+		if p.Approval.Reason != "" {
+			d.w("**Why this plan:** %s\n\n", clipIf(!d.full, oneLine(p.Approval.Reason), 300))
+		}
 		d.notes(p.Approval.Notes)
 		if p.Amended {
 			d.w("That revision amends the plan approved before it; the steps are the amended ones.\n\n")
@@ -293,10 +296,16 @@ func (d *doc) decisions(r *Report) {
 			if n := oneLine(dec.Notes); n != "" {
 				line += ": " + clip(n, 200)
 			}
+			if dec.Reason != "" {
+				line += "; why this plan: " + clip(oneLine(dec.Reason), 200)
+			}
 			d.w("- %s\n", line)
 			continue
 		}
 		d.w("- %s\n", line)
+		if dec.Reason != "" {
+			d.w("\n  **Why this plan:** %s\n\n", oneLine(dec.Reason))
+		}
 		if dec.Notes != "" {
 			d.w("\n%s\n\n", indent(quote(dec.Notes), "  "))
 		}
@@ -887,6 +896,14 @@ func linkText(s string) string {
 
 // words: "in_review" → "in review".
 func words(s string) string { return strings.ReplaceAll(s, "_", " ") }
+
+// clipIf clips s to n runes when cut is true.
+func clipIf(cut bool, s string, n int) string {
+	if cut {
+		return clip(s, n)
+	}
+	return s
+}
 
 func clip(s string, n int) string {
 	r := []rune(s)

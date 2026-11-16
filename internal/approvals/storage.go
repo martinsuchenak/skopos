@@ -28,9 +28,9 @@ func (s *Storage) Write(ctx context.Context, e Entry) error {
 		actorKeyID = e.ActorKeyID
 	}
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO approvals (id, workspace_id, item_id, gate, subject, decision, actor, actor_key_id, via, notes, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.WorkspaceID, e.ItemID, e.Gate, e.Subject, e.Decision, e.Actor, actorKeyID, e.Via, e.Notes, formatTime(e.CreatedAt)); err != nil {
+		INSERT INTO approvals (id, workspace_id, item_id, gate, subject, decision, actor, actor_key_id, via, notes, reason, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.WorkspaceID, e.ItemID, e.Gate, e.Subject, e.Decision, e.Actor, actorKeyID, e.Via, e.Notes, e.Reason, formatTime(e.CreatedAt)); err != nil {
 		return fmt.Errorf("inserting approval: %w", err)
 	}
 	return nil
@@ -39,7 +39,7 @@ func (s *Storage) Write(ctx context.Context, e Entry) error {
 // List returns an item's decisions, newest-first.
 func (s *Storage) List(ctx context.Context, itemID string) ([]Entry, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, workspace_id, item_id, gate, subject, decision, actor, actor_key_id, via, notes, created_at
+		SELECT id, workspace_id, item_id, gate, subject, decision, actor, actor_key_id, via, notes, reason, created_at
 		FROM approvals WHERE item_id = ? ORDER BY id DESC`, itemID)
 	if err != nil {
 		return nil, fmt.Errorf("listing approvals: %w", err)
@@ -50,7 +50,7 @@ func (s *Storage) List(ctx context.Context, itemID string) ([]Entry, error) {
 		var e Entry
 		var actorKeyID sql.NullString
 		var createdAt string
-		if err := rows.Scan(&e.ID, &e.WorkspaceID, &e.ItemID, &e.Gate, &e.Subject, &e.Decision, &e.Actor, &actorKeyID, &e.Via, &e.Notes, &createdAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.WorkspaceID, &e.ItemID, &e.Gate, &e.Subject, &e.Decision, &e.Actor, &actorKeyID, &e.Via, &e.Notes, &e.Reason, &createdAt); err != nil {
 			return nil, err
 		}
 		e.ActorKeyID = actorKeyID.String
@@ -68,10 +68,10 @@ func (s *Storage) LatestApproved(ctx context.Context, itemID, gate string) (*Ent
 	var actorKeyID sql.NullString
 	var createdAt string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, workspace_id, item_id, gate, subject, decision, actor, actor_key_id, via, notes, created_at
+		SELECT id, workspace_id, item_id, gate, subject, decision, actor, actor_key_id, via, notes, reason, created_at
 		FROM approvals WHERE item_id = ? AND gate = ? AND decision = ?
 		ORDER BY id DESC LIMIT 1`, itemID, gate, DecisionApproved,
-	).Scan(&e.ID, &e.WorkspaceID, &e.ItemID, &e.Gate, &e.Subject, &e.Decision, &e.Actor, &actorKeyID, &e.Via, &e.Notes, &createdAt)
+	).Scan(&e.ID, &e.WorkspaceID, &e.ItemID, &e.Gate, &e.Subject, &e.Decision, &e.Actor, &actorKeyID, &e.Via, &e.Notes, &e.Reason, &createdAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

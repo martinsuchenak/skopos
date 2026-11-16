@@ -131,6 +131,24 @@ func TestIntegrationAutoApprovePlan(t *testing.T) {
 		t.Fatalf("the re-plan's hold: %v", e)
 	}
 
+	// Approved by hand with a reason: kept with the approval and in the
+	// report, never in what the implementer reads.
+	rev := mustJSON(t, approver.req("GET", "/api/inbox/"+askedID+"/state", ""), 200).(map[string]any)["plan"].(map[string]any)["revisions"].([]any)[0].(map[string]any)
+	mustDo(t, approver.req("POST", "/api/inbox/"+askedID+"/approve", `{"revision_id":"`+rev["revision_id"].(string)+`","notes":"pin the router","reason":"the smaller of the two changes"}`), 200)
+	if impl := claim(t, worker, `{"worker_id":"w3","runners":["claude"],"workspaces":["`+ws+`"]}`); impl["item_id"] != askedID || impl["stage"] != "implement" {
+		t.Fatalf("approved by hand, implemented: %v", impl)
+	}
+	if c := item(askedID)["content"].(string); strings.Contains(c, "smaller of the two") || !strings.Contains(c, "pin the router") {
+		t.Fatalf("the reason is not appended for the implementer:\n%s", c)
+	}
+	var appr []map[string]any
+	if err := json.Unmarshal([]byte(mustDo(t, approver.req("GET", "/api/inbox/"+askedID+"/approvals", ""), 200).body), &appr); err != nil || len(appr) == 0 || appr[0]["reason"] != "the smaller of the two changes" {
+		t.Fatalf("the approval keeps the reason: %v %v", appr, err)
+	}
+	if rep := mustDo(t, approver.req("GET", "/api/inbox/"+askedID+"/report", ""), 200).body; !strings.Contains(rep, "**Why this plan:** the smaller of the two changes") || strings.Contains(rep, "> Why this plan") {
+		t.Fatalf("the report shows the reason once:\n%s", rep)
+	}
+
 	// The item report names both.
 	if rep := mustDo(t, approver.req("GET", "/api/inbox/"+autoID+"/report?level=summary", ""), 200).body; !strings.Contains(rep, "· Plan approved automatically, switched on by key alex") {
 		t.Fatalf("the report names the automatic approval:\n%s", rep)

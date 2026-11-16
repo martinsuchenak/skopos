@@ -352,6 +352,11 @@ Then either:
   implementer and override the plan where they conflict;
 - or click **Request changes**, with notes or answers, to get a re-plan.
 
+When several planners each wrote a plan, the preview also has **Why this
+plan (optional)**. What you write there is kept with the approval and shown
+in the item report; the implementer doesn't read it. In Slack, add a line
+`why: …` to `approve <n>: …`; on the CLI, `skopos inbox approve --reason`.
+
 To read a plan in full, or several planners' plans next to each other,
 click **Read the plans side by side**. The same view exports them as
 Markdown, as does `skopos inbox plans --id <item>`.

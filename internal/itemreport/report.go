@@ -222,6 +222,8 @@ type Decision struct {
 	By      string `json:"by"`
 	Via     string `json:"via,omitempty"`
 	Notes   string `json:"notes,omitempty"`
+	// Reason: why the approver chose this plan (a plan approval only).
+	Reason string `json:"reason,omitempty"`
 }
 
 // Check is one setup or check command's result.
@@ -490,7 +492,7 @@ func decisions(approved []approvals.Entry, timeline []audit.Entry) []Decision {
 	if len(timeline) == 0 {
 		for _, action := range []string{ActionApprove, ActionMarkDone} {
 			for _, e := range subjects[action] {
-				out = append(out, Decision{At: e.CreatedAt, Action: action, Subject: e.Subject, By: e.Actor, Via: e.Via, Notes: strings.TrimSpace(e.Notes)})
+				out = append(out, Decision{At: e.CreatedAt, Action: action, Subject: e.Subject, By: e.Actor, Via: e.Via, Notes: strings.TrimSpace(e.Notes), Reason: e.Reason})
 			}
 		}
 		sort.SliceStable(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
@@ -513,8 +515,13 @@ func decisions(approved []approvals.Entry, timeline []audit.Entry) []Decision {
 			}
 		}
 		if best >= 0 {
-			d.Subject = subjects[action][best].Subject
+			d.Subject, d.Reason = subjects[action][best].Subject, subjects[action][best].Reason
 			used[action][best] = true
+			// The audit note repeats the reason after the notes: the
+			// report shows it once, as the reason.
+			if d.Reason != "" {
+				d.Notes = strings.TrimSpace(strings.TrimSuffix(d.Notes, "Why this plan: "+d.Reason))
+			}
 		}
 		out = append(out, d)
 	}

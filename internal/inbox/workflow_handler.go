@@ -105,7 +105,7 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := h.service.Approve(r.Context(), r.PathValue("id"), ApproveInput{
 		Notes: req.Notes, Answers: req.Answers, Via: viaFrom(r, ""),
-		RevisionID: req.RevisionID, ContentHash: req.ContentHash,
+		RevisionID: req.RevisionID, ContentHash: req.ContentHash, Reason: req.Reason,
 	})
 	if errors.Is(err, ErrStaleRevision) {
 		rest.RespondError(w, http.StatusConflict, err.Error())

@@ -1734,6 +1734,11 @@
                             <label for="workflow-note" class="text-[11px] font-medium text-zinc-400" x-text="workflowNoteLabel()"></label>
                             <textarea id="workflow-note" x-model="workflowNote" rows="3" class="fld w-full resize-y text-sm" :placeholder="workflowNotePlaceholder()" :aria-label="workflowNoteLabel()"></textarea>
                         </div>
+                        <div class="flex w-full flex-col gap-1" x-show="workflowShowApprove() && previewCandidates.length > 1">
+                            <label for="workflow-reason" class="text-[11px] font-medium text-zinc-400">Why this plan (optional)</label>
+                            <textarea id="workflow-reason" x-model="workflowReason" rows="2" class="fld w-full resize-y text-sm" placeholder="What made you choose it over the others" aria-describedby="workflow-reason-help"></textarea>
+                            <p id="workflow-reason-help" class="text-[11px] text-zinc-500">Kept with the approval and in the item report. The implementer does not read it.</p>
+                        </div>
                         <button type="button" x-show="workflowShowQueue()" @click.stop="queueInboxItem(previewItem.id)" :disabled="!workflowActionReady('queue')" class="btn btn-sm btn-primary" :aria-label="'Queue item ' + previewItem.title">Queue</button>
                         <button type="button" x-show="workflowShowReviewBranch()" @click.stop="reviewInboxBranch(previewItem.id)" :disabled="!workflowActionReady('review')" class="btn btn-sm" :aria-label="'Review the branch of ' + previewItem.title" title="Run the checks on the existing branch and review it; nothing is planned or implemented">Review branch</button>
                         <!-- What Approve binds: the plan revision, or one card per
