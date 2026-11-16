@@ -4,6 +4,71 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.38.0] — 2026-11-16
+
+### Added
+
+- **A plan approved automatically when the planner asks no question.** An
+  item's `auto_approve_plan` (the item form's "Approve the plan when it has
+  no questions", `#auto` in a Slack capture, `auto: on|off` in the item's
+  thread, `skopos inbox add|update --auto-approve on|off`, the API and the
+  inbox tools) has the server approve the plan when its run finishes, the
+  planner asked no question, the round has one plan and it is not a re-plan
+  you asked for. The implementation then starts; the branch still comes to
+  you at sign-off.
+  - Only an approver switches it, on any item, and the change is audited.
+  - The approval is recorded as "auto (set by <who switched it on>)", via
+    `auto`. The plan gate opens without a "Plan ready" message or waiting
+    events; Slack says "Plan approved automatically" with the steps.
+  - A plan something held waits at the gate as before, and the gate message
+    and the item's timeline say why (`inbox.auto_approve_held`). An
+    amendment from the implementer and a panel's candidates always come to
+    you.
+- **Why this plan.** An approval takes an optional reason for the plan
+  chosen: the "Why this plan" box when several planners wrote one, a `why:`
+  line inside `approve <n>: …` in Slack, `skopos inbox approve --reason`,
+  `reason` in the API. It is kept with the approval and in the item report,
+  and the implementer does not read it.
+- **Item templates.** A template holds a title, a text, tags, needed worker
+  labels, the agents switch and the automatic plan approval, for a
+  workspace (its approvers) or a group (root); a workspace's own is used
+  before its group's. `{date}`, `{month}`, `{year}` and `{workspace}` are
+  filled in when an item is started.
+  - Held in Settings → Templates, with `skopos workspace|group template`,
+    or at `/api/workspaces|groups/{id}/templates`.
+  - An item is started from one with the item form's template picker,
+    `new <workspace>: template <name>` in Slack, `skopos inbox add
+    --template <name> [--extra …] [--queue]`, or `template` on `POST
+    /api/inbox`; what the request gives is used instead of the template's,
+    and the item records the template and its revision.
+  - Starting from a template that approves plans automatically needs the
+    approver permission; `--auto-approve off` keeps it off for one item.
+- **Schedules.** A schedule starts an item from a template on a rhythm and
+  queues it, for a workspace or for each workspace of a group: `monthly`,
+  `weekly`, `daily`, `hourly` or five cron fields, in a timezone.
+  - Workspaces → Schedules in the dashboard (New, Run now, Pause, Edit,
+    Remove), `skopos schedule list|set|pause|resume|delete|run`, and
+    `/api/schedules`.
+  - Each occurrence starts at most one item per workspace, also across a
+    restart; occurrences missed while the server was down fire once. While
+    the item a schedule started earlier in a workspace is still open, it
+    adds none there.
+  - A schedule fires only while the key of whoever last saved it is still
+    an approver for the workspace.
+  - Slack notes in the item's thread that a schedule started it, and says
+    when a schedule started nothing and why.
+- **"Nothing to do."** The planner can report that routine work is not
+  needed now, with what it checked, instead of writing a plan. An item
+  whose plan is approved automatically is then closed as done without
+  changes (`item.closed` with outcome `nothing_to_do` and the reason; a
+  "Nothing to do" message in Slack). Any other item waits at the gate with
+  the reason, and an approval there is refused.
+- **The count of automatic approvals.** `skopos inbox summary` and `GET
+  /api/inbox/summary` count, per workspace and template over a period, the
+  plans approved automatically, how many of those items were signed off
+  with no input from you, the plans held for you by reason, and the items
+  closed with nothing to do.
+
 ## [0.37.0] — 2026-11-15
 
 ### Added
