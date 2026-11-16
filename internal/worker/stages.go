@@ -665,6 +665,11 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 			return fmt.Errorf("push token env %s is empty", repo.Push.TokenEnv)
 		}
 		if err := pushBranch(ctx, worktree, repo.Push.RemoteURL, token, repo.Push.Kind, branch, repo.BranchPrefix, repo.Protected); err != nil {
+			// The remote refused the token: a retry pushes with the same
+			// one. Only a person can fix it.
+			if pushAuthRefused(err) {
+				return needsPerson(fmt.Errorf("push: the remote refused the push token (%s): %w", repo.Push.TokenEnv, err))
+			}
 			// Rejected (origin moved on) or unreachable: the retry pulls first.
 			return retryable(fmt.Errorf("push: %w", err))
 		}

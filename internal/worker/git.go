@@ -296,6 +296,30 @@ func pushBranch(ctx context.Context, worktree, remoteURL, token, authKind, branc
 	return err
 }
 
+// pushAuthRefused reports a push the remote refused for its credentials:
+// the token is wrong, expired or may not write to the repository. git's
+// output says so in these words (GitHub, Gitea, GitLab).
+func pushAuthRefused(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	for _, m := range []string{
+		"the requested url returned error: 401",
+		"the requested url returned error: 403",
+		"authentication failed",
+		"invalid username or password",
+		"invalid credentials",
+		"could not read username",
+	} {
+		if strings.Contains(s, m) {
+			return true
+		}
+	}
+	// GitHub: "remote: Permission to owner/repo.git denied to user."
+	return strings.Contains(s, "permission to ") && strings.Contains(s, " denied to ")
+}
+
 // pushAuthHeader is the HTTP header that carries the push token.
 //   - github: HTTP Basic with the token as the password and the
 //     conventional user x-access-token. GitHub's git-over-HTTPS rejects a

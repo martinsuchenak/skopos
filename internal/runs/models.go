@@ -104,10 +104,12 @@ const preferGrace = 15 * time.Minute
 // Retryable failures (tmp/self-healing-workers — design.md §1): up to
 // maxRetries requeues after the first failure, each after its back-off;
 // from the second retry on the failing worker is kept off the run for
-// avoidWindow past the back-off, so another worker gets the first go.
+// avoidWindow past the back-off, so another worker gets the first go. The
+// window is short: a workspace often has one worker, and then the last
+// attempt waits it out (back-off + window = 10 minutes).
 const (
 	maxRetries  = 2
-	avoidWindow = 30 * time.Minute
+	avoidWindow = 5 * time.Minute
 )
 
 var retryBackoff = [maxRetries]time.Duration{time.Minute, 5 * time.Minute}

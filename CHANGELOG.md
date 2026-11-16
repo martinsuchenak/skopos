@@ -4,6 +4,17 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- A push the remote refused for its credentials (401, 403, "Permission …
+  denied", "Authentication failed") is no longer retried: the item blocks
+  at once with the reason, naming the token's variable.
+- From the second retry on, the worker that failed a run is kept off it for
+  5 minutes, not 30. On a workspace with one worker, the last attempt comes
+  10 minutes after the second failure.
+
 ## [0.38.2] — 2026-11-16
 
 ### Fixed

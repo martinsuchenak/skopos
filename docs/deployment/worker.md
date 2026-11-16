@@ -1220,12 +1220,15 @@ the worker's own problems from blocking items:
   queue instead of blocking the item: setup failed or hung, a check hung,
   git (fetch, checkout, worktree) failed, the push was rejected, or the
   provider kept failing. The retry waits 1 minute, then 5; from the second
-  retry on, the worker that failed it can't take it for 30 minutes more, so
-  another worker serving the repo gets the first go. After 3 attempts the
-  item blocks with the last reason. Failures that need a person block at
-  once, as before: checks still failing after the fix rounds, the agent
-  saying it is blocked, a merge conflict, a branch rewritten since the plan
-  was approved.
+  retry on, the worker that failed it can't take it for 5 minutes more, so
+  another worker serving the repo gets the first go. Where it is the only
+  one, the last attempt comes 10 minutes after the second failure. After 3
+  attempts the item blocks with the last reason. Failures that need a
+  person block at once: checks still failing after the fix rounds, the
+  agent saying it is blocked, a merge conflict, a branch rewritten since
+  the plan was approved, and a push the remote refused for its credentials
+  (401 or 403, "Permission … denied", "Authentication failed": the token is
+  wrong, expired, or may not write to the repository).
 - **Preflight.** `preflight` lists commands that say whether this worker can
   take the repo's work right now (its database, queue, services):
 

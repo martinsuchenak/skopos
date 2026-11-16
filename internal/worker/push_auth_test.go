@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
@@ -65,5 +66,36 @@ func TestPushBranchSendsGitHubBasicAuth(t *testing.T) {
 		if h != want {
 			t.Fatalf("git sent Authorization %q, want %q (all: %s)", h, want, strings.Join(seen, " | "))
 		}
+	}
+}
+
+// A push the remote refused for its credentials needs a person: retrying
+// pushes with the same token. Anything else (rejected because origin moved
+// on, the host unreachable) stays retryable.
+func TestPushAuthRefused(t *testing.T) {
+	refused := []string{
+		"git push: exit status 128: remote: Permission to acme/shop.git denied to someone.\nfatal: unable to access 'https://github.com/acme/shop.git/': The requested URL returned error: 403",
+		"git push: exit status 128: fatal: Authentication failed for 'https://git.example.com/acme/shop.git/'",
+		"git push: exit status 128: remote: invalid credentials",
+		"git push: exit status 128: fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+		"git push: exit status 128: fatal: unable to access '…': The requested URL returned error: 401",
+	}
+	for _, s := range refused {
+		if !pushAuthRefused(errors.New(s)) {
+			t.Errorf("not seen as refused: %s", s)
+		}
+	}
+	other := []string{
+		"git push: exit status 1: ! [rejected] agent/x -> agent/x (fetch first)",
+		"git push: exit status 128: fatal: unable to access '…': Could not resolve host: github.com",
+		"git push: exit status 128: fatal: unable to access '…': The requested URL returned error: 500",
+	}
+	for _, s := range other {
+		if pushAuthRefused(errors.New(s)) {
+			t.Errorf("seen as refused: %s", s)
+		}
+	}
+	if pushAuthRefused(nil) {
+		t.Error("nil seen as refused")
 	}
 }
