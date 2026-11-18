@@ -81,7 +81,7 @@ model, the effort and the credentials.
 | Runner kind | Lockdown | How it runs |
 |---|---|---|
 | `claude` (default) | verified | Claude Code `-p`; structured results via `--json-schema` |
-| `opencode` | verified | `opencode run --format json`; results extracted from the reply |
+| `opencode` | verified (1.x, and 2.x from 2.2.3) | `opencode run --format json`; results extracted from the reply |
 | `codex` | verified, **read-only stages** | `codex exec --json`; structured results via `--output-schema`. Plan, review, compare and second opinions; it refuses implement |
 | `antigravity` | **unverified** | Antigravity CLI (`agy --print`, Gemini); structured results via `--json-schema` — runs **only inside a wrapper** (see [Antigravity](#antigravity-agy)) |
 | `command` | **unverified** | any CLI from an argv template — runs **only inside a wrapper** |
@@ -295,9 +295,17 @@ env    = { CODEX_HOME = "~/skopos-workers/accounts/codex-1" }   # or CODEX_API_K
   reports.
 - **MCP servers** reach a Codex run as settings on its command line, since
   its lockdown ignores the login directory's own config:
-  - It gets the skopos tools and the run's **http** servers. A server that
-    is a command is left out of a Codex run, and the run's log says so:
-    Codex would start it outside its sandbox.
+  - It gets the skopos tools and the run's **http** servers. A **command**
+    server it gets only where something contains the whole run: a
+    wrapper, or a host that is a container (`contained_by`). Codex starts a
+    command server outside its own sandbox, so without one of those the
+    server is left out and the run's log says so. See
+    [MCP command servers](#mcp-command-servers).
+  - A command server's env values are never on the command line either:
+    they are variables of the Codex process, forwarded to the server by
+    name. A server whose env sets a variable Codex reads itself (its
+    login, endpoint or provider), a `SKOPOS_` variable, or one the account
+    or another server sets differently, is left out.
   - A header's value is never on the command line. It is handed over in a
     variable of the Codex process that the agent's shell does not get.
   - A server's address is on the command line, so a server whose address
@@ -382,7 +390,7 @@ refuses a value the CLI doesn't take when it loads the config:
 | `claude` | `--effort` | `low`, `medium`, `high`, `xhigh`, `max` |
 | `antigravity` | `--effort` | `low`, `medium`, `high`, `xhigh`, `max` |
 | `codex` | `-c model_reasoning_effort=…` | `minimal`, `low`, `medium`, `high`, `xhigh` |
-| `opencode` | `--variant` | the model's variants (provider-specific, e.g. `high`, `max`, `minimal`) |
+| `opencode` | `--variant` (opencode 1), the model's `#variant` (opencode 2) | the model's variants (provider-specific, e.g. `high`, `max`, `minimal`) |
 | `command` | `{effort}` in the template | any word; refused when the template has no `{effort}`, and a template with `{effort}` needs it on every account |
 
 ```toml
@@ -402,7 +410,7 @@ list`, `runner test` and the run log show it next to the model.
 
 - **The CLI must know the flag.** When an account sets effort, `worker
   check` and worker startup also check the CLI's help for `--effort`
-  (claude, agy) or `--variant` (opencode). An older CLI is refused there
+  (claude, agy) or `--variant` (opencode 1). An older CLI is refused there
   rather than failing every run.
 - **Keep one setting per runner.** Stages pin runners, and the pool rotates
   between a runner's accounts on quota. Accounts of one runner that differ
@@ -448,9 +456,19 @@ These hold for every runner, regardless of configuration.
     allow rules, hooks or MCP servers, and its file tools stay inside the
     working directory.
   - **opencode:** runs with an empty config dir and its `OPENCODE_DISABLE_*`
-    switches. Its permissions come from an ordered `OPENCODE_PERMISSION`
-    translated from the same allowlist: deny-all, then the stage's allows,
-    then the hard denies, including `external_directory`. opencode applies
+    switches. Its permissions are translated from the same allowlist, in
+    order: deny-all, then the stage's allows, then the hard denies,
+    including `external_directory`. opencode 1 gets them in
+    `OPENCODE_PERMISSION`. opencode 2 gets them as `permissions` in the
+    run's own config directory, and the hard denies again as `policies`,
+    which the agent's own rules can't lift; skills, plugins and MCP servers
+    other than the run's are dropped by policy too. An opencode 2 run uses
+    a private server of its own (`--standalone`), never the shared
+    background service, which would run the tools with its own environment
+    and outside the run's wrapper. opencode 2 also reads the `AGENTS.md` of
+    a folder below the worktree's root when the agent reads a file there,
+    and nothing turns that off; review and QA runs see the base's version
+    (see the reset below). opencode applies
     `external_directory` to its file tools but only to a few shell commands,
     so the shell's allowed commands are also refused when their text
     reaches out of the worktree or runs something else: `$` and backtick
@@ -465,7 +483,7 @@ These hold for every runner, regardless of configuration.
     (`project_doc_max_bytes=0`), no skills listing, plugins, apps or hooks,
     approvals `never`. Its permission profile lets the shell read only the
     worktree, the clone's git directory and what a shell needs (not the
-    temp directories); nothing is writable and the network is off. The
+    temp directories, except one the worktree itself sits in); nothing is writable and the network is off. The
     shell's environment leaves out the account's env and anything named
     like a credential. Its MCP servers are only the run's own, passed as
     settings (see [Codex](#codex)). The stage allowlist becomes that read-only sandbox, since Codex reads files
@@ -491,6 +509,16 @@ These hold for every runner, regardless of configuration.
   it, and allowlist their tool prefixes in `mcp_servers`. A workspace whose
   config on the server names its MCP servers gets those instead, with each
   run: see [MCP servers from the server](#mcp-servers-from-the-server).
+- **MCP command servers** <a id="mcp-command-servers"></a>are processes the
+  agent CLI starts itself. A wrapper, or a host that is a container,
+  holds them with the rest of the run. A runner's own sandbox does not:
+  Claude Code's sandbox settings and Codex's sandbox confine the agent's
+  shell, and the CLI starts its servers outside them. So a run whose only
+  boundary is such a sandbox gets its http servers only, with a note in
+  its log; a run nothing claims to contain gets its command servers too,
+  as before. Which one a workspace's runs get is the configuration's
+  choice: a wrapper rule for the stage (or `contained_by` on a host that
+  is a container) gives every runner its command servers.
 - **Scrubbed environment.** Agent runs, checks and `setup` commands get no
   push tokens, no skopos key, no SSH agent and nothing from the env file:
   - an account's `env` (with `${VAR}` references) passes credentials to the
@@ -502,7 +530,7 @@ These hold for every runner, regardless of configuration.
   environment and the timeouts apply. Where that matters, run the worker
   itself in a container or as a user that can reach only what it needs.
 - **The right working directory.** Every agent command gets `PWD` set to its
-  run directory, and opencode also gets `--dir`, because opencode trusts
+  run directory, and opencode 1 also gets `--dir`, because opencode trusts
   `$PWD`.
 - **Review worktrees reset instruction files.** Before a review or QA run,
   `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.skopos/`, `.claude/`, `.opencode/`,

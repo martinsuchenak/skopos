@@ -429,6 +429,11 @@ skopos group config set --group acme \
   `skopos mcp-server set scripts --command '["scripts","mcp"]'`.
   `${NAME}` in a command server's command and env is filled in on each
   worker from its `[worker.vars]`.
+  A command server reaches a run only where its process is contained:
+  under a wrapper, on a host that is a container, or where nothing claims
+  to contain the run. A run held only by a runner's own sandbox (Claude
+  Code's sandbox settings, Codex's sandbox) gets the http servers; see
+  [MCP command servers](../deployment/worker.md#mcp-command-servers).
 - **A credential is never part of a definition.** It is named
   `${secret:NAME}` in the URL, a header or an env value. A definition is
   stored, exported and recorded as written, so what looks like a credential

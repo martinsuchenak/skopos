@@ -88,6 +88,12 @@ type AgentRun struct {
 	WrapBin string
 }
 
+// wholeRunContained: a wrapper or a host that is a container holds the
+// agent CLI and every process it starts — its MCP command servers too.
+func (r AgentRun) wholeRunContained() bool {
+	return len(r.Wrapper) > 0 || r.HostContained
+}
+
 // withPWD pins $PWD to the run's directory. The scrubbed environment
 // inherits the daemon's PWD (under a service: the config dir), and some
 // agent CLIs trust $PWD over the process's real working directory —

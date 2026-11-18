@@ -172,6 +172,8 @@ func TestCodexLockdownProbe(t *testing.T) {
 // login; default ~/.codex — if that holds an AGENTS.md, which workers
 // refuse, the test notes it and runs anyway: its claims are about the
 // worktree). SKOPOS_LIVE_CODEX_MODEL picks the model (default: codex's).
+// SKOPOS_LIVE_CODEX_ENV names variables (comma-separated) handed to the run
+// as an account's are, such as CODEX_ACCESS_TOKEN for a login by token.
 // Same claims as the claude and opencode live tests, for a read-only stage:
 // no AGENTS.md, nothing outside the worktree, no account env in the shell,
 // no network, native structured output, and a resumed session. And the
@@ -204,7 +206,7 @@ func TestLiveCodexLockdown(t *testing.T) {
 		res := cx.Run(context.Background(), AgentRun{
 			Dir: wt, Prompt: prompt, Schema: schema, Model: os.Getenv("SKOPOS_LIVE_CODEX_MODEL"),
 			SessionID: session, Resume: session != "",
-			AllowedTools: reviewTools, Env: map[string]string{"CODEX_HOME": login, "SKOPOS_LIVE_PROBE_TOKEN": "zebra-tok-91"},
+			AllowedTools: reviewTools, Env: liveAccountEnv("SKOPOS_LIVE_CODEX_ENV", map[string]string{"CODEX_HOME": login, "SKOPOS_LIVE_PROBE_TOKEN": "zebra-tok-91"}),
 			Timeout: 10 * time.Minute, LogFile: filepath.Join(logs, "run"+string(rune('0'+n))+".log"),
 		})
 		if res.Outcome != OutcomeOK {
@@ -230,6 +232,11 @@ func TestLiveCodexLockdown(t *testing.T) {
 	res := run("Review: run `git log --oneline -1` and read file.txt. Does the base commit hold a greeting file? Pass if so.", reviewSchema, "")
 	if len(res.Structured) == 0 || !strings.Contains(string(res.Structured), `"verdict"`) || res.SessionID == "" {
 		t.Fatalf("native structured output and a session id: %q / %q / %q", res.Structured, res.Text, res.SessionID)
+	}
+	// The lockdown must still let the review see the worktree: a blind
+	// review fails the greeting file it was asked about.
+	if !strings.Contains(string(res.Structured), `"verdict":"pass"`) {
+		t.Errorf("the review could not read the worktree: %s", res.Structured)
 	}
 	again := run("Give the same verdict again, in the schema.", reviewSchema, res.SessionID)
 	if len(again.Structured) == 0 || again.SessionID != res.SessionID {
@@ -270,7 +277,7 @@ func TestLiveCodexLockdown(t *testing.T) {
 		AllowedTools: append(slices.Clone(reviewTools), "mcp__probe__probe_echo", "mcp__open", "mcp__cmd", "mcp__down"),
 		Settings:     `{"permissions":{"deny":["mcp__open__danger"]}}`,
 		MCPConfig:    cfgFile,
-		Env:          map[string]string{"CODEX_HOME": login},
+		Env:          liveAccountEnv("SKOPOS_LIVE_CODEX_ENV", map[string]string{"CODEX_HOME": login}),
 		Timeout:      10 * time.Minute, LogFile: logFile,
 	})
 	raw, _ := os.ReadFile(logFile)
@@ -307,7 +314,81 @@ func TestLiveCodexLockdown(t *testing.T) {
 	if _, err := os.Stat(marker); err == nil {
 		t.Errorf("a command server was started for a codex run")
 	}
+
+	// Where something contains the whole run (here: the host, as
+	// contained_by says), a command server goes to codex too: started with
+	// its env forwarded by name, its tool callable, and neither its env
+	// value nor codex's own credentials in the agent's shell.
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Log("no python3: the command-server run is skipped")
+		return
+	}
+	stdio := filepath.Join(outside, "stdio_server.py")
+	if err := os.WriteFile(stdio, []byte(liveStdioServer), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cmdCfg := filepath.Join(outside, "mcp-cmd.json")
+	cfg, _ = json.Marshal(map[string]any{"mcpServers": map[string]any{
+		"tool": map[string]any{"command": "python3", "args": []string{stdio}, "env": map[string]string{"CMD_SECRET": "cmd-cred-55"}},
+	}})
+	if err := os.WriteFile(cmdCfg, cfg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logFile = filepath.Join(logs, "mcp-cmd.log")
+	withCmd := cx.Run(context.Background(), AgentRun{
+		Dir: wt, Model: os.Getenv("SKOPOS_LIVE_CODEX_MODEL"),
+		Prompt: "This is a tool check. Do each step and report its result on its own line.\n" +
+			"1. Call the MCP tool cmd_check and report exactly what it returned.\n" +
+			"2. Run `printenv CMD_SECRET; echo shell-done` and report its exact output.\n",
+		AllowedTools:  append(slices.Clone(reviewTools), "mcp__tool"),
+		MCPConfig:     cmdCfg,
+		Secrets:       []string{"cmd-cred-55"},
+		HostContained: true,
+		Env:           liveAccountEnv("SKOPOS_LIVE_CODEX_ENV", map[string]string{"CODEX_HOME": login}),
+		Timeout:       10 * time.Minute, LogFile: logFile,
+	})
+	raw, _ = os.ReadFile(logFile)
+	if withCmd.Outcome != OutcomeOK {
+		t.Fatalf("the run with a command server: %s %s\n%s", withCmd.Outcome, withCmd.Detail, raw)
+	}
+	t.Logf("command-server run: %.400s", withCmd.Text)
+	if !strings.Contains(withCmd.Text, "cmd-check secret=yes") {
+		t.Errorf("the command server must run, with its env: %q", withCmd.Text)
+	}
+	if strings.Contains(withCmd.Text, "token=yes") {
+		t.Logf("note: the command server's environment holds a credential-named variable of codex's own")
+	}
+	if strings.Contains(withCmd.Text, "cmd-cred-55") || strings.Contains(string(raw), "cmd-cred-55") {
+		t.Errorf("the server's env value reached the agent's shell or the run's log")
+	}
 }
+
+// liveStdioServer is a minimal stdio MCP server: one tool, cmd_check, that
+// says whether the server got its CMD_SECRET and whether any variable named
+// like a token reached it.
+const liveStdioServer = `import sys, json, os
+for line in sys.stdin:
+    try:
+        req = json.loads(line)
+    except Exception:
+        continue
+    i = req.get("id")
+    if i is None:
+        continue
+    m = req.get("method")
+    if m == "initialize":
+        res = {"protocolVersion": req.get("params", {}).get("protocolVersion", "2025-06-18"), "capabilities": {"tools": {}}, "serverInfo": {"name": "tool", "version": "0"}}
+    elif m == "tools/list":
+        res = {"tools": [{"name": "cmd_check", "description": "Reports what the server process can see.", "inputSchema": {"type": "object", "properties": {}}}]}
+    elif m == "tools/call":
+        secret = "yes" if os.environ.get("CMD_SECRET") == "cmd-cred-55" else "no"
+        token = "yes" if any("TOKEN" in k or k.endswith("_KEY") for k in os.environ) else "no"
+        res = {"content": [{"type": "text", "text": "cmd-check secret=%s token=%s" % (secret, token)}]}
+    else:
+        res = {}
+    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": i, "result": res}) + "\n")
+    sys.stdout.flush()
+`
 
 // liveMCPServer is a minimal streamable-http MCP server: /probe offers
 // probe_echo and probe_write, /open offers safe and danger. It records what
@@ -374,4 +455,16 @@ func (s *liveMCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
+}
+
+// liveAccountEnv adds the variables the named setting lists (comma-
+// separated) to an account env, from the test's environment: a credential
+// of the worker's own never reaches an agent, an account's does.
+func liveAccountEnv(setting string, env map[string]string) map[string]string {
+	for _, k := range strings.Split(os.Getenv(setting), ",") {
+		if k = strings.TrimSpace(k); k != "" {
+			env[k] = os.Getenv(k)
+		}
+	}
+	return env
 }

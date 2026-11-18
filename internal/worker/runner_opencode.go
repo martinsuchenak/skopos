@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -41,10 +42,19 @@ func (opencodeRunner) Verified() bool       { return true }
 func (opencodeRunner) HonorsSettings() bool { return false }
 
 func (o opencodeRunner) EffortSupported(ctx context.Context, pathEnv string) error {
+	if opencodeVersion(ctx, o.bin, pathEnv).v2() {
+		return nil // the effort rides on the model as its #variant
+	}
 	return effortSupported(ctx, o.bin, pathEnv, []string{"run", "--help"}, "--variant", "opencode")
 }
 
 func (o opencodeRunner) Check(ctx context.Context, pathEnv string) error {
+	if v := opencodeVersion(ctx, o.bin, pathEnv); v.v2() {
+		if err := o.checkV2(ctx, v, pathEnv); err != nil {
+			return err
+		}
+		return o.checkConfig()
+	}
 	missing, err := missingFlags(ctx, o.bin, pathEnv, []string{"run", "--help"}, "--format", "--session", "--model")
 	if err != nil {
 		return err
@@ -52,6 +62,11 @@ func (o opencodeRunner) Check(ctx context.Context, pathEnv string) error {
 	if len(missing) > 0 {
 		return fmt.Errorf("%s run does not support %s — upgrade opencode", o.bin, strings.Join(missing, ", "))
 	}
+	return o.checkConfig()
+}
+
+// checkConfig: the operator's base config (providers, models) exists.
+func (o opencodeRunner) checkConfig() error {
 	if o.config != "" {
 		if _, err := os.Stat(o.config); err != nil {
 			return fmt.Errorf("opencode base config %s: %v", o.config, err)
@@ -95,21 +110,7 @@ func (o opencodeRunner) invoke(ctx context.Context, r AgentRun, prompt, session 
 	}
 	defer func() { _ = os.RemoveAll(cfgDir) }()
 
-	// --dir AND $PWD: opencode resolves its project from $PWD, not the
-	// process cwd (found live: with the daemon's PWD it worked in the wrong
-	// repository).
-	args := []string{"run", "--format", "json", "--dir", r.Dir}
-	if r.Model != "" {
-		args = append(args, "-m", r.Model)
-	}
-	if r.Effort != "" {
-		args = append(args, "--variant", r.Effort)
-	}
-	if resume && session != "" {
-		args = append(args, "-s", session)
-	}
-	args = append(args, prompt)
-
+	v2 := opencodeVersion(ctx, o.bin, r.Env["PATH"]).v2()
 	env := withPWD(scrubEnv(r.Env, r.TokenEnvs, r.FileEnvKeys), r.Dir)
 	env = append(env,
 		"OPENCODE_CONFIG_DIR="+cfgDir,
@@ -118,17 +119,49 @@ func (o opencodeRunner) invoke(ctx context.Context, r AgentRun, prompt, session 
 		"OPENCODE_DISABLE_EXTERNAL_SKILLS=1",
 		"OPENCODE_DISABLE_AUTOUPDATE=1",
 		"OPENCODE_DISABLE_SHARE=1",
-		"OPENCODE_PERMISSION="+opencodePermission(r.AllowedTools, settingsDeny(r.Settings)),
 	)
 	if o.config != "" {
 		env = append(env, "OPENCODE_CONFIG="+o.config)
 	}
-	if r.MCPConfig != "" {
-		content, err := opencodeMCPContent(r.MCPConfig)
-		if err != nil {
+	var args []string
+	if v2 {
+		// opencode 2: the folder is the working directory and $PWD, the
+		// rules and MCP servers live in the run's config directory.
+		args = opencodeV2Args(r.Model, r.Effort, session, resume, prompt)
+		var servers map[string]any
+		if r.MCPConfig != "" {
+			if servers, err = opencodeV2Servers(r.MCPConfig); err != nil {
+				return AgentResult{Outcome: OutcomeError, Detail: err.Error()}
+			}
+		}
+		cfg := opencodeV2Config(r.AllowedTools, settingsDeny(r.Settings), servers)
+		if err := os.WriteFile(filepath.Join(cfgDir, "opencode.json"), []byte(cfg), 0o600); err != nil {
 			return AgentResult{Outcome: OutcomeError, Detail: err.Error()}
 		}
-		env = append(env, "OPENCODE_CONFIG_CONTENT="+content)
+		env = append(env, "OPENCODE_DISABLE_CLAUDE_CODE_PROMPT=1")
+	} else {
+		// --dir AND $PWD: opencode resolves its project from $PWD, not the
+		// process cwd (found live: with the daemon's PWD it worked in the
+		// wrong repository).
+		args = []string{"run", "--format", "json", "--dir", r.Dir}
+		if r.Model != "" {
+			args = append(args, "-m", r.Model)
+		}
+		if r.Effort != "" {
+			args = append(args, "--variant", r.Effort)
+		}
+		if resume && session != "" {
+			args = append(args, "-s", session)
+		}
+		args = append(args, prompt)
+		env = append(env, "OPENCODE_PERMISSION="+opencodePermission(r.AllowedTools, settingsDeny(r.Settings)))
+		if r.MCPConfig != "" {
+			content, err := opencodeMCPContent(r.MCPConfig)
+			if err != nil {
+				return AgentResult{Outcome: OutcomeError, Detail: err.Error()}
+			}
+			env = append(env, "OPENCODE_CONFIG_CONTENT="+content)
+		}
 	}
 
 	cctx, cancel := context.WithTimeout(ctx, orTimeout(r.Timeout))
@@ -343,28 +376,40 @@ func settingsDeny(settings string) []string {
 	return s.Permissions.Deny
 }
 
-// opencodeMCPContent translates a Claude-format mcp_config file
-// ({"mcpServers": {...}}) into opencode's {"mcp": {...}}.
-func opencodeMCPContent(path string) (string, error) {
+// mcpServerEntry is one server of a Claude-format mcp_config file.
+type mcpServerEntry struct {
+	Type    string            `json:"type"`
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers"`
+	Command string            `json:"command"`
+	Args    []string          `json:"args"`
+	Env     map[string]string `json:"env"`
+}
+
+// readMCPServers reads a Claude-format mcp_config file ({"mcpServers": {...}}).
+func readMCPServers(path string) (map[string]mcpServerEntry, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("mcp_config: %v", err)
+		return nil, fmt.Errorf("mcp_config: %v", err)
 	}
 	var in struct {
-		MCPServers map[string]struct {
-			Type    string            `json:"type"`
-			URL     string            `json:"url"`
-			Headers map[string]string `json:"headers"`
-			Command string            `json:"command"`
-			Args    []string          `json:"args"`
-			Env     map[string]string `json:"env"`
-		} `json:"mcpServers"`
+		MCPServers map[string]mcpServerEntry `json:"mcpServers"`
 	}
 	if err := json.Unmarshal(raw, &in); err != nil {
-		return "", fmt.Errorf("mcp_config %s: %v", path, err)
+		return nil, fmt.Errorf("mcp_config %s: %v", path, err)
+	}
+	return in.MCPServers, nil
+}
+
+// opencodeMCPContent translates a Claude-format mcp_config file into
+// opencode 1's {"mcp": {...}}.
+func opencodeMCPContent(path string) (string, error) {
+	servers, err := readMCPServers(path)
+	if err != nil {
+		return "", err
 	}
 	out := map[string]any{}
-	for name, s := range in.MCPServers {
+	for name, s := range servers {
 		if s.URL != "" {
 			m := map[string]any{"type": "remote", "url": s.URL, "enabled": true}
 			if len(s.Headers) > 0 {

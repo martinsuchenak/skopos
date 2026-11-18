@@ -4,6 +4,38 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.41.0] — 2026-11-18
+
+### Added
+
+- opencode 2 runs (2.2.3 and later). Each run gets a private opencode
+  server, never the shared background service, so its tools run with the
+  run's environment and inside its wrapper. The stage's permissions and MCP
+  servers are written to the run's own opencode config, the hard denies
+  again as policies the agent's rules cannot lift, and skills and plugins
+  are turned off. An account's effort goes on the model as its variant.
+  opencode 1 runs as before; `worker check` refuses opencode 2 before 2.2.3
+  and anything newer than 2.
+- Codex runs get MCP command servers where something contains the whole
+  run: a wrapper, or a host that is a container. The server's env values
+  travel in the codex process's environment, never on its command line.
+
+### Changed
+
+- One rule for MCP command servers across runners: a run whose only
+  boundary is the runner's own sandbox (Claude Code's sandbox settings,
+  Codex's sandbox) gets its http servers only, since the agent CLI starts
+  a command server outside that sandbox. A wrapper rule or `contained_by`
+  gives every runner its command servers; a run nothing claims to contain
+  gets them as before. The run's log names each server left out.
+
+### Fixed
+
+- A codex run on Linux could not read a worktree that sits in a temp
+  directory (`$TMPDIR` or `/tmp`): its profile closes those, and on Linux
+  that hid the worktree too. The temp directory the worktree is in now
+  stays open.
+
 ## [0.40.3] — 2026-11-18
 
 ### Fixed

@@ -3,6 +3,7 @@ package worker
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path"
@@ -10,6 +11,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/martinsuchenak/skopos/internal/wsconfig"
 )
 
 // A codex run's MCP servers.
@@ -19,9 +22,14 @@ import (
 // settings. What that means, each point verified live against codex-cli
 // 0.163.0 (TestLiveCodexLockdown):
 //
-//   - http servers only. Codex starts a command server itself, outside the
-//     sandbox it keeps the agent's shell in, with the worker's privileges:
-//     such a server is left out of a codex run.
+//   - A command server only when something contains the whole run (a
+//     wrapper, or a host that is a container): codex starts it itself,
+//     outside the sandbox it keeps the agent's shell in, so without that it
+//     is left out. Its env values travel like header values — variables of
+//     the codex process, forwarded by name (env_vars), never on the
+//     command line — and a name that would change codex itself, or that
+//     another server or the account already sets, leaves the server out
+//     (verified live against codex-cli 0.170.0).
 //   - A header's value is never on the command line (`ps` shows it): it is
 //     put in a variable of the codex process, named in env_http_headers,
 //     and that variable is kept out of the agent's shell like the account's
@@ -60,8 +68,9 @@ const codexMCPStartup = 20
 // codexMCP reads a run's MCP config (Claude's mcpServers shape) and turns
 // it into codex settings. allowed is the stage's tool list, denied the deny
 // rules of the run's settings, secrets the run's secret values (an address
-// holding one is not put on the command line).
-func codexMCP(file string, allowed, denied, secrets []string) (codexMCPPlan, error) {
+// holding one is not put on the command line); contained says something
+// contains the whole run, account is the account's env.
+func codexMCP(file string, allowed, denied, secrets []string, contained bool, account map[string]string) (codexMCPPlan, error) {
 	plan := codexMCPPlan{Env: map[string]string{}}
 	raw, err := os.ReadFile(file)
 	if err != nil {
@@ -72,6 +81,8 @@ func codexMCP(file string, allowed, denied, secrets []string) (codexMCPPlan, err
 			URL     string            `json:"url"`
 			Headers map[string]string `json:"headers"`
 			Command string            `json:"command"`
+			Args    []string          `json:"args"`
+			Env     map[string]string `json:"env"`
 		} `json:"mcpServers"`
 	}
 	if err := json.Unmarshal(raw, &in); err != nil {
@@ -99,8 +110,46 @@ func codexMCP(file string, allowed, denied, secrets []string) (codexMCPPlan, err
 		case !codexMCPServerName.MatchString(name):
 			left("codex cannot be given a server of that name")
 			continue
+		case s.Command != "" && !contained:
+			left("it is a command, which codex would start outside its sandbox, and nothing contains the whole run (a wrapper, or a host that is a container)")
+			continue
 		case s.Command != "":
-			left("it is a command, which codex would start outside its sandbox")
+			key := "mcp_servers." + name + "."
+			args := []string{"-c", key + "command=" + quote(s.Command)}
+			if len(s.Args) > 0 {
+				args = append(args, "-c", key+"args="+quote(s.Args))
+			}
+			vars := slices.Sorted(maps.Keys(s.Env))
+			why := ""
+			for _, k := range vars {
+				if strings.HasPrefix(strings.ToUpper(k), "SKOPOS_") {
+					why = fmt.Sprintf("its env sets %s, and SKOPOS_ variables are the worker's", k)
+				} else if r := wsconfig.ChangesAgent(k); r != "" {
+					why = fmt.Sprintf("its env sets %s, which codex would read itself: %s", k, r)
+				} else if v, ok := account[k]; ok && v != s.Env[k] {
+					why = fmt.Sprintf("its env sets %s, which the account already sets", k)
+				} else if v, ok := plan.Env[k]; ok && v != s.Env[k] {
+					why = fmt.Sprintf("its env sets %s, which another server of the run sets to something else", k)
+				}
+				if why != "" {
+					break
+				}
+			}
+			if why != "" {
+				left(why)
+				continue
+			}
+			for _, k := range vars {
+				plan.Env[k] = s.Env[k]
+			}
+			if len(vars) > 0 {
+				args = append(args, "-c", key+"env_vars="+quote(vars))
+			}
+			plan.Args = append(plan.Args, args...)
+			plan.Args = append(plan.Args, "-c", key+"startup_timeout_sec="+fmt.Sprint(codexMCPStartup),
+				"-c", key+`default_tools_approval_mode="approve"`)
+			plan.Args = append(plan.Args, codexToolArgs(key, all, tools, denyNames, quote)...)
+			plan.Names = append(plan.Names, name)
 			continue
 		}
 		u, err := url.Parse(s.URL)
@@ -133,16 +182,21 @@ func codexMCP(file string, allowed, denied, secrets []string) (codexMCPPlan, err
 			}
 			plan.Args = append(plan.Args, "-c", key+"env_http_headers={"+strings.Join(pairs, ", ")+"}")
 		}
-		if all {
-			if len(denyNames) > 0 {
-				plan.Args = append(plan.Args, "-c", key+"disabled_tools="+quote(denyNames))
-			}
-		} else {
-			plan.Args = append(plan.Args, "-c", key+"enabled_tools="+quote(tools))
-		}
+		plan.Args = append(plan.Args, codexToolArgs(key, all, tools, denyNames, quote)...)
 		plan.Names = append(plan.Names, name)
 	}
 	return plan, nil
+}
+
+// codexToolArgs: which of a server's tools the run gets.
+func codexToolArgs(key string, all bool, tools, denyNames []string, quote func(any) string) []string {
+	if all {
+		if len(denyNames) > 0 {
+			return []string{"-c", key + "disabled_tools=" + quote(denyNames)}
+		}
+		return nil
+	}
+	return []string{"-c", key + "enabled_tools=" + quote(tools)}
 }
 
 // codexMCPTools reads what the stage's allow list and the deny rules say

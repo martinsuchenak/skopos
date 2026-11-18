@@ -320,6 +320,22 @@ func (w *Worker) runAgent(ctx context.Context, ar AgentRun) AgentResult {
 		}
 	}
 	rl := runLogFrom(ctx)
+	if why := commandServersEscape(r, ar); why != "" && ar.MCPConfig != "" {
+		// The run's boundary is the runner's own sandbox, and the CLI starts
+		// an MCP command server outside it: the agent gets the run's http
+		// servers only.
+		file, notes, err := withoutCommandServers(ar.MCPConfig, ar.TempDir, why)
+		if err != nil {
+			return AgentResult{Outcome: OutcomeError, Detail: err.Error()}
+		}
+		if file != ar.MCPConfig {
+			defer func() { _ = os.Remove(file) }()
+			ar.MCPConfig = file
+		}
+		for _, n := range notes {
+			rl.notef("%s", n)
+		}
+	}
 	if rl != nil {
 		what := ar.Runner
 		if d := runDetail(ar.Model, ar.Effort); d != "" {

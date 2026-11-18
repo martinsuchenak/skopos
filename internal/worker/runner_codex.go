@@ -189,7 +189,7 @@ func (c codexRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 	// the lockdown lists what the agent's shell must not get.
 	var mcpArgs []string
 	if r.MCPConfig != "" {
-		plan, err := codexMCP(r.MCPConfig, r.AllowedTools, settingsDeny(r.Settings), r.Secrets)
+		plan, err := codexMCP(r.MCPConfig, r.AllowedTools, settingsDeny(r.Settings), r.Secrets, r.wholeRunContained(), r.Env)
 		if err != nil {
 			return AgentResult{Outcome: OutcomeError, Detail: err.Error()}
 		}
@@ -292,7 +292,7 @@ func codexLockdownArgs(ctx context.Context, bin string, r AgentRun) []string {
 		"-c", `web_search="disabled"`,
 		"-c", "allow_login_shell=false",
 		"-c", `default_permissions="skopos"`,
-		"-c", "permissions.skopos.filesystem=" + codexFilesystem(codexReadRoots(ctx, bin, r)),
+		"-c", "permissions.skopos.filesystem=" + codexFilesystem(codexOpenTemps(r), codexReadRoots(ctx, bin, r)),
 		"-c", "permissions.skopos.network.enabled=false",
 		"-c", "shell_environment_policy.exclude=" + codexShellExclude(r.Env),
 	}
@@ -329,14 +329,56 @@ func codexShellExclude(env map[string]string) string {
 // codexFilesystem renders the profile's filesystem table: the shell's
 // minimum and the worktree, plus the extra read roots — read, never write.
 // The temp directories :minimal would open (other runs' files live there)
-// are closed; the worktree stays readable even when it sits inside one.
-func codexFilesystem(extra []string) string {
-	parts := []string{`":minimal"="read"`, `":tmpdir"="none"`, `":slash_tmp"="none"`, `":workspace_roots"="read"`}
+// are closed, except one the worktree sits in (open lists it): on Linux a
+// closed directory cannot be opened again for a path inside it, so the
+// worktree would be unreadable (found live on codex 0.170.0).
+func codexFilesystem(open map[string]bool, extra []string) string {
+	parts := []string{`":minimal"="read"`}
+	for _, t := range []string{":tmpdir", ":slash_tmp"} {
+		if !open[t] {
+			parts = append(parts, `"`+t+`"="none"`)
+		}
+	}
+	parts = append(parts, `":workspace_roots"="read"`)
 	for _, p := range extra {
 		q, _ := json.Marshal(p) // a JSON string is a TOML basic string
 		parts = append(parts, string(q)+`="read"`)
 	}
 	return "{" + strings.Join(parts, ", ") + "}"
+}
+
+// codexOpenTemps names the temp directories the run's worktree sits in
+// (:tmpdir for $TMPDIR as codex gets it, :slash_tmp for /tmp).
+func codexOpenTemps(r AgentRun) map[string]bool {
+	open := map[string]bool{}
+	if r.Dir == "" {
+		return open
+	}
+	real := func(p string) string {
+		if e, err := filepath.EvalSymlinks(p); err == nil {
+			return e
+		}
+		return filepath.Clean(p)
+	}
+	under := func(root, dir string) bool {
+		rel, err := filepath.Rel(root, dir)
+		return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
+	}
+	// As written and through symlinks (macOS: /tmp is /private/tmp).
+	inside := func(root string) bool {
+		return root != "" && (under(filepath.Clean(root), filepath.Clean(r.Dir)) || under(real(root), real(r.Dir)))
+	}
+	tmp := r.Env["TMPDIR"]
+	if tmp == "" {
+		tmp = os.Getenv("TMPDIR")
+	}
+	if inside(tmp) {
+		open[":tmpdir"] = true
+	}
+	if inside("/tmp") {
+		open[":slash_tmp"] = true
+	}
+	return open
 }
 
 // codexReadRoots are what a confined run still needs to read: the clone's

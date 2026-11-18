@@ -179,7 +179,10 @@ echo '{"type":"turn.completed","usage":{}}'`)
 			t.Errorf("never %s:\n%s", never, a)
 		}
 	}
-	if !strings.Contains(a, `permissions.skopos.filesystem={":minimal"="read", ":tmpdir"="none", ":slash_tmp"="none", ":workspace_roots"="read"`) || strings.Contains(a, `"write"`) {
+	// (The worktree is a test temp directory: the temp directory it sits in
+	// stays open — TestCodexOpenTemps.)
+	if !strings.Contains(a, "permissions.skopos.filesystem="+codexFilesystem(codexOpenTemps(AgentRun{Dir: wt, Env: map[string]string{"CODEX_HOME": home}}), nil)[:len(`{":minimal"="read"`)]) ||
+		!strings.Contains(a, `":workspace_roots"="read"`) || strings.Contains(a, `"write"`) {
 		t.Errorf("read-only confined profile:\n%s", a)
 	}
 	// The account env (its credentials) never reaches the agent's shell.
@@ -219,5 +222,27 @@ func TestCodexUnfinished(t *testing.T) {
 		Env: map[string]string{"CODEX_HOME": t.TempDir()}, Timeout: time.Minute})
 	if res.Outcome != OutcomeAuth {
 		t.Fatalf("a 401 that never recovered is an auth problem: %+v", res)
+	}
+}
+
+// The temp directories stay closed, except one the worktree sits in: on
+// Linux a closed directory hides everything below it, the worktree too.
+func TestCodexOpenTemps(t *testing.T) {
+	out := t.TempDir()
+	t.Setenv("TMPDIR", filepath.Join(out, "tmp"))
+	if err := os.MkdirAll(filepath.Join(out, "tmp", "wt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := codexFilesystem(codexOpenTemps(AgentRun{Dir: filepath.Join(out, "state", "wt")}), []string{"/git"}); got != `{":minimal"="read", ":tmpdir"="none", ":slash_tmp"="none", ":workspace_roots"="read", "/git"="read"}` {
+		t.Errorf("worktree outside the temp directories: %s", got)
+	}
+	if got := codexFilesystem(codexOpenTemps(AgentRun{Dir: filepath.Join(out, "tmp", "wt")}), nil); got != `{":minimal"="read", ":slash_tmp"="none", ":workspace_roots"="read"}` {
+		t.Errorf("worktree inside $TMPDIR: %s", got)
+	}
+	if got := codexFilesystem(codexOpenTemps(AgentRun{Dir: "/tmp/run/wt", Env: map[string]string{"TMPDIR": filepath.Join(out, "tmp")}}), nil); got != `{":minimal"="read", ":tmpdir"="none", ":workspace_roots"="read"}` {
+		t.Errorf("worktree inside /tmp: %s", got)
+	}
+	if got := codexOpenTemps(AgentRun{Dir: filepath.Join(out, "tmpx", "wt")}); len(got) != 0 {
+		t.Errorf("a sibling with the same prefix is not inside: %v", got)
 	}
 }

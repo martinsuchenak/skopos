@@ -234,6 +234,23 @@ func StageEnvRefused(name string) string {
 		return "it selects the agent's login or its own configuration, which is the worker's to choose"
 	case strings.Contains(up, "TOKEN") || strings.Contains(up, "SECRET") || strings.Contains(up, "PASSWORD") || strings.HasSuffix(up, "_KEY") || strings.HasSuffix(up, "ASKPASS"):
 		return "it looks like a credential: a stage's env is recorded in full, and an agent's credentials are its account's"
+	}
+	return ChangesAgent(name)
+}
+
+// ChangesAgent says why setting a variable in an agent CLI's own process
+// would change the agent ("" = it would not): where it sends requests,
+// what it loads, its login or configuration, its model, credentials or
+// provider. Credential-looking names pass: they are not the agent's own.
+func ChangesAgent(name string) string {
+	up := strings.ToUpper(name)
+	switch {
+	case !reEnvName.MatchString(name):
+		return "it is not a variable name"
+	case policy.RoutesRequests(name) || loaderEnv[up]:
+		return "it changes where the agent sends its requests or what it loads, which the runner's facts would not show"
+	case loginEnv[up]:
+		return "it selects the agent's login or its own configuration, which is the worker's to choose"
 	case strings.HasPrefix(up, "LD_") || strings.HasPrefix(up, "DYLD_") || strings.HasPrefix(up, "GIT_CONFIG") || strings.HasPrefix(up, "GIT_SSH"):
 		return "it changes what the agent's processes load or how git connects"
 	}
