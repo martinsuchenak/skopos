@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.40.3] — 2026-11-18
+
+### Fixed
+
+- The stage check held back a stage whose tools allow a shell builtin such
+  as `Bash(cd:*)`: it looked for `cd` on the PATH, where Debian has none.
+  Builtins (`cd`, `source`, `export`, `pushd` and the like) are no longer
+  looked for.
+
 ## [0.40.2] — 2026-11-16
 
 ### Added

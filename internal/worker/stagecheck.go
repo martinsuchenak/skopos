@@ -242,9 +242,22 @@ func tokenFingerprint(token string) string {
 	return hex.EncodeToString(sum[:4])
 }
 
+// shellBuiltins are commands the shell runs itself: a Bash(…) rule for one
+// names nothing to find on the PATH (Debian has no /usr/bin/cd).
+var shellBuiltins = map[string]bool{
+	".": true, ":": true, "alias": true, "bg": true, "bind": true, "break": true,
+	"builtin": true, "cd": true, "command": true, "continue": true, "declare": true,
+	"dirs": true, "disown": true, "eval": true, "exec": true, "exit": true,
+	"export": true, "fg": true, "hash": true, "jobs": true, "let": true,
+	"local": true, "popd": true, "pushd": true, "read": true, "readonly": true,
+	"return": true, "set": true, "shift": true, "source": true, "trap": true,
+	"type": true, "typeset": true, "ulimit": true, "umask": true, "unalias": true,
+	"unset": true, "wait": true,
+}
+
 // bashProgram is the program a Bash(…) tool pattern runs: its first word,
 // when that is a program name looked up on the PATH ("" otherwise: a
-// path, a glob, or not a Bash pattern).
+// path, a glob, a shell builtin, or not a Bash pattern).
 func bashProgram(tool string) string {
 	inner, ok := strings.CutPrefix(tool, "Bash(")
 	if !ok || !strings.HasSuffix(inner, ")") {
@@ -257,7 +270,7 @@ func bashProgram(tool string) string {
 		return ""
 	}
 	prog := fields[0]
-	if strings.ContainsAny(prog, "/*?[=$") {
+	if strings.ContainsAny(prog, "/*?[=$") || shellBuiltins[prog] {
 		return ""
 	}
 	return prog

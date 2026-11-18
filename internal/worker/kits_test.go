@@ -111,6 +111,7 @@ func TestBashProgram(t *testing.T) {
 	for in, want := range map[string]string{
 		"Bash(go:*)": "go", "Bash(git ls-remote:*)": "git", "Bash(./tests/run.sh:*)": "",
 		"Bash(vendor/bin/*:*)": "", "Bash(npm run test)": "npm", "Read(/opt/**)": "", "Bash(FOO=1 go:*)": "",
+		"Bash(cd:*)": "", "Bash(source:*)": "", "Bash(export:*)": "",
 	} {
 		if got := bashProgram(in); got != want {
 			t.Errorf("bashProgram(%q) = %q, want %q", in, got, want)
