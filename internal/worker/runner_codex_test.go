@@ -228,21 +228,19 @@ func TestCodexUnfinished(t *testing.T) {
 // The temp directories stay closed, except one the worktree sits in: on
 // Linux a closed directory hides everything below it, the worktree too.
 func TestCodexOpenTemps(t *testing.T) {
-	out := t.TempDir()
-	t.Setenv("TMPDIR", filepath.Join(out, "tmp"))
-	if err := os.MkdirAll(filepath.Join(out, "tmp", "wt"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if got := codexFilesystem(codexOpenTemps(AgentRun{Dir: filepath.Join(out, "state", "wt")}), []string{"/git"}); got != `{":minimal"="read", ":tmpdir"="none", ":slash_tmp"="none", ":workspace_roots"="read", "/git"="read"}` {
+	// Paths that need not exist (they are compared as written too): the
+	// test's own temp directory may itself sit in /tmp.
+	t.Setenv("TMPDIR", "/skopos-test-tmp")
+	if got := codexFilesystem(codexOpenTemps(AgentRun{Dir: "/skopos-test-state/wt"}), []string{"/git"}); got != `{":minimal"="read", ":tmpdir"="none", ":slash_tmp"="none", ":workspace_roots"="read", "/git"="read"}` {
 		t.Errorf("worktree outside the temp directories: %s", got)
 	}
-	if got := codexFilesystem(codexOpenTemps(AgentRun{Dir: filepath.Join(out, "tmp", "wt")}), nil); got != `{":minimal"="read", ":slash_tmp"="none", ":workspace_roots"="read"}` {
+	if got := codexFilesystem(codexOpenTemps(AgentRun{Dir: "/skopos-test-tmp/wt"}), nil); got != `{":minimal"="read", ":slash_tmp"="none", ":workspace_roots"="read"}` {
 		t.Errorf("worktree inside $TMPDIR: %s", got)
 	}
-	if got := codexFilesystem(codexOpenTemps(AgentRun{Dir: "/tmp/run/wt", Env: map[string]string{"TMPDIR": filepath.Join(out, "tmp")}}), nil); got != `{":minimal"="read", ":tmpdir"="none", ":workspace_roots"="read"}` {
+	if got := codexFilesystem(codexOpenTemps(AgentRun{Dir: "/tmp/skopos-test-run/wt", Env: map[string]string{"TMPDIR": "/skopos-test-tmp"}}), nil); got != `{":minimal"="read", ":tmpdir"="none", ":workspace_roots"="read"}` {
 		t.Errorf("worktree inside /tmp: %s", got)
 	}
-	if got := codexOpenTemps(AgentRun{Dir: filepath.Join(out, "tmpx", "wt")}); len(got) != 0 {
+	if got := codexOpenTemps(AgentRun{Dir: "/skopos-test-tmpx/wt"}); len(got) != 0 {
 		t.Errorf("a sibling with the same prefix is not inside: %v", got)
 	}
 }
