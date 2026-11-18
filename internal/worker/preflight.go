@@ -51,6 +51,15 @@ func (w *Worker) checkHealth(ctx context.Context) map[string]string {
 			out[ws] = why
 			continue
 		}
+		// The clone the worker makes itself is not there yet (clone.go):
+		// nothing of the workspace can run, and nothing else is checked.
+		if why := w.cloneProblem(ws); why != "" {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[ws] = why
+			continue
+		}
 		// What the workspace's runs need on this host: the sandbox, the
 		// commands its stages run, the push token (stagecheck.go). A
 		// failure holds back only the stages it concerns.

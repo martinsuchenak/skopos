@@ -80,6 +80,29 @@ func TestMergeManagedReplacesTheFilesSharedFields(t *testing.T) {
 	}
 }
 
+// clone_url comes from the server like the other shared fields; left out
+// there, it is the default ("": the push URL), not the file's.
+func TestMergeManagedCloneURL(t *testing.T) {
+	c := managedConfig(t, true)
+	c.Repos["ws"].CloneURL = "https://file.example.com/x.git"
+	eff := &wsconfig.Effective{Workspace: "ws", Managed: true, Rev: "r1", Config: wsconfig.Config{CloneURL: new("https://mirror.example.com/x.git")}}
+	m, err := c.mergeManaged("ws", eff)
+	if err != nil || m.repo.CloneURL != "https://mirror.example.com/x.git" {
+		t.Fatalf("the server's clone_url: %+v %v", m, err)
+	}
+	m, err = c.mergeManaged("ws", &wsconfig.Effective{Workspace: "ws", Managed: true, Rev: "r2"})
+	if err != nil || m.repo.CloneURL != "" {
+		t.Fatalf("left out on the server: %q %v", m.repo.CloneURL, err)
+	}
+	// Without server_commands it is a command field kept from the file.
+	off := managedConfig(t, false)
+	off.Repos["ws"].CloneURL = "https://file.example.com/x.git"
+	m, err = off.mergeManaged("ws", eff)
+	if err != nil || m.repo.CloneURL != "https://file.example.com/x.git" || !slices.Contains(m.local, "clone_url") {
+		t.Fatalf("server_commands off: %+v %v", m, err)
+	}
+}
+
 // Without worker.server_commands the command fields stay the file's, even
 // for a managed workspace; everything else still comes from the server.
 func TestServerCommandsOffKeepsLocalCommands(t *testing.T) {

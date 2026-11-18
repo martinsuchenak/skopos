@@ -225,6 +225,62 @@ func TestWorkerInitAsksAndFillsIn(t *testing.T) {
 	}
 }
 
+// Enter at the clone question leaves the clone to the worker: the repo
+// block has no path, the default branch is the remote's, and the config
+// passes Default() with the clone under the state folder.
+func TestWorkerInitWorkerClones(t *testing.T) {
+	old := remoteDefaultBranchOf
+	var header string
+	remoteDefaultBranchOf = func(_ context.Context, _, h string) string { header = h; return "trunk" }
+	defer func() { remoteDefaultBranchOf = old }()
+	o := workerInitOptions{Push: "none", TokenEnv: "GH_TOKEN", RepoPaths: map[string]string{}, Clone: map[string]bool{}}
+	answers := strings.Join([]string{"https://skopos.example.com", "github.com/you/repo", "sk_worker_secret", ""}, "\n") + "\n"
+	in := bufio.NewReader(strings.NewReader(answers))
+	var out bytes.Buffer
+	askWorkerInit(in, &out, &o, func(in *bufio.Reader, out io.Writer, label string) string { return promptTo(in, out, label, "") })
+	if strings.Contains(out.String(), "Clone https://") {
+		t.Fatalf("no clone question when the worker clones:\n%s", out.String())
+	}
+	repos, secrets, err := prepareWorkerRepos(t.Context(), &out, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(t.TempDir(), "skopos-config.toml")
+	if err := runWorkerInitRepos(&out, cfgPath, o.ServerURL, repos, secrets, o.ClaudeEnv); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(cfgPath)
+	if strings.Contains(string(raw), "\npath = ") || !strings.Contains(string(raw), "the worker clones the repository") {
+		t.Fatalf("no path line:\n%s", raw)
+	}
+	var file struct {
+		Worker *worker.Config `toml:"worker"`
+	}
+	if _, err := toml.Decode(string(raw), &file); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Worker.Default(t.TempDir()); err != nil {
+		t.Fatalf("must pass Default(): %v", err)
+	}
+	r := file.Worker.Repos["github.com/you/repo"]
+	if !r.SelfClone() || r.DefaultBranch != "trunk" || !strings.HasSuffix(r.Path, filepath.Join("clones", "github.com", "you", "repo")) {
+		t.Fatalf("repo: %+v", r)
+	}
+	if strings.Contains(out.String(), "fill in the repos blocks") {
+		t.Errorf("nothing left to fill in:\n%s", out.String())
+	}
+	if header != "" {
+		t.Errorf("no token, no header: %q", header)
+	}
+	// With a token the lookup can read a private repository.
+	if h := remoteAuthHeader("github.com/you/repo", "ghp_x"); !strings.HasPrefix(h, "Authorization: Basic ") {
+		t.Errorf("header: %q", h)
+	}
+	if h := remoteAuthHeader("gitea.example.com/you/repo", "tok"); h != "" {
+		t.Errorf("only GitHub's form is known here: %q", h)
+	}
+}
+
 // Unattended: a bare --repo path with one workspace; no token means no push.
 func TestWorkerInitUnattendedOptions(t *testing.T) {
 	cmd := workerInitCmd()

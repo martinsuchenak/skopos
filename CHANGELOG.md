@@ -4,6 +4,26 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.42.0] — 2026-11-19
+
+### Added
+
+- A worker clones a repository itself: a repo in its file without a `path`
+  is cloned into `<state_dir>/clones/<workspace>`, in the background, from
+  `clone_url`, else the push URL, else `https://<workspace>.git`. Until the
+  clone is there the workspace is unhealthy for that worker, so its runs
+  go elsewhere or wait; a failed clone is tried again later. A clone the
+  worker made and no longer serves is removed a week after. `clone_url` is
+  also a workspace config field on the server and in the dashboard's form;
+  it is a command field, taken from the server only with `server_commands`.
+  `skopos worker init` asks for an existing clone only (Enter leaves it to
+  the worker), and `worker check` says which clones the worker will make.
+- The worker's own fetches, `ls-remote` calls and clones send the push
+  token, as the push does, so a private repository needs no other git
+  credential on the machine. Only to the push URL's host, with TLS
+  verified and no `insteadOf` rewrite in git's config, never in an
+  agent's, a setup's or a check's environment.
+
 ## [0.41.0] — 2026-11-18
 
 ### Added

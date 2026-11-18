@@ -658,7 +658,12 @@ func (c *Config) fileProfile(workspace, stage string) *StageProfile {
 
 // Repo is one workspace's local clone: worktrees are cut from it per run.
 type Repo struct {
-	Path          string `toml:"path"`
+	// Path is the clone. Left out, the worker makes the clone itself, at
+	// <state_dir>/clones/<workspace> (clone.go).
+	Path string `toml:"path"`
+	// CloneURL is where that clone comes from ("" = push.remote_url, else
+	// https://<workspace>.git).
+	CloneURL      string `toml:"clone_url"`
 	DefaultBranch string `toml:"default_branch"`
 	BranchPrefix  string `toml:"branch_prefix"` // default "agent/"
 	// BranchTemplate names an item's branch (default
@@ -710,6 +715,9 @@ type Repo struct {
 	localSet []string
 	// tokenOnly: the file's push block names only token_env.
 	tokenOnly bool
+	// selfClone: the file gives no path, so the clone is the worker's own,
+	// made by it under <state_dir>/clones.
+	selfClone bool
 
 	// Push: remote-agnostic. Token from env (never argv); Kind selects the
 	// credential flavor (pushAuthHeader): "gitea" sends Gitea's token
@@ -922,6 +930,18 @@ func (c *Config) Default(home string) error {
 	for ws, r := range c.Repos {
 		r.localSet = r.sharedSet()
 		r.Path = expandHome(r.Path, home)
+		if strings.TrimSpace(r.Path) == "" {
+			dir, err := cloneDirFor(c.StateDir, ws)
+			if err != nil {
+				return fmt.Errorf("repo %s: %w", ws, err)
+			}
+			r.Path, r.selfClone = dir, true
+		}
+		if r.CloneURL = strings.TrimSpace(r.CloneURL); r.CloneURL != "" {
+			if err := wsconfig.CheckCloneURL(r.CloneURL); err != nil {
+				return fmt.Errorf("repo %s: %w", ws, err)
+			}
+		}
 		if r.DefaultBranch == "" {
 			r.DefaultBranch = "main"
 		}

@@ -118,6 +118,7 @@ func (w *Worker) maybeSweep(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, sweepBudget)
 	defer cancel()
 	w.sweepBranches(ctx, time.Now())
+	w.sweepClones(time.Now())
 	w.sweepOutcomes(ctx, time.Now())
 }
 

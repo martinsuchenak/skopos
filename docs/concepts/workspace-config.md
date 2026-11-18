@@ -14,9 +14,9 @@ one keeps using each worker's file.
 | On the server | In each worker's file |
 |---|---|
 | `default_branch`, `branch_prefix`, `branch_template`, `checkout`, `protected_branches` | `id`, `state_dir`, the server URL and the worker's key |
-| `setup`, `checks`, `check_fix_rounds`, `preflight`, `preflight_interval` | per repo: the clone's `path`, `setup_env`, `push.token_env`, `redact_files` |
+| `setup`, `checks`, `check_fix_rounds`, `preflight`, `preflight_interval` | per repo: the clone's `path` (none: the worker clones it — [The clone](../deployment/worker.md#the-clone)), `setup_env`, `push.token_env`, `redact_files` |
 | `setup_timeout`, `check_timeout`, `quiet_timeout`, `plan_timeout`, `impl_timeout`, `qa_timeout` | accounts: name, kind, credentials, priority |
-| `push.kind`, `push.remote_url`, `push.pull_request`, `push.steps` | `contained_by`, `server_commands`, `auto_upgrade` |
+| `push.kind`, `push.remote_url`, `push.pull_request`, `push.steps`; `clone_url`, where a worker clones from when it makes the clone itself | `contained_by`, `server_commands`, `auto_upgrade` |
 | `mcp_deny`, `mcp_servers`; `mcp`: which MCP servers the runs get | `mcp_config`, for workspaces whose config sets no `mcp` |
 | `kits`: the repository's toolchain, for every stage | `sandbox_nested`, and the toolchain itself installed on the host |
 | `stages`: each stage's tools, env and settings, and which wrapper goes around it | what contains a stage on this host: `contained_by`, a profile's `wrapper` and sandbox settings; `vars` |
@@ -241,6 +241,10 @@ tools = ["Bash(mago:*)"]
   names a `${NAME}` the worker does not declare, or holds something the
   worker refuses, the worker takes none of the workspace's runs and reports
   why. Its own profiles do not apply instead.
+- **`clone_url` is a command field too:** a worker that makes its own
+  clone runs setup and checks in what it cloned, so it takes the server's
+  `clone_url` (and the push URL as the clone's source) only with
+  `server_commands`.
 - **Stage blocks are command fields.** A worker takes them only with
   `server_commands = true`; without it the worker's own profiles apply as
   before. Their values are in the revision in full and in the audit note

@@ -140,8 +140,9 @@ func gitCommand(ctx context.Context, dir string, env []string, args ...string) (
 	if isWorktree {
 		args = append([]string{"-c", "core.fsmonitor=false"}, args...)
 	}
+	auth := fetchAuthEnv(ctx, dir, env, args)
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), env...), pin...)
+	cmd.Env = append(append(append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), env...), auth...), pin...)
 	return cmd, nil
 }

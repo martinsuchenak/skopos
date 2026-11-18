@@ -81,6 +81,7 @@ func (r *Repo) sharedSet() []string {
 	add(r.Push.RemoteURL != "", "push.remote_url")
 	add(r.Push.PullRequest != "", "push.pull_request")
 	add(r.Push.Steps != nil, "push.steps")
+	add(r.CloneURL != "", "clone_url")
 	return out
 }
 
@@ -129,6 +130,9 @@ func (c *Config) mergeManaged(ws string, eff *wsconfig.Effective) (*managedWS, e
 		set.Setup, set.Checks, set.Preflight = &setup, &checks, &preflight
 		// The stage blocks and kits too: the file's profiles keep applying.
 		set.Stages, set.Kits = nil, nil
+		// And where the worker's own clone comes from (cloneSourceFor).
+		cloneURL := local.CloneURL
+		set.CloneURL = &cloneURL
 	}
 	full := wsconfig.Complete(set)
 	r := *local
@@ -143,6 +147,10 @@ func (c *Config) mergeManaged(ws string, eff *wsconfig.Effective) (*managedWS, e
 	r.Push.Kind, r.Push.RemoteURL, r.Push.PullRequest = *full.Push.Kind, *full.Push.RemoteURL, *full.Push.PullRequest
 	steps := *full.Push.Steps
 	r.Push.Steps = &steps
+	// A server from before clone_url leaves it out: the default ("").
+	if full.CloneURL != nil {
+		r.CloneURL = *full.CloneURL
+	}
 	m.repo = &r
 	m.planTimeout, m.implTimeout = full.PlanTimeout.D(), full.ImplTimeout.D()
 	// A server from before the QA timeout leaves it out: the file's applies.
@@ -162,6 +170,7 @@ func (c *Config) mergeManaged(ws string, eff *wsconfig.Effective) (*managedWS, e
 		m.mcpOwned, m.mcp = true, slices.Clone(*set.MCP)
 	}
 	m.commands["setup"], m.commands["checks"], m.commands["preflight"] = strings.Join(r.Setup, "\n"), strings.Join(r.Checks, "\n"), strings.Join(r.Preflight, "\n")
+	m.commands["clone_url"] = r.CloneURL
 	if c.ServerCommands {
 		// The server says what each stage is given — nothing, for a stage
 		// without a block.
@@ -380,6 +389,9 @@ func (w *Worker) applyConfig(ws string, eff *wsconfig.Effective) {
 				was = w.cfg.fileStage(ws, stage)
 			} else if local := w.cfg.Repos[ws]; local != nil {
 				was = strings.Join(map[string][]string{"setup": local.Setup, "checks": local.Checks, "preflight": local.Preflight}[f], "\n")
+				if f == "clone_url" {
+					was = local.CloneURL
+				}
 			}
 			if now := m.commands[f]; now != was {
 				w.log.Warn("config: commands from the server changed", "workspace", ws, "field", f, "rev", eff.Rev, "commands", strings.ReplaceAll(now, "\n", " ; "))

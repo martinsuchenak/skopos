@@ -476,7 +476,11 @@ func baseWorkerChecks(configPath, envFile, pathEnv, home string) ([]string, *wor
 			problems = append(problems, fmt.Sprintf("repo %s: path is not filled in", id))
 			continue
 		}
-		if !fileExists(filepath.Join(r.Path, ".git")) {
+		if r.SelfClone() && !fileExists(filepath.Join(r.Path, ".git")) {
+			// The worker makes this clone itself when it starts (its runs
+			// wait for it there, not here).
+			fmt.Println("note: " + fmt.Sprintf("repo %s: the worker clones %s into %s when it starts", id, ws.CloneSourceFor(id), r.Path))
+		} else if !fileExists(filepath.Join(r.Path, ".git")) {
 			problems = append(problems, fmt.Sprintf("repo %s: %s is not a git clone", id, r.Path))
 		}
 		if placeholderish(r.Push.RemoteURL) || placeholderish(r.Push.TokenEnv) {

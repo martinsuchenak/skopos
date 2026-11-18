@@ -83,6 +83,10 @@ type Config struct {
 	QATimeout *Duration `json:"qa_timeout,omitempty" toml:"qa_timeout,omitempty"`
 
 	Push *Push `json:"push,omitempty" toml:"push,omitempty"`
+	// CloneURL is where a worker clones the repository from when it makes
+	// the clone itself (a repo without a path in its file): "" = the push
+	// URL, else https://<workspace>.git.
+	CloneURL *string `json:"clone_url,omitempty" toml:"clone_url,omitempty"`
 
 	MCPDeny    *[]string `json:"mcp_deny,omitempty" toml:"mcp_deny,omitempty"`
 	MCPServers *[]string `json:"mcp_servers,omitempty" toml:"mcp_servers,omitempty"`
@@ -126,9 +130,10 @@ var ShellFields = []string{"setup", "checks", "preflight"}
 // CommandFields are the fields whose values decide what executes on a
 // worker's host: the shell commands the worker runs, and each stage's block
 // — the tools and env its agent is given and the wrapper it starts behind
-// are commands under another name. A worker takes them from the server only
-// with worker.server_commands.
-var CommandFields = append(append(slices.Clone(ShellFields), "kits"), StageFields()...)
+// are commands under another name. clone_url too: a worker that makes its
+// own clone runs its setup and checks in what it cloned. A worker takes
+// them from the server only with worker.server_commands.
+var CommandFields = append(append(slices.Clone(ShellFields), "kits", "clone_url"), StageFields()...)
 
 // IsCommandField reports whether a field (as Fields names it) decides what
 // executes on a worker's host.
@@ -151,6 +156,7 @@ func Defaults() Config {
 		QuietTimeout: new(Duration(0)), PlanTimeout: new(Duration(10 * time.Minute)), ImplTimeout: new(Duration(90 * time.Minute)),
 		QATimeout: new(Duration(30 * time.Minute)),
 		Push:      &Push{Kind: new("none"), RemoteURL: new(""), PullRequest: new("none"), Steps: new(true)},
+		CloneURL:  new(""),
 		MCPDeny:   new([]string{}), MCPServers: new([]string{}),
 		Kits: new([]string{}),
 	}
@@ -341,6 +347,14 @@ func Normalize(in Config) (Config, error) {
 	}
 	if c.Checkout != nil && *c.Checkout != "worktree" && *c.Checkout != "branch" {
 		return bad("checkout %q is not one of worktree, branch", *c.Checkout)
+	}
+	// An empty clone_url is a value: the push URL, which a workspace may set
+	// to undo its group's.
+	c.CloneURL = trimStr(c.CloneURL)
+	if c.CloneURL != nil && *c.CloneURL != "" {
+		if err := CheckCloneURL(*c.CloneURL); err != nil {
+			return bad("%v", err)
+		}
 	}
 	lists := []struct {
 		name    string
@@ -572,4 +586,18 @@ func Describe(v json.RawMessage) string {
 		return "(not set)"
 	}
 	return string(v)
+}
+
+// CheckCloneURL: a URL a worker may clone from — http(s) (or srv+http(s),
+// resolved when the worker clones), with no credentials in it: a fetch
+// sends the push token as a header, never in the URL.
+func CheckCloneURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || !srvurl.HTTPScheme(u.Scheme) {
+		return fmt.Errorf("clone_url %q is not an http(s) URL", raw)
+	}
+	if u.User != nil {
+		return fmt.Errorf("clone_url must not carry credentials")
+	}
+	return nil
 }

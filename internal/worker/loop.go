@@ -194,6 +194,8 @@ type Worker struct {
 	runTokensSeen       bool
 	// index: idle-time code indexing (indexer.go).
 	index indexer
+	// clones: the clones the worker makes itself (clone.go).
+	clones cloner
 	// logOutput: the log output (--log-output-url) run logs also go to;
 	// nil = none. extraSecrets: values run logs redact besides the ones
 	// the config names (runlog.go).
@@ -224,6 +226,13 @@ func New(cfg *Config, client *Client, log *slog.Logger) *Worker {
 			}
 		}
 	}
+	// The worker's own fetches in a clone send its repo's push token
+	// (gitauth.go): which repo each clone is, as the worker sees it now.
+	for ws, repo := range cfg.Repos {
+		if repo != nil && repo.Path != "" {
+			registerCloneRepo(repo.Path, func() *Repo { return w.repo(ws) })
+		}
+	}
 	if client != nil {
 		client.SetServerCommands(cfg.ServerCommands)
 	}
@@ -245,6 +254,9 @@ func (w *Worker) Loop(ctx context.Context) error {
 		// A wrapper the workspaces' config names has to start on this
 		// host: checked before the claim says what the worker can run.
 		w.checkWrappers(ctx, false)
+		// A clone the worker makes itself starts in the background; its
+		// workspace stays unhealthy here until it is there.
+		w.maybeClone(ctx)
 		run, err := w.client.Claim(ctx, w.cfg.ID, w.cfg.AvailableRunners(time.Now()), w.cfg.Workspaces, w.checkHealth(ctx), w.indexable(), w.runnerFacts())
 		if err != nil {
 			w.log.Error("claim failed", "err", err)

@@ -166,10 +166,14 @@ func TestRunWorkerChecks(t *testing.T) {
 		t.Fatal("placeholder config must fail checks")
 	}
 	joined := strings.Join(problems, "\n")
-	for _, want := range []string{"no API key", "path is not filled in", "server URL looks like a placeholder"} {
+	for _, want := range []string{"no API key", "server URL looks like a placeholder"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("expected problem %q, got:\n%s", want, joined)
 		}
+	}
+	// No path: the worker clones the repository itself, which is no problem.
+	if strings.Contains(joined, "path is not filled in") || strings.Contains(joined, "is not a git clone") {
+		t.Errorf("a repo without a path is the worker's own clone:\n%s", joined)
 	}
 	// The template's account uses the machine's own login: nothing to
 	// resolve. An account whose ${VAR} resolves empty is caught.

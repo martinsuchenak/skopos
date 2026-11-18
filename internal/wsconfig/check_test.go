@@ -64,3 +64,22 @@ func TestFieldProblems(t *testing.T) {
 		t.Fatalf("not an object: %v", got)
 	}
 }
+
+// clone_url: an http(s) URL with no credentials; empty is a value (the
+// push URL), so a workspace can undo its group's.
+func TestNormalizeCloneURL(t *testing.T) {
+	for _, ok := range []string{"https://github.com/a/b.git", "srv+https://git/a/b.git", ""} {
+		c, err := Normalize(Config{CloneURL: new(ok)})
+		if err != nil || c.CloneURL == nil || *c.CloneURL != ok {
+			t.Errorf("%q: %v %v", ok, c.CloneURL, err)
+		}
+	}
+	for _, bad := range []string{"git@github.com:a/b.git", "https://u:p@github.com/a/b.git", "file:///srv/a"} {
+		if _, err := Normalize(Config{CloneURL: new(bad)}); err == nil || !strings.Contains(err.Error(), "clone_url") {
+			t.Errorf("%q must be refused: %v", bad, err)
+		}
+	}
+	if d := Defaults(); d.CloneURL == nil || *d.CloneURL != "" {
+		t.Error("the default is set, to the push URL")
+	}
+}

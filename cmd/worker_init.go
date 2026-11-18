@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/martinsuchenak/skopos/internal/install"
 	"github.com/paularlott/cli"
@@ -155,8 +157,8 @@ func runWorkerInitRepos(out io.Writer, configPath, serverURL string, repos []rep
 		step("skopos key create --name <this-host> --workspace <workspace-id> --worker   # the worker's key")
 		step("put it in skopos-worker.env as SKOPOS_API_KEY=")
 	}
-	if len(repos) == 0 || slices.ContainsFunc(repos, func(r repoInit) bool { return r.Path == "" }) {
-		step("fill in the repos blocks (clone path, setup, checks, push)")
+	if len(repos) == 0 {
+		step("fill in the repos blocks (setup, checks, push; a path only for a clone you made)")
 	}
 	step("skopos worker runner add                                         # more agent runners + accounts (wizard)")
 	step("skopos worker runner test                                        # one real prompt per account")
@@ -232,7 +234,10 @@ func workerSectionTOML(workerID string, repos []repoInit, claudeEnv string) stri
 		// Workspace ids contain '/' (github.com/owner/repo) — quoted table
 		// keys are mandatory in TOML.
 		key := fmt.Sprintf("%q", r.Workspace)
-		path := cmp.Or(r.Path, "/srv/clones/<repo>")
+		pathLine := "# No path: the worker clones the repository into its state folder\n# (state_dir/clones/<workspace>) and keeps it there.\n"
+		if r.Path != "" {
+			pathLine = fmt.Sprintf("# A local clone of the repo; worktrees are cut from it per run.\npath = %q\n", r.Path)
+		}
 		kind := cmp.Or(r.PushKind, "none")
 		pr := ""
 		if kind == "github" {
@@ -240,9 +245,7 @@ func workerSectionTOML(workerID string, repos []repoInit, claudeEnv string) stri
 		}
 		repoBlocks += fmt.Sprintf(`
 [worker.repos.%s]
-# A local clone of the repo; worktrees are cut from it per run.
-path = %q
-default_branch = %q
+%sdefault_branch = %q
 branch_prefix = "agent/"           # agent branches: agent/<item>-<slug>
 setup = []                        # commands run in every fresh worktree ({clone} expands)
 checks = []                       # verification commands, e.g. ["task test"]
@@ -252,7 +255,7 @@ protected_branches = ["main", "master", "develop", "release/**", "hotfix/**"]
 kind = %q                     # gitea | github | none
 remote_url = %q                   # https push URL
 token_env = %q                    # env var holding the token (set it in skopos-worker.env)
-%s`, key, path, cmp.Or(r.DefaultBranch, "main"), key, kind, r.RemoteURL, r.TokenEnv, pr)
+%s`, key, pathLine, cmp.Or(r.DefaultBranch, "main"), key, kind, r.RemoteURL, r.TokenEnv, pr)
 	}
 	return fmt.Sprintf(`[worker]
 # id must keep the "worker-" prefix (it marks worker-created plans so the
@@ -411,7 +414,10 @@ func askWorkerInit(in *bufio.Reader, out io.Writer, o *workerInitOptions, secret
 	home, _ := os.UserHomeDir()
 	for _, ws := range o.Workspaces {
 		if o.RepoPaths[ws] == "" {
-			o.RepoPaths[ws] = promptTo(in, out, "\nLocal clone of "+ws, filepath.Join(home, "src", repoName(ws)))
+			o.RepoPaths[ws] = promptTo(in, out, "\nAn existing clone of "+ws+" (Enter: the worker clones it into its own folder)", "")
+		}
+		if o.RepoPaths[ws] == "" {
+			continue // the worker makes the clone itself
 		}
 		if !isGitClone(expandTilde(o.RepoPaths[ws], home)) && !o.CloneAll {
 			o.Clone[ws] = yes(fmt.Sprintf("%s isn't a git clone. Clone https://%s.git there now?", o.RepoPaths[ws], ws))
@@ -447,6 +453,10 @@ func prepareWorkerRepos(ctx context.Context, out io.Writer, o workerInitOptions)
 		}
 		if r.Path != "" && isGitClone(r.Path) {
 			r.DefaultBranch = originDefaultBranch(ctx, r.Path)
+		} else if r.Path == "" {
+			// The worker clones it later: ask the remote which branch is its
+			// default, as a clone would know it.
+			r.DefaultBranch = remoteDefaultBranchOf(ctx, "https://"+ws+".git", remoteAuthHeader(ws, o.Token))
 		}
 		kind := o.Push
 		if kind == "auto" {
@@ -472,8 +482,6 @@ func prepareWorkerRepos(ctx context.Context, out io.Writer, o workerInitOptions)
 
 func isGitHub(ws string) bool { return strings.HasPrefix(ws, "github.com/") }
 
-func repoName(ws string) string { return filepath.Base(strings.TrimSuffix(ws, ".git")) }
-
 func isGitClone(path string) bool {
 	if path == "" {
 		return false
@@ -484,6 +492,45 @@ func isGitClone(path string) bool {
 
 // originDefaultBranch: origin's HEAD branch ("" when unknown — init then
 // writes main).
+// remoteDefaultBranchOf is remoteDefaultBranch, swapped in tests (no
+// network).
+var remoteDefaultBranchOf = remoteDefaultBranch
+
+// remoteAuthHeader is the header that lets the push token read a private
+// GitHub repository ("" without a token, or for another forge).
+func remoteAuthHeader(ws, token string) string {
+	if token == "" || !isGitHub(ws) {
+		return ""
+	}
+	return "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:"+token))
+}
+
+// remoteDefaultBranch asks a remote which branch its HEAD names ("" when it
+// cannot tell: the worker's config then says main). header, when set, goes
+// with the request (a private repository).
+func remoteDefaultBranch(ctx context.Context, remote, header string) string {
+	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "git", "ls-remote", "--symref", remote, "HEAD")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	if header != "" {
+		cmd.Env = append(cmd.Env, "GIT_CONFIG_COUNT=2", "GIT_CONFIG_KEY_0=http.extraHeader", "GIT_CONFIG_VALUE_0="+header,
+			"GIT_CONFIG_KEY_1=http.sslVerify", "GIT_CONFIG_VALUE_1=true")
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if ref, ok := strings.CutPrefix(line, "ref: refs/heads/"); ok {
+			if name, _, ok := strings.Cut(ref, "\t"); ok {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
 func originDefaultBranch(ctx context.Context, clone string) string {
 	out, err := exec.CommandContext(ctx, "git", "-C", clone, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD").Output()
 	if err != nil {

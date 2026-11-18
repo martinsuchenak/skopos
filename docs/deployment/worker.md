@@ -24,9 +24,10 @@ curl -fsSL https://github.com/martinsuchenak/skopos/releases/latest/download/ins
 ```
 
 It installs the binary into `~/.local/bin`, then runs `skopos worker init`
-with your terminal as input: it asks for the worker key (typed hidden), the
-clone (offering to clone it), whether to push to GitHub with draft pull
-requests (and the token), then the runner wizard. Then `worker check`, and
+with your terminal as input: it asks for the worker key (typed hidden), an
+existing clone (Enter leaves the clone to the worker: see [The
+clone](#the-clone)), whether to push to GitHub with draft pull requests
+(and the token), then the runner wizard. Then `worker check`, and
 when that passes, `worker install` starts the service. Add `--no-service` to
 stop before the service, `--repo PATH`, `--clone`, `--push
 github|gitea|none` to answer up front.
@@ -48,7 +49,8 @@ Step by step instead:
 curl -fsSL https://github.com/martinsuchenak/skopos/releases/latest/download/install.sh | sh
 
 # 1. Scaffold the config (annotated [worker] section + skopos-worker.env).
-#    In a terminal it asks for the key, the clone and the push, then offers
+#    In a terminal it asks for the key, an existing clone (Enter: the worker
+#    clones the repository itself) and the push, then offers
 #    the runner wizard. --repo PATH, --clone and --push github|gitea|none
 #    answer up front; SKOPOS_API_KEY, GH_TOKEN and a Claude credential are
 #    taken from the environment.
@@ -60,7 +62,8 @@ skopos worker init --server-url https://skopos.example.com \
 skopos key create --name worker-vm1 --workspace github.com/you/repo --worker \
                   --server-url https://skopos.example.com --api-key <root-key>
 
-# 3. Fill in the repos blocks in skopos-config.toml (clone path, checks, push)
+# 3. Fill in the repos blocks in skopos-config.toml (checks, push; a path
+#    only for a clone you made yourself)
 
 # 4. Agent runners and their accounts — wizard, then a real smoke test
 skopos worker runner add
@@ -675,6 +678,60 @@ reviewers query the code as it is:
 
 The worker pushes with its own key, which needs `code:write`.
 
+## The clone
+
+Each workspace a worker serves needs a clone on the worker's machine:
+worktrees are cut from it for each run, or, with `checkout = "branch"`,
+runs work in it.
+
+```toml
+[worker.repos."github.com/you/repo"]
+# No path: the worker clones the repository itself.
+
+[worker.repos."github.com/you/other"]
+path = "/srv/clones/other"     # a clone you made and look after
+```
+
+- **Without a `path`** the worker clones the repository itself, into
+  `<state_dir>/clones/<workspace>` (`~/.local/state/skopos-worker/clones/github.com/you/repo`).
+  It clones in the background when it starts, and again whenever a
+  workspace without its clone appears. Until the clone is there, the
+  workspace is unhealthy for this worker ("cloning …"), so its runs go to
+  other workers or wait; nothing else the worker does waits for it.
+- **From where:** `clone_url`, else `push.remote_url`, else
+  `https://<workspace>.git`. For a workspace whose config the server holds,
+  the server's `clone_url` and push URL count only with `server_commands =
+  true`: the worker runs setup and checks in what it cloned, so where the
+  code comes from is a command field. Without it, this file's repo block
+  says where.
+- **Complete or not at all:** the clone is made in a folder beside its
+  place and renamed into place once the default branch is checked out, so
+  a half-made clone is never used. A full clone, never shallow or partial:
+  worktrees, reviews and resumed runs need the history.
+- **A failed clone** (no access, a default branch the remote does not have)
+  keeps the workspace unhealthy with the reason, and is tried again after
+  1 minute, 5 minutes, 30 minutes, then hourly.
+- **Credentials:** the same push token the worker pushes with (`push.token_env`),
+  for the clone and for every fetch (below). A public repository needs
+  none.
+- **A clone the worker made and no longer serves** (its repo left the
+  file) is removed a week after the worker first saw it unused. Only clones
+  under `<state_dir>/clones`; a `path` you gave is never touched.
+- **`skopos worker check`** says which clones the worker will make when it
+  starts.
+
+### Fetching with the push token
+
+The worker's own fetches and `ls-remote` calls in a clone, and the clone
+itself, send the push token the way the push does (an HTTP header for that
+one git command), so a private repository needs no other git credential on
+the machine. Only when the clone's `origin` is on the push URL's host, over
+https, with TLS verified, and no `url.*.insteadOf` rule in git's config
+(setup and check code could write one into the clone's config to carry
+the fetch elsewhere): the token goes nowhere else. It is never in the environment of an
+agent, a setup or a check command. Without a push token, git uses the
+machine's own credentials, as before.
+
 ## Pushing and pull requests
 
 Each repo's `push` block decides what happens to a finished implementation:
@@ -1120,7 +1177,8 @@ path = "/srv/clones/shop"
 push.token_env = "REPO_PUSH_TOKEN"
 ```
 
-- **What stays in this file:** the clone's `path`, `setup_env`,
+- **What stays in this file:** the clone's `path` (or none: [the worker
+  clones it](#the-clone)), `setup_env`,
   `push.token_env`, the accounts, `mcp_config` (for workspaces whose config
   names no MCP servers), and what contains a stage
   (`contained_by`, a profile's `wrapper` and sandbox settings).
@@ -1133,7 +1191,7 @@ push.token_env = "REPO_PUSH_TOKEN"
   worker logs once which ones; a field the server leaves out has its
   default, not this file's value.
 - **Without `server_commands`** the command fields — `setup`, `checks`,
-  `preflight` and the stage blocks — stay this file's and the rest still
+  `preflight`, the stage blocks, `kits` and `clone_url` — stay this file's and the rest still
   comes from the server. The worker logs that the server sets commands it
   does not take.
 - **Each run names its config.** The claim carries the revision; the worker
