@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- The item view has a copy button beside the branch name. For an item
+  named only by a reference, it copies the branch its runs used, once
+  there is one.
+
 ## [0.43.1] — 2026-11-19
 
 ### Fixed

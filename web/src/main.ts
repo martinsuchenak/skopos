@@ -1521,6 +1521,16 @@ const appState = () => ({
       this.notify('Could not copy the item ID', 'error');
     }
   },
+  async copyBranch() {
+    const branch = this.previewBranch();
+    if (!branch) return;
+    try {
+      await navigator.clipboard.writeText(branch);
+      this.notify('Branch name copied', 'success');
+    } catch {
+      this.notify('Could not copy the branch name', 'error');
+    }
+  },
   onPreviewDescToggle(e: globalThis.Event) { this.previewDescOpen = (e.target as HTMLDetailsElement).open; },
   onPreviewRunsToggle(e: globalThis.Event) { this.previewRunsOpen = (e.target as HTMLDetailsElement).open; },
   async fetchPreviewPipe() {
@@ -4791,6 +4801,33 @@ const appState = () => ({
     if (it.flow === 'review') return 'The agent checks and reviews this existing branch; nothing is planned or implemented';
     if (it.branch) return 'Works on the branch ' + it.branch + ': an existing one is continued, a new one is created under this name';
     return it.ref ? 'Reference ' + it.ref + ': the repository\'s branch template names the branch after it' : '';
+  },
+  // The git branch the previewed item works on: its own, else the one its
+  // newest run used (the repository's branch template named it after the
+  // reference).
+  previewBranch(): string {
+    const it = this.previewItem;
+    if (!it) return '';
+    if (it.branch) return it.branch;
+    let newest: RunRow | null = null;
+    for (const r of this.previewRuns) {
+      if (r.branch && (!newest || this.runTime(r) > this.runTime(newest))) newest = r;
+    }
+    return newest?.branch || '';
+  },
+  previewBranchLabel(): string {
+    const it = this.previewItem;
+    if (!it) return '';
+    const b = this.previewBranch();
+    if (it.branch || !b) return this.branchLabel(it);
+    return it.flow === 'review' ? 'review only · ' + b : b;
+  },
+  previewBranchTitle(): string {
+    const it = this.previewItem;
+    if (!it) return '';
+    const b = this.previewBranch();
+    if (it.branch || !b || it.flow === 'review') return this.branchTitle(it);
+    return 'Works on the branch ' + b + (it.ref ? ', named after the reference ' + it.ref : '');
   },
   attemptCloseInboxItemModal() {
     if (!this.showInboxItemModal || this.confirm.open) return;
