@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.44.0] — 2026-11-19
 
 ### Added
 
@@ -18,6 +18,19 @@ versions follow [Semantic Versioning](https://semver.org/).
   `.credentials.json`. The message names the login command to run as the
   worker's user. Accounts on an API key are exempt. A running worker only
   logs it.
+- Implementations, reviews and QA list what they did, with an outcome for
+  each entry. An implementation lists the verifications it ran, and the
+  ones it could not run with the reason. A review lists what it checked
+  and against what. QA lists its scenarios with the screen or command, the
+  values used and what happened. The item view counts them on each step
+  ("13 scenarios: 12 passed, 1 skipped") and lists every entry in the
+  step's details. The item report shows them under each run. The list is
+  in the run's `observed.work`.
+
+### Changed
+
+- Once a worker has a branch for an item, the item's edit form shows that
+  branch and the field is read-only.
 
 ## [0.43.1] — 2026-11-19
 

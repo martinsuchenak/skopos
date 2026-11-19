@@ -629,6 +629,26 @@ label. See
   still go to any worker. See
   [Worker labels](../deployment/worker.md#worker-labels).
 
+## What each stage did
+
+Implementations, reviews and QA each list what they did, and what came of
+each entry (passed, failed or skipped, with what the agent saw):
+
+- **an implementation** lists the verifications it made: the commands it
+  ran and what it checked, and a verification the plan asks for that it
+  could not do, as skipped with the reason. Its check-fix rounds add
+  theirs;
+- **a review** (and a branch review or second opinion) lists what it
+  checked and against what;
+- **QA** lists its scenarios: where it tested (the screen, page or
+  command), the values it used, and what happened.
+
+The item preview counts them on the Implement, Agent review and QA steps
+("13 scenarios: 12 passed, 1 skipped") and lists every entry in the step's
+details. The item report shows them under each run, and its summary
+gives the counts. Reviews and QA also write the list into their section of
+the item.
+
 ## What the runs record
 
 Besides their results, runs record facts nothing decides on yet: the data
@@ -642,7 +662,9 @@ run's `observed` (in `GET /api/runs/{id}`; lists leave it out) holds:
   declares: steps whose effect reverting the commit does not undo (data
   deleted or rewritten, a message sent, a release), what users or other
   systems will see behave differently, and what the plan does that the
-  item did not ask for.
+  item did not ask for;
+- **for an implementation, a review or QA,** `work`: what the run did,
+  as in [What each stage did](#what-each-stage-did).
 
 Your decisions at each gate are in the audit log, and each item's
 `status_since` says how long it has waited at its gate. After you sign an

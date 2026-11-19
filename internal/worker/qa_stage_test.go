@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -202,6 +203,11 @@ func TestQAStageRunsInTheCloneOnABranchCheckout(t *testing.T) {
 		!strings.Contains(g.content, "- save without a date: **pass** — refused with a message") || !strings.Contains(g.content, "- export: **skipped**") {
 		t.Fatalf("QA's section lists its scenarios:\n%s", g.content)
 	}
+	// The scenarios go with the run too, for its step and the report.
+	if obs, _ := rep["observed"].(map[string]any); obs == nil || len(obs["work"].([]any)) != 2 ||
+		obs["work"].([]any)[1].(map[string]any)["result"] != "skipped" {
+		t.Fatalf("the report carries the scenarios: %v", rep["observed"])
+	}
 	// The password in the repository's own env file never reaches a run log.
 	if got := g.w.fileSecrets("ws"); len(got) != 1 || got[0] != "correct horse battery" {
 		t.Fatalf("redact_files secrets: %q", got)
@@ -289,7 +295,7 @@ func TestQAPromptAndQuestions(t *testing.T) {
 	if strings.Contains(out, "You were given nothing that can run") {
 		t.Error("a QA with tools is not told it has none")
 	}
-	if got := scenariosSection([]qaScenario{{Name: " "}, {Name: "login"}}); got != "\n\n**Scenarios**\n\n- login: **not reported**" {
+	if got := scenariosSection(workList{{Name: " "}, {Name: "login"}}); got != "\n\n**Scenarios**\n\n- login: **not reported**" {
 		t.Errorf("scenarios section: %q", got)
 	}
 	if scenariosSection(nil) != "" {
@@ -426,14 +432,14 @@ func TestQARunsRepositoryCommands(t *testing.T) {
 // A QA verdict follows what ran: only scenarios that ran and passed count
 // as tested, and the ones reported as failed are what the findings are for.
 func TestQAScenarioCounts(t *testing.T) {
-	passed, failed := qaScenarioCounts([]qaScenario{
+	passed, failed := qaScenarioCounts(workList{
 		{Name: "add a contact", Result: "pass"}, {Name: "edit it", Result: "Passed"},
 		{Name: "copy it", Result: "fail", Note: "the field is empty"}, {Name: "export", Result: "skipped"},
 	})
 	if passed != 2 || len(failed) != 1 || failed[0].Name != "copy it" {
 		t.Fatalf("counts: %d passed, failed %+v", passed, failed)
 	}
-	if passed, failed := qaScenarioCounts([]qaScenario{{Name: "a", Result: "skipped"}}); passed != 0 || len(failed) != 0 {
+	if passed, failed := qaScenarioCounts(workList{{Name: "a", Result: "skipped"}}); passed != 0 || len(failed) != 0 {
 		t.Fatalf("nothing ran: %d %v", passed, failed)
 	}
 	if (reviewResult{Findings: []Finding{{Severity: "nit", Text: "x"}}}).hasBlocking() || !(reviewResult{Findings: []Finding{{Severity: "blocking", Text: "x"}}}).hasBlocking() {
@@ -452,6 +458,9 @@ func TestAnswerListIsNotSchemaChecked(t *testing.T) {
 		{reviewSchema, `{"verdict":"pass","summary":"ok","previous":[{"id":2,"status":"addressed"}]}`},
 		{qaSchema, `{"verdict":"pass","summary":"ok","previous":{"F1":"addressed"}}`},
 		{implSchema, `{"status":"done","steps_done":[1],"summary":"ok","findings":null}`},
+		{implSchema, `{"status":"done","steps_done":[1],"summary":"ok","verified":"ran the tests"}`},
+		{reviewSchema, `{"verdict":"pass","summary":"ok","checked":[{"name":"x","result":1}]}`},
+		{qaSchema, `{"verdict":"pass","summary":"ok","scenarios":[{"name":"x","result":null}]}`},
 	} {
 		if _, err := extractStructured(tc.result, tc.schema); err != nil {
 			t.Errorf("%s: %v", tc.result, err)
@@ -463,5 +472,42 @@ func TestAnswerListIsNotSchemaChecked(t *testing.T) {
 	}
 	if _, err := extractStructured(`{"verdict":"maybe","summary":"ok"}`, reviewSchema); err == nil {
 		t.Fatal("the verdict is still checked")
+	}
+}
+
+// What a run says it did is read whatever shape it comes in, never failing
+// the result, and its outcomes are normalised.
+func TestWorkListDecodes(t *testing.T) {
+	var ir implResult
+	if err := json.Unmarshal([]byte(`{"status":"done","verified":[{"name":" go test ","result":"Passed"},{"name":"e2e","result":"not run","note":"no instance"},"loose",{"note":""},{"name":"lint","result":7}]}`), &ir); err != nil {
+		t.Fatal(err)
+	}
+	want := workList{{Name: "go test", Result: "pass"}, {Name: "e2e", Result: "skipped", Note: "no instance"}, {Name: "lint", Result: "7"}}
+	if !reflect.DeepEqual(ir.Verified, want) {
+		t.Fatalf("verified: %+v", ir.Verified)
+	}
+	for _, raw := range []string{`{"status":"done","verified":"ran"}`, `{"status":"done","verified":null}`, `{"status":"done","verified":{"a":1}}`} {
+		var r implResult
+		if err := json.Unmarshal([]byte(raw), &r); err != nil || r.Status != "done" || r.Verified != nil {
+			t.Fatalf("%s: %v %+v", raw, err, r)
+		}
+	}
+	var rr reviewResult
+	if err := json.Unmarshal([]byte(`{"verdict":"pass","summary":"s","checked":[{"name":"names against the controllers","result":"holds"}]}`), &rr); err != nil || len(rr.Checked) != 1 || rr.Checked[0].Result != "pass" {
+		t.Fatalf("checked: %v %+v", err, rr.Checked)
+	}
+	fields := addWork(map[string]any{"observed": map[string]any{"change": 1}}, want)
+	if obs := fields["observed"].(map[string]any); obs["change"] != 1 || len(obs["work"].([]workEntry)) != 3 {
+		t.Fatalf("addWork keeps the change: %v", fields)
+	}
+	if fields := addWork(map[string]any{}, nil); fields["observed"] != nil {
+		t.Fatal("no list, no observed")
+	}
+	red := strings.NewReplacer("hunter2-secret", "[redacted]")
+	if got := (workList{{Name: "curl with hunter2-secret", Result: "pass", Note: "token hunter2-secret accepted"}}).redacted(red); got[0].Name != "curl with [redacted]" || got[0].Note != "token [redacted] accepted" || got[0].Result != "pass" {
+		t.Fatalf("redacted: %+v", got)
+	}
+	if got := workSection("Checked", want[:2]); got != "\n\n**Checked**\n\n- go test: **pass**\n- e2e: **skipped** — no instance" {
+		t.Fatalf("section: %q", got)
 	}
 }

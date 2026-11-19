@@ -102,4 +102,9 @@ why, and how it was verified. Write it about the repository only — nothing abo
 tools or commands you were allowed or refused, a sandbox, the blackboard, plan items or how you
 staged your commits. Put what only the approver needs to know about this run in `notes` (a tool
 you could not use, a command that was refused, something you could not verify, something you
-recorded for later); leave `notes` empty when there is nothing. Return only the structured result.
+recorded for later); leave `notes` empty when there is nothing.
+
+`verified` lists each verification you made, one entry each: `name` (the command you ran or what
+you checked, and against what), `result` "pass", "fail" or "skipped" (you could not run it), and a
+short `note` (what you saw, or why you could not run it). A verification the plan asks for that
+you could not do is in the list as "skipped", never left out. Return only the structured result.

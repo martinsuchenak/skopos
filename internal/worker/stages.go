@@ -530,7 +530,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	// fix rounds it has used.
 	var ir implResult
 	if rec.ImplementedRun == run.ID {
-		ir = implResult{Status: "done", Summary: rec.ImplementedSummary, Notes: rec.ImplementedNotes}
+		ir = implResult{Status: "done", Summary: rec.ImplementedSummary, Notes: rec.ImplementedNotes, Verified: rec.ImplementedVerified}
 		log.Info("resuming the check fixes", "fix_rounds_used", rec.FixRounds)
 	} else {
 		// An earlier run of this implementation that was cut off (its
@@ -593,6 +593,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		if err := json.Unmarshal(res.Structured, &ir); err != nil {
 			return fmt.Errorf("no structured result: %s", firstLine(res.Text))
 		}
+		ir.Verified = ir.Verified.redacted(w.redactor())
 		switch ir.Status {
 		case "amendment":
 			return w.proposeAmendment(ctx, run, item, ir)
@@ -607,7 +608,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		if commitCount(ctx, worktree, baseRef) == 0 {
 			return fmt.Errorf("agent reported done but made no commits")
 		}
-		rec.ImplementedRun, rec.ImplementedSummary, rec.ImplementedNotes, rec.FixRounds = run.ID, ir.Summary, ir.Notes, 0
+		rec.ImplementedRun, rec.ImplementedSummary, rec.ImplementedNotes, rec.ImplementedVerified, rec.FixRounds = run.ID, ir.Summary, ir.Notes, ir.Verified, 0
 		said := resolveAnswers(toFix, ir.Findings, findings.KindFixed, findings.KindNotFixed)
 		rec.FindingAnswers = wireAnswers(said)
 		if len(toFix) > 0 {
@@ -637,6 +638,9 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 				return true, err
 			}
 			rec.FixRounds = round
+			// What the fix round verified joins the turn's list.
+			rec.ImplementedVerified = append(rec.ImplementedVerified, fix.Verified...)
+			ir.Verified = rec.ImplementedVerified
 			w.saveBranch(rec)
 			switch fix.Status {
 			case "amendment":
@@ -722,6 +726,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	if c := changeFacts(ctx, worktree, baseRef); c != nil {
 		fields["observed"] = map[string]any{"change": c}
 	}
+	addWork(fields, ir.Verified)
 	if rec.ImplementedRun == run.ID && len(rec.FindingAnswers) > 0 {
 		fields["finding_answers"] = rec.FindingAnswers
 	}
@@ -769,6 +774,7 @@ func (w *Worker) fixChecksRound(ctx context.Context, run *Run, item *Item, repo 
 	if err := json.Unmarshal(res.Structured, &ir); err != nil {
 		return nil, fmt.Errorf("fix round %d: no structured result: %s", round, firstLine(res.Text))
 	}
+	ir.Verified = ir.Verified.redacted(w.redactor())
 	return &ir, nil
 }
 
@@ -777,7 +783,7 @@ func (w *Worker) fixChecksRound(ctx context.Context, run *Run, item *Item, repo 
 // findings fail the review, nits are reported but never block (multi-agent
 // stages merge them across reviewers). `issues` is the older shape, still
 // accepted as all-blocking.
-const reviewSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","fail"]},"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["blocking","nit"]},"text":{"type":"string"},"file":{"type":"string"}},"required":["severity","text"]}},"issues":{"type":"array","items":{"type":"string"}},"previous":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"status":{"type":"string"},"note":{"type":"string"}}}}},"required":["verdict","summary"]}`
+const reviewSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","fail"]},"summary":{"type":"string"},"checked":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"result":{"type":"string"},"note":{"type":"string"}}}},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["blocking","nit"]},"text":{"type":"string"},"file":{"type":"string"}},"required":["severity","text"]}},"issues":{"type":"array","items":{"type":"string"}},"previous":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"status":{"type":"string"},"note":{"type":"string"}}}}},"required":["verdict","summary"]}`
 
 // qaSchema: the review result, plus what only a tester returns — the
 // scenarios it ran, and "blocked" with questions when it could not test.
@@ -786,26 +792,20 @@ const qaSchema = `{"type":"object","properties":{"verdict":{"type":"string","enu
 // qaVerdictBlocked: QA could not test and asks instead.
 const qaVerdictBlocked = "blocked"
 
-type qaScenario struct {
-	Name   string `json:"name"`
-	Result string `json:"result"`
-	Note   string `json:"note"`
-}
-
 type qaResult struct {
 	reviewResult
-	Scenarios []qaScenario        `json:"scenarios"`
+	Scenarios workList            `json:"scenarios"`
 	Questions []itemtext.Question `json:"questions"`
 }
 
 // qaScenarioCounts is how many scenarios ran and passed, and the ones that
 // failed (at most five: each becomes a finding).
-func qaScenarioCounts(scs []qaScenario) (passed int, failed []qaScenario) {
+func qaScenarioCounts(scs workList) (passed int, failed []workEntry) {
 	for _, sc := range scs {
-		switch strings.ToLower(strings.TrimSpace(sc.Result)) {
-		case "pass", "passed":
+		switch workResult(sc.Result) {
+		case "pass":
 			passed++
-		case "fail", "failed":
+		case "fail":
 			if len(failed) < 5 {
 				failed = append(failed, sc)
 			}
@@ -825,32 +825,12 @@ func (r reviewResult) hasBlocking() bool {
 }
 
 // scenariosSection lists what QA ran, for its section in the item.
-func scenariosSection(scs []qaScenario) string {
-	var b strings.Builder
-	for _, sc := range scs {
-		name := strings.TrimSpace(sc.Name)
-		if name == "" {
-			continue
-		}
-		if b.Len() == 0 {
-			b.WriteString("\n\n**Scenarios**\n")
-		}
-		result := strings.ToLower(strings.TrimSpace(sc.Result))
-		if result == "" {
-			result = "not reported"
-		}
-		fmt.Fprintf(&b, "\n- %s: **%s**", name, result)
-		if note := strings.TrimSpace(sc.Note); note != "" {
-			fmt.Fprintf(&b, " — %s", note)
-		}
-	}
-	return b.String()
-}
+func scenariosSection(scs workList) string { return workSection("Scenarios", scs) }
 
 // qaAsks is a QA run that could not test: its questions go on record for
 // the approver, and the run fails without findings. The answer starts QA
 // again (inbox retry), not a new implementation.
-func (w *Worker) qaAsks(ctx context.Context, run *Run, summary string, qs []itemtext.Question, head string, setup []Check) error {
+func (w *Worker) qaAsks(ctx context.Context, run *Run, summary string, qs []itemtext.Question, head string, setup []Check, scenarios workList) error {
 	var asked []itemtext.Question
 	for _, q := range qs {
 		if strings.TrimSpace(q.Text) != "" {
@@ -874,9 +854,9 @@ func (w *Worker) qaAsks(ctx context.Context, run *Run, summary string, qs []item
 			"reason": "qa: its questions could not be recorded: " + err.Error(), "head_sha": head, "setup": setup, "retryable": true,
 		})
 	}
-	return w.report(ctx, run, false, map[string]any{
+	return w.report(ctx, run, false, addWork(map[string]any{
 		"reason": "qa needs an answer: " + asked[0].Text, "summary": summary, "head_sha": head, "setup": setup,
-	})
+	}, scenarios))
 }
 
 type reviewResult struct {
@@ -884,6 +864,8 @@ type reviewResult struct {
 	Summary  string    `json:"summary"`
 	Findings []Finding `json:"findings"`
 	Issues   []string  `json:"issues"`
+	// Checked: what the reviewer verified and what came of each (workList).
+	Checked workList `json:"checked"`
 	// Previous: what the review says about the earlier findings its prompt
 	// listed, by handle.
 	Previous findingAnswers `json:"previous"`
@@ -1167,7 +1149,7 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 		return err
 	}
 	var rr reviewResult
-	var scenarios []qaScenario
+	var scenarios workList
 	if qa {
 		// QA signs in to systems. What it returns goes into the item, to
 		// Slack and into the findings record, so the known secrets are
@@ -1181,7 +1163,7 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 		}
 		if qr.Verdict == qaVerdictBlocked {
 			log.Info("qa could not test and asks", "questions", len(qr.Questions), "cost_usd", res.CostUSD)
-			return w.qaAsks(ctx, run, qr.Summary, qr.Questions, reviewed, qaSetup)
+			return w.qaAsks(ctx, run, qr.Summary, qr.Questions, reviewed, qaSetup, qr.Scenarios)
 		}
 		// The verdict follows what ran, not the word the agent chose. A
 		// scenario it reports as failed is a finding, whatever the verdict
@@ -1195,12 +1177,17 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 		}
 		if qr.Verdict == "pass" && ran == 0 && len(failed) == 0 {
 			log.Info("qa returned pass without a scenario that ran: it asks", "scenarios", len(qr.Scenarios), "cost_usd", res.CostUSD)
-			return w.qaAsks(ctx, run, "it reported the change as passing without running a scenario: "+firstLine(qr.Summary), nil, reviewed, qaSetup)
+			return w.qaAsks(ctx, run, "it reported the change as passing without running a scenario: "+firstLine(qr.Summary), nil, reviewed, qaSetup, qr.Scenarios)
 		}
 		rr, scenarios = qr.reviewResult, qr.Scenarios
+		rr.Checked = nil
 	} else if err := json.Unmarshal(res.Structured, &rr); err != nil || rr.Verdict == "" {
 		return fmt.Errorf("review returned no verdict: %s", firstLine(res.Text))
 	}
+	// What it checked often quotes what it read: the known secrets come
+	// out before it reaches the item, the record and the report (QA's
+	// whole result is redacted above).
+	rr.Checked = rr.Checked.redacted(w.redactor())
 	// What it says about the earlier findings; one that blocks and is not
 	// fixed fails the review like a finding of its own.
 	said := resolveAnswers(recheck, rr.Previous, findings.KindAddressed, findings.KindStillOpen)
@@ -1213,10 +1200,10 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 		// The server writes the section (runner and head from the run
 		// record), and the verdict is advisory: the run itself succeeded.
 		log.Info("second opinion finished", "verdict", rr.Verdict, "findings", len(rr.Findings), "head", run.HeadSHA, "cost_usd", res.CostUSD)
-		return w.report(ctx, run, true, map[string]any{
+		return w.report(ctx, run, true, addWork(map[string]any{
 			"summary": rr.Summary, "findings": rr.Findings, "verdict": rr.Verdict, "head_sha": run.HeadSHA,
 			"finding_answers": answers, "findings_listed": len(recheck),
-		})
+		}, rr.Checked))
 	}
 	if br != nil {
 		// The verdict is what the approver asked for: written into the item, and
@@ -1225,31 +1212,35 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 		if run.Focus != "" {
 			heading = "review — " + run.Focus + " · " + account.Name
 		}
-		_ = w.client.AppendSection(ctx, run.ItemID, heading, reviewSection(rr, said))
+		_ = w.client.AppendSection(ctx, run.ItemID, heading, reviewSection(rr, said)+workSection("Checked", rr.Checked))
 		log.Info("branch review finished", "verdict", rr.Verdict, "findings", len(rr.Findings), "branch", run.Branch, "head", br.Head, "cost_usd", res.CostUSD)
-		return w.report(ctx, run, true, map[string]any{
+		return w.report(ctx, run, true, addWork(map[string]any{
 			"summary": rr.Summary, "findings": rr.Findings, "verdict": rr.Verdict, "finding_answers": answers, "findings_listed": len(recheck),
 			"head_sha": br.Head, "branch": run.Branch, "checks": br.Checks, "setup": br.Setup,
 			"diffstat": diffStat(ctx, wt, base), "observed": map[string]any{"change": changeFacts(ctx, wt, base)},
-		})
+		}, rr.Checked))
 	}
 	passed := rr.Verdict == "pass"
 	heading := run.Stage + " — " + account.Name
 	if run.Focus != "" {
 		heading = run.Stage + " — " + run.Focus + " · " + account.Name
 	}
-	_ = w.client.AppendSection(ctx, run.ItemID, heading, reviewSection(rr, said)+scenariosSection(scenarios))
+	_ = w.client.AppendSection(ctx, run.ItemID, heading, reviewSection(rr, said)+workSection("Checked", rr.Checked)+scenariosSection(scenarios))
+	work := rr.Checked
+	if qa {
+		work = scenarios
+	}
 	log.Info("review finished", "verdict", rr.Verdict, "findings", len(rr.Findings), "still_open", stillOpenBlocking(said), "focus", run.Focus, "cost_usd", res.CostUSD)
 	if !passed {
-		return w.report(ctx, run, false, map[string]any{
+		return w.report(ctx, run, false, addWork(map[string]any{
 			"reason": run.Stage + " failed: " + rr.Summary, "summary": rr.Summary, "findings": rr.Findings,
 			"finding_answers": answers, "findings_listed": len(recheck), "head_sha": reviewed,
-		})
+		}, work))
 	}
-	return w.report(ctx, run, true, map[string]any{
+	return w.report(ctx, run, true, addWork(map[string]any{
 		"summary": rr.Summary, "findings": rr.Findings, "finding_answers": answers, "findings_listed": len(recheck), "head_sha": reviewed,
 		"checks": []Check{{Name: run.Stage + ":" + account.Name, Passed: true, Output: rr.Summary}},
-	})
+	}, work))
 }
 
 // reviewSection renders one reviewer's verdict for the item: what it says
@@ -1376,8 +1367,11 @@ type implResult struct {
 	// Notes: what only the approver needs to know about the run (a tool it
 	// could not use, a command refused, how it committed). On the item,
 	// never in the pull request.
-	Notes        string `json:"notes"`
-	AmendedSteps []Step `json:"amended_steps"`
+	Notes string `json:"notes"`
+	// Verified: each verification the implementer made and what came of
+	// it (workList); a fix round's are added to the turn's.
+	Verified     workList `json:"verified"`
+	AmendedSteps []Step   `json:"amended_steps"`
 	// Questions for the approver with an amendment or a block; Question is the
 	// single-string shape the schema had before.
 	Questions []itemtext.Question `json:"questions"`

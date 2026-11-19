@@ -301,7 +301,8 @@ skopos workspace pipeline set --workspace github.com/you/repo --stage qa --runne
   (**Retry** with the answer, `skopos inbox retry`, or a Slack reply) starts
   QA again on the same commit. The implementation is not run again.
 - **The result** is a verdict, findings and the list of scenarios with what
-  each did, in the item's `qa — <runner>` section. A blocking finding sends
+  each did, in the item's `qa — <runner>` section, on the item's QA step
+  and in its report. A blocking finding sends
   the item back like a review's.
 - **Timeout:** `qa_timeout`, 30 minutes by default.
 - **Credentials in the log.** List the repository's credential files in the

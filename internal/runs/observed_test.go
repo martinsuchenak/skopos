@@ -44,6 +44,20 @@ func TestReportRecordsObserved(t *testing.T) {
 	if p := got.Observed.Plan; p == nil || p.Size != "m" || p.Steps != 3 || len(p.Irreversible) != 2 || len(p.Irreversible[1]) != maxObservedText {
 		t.Fatalf("plan facts: %+v", got.Observed.Plan)
 	}
+	// What a QA run did: kept in order, blank entries dropped, bounded.
+	_ = mustQueue(t, s, ctx, "ws-a", "item-3", StagePlan)
+	run, _ = s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	work := []WorkEntry{{Name: "edit customer 3", Result: " Pass ", Note: "saved, the change log shows it"}, {Name: " "}, {Name: "no second user", Result: "skipped", Note: strings.Repeat("n", 3000)}}
+	for range maxWorkEntries {
+		work = append(work, WorkEntry{Name: "more"})
+	}
+	if _, err := s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded, Summary: "tested", Observed: &Observed{Work: work}}, run.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetFull(ctx, run.ID)
+	if w := got.Observed.Work; len(w) != maxWorkEntries || w[0].Result != "pass" || w[1].Name != "no second user" || len(w[1].Note) != maxWorkNote {
+		t.Fatalf("work: %+v", got.Observed.Work)
+	}
 	// Lists and plain reads leave it out: runs are polled where nothing
 	// shows it.
 	if plain, _ := s.Get(ctx, run.ID); plain.Observed != nil {

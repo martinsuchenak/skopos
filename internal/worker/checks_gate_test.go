@@ -27,7 +27,7 @@ import (
 // Every call appends its kind (impl / fix) to $CALLS.
 const fakeImplementer = `prompt="$2"
 c() { git -c user.name=t -c user.email=t@t "$@"; }
-done_json() { printf '{"type":"result","session_id":"s1","structured_output":{"status":"done","steps_done":[1],"summary":"%s"}}' "$1"; }
+done_json() { printf '{"type":"result","session_id":"s1","structured_output":{"status":"done","steps_done":[1],"summary":"%s","verified":[{"name":"state check","result":"pass"}]}}' "$1"; }
 case "$prompt" in
 *"fix round"*)
   echo fix >> "$CALLS"
@@ -41,7 +41,7 @@ case "$prompt" in
   esac ;;
 *)
   echo impl >> "$CALLS"
-  echo bad > state; git add -A; c commit -qm "agent: step 1"; printf '{"type":"result","session_id":"s1","structured_output":{"status":"done","steps_done":[1],"summary":"implemented","notes":"a tool was refused"}}' ;;
+  echo bad > state; git add -A; c commit -qm "agent: step 1"; printf '{"type":"result","session_id":"s1","structured_output":{"status":"done","steps_done":[1],"summary":"implemented","notes":"a tool was refused","verified":[{"name":"unit tests","result":"skipped","note":"no runtime"}]}}' ;;
 esac
 `
 
@@ -152,6 +152,12 @@ func TestImplementChecksGate(t *testing.T) {
 		}
 		if rep["fix_rounds"] != float64(1) {
 			t.Fatalf("the report must carry the fix rounds used: %v", rep["fix_rounds"])
+		}
+		// What the turn and its fix round verified, in order, beside the change.
+		obs, _ := rep["observed"].(map[string]any)
+		work, _ := obs["work"].([]any)
+		if len(work) != 2 || work[0].(map[string]any)["name"] != "unit tests" || work[1].(map[string]any)["name"] != "state check" || obs["change"] == nil {
+			t.Fatalf("the report carries what was verified: %v", rep["observed"])
 		}
 		// The dashboard's Checks step: checks running, the fix, checks again.
 		if got := strings.Join(g.phases, ","); got != "checks,fixing,checks" {
@@ -277,6 +283,10 @@ func TestImplementChecksGate(t *testing.T) {
 		}
 		if setup, _ := rep["setup"].([]any); len(setup) != 1 {
 			t.Fatalf("the resumed run must still report the setup it ran: %v", rep["setup"])
+		}
+		// So does what the turn before the pause verified.
+		if obs, _ := rep["observed"].(map[string]any); obs == nil || len(obs["work"].([]any)) != 2 {
+			t.Fatalf("verified across the pause: %v", rep["observed"])
 		}
 		// One implement turn: the resume went straight back to fixing.
 		if got := g.callLog(t); got != "impl,fix,fix" {

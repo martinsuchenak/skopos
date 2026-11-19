@@ -115,7 +115,8 @@ Return ONLY the structured result:
 - `summary`: two or three sentences: the system you tested on, how many scenarios ran, passed,
   failed and were skipped.
 - `scenarios`: every scenario, each with `name`, `result` ("pass", "fail" or "skipped") and a short
-  `note` (what you did and saw, or why it was skipped).
+  `note`: where you did it (the screen, page or command), the values you used, and what you saw —
+  or why it was skipped.
 - `findings`: one entry per problem{{if .Recheck}} nobody reported before{{end}}, most severe first, each with `severity`
   and `text`: what you did, what you expected and what happened instead, so someone can repeat it.
   `file` is optional (`path:line`) when you know where it comes from.

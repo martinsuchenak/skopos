@@ -106,6 +106,8 @@ body.modal-open { overflow: hidden; }
   }
   textarea.fld { padding-block: 0.5rem; }
   .fld:disabled { @apply cursor-not-allowed opacity-60; }
+  /* Shown for reading, not editing: dimmed, no text cursor. */
+  input.fld[readonly], textarea.fld[readonly] { @apply cursor-default opacity-70; }
   .fld[aria-invalid="true"] {
     @apply border-rose-500 focus-visible:ring-rose-500/40;
   }

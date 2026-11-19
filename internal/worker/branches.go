@@ -38,7 +38,9 @@ type branchRecord struct {
 	ImplementedRun     string `json:"implemented_run,omitempty"`
 	ImplementedSummary string `json:"implemented_summary,omitempty"`
 	ImplementedNotes   string `json:"implemented_notes,omitempty"`
-	FixRounds          int    `json:"fix_rounds,omitempty"`
+	// ImplementedVerified: what that turn and its fix rounds verified.
+	ImplementedVerified workList `json:"implemented_verified,omitempty"`
+	FixRounds           int      `json:"fix_rounds,omitempty"`
 	// FindingAnswers: what that implement turn said about the review
 	// findings it was given, kept for the run's report.
 	FindingAnswers []findings.Answer `json:"finding_answers,omitempty"`

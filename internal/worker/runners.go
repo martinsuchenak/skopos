@@ -513,10 +513,11 @@ func validateSchema(v any, schema string) error {
 		return fmt.Errorf("schema: %v", err)
 	}
 	// What an agent says about earlier findings (a list of id, status,
-	// note) is read by a decoder that takes any shape and can never cost a
-	// run its result (findingAnswers). Checked here first, a `null`, a
-	// word or a number for an id would do exactly that: so that list is
-	// not validated.
+	// note) and what it says it did (name, result, note) are read by
+	// decoders that take any shape and can never cost a run its result
+	// (findingAnswers, workList). Checked here first, a `null`, a word or a
+	// number for a field would do exactly that: so those lists are not
+	// validated.
 	if props, ok := s["properties"].(map[string]any); ok {
 		for name, p := range props {
 			if isAnswerList(p) {
@@ -527,8 +528,9 @@ func validateSchema(v any, schema string) error {
 	return validateNode(v, s, "$")
 }
 
-// isAnswerList recognises the schema of a finding-answer list: an array of
-// objects with exactly id, status and note.
+// isAnswerList recognises the schema of a list read leniently: an array of
+// objects with exactly id, status and note (finding answers) or name,
+// result and note (what a run did).
 func isAnswerList(p any) bool {
 	ps, _ := p.(map[string]any)
 	items, _ := ps["items"].(map[string]any)
@@ -536,12 +538,15 @@ func isAnswerList(p any) bool {
 	if ps["type"] != "array" || len(props) != 3 {
 		return false
 	}
-	for _, k := range []string{"id", "status", "note"} {
-		if _, ok := props[k]; !ok {
-			return false
+	has := func(keys ...string) bool {
+		for _, k := range keys {
+			if _, ok := props[k]; !ok {
+				return false
+			}
 		}
+		return true
 	}
-	return true
+	return has("id", "status", "note") || has("name", "result", "note")
 }
 
 func validateNode(v any, s map[string]any, path string) error {

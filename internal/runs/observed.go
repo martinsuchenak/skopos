@@ -7,13 +7,25 @@ import (
 )
 
 // Observed is what a run saw that later rules and analyses read: the change
-// an implementation made, what a plan says about itself. It is recorded,
+// an implementation made, what a plan says about itself, what the run says
+// it did (shown on the item's steps and in its report). It is recorded,
 // never decided on: the data the gate rules and the watcher are designed
 // from (tmp/roadmap.md, item 27). Raw facts, not their reading: which files
 // are migrations or CI is for whoever reads them.
 type Observed struct {
 	Change *Change    `json:"change,omitempty"`
 	Plan   *PlanFacts `json:"plan,omitempty"`
+	// Work: what the run says it did, each with what came of it — an
+	// implementation's verifications, a review's checks, QA's scenarios.
+	Work []WorkEntry `json:"work,omitempty"`
+}
+
+// WorkEntry is one thing a run did. Result is pass, fail or skipped when
+// the agent said one of them, else its own word.
+type WorkEntry struct {
+	Name   string `json:"name"`
+	Result string `json:"result,omitempty"`
+	Note   string `json:"note,omitempty"`
 }
 
 // Change is a branch's change against its base: each file with its git
@@ -54,6 +66,10 @@ const (
 	maxObservedPath  = 512
 	maxObservedList  = 20
 	maxObservedText  = 300
+	maxWorkEntries   = 60
+	maxWorkName      = 500
+	maxWorkNote      = 2000
+	maxWorkResult    = 24
 )
 
 // clean bounds what a worker sent; nil when nothing is left.
@@ -88,7 +104,20 @@ func (o *Observed) clean() *Observed {
 			Irreversible: cleanList(p.Irreversible), BehaviourChange: cleanList(p.BehaviourChange), OutsideBrief: cleanList(p.OutsideBrief),
 		}
 	}
-	if out.Change == nil && out.Plan == nil {
+	for _, e := range o.Work {
+		e.Name, e.Note = strings.TrimSpace(e.Name), strings.TrimSpace(e.Note)
+		if e.Name == "" && e.Note == "" {
+			continue
+		}
+		if len(out.Work) == maxWorkEntries {
+			break
+		}
+		out.Work = append(out.Work, WorkEntry{
+			Name: clipText(e.Name, maxWorkName), Note: clipText(e.Note, maxWorkNote),
+			Result: clipText(strings.ToLower(strings.TrimSpace(e.Result)), maxWorkResult),
+		})
+	}
+	if out.Change == nil && out.Plan == nil && out.Work == nil {
 		return nil
 	}
 	return out

@@ -2,6 +2,7 @@ package itemreport
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -419,6 +420,9 @@ func (d *doc) implementation(r *Report) {
 			}
 			d.w("- %s\n", s)
 		}
+		if s := workOutcomes(im.Work); s != "" {
+			d.w("- The implementer's verifications: %s\n", s)
+		}
 		switch {
 		case im.PRURL != "":
 			d.w("- Pull request: <%s>\n", im.PRURL)
@@ -434,6 +438,7 @@ func (d *doc) implementation(r *Report) {
 		if im.Summary != "" {
 			d.w("%s\n\n", nest(im.Summary, 3))
 		}
+		d.workList("What the implementer verified", im.Work)
 		for _, c := range append(append([]Check(nil), im.Setup...), im.Checks...) {
 			if c.Passed || c.Output == "" {
 				continue
@@ -441,6 +446,79 @@ func (d *doc) implementation(r *Report) {
 			d.w("The end of %s's output:\n\n%s\n\n", code(c.Name), fenced(c.Output))
 		}
 	}
+}
+
+// workList renders what a run says it did, one line each: what, the
+// outcome, and what it saw.
+func (d *doc) workList(title string, ws []runs.WorkEntry) {
+	if len(ws) == 0 {
+		return
+	}
+	d.w("**%s**\n\n", title)
+	for _, e := range ws {
+		line := oneLine(e.Name) + ": **" + workWord(e.Result) + "**"
+		if e.Note != "" {
+			line += " — " + oneLine(e.Note)
+		}
+		d.w("- %s\n", line)
+	}
+	d.w("\n")
+}
+
+// workCount: "13 scenarios: 12 passed, 1 skipped".
+func workCount(ws []runs.WorkEntry, noun string) string {
+	if len(ws) == 0 {
+		return ""
+	}
+	return plural(len(ws), noun) + ": " + workOutcomes(ws)
+}
+
+// workOutcomes: "12 passed, 1 skipped".
+func workOutcomes(ws []runs.WorkEntry) string {
+	var order []string
+	by := map[string]int{}
+	for _, e := range ws {
+		w := workWord(e.Result)
+		if by[w] == 0 {
+			order = append(order, w)
+		}
+		by[w]++
+	}
+	rank := func(w string) int {
+		if i := slices.Index([]string{"passed", "failed", "skipped"}, w); i >= 0 {
+			return i
+		}
+		return 3
+	}
+	slices.SortStableFunc(order, func(a, b string) int { return rank(a) - rank(b) })
+	parts := make([]string, 0, len(order))
+	for _, w := range order {
+		parts = append(parts, fmt.Sprintf("%d %s", by[w], w))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// workWord is a work entry's outcome as the report says it.
+func workWord(result string) string {
+	switch result {
+	case "pass":
+		return "passed"
+	case "fail":
+		return "failed"
+	case "skipped":
+		return "skipped"
+	case "":
+		return "not reported"
+	}
+	return oneLine(result)
+}
+
+// workNoun is what one entry of a review-like run's list is called.
+func workNoun(stage string) string {
+	if stage == runs.StageQA {
+		return "scenario"
+	}
+	return "check"
 }
 
 // checkLine: "Checks: 3 passed, 1 failed (lint)".
@@ -486,7 +564,11 @@ func (d *doc) reviews(r *Report) {
 			d.w("Of commit %s, the newest reviewed (the full report has %s):\n\n", code(short(head)), plural(len(list)-len(newest), "earlier review"))
 		}
 		for _, rv := range newest {
-			d.w("- %s: %s\n", reviewName(rv), verdict(rv))
+			line := reviewName(rv) + ": " + verdict(rv)
+			if s := workCount(rv.Work, workNoun(rv.Stage)); s != "" {
+				line += " (" + s + ")"
+			}
+			d.w("- %s\n", line)
 		}
 		d.w("\n")
 		return
@@ -501,6 +583,11 @@ func (d *doc) reviews(r *Report) {
 		if rv.Summary != "" {
 			d.w("%s\n\n", nest(rv.Summary, 3))
 		}
+		listTitle := "What it checked"
+		if rv.Stage == runs.StageQA {
+			listTitle = "Scenarios"
+		}
+		d.workList(listTitle, rv.Work)
 		for _, f := range rv.Findings {
 			line := "**" + f.Severity + "** " + oneLine(f.Text)
 			if f.File != "" {

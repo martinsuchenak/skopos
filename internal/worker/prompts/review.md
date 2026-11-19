@@ -105,7 +105,12 @@ Each finding has a severity:
 Return ONLY the structured result:
 - `verdict`: "fail" if there is at least one blocking finding{{if .Recheck}} or an earlier blocking finding is
   still open{{end}}, otherwise "pass".
-- `summary`: one paragraph.
+- `summary`: one paragraph: what the change does and your overall judgement. The individual checks
+  go in `checked`, not here.
+- `checked`: each thing you verified, one entry each: `name` (what you checked, and against what:
+  "the attribute names against the controllers", "step 3 against the plan"), `result` "pass" (it
+  holds), "fail" (it does not: also a finding) or "skipped" (you could not check it), and a short
+  `note` (what you looked at and saw, or why you could not check it).
 - `findings`: one entry per problem{{if .Recheck}} nobody reported before{{end}}, most severe first, each with `severity`, `text` (one
   sentence: what is wrong and why) and, when it applies, `file` as `path:line`.
 {{if .Recheck}}- `previous`: one entry for every earlier finding listed above: its `id` (`F1`, `F2`, …), `status`

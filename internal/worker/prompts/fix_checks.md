@@ -33,4 +33,5 @@ the reason in at most 2 sentences. Either way, put any decision the approver mus
 (one entry each: `question`, and `options` when there is a choice).
 
 When the fix is committed, return status "done", the plan's step numbers in steps_done, and a
-summary of the fix. Return only the structured result.
+summary of the fix. In `verified`, list what you ran or checked for the fix, each with `name`,
+`result` ("pass", "fail" or "skipped") and a short `note`. Return only the structured result.

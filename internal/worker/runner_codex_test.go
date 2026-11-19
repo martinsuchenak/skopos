@@ -24,7 +24,7 @@ func TestCodexStrictSchema(t *testing.T) {
 	if s["additionalProperties"] != false {
 		t.Fatalf("top object must be closed: %s", got)
 	}
-	if req := s["required"].([]any); len(req) != 5 {
+	if req := s["required"].([]any); len(req) != 6 {
 		t.Fatalf("every property required: %v", req)
 	}
 	props := s["properties"].(map[string]any)

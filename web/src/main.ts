@@ -135,7 +135,10 @@ type LinkRow = { key: string; href: string; text: string };
 // that opens a run's log.
 type LogRecord = { t: number; src: string; msg: string; err?: boolean; k?: number };
 type LogButton = { key: string; id: string; text: string };
-type MoreRow = { key: string; label: string; text: string; mono?: boolean };
+type MoreRow = { key: string; label: string; text: string; mono?: boolean; work?: boolean };
+// One thing a run says it did (runs.WorkEntry): an implementation's
+// verification, a review's check, a QA scenario.
+type WorkEntry = { name: string; result?: string; note?: string };
 type StageRow = { key: string; name: string; who: string; state: string; when: string; round: string; lines: string[]; links: LinkRow[]; more: MoreRow[]; moreLabel: string; warn: string; logs: LogButton[]; plans: boolean; hidden?: boolean };
 type TextRow = { key: string; ic: string; text: string; more?: MoreRow[] };
 // The item's record of review findings (GET /api/inbox/{id}/findings).
@@ -152,7 +155,7 @@ type FindingGroupView = { key: string; id: string; title: string; hint: string; 
 type AuditEntry = { id: string; action: string; actor: string; via?: string; notes?: string; created_at: string };
 // wsLocked: a workflow item cannot move workspace (its runs, plan and
 // branch live there) — the server refuses it; the modal hides the picker.
-type InboxForm = { id: string; title: string; tags: string; workspace: string; agents: string; branch: string; ref: string; needs: string; auto: boolean; template: string; wsLocked: boolean };
+type InboxForm = { id: string; title: string; tags: string; workspace: string; agents: string; branch: string; ref: string; needs: string; auto: boolean; template: string; wsLocked: boolean; branchLocked: boolean };
 
 const UI_AUTHOR = 'ui';
 type View = 'sessions' | 'blackboard' | 'plans' | 'inbox' | 'index' | 'keys' | 'workspaces' | 'workers' | 'webhooks';
@@ -181,6 +184,8 @@ function clearInboxDropMarker() {
 // Outside Alpine state: writing reactive state while rendering would loop.
 // Keyed on the identities of the reactive inputs, which change on refetch.
 let stageCache: { inputs: unknown[]; model: unknown } | null = null;
+// The run state each run's work list was read at (fetchRunWork).
+let workRead: Record<string, string> = {};
 
 // The open preview's slow poll: run state that changes without an inbox
 // event (a review run starting, a worker going offline, a lease running out).
@@ -219,6 +224,18 @@ let runLogKey = 0;
 let plansClosedAt = 0;
 // Lines the panel keeps (the server keeps the whole log).
 const RUN_LOG_KEEP = 5000;
+// The stages whose runs say what they did, and what an entry is called there.
+const WORK_STAGES: Record<string, string> = { implement: 'verified', review: 'checked', branch_review: 'checked', second_opinion: 'checked', qa: 'scenario' };
+const WORK_ORDER = ['passed', 'failed', 'skipped', 'not reported'];
+// Where an outcome word sorts: the known ones in order, any other after them.
+function workRank(word: string): number { const i = WORK_ORDER.indexOf(word); return i < 0 ? WORK_ORDER.length : i; }
+function workWord(result?: string): string {
+  return result === 'pass' ? 'passed' : result === 'fail' ? 'failed' : result === 'skipped' ? 'skipped' : (result || 'not reported');
+}
+function workMark(result?: string): string {
+  const word = workWord(result);
+  return (result === 'pass' ? '✓ ' : result === 'fail' ? '✗ ' : result === 'skipped' ? '– ' : '') + word;
+}
 
 declare global { interface Window { Alpine: typeof Alpine; app: () => object } }
 
@@ -303,6 +320,9 @@ const appState = () => ({
   // columns the reader hid.
   planView: { open: false, loading: false, view: null as PlansRound | null, hidden: {} as Record<string, boolean> },
   previewFindings: [] as FindingRec[],
+  // What each finished run says it did, by run id (GET /api/runs/{id}'s
+  // observed.work: read once per run state, never with the run list).
+  previewWork: {} as Record<string, WorkEntry[]>,
   // The action that takes findings to send back now, as the server says
   // ('request-changes', 'retry', or '' when none does or the key may not).
   previewFindingsSend: '',
@@ -1338,6 +1358,8 @@ const appState = () => ({
     this.questionAnswers = {};
     this.answersSavedFor = '';
     this.previewFindings = [];
+    this.previewWork = {};
+    workRead = {};
     this.previewFindingsSend = '';
     this.findingPicks = {};
     this.findingFold = {};
@@ -1673,6 +1695,61 @@ const appState = () => ({
     if (!res.ok) { this.previewRuns = []; return; }
     this.previewRuns = (await res.json()) as RunRow[];
     this.followLog();
+    this.fetchRunWork();
+  },
+  // The work lists of the item's finished runs: one read per run and state
+  // (a list is long, and the run list is polled).
+  async fetchRunWork() {
+    const item = this.previewItem;
+    if (!item) return;
+    const due = this.previewRuns.filter((r: RunRow) => WORK_STAGES[r.stage] && (r.status === 'succeeded' || r.status === 'failed')
+      && workRead[r.id] !== r.status + '|' + r.attempt + '|' + r.updated_at);
+    if (!due.length) return;
+    // Marked read before the requests, so an overlapping refresh asks for
+    // none of them again. A run the server refuses (gone, not readable) is
+    // not asked for again until its state changes; one whose read failed
+    // otherwise is asked for at the next refresh.
+    for (const r of due) workRead[r.id] = r.status + '|' + r.attempt + '|' + r.updated_at;
+    const read = await Promise.all(due.map(async (r: RunRow) => {
+      const res = await this.authFetch('/api/runs/' + encodeURIComponent(r.id)).catch(() => null);
+      if (!res || !res.ok) {
+        if (!res || res.status >= 500) delete workRead[r.id];
+        return null;
+      }
+      const full = (await res.json()) as { observed?: { work?: WorkEntry[] } };
+      return { id: r.id, work: (full.observed && full.observed.work) || [] };
+    }));
+    if (!this.previewItem || this.previewItem.id !== item.id) return;
+    const next = { ...this.previewWork };
+    let changed = false;
+    for (const got of read) {
+      if (!got || (!got.work.length && !next[got.id])) continue;
+      next[got.id] = got.work;
+      changed = true;
+    }
+    if (changed) this.previewWork = next;
+  },
+  // What a run's work list is called on its step, by stage.
+  workKind(r: RunRow): string { return WORK_STAGES[r.stage] || ''; },
+  // A run's work list in one phrase: "13 scenarios: 12 passed, 1 skipped".
+  workCount(r: RunRow): string {
+    const work = this.previewWork[r.id] || [];
+    if (!work.length) return '';
+    const by: Record<string, number> = {};
+    for (const e of work) { const k = workWord(e.result); by[k] = (by[k] || 0) + 1; }
+    const parts = Object.keys(by).sort((a, b) => workRank(a) - workRank(b)).map(k => by[k] + ' ' + k);
+    const kind = this.workKind(r);
+    return this.plural(work.length, kind === 'scenario' ? 'scenario' : kind === 'checked' ? 'check' : 'verification') + ': ' + parts.join(', ');
+  },
+  // A run's work list as fold-out rows, one per entry.
+  workMore(r: RunRow, who: string): MoreRow[] {
+    const kind = this.workKind(r);
+    return (this.previewWork[r.id] || []).map((e: WorkEntry, k: number) => ({
+      key: r.id + '|w' + k,
+      label: workMark(e.result) + ' · ' + kind + ' · ' + who,
+      text: e.name + (e.note ? '\n' + e.note : ''),
+      work: true,
+    }));
   },
   refreshPreviewRuns() { if (this.previewItem) this.fetchPreviewRuns(this.previewItem.id); },
 
@@ -1778,6 +1855,7 @@ const appState = () => ({
     const sig = (rs: RunRow[]) => rs.map((r: RunRow) => r.id + '|' + r.status + '|' + r.attempt + '|' + (r.phase || '')).join(',');
     if (sig(runs) !== sig(this.previewRuns)) this.previewRuns = runs;
     this.followLog();
+    this.fetchRunWork();
   },
   // The run the panel moves to: one that is running now, the oldest first,
   // so parallel reviewers are shown one after the other.
@@ -1950,6 +2028,10 @@ const appState = () => ({
   stillOpenText(r: RunRow): string { return r.still_open ? this.plural(r.still_open, 'earlier finding') + ' still open' : ''; },
   plural(n: number, word: string): string { return n + ' ' + word + (n === 1 ? '' : 's'); },
   reviewLine(r: RunRow): string {
+    const count = this.workCount(r);
+    return this.verdictLine(r) + (count ? ' · ' + count : '');
+  },
+  verdictLine(r: RunRow): string {
     const who = (r.focus || (r.stage === 'branch_review' ? 'review' : r.stage)) + (r.runner ? ' (' + r.runner + ')' : '');
     // A branch review succeeds whatever its verdict: blocking findings are
     // the verdict.
@@ -2060,6 +2142,7 @@ const appState = () => ({
         }]);
       }
     }
+    out = out.concat(this.workMore(r, who));
     if (r.result_summary) out.push({ key: r.id + '|sum', label: 'summary · ' + who, text: r.result_summary });
     return out;
   },
@@ -2105,7 +2188,7 @@ const appState = () => ({
     return '';
   },
   stageModel(): { rows: StageRow[]; current: number } {
-    const inputs = [this.previewItem, this.previewRuns, this.previewApprovedRev, this.previewPipe, this.previewWorkers, this.previewFindings];
+    const inputs = [this.previewItem, this.previewRuns, this.previewApprovedRev, this.previewPipe, this.previewWorkers, this.previewFindings, this.previewWork];
     if (stageCache && stageCache.inputs.every((v, i) => v === inputs[i])) return stageCache.model as { rows: StageRow[]; current: number };
     const model = this.buildStageModel();
     stageCache = { inputs, model };
@@ -2204,8 +2287,10 @@ const appState = () => ({
         if (stat) lines.push(stat);
         const setup = this.setupSummary(implRun);
         if (setup.line) lines.push(setup.line);
+        const verified = this.workCount(implRun);
+        if (verified) lines.push(verified);
         const warn = local ? 'Not pushed: the branch is only on ' + (implRun.worker_id || 'the worker') + ', so there is no link to it and reviewers can\'t fetch it. Set up push for this repository in the worker config.' : '';
-        return { lines, when: this.timeAgo(implRun.updated_at), links: this.changesLinks(this.trackBase(implRun), implRun.head_sha || ''), more: setup.more, warn };
+        return { lines, when: this.timeAgo(implRun.updated_at), links: this.changesLinks(this.trackBase(implRun), implRun.head_sha || ''), more: this.workMore(implRun, implRun.runner || 'implementer').concat(setup.more), warn };
       }
       if (i === 4 && implRun && (implRun.checks || []).length) {
         const checks = this.checkSummary(implRun);
@@ -2291,7 +2376,10 @@ const appState = () => ({
       // The key leaves out `when` (relative time): it changes every minute,
       // and a re-keyed row is re-created, closing an open fold-out. A kept
       // row still updates its time through the bindings.
-      const moreLabel = i === 3 ? 'Setup output' : i === 4 ? 'Check output' : 'Findings and summaries';
+      // A run's work list is in the fold-out too: its label says so.
+      const hasWork = more.some((m: MoreRow) => !!m.work);
+      const moreLabel = i === 3 ? (hasWork ? 'Verifications and setup output' : 'Setup output') : i === 4 ? 'Check output'
+        : hasWork ? (i === 6 ? 'Scenarios, findings and summaries' : 'Checks, findings and summaries') : 'Findings and summaries';
       const logs = this.stepLogs(i, state);
       // The Plan step opens the plans side by side once there is one to read.
       // (A panel's plan is linked at the first claim, before any candidate
@@ -2821,7 +2909,7 @@ const appState = () => ({
     return [{
       key: 'so|' + state + '|' + lines.join('/') + '|' + more.map((m: MoreRow) => m.key).join(',') + '|' + logs.map((l: LogButton) => l.id + l.text).join(','),
       name: 'Second opinion', who: 'optional', state, when: this.timeAgo(newest.updated_at), round: '', lines, links: [], more,
-      moreLabel: 'Findings and summaries', warn: '', logs, plans: false,
+      moreLabel: more.some((m: MoreRow) => !!m.work) ? 'Checks, findings and summaries' : 'Findings and summaries', warn: '', logs, plans: false,
     }];
   },
   // Why the Second opinion button is disabled, '' when it isn't: the server
@@ -4741,15 +4829,34 @@ const appState = () => ({
     const res = await this.authFetch('/api/inbox/' + encodeURIComponent(item.id));
     if (!await this.handleBad(res, 'Could not load item')) return;
     const detail = (await res.json()) as InboxDetail;
+    // Once a worker has a branch for the item, the field shows it and
+    // can't be changed: the runs work on that branch.
+    const ran = this.isWorkflowStatus(detail.status) || detail.status === 'done' || detail.status === 'discarded';
+    const runBranch = ran ? await this.itemRunBranch(detail.id) : '';
+    const branch = detail.branch || runBranch;
     this.inboxForm = {
       id: detail.id, title: detail.title, tags: (detail.tags || []).join(', '), workspace: detail.workspace_id || '',
-      agents: detail.agents || '', branch: detail.branch || '', ref: detail.ref || '', needs: (detail.needs || []).join(', '), auto: !!detail.auto_approve_plan, template: '', wsLocked: this.isWorkflowStatus(detail.status),
+      agents: detail.agents || '', branch, ref: detail.ref || '', needs: (detail.needs || []).join(', '), auto: !!detail.auto_approve_plan, template: '', wsLocked: this.isWorkflowStatus(detail.status),
+      branchLocked: !!runBranch,
     };
-    this.inboxBaseline = { title: detail.title, tags: this.inboxForm.tags, content: detail.content, workspace: detail.workspace_id || '', agents: detail.agents || '', branch: detail.branch || '', ref: detail.ref || '', needs: this.inboxForm.needs, auto: this.inboxForm.auto };
+    this.inboxBaseline = { title: detail.title, tags: this.inboxForm.tags, content: detail.content, workspace: detail.workspace_id || '', agents: detail.agents || '', branch, ref: detail.ref || '', needs: this.inboxForm.needs, auto: this.inboxForm.auto };
     this.inboxErrors = {};
     this.showInboxItemModal = true;
     this.syncInboxWsField();
     this.mountInboxEditor(detail.content);
+  },
+  // The branch the item's newest run works on ('' when none has one yet).
+  async itemRunBranch(id: string): Promise<string> {
+    const res = await this.authFetch('/api/runs?item_id=' + encodeURIComponent(id));
+    if (!res.ok) return '';
+    const runs = (await res.json()) as RunRow[];
+    const withBranch = runs.filter((r: RunRow) => !!r.branch).sort((a: RunRow, b: RunRow) => this.runTime(b) - this.runTime(a));
+    return withBranch.length ? withBranch[0].branch || '' : '';
+  },
+  inboxBranchHelp(): string {
+    return this.inboxForm.branchLocked
+      ? 'The branch the worker created for this item. It can\'t be changed here: the runs work on it.'
+      : 'An existing branch is continued or reviewed; a new name is created. Empty: the worker names it.';
   },
   // Imperative, like syncSessionPurge: a new x-show on a static element is
   // one of the CSP build's silent failure modes. Workflow items keep their
@@ -5883,7 +5990,7 @@ function labelList(v: string): string[] {
   }
   return out.sort();
 }
-function emptyInboxForm(): InboxForm { return { id: '', title: '', tags: '', workspace: '', agents: '', branch: '', ref: '', needs: '', auto: false, template: '', wsLocked: false }; }
+function emptyInboxForm(): InboxForm { return { id: '', title: '', tags: '', workspace: '', agents: '', branch: '', ref: '', needs: '', auto: false, template: '', wsLocked: false, branchLocked: false }; }
 function emptyInboxBaseline() { return { title: '', tags: '', content: '', workspace: '', agents: '', branch: '', ref: '', needs: '', auto: false }; }
 
 Alpine.plugin(focus);

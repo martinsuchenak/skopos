@@ -473,6 +473,58 @@ func TestReviewOnlyHead(t *testing.T) {
 	mustHold(t, "the report", Markdown(r, LevelSummary), "- Providers that received the code: anthropic (claude: sonnet)\n- 1 run did not record a provider\n- Runs: 2")
 }
 
+// fakeRunDetail serves the runs and, for GetFull, what each observed.
+type fakeRunDetail struct {
+	fakeRuns
+	observed map[string]*runs.Observed
+	gone     map[string]bool // removed since the list was read
+}
+
+func (f fakeRunDetail) GetFull(_ context.Context, id string) (*runs.Run, error) {
+	if f.gone[id] {
+		return nil, runs.ErrNotFound
+	}
+	for _, r := range f.fakeRuns {
+		if r.ID == id {
+			r.Observed = f.observed[id]
+			return &r, nil
+		}
+	}
+	return nil, runs.ErrNotFound
+}
+
+// What the runs say they did is listed under each, and counted in the
+// summary.
+func TestWorkLists(t *testing.T) {
+	item := &inbox.Item{ID: "item-5", WorkspaceID: "ws", Status: inbox.StatusInReview}
+	src := fakeRunDetail{
+		fakeRuns: fakeRuns{
+			{ID: "q1", Stage: runs.StageQA, Status: runs.StatusSucceeded, HeadSHA: "cccccccccccc", CreatedAt: at(5), UpdatedAt: at(6)},
+			{ID: "i1", Stage: runs.StageImplement, Status: runs.StatusSucceeded, HeadSHA: "cccccccccccc", CreatedAt: at(1), UpdatedAt: at(2)},
+			{ID: "v0", Stage: runs.StageReview, Status: runs.StatusSucceeded, HeadSHA: "bbbbbbbbbbbb", CreatedAt: at(0), UpdatedAt: at(1)},
+		},
+		gone: map[string]bool{"v0": true},
+		observed: map[string]*runs.Observed{
+			"i1": {Work: []runs.WorkEntry{{Name: "go test ./...", Result: "pass"}, {Name: "end to end", Result: "skipped", Note: "no instance"}}},
+			"q1": {Work: []runs.WorkEntry{
+				{Name: "edit customer 3", Result: "pass", Note: "the change log lists the new name"},
+				{Name: "a caller without permissions", Result: "skipped", Note: "no second user"},
+				{Name: "login totals", Result: "pass"},
+			}},
+		},
+	}
+	r, err := (&Service{Items: fakeItems{item}, Runs: src}).Build(context.Background(), "item-5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustHold(t, "the full report", Markdown(r, LevelFull),
+		"- The implementer's verifications: 1 passed, 1 skipped\n",
+		"**What the implementer verified**\n\n- go test ./...: **passed**\n- end to end: **skipped** — no instance\n",
+		"**Scenarios**\n\n- edit customer 3: **passed** — the change log lists the new name\n- a caller without permissions: **skipped** — no second user\n- login totals: **passed**\n",
+	)
+	mustHold(t, "the summary", Markdown(r, LevelSummary), "- QA: passed (3 scenarios: 2 passed, 1 skipped)\n")
+}
+
 func TestNest(t *testing.T) {
 	for _, tc := range []struct{ name, in, want string }{
 		{"the highest heading goes below the report's", "# A\n\ntext\n\n## B", "### A\n\ntext\n\n#### B"},

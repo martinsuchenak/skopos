@@ -48,6 +48,13 @@ type Runs interface {
 	List(ctx context.Context, status runs.Status, itemID string) ([]runs.Run, error)
 }
 
+// RunDetail reads one run with what it observed (runs.Service.GetFull):
+// the work list a finished run reported. A Runs without it leaves the
+// lists out.
+type RunDetail interface {
+	GetFull(ctx context.Context, id string) (*runs.Run, error)
+}
+
 // Questions reads the item's question-and-answer record.
 type Questions interface {
 	Record(ctx context.Context, itemID string) (*qa.Record, error)
@@ -256,6 +263,8 @@ type Implementation struct {
 	FixRounds  int       `json:"fix_rounds,omitempty"`
 	Pushed     *bool     `json:"pushed,omitempty"`
 	PRURL      string    `json:"pr_url,omitempty"`
+	// Work: what the implementer says it verified, and what came of each.
+	Work []runs.WorkEntry `json:"work,omitempty"`
 }
 
 // Review is one finished review, QA run or second opinion.
@@ -277,6 +286,8 @@ type Review struct {
 	Summary    string       `json:"summary,omitempty"`
 	FailReason string       `json:"fail_reason,omitempty"`
 	Findings   []RunFinding `json:"findings,omitempty"`
+	// Work: what the reviewer checked, or the scenarios QA ran.
+	Work []runs.WorkEntry `json:"work,omitempty"`
 }
 
 // RunFinding is a finding as its run reported it.
@@ -395,6 +406,21 @@ func (s *Service) Build(ctx context.Context, itemID string) (*Report, error) {
 			}
 			return all[i].ID < all[j].ID
 		})
+		if d, ok := s.Runs.(RunDetail); ok {
+			for i, run := range all {
+				if run.Observed != nil || !finished(run.Status) || (run.Stage != runs.StageImplement && !reviewStage(run.Stage)) {
+					continue
+				}
+				full, err := d.GetFull(ctx, run.ID)
+				if errors.Is(err, runs.ErrNotFound) {
+					continue // removed since the list was read: no list for it
+				}
+				if err != nil {
+					return nil, err
+				}
+				all[i].Observed = full.Observed
+			}
+		}
 		r.fromRuns(all)
 	}
 	if s.Findings != nil {
@@ -699,6 +725,14 @@ func reviewStage(stage string) bool {
 
 func finished(s runs.Status) bool { return s == runs.StatusSucceeded || s == runs.StatusFailed }
 
+// work is the list a run reported of what it did.
+func work(run runs.Run) []runs.WorkEntry {
+	if run.Observed == nil {
+		return nil
+	}
+	return run.Observed.Work
+}
+
 // fromRuns fills the implementations, the reviews, the run table, the cost
 // and the header's branch, head and pull request (all oldest first).
 func (r *Report) fromRuns(all []runs.Run) {
@@ -734,6 +768,7 @@ func (r *Report) fromRuns(all []runs.Run) {
 				RunID: run.ID, Runner: run.Runner, Status: string(run.Status), At: run.UpdatedAt, HeadSHA: run.HeadSHA,
 				Diffstat: strings.TrimSpace(run.Diffstat), Summary: strings.TrimSpace(run.ResultSummary), FailReason: strings.TrimSpace(run.FailReason),
 				Setup: checks(run.Setup), Checks: checks(run.Checks), FixRounds: run.FixRounds, Pushed: run.Pushed, PRURL: run.PRURL,
+				Work: work(run),
 			})
 			if run.Branch != "" {
 				r.Item.Branch = run.Branch
@@ -750,6 +785,7 @@ func (r *Report) fromRuns(all []runs.Run) {
 				Status: string(run.Status), Passed: runs.ReviewPassed(run), Advisory: run.Stage == runs.StageSecondOpinion,
 				Blocking: runs.BlockingFindings(run), StillOpen: run.StillOpen,
 				Summary: strings.TrimSpace(run.ResultSummary), FailReason: strings.TrimSpace(run.FailReason),
+				Work: work(run),
 			}
 			for _, f := range run.Findings {
 				if f.Severity == runs.SeverityNit {
