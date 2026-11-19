@@ -109,8 +109,17 @@ func TestCodexSandboxHoldsCodexBack(t *testing.T) {
 	if w.checkCodexSandbox(ctx) {
 		t.Fatal("not due again at once")
 	}
+	// On Linux the stage check may list Claude Code's sandbox too (a
+	// sandboxed stage on a host without bubblewrap): only codex's line is
+	// this test's.
 	held, _ := c.StageCheck(ctx)
-	if len(held) != 1 || !strings.HasPrefix(held[0], "runner codex (unless wrapped): codex's sandbox cannot start") {
+	var codexLines []string
+	for _, h := range held {
+		if strings.HasPrefix(h, "runner ") {
+			codexLines = append(codexLines, h)
+		}
+	}
+	if len(codexLines) != 1 || !strings.HasPrefix(codexLines[0], "runner codex (unless wrapped): codex's sandbox cannot start") {
 		t.Fatalf("worker check names it: %q", held)
 	}
 
