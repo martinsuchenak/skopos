@@ -41,6 +41,11 @@ func (r *Repo) PreflightEvery() time.Duration {
 func (w *Worker) checkHealth(ctx context.Context) map[string]string {
 	var out map[string]string
 	now := time.Now()
+	// Whether codex's sandbox can start here (codexsandbox.go): a failure
+	// holds back the codex runner's runs only.
+	if w.checkCodexSandbox(ctx) {
+		w.resetFacts()
+	}
 	for _, ws := range w.cfg.Workspaces {
 		// The server's config for the workspace cannot be used on this
 		// host (managed.go): none of its runs until that is fixed.

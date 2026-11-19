@@ -326,7 +326,8 @@ func runStageCheck(ctx context.Context, plan checkPlan, nested bool, redact func
 
 // StageCheck runs every workspace's stage check now, as the worker would
 // before taking its runs, and says what it would hold back: one line per
-// stage (and the push) that fails. For `skopos worker check` and `worker
+// stage (and the push) that fails, and one per codex runner whose sandbox
+// cannot start (codexsandbox.go). For `skopos worker check` and `worker
 // install`; call it after CheckServerConfig, which sets the server's stage
 // blocks and its repository fields for managed workspaces. notes name the
 // workspaces whose server config could not be read: their check covers this
@@ -367,6 +368,13 @@ func (c *Config) StageCheck(ctx context.Context) (held, notes []string) {
 		}
 		if res.push != "" {
 			held = append(held, fmt.Sprintf("workspace %s, implement (push): %s", ws, res.push))
+		}
+	}
+	if bins, _ := c.codexSandboxPlan(); bins != nil {
+		bad := c.codexSandboxProblems(ctx, bins)
+		names := slices.Sorted(maps.Keys(bad))
+		for _, name := range names {
+			held = append(held, fmt.Sprintf("runner %s (unless wrapped): %s", name, clip(redact(bad[name]), maxCheckReason)))
 		}
 	}
 	return held, notes

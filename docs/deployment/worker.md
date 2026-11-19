@@ -1376,9 +1376,25 @@ workspace's other stages go on. No item is spent finding it.
   (`git push --dry-run`); a token that is wrong, expired or may not write
   is refused there. An empty token variable is reported too. A remote that
   cannot be reached is not counted against the token.
+- **Codex's sandbox can start,** on Linux, for a worker with a codex
+  runner. Codex runs every command its agent gives the shell, file reads
+  included, inside its own sandbox (bubblewrap), which needs the host to
+  allow unprivileged user namespaces. Where it cannot start, the agent's
+  commands all fail and the review it returns is written without reading
+  the change, so the codex runner's runs are held back instead, in every
+  workspace: the executor is `none:check` for that runner only, and the
+  server gives its runs to a worker where the sandbox starts. The worker
+  starts the sandbox the way a run does, around a command that does
+  nothing. A codex run in a wrapper is not held back, since its sandbox
+  starts inside the wrapper. To allow user namespaces, set
+  `kernel.apparmor_restrict_unprivileged_userns=0` (Ubuntu 24.04 and
+  later) or `kernel.unprivileged_userns_clone=1` (Debian) on the host, and
+  for a container, let it create user namespaces (`security.nesting=true`
+  on LXD/Incus; a seccomp profile that allows them on Docker). Check with
+  `unshare -Ur true` inside it.
 
 The check runs again when what it depends on changes (the workspace's
-stage blocks, the push settings, the token, the PATH), every 2 minutes
+stage blocks, the push settings, the token, the PATH, the codex binary), every 2 minutes
 while it fails, and every 6 hours while it passes.
 
 `skopos worker check` and `skopos worker install` run the same check, with
@@ -1392,6 +1408,7 @@ config OK — the worker can start
 The worker holds these back until they pass (it checks again every 2 minutes; a change under [worker] needs a restart):
   - workspace github.com/acme/shop, stage implement: not on the PATH runs get: bun (install, or link into a folder on the service's PATH)
   - workspace github.com/acme/shop, implement (push): the remote refuses the push token (GH_TOKEN): wrong, expired, or no write access (remote: Permission to acme/shop.git denied to acme-bot.)
+  - runner codex (unless wrapped): codex's sandbox cannot start: this host does not let bubblewrap create a user namespace (allow unprivileged user namespaces, or run codex in a wrapper): bwrap: No permissions to create a new namespace
 ```
 
 A stage held back does not keep the service from starting: `install`

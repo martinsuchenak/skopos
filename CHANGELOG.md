@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.45.1] — 2026-11-19
+
+### Fixed
+
+- On a Linux host that does not allow unprivileged user namespaces, codex's
+  sandbox cannot start, so every command a codex agent ran failed. Its
+  review was written without reading the change, and the run still
+  finished. The worker now checks that codex's sandbox starts (the stage
+  check, and `skopos worker check`). Where it cannot, the codex runner's
+  runs are held back on that worker, with the reason on the Workers page,
+  and go to a worker where the sandbox starts. A codex run in a wrapper is
+  not held back.
+
 ## [0.45.0] — 2026-11-19
 
 ### Added

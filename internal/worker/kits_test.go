@@ -234,7 +234,7 @@ func TestKitsOnAContainedHost(t *testing.T) {
 	}
 	w := &Worker{cfg: c, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	w.checkStages(context.Background(), "bare")
-	why := c.checkReason("bare", "implement")
+	why := c.checkReason("bare", "implement", "")
 	if !strings.Contains(why, "bun") || strings.Contains(why, "Claude Code's sandbox") {
 		t.Fatalf("the check looks for the commands only: %q", why)
 	}

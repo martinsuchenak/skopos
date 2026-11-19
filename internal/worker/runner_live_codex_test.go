@@ -82,6 +82,7 @@ func codexConfigArgs(args []string, withDisable bool) []string {
 //	    given: with the run's flags no instruction file, skill or project
 //	    config is in it (and without them MANGO is, so the probe means
 //	    something);
+//	  - the worker's codex sandbox check (codexsandbox.go) passes;
 //	  - `codex sandbox` with the run's permission profile: the worktree and
 //	    git work; the secret outside, the CODEX_HOME files and the network
 //	    don't; nothing is writable; the account's env and credential-named
@@ -106,6 +107,12 @@ func TestCodexLockdownProbe(t *testing.T) {
 		return string(out)
 	}
 	words := []string{"MANGO", "KIWI", "PAPAYA", "GUAVA", "DURIAN", "FIG."}
+
+	// The worker's codex sandbox check agrees with this codex: its sandbox
+	// starts here, so the check must not hold codex back.
+	if why := codexSandboxProblem(ctx, "codex", os.Environ()); why != "" {
+		t.Fatalf("the codex sandbox check fails where codex's sandbox works: %s", why)
+	}
 
 	open := codex("debug", "prompt-input", "hi")
 	if !strings.Contains(open, "MANGO") || !strings.Contains(open, "DURIAN") {

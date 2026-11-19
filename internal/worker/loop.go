@@ -138,6 +138,8 @@ type Worker struct {
 	health map[string]preflightResult
 	// stageChecks: each workspace's last stage check (stagecheck.go).
 	stageChecks map[string]stageCheck
+	// codexCheck: the last codex sandbox check (codexsandbox.go).
+	codexCheck codexSandboxCheck
 	// Workspace config from the server (managed.go): what the worker holds
 	// per managed workspace, why one cannot be used here, and the claim
 	// answer's digest it was last refreshed for. cfgMu guards the two maps:

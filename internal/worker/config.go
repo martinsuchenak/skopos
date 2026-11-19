@@ -99,6 +99,9 @@ type Config struct {
 	// checkBad: per workspace, what its last stage check found (stagecheck.go):
 	// a reason per stage, and under "push" the push token's.
 	checkBad map[string]map[string]string
+	// codexBad: why codex's sandbox cannot start on this host, per codex
+	// runner (codexsandbox.go).
+	codexBad map[string]string
 	// checkRepos: a managed workspace's repository as CheckServerConfig
 	// merged it, for StageCheck (the running worker reads Worker.repo).
 	checkRepos map[string]*Repo
@@ -430,8 +433,9 @@ func (c *Config) ExecutorFor(workspace, stage, runner string) string {
 		// only a runner that honours them).
 		return policy.NoExecutor(policy.NoneUncontained)
 	}
-	if c.checkProblem(workspace, stage, prof) != "" {
-		// The stage check found what this run would need missing here.
+	if c.checkProblem(workspace, stage, prof) != "" || c.codexSandboxBad(prof, runner) != "" {
+		// The stage check found what this run would need missing here, or
+		// codex's sandbox cannot start on this host.
 		return policy.NoExecutor(policy.NoneCheck)
 	}
 	return c.executorOf(prof, stage, runner)
@@ -605,7 +609,7 @@ func (c *Config) ExecutorFacts() map[string][]policy.ExecutorFact {
 		// Why the stage check holds a stage back, said with its fact.
 		for i, f := range facts {
 			if f.Executor == policy.NoExecutor(policy.NoneCheck) {
-				facts[i].Reason = c.checkReason(ws, f.Stage)
+				facts[i].Reason = c.checkReason(ws, f.Stage, f.Runner)
 			}
 		}
 		out[ws] = facts
@@ -614,9 +618,19 @@ func (c *Config) ExecutorFacts() map[string][]policy.ExecutorFact {
 }
 
 // checkReason is what the stage check found for a run stage of ws ("" =
-// every reason, for the workspace's default).
-func (c *Config) checkReason(ws, stage string) string {
+// every reason, for the workspace's default) and runner ("" = any), with
+// the codex sandbox check's word for a codex runner.
+func (c *Config) checkReason(ws, stage, runner string) string {
 	bad := c.checkBad[ws]
+	// codex's sandbox: the runner's own, or every codex runner's for a
+	// fact that names no runner.
+	var codex []string
+	for name, why := range c.codexBad {
+		if (runner == "" || runner == name) && !slices.Contains(codex, why) {
+			codex = append(codex, why)
+		}
+	}
+	slices.Sort(codex)
 	if stage != "" {
 		var parts []string
 		if why := bad[stagePhase(stage)]; why != "" {
@@ -625,10 +639,16 @@ func (c *Config) checkReason(ws, stage string) string {
 		if why := bad[checkPush]; stage == "implement" && why != "" {
 			parts = append(parts, why)
 		}
+		parts = append(parts, codex...)
 		return clip(strings.Join(parts, "; "), 2*maxCheckReason)
 	}
 	var all []string
 	for _, why := range bad {
+		if !slices.Contains(all, why) {
+			all = append(all, why)
+		}
+	}
+	for _, why := range codex {
 		if !slices.Contains(all, why) {
 			all = append(all, why)
 		}
