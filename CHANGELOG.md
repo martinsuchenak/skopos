@@ -11,6 +11,13 @@ versions follow [Semantic Versioning](https://semver.org/).
 - The item view has a copy button beside the branch name. For an item
   named only by a reference, it copies the branch its runs used, once
   there is one.
+- `skopos worker check` and `worker install` refuse a Codex or Claude
+  account that was never logged in: a `CODEX_HOME` (or `login_dir`) that
+  is missing or has no `auth.json`, or a `CLAUDE_CONFIG_DIR` (or
+  `login_dir`) that is missing or, outside macOS, has no
+  `.credentials.json`. The message names the login command to run as the
+  worker's user. Accounts on an API key are exempt. A running worker only
+  logs it.
 
 ## [0.43.1] — 2026-11-19
 

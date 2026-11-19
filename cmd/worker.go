@@ -136,6 +136,13 @@ func workerCmd() *cli.Command {
 			if problems := cfg.CheckRunners(ctx, ""); len(problems) > 0 {
 				return fmt.Errorf("agent runners not ready: %s", strings.Join(problems, "; "))
 			}
+			// An account that was never logged in fails its first run. Not
+			// a reason to stop: a worker that upgraded itself with a file the
+			// release before accepted would never come back. `worker check`
+			// and `worker install` refuse it.
+			for _, p := range cfg.LoginProblems() {
+				log.Error("account login: " + p)
+			}
 			// What the worker tells the server about its runners decides
 			// which runs the policy lets it take, so it must be true. A
 			// config whose facts would not be (a proxy in an account's env,

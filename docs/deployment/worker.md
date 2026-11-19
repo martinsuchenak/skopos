@@ -140,6 +140,16 @@ skopos worker runner add --kind opencode --name opencode-glm \
 empty. Otherwise the CLI would quietly fall back to its own login and pass on
 the wrong credentials.
 
+`worker check` and `worker install` also refuse an account whose login
+directory is missing or was never logged in: a Codex `CODEX_HOME` (or the
+account's `login_dir`) without `auth.json`, or a Claude `CLAUDE_CONFIG_DIR`
+(or `login_dir`) without `.credentials.json`. On macOS the Claude login is
+in the keychain, so only the directory is checked. Log in as the user the
+worker runs as, so the files land where the service looks. Accounts on an
+API key (`CODEX_API_KEY`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`)
+don't need one. A running worker logs the problem and keeps going, so one
+that upgraded itself still comes back; the account's first run fails.
+
 ### What the config looks like
 
 ```toml
@@ -272,6 +282,10 @@ the token on stdin):
 ```bash
 printenv CODEX_ACCESS_TOKEN | CODEX_HOME=~/skopos-workers/accounts/codex-1 codex login --with-access-token
 ```
+
+On a headless server, log in as the worker's user with
+`codex login --device-auth`; `worker check` names the command when the
+directory is missing or holds no login.
 
 ```toml
 [[worker.accounts]]

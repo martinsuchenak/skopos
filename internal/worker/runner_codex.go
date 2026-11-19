@@ -156,6 +156,17 @@ func codexHomeProblem(env map[string]string) string {
 	return ""
 }
 
+// codexLoginProblem: the account's CODEX_HOME must exist and hold codex's
+// login (auth.json) — unless it runs on CODEX_API_KEY. Codex itself only
+// says so when a run starts.
+func codexLoginProblem(env map[string]string) string {
+	if _, ok := env["CODEX_API_KEY"]; ok {
+		return ""
+	}
+	home := codexHome(env)
+	return loginDirProblem(home, "auth.json", "CODEX_HOME="+home+" codex login --device-auth")
+}
+
 // codexWrites: the stage asks for edits (implement), which this adapter
 // does not run.
 func codexWrites(allowed []string) bool {

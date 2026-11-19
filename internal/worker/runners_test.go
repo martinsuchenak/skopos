@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -301,5 +302,89 @@ func TestAgentPWDPinned(t *testing.T) {
 	res := commandRunner{argv: []string{script}}.Run(context.Background(), AgentRun{Dir: dir, Prompt: "x", Schema: testSchema})
 	if !strings.Contains(string(res.Structured), dir) {
 		t.Fatalf("the agent must see PWD=%s: %s", dir, res.Structured)
+	}
+}
+
+// worker check and worker install catch a codex or claude login directory
+// that is missing or never logged in, naming the login command; accounts on
+// an API key don't need one. It is not an AccountProblem: those stop the
+// daemon, and a worker that upgraded itself must come back.
+func TestAccountLoginProblems(t *testing.T) {
+	root := t.TempDir()
+	missing := filepath.Join(root, "missing")
+	empty := filepath.Join(root, "empty")
+	codexIn := filepath.Join(root, "codex-in")
+	claudeIn := filepath.Join(root, "claude-in")
+	for _, d := range []string{empty, codexIn, claudeIn} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []string{filepath.Join(codexIn, "auth.json"), filepath.Join(claudeIn, ".credentials.json")} {
+		if err := os.WriteFile(f, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	problems := func(a *Account) []string {
+		c := &Config{Accounts: []*Account{a}}
+		if ps := c.AccountProblems(); len(ps) != 0 {
+			t.Fatalf("a login problem must not stop the daemon: %v", ps)
+		}
+		return c.LoginProblems()
+	}
+	codex := func(env map[string]string) *Account { return &Account{Name: "cx", Runner: "codex", Env: env} }
+	claude := func(env map[string]string) *Account { return &Account{Name: "cl", Runner: "claude", Env: env} }
+
+	// codex
+	ps := problems(codex(map[string]string{"CODEX_HOME": missing}))
+	if len(ps) != 1 || !strings.Contains(ps[0], "account cx") || !strings.Contains(ps[0], "does not exist") ||
+		!strings.Contains(ps[0], "CODEX_HOME="+missing+" codex login --device-auth") {
+		t.Fatalf("missing CODEX_HOME: %v", ps)
+	}
+	if ps := problems(codex(map[string]string{"CODEX_HOME": empty})); len(ps) != 1 || !strings.Contains(ps[0], "no login (auth.json)") {
+		t.Fatalf("CODEX_HOME without auth.json: %v", ps)
+	}
+	if ps := problems(codex(map[string]string{"CODEX_HOME": codexIn})); len(ps) != 0 {
+		t.Fatalf("logged-in CODEX_HOME: %v", ps)
+	}
+	if ps := problems(codex(map[string]string{"CODEX_HOME": missing, "CODEX_API_KEY": "k"})); len(ps) != 0 {
+		t.Fatalf("an API-key codex account needs no login: %v", ps)
+	}
+
+	// claude
+	ps = problems(claude(map[string]string{"CLAUDE_CONFIG_DIR": missing}))
+	if len(ps) != 1 || !strings.Contains(ps[0], "account cl") || !strings.Contains(ps[0], "does not exist") ||
+		!strings.Contains(ps[0], "CLAUDE_CONFIG_DIR="+missing+" claude") {
+		t.Fatalf("missing CLAUDE_CONFIG_DIR: %v", ps)
+	}
+	ps = problems(claude(map[string]string{"CLAUDE_CONFIG_DIR": empty}))
+	if runtime.GOOS == "darwin" {
+		if len(ps) != 0 { // the login is in the keychain there
+			t.Fatalf("an existing CLAUDE_CONFIG_DIR on macOS: %v", ps)
+		}
+	} else if len(ps) != 1 || !strings.Contains(ps[0], "no login (.credentials.json)") {
+		t.Fatalf("CLAUDE_CONFIG_DIR without .credentials.json: %v", ps)
+	}
+	if ps := problems(claude(map[string]string{"CLAUDE_CONFIG_DIR": claudeIn})); len(ps) != 0 {
+		t.Fatalf("logged-in CLAUDE_CONFIG_DIR: %v", ps)
+	}
+	for _, k := range []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"} {
+		if ps := problems(claude(map[string]string{"CLAUDE_CONFIG_DIR": missing, k: "k"})); len(ps) != 0 {
+			t.Fatalf("a %s claude account needs no login: %v", k, ps)
+		}
+	}
+	// login_dir names the directory in place of the variable.
+	if ps := problems(&Account{Name: "cl", Runner: "claude", LoginDir: missing}); len(ps) != 1 || !strings.Contains(ps[0], missing) {
+		t.Fatalf("a claude login_dir that does not exist: %v", ps)
+	}
+	if ps := problems(&Account{Name: "cx", Runner: "codex", LoginDir: codexIn, Env: map[string]string{"CODEX_HOME": missing}}); len(ps) != 0 {
+		t.Fatalf("login_dir wins over CODEX_HOME: %v", ps)
+	}
+	// A login for a kind of CLI (runner definitions on the server).
+	if ps := problems(&Account{Name: "cx", Kind: "codex", Env: map[string]string{"CODEX_HOME": missing}}); len(ps) != 1 || !strings.Contains(ps[0], "account cx") {
+		t.Fatalf("a codex kind account that was never logged in: %v", ps)
+	}
+	if ps := problems(&Account{Name: "default"}); len(ps) != 0 {
+		t.Fatalf("a claude account on the worker user's own login isn't checked: %v", ps)
 	}
 }

@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -224,6 +226,87 @@ func (c *Config) AccountProblems() []string {
 		}
 	}
 	return out
+}
+
+// LoginProblems reports codex and claude accounts whose login directory is
+// missing or was never logged in, so the first run on them would fail. Read
+// from the environment the agent really gets (agentEnv) and the account's
+// login_dir. `worker check` and `worker install` refuse them; a running
+// worker only logs them — one that upgraded itself must come back.
+func (c *Config) LoginProblems() []string {
+	var out []string
+	for _, a := range c.FileAccounts() {
+		kind := a.Kind
+		if kind == "" {
+			_, kind = c.runnerSpec(accountRunner(a))
+		}
+		env := c.agentEnv(a)
+		p := ""
+		switch kind {
+		case "codex":
+			if a.LoginDir != "" {
+				env["CODEX_HOME"] = a.LoginDir
+			}
+			p = codexLoginProblem(env)
+		case "claude":
+			if a.LoginDir != "" {
+				env["CLAUDE_CONFIG_DIR"] = a.LoginDir
+			}
+			p = claudeLoginProblem(env)
+		}
+		if p != "" {
+			out = append(out, "account "+a.Name+": "+p)
+		}
+	}
+	return out
+}
+
+// claudeAuthEnvs are credentials that make a claude account independent of
+// its config directory's login.
+var claudeAuthEnvs = []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
+	"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"}
+
+// claudeLoginProblem: an account with a CLAUDE_CONFIG_DIR of its own needs
+// that directory logged in. The login lives in .credentials.json there,
+// except on macOS, where it is in the keychain — only the directory is
+// checked.
+func claudeLoginProblem(env map[string]string) string {
+	dir := env["CLAUDE_CONFIG_DIR"]
+	if dir == "" {
+		return ""
+	}
+	for _, k := range claudeAuthEnvs {
+		if _, ok := env[k]; ok {
+			return ""
+		}
+	}
+	file := ".credentials.json"
+	if runtime.GOOS == "darwin" {
+		file = ""
+	}
+	return loginDirProblem(expandHome(dir, userHome()), file, "CLAUDE_CONFIG_DIR="+dir+" claude   (then /login)")
+}
+
+// loginDirProblem reports a login directory that is missing, unreadable, or
+// without its login file ("" = only the directory is checked); fix is the
+// login command, run as the worker's user.
+func loginDirProblem(dir, file, fix string) string {
+	if _, err := os.Stat(dir); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Sprintf("login directory %s does not exist — log the account in as the user the worker runs as: %s", dir, fix)
+		}
+		return fmt.Sprintf("login directory %s: %v — it must be readable by the user the worker runs as", dir, err)
+	}
+	if file == "" {
+		return ""
+	}
+	if _, err := os.Stat(filepath.Join(dir, file)); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Sprintf("login directory %s holds no login (%s) — log the account in as the user the worker runs as: %s", dir, file, fix)
+		}
+		return fmt.Sprintf("login directory %s: %v — it must be readable by the user the worker runs as", dir, err)
+	}
+	return ""
 }
 
 // CheckRunners validates every used runner's CLI on pathEnv, and the

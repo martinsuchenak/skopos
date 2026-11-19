@@ -521,6 +521,7 @@ func baseWorkerChecks(configPath, envFile, pathEnv, home string) ([]string, *wor
 		}
 	}
 	problems = append(problems, ws.AccountProblems()...)
+	problems = append(problems, ws.LoginProblems()...)
 	if ws.MCPConfig != "" && !fileExists(ws.MCPConfig) {
 		problems = append(problems, "mcp_config "+ws.MCPConfig+" does not exist")
 	}
