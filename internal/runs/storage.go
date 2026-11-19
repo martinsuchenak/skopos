@@ -47,7 +47,7 @@ const runColumns = `id, workspace_id, item_id, plan_rev_id, stage, runner, worke
 	resume_kind, lease_expires_at, resume_after, attempt, branch, base_sha, head_sha,
 	result_summary, diffstat, checks, log_ref, fail_reason, lease_token_hash, claimed_key_id, created_at, updated_at, executor,
 	group_id, focus, cost_usd, findings, pushed, pr_url, setup, fix_rounds, phase, retries, retry_after, avoid_worker,
-	prefer_worker, prefer_until, runner_picked, policy_rev, facts, stranded_reason, grants, config_rev, still_open, nothing_to_do,
+	prefer_worker, prefer_until, runner_picked, policy_rev, facts, stranded_reason, grants, config_rev, still_open, nothing_to_do, adopt_from,
 	COALESCE((SELECT needs FROM inbox_items WHERE inbox_items.id = runs.item_id), '')`
 
 func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
@@ -63,7 +63,7 @@ func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 		&r.ResumeKind, &lease, &resumeAfter, &r.Attempt, &r.Branch, &r.BaseSHA, &r.HeadSHA,
 		&r.ResultSummary, &r.Diffstat, &checks, &r.LogRef, &r.FailReason, &r.LeaseTokenHash, &r.ClaimedKeyID, &createdAt, &updatedAt, &r.Executor,
 		&groupID, &focus, &cost, &findings, &pushed, &r.PRURL, &setup, &r.FixRounds, &r.Phase, &r.Retries, &retryAfter, &r.AvoidWorker,
-		&r.PreferWorker, &preferUntil, &picked, &r.PolicyRev, &facts, &r.Stranded, &r.Grants, &r.ConfigRev, &r.StillOpen, &nothing, &needs); err != nil {
+		&r.PreferWorker, &preferUntil, &picked, &r.PolicyRev, &facts, &r.Stranded, &r.Grants, &r.ConfigRev, &r.StillOpen, &nothing, &r.AdoptFrom, &needs); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -145,11 +145,11 @@ func insertRun(ctx context.Context, db execer, r Run) error {
 	}
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO runs (id, workspace_id, item_id, plan_rev_id, stage, runner, status, attempt,
-			branch, base_sha, head_sha, checks, created_at, updated_at, group_id, focus, prefer_worker, prefer_until)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			branch, base_sha, head_sha, checks, created_at, updated_at, group_id, focus, prefer_worker, prefer_until, adopt_from)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.ID, r.WorkspaceID, r.ItemID, r.PlanRevID, r.Stage, r.Runner, StatusQueued, 1,
 		r.Branch, r.BaseSHA, r.HeadSHA, string(checks), formatTime(r.CreatedAt), formatTime(r.UpdatedAt),
-		nullIfEmpty(r.GroupID), nullIfEmpty(r.Focus), r.PreferWorker, formatPreferUntil(r.PreferUntil)); err != nil {
+		nullIfEmpty(r.GroupID), nullIfEmpty(r.Focus), r.PreferWorker, formatPreferUntil(r.PreferUntil), r.AdoptFrom); err != nil {
 		return fmt.Errorf("inserting run: %w", err)
 	}
 	return nil

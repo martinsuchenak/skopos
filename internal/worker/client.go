@@ -788,6 +788,10 @@ type Run struct {
 	Branch     string `json:"branch"`
 	BaseSHA    string `json:"base_sha"`
 	HeadSHA    string `json:"head_sha"`
+	// AdoptFrom: an implement run that takes in the commits added to the
+	// branch after this commit: setup and the checks on the branch as it
+	// is, no agent turn unless a check fails.
+	AdoptFrom string `json:"adopt_from,omitempty"`
 	// GroupID: set when the run is one member of a multi-agent stage;
 	// Focus: the member's brief (.skopos/focus/<name>.md at the base).
 	GroupID string `json:"group_id"`

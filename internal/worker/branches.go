@@ -38,6 +38,13 @@ type branchRecord struct {
 	ImplementedRun     string `json:"implemented_run,omitempty"`
 	ImplementedSummary string `json:"implemented_summary,omitempty"`
 	ImplementedNotes   string `json:"implemented_notes,omitempty"`
+	// Head: the head the newest successful implementation reported (what
+	// review and QA test); TipReported: the branch tip last reported for it
+	// at sign-off ("" = none, a trailing "!" = rewritten).
+	Head        string `json:"head,omitempty"`
+	TipReported string `json:"tip_reported,omitempty"`
+	// Adopted: the commits an adopt run took in (kept across a pause).
+	Adopted []tipCommit `json:"adopted,omitempty"`
 	// ImplementedVerified: what that turn and its fix rounds verified.
 	ImplementedVerified workList `json:"implemented_verified,omitempty"`
 	FixRounds           int      `json:"fix_rounds,omitempty"`
@@ -184,6 +191,11 @@ func (w *Worker) sweepBranches(ctx context.Context, now time.Time) {
 			if rec.DiscardedSeenMS != 0 || rec.MissingSeenMS != 0 {
 				rec.DiscardedSeenMS, rec.MissingSeenMS = 0, 0
 				w.saveBranch(rec)
+			}
+			// Waiting for sign-off: commits a developer added since the
+			// review and QA are named on the sign-off card.
+			if status == "in_review" {
+				w.checkBranchTip(ctx, rec, log)
 			}
 			continue
 		}

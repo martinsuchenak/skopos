@@ -321,7 +321,13 @@ func Actions(ctx context.Context, item *inbox.Item, itemRuns []runs.Run) []strin
 	case inbox.StatusAwaitingApproval:
 		return []string{"approve", "request-changes", "answers", "reject"}
 	case inbox.StatusInReview:
-		return withSecondOpinion(item, itemRuns, []string{"mark-done", "request-changes"}, "reject")
+		before := []string{"mark-done", "request-changes"}
+		// Commits added after review and QA, about the head they tested:
+		// they can be checked (POST /api/inbox/{id}/check-commits).
+		if tip := item.BranchTip; tip != nil && !tip.Rewritten && tip.Head == newestImplementHead(itemRuns) {
+			before = append(before, "check-commits")
+		}
+		return withSecondOpinion(item, itemRuns, before, "reject")
 	case inbox.StatusBlocked:
 		return withSecondOpinion(item, itemRuns, []string{"retry", "answers"}, "reject")
 	case inbox.StatusFailed:
@@ -330,6 +336,17 @@ func Actions(ctx context.Context, item *inbox.Item, itemRuns []runs.Run) []strin
 		return []string{"reject"}
 	}
 	return []string{}
+}
+
+// newestImplementHead is the head of the newest successful implement run
+// (runs come newest first).
+func newestImplementHead(itemRuns []runs.Run) string {
+	for _, r := range itemRuns {
+		if r.Stage == runs.StageImplement && r.Status == runs.StatusSucceeded && r.HeadSHA != "" {
+			return r.HeadSHA
+		}
+	}
+	return ""
 }
 
 // withSecondOpinion lists before, second-opinion when one can be

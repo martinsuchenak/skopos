@@ -18,6 +18,9 @@ type Observed struct {
 	// Work: what the run says it did, each with what came of it — an
 	// implementation's verifications, a review's checks, QA's scenarios.
 	Work []WorkEntry `json:"work,omitempty"`
+	// Adopted: an adopt run's commits, the ones a person added to the
+	// branch after the implementation (adopt.go).
+	Adopted []AdoptedCommit `json:"adopted,omitempty"`
 }
 
 // WorkEntry is one thing a run did. Result is pass, fail or skipped when
@@ -117,7 +120,16 @@ func (o *Observed) clean() *Observed {
 			Result: clipText(strings.ToLower(strings.TrimSpace(e.Result)), maxWorkResult),
 		})
 	}
-	if out.Change == nil && out.Plan == nil && out.Work == nil {
+	for _, c := range o.Adopted {
+		if c.SHA = strings.TrimSpace(c.SHA); c.SHA == "" {
+			continue
+		}
+		if len(out.Adopted) == maxWorkEntries {
+			break
+		}
+		out.Adopted = append(out.Adopted, AdoptedCommit{SHA: clipText(c.SHA, 64), Author: clipText(strings.TrimSpace(c.Author), maxObservedText), Subject: clipText(strings.TrimSpace(c.Subject), maxWorkName)})
+	}
+	if out.Change == nil && out.Plan == nil && out.Work == nil && out.Adopted == nil {
 		return nil
 	}
 	return out

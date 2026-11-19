@@ -29,7 +29,10 @@ type ItemForm = { title: string; description: string; phase: string; depends_on:
 type InboxPlanSummary = { id: string; name: string; status: string };
 // What became of a signed-off item's branch (the worker reports it).
 type ItemOutcome = { state: 'merged' | 'closed' | 'open'; pr_url?: string; merge_sha?: string; merged_at?: string; closed_at?: string };
-type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; agents?: string; branch?: string; ref?: string; external_url?: string; flow?: string; needs?: string[]; auto_approve_plan?: boolean; auto_approve_by?: string; created_at: string; updated_at: string; status_since?: string; outcome?: ItemOutcome; excerpt?: string };
+type InboxItem = { id: string; workspace_id?: string; title: string; tags: string[]; status: string; priority?: number; claimed_by_agent_id?: string; author_agent_id: string; plan_id?: string; plan?: InboxPlanSummary; agents?: string; branch?: string; ref?: string; external_url?: string; flow?: string; needs?: string[]; auto_approve_plan?: boolean; auto_approve_by?: string; created_at: string; updated_at: string; status_since?: string; outcome?: ItemOutcome; branch_tip?: BranchTip; excerpt?: string };
+// Commits on an item's branch after the one review and QA tested, as the
+// implementing worker last saw them (inbox.BranchTip).
+type BranchTip = { head: string; sha: string; local?: boolean; rewritten?: boolean; worker?: string; commits?: { sha: string; author?: string; subject?: string }[] };
 // The detail view's content, cut server-side (internal/inbox/parts.go):
 // The author's text, then the pipeline's sections in rounds.
 type ItemQuestion = { text: string; options?: string[] };
@@ -127,7 +130,7 @@ type PlanRevisionInfo = { id: string; revision_no: number; content_hash: string;
 // One thing the approver can approve at the gate: the plan revision, or one
 // candidate of a multi-agent plan round.
 type ApproveTarget = { id: string; title: string; meta: string; steps: string[]; candidate: boolean; hash: string; toast: string };
-type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { id?: string; severity: string; text: string; file?: string }[]; still_open?: number; lease_expires_at?: string; pushed?: boolean; pr_url?: string; checks?: { name: string; passed: boolean; output?: string }[]; setup?: { name: string; passed: boolean; output?: string }[]; fix_rounds?: number; phase?: string; retries?: number; retry_after?: string; prefer_worker?: string; prefer_until?: string; stranded?: string; runner_picked?: boolean; policy_rev?: string; created_at: string; updated_at: string };
+type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { id?: string; severity: string; text: string; file?: string }[]; still_open?: number; lease_expires_at?: string; pushed?: boolean; pr_url?: string; checks?: { name: string; passed: boolean; output?: string }[]; setup?: { name: string; passed: boolean; output?: string }[]; fix_rounds?: number; phase?: string; adopt_from?: string; retries?: number; retry_after?: string; prefer_worker?: string; prefer_until?: string; stranded?: string; runner_picked?: boolean; policy_rev?: string; created_at: string; updated_at: string };
 // One row of the preview's stage tracker. state: done | run | you | bad |
 // up (not reached) | skip (not configured, or never reached on a discarded item).
 type LinkRow = { key: string; href: string; text: string };
@@ -323,6 +326,8 @@ const appState = () => ({
   // What each finished run says it did, by run id (GET /api/runs/{id}'s
   // observed.work: read once per run state, never with the run list).
   previewWork: {} as Record<string, WorkEntry[]>,
+  // The commits each adopt run took in, by run id (observed.adopted).
+  previewAdopted: {} as Record<string, { sha: string; author?: string; subject?: string }[]>,
   // The action that takes findings to send back now, as the server says
   // ('request-changes', 'retry', or '' when none does or the key may not).
   previewFindingsSend: '',
@@ -1359,6 +1364,7 @@ const appState = () => ({
     this.answersSavedFor = '';
     this.previewFindings = [];
     this.previewWork = {};
+    this.previewAdopted = {};
     workRead = {};
     this.previewFindingsSend = '';
     this.findingPicks = {};
@@ -1716,18 +1722,42 @@ const appState = () => ({
         if (!res || res.status >= 500) delete workRead[r.id];
         return null;
       }
-      const full = (await res.json()) as { observed?: { work?: WorkEntry[] } };
-      return { id: r.id, work: (full.observed && full.observed.work) || [] };
+      const full = (await res.json()) as { observed?: { work?: WorkEntry[]; adopted?: { sha: string; author?: string; subject?: string }[] } };
+      return { id: r.id, work: (full.observed && full.observed.work) || [], adopted: (full.observed && full.observed.adopted) || [] };
     }));
     if (!this.previewItem || this.previewItem.id !== item.id) return;
     const next = { ...this.previewWork };
-    let changed = false;
+    const nextAdopted = { ...this.previewAdopted };
+    let changed = false, adoptedChanged = false;
     for (const got of read) {
-      if (!got || (!got.work.length && !next[got.id])) continue;
-      next[got.id] = got.work;
-      changed = true;
+      if (!got) continue;
+      if (got.work.length || next[got.id]) { next[got.id] = got.work; changed = true; }
+      if (got.adopted.length) { nextAdopted[got.id] = got.adopted; adoptedChanged = true; }
     }
     if (changed) this.previewWork = next;
+    if (adoptedChanged) this.previewAdopted = nextAdopted;
+  },
+  // An adopt run in one line: "Took in 2 commits added after a1b2c3d (Jane)".
+  adoptLine(r: RunRow): string {
+    const cs = this.previewAdopted[r.id] || [];
+    const who = Array.from(new Set(cs.map(c => c.author || '').filter(Boolean))).join(', ');
+    return 'Took in ' + (cs.length ? this.plural(cs.length, 'commit') : 'the commits') + ' added after ' + this.shortSha(r.adopt_from || '') + (who ? ' (' + who + ')' : '');
+  },
+  // The branch's commits after the tested head, as the worker reported them
+  // ('' when there are none, or the report is about an older head).
+  branchTipFor(head: string): BranchTip | null {
+    const tip = this.previewItem ? this.previewItem.branch_tip : undefined;
+    return tip && tip.head === head && tip.sha !== head ? tip : null;
+  },
+  branchTipCheckable(): boolean {
+    const item = this.previewItem;
+    if (!item || item.status !== 'in_review') return false;
+    const tip = this.branchTipFor(this.reviewHead());
+    return !!tip && !tip.rewritten;
+  },
+  checkNewCommits() {
+    if (!this.previewItem || !this.branchTipCheckable()) return;
+    this.postWorkflowAction(this.previewItem.id, 'check-commits', null, 'The new commits are being checked');
   },
   // What a run's work list is called on its step, by stage.
   workKind(r: RunRow): string { return WORK_STAGES[r.stage] || ''; },
@@ -2188,7 +2218,7 @@ const appState = () => ({
     return '';
   },
   stageModel(): { rows: StageRow[]; current: number } {
-    const inputs = [this.previewItem, this.previewRuns, this.previewApprovedRev, this.previewPipe, this.previewWorkers, this.previewFindings, this.previewWork];
+    const inputs = [this.previewItem, this.previewRuns, this.previewApprovedRev, this.previewPipe, this.previewWorkers, this.previewFindings, this.previewWork, this.previewAdopted];
     if (stageCache && stageCache.inputs.every((v, i) => v === inputs[i])) return stageCache.model as { rows: StageRow[]; current: number };
     const model = this.buildStageModel();
     stageCache = { inputs, model };
@@ -2283,6 +2313,8 @@ const appState = () => ({
       if (i === 3 && implRun) {
         const local = this.unpushed(implRun.head_sha || '');
         const lines = [(implRun.runner || implRun.worker_id || 'The agent') + (local ? ' committed ' : ' pushed ') + this.shortSha(implRun.head_sha || '') + (implRun.branch ? (local ? ' on ' : ' to ') + implRun.branch : '')];
+        // An adopt run implemented nothing: it took in a person's commits.
+        if (implRun.adopt_from) lines[0] = this.adoptLine(implRun) + ', now at ' + this.shortSha(implRun.head_sha || '');
         const stat = (implRun.diffstat || '').split('\n').map((l: string) => l.trim()).filter(Boolean).pop();
         if (stat) lines.push(stat);
         const setup = this.setupSummary(implRun);
@@ -2509,10 +2541,29 @@ const appState = () => ({
     if (item.status !== 'in_review') return out;
     if (rev) out.push({ key: 'g-rev|' + rev.id, ic: 'y', text: 'The plan you approved: revision #' + rev.revision_no + (rev.label ? ' (' + rev.label + ')' : '') });
     const head = this.reviewHead();
-    const reviews = this.trackReviews();
     if (!head) return out;
+    // Only reviews of the commit being signed count for it. One that ran on
+    // another commit (an older worker tested whatever the branch held) is
+    // named apart, never counted.
+    const all = this.trackReviews();
+    const reviews = all.filter((r: RunRow) => !r.head_sha || r.head_sha === head);
+    const elsewhere = all.filter((r: RunRow) => !!r.head_sha && r.head_sha !== head);
+    // Commits a developer added after review and QA: not reviewed or tested.
+    const tip = this.branchTipFor(head);
+    if (tip && tip.rewritten) {
+      out.push({ key: 'g-tip|' + tip.sha, ic: 'w', text: 'The branch no longer holds ' + this.shortSha(head) + ': it was rewritten after review and QA (it is at ' + this.shortSha(tip.sha) + '). Request changes to continue from it.' });
+    } else if (tip) {
+      const cs = tip.commits || [];
+      const who = Array.from(new Set(cs.map(c => c.author || '').filter(Boolean))).join(', ');
+      out.push({ key: 'g-tip|' + tip.sha, ic: 'w', text: 'The branch has ' + (cs.length ? this.plural(cs.length, 'commit') : 'commits') + ' after ' + this.shortSha(head) + (who ? ' by ' + who : '') + (tip.local ? ', in ' + (tip.worker || 'a worker') + '\'s clone (not pushed)' : '') + ': not reviewed or tested. Check them, or sign off ' + this.shortSha(head) + ' without them.' });
+      for (const c of cs.slice(0, 5)) out.push({ key: 'g-tipc|' + c.sha, ic: 'n', text: this.shortSha(c.sha) + ' ' + (c.subject || '') + (c.author ? ' (' + c.author + ')' : '') });
+    }
+    if (elsewhere.length) {
+      const heads = Array.from(new Set(elsewhere.map((r: RunRow) => this.shortSha(r.head_sha || '')))).join(', ');
+      out.push({ key: 'g-elsewhere|' + heads, ic: 'w', text: this.plural(elsewhere.length, 'review') + ' ran on another commit (' + heads + ') and ' + (elsewhere.length === 1 ? 'does' : 'do') + ' not count for ' + this.shortSha(head) + '.' });
+    }
     if (reviews.length) {
-      out.push({ key: 'g-head|' + head, ic: 'y', text: 'Commit ' + this.shortSha(head) + ' is the branch head, and the reviewers checked it' });
+      out.push({ key: 'g-head|' + head, ic: 'y', text: 'Commit ' + this.shortSha(head) + ' is what the implementation pushed, and the reviewers checked that commit' });
       // One line per agent step that ran on the head: Agent review, QA.
       const steps: [string, RunRow[]][] = [['Agent review', reviews.filter((r: RunRow) => r.stage !== 'qa')], ['QA', reviews.filter((r: RunRow) => r.stage === 'qa')]];
       for (const [name, runs] of steps) {
@@ -3020,6 +3071,7 @@ const appState = () => ({
     if (action === 'approve') return true;
     if (action === 'queue' || action === 'review' || action === 'reject') return true;
     if (action === 'mark_done') return this.reviewHead() !== '';
+    if (action === 'check_commits') return this.branchTipCheckable();
     // Retry after saving the answers: they are the answer to the blocker.
     if (action === 'retry' && this.savedAnswers()) return true;
     return this.hasWorkflowInput();

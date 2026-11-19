@@ -326,6 +326,11 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "runs", "observed", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	// runs.adopt_from: an implement run that checks the commits pushed to
+	// the branch after this one (internal/runs/adopt.go); '' = an ordinary run.
+	if err := ensureColumn(db, "runs", "adopt_from", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	// inbox_items.status_since_ms: when the item entered its status (Unix
 	// ms). Triggers keep it on every write path, so no status change can
 	// miss it. A row from before starts at its newest status change the

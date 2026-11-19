@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -30,6 +31,7 @@ pwd -P > "$OUT/pwd"
 [ -f setup-ran ] && touch "$OUT/setup-ran"
 git rev-parse HEAD > "$OUT/head"
 case "$MODE" in
+moves) git checkout -q --detach HEAD~1; printf '{"type":"result","session_id":"s1","structured_output":{"verdict":"pass","summary":"tested","scenarios":[{"name":"a","result":"pass"}]}}' ;;
 blocked) printf '{"type":"result","session_id":"s1","structured_output":{"verdict":"blocked","summary":"the local system does not answer","questions":[{"question":"Which system should QA test on?","options":["the local system","a new test space"]}]}}' ;;
 *) printf '{"type":"result","session_id":"s1","structured_output":{"verdict":"pass","summary":"1 of 2 scenarios ran and passed on the local system","scenarios":[{"name":"save without a date","result":"pass","note":"refused with a message"},{"name":"export","result":"skipped","note":"no export here"}]}}' ;;
 esac
@@ -39,6 +41,7 @@ type qaStack struct {
 	w          *Worker
 	run        *Run
 	clone, out string
+	origin     string
 	branchHead string
 	mu         sync.Mutex
 	reports    []map[string]any
@@ -91,7 +94,7 @@ func newQAStack(t *testing.T, checkout, mode string) *qaStack {
 	write("local.env", "E2E_BASE_URL=http://localhost:8080\nE2E_USERNAME=qa\nE2E_PASSWORD=\"correct horse battery\"\n")
 
 	const itemID = "01a19700-0000-7000-8000-00000000c0de"
-	g := &qaStack{clone: clone, out: t.TempDir(), branchHead: head, content: "People must enter a date of birth."}
+	g := &qaStack{clone: clone, origin: origin, out: t.TempDir(), branchHead: head, content: "People must enter a date of birth."}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
 		defer g.mu.Unlock()
@@ -510,4 +513,107 @@ func TestWorkListDecodes(t *testing.T) {
 	if got := workSection("Checked", want[:2]); got != "\n\n**Checked**\n\n- go test: **pass**\n- e2e: **skipped** — no instance" {
 		t.Fatalf("section: %q", got)
 	}
+}
+
+// pushToBranch pushes one more commit to origin's agent/x, as someone
+// working on the branch after the implementation would.
+func (g *qaStack) pushToBranch(t *testing.T) string {
+	t.Helper()
+	other := filepath.Join(t.TempDir(), "other")
+	gitT(t, filepath.Dir(other), "clone", "-q", "-b", "agent/x", g.origin, other)
+	if err := os.WriteFile(filepath.Join(other, "later.txt"), []byte("later\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, other, "add", "-A")
+	gitT(t, other, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "pushed later")
+	gitT(t, other, "push", "-q", "origin", "agent/x")
+	return gitT(t, other, "rev-parse", "HEAD")
+}
+
+// A QA run the server pinned to the implemented commit tests that commit;
+// one whose branch moved on since stops for a person, and an agent that
+// moves the checkout has its result thrown away.
+func TestQAPinnedToTheImplementedCommit(t *testing.T) {
+	t.Run("at the pinned commit", func(t *testing.T) {
+		g := newQAStack(t, "", "pass")
+		g.run.HeadSHA = g.branchHead
+		if err := g.w.review(context.Background(), g.run, g.w.log, nil); err != nil {
+			t.Fatal(err)
+		}
+		if head, _ := g.saw(t, "head"); head != g.branchHead {
+			t.Fatalf("tested %s, pinned %s", head, g.branchHead)
+		}
+		if rep := g.lastReport(t); rep["status"] != "succeeded" || rep["head_sha"] != g.branchHead {
+			t.Fatalf("report: %v", rep)
+		}
+	})
+	t.Run("the branch moved on", func(t *testing.T) {
+		g := newQAStack(t, checkoutBranch, "pass")
+		g.run.HeadSHA = g.branchHead
+		later := g.pushToBranch(t)
+		if err := g.w.review(context.Background(), g.run, g.w.log, nil); err != nil {
+			t.Fatal(err)
+		}
+		rep := g.lastReport(t)
+		moved, _ := rep["head_moved"].(map[string]any)
+		if rep["status"] != "failed" || moved == nil || moved["from"] != g.branchHead || moved["to"] != later || moved["local"] != nil {
+			t.Fatalf("a moved branch is handed back with its new head: %v", rep)
+		}
+		if _, ran := g.saw(t, "head"); ran {
+			t.Fatal("no agent may run on a branch that moved on")
+		}
+	})
+	t.Run("commits in the clone only", func(t *testing.T) {
+		g := newQAStack(t, checkoutBranch, "pass")
+		g.run.HeadSHA = g.branchHead
+		// A developer commits on the branch in the clone, without pushing.
+		gitT(t, g.clone, "fetch", "-q", "origin", "agent/x:agent/x")
+		gitT(t, g.clone, "checkout", "-q", "agent/x")
+		if err := os.WriteFile(filepath.Join(g.clone, "mine.txt"), []byte("mine\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gitT(t, g.clone, "add", "mine.txt")
+		gitT(t, g.clone, "-c", "user.name=dev", "-c", "user.email=d@d", "commit", "-q", "-m", "a developer's fix")
+		local := gitT(t, g.clone, "rev-parse", "HEAD")
+		gitT(t, g.clone, "checkout", "-q", "main")
+		if err := g.w.review(context.Background(), g.run, g.w.log, nil); err != nil {
+			t.Fatal(err)
+		}
+		moved, _ := g.lastReport(t)["head_moved"].(map[string]any)
+		if moved == nil || moved["to"] != local || moved["local"] != true {
+			t.Fatalf("commits only in the clone are handed back as local: %v", g.lastReport(t))
+		}
+	})
+	t.Run("the branch was rewritten", func(t *testing.T) {
+		g := newQAStack(t, "", "pass")
+		g.run.HeadSHA = g.branchHead
+		other := filepath.Join(t.TempDir(), "other")
+		gitT(t, filepath.Dir(other), "clone", "-q", "-b", "agent/x", g.origin, other)
+		gitT(t, other, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--amend", "-m", "rewritten")
+		gitT(t, other, "push", "-q", "--force", "origin", "agent/x")
+		err := g.w.review(context.Background(), g.run, g.w.log, nil)
+		var p *needsPersonError
+		if !errors.As(err, &p) || !strings.Contains(err.Error(), "rewritten") {
+			t.Fatalf("a rewritten branch stops for a person: %v", err)
+		}
+	})
+	t.Run("the commit is not on origin", func(t *testing.T) {
+		g := newQAStack(t, "", "pass")
+		g.run.HeadSHA = strings.Repeat("e", 40)
+		if err := g.w.review(context.Background(), g.run, g.w.log, nil); !isRetryable(err) || !strings.Contains(err.Error(), notPushedMarker) {
+			t.Fatalf("an implemented commit origin lacks is retried: %v", err)
+		}
+	})
+	t.Run("the agent moved the checkout", func(t *testing.T) {
+		g := newQAStack(t, "", "moves")
+		g.run.HeadSHA = g.branchHead
+		if err := g.w.review(context.Background(), g.run, g.w.log, nil); !isRetryable(err) || !strings.Contains(err.Error(), "moved from "+shortSHA(g.branchHead)) {
+			t.Fatalf("a result about another commit is not used: %v", err)
+		}
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		if len(g.reports) != 0 {
+			t.Fatalf("nothing is reported for it: %v", g.reports)
+		}
+	})
 }

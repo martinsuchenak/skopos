@@ -54,6 +54,7 @@ func (s *Service) queueGroup(ctx context.Context, in QueueInput, members []Membe
 			PlanRevID: strings.TrimSpace(in.PlanRevID), Stage: in.Stage,
 			Runner: m.Runner, Focus: m.Focus, GroupID: g.ID,
 			Branch: strings.TrimSpace(in.Branch), BaseSHA: strings.TrimSpace(in.BaseSHA),
+			HeadSHA:   strings.TrimSpace(in.HeadSHA),
 			CreatedAt: now, UpdatedAt: now,
 		})
 	}

@@ -55,7 +55,7 @@ type Summary struct {
 // actions after an automatic approval that count as a person's input.
 var inputActions = map[string]bool{
 	"inbox.request_changes": true, "inbox.retry": true, "inbox.answer": true,
-	"inbox.finding_waive": true, "inbox.second_opinion": true,
+	"inbox.finding_waive": true, "inbox.second_opinion": true, "inbox.check_commits": true,
 }
 
 const maxSummaryPages = 50

@@ -271,6 +271,10 @@ func TestChaining(t *testing.T) {
 	if len(rruns) != 1 || rruns[0].Stage != StageReview || rruns[0].Runner != "gemini" {
 		t.Fatalf("review run not queued: %+v", rruns)
 	}
+	// It reviews the commit the implementation pushed, not the branch tip.
+	if rruns[0].HeadSHA != "abc" {
+		t.Fatalf("the review run is pinned to the implemented head: %q", rruns[0].HeadSHA)
+	}
 	// Review success -> in_review (no qa preference configured).
 	run, _ = s.ClaimNext(ctx, ClaimInput{WorkerID: "w-gemini", Runners: []string{"gemini"}, Workspaces: []string{"ws-a"}})
 	if run == nil || run.Stage != StageReview {
@@ -309,8 +313,8 @@ func TestChainingQAWithoutReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	queued, _ := s.List(ctx, StatusQueued, "item-1")
-	if len(queued) != 1 || queued[0].Stage != StageQA || queued[0].Runner != "gemini" {
-		t.Fatalf("qa run not queued after implement: %+v", queued)
+	if len(queued) != 1 || queued[0].Stage != StageQA || queued[0].Runner != "gemini" || queued[0].HeadSHA != "abc" {
+		t.Fatalf("qa run not queued after implement, pinned to its head: %+v", queued)
 	}
 	for _, m := range moved {
 		if strings.HasPrefix(m, "item-1:in_review") {

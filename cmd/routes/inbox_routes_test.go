@@ -36,6 +36,9 @@ func (s *noopInboxStore) SetBranchRef(context.Context, string, string, string, t
 }
 func (s *noopInboxStore) SetFlow(context.Context, string, string, time.Time) error { return nil }
 func (s *noopInboxStore) PutOutcome(context.Context, string, inbox.Outcome) error  { return nil }
+func (s *noopInboxStore) PutBranchTip(context.Context, string, string, *inbox.BranchTip) error {
+	return nil
+}
 func (s *noopInboxStore) GetOutcome(context.Context, string) (*inbox.Outcome, error) {
 	return nil, nil
 }

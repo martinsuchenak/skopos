@@ -142,6 +142,10 @@ type Run struct {
 	// (observed.go): an implementation's change, a plan's size and impact.
 	// Read only by GetFull (GET /api/runs/{id}); lists leave it out.
 	Observed *Observed `json:"observed,omitempty"`
+	// AdoptFrom: an implement run that takes in the commits pushed to the
+	// branch after this commit (adopt.go): it runs setup and the checks on
+	// the branch as it is, with no agent turn unless a check fails.
+	AdoptFrom string `json:"adopt_from,omitempty"`
 	// ConfigRev: the workspace's effective config the claim named
 	// (internal/wsconfig; "" = the workspace is not managed, the worker
 	// uses its own file). The worker fetches exactly this revision and runs
@@ -404,6 +408,10 @@ type ReportInput struct {
 	FindingAnswers []findings.Answer `json:"finding_answers,omitempty"`
 	// Observed: what the run saw (observed.go); nil keeps what is stored.
 	Observed *Observed `json:"observed,omitempty"`
+	// HeadMoved: a review or QA run found commits on the branch after the
+	// one it was given; it tested nothing, and the server checks those
+	// commits first (adopt.go).
+	HeadMoved *HeadMoved `json:"head_moved,omitempty"`
 	// FindingsListed: how many earlier findings the run's prompt listed
 	// for it to answer (0 when the worker could not read them). Absent
 	// from a worker that does not list them by name; only then does a
@@ -550,8 +558,14 @@ type QueueInput struct {
 	// preference; Single never opens a group (a seeded plan revise).
 	Runner string
 	Single bool
-	// HeadSHA pins a second opinion to the commit it reviews.
+	// HeadSHA pins the run to the commit it reviews: a second opinion's
+	// is the approver's; a review or QA run left without one gets the
+	// item's newest implementation head (Queue).
 	HeadSHA string
+	// AdoptFrom: see Run.AdoptFrom. PreferWorker: the worker the run waits
+	// for (preferGrace), set when the commits exist only in its clone.
+	AdoptFrom    string
+	PreferWorker string
 }
 
 // RunMCP is the MCP servers of one run, as its claim answer carries them

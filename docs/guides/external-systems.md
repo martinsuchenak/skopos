@@ -234,7 +234,7 @@ Each action names the endpoint to POST: `/api/inbox/{id}/<action>`.
 |---|---|
 | not started | `queue`, plus `review` when the item has a branch or ref |
 | `plan_approval` | `approve`, `request-changes`, `answers`, `reject` |
-| `sign_off` | `mark-done`, `request-changes`, `second-opinion` (when none is running), `reject` |
+| `sign_off` | `mark-done`, `request-changes`, `check-commits` (when the branch has commits after the tested one), `second-opinion` (when none is running), `reject` |
 | `blocked` | `retry`, `answers`, `second-opinion` (when its review blocked it), `reject` |
 | `failed` | `retry`, `answers`, `reject` |
 | agent working | `reject` |

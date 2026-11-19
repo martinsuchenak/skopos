@@ -168,6 +168,9 @@ type Item struct {
 	// Outcome: what became of the item's branch after sign-off, when the
 	// worker reported it (outcome.go).
 	Outcome *BranchOutcome `json:"outcome,omitempty"`
+	// BranchTip: commits on the branch after the one review and QA tested,
+	// as the implementing worker last saw them (branchtip.go).
+	BranchTip *BranchTip `json:"branch_tip,omitempty"`
 
 	// Read-path hydration. List rows carry only Excerpt (content is dropped);
 	// GetItem fills ContentHTML (dashboard-safe rendering) and, when the item

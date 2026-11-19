@@ -528,6 +528,21 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	// A run resumed after a pause during a fix round (quota) already has
 	// its implementation: it goes straight back to the checks, with the
 	// fix rounds it has used.
+	// An adopt run: the branch holds commits someone added after the
+	// implementation. They are checked like an implementation's — setup
+	// above, the checks, a fix round when one fails, the push — with no
+	// turn of the agent.
+	if run.AdoptFrom != "" && rec.ImplementedRun != run.ID {
+		head := headSHA(ctx, worktree)
+		if !isAncestor(ctx, worktree, run.AdoptFrom, head) {
+			return needsPerson(fmt.Errorf("the branch no longer holds the implemented commit %s (it is at %s): it was rewritten; Request changes or Retry to implement again from it", shortSHA(run.AdoptFrom), shortSHA(head)))
+		}
+		adopted := commitsAfter(ctx, worktree, run.AdoptFrom, head)
+		rl.notef("checking %s added after %s", plural(len(adopted), "commit"), shortSHA(run.AdoptFrom))
+		rec.ImplementedRun, rec.ImplementedSummary, rec.ImplementedNotes, rec.ImplementedVerified, rec.FixRounds = run.ID, adoptSummary(run.AdoptFrom, adopted), "", nil, 0
+		rec.FindingAnswers, rec.Adopted = nil, adopted
+		w.saveBranch(rec)
+	}
 	var ir implResult
 	if rec.ImplementedRun == run.ID {
 		ir = implResult{Status: "done", Summary: rec.ImplementedSummary, Notes: rec.ImplementedNotes, Verified: rec.ImplementedVerified}
@@ -727,6 +742,14 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		fields["observed"] = map[string]any{"change": c}
 	}
 	addWork(fields, ir.Verified)
+	if run.AdoptFrom != "" && len(rec.Adopted) > 0 {
+		observed, _ := fields["observed"].(map[string]any)
+		if observed == nil {
+			observed = map[string]any{}
+		}
+		observed["adopted"] = rec.Adopted
+		fields["observed"] = observed
+	}
 	if rec.ImplementedRun == run.ID && len(rec.FindingAnswers) > 0 {
 		fields["finding_answers"] = rec.FindingAnswers
 	}
@@ -748,6 +771,11 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 	// workspace's code_index switch is on; bounded, else at the next idle
 	// moment). A branch blocked by its checks is never reviewed: no index.
 	w.indexBranchNow(ctx, repo, run.WorkspaceID, branch)
+	// What review and QA will test, for the look at the branch at sign-off.
+	if rec.Head != head {
+		rec.Head, rec.TipReported = head, ""
+	}
+	w.saveBranch(rec)
 	log.Info("implementation finished", "head", head, "commits", commitCount(ctx, worktree, baseRef), "fix_rounds", rounds, "cost_usd", w.costs[run.ID])
 	return w.report(ctx, run, true, fields)
 }
@@ -982,6 +1010,27 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 		ref = run.HeadSHA
 	case br != nil:
 		ref = br.Head
+	case run.HeadSHA != "":
+		// Pinned by the server to the implemented commit: that commit is
+		// what is tested. Commits after it (a developer's, pushed or in
+		// this clone) are checked first: the run tests nothing and says so.
+		moved, err := pinnedHead(ctx, repo, run.Branch, run.HeadSHA)
+		if err != nil {
+			return fmt.Errorf("%s: %w", run.Stage, err)
+		}
+		if moved != nil {
+			where := "origin/" + run.Branch
+			if moved.Local {
+				where = run.Branch + " in this worker's clone"
+			}
+			runLogFrom(ctx).notef("%s has commits after %s (it is at %s): they are checked first", where, shortSHA(moved.From), shortSHA(moved.To))
+			log.Info("the branch moved on; handing back for the new commits to be checked", "from", shortSHA(moved.From), "to", shortSHA(moved.To), "local", moved.Local)
+			return w.report(ctx, run, false, map[string]any{
+				"reason":     fmt.Sprintf("%s: %s moved on from %s to %s; the new commits are checked first", run.Stage, where, shortSHA(moved.From), shortSHA(moved.To)),
+				"head_moved": moved, "head_sha": run.HeadSHA,
+			})
+		}
+		ref = run.HeadSHA
 	}
 	var qaSetup []Check
 	if qa {
@@ -1142,11 +1191,17 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 	if err != nil {
 		return err
 	}
-	log.Info("reviewing", "account", account.Name, "branch", run.Branch)
+	log.Info("reviewing", "account", account.Name, "branch", run.Branch, "head", shortSHA(reviewed))
 	res := w.runAgent(ctx, w.agentRun(wt, prompt, schema, w.reviewToolsFor(run.WorkspaceID), timeout, account, run, phase))
 	w.addCost(run, res)
 	if err := w.handleAgentOutcome(ctx, run, res, account, phase); err != nil {
 		return err
+	}
+	// The result is about the commit the run was given: an agent that
+	// moved the checkout (a pull, a checkout, a commit) tested something
+	// else, so its result is not used and the run is tried again.
+	if now := headSHA(ctx, wt); now != reviewed {
+		return retryable(fmt.Errorf("%s: the checkout moved from %s to %s while the agent ran; its result is not used", run.Stage, shortSHA(reviewed), shortSHA(now)))
 	}
 	var rr reviewResult
 	var scenarios workList

@@ -269,8 +269,16 @@ skopos workspace pipeline set --workspace github.com/you/repo --stage qa --runne
   system to test on, where its credentials are, how to sign in, what to do
   when it is not there. It is `.skopos/focus/e2e.md` in the repository, or a
   [brief held on the server](#briefs-on-the-server).
-- **Where QA runs.** At the head of the pushed branch, after the
-  repository's `setup` commands:
+- **Which commit.** The one the implementation pushed, never what the
+  branch holds when a worker gets to it. Reviews work the same way. Commits
+  someone added after the implementation (pushed, or in the worker's clone
+  with `checkout = "branch"`) are checked first, then review and QA run on
+  them: see [Someone committed to the branch?](guides/pipeline.md#6-run-your-first-item).
+  If the agent moves the checkout while it runs (a pull, a checkout, a
+  commit), its result is not used and the run is tried again. The sign-off
+  card counts only the reviews of the commit you sign.
+- **Where QA runs.** At that commit, after the repository's `setup`
+  commands:
   - with `checkout = "branch"`, in the clone itself, switched to that commit
     for the run. A system that runs from the clone runs the change, and the
     files git ignores (local configuration, credentials) are there. The

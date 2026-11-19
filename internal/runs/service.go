@@ -278,6 +278,12 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 			return nil, fmt.Errorf("%w: %s (%s)", ErrDuplicateActive, in.Stage, r.ID)
 		}
 	}
+	// A review or QA run tests the commit the implementation pushed, not
+	// whatever the branch points to when a worker gets to it: the worker
+	// checks that commit out and refuses a branch that moved on.
+	if (in.Stage == StageReview || in.Stage == StageQA) && strings.TrimSpace(in.HeadSHA) == "" {
+		in.HeadSHA = implementedHead(existing)
+	}
 	// Multi-agent stage (opt-in): two or more members routed to it open a
 	// group instead of a single run (a seeded revise is always single).
 	// The item's switch decides, at every queue: panel (or the workspace
@@ -300,6 +306,9 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 	if w := lastWorkerFor(existing, in.Stage, runner); w != "" {
 		preferWorker, preferUntil = w, now.Add(preferGrace)
 	}
+	if w := strings.TrimSpace(in.PreferWorker); w != "" {
+		preferWorker, preferUntil = w, now.Add(preferGrace)
+	}
 	r := Run{
 		ID:           ids.New(),
 		WorkspaceID:  in.WorkspaceID,
@@ -311,6 +320,7 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 		Branch:       strings.TrimSpace(in.Branch),
 		BaseSHA:      strings.TrimSpace(in.BaseSHA),
 		HeadSHA:      strings.TrimSpace(in.HeadSHA),
+		AdoptFrom:    strings.TrimSpace(in.AdoptFrom),
 		CreatedAt:    now,
 		UpdatedAt:    now,
 		PreferWorker: preferWorker,
@@ -320,6 +330,18 @@ func (s *Service) Queue(ctx context.Context, in QueueInput) (*Run, error) {
 		return nil, err
 	}
 	return &r, nil
+}
+
+// implementedHead is the head of the item's newest successful
+// implementation (existing is newest first): the commit its review and QA
+// test, and the one a sign-off approves. "" when there is none.
+func implementedHead(existing []Run) string {
+	for _, r := range existing {
+		if r.Stage == StageImplement && r.Status == StatusSucceeded && r.HeadSHA != "" {
+			return r.HeadSHA
+		}
+	}
+	return ""
 }
 
 // lastWorkerFor is the worker that ran the item's newest run of this stage
@@ -895,6 +917,12 @@ func (s *Service) chain(ctx context.Context, run *Run, in ReportInput) {
 		return
 	}
 	if s.itemTransition == nil {
+		return
+	}
+	// The branch moved on before a review or QA tested anything: the new
+	// commits are checked first, then review and QA run on them.
+	if in.HeadMoved != nil && (run.Stage == StageReview || run.Stage == StageQA) {
+		s.adoptHead(ctx, run, *in.HeadMoved)
 		return
 	}
 	// A group member's result is recorded on its run; the group decides

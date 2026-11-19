@@ -4,6 +4,39 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.45.0] — 2026-11-19
+
+### Added
+
+- Commits a developer adds to an item's branch between the stages are taken
+  in. Pushed to origin, or, with `checkout = "branch"`, made in the
+  worker's clone without pushing: a review or QA run that finds them tests
+  nothing and hands back. An implement run then checks the branch as it is
+  (setup, the checks, a fix round when a check fails, the push) without an
+  agent turn, and review and QA run again on the new head. The Implement
+  step and the item report name the commits it took in.
+- At sign-off, the worker that implemented an item looks at its branch
+  between runs. Commits added after review and QA are named on the
+  sign-off card as not reviewed or tested, with a **Check the new commits**
+  button (`POST /api/inbox/{id}/check-commits`, listed in the item state's
+  actions). The worker reports them to `PUT /api/inbox/{id}/branch-tip`.
+
+### Fixed
+
+- `worker check` and `worker install` refused a codex account that logs
+  in with `CODEX_ACCESS_TOKEN` in its `env`, because its login directory
+  holds no `auth.json`. Codex reads that token from its environment, so
+  such an account needs no login there.
+- Reviews and QA tested whatever the branch held when a worker got to
+  them, so a commit pushed after the implementation was tested in its
+  place, and the sign-off card still said the implemented commit had been
+  checked. Review and QA runs now carry the implemented commit and test
+  exactly that one. If the agent moves the checkout while it runs, its
+  result is not used and the run is tried again. A branch rewritten so it
+  no longer holds the commit stops for a person. The sign-off card counts
+  only the reviews of the commit being signed and names any that ran on
+  another.
+
 ## [0.44.0] — 2026-11-19
 
 ### Added

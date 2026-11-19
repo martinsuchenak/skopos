@@ -156,12 +156,19 @@ func codexHomeProblem(env map[string]string) string {
 	return ""
 }
 
+// codexAuthEnvs are credentials codex reads from its environment instead of
+// a login in CODEX_HOME: an access token (codex writes nothing to auth.json
+// for it) or an API key.
+var codexAuthEnvs = []string{"CODEX_ACCESS_TOKEN", "CODEX_API_KEY"}
+
 // codexLoginProblem: the account's CODEX_HOME must exist and hold codex's
-// login (auth.json) — unless it runs on CODEX_API_KEY. Codex itself only
-// says so when a run starts.
+// login (auth.json) — unless the account gives codex a credential in its
+// env. Codex itself only says so when a run starts.
 func codexLoginProblem(env map[string]string) string {
-	if _, ok := env["CODEX_API_KEY"]; ok {
-		return ""
+	for _, k := range codexAuthEnvs {
+		if _, ok := env[k]; ok {
+			return ""
+		}
 	}
 	home := codexHome(env)
 	return loginDirProblem(home, "auth.json", "CODEX_HOME="+home+" codex login --device-auth")

@@ -18,6 +18,9 @@ type Store interface {
 	// PutOutcome / GetOutcome: what became of the item's branch (outcome.go).
 	PutOutcome(ctx context.Context, workspaceID string, o Outcome) error
 	GetOutcome(ctx context.Context, itemID string) (*Outcome, error)
+	// PutBranchTip: where the branch stands after review and QA, nil to
+	// clear (branchtip.go).
+	PutBranchTip(ctx context.Context, itemID, workspaceID string, tip *BranchTip) error
 	GetItem(ctx context.Context, id string) (*Item, error)
 	// SetSlackThread records the item's Slack notification thread root.
 	SetSlackThread(ctx context.Context, id, ts string) error
@@ -125,12 +128,13 @@ const itemColumns = `
 	i.id, i.workspace_id, i.title, i.content, i.tags, i.status, i.priority,
 	i.claimed_by_agent_id, i.author_agent_id, i.plan_id, i.slack_thread_ts, i.agents, i.branch, i.ref, i.flow, i.external_url, i.needs, i.auto_approve_by, i.template, i.template_rev, i.created_at, i.updated_at, i.status_since_ms,
 	p.name, p.status,
-	o.state, o.pr_url, o.merge_sha, o.merged_ms, o.closed_ms
+	o.state, o.pr_url, o.merge_sha, o.merged_ms, o.closed_ms,
+	t.head, t.tip, t.worker, t.commits, t.local, t.rewritten, t.reported_ms
 `
 
 // itemFrom is the FROM of every item read: the linked plan's summary and
 // what became of the item's branch (item_outcomes).
-const itemFrom = `FROM inbox_items i LEFT JOIN plans p ON p.id = i.plan_id LEFT JOIN item_outcomes o ON o.item_id = i.id`
+const itemFrom = `FROM inbox_items i LEFT JOIN plans p ON p.id = i.plan_id LEFT JOIN item_outcomes o ON o.item_id = i.id LEFT JOIN item_branch_tips t ON t.item_id = i.id`
 
 // itemOrder is the partial-order contract: prioritized items first (ascending
 // priority), the unprioritized tail after them (newest first) — the board and
@@ -608,9 +612,12 @@ func scanItem(row rowScanner) (Item, error) {
 	var statusSince sql.NullInt64
 	var outState, outPR, outSHA sql.NullString
 	var outMerged, outClosed sql.NullInt64
+	var tipHead, tipSHA, tipWorker, tipCommits sql.NullString
+	var tipLocal, tipRewritten, tipReported sql.NullInt64
 	if err := row.Scan(&item.ID, &workspace, &item.Title, &item.Content, &tags, &item.Status, &priority,
 		&claimedBy, &item.AuthorAgentID, &planID, &item.SlackThreadTS, &agents, &item.Branch, &item.Ref, &item.Flow, &item.ExternalURL, &needs, &item.AutoApproveBy, &item.Template, &item.TemplateRev, &createdAt, &updatedAt, &statusSince, &planName, &planStatus,
-		&outState, &outPR, &outSHA, &outMerged, &outClosed); err != nil {
+		&outState, &outPR, &outSHA, &outMerged, &outClosed,
+		&tipHead, &tipSHA, &tipWorker, &tipCommits, &tipLocal, &tipRewritten, &tipReported); err != nil {
 		return item, fmt.Errorf("scanning inbox item: %w", err)
 	}
 	if workspace.Valid {
@@ -652,6 +659,7 @@ func scanItem(row rowScanner) (Item, error) {
 		}
 		item.Outcome = &BranchOutcome{State: outState.String, PRURL: outPR.String, MergeSHA: outSHA.String, MergedAt: at(outMerged), ClosedAt: at(outClosed)}
 	}
+	item.BranchTip = branchTipFrom(tipHead, tipSHA, tipWorker, tipCommits, tipLocal, tipRewritten, tipReported)
 	return item, nil
 }
 

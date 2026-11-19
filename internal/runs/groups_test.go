@@ -197,7 +197,13 @@ func TestGroupAnyBlocks(t *testing.T) {
 // All members pass → the item moves on to in_review (no qa configured).
 func TestGroupPassAdvances(t *testing.T) {
 	f := newGroupFixture(t, StagePolicy{}, Member{Runner: "claude"}, Member{Runner: "glm"})
-	mustQueue(t, f.s, rootCtx(), "ws-a", "item-1", StageReview)
+	// Every member reviews the commit given at the queue.
+	if _, err := f.s.Queue(rootCtx(), QueueInput{WorkspaceID: "ws-a", ItemID: "item-1", Stage: StageReview, HeadSHA: "abc"}); err != nil {
+		t.Fatal(err)
+	}
+	if queued, _ := f.s.List(rootCtx(), StatusQueued, "item-1"); len(queued) != 2 || queued[0].HeadSHA != "abc" || queued[1].HeadSHA != "abc" {
+		t.Fatalf("members are pinned to the head: %+v", queued)
+	}
 	a, b := f.claimAs(t, "w1", "claude"), f.claimAs(t, "w2", "glm")
 	f.report(t, a, "w1", true)
 	f.report(t, b, "w2", true)

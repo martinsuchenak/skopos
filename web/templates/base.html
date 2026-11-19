@@ -1844,6 +1844,11 @@
                         <template x-for="g in gateChecks()" :key="g.key">
                             <p class="stage-check w-full"><span class="stage-ic" :class="'stage-ic-' + g.ic" x-text="g.ic === 'y' ? '✓' : (g.ic === 'w' ? '!' : '○')"></span><span x-text="g.text"></span></p>
                         </template>
+                        <!-- Commits added after review and QA: one click checks
+                             them (setup and checks, then review and QA again). -->
+                        <div class="flex w-full flex-wrap gap-2" x-show="branchTipCheckable()">
+                            <button type="button" class="btn btn-sm" @click="checkNewCommits()" :disabled="!workflowActionReady('check_commits')">Check the new commits</button>
+                        </div>
                         <div class="flex w-full flex-wrap gap-2" x-show="signoffLinks().length > 0">
                             <template x-for="lk in signoffLinks()" :key="lk.key">
                                 <a class="btn btn-sm" :href="lk.href" target="_blank" rel="noopener noreferrer" x-text="lk.text + ' ↗'"></a>

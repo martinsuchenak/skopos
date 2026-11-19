@@ -354,6 +354,8 @@ func decisionWords(d Decision) string {
 		return "Finding waived"
 	case ActionAnswer:
 		return "Questions answered"
+	case ActionCheckCommits:
+		return "New commits sent to be checked"
 	case ActionAutoHeld:
 		return "Not approved automatically"
 	case ActionNothingToDo:
@@ -404,6 +406,16 @@ func (d *doc) implementation(r *Report) {
 			line += ", " + stamp(im.At)
 		}
 		d.w("- %s\n", line)
+		if im.AdoptFrom != "" {
+			d.w("- Took in %s added to the branch after %s; no agent implemented anything\n", plural(len(im.Adopted), "commit"), code(short(im.AdoptFrom)))
+			for _, c := range im.Adopted {
+				line := code(short(c.SHA)) + " " + oneLine(c.Subject)
+				if c.Author != "" {
+					line += " (" + oneLine(c.Author) + ")"
+				}
+				d.w("  - %s\n", line)
+			}
+		}
 		if im.HeadSHA != "" {
 			line := "Commit " + code(short(im.HeadSHA))
 			if im.Diffstat != "" {
@@ -435,7 +447,8 @@ func (d *doc) implementation(r *Report) {
 		if !d.full {
 			continue
 		}
-		if im.Summary != "" {
+		// An adopt run's summary only lists the commits named above.
+		if im.Summary != "" && im.AdoptFrom == "" {
 			d.w("%s\n\n", nest(im.Summary, 3))
 		}
 		d.workList("What the implementer verified", im.Work)

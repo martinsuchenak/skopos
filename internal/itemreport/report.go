@@ -215,6 +215,7 @@ const (
 	ActionSecondOpinion = "second_opinion"  // asked another runner for an opinion
 	ActionWaive         = "finding_waive"   // accepted a finding as it is
 	ActionAnswer        = "answer"          // answered questions without moving the item
+	ActionCheckCommits  = "check_commits"   // had commits added after review and QA checked
 	// ActionAutoHeld: the item asked for its plan to be approved
 	// automatically and something kept it for the person (the notes say
 	// what). Recorded by the server, not a person's action.
@@ -265,6 +266,10 @@ type Implementation struct {
 	PRURL      string    `json:"pr_url,omitempty"`
 	// Work: what the implementer says it verified, and what came of each.
 	Work []runs.WorkEntry `json:"work,omitempty"`
+	// AdoptFrom: the run took in commits added to the branch after this
+	// one (Adopted: those commits); no agent implemented anything.
+	AdoptFrom string               `json:"adopt_from,omitempty"`
+	Adopted   []runs.AdoptedCommit `json:"adopted,omitempty"`
 }
 
 // Review is one finished review, QA run or second opinion.
@@ -492,7 +497,7 @@ var personActions = map[string]string{
 	"inbox.queue": ActionQueue, "inbox.review": ActionReview, "inbox.approve": ActionApprove,
 	"inbox.request_changes": ActionRequestChange, "inbox.retry": ActionRetry, "inbox.reject": ActionReject,
 	"inbox.mark_done": ActionMarkDone, "inbox.second_opinion": ActionSecondOpinion,
-	"inbox.finding_waive": ActionWaive, "inbox.answer": ActionAnswer,
+	"inbox.finding_waive": ActionWaive, "inbox.answer": ActionAnswer, "inbox.check_commits": ActionCheckCommits,
 	"inbox.auto_approve_held": ActionAutoHeld, "inbox.nothing_to_do": ActionNothingToDo,
 }
 
@@ -725,6 +730,14 @@ func reviewStage(stage string) bool {
 
 func finished(s runs.Status) bool { return s == runs.StatusSucceeded || s == runs.StatusFailed }
 
+// adopted is the commits an adopt run took in.
+func adopted(run runs.Run) []runs.AdoptedCommit {
+	if run.Observed == nil {
+		return nil
+	}
+	return run.Observed.Adopted
+}
+
 // work is the list a run reported of what it did.
 func work(run runs.Run) []runs.WorkEntry {
 	if run.Observed == nil {
@@ -768,7 +781,7 @@ func (r *Report) fromRuns(all []runs.Run) {
 				RunID: run.ID, Runner: run.Runner, Status: string(run.Status), At: run.UpdatedAt, HeadSHA: run.HeadSHA,
 				Diffstat: strings.TrimSpace(run.Diffstat), Summary: strings.TrimSpace(run.ResultSummary), FailReason: strings.TrimSpace(run.FailReason),
 				Setup: checks(run.Setup), Checks: checks(run.Checks), FixRounds: run.FixRounds, Pushed: run.Pushed, PRURL: run.PRURL,
-				Work: work(run),
+				Work: work(run), AdoptFrom: run.AdoptFrom, Adopted: adopted(run),
 			})
 			if run.Branch != "" {
 				r.Item.Branch = run.Branch

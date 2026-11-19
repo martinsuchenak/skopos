@@ -642,6 +642,22 @@ CREATE TABLE IF NOT EXISTS qa_imports (
 -- merged, closed (without merging), or still open when it stops watching.
 -- One row per item, the newest report; recorded for later rules, decided on
 -- by nothing.
+-- Where an item's branch stands after its review and QA, when a developer
+-- committed to it afterwards (internal/inbox/branchtip.go): one row per item,
+-- the implementing worker's newest report; none = the branch is at the
+-- tested commit.
+CREATE TABLE IF NOT EXISTS item_branch_tips (
+    item_id      TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    head         TEXT NOT NULL,
+    tip          TEXT NOT NULL,
+    local        INTEGER NOT NULL DEFAULT 0 CHECK (local IN (0, 1)),
+    rewritten    INTEGER NOT NULL DEFAULT 0 CHECK (rewritten IN (0, 1)),
+    worker       TEXT NOT NULL DEFAULT '',
+    commits      TEXT NOT NULL DEFAULT '[]',
+    reported_ms  INTEGER NOT NULL
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS item_outcomes (
     item_id      TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,

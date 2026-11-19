@@ -350,6 +350,9 @@ func TestAccountLoginProblems(t *testing.T) {
 	if ps := problems(codex(map[string]string{"CODEX_HOME": missing, "CODEX_API_KEY": "k"})); len(ps) != 0 {
 		t.Fatalf("an API-key codex account needs no login: %v", ps)
 	}
+	if ps := problems(codex(map[string]string{"CODEX_HOME": empty, "CODEX_ACCESS_TOKEN": "t"})); len(ps) != 0 {
+		t.Fatalf("an access-token codex account needs no auth.json: %v", ps)
+	}
 
 	// claude
 	ps = problems(claude(map[string]string{"CLAUDE_CONFIG_DIR": missing}))

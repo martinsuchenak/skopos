@@ -294,3 +294,59 @@ func TestImplementChecksGate(t *testing.T) {
 		}
 	})
 }
+
+// An adopt run takes in what a developer committed after the
+// implementation: no turn of the agent, the checks on the branch as it is,
+// and the commits reported with the new head.
+func TestImplementAdoptsCommitsAfterIt(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	g := newGateStack(t, "fix", nil)
+	if err := g.w.stageImplement(t.Context(), g.run, g.w.log); err != nil {
+		t.Fatal(err)
+	}
+	first := g.lastReport(t)
+	implemented, _ := first["head_sha"].(string)
+	if first["status"] != "succeeded" || implemented == "" {
+		t.Fatalf("first implementation: %v", first)
+	}
+	rec, _ := g.w.loadBranch(g.run.ItemID)
+	if rec.Head != implemented {
+		t.Fatalf("the record keeps the implemented head: %q", rec.Head)
+	}
+	// A developer commits on the item's branch after the implementation.
+	wt := rec.Worktree
+	if err := os.WriteFile(filepath.Join(wt, "dev.txt"), []byte("by hand\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, wt, "add", "dev.txt")
+	gitT(t, wt, "-c", "user.name=Dev", "-c", "user.email=d@d", "commit", "-q", "-m", "tweak the copy")
+	tip := gitT(t, wt, "rev-parse", "HEAD")
+
+	rec.ImplementedRun = "an-earlier-run" // the adopt run is a run of its own
+	g.w.saveBranch(rec)
+	before := g.callLog(t)
+	g.run.AdoptFrom = implemented
+	if err := g.w.stageImplement(t.Context(), g.run, g.w.log); err != nil {
+		t.Fatal(err)
+	}
+	rep := g.lastReport(t)
+	if rep["status"] != "succeeded" || rep["head_sha"] != tip {
+		t.Fatalf("the adopt run reports the branch's new head: %v", rep)
+	}
+	if got := g.callLog(t); got != before {
+		t.Fatalf("no agent turn for passing checks: calls %q, before %q", got, before)
+	}
+	obs, _ := rep["observed"].(map[string]any)
+	adopted, _ := obs["adopted"].([]any)
+	if len(adopted) != 1 || adopted[0].(map[string]any)["author"] != "t" || adopted[0].(map[string]any)["subject"] != "tweak the copy" {
+		t.Fatalf("the adopted commits: %v", obs)
+	}
+	if s, _ := rep["summary"].(string); !strings.Contains(s, "Checked 1 commit added to the branch after "+shortSHA(implemented)) {
+		t.Fatalf("summary: %q", s)
+	}
+	if rec, _ := g.w.loadBranch(g.run.ItemID); rec.Head != tip {
+		t.Fatalf("the record moves to the adopted head: %q", rec.Head)
+	}
+}

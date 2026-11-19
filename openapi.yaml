@@ -3090,6 +3090,70 @@ paths:
         "403": { description: A run's token }
         "404": { description: Not found }
 
+  /api/inbox/{id}/branch-tip:
+    put:
+      summary: Report commits on the item's branch after the tested head (the worker's path; workspace scope required, never a run token)
+      description: >-
+        The implementing worker looks at the branch of an item waiting for
+        sign-off and reports commits added after the commit review and QA
+        tested: on origin, or (local) only in its branch-checkout clone. A
+        sha equal to head, or none, clears the report. The item carries it as
+        branch_tip.
+      operationId: putItemBranchTip
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                head: { type: string, description: The commit review and QA tested }
+                sha: { type: string, description: "The branch's tip now; empty or equal to head clears" }
+                local: { type: boolean, description: "The tip is only in the worker's clone, not pushed" }
+                rewritten: { type: boolean, description: The branch no longer holds head }
+                worker: { type: string, description: The reporting worker's id }
+                commits:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      sha: { type: string }
+                      author: { type: string }
+                      subject: { type: string }
+      responses:
+        "200": { description: The recorded report }
+        "204": { description: The report was cleared }
+        "400": { description: Invalid input }
+        "401": { description: Unauthorized }
+        "403": { description: A run's token }
+        "404": { description: Not found }
+
+  /api/inbox/{id}/check-commits:
+    post:
+      summary: Check the commits added after review and QA (approver permission required)
+      description: >-
+        in_review → implementing. Queues an implement run that takes in the
+        commits the worker reported after the tested head (setup, the checks,
+        a fix round when a check fails, the push; no agent turn otherwise),
+        after which review and QA run again on the new head. Refused when no
+        commits are reported, the branch was rewritten, or the report is about
+        an older head. Audited as inbox.check_commits.
+      operationId: inboxCheckCommits
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/InboxItemId" }]
+      responses:
+        "200":
+          description: The item, back at implementing
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InboxItem" }
+        "400": { description: Nothing to check, or the report is out of date }
+        "401": { description: Unauthorized }
+        "403": { description: Approver permission required }
+        "404": { description: Not found }
+
   /api/inbox/{id}/state:
     get:
       summary: Everything another system needs to show the item and act on it

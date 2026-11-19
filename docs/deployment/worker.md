@@ -797,6 +797,12 @@ worker looks up the items it implemented:
   stashed under the branch). After a day, because Reject can be undone, it closes the pull
   request without merging and cleans up as for done. A pull request someone
   else opened, on a branch the item took over, is never closed.
+- **Waiting for sign-off:** it fetches the item's branch and compares it
+  with the commit review and QA tested. Commits added since (on origin, or,
+  with `checkout = "branch"`, on the clone's own branch and not pushed) are
+  reported once per change, with author and subject, to
+  `PUT /api/inbox/{id}/branch-tip`: the sign-off card names them and
+  offers to check them.
 - **Not found:** skopos answers 404 both for a deleted item and for one
   outside the worker key's scope, so the worker never closes that item's pull
   request or deletes its branch. After a week, it removes the worktree.
@@ -813,6 +819,16 @@ files; keep one of the two (push the one you want and delete the other, or
 delete the worker's local branch to continue from the remote's) and retry.
 A pull request skopos opened and someone closed without merging is reopened
 rather than duplicated.
+
+**Commits someone added between the stages.** A review or QA run is given
+the commit the implementation pushed. When the branch holds commits after
+it (a developer's, on origin or in a branch-checkout clone), the run tests
+nothing and hands back; skopos then queues an implement run that takes them
+in: the branch as it is (local commits and origin's merged as above), setup,
+the checks, a fix round by the implementer when a check fails, and the
+push, with no agent turn when the checks pass. Its report lists the
+commits it took in, and review and QA run again on its head. A branch that
+no longer holds the tested commit (rewritten) stops for a person.
 
 ## Branch names and existing branches
 

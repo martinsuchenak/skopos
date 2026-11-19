@@ -109,7 +109,10 @@ group; a repository overrides only the stages it needs.
 - **Briefs without a commit.** What a focused agent is told can be held on
   the server (Workspaces → Settings → Briefs) instead of in `.skopos/focus/`:
   [Briefs on the server](../configuration.md#briefs-on-the-server).
-- **Review reads the code, QA tests it.** QA runs at the pushed commit after
+- **Review reads the code, QA tests it.** Both work on the commit the
+  implementation pushed; commits added to the branch since are checked
+  first. QA runs
+  at that commit after
   the repository's setup, with the instructions you give it in a focus
   brief, and asks you when it has nothing to test on. See
   [QA: testing the change](../configuration.md#qa-testing-the-change).
@@ -514,6 +517,27 @@ Mark done doesn't merge. Merge the pull request or the branch yourself: skopos
 never merges. With `pull_request = "draft"` in the repo's push config, the
 worker opens the pull request when it pushes. Rejecting an item closes its
 pull request. See [Pushing and pull requests](../deployment/worker.md#pushing-and-pull-requests).
+
+**Someone committed to the branch?** Review and QA test the commit the
+implementation pushed. When a developer commits to the branch between the
+stages (pushed to origin, or, with `checkout = "branch"`, in the worker's
+clone without pushing), skopos takes the commits in instead of testing
+around them:
+- **Before review or QA:** the stage tests nothing. The item's commits are
+  checked like an implementation's (setup, the checks, a fix round by the
+  implementer when a check fails, the push), with no agent turn otherwise,
+  and review and QA then run on the new head. The Implement step says
+  "Took in 2 commits added after a1b2c3d (Jane)". Commits only in one
+  worker's clone wait for that worker; when they still don't reach the
+  check after two tries, the item is blocked and asks you to push them.
+- **After QA, at sign-off:** the worker that implemented the item looks at
+  the branch between runs. The sign-off card names the new commits and
+  says they were not reviewed or tested; **Check the new commits** runs the
+  same check, then review and QA (`POST /api/inbox/{id}/check-commits`).
+  Mark done still signs the tested commit, without them.
+- **A rewritten branch** (a force-push or a rebase that dropped the tested
+  commit) stops for you: Request changes or Retry continues from the branch
+  as it is.
 
 **Want another pair of eyes first?** Ask for a **second opinion** in the
 preview (or `second codex` in Slack).
