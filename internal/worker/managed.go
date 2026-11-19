@@ -285,8 +285,8 @@ func (w *Worker) mcpDeny(ws string) []string {
 	return w.cfg.MCPDeny
 }
 
-// planToolsFor / implToolsFor: the stage's tools with the MCP server
-// prefixes the workspace's runs may use.
+// planToolsFor / implToolsFor / reviewToolsFor: the stage's tools with the
+// MCP server prefixes the workspace's runs may use.
 func (w *Worker) planToolsFor(ws string) []string {
 	if m := w.managedFor(ws); m != nil {
 		return append(slices.Clone(basePlanTools), m.mcpServers...)
@@ -299,6 +299,16 @@ func (w *Worker) implToolsFor(ws string) []string {
 		return append(slices.Clone(baseImplTools), m.mcpServers...)
 	}
 	return implTools
+}
+
+// reviewToolsFor is the review-like stages' tools (review, branch review,
+// second opinion, QA) with the workspace's MCP server prefixes, as for
+// plan and implement.
+func (w *Worker) reviewToolsFor(ws string) []string {
+	if m := w.managedFor(ws); m != nil {
+		return append(slices.Clone(baseReviewTools), m.mcpServers...)
+	}
+	return reviewTools
 }
 
 // configProblem is why a managed workspace's config cannot be used on this

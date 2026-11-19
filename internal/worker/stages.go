@@ -1161,7 +1161,7 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 		return err
 	}
 	log.Info("reviewing", "account", account.Name, "branch", run.Branch)
-	res := w.runAgent(ctx, w.agentRun(wt, prompt, schema, reviewTools, timeout, account, run, phase))
+	res := w.runAgent(ctx, w.agentRun(wt, prompt, schema, w.reviewToolsFor(run.WorkspaceID), timeout, account, run, phase))
 	w.addCost(run, res)
 	if err := w.handleAgentOutcome(ctx, run, res, account, phase); err != nil {
 		return err

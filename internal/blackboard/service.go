@@ -322,15 +322,7 @@ func formatMarkdown(branchName string, entries []Entry) string {
 		}
 		fmt.Fprintf(&sb, "#### %s\n", labels[t])
 		for _, e := range es {
-			ref := ""
-			if e.CodeRef != "" {
-				ref = fmt.Sprintf(" (%s)", sanitizeEntryText(e.CodeRef))
-			}
-			fmt.Fprintf(&sb, "- **%s**%s\n", sanitizeEntryText(e.Title), ref)
-			if e.Content != "" {
-				fmt.Fprintf(&sb, "  %s\n", sanitizeEntryText(e.Content))
-			}
-			fmt.Fprintf(&sb, "  _— %s_\n", sanitizeEntryText(e.AuthorAgentID))
+			writeEntry(&sb, e)
 		}
 		sb.WriteString("\n")
 	}

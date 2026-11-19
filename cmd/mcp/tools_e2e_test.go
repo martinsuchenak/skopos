@@ -333,6 +333,12 @@ func TestMCPReadToolsAcceptAliases(t *testing.T) {
 	if !bytes.Contains([]byte(found), []byte("agent-x")) {
 		t.Fatalf("expected author in search result: %s", found)
 	}
+	// The whole bundle comes once, as text with each entry's id: not the
+	// text and the entries again as JSON.
+	whole := callText(t, h, sessionID, 6, "blackboard_read", map[string]any{"workspace_id": "ws-alias"})
+	if !strings.Contains(whole, "alias probe") || !strings.Contains(whole, ", id ") || strings.Contains(whole, `"entries"`) {
+		t.Fatalf("blackboard_read bundle: %s", whole)
+	}
 }
 
 func mustOpenDB(t *testing.T) *sql.DB {

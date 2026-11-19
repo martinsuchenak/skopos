@@ -57,16 +57,20 @@ var baseImplTools = []string{"Read", "Edit", "Write", "MultiEdit", "Glob", "Grep
 	"Bash(git show:*)", "Bash(git restore:*)", "Bash(pwd)", "Bash(ls:*)", "Bash(find:*)", "Bash(grep:*)", "Bash(rg:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(mkdir:*)"}
 var implTools = baseImplTools
 
-var reviewTools = []string{"Read", "Glob", "Grep", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)"}
+var baseReviewTools = []string{"Read", "Glob", "Grep", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)"}
+var reviewTools = baseReviewTools
 
 // ApplyMCPServers extends the tool allowlists with the configured MCP
 // servers (the agent may use them; the deny list still wins per tool).
+// Every stage gets them: plan, implement, and the review-like stages
+// (review, branch review, second opinion, QA).
 func (w *Worker) ApplyMCPServers() {
 	if len(w.cfg.MCPServers) == 0 {
 		return
 	}
 	planTools = append(append([]string{}, basePlanTools...), w.cfg.MCPServers...)
 	implTools = append(append([]string{}, baseImplTools...), w.cfg.MCPServers...)
+	reviewTools = append(append([]string{}, baseReviewTools...), w.cfg.MCPServers...)
 }
 
 // settingsJSON merges the hard guards with the deployment's MCP deny list

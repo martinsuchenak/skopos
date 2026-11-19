@@ -75,7 +75,7 @@ Start a Claude Code session in any directory. Open the Skopos dashboard at `http
 Once MCP is connected, Claude Code automatically has access to two blackboard tools:
 
 - **`blackboard_write`** — record a finding, decision, bug, debt, warning, or context note
-- **`blackboard_read`** — fetch the Knowledge Bundle for the current branch (structured entries + formatted markdown)
+- **`blackboard_read`** — fetch the Knowledge Bundle for the current branch as text, each entry with its id; at most 32 KB, the branch's own entries and the newest first, with a closing line when entries were left out (narrow with `q`, `entry_type` or `author`)
 
 Typical workflow:
 

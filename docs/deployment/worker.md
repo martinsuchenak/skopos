@@ -509,7 +509,9 @@ These hold for every runner, regardless of configuration.
   key: see [Skopos tools for agent runs](#skopos-tools-for-agent-runs)). Put
   the servers runs may use in a JSON file (`{"mcpServers": {...}}`, Claude
   Code's shape; opencode and Codex get it translated), point `worker.mcp_config` at
-  it, and allowlist their tool prefixes in `mcp_servers`. A workspace whose
+  it, and allowlist their tool prefixes in `mcp_servers`: every stage may
+  call those tools, reviews and QA included, except what `mcp_deny` names.
+  A workspace whose
   config on the server names its MCP servers gets those instead, with each
   run: see [MCP servers from the server](#mcp-servers-from-the-server).
 - **MCP command servers** <a id="mcp-command-servers"></a>are processes the

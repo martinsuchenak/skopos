@@ -323,6 +323,14 @@ func TestPerWorkspaceSettings(t *testing.T) {
 	if tools := w.planToolsFor("ws"); !slices.Contains(tools, "mcp__srv") || slices.Contains(tools, "mcp__local") {
 		t.Fatalf("the workspace's MCP prefixes replace the worker's: %v", tools)
 	}
+	// A review (and a branch review, second opinion or QA) gets the MCP
+	// servers too, beside its read-only tools.
+	if tools := w.reviewToolsFor("ws"); !slices.Contains(tools, "mcp__srv") || slices.Contains(tools, "mcp__local") || !slices.Contains(tools, "Bash(git diff:*)") || slices.Contains(tools, "Edit") {
+		t.Fatalf("review tools of the managed workspace: %v", tools)
+	}
+	if !slices.Contains(w.reviewToolsFor("free"), "mcp__local") {
+		t.Fatalf("an unmanaged workspace's review keeps the worker's MCP prefixes: %v", w.reviewToolsFor("free"))
+	}
 	if w.planTimeout("free") != 7*time.Minute || !slices.Equal(w.mcpDeny("free"), []string{"mcp__local__deny"}) || !slices.Contains(w.implToolsFor("free"), "mcp__local") {
 		t.Fatalf("an unmanaged workspace keeps the worker's own: %s %v", w.planTimeout("free"), w.mcpDeny("free"))
 	}

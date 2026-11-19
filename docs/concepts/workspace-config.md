@@ -464,8 +464,9 @@ skopos group config set --group acme \
   gets no runs of the workspace and shows as unhealthy for it, with that
   command. The root key counts as a worker key.
 - **`mcp` says which servers a workspace's runs get;** `mcp_servers` says
-  which of their tools a run may call (`mcp__router` for all of them,
-  `mcp__router__search` for one), and `mcp_deny` which it may not. A
+  which of their tools a run of any stage may call (`mcp__router` for all
+  of them, `mcp__router__search` for one), and `mcp_deny` which it may not.
+  Reviews, second opinions and QA get them as plan and implement do. A
   server in `mcp` without an entry in `mcp_servers` that allows its tools
   is refused.
 - **Once a workspace's config sets `mcp`, the server holds its runs' MCP

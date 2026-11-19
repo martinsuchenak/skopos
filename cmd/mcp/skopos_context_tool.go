@@ -62,10 +62,12 @@ func buildSnapshot(
 		for _, e := range bundle.Entries {
 			byType[string(e.EntryType)]++
 		}
+		text, shown := bundle.ForAgent(branch, blackboard.MaxAgentBytes)
 		snapshot["blackboard"] = map[string]any{
 			"total":    len(bundle.Entries),
+			"shown":    shown,
 			"by_type":  byType,
-			"markdown": bundle.MarkdownBundle,
+			"markdown": text,
 		}
 	}
 

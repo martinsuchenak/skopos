@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.43.0] — 2026-11-19
+
+### Changed
+
+- A workspace's `mcp_servers` now applies to reviews, branch reviews,
+  second opinions and QA as it does to plan and implement: those runs may
+  call the allowed MCP tools too, except what `mcp_deny` names.
+- `blackboard_read` returns the knowledge bundle once, as text with each
+  entry's id, and at most 32 KB of it: the branch's own entries first, then
+  the newest, with a closing line saying how many were left out and how to
+  narrow the read (`q`, `entry_type`, `author`). It no longer adds the same
+  entries again as JSON. `skopos_context` holds the same bounded text and
+  says how many entries it shows.
+
 ## [0.42.0] — 2026-11-19
 
 ### Added

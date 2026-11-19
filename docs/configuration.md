@@ -85,7 +85,7 @@ walkthrough.
 | `worker.plan_timeout` / `worker.impl_timeout` | — | `10m` / `90m` | Agent run timeouts (review uses the plan timeout) |
 | `worker.qa_timeout` | — | `30m` | How long a QA run's agent may take: it tests the change on a running system ([QA](#qa-testing-the-change)) |
 | `worker.mcp_config` | — | — | JSON file with the MCP servers pipeline runs get (Claude Code `mcpServers` shape); required when `mcp_servers` is set |
-| `worker.mcp_servers` | — | — | MCP tool prefixes allowed in plan/implement runs, e.g. `["mcp__skopos"]` |
+| `worker.mcp_servers` | — | — | MCP tool prefixes runs of every stage may call (plan, implement, review, branch review, second opinion, QA), e.g. `["mcp__router"]`; `mcp_deny` still wins |
 | `worker.mcp_deny` | — | none | MCP tools denied in every run (added to the built-in git/network denials) |
 | `worker.profiles.<name>.<stage>` | — | — | Operator-supplied stage executor (`plan`/`implement`/`review`/`qa`): `wrapper` (placeholders `{dir}` `{gitdir}` `{login}` `{rundir}` `{cli}` `{run}` `{stage}` `{workspace}`), `settings`, `tools`, `env` — see [deployment/worker.md](deployment/worker.md#containing-agent-runs). For a workspace the server manages (with `server_commands`), `tools`, `env` and the settings besides `sandbox` come from the server instead |
 | — | `--env-file` / `SKOPOS_WORKER_ENV` | `<config-dir>/skopos-worker.env` when present | `KEY=VALUE` secrets loaded before the config (real environment wins) |

@@ -51,11 +51,15 @@ func registerBlackboardReadTool(server *mcplib.Server, service *blackboard.Servi
 				}
 				return mcplib.NewToolResponseJSON(map[string]any{"entries": entries, "total": len(entries)}), nil
 			}
-			bundle, err := service.Bundle(ctx, workspaceID, req.StringOr("branch", ""), req.StringOr("session_id", ""))
+			branch := req.StringOr("branch", "")
+			bundle, err := service.Bundle(ctx, workspaceID, branch, req.StringOr("session_id", ""))
 			if err != nil {
 				return nil, toolError(err)
 			}
-			return mcplib.NewToolResponseJSON(bundle), nil
+			// One copy, bounded (blackboard.MaxAgentBytes): the entries as
+			// text with their ids, not the text and the entries again as JSON.
+			text, _ := bundle.ForAgent(branch, blackboard.MaxAgentBytes)
+			return mcplib.NewToolResponseText(text), nil
 		},
 	)
 }

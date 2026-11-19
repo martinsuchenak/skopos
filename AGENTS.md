@@ -149,7 +149,7 @@ Every domain package follows `handler → service → storage` layering. Storage
 Three scopes: `session` (requires `session_id`, cascade-deleted with session via the `blackboard_entries.session_id` foreign key), `branch` (requires `branch_name`), `project` (global).
 Six entry types: `finding`, `decision`, `warning`, `context`, `bug`, `debt`.
 `bug` and `debt` are "floating" — always included in reads regardless of branch filter.
-Read returns both structured `entries` array and a `markdown_bundle` text block.
+REST `GET /api/blackboard/entries` returns both a structured `entries` array and a `markdown_bundle` text block. The MCP `blackboard_read` (whole bundle) and `skopos_context` hand an agent ONE copy, as text with each entry's id, bounded by `blackboard.MaxAgentBytes` (`Bundle.ForAgent`: the branch's and session's own entries first, then newest; a closing line says how many were left out) — a workspace's project entries come with every read and once filled a run's context with 300 KB.
 
 ## Plans
 
