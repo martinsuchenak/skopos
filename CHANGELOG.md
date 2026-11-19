@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.43.1] — 2026-11-19
+
+### Fixed
+
+- With `checkout = "branch"`, a run after an implementation (QA, a branch
+  check, a resumed round) skipped setup because the clone counted as set
+  up for the branch's new head. Setup is now skipped only at the head it
+  ran at, so commits made after it (a new migration, a dependency change)
+  get set up before the next run uses the clone.
+
 ## [0.43.0] — 2026-11-19
 
 ### Changed

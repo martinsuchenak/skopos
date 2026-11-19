@@ -84,12 +84,35 @@ func TestBranchCheckoutImplement(t *testing.T) {
 			t.Fatalf("record: %+v", rec)
 		}
 	})
-	for _, other := range []bool{false, true} {
-		name := "a pause stashes the uncommitted work; the resume skips setup"
-		if other {
-			name = "a resume after another branch's setup sets the clone up again"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		marker    func(t *testing.T, clone, branch string) // the setup record before the resume
+		skip      bool
+		setupRuns int
+	}{
+		{
+			// The paused round committed after its setup: those commits
+			// may hold a migration no setup has applied.
+			name:      "a pause stashes the uncommitted work; the resume after new commits sets up again",
+			setupRuns: 2,
+		},
+		{
+			name: "a resume at the head setup ran at skips setup",
+			marker: func(t *testing.T, clone, branch string) {
+				writeCloneSetup(t.Context(), clone, cloneSetup{Branch: branch, Head: gitOut(t, clone, "rev-parse", branch)})
+			},
+			skip:      true,
+			setupRuns: 1,
+		},
+		{
+			name: "a resume after another branch's setup sets the clone up again",
+			marker: func(t *testing.T, clone, _ string) {
+				writeCloneSetup(t.Context(), clone, cloneSetup{Branch: "agent/other", Head: "x"})
+			},
+			setupRuns: 2,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			mark := filepath.Join(t.TempDir(), "setup-runs")
 			g := newGateStack(t, "quota", nil, "echo ran >> "+mark)
 			repo := g.w.cfg.Repos["ws"]
@@ -106,8 +129,11 @@ func TestBranchCheckoutImplement(t *testing.T) {
 			if fileExists(filepath.Join(repo.Path, "wip.txt")) || len(stashRefs(t.Context(), repo.Path, stashLabel(rec.Branch))) != 1 {
 				t.Fatal("the uncommitted work must be stashed under the branch")
 			}
-			if other {
-				writeCloneSetup(t.Context(), repo.Path, cloneSetup{Branch: "agent/other", Head: "x"})
+			if cs := readCloneSetup(t.Context(), repo.Path); cs.Branch != rec.Branch || cs.Head == gitOut(t, repo.Path, "rev-parse", rec.Branch) {
+				t.Fatalf("the setup record must keep the head setup ran at, not the paused round's commits: %+v", cs)
+			}
+			if tc.marker != nil {
+				tc.marker(t, repo.Path, rec.Branch)
 			}
 			rl, lines := captureRunLog(g.run)
 			if err := g.w.stageImplement(withRunLog(t.Context(), rl), g.run, g.w.log); err != nil {
@@ -115,8 +141,8 @@ func TestBranchCheckoutImplement(t *testing.T) {
 			}
 			// The live view names every step before the agent starts.
 			if got := lines(); !strings.Contains(got, "fetching and checking out "+rec.Branch+" in the clone …") ||
-				strings.Contains(got, "setup skipped") == other {
-				t.Fatalf("run log (other branch's setup %v):\n%s", other, got)
+				strings.Contains(got, "setup skipped") != tc.skip {
+				t.Fatalf("run log (setup skipped: want %v):\n%s", tc.skip, got)
 			}
 			rep := g.lastReport(t)
 			if rep["status"] != "succeeded" {
@@ -128,9 +154,8 @@ func TestBranchCheckoutImplement(t *testing.T) {
 			if refs := stashRefs(t.Context(), repo.Path, stashLabel(rec.Branch)); len(refs) != 0 {
 				t.Fatalf("an applied stash is dropped: %v", refs)
 			}
-			want := map[bool]int{false: 1, true: 2}[other]
-			if b, _ := os.ReadFile(mark); strings.Count(string(b), "ran") != want {
-				t.Fatalf("setup ran %d times, want %d", strings.Count(string(b), "ran"), want)
+			if b, _ := os.ReadFile(mark); strings.Count(string(b), "ran") != tc.setupRuns {
+				t.Fatalf("setup ran %d times, want %d", strings.Count(string(b), "ran"), tc.setupRuns)
 			}
 		})
 	}

@@ -175,11 +175,13 @@ func runMarker(ctx context.Context, clone string) string {
 }
 
 // cloneSetup is what a branch-checkout clone was last set up for: the
-// branch, and its head when the clone was last parked on it. It lives in
-// the clone's git dir beside the lock, so every worker process sharing the
-// clone sees it. Switching back to that branch at that head needs no new
-// setup: a checkout leaves ignored files (dependencies, builds) alone, and
-// only another setup touches the database.
+// branch, and the head setup ran at. It lives in the clone's git dir beside
+// the lock, so every worker process sharing the clone sees it. Switching
+// back to that branch at that head needs no new setup: a checkout leaves
+// ignored files (dependencies, builds) alone, and only another setup
+// touches the database. Commits made after the setup (an implementation, a
+// fix round) are a new head: they can hold a migration or a dependency
+// change no setup has applied yet, so the next run sets up again.
 type cloneSetup struct {
 	Branch string `json:"branch"`
 	Head   string `json:"head"`
@@ -253,15 +255,11 @@ func parkClone(ctx context.Context, clone, defaultBranch, label string) error {
 }
 
 // park is parkClone when a run ends: on its own context, so a run cancelled
-// by a shutdown still leaves the clone on the default branch. A clone set
-// up for this branch records the head it leaves, for the next run's setup
-// check.
+// by a shutdown still leaves the clone on the default branch. The setup
+// record keeps the head setup ran at, never the head the run leaves.
 func (w *Worker) park(repo *Repo, branch string, log *slog.Logger) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	if cs := readCloneSetup(ctx, repo.Path); cs.Branch == branch {
-		writeCloneSetup(ctx, repo.Path, cloneSetup{Branch: branch, Head: headSHA(ctx, repo.Path)})
-	}
 	if err := parkClone(ctx, repo.Path, repo.DefaultBranch, stashLabel(branch)); err != nil {
 		log.Error("the clone could not be put back on the default branch; the next run on it tries again", "clone", repo.Path, "err", err)
 		return

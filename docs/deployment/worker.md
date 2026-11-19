@@ -1494,9 +1494,13 @@ setup_timeout = "45m"
    - else a new branch at the approved base, fetched first when the clone
      doesn't have that commit yet (another worker planned the item).
 3. **Setup:** setup runs unless the clone is still set up for this branch at
-   this head, for example when a paused run resumes and no other item has
-   been set up in the clone since. Make it idempotent: it runs again whenever
-   another item's branch was set up in between.
+   this head: setup last ran in the clone for this branch at this commit,
+   for example when a run is tried again before it committed anything.
+   Commits made after the setup (an implementation, a fix round) are a new
+   head, so the next run on the branch (QA, a resumed run, the next round)
+   sets up again and applies the migrations and dependency changes they
+   hold. Make it idempotent: it also runs again whenever another item's
+   branch was set up in between.
 4. **Work:** the agent implements, the checks run, and the branch is pushed,
    as in a worktree.
 5. **Back:** when the run ends, the clone goes back to the default branch,
