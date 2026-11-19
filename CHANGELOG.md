@@ -4,6 +4,17 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.45.2] — 2026-11-19
+
+### Fixed
+
+- The codex sandbox check from 0.45.1 held codex back on hosts where its
+  sandbox works. With codex installed from npm, the sandbox starts
+  through a helper codex creates in `CODEX_HOME`, and codex refuses to
+  create it in a temporary folder, where the check had put its own
+  `CODEX_HOME`. The check now uses the runner's own `CODEX_HOME` (its
+  first account's login folder), as a run does.
+
 ## [0.45.1] — 2026-11-19
 
 ### Fixed

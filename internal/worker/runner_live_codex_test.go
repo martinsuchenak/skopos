@@ -110,7 +110,9 @@ func TestCodexLockdownProbe(t *testing.T) {
 
 	// The worker's codex sandbox check agrees with this codex: its sandbox
 	// starts here, so the check must not hold codex back.
-	if why := codexSandboxProblem(ctx, "codex", os.Environ()); why != "" {
+	// With this machine's own CODEX_HOME, as a worker without a login
+	// folder of its own uses: codex keeps its sandbox helper there.
+	if why := codexSandboxProblem(ctx, "codex", codexHome(map[string]string{}), os.Environ()); why != "" {
 		t.Fatalf("the codex sandbox check fails where codex's sandbox works: %s", why)
 	}
 

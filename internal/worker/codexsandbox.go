@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -36,10 +35,19 @@ type codexSandboxCheck struct {
 	bad map[string]string
 }
 
-// codexSandboxPlan is what the check tries: the codex binary of each
-// runner of kind codex, and a key that changes when the check must run
-// again.
-func (c *Config) codexSandboxPlan() (bins map[string]string, key string) {
+// codexProbe is what the check starts for one codex runner: its binary,
+// and the CODEX_HOME its runs use (the login folder of its first account).
+// Codex keeps the helper its sandbox starts through in CODEX_HOME, and
+// refuses to create it in a temporary folder, so the check uses the
+// folder a run does.
+type codexProbe struct {
+	Bin  string `json:"bin"`
+	Home string `json:"home"`
+}
+
+// codexSandboxPlan is what the check tries, per runner of kind codex, and
+// a key that changes when the check must run again.
+func (c *Config) codexSandboxPlan() (probes map[string]codexProbe, key string) {
 	if codexSandboxGOOS != "linux" {
 		return nil, ""
 	}
@@ -48,38 +56,50 @@ func (c *Config) codexSandboxPlan() (bins map[string]string, key string) {
 		if err != nil {
 			continue
 		}
-		if cr, ok := r.(codexRunner); ok {
-			if bins == nil {
-				bins = map[string]string{}
-			}
-			bins[name] = cr.bin
+		cr, ok := r.(codexRunner)
+		if !ok {
+			continue
 		}
+		var env map[string]string
+		for _, a := range c.Accounts {
+			if accountRunner(a) == name {
+				env = c.agentEnv(a)
+				if a.LoginDir != "" {
+					env["CODEX_HOME"] = a.LoginDir
+				}
+				break
+			}
+		}
+		if probes == nil {
+			probes = map[string]codexProbe{}
+		}
+		probes[name] = codexProbe{Bin: cr.bin, Home: codexHome(env)}
 	}
-	if bins == nil {
+	if probes == nil {
 		return nil, ""
 	}
-	buf, _ := json.Marshal(map[string]any{"bins": bins, "path": os.Getenv("PATH")})
-	return bins, string(buf)
+	buf, _ := json.Marshal(map[string]any{"probes": probes, "path": os.Getenv("PATH")})
+	return probes, string(buf)
 }
 
 // codexSandboxProblems runs the check for every codex runner: why its
 // sandbox cannot start on this host, by runner name (nil = it can, or there
 // is no codex runner).
-func (c *Config) codexSandboxProblems(ctx context.Context, bins map[string]string) map[string]string {
+func (c *Config) codexSandboxProblems(ctx context.Context, probes map[string]codexProbe) map[string]string {
 	env := scrubEnv(nil, c.TokenEnvs(), c.envFileKeys)
-	byBin := map[string]string{}
+	seen := map[codexProbe]string{}
 	var out map[string]string
-	names := make([]string, 0, len(bins))
-	for name := range bins {
+	names := make([]string, 0, len(probes))
+	for name := range probes {
 		names = append(names, name)
 	}
 	slices.Sort(names)
 	for _, name := range names {
-		bin := bins[name]
-		why, seen := byBin[bin]
-		if !seen {
-			why = codexSandboxProblem(ctx, bin, env)
-			byBin[bin] = why
+		p := probes[name]
+		why, done := seen[p]
+		if !done {
+			why = codexSandboxProblem(ctx, p.Bin, p.Home, env)
+			seen[p] = why
 		}
 		if why != "" {
 			if out == nil {
@@ -94,7 +114,7 @@ func (c *Config) codexSandboxProblems(ctx context.Context, bins map[string]strin
 // checkCodexSandbox runs the check when it is due and records what it found
 // for ExecutorFor. It reports whether that changed.
 func (w *Worker) checkCodexSandbox(ctx context.Context) (changed bool) {
-	bins, key := w.cfg.codexSandboxPlan()
+	probes, key := w.cfg.codexSandboxPlan()
 	last := w.codexCheck
 	if key == "" {
 		w.codexCheck = codexSandboxCheck{}
@@ -105,11 +125,11 @@ func (w *Worker) checkCodexSandbox(ctx context.Context) (changed bool) {
 	if !due {
 		return false
 	}
-	bad := w.cfg.codexSandboxProblems(ctx, bins)
+	bad := w.cfg.codexSandboxProblems(ctx, probes)
 	if ctx.Err() != nil {
 		return false // shutting down: not a verdict
 	}
-	for name := range bins {
+	for name := range probes {
 		was, why := last.bad[name], bad[name]
 		switch {
 		case why != "" && why != was:
@@ -154,19 +174,18 @@ func (c *Config) codexSandboxBad(prof *StageProfile, runner string) string {
 }
 
 // codexSandboxProblem starts codex's sandbox with a run's permission profile
-// around a command that does nothing, in an empty CODEX_HOME (no login, no
-// config of the account's), and says why it failed ("" = it started, or
-// this codex has no sandbox command to tell).
-func codexSandboxProblem(ctx context.Context, bin string, env []string) string {
+// around a command that does nothing, with the runner's CODEX_HOME (home),
+// and says why it failed ("" = it started, or this codex has no sandbox
+// command to tell, or the home is not there yet: the login check says so).
+func codexSandboxProblem(ctx context.Context, bin, home string, env []string) string {
+	if fi, err := os.Stat(home); home == "" || err != nil || !fi.IsDir() {
+		return ""
+	}
 	dir, err := os.MkdirTemp("", "skopos-codex-check-")
 	if err != nil {
 		return ""
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
-	home := filepath.Join(dir, "home")
-	if err := os.Mkdir(home, 0o700); err != nil {
-		return ""
-	}
 	cctx, cancel := context.WithTimeout(ctx, stageCheckTimeout)
 	defer cancel()
 	// The filesystem a run gets, for a worktree in this folder: on Linux

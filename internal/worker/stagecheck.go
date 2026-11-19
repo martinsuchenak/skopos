@@ -370,8 +370,8 @@ func (c *Config) StageCheck(ctx context.Context) (held, notes []string) {
 			held = append(held, fmt.Sprintf("workspace %s, implement (push): %s", ws, res.push))
 		}
 	}
-	if bins, _ := c.codexSandboxPlan(); bins != nil {
-		bad := c.codexSandboxProblems(ctx, bins)
+	if probes, _ := c.codexSandboxPlan(); probes != nil {
+		bad := c.codexSandboxProblems(ctx, probes)
 		names := slices.Sorted(maps.Keys(bad))
 		for _, name := range names {
 			held = append(held, fmt.Sprintf("runner %s (unless wrapped): %s", name, clip(redact(bad[name]), maxCheckReason)))

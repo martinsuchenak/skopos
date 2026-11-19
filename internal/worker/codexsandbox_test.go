@@ -24,7 +24,7 @@ func fakeCodex(t *testing.T, out string, code int) (bin, log string) {
 	dir := t.TempDir()
 	bin, log = filepath.Join(dir, "codex"), filepath.Join(dir, "calls")
 	script := "#!/bin/sh\n" +
-		"printf '%s\\n' \"$*\" \"$PWD\" \"$CODEX_HOME\" \"$(ls -A \"$CODEX_HOME\" | wc -l | tr -d ' ')\" >> " + log + "\n" +
+		"printf '%s\\n' \"$*\" \"$PWD\" \"$CODEX_HOME\" >> " + log + "\n" +
 		"printf '%s\\n' '" + out + "' >&2\n" +
 		"exit " + string(rune('0'+code)) + "\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
@@ -37,34 +37,42 @@ func fakeCodex(t *testing.T, out string, code int) (bin, log string) {
 // empty CODEX_HOME, and turns codex's own words into the reason.
 func TestCodexSandboxProblem(t *testing.T) {
 	ctx := context.Background()
+	home := t.TempDir()
 	bin, log := fakeCodex(t, "", 0)
-	if why := codexSandboxProblem(ctx, bin, os.Environ()); why != "" {
+	if why := codexSandboxProblem(ctx, bin, home, os.Environ()); why != "" {
 		t.Fatalf("a sandbox that starts: %q", why)
 	}
 	calls, _ := os.ReadFile(log)
 	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
-	if len(lines) != 4 || !strings.HasPrefix(lines[0], "sandbox --permission-profile skopos -C ") || !strings.HasSuffix(lines[0], " -- true") ||
+	if len(lines) != 3 || !strings.HasPrefix(lines[0], "sandbox --permission-profile skopos -C ") || !strings.HasSuffix(lines[0], " -- true") ||
 		!strings.Contains(lines[0], "permissions.skopos.network.enabled=false") {
 		t.Fatalf("the run's profile around true: %q", lines)
 	}
-	if !strings.HasPrefix(lines[2], lines[1]) || lines[3] != "0" {
-		t.Fatalf("an empty CODEX_HOME of its own: %q", lines)
+	if lines[2] != home {
+		t.Fatalf("the runner's own CODEX_HOME, where codex keeps its sandbox helper: %q", lines)
 	}
 	if _, err := os.Stat(lines[1]); !os.IsNotExist(err) {
 		t.Fatalf("the probe's folder is removed: %v", err)
 	}
 
 	bin, _ = fakeCodex(t, "bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces.", 1)
-	if why := codexSandboxProblem(ctx, bin, os.Environ()); !strings.Contains(why, "user namespace") || !strings.Contains(why, "No permissions to create a new namespace") {
+	if why := codexSandboxProblem(ctx, bin, home, os.Environ()); !strings.Contains(why, "user namespace") || !strings.Contains(why, "No permissions to create a new namespace") {
 		t.Fatalf("the namespace refusal, with a hint: %q", why)
 	}
 	bin, _ = fakeCodex(t, "Error: sandbox failed", 1)
-	if why := codexSandboxProblem(ctx, bin, os.Environ()); why != "codex's sandbox cannot start: Error: sandbox failed" {
+	if why := codexSandboxProblem(ctx, bin, home, os.Environ()); why != "codex's sandbox cannot start: Error: sandbox failed" {
 		t.Fatalf("any other failure: %q", why)
 	}
 	bin, _ = fakeCodex(t, "error: unrecognized subcommand 'sandbox'", 2)
-	if why := codexSandboxProblem(ctx, bin, os.Environ()); why != "" {
+	if why := codexSandboxProblem(ctx, bin, home, os.Environ()); why != "" {
 		t.Fatalf("a codex without the command cannot be checked, and is not held: %q", why)
+	}
+	bin, log = fakeCodex(t, "bwrap: No permissions to create a new namespace", 1)
+	if why := codexSandboxProblem(ctx, bin, filepath.Join(home, "missing"), os.Environ()); why != "" {
+		t.Fatalf("a CODEX_HOME not there yet is the login check's to report: %q", why)
+	}
+	if _, err := os.Stat(log); !os.IsNotExist(err) {
+		t.Fatal("and codex is not started without it")
 	}
 }
 
@@ -76,14 +84,23 @@ func TestCodexSandboxHoldsCodexBack(t *testing.T) {
 	codexSandboxGOOS = "linux"
 	t.Cleanup(func() { codexSandboxGOOS = was })
 	c := executorConfig(t)
-	bin, _ := fakeCodex(t, "bwrap: No permissions to create a new namespace", 1)
+	bin, log := fakeCodex(t, "bwrap: No permissions to create a new namespace", 1)
 	c.RunnerSpecs["codex"].Bin = bin
+	login := t.TempDir()
+	for _, a := range c.Accounts {
+		if a.Runner == "codex" {
+			a.LoginDir = login
+		}
+	}
 	w := &Worker{cfg: c, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	ctx := context.Background()
 
 	before := c.ExecutorFor("bare", "review", "claude")
 	if !w.checkCodexSandbox(ctx) {
 		t.Fatal("the check's result is new")
+	}
+	if calls, _ := os.ReadFile(log); !strings.Contains(string(calls), "\n"+login+"\n") {
+		t.Fatalf("the check uses the codex account's login folder: %q", calls)
 	}
 	if got := c.ExecutorFor("bare", "review", "codex"); got != policy.NoExecutor(policy.NoneCheck) {
 		t.Fatalf("codex is held back: %s", got)
