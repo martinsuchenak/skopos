@@ -144,9 +144,11 @@ func fixture() (*Service, *inbox.Item) {
 	pushed := true
 	cost1, cost2 := 0.75, 1.5
 	all := fakeRuns{ // newest first, as the runs service lists them
-		{ID: "r6", Stage: runs.StageQA, Status: runs.StatusSucceeded, HeadSHA: "bbbbbbbbbbbbbbbb", Runner: "claude", ResultSummary: "works", CreatedAt: at(40), UpdatedAt: at(44)},
+		{ID: "r6", Stage: runs.StageQA, Status: runs.StatusSucceeded, HeadSHA: "bbbbbbbbbbbbbbbb", Runner: "claude", ResultSummary: "works", CreatedAt: at(40), UpdatedAt: at(44),
+			Usage: &runs.Usage{Counts: map[string]int64{"input_tokens": 10, "output_tokens": 5}, Models: map[string]map[string]int64{"claude-opus-5-5": {"input_tokens": 10}}}},
 		{ID: "r5", Stage: runs.StageReview, Status: runs.StatusSucceeded, HeadSHA: "bbbbbbbbbbbbbbbb", Runner: "claude", Focus: "security",
 			ResultSummary: "fixed", CreatedAt: at(35), UpdatedAt: at(38), CostUSD: &cost2,
+			Usage: &runs.Usage{Counts: map[string]int64{"input_tokens": 1000, "cache_read_tokens": 20000, "output_tokens": 500, "reasoning_tokens": 50}},
 			Facts: []byte(`{"name":"claude","kind":"claude","model":"sonnet","provider":"anthropic","executor":"local"}`)},
 		{ID: "r4", Stage: runs.StageImplement, Status: runs.StatusSucceeded, Branch: "agent/rate-limit", HeadSHA: "bbbbbbbbbbbbbbbb", Runner: "claude",
 			ResultSummary: "# Done\n\nMoved the counter.", Diffstat: "2 files changed", Pushed: &pushed, PRURL: "https://git.example.com/acme/shop/pull/3",
@@ -282,6 +284,9 @@ func TestBuild(t *testing.T) {
 	if r.CostUSD == nil || *r.CostUSD != 2.25 {
 		t.Fatalf("cost: %v", r.CostUSD)
 	}
+	if r.Usage == nil || r.Usage.Counts["input_tokens"] != 1010 || r.Usage.Counts["cache_read_tokens"] != 20000 || len(r.Runs[5].ModelsUsed) != 1 || r.Runs[5].ModelsUsed[0] != "claude-opus-5-5" {
+		t.Fatalf("usage: %+v, %+v", r.Usage, r.Runs[5])
+	}
 	if len(r.Findings) != 3 || !r.Findings[0].Earlier || r.Findings[2].Outcome != "waived by alex: a matter of taste" {
 		t.Fatalf("findings: %+v", r.Findings)
 	}
@@ -339,7 +344,9 @@ func TestMarkdown(t *testing.T) {
 		"### qa — claude-1\n\n#### Scenarios",
 		"| review · security | claude | sonnet | anthropic | wrapper:bwrap:abc | ",
 		"- Providers that received the code: openai (codex: gpt), anthropic (claude: sonnet)",
-		"- Cost as the runners reported it: $2.25",
+		"- Cost as the runners reported it: $2.25\n- Tokens as the runners reported them: 21k in (20k from the cache), 505 out (50 reasoning)\n",
+		"| 21k in · 500 out | $1.50 |",
+		"| claude | claude-opus-5-5 | ",
 	)
 	// Nothing an agent wrote sits at the level of the report's own parts.
 	for _, line := range strings.Split(full, "\n") {
@@ -361,7 +368,7 @@ func TestMarkdown(t *testing.T) {
 		"## Brief\n\nLimit requests per client.\n\n## Plan",
 		"Of commit `bbbbbbbbbb`, the newest reviewed (the full report has 1 earlier review):\n\n- Review · security · claude: passed\n- QA · claude: passed",
 		"2 findings: 1 fixed and confirmed, 1 waived.\n\n- rename | lim (nit, review · security): waived by alex: a matter of taste",
-		"- Providers that received the code: openai (codex: gpt), anthropic (claude: sonnet)\n- Runs: 7\n- Cost as the runners reported it: $2.25",
+		"- Providers that received the code: openai (codex: gpt), anthropic (claude: sonnet)\n- Runs: 7\n- Cost as the runners reported it: $2.25\n- Tokens as the runners reported them: 21k in",
 	)
 	mustLack(t, "the summary", summary, "Plan B", "Plan A", "### ", "| # |", "an old one", "noise", "#### Scenarios")
 	if Markdown(r, LevelFull) != full {
@@ -667,4 +674,14 @@ func TestOutcomeNamesTheMerge(t *testing.T) {
 	if got := strings.Join(outcome(r), " "); !strings.Contains(got, "closed without merging.") {
 		t.Fatalf("outcome: %q", got)
 	}
+}
+
+// Runs a worker finished without token counts are named beside the sum.
+func TestMarkdownRunsWithoutUsage(t *testing.T) {
+	r := &Report{Item: Item{ID: "i", Title: "t"}, Usage: &runs.Usage{Counts: map[string]int64{"input_tokens": 5}}, Runs: []Run{
+		{ID: "a", Stage: "plan", WorkerID: "w", Status: "succeeded", Usage: &runs.Usage{Counts: map[string]int64{"input_tokens": 5}}},
+		{ID: "b", Stage: "review", WorkerID: "w", Status: "failed"},
+		{ID: "c", Stage: "review", WorkerID: "w", Status: "running"},
+	}}
+	mustHold(t, "the summary", Markdown(r, LevelSummary), "- Tokens as the runners reported them: 5 in, 0 out\n- 1 run recorded no usage: a worker older than the record, or no agent started\n")
 }

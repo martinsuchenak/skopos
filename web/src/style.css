@@ -261,6 +261,11 @@ body.modal-open { overflow: hidden; }
 /* A comparison's score table is wider than a column: it scrolls on its own. */
 .plan-col .md-body table { display: block; max-width: 100%; overflow-x: auto; white-space: nowrap; }
 .light .plan-col { border-color: #e4e4e7; background: #fafafa; }
+/* The item report in its dialog: one scrolling column; wide tables
+   scroll on their own. */
+.report-body { min-height: 0; flex: 1 1 auto; overflow-y: auto; padding-right: 0.5rem; }
+.report-body table { display: block; max-width: 100%; overflow-x: auto; white-space: nowrap; }
+.report-body > h1:first-child { margin-top: 0; }
 .light .plan-col-head { border-color: #e4e4e7; background: #f4f4f5; }
 .stage-flag .stage-mark { border-color: #f59e0b; background: rgb(245 158 11 / 0.15); color: #fcd34d; }
 .stage-spin { animation: stage-spin 1.1s linear infinite; }

@@ -188,8 +188,10 @@ type AgentResult struct {
 	Structured json.RawMessage
 	Text       string
 	CostUSD    float64
-	ResetAt    time.Time // quota: when the allowance resets
-	Detail     string
+	// Usage: what the agent used, as its runner reported it (usage.go).
+	Usage   *Usage
+	ResetAt time.Time // quota: when the allowance resets
+	Detail  string
 }
 
 // scrubEnv removes credentials an agent must never use. Beyond the fixed
@@ -241,13 +243,53 @@ func scrubEnv(extra map[string]string, tokenEnvs, fileEnvKeys []string) []string
 }
 
 type claudeJSON struct {
-	Type             string          `json:"type"`
-	IsError          bool            `json:"is_error"`
-	Result           string          `json:"result"`
-	SessionID        string          `json:"session_id"`
-	StructuredOutput json.RawMessage `json:"structured_output"`
-	TotalCostUSD     float64         `json:"total_cost_usd"`
-	APIErrorStatus   *int            `json:"api_error_status"`
+	Type             string                     `json:"type"`
+	IsError          bool                       `json:"is_error"`
+	Result           string                     `json:"result"`
+	SessionID        string                     `json:"session_id"`
+	StructuredOutput json.RawMessage            `json:"structured_output"`
+	TotalCostUSD     float64                    `json:"total_cost_usd"`
+	APIErrorStatus   *int                       `json:"api_error_status"`
+	NumTurns         int64                      `json:"num_turns"`
+	DurationAPIMS    int64                      `json:"duration_api_ms"`
+	Usage            json.RawMessage            `json:"usage"`
+	ModelUsage       map[string]json.RawMessage `json:"modelUsage"`
+	SubagentStats    struct {
+		Spawned int64 `json:"spawned"`
+	} `json:"subagent_stats"`
+}
+
+// usage: what the run used. modelUsage is the whole process's, per model
+// (Claude Code may call more than one: its subagents, a fallback), like
+// total_cost_usd; the result's own usage is not — it leaves out subagents,
+// and when the stream holds more than one result event (one more after a
+// background subagent finished) the last one's covers only its own turns.
+// So the counts are modelUsage's, summed; the result's usage only for a
+// CLI that prints no modelUsage. turns: num_turns summed over every result
+// event of the stream (the catcher's), as each counts its own.
+func (out claudeJSON) usage(turns int64) *Usage {
+	u := &Usage{}
+	for model, raw := range out.ModelUsage {
+		for k, v := range usageFrom(raw, "context_window", "max_output_tokens", "cost_usd") {
+			u.ModelCount(model, k, v)
+			u.Count(k, v)
+		}
+	}
+	if len(out.ModelUsage) == 0 {
+		for k, v := range usageFrom(out.Usage) {
+			u.Count(k, v)
+		}
+	}
+	if turns == 0 {
+		turns = out.NumTurns
+	}
+	u.Count("turns", turns)
+	u.Count("api_ms", out.DurationAPIMS)
+	u.Count("subagents", out.SubagentStats.Spawned)
+	if u.Empty() {
+		return nil
+	}
+	return u
 }
 
 // runClaude executes the claude CLI headless with the guards applied.
@@ -311,7 +353,7 @@ func runClaude(ctx context.Context, r AgentRun) AgentResult {
 	if out.SessionID != "" {
 		res.SessionID = out.SessionID
 	}
-	res.Text, res.CostUSD, res.Structured = out.Result, out.TotalCostUSD, out.StructuredOutput
+	res.Text, res.CostUSD, res.Structured, res.Usage = out.Result, out.TotalCostUSD, out.StructuredOutput, out.usage(result.turnsTotal())
 	if !out.IsError && err == nil {
 		res.Outcome = OutcomeOK
 		return res
@@ -333,6 +375,7 @@ type claudeResultCatcher struct {
 	skipping bool // inside a line past maxEventLine: dropped up to its newline
 	last     []byte
 	plain    []byte
+	turns    int64 // num_turns summed over every result event
 }
 
 // maxEventLine bounds one stream line the catcher holds.
@@ -376,7 +419,20 @@ func (c *claudeResultCatcher) consider(line []byte) {
 	}
 	if probe.Type == "result" {
 		c.last = bytes.Clone(line)
+		var t struct {
+			NumTurns int64 `json:"num_turns"`
+		}
+		if json.Unmarshal(line, &t) == nil && t.NumTurns > 0 {
+			c.turns += t.NumTurns
+		}
 	}
+}
+
+// turnsTotal: the turns of every result event the stream held.
+func (c *claudeResultCatcher) turnsTotal() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.turns
 }
 
 // result is the result event ("" when the stream had none); a trailing

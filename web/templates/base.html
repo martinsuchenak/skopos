@@ -182,7 +182,7 @@
                                             <span class="shrink-0" x-text="session.agent_count + ' agents'"></span>
                                         </div>
                                         <div class="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-zinc-600">
-                                            <span x-text="'active ' + timeAgo(session.updated_at)"></span>
+                                            <span :title="timeFull(session.updated_at)" x-text="'active ' + timeWhen(session.updated_at)"></span>
                                             <span class="shrink-0" x-text="'ran ' + sessionDuration(session)"></span>
                                         </div>
                                     </button>
@@ -199,7 +199,7 @@
                             <h2 class="text-2xl font-semibold" x-text="selectedSession && selectedSession.title || 'No session selected'"></h2>
                             <p class="mt-1 text-sm text-zinc-400" x-text="selectedSession && workspaceLabel(selectedSession.workspace) || 'Reports appear here as agents check in.'"></p>
                             <p x-show="selectedSession" class="mt-0.5 text-xs text-zinc-600"
-                                x-text="selectedSession && ('started ' + formatTime(selectedSession.started_at) + ' · ran ' + sessionDuration(selectedSession) + ' · last activity ' + timeAgo(selectedSession.updated_at))"></p>
+                                x-text="selectedSession && ('started ' + formatTime(selectedSession.started_at) + ' · ran ' + sessionDuration(selectedSession) + ' · last activity ' + timeWhen(selectedSession.updated_at))"></p>
                         </div>
                         <span x-show="selectedSession" class="badge" :class="toneOf('status', selectedSession && selectedSession.status)" x-text="selectedSession && selectedSession.status"></span>
                     </div>
@@ -309,7 +309,7 @@
                                                 {{template "ws-badge" (dict "V" "entry" "Missing" "no workspace")}}
                                             </div>
                                             <div class="flex items-center gap-1">
-                                                <span class="text-xs text-zinc-600" x-text="formatDateTime(entry.created_at)"></span>
+                                                <span class="text-xs text-zinc-600" :title="timeFull(entry.created_at)" x-text="formatDateTime(entry.created_at)"></span>
                                                 <button x-show="entry.scope !== 'project'" type="button" @click.stop="promoteEntry(entry.id)" class="btn btn-sm btn-ghost" :aria-label="'Promote entry ' + entry.title + ' to a wider scope'">Promote</button>
                                                 <button type="button" @click.stop="requestDelete('entry', entry.id, entry.title)" class="btn btn-sm btn-ghost btn-bad" :aria-label="'Delete entry ' + entry.title">Delete</button>
                                             </div>
@@ -541,7 +541,7 @@
                                                 <span x-show="item.claimed_by_agent_id" class="truncate max-w-28" x-text="item.claimed_by_agent_id"></span>
                                                 <span x-show="item.plan_id" class="badge max-w-32 truncate tone-accent" x-text="item.plan && item.plan.name ? '→ ' + item.plan.name : '→ plan'"></span>
                                                 <span class="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap">
-                                                    <span x-text="timeAgo(item.created_at)"></span>
+                                                    <time :datetime="item.created_at" :title="timeFull(item.created_at)" x-text="timeWhen(item.created_at)"></time>
                                                     <span x-show="inboxShowUpdated(item)" x-text="inboxUpdatedLabel(item)"></span>
                                                 </span>
                                             </div>
@@ -602,7 +602,7 @@
                                         <span x-show="item.plan_id" class="badge tone-accent" x-text="item.plan && item.plan.name ? '→ ' + item.plan.name : '→ plan'"></span>
                                         <!-- Dates stay one group: never split created/updated. -->
                                         <span class="flex shrink-0 items-center gap-2 whitespace-nowrap">
-                                            <span class="text-xs text-zinc-600" x-text="timeAgo(item.created_at)"></span>
+                                            <time class="text-xs text-zinc-600" :datetime="item.created_at" :title="timeFull(item.created_at)" x-text="timeWhen(item.created_at)"></time>
                                             <span x-show="inboxShowUpdated(item)" class="text-xs text-zinc-600" x-text="inboxUpdatedLabel(item)"></span>
                                         </span>
                                         <span class="text-xs text-zinc-600" x-text="'by ' + item.author_agent_id"></span>
@@ -772,9 +772,9 @@
                                     <dt x-show="w.stages.length">Stages it ran</dt>
                                     <dd x-show="w.stages.length" x-text="w.stages.join(', ')"></dd>
                                     <dt x-show="w.lastSeen">Last seen</dt>
-                                    <dd x-show="w.lastSeen" x-text="workerWhen(w.lastSeen)"></dd>
+                                    <dd x-show="w.lastSeen" :title="timeFull(w.lastSeen)" x-text="workerWhen(w.lastSeen)"></dd>
                                     <dt x-show="w.lastActive">Last run</dt>
-                                    <dd x-show="w.lastActive" x-text="workerWhen(w.lastActive)"></dd>
+                                    <dd x-show="w.lastActive" :title="timeFull(w.lastActive)" x-text="workerWhen(w.lastActive)"></dd>
                                 </dl>
                             </div>
                         </li>
@@ -809,7 +809,7 @@
                                     <dl class="mt-2 space-y-0.5 text-xs text-zinc-400">
                                         <div><dt class="inline text-zinc-300">workspaces:</dt> <dd class="inline break-all" x-text="webhookScope(w)"></dd></div>
                                         <div><dt class="inline text-zinc-300">events:</dt> <dd class="inline" x-text="webhookTypesLabel(w)"></dd></div>
-                                        <div><dt class="inline text-zinc-300">created:</dt> <dd class="inline"><span x-text="formatDateTime(w.created_at)"></span> by <span x-text="w.created_by"></span></dd></div>
+                                        <div><dt class="inline text-zinc-300">created:</dt> <dd class="inline"><span :title="timeFull(w.created_at)" x-text="formatDateTime(w.created_at)"></span> by <span x-text="w.created_by"></span></dd></div>
                                     </dl>
                                     <p x-show="webhookNote(w)" class="mt-2 break-words text-xs" :class="w.enabled ? 'text-amber-300' : 'text-rose-300'" x-text="webhookNote(w)"></p>
                                 </div>
@@ -835,7 +835,7 @@
                                         <li class="flex flex-wrap items-center gap-2 py-1.5">
                                             <span class="badge" :class="deliveryStateClass(d)" x-text="d.state"></span>
                                             <span class="font-mono text-zinc-200" x-text="d.event_type || 'event no longer kept'"></span>
-                                            <span class="text-zinc-400" x-text="formatDateTime(d.created_at)"></span>
+                                            <span class="text-zinc-400" :title="timeFull(d.created_at)" x-text="formatDateTime(d.created_at)"></span>
                                             <span class="min-w-0 flex-1 break-words text-zinc-400" x-text="deliveryDetail(d)"></span>
                                             <button type="button" x-show="d.state !== 'pending'" @click="redeliverWebhook(w, d)" :disabled="hookBusy !== ''" class="btn btn-sm btn-ghost" :aria-label="'Deliver ' + (d.event_type || 'this event') + ' again'">Send again</button>
                                         </li>
@@ -874,8 +874,8 @@
                                     <span x-show="k.revoked_at" class="chip tone-danger">revoked</span>
                                 </div>
                                 <div class="mt-0.5 text-xs text-zinc-400">
-                                    created <span x-text="formatDateTime(k.created_at)"></span>
-                                    <span x-show="k.last_used_at"> · last used <span x-text="formatDateTime(k.last_used_at || '')"></span></span>
+                                    created <span :title="timeFull(k.created_at)" x-text="formatDateTime(k.created_at)"></span>
+                                    <span x-show="k.last_used_at"> · last used <span :title="timeFull(k.last_used_at || '')" x-text="formatDateTime(k.last_used_at || '')"></span></span>
                                 </div>
                             </div>
                             <div class="flex flex-wrap items-center gap-1">
@@ -1794,7 +1794,7 @@
                                 <!-- The raw status only where no step summary says it. -->
                                 <span x-show="stageSummary().length === 0" class="badge" :class="toneOf('status', previewItem.status)" x-text="statusText(previewItem.status)"></span>
                                 <template x-for="c in previewCost()" :key="c.key">
-                                    <span class="badge tone-muted font-mono" title="What the agent runs on this item cost" x-text="c.text"></span>
+                                    <span class="badge tone-muted font-mono" :title="c.title" x-text="c.text"></span>
                                 </template>
                                 <span x-show="previewItem.workspace_id" class="badge max-w-48 truncate tone-info" :title="previewItem.workspace_id" x-text="workspaceLabel(previewItem.workspace_id)"></span>
                                 <span x-show="!previewItem.workspace_id" class="badge tone-warn">unfiled</span>
@@ -1810,7 +1810,7 @@
                                 <a x-show="previewItem.external_url" :href="previewItem.external_url" target="_blank" rel="noopener noreferrer" class="badge tone-neutral hover:underline" :title="previewItem.external_url">Job ↗</a>
                                 <span x-show="previewItem.claimed_by_agent_id" x-text="previewItem.claimed_by_agent_id"></span>
                                 <span x-show="previewItem.plan_id" class="badge max-w-40 truncate tone-accent" x-text="'→ ' + (previewItem.plan && previewItem.plan.name ? previewItem.plan.name : 'plan')"></span>
-                                <span x-text="timeAgo(previewItem.created_at)"></span>
+                                <time :datetime="previewItem.created_at" :title="'Created ' + timeFull(previewItem.created_at)" x-text="timeWhen(previewItem.created_at)"></time>
                             </div>
                             <div class="mt-1.5 flex flex-wrap gap-1" x-show="(previewItem.tags || []).length > 0">
                                 <template x-for="t in previewItem.tags" :key="'pt|' + previewItem.id + '|' + t">
@@ -1819,7 +1819,7 @@
                             </div>
                         </div>
                         <div class="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
-                            <button type="button" @click="downloadReport()" :disabled="reportBusy" class="btn btn-sm" title="Download the item's report as Markdown: the brief, the approved plan, questions and answers, decisions, the implementation, the reviews and what became of each finding">Report</button>
+                            <button type="button" @click="openReport()" :disabled="reportBusy" class="btn btn-sm" aria-haspopup="dialog" title="Read the item's report: the brief, the approved plan, questions and answers, decisions, the implementation, the reviews and what became of each finding; copy or download it as Markdown">Report</button>
                             <button type="button" @click="copyReportSummary()" :disabled="reportBusy" class="btn btn-sm" title="Copy a short summary of the item's report, to paste into a comment">Copy summary</button>
                             <button type="button" x-show="inboxContentEditable(previewItem)" @click="editFromPreview()" class="btn btn-sm" :aria-label="'Edit item ' + previewItem.title">Edit</button>
                         </div>
@@ -2051,12 +2051,13 @@
                                     <span class="badge" :class="toneOf('status', run.status)" x-text="statusText(run.status)"></span>
                                     <span x-show="run.focus" class="chip tone-accent" :title="run.group_id ? 'One of several agents on this stage — focus brief .skopos/focus/' + run.focus + '.md' : 'Focus brief .skopos/focus/' + run.focus + '.md'" x-text="run.focus"></span>
                                     <span x-show="runCost(run)" class="text-zinc-400" title="What this run cost" x-text="runCost(run)"></span>
+                                    <span x-show="runTokens(run)" class="font-mono text-zinc-500" :title="runTokensTitle(run)" x-text="runTokens(run)"></span>
                                     <span x-show="run.worker_id" class="max-w-32 truncate text-zinc-400" :title="run.worker_id" x-text="run.worker_id"></span>
                                     <span class="text-zinc-500" x-text="'try ' + run.attempt"></span>
                                     <span x-show="run.executor" class="badge bg-zinc-800 font-mono text-zinc-400" title="How the worker ran this stage (capability profile)" x-text="run.executor"></span>
                                     <span x-show="run.branch" class="badge max-w-40 truncate tone-muted" :title="run.branch" x-text="run.branch"></span>
                                     <span x-show="run.head_sha" class="font-mono text-zinc-500" :title="run.head_sha" x-text="shortSha(run.head_sha)"></span>
-                                    <span class="ml-auto shrink-0 text-zinc-600" x-text="timeAgo(run.updated_at)"></span>
+                                    <time class="ml-auto shrink-0 text-zinc-600" :datetime="run.updated_at" :title="'Last change ' + timeFull(run.updated_at)" x-text="timeWhen(run.updated_at)"></time>
                                     <button type="button" x-show="run.status !== 'queued'" @click.stop="openRunLog(run.id)" class="btn btn-ghost btn-xs" :aria-label="'Log of the ' + run.stage + ' run, try ' + run.attempt">Log</button>
                                     <p x-show="runHasFailed(run)" class="w-full text-rose-300" x-text="run.fail_reason"></p>
                                     <p x-show="run.stranded" class="w-full text-amber-300" x-text="'Waiting: ' + run.stranded"></p>
@@ -2072,7 +2073,7 @@
                             <template x-for="h in historyRows()" :key="h.key">
                                 <li class="flex flex-wrap items-baseline gap-x-2 border-b border-zinc-800/60 px-3 py-1.5 text-xs last:border-b-0">
                                     <span class="text-zinc-200" x-text="h.text"></span>
-                                    <span class="ml-auto font-mono text-[11px] text-zinc-500" x-text="h.when"></span>
+                                    <time class="ml-auto font-mono text-[11px] text-zinc-500" :datetime="h.at" :title="timeFull(h.at)" x-text="h.when"></time>
                                     <p x-show="h.notes" class="w-full text-zinc-400" x-text="h.notes"></p>
                                 </li>
                             </template>
@@ -2086,6 +2087,23 @@
     <!-- The plans of one planning round, side by side: each planner's plan
          in full, the comparison and the synthesis. After the preview in the
          page, so it sits on top of it. -->
+    <!-- The item report, read here (openReport): over the preview, like the
+         plans. -->
+    {{template "modal-open" (dict "ID" "report-modal" "Show" "reportView.open" "Close" "closeReport()" "Size" "flex max-h-[94vh] w-[97vw] max-w-5xl flex-col max-sm:h-[100dvh] max-sm:max-h-[100dvh] max-sm:rounded-none max-sm:p-4" "Wrap" "max-sm:p-0")}}
+            <h2 id="report-modal-title" class="modal-title pr-8">Report · <span x-text="previewItem ? previewItem.title : ''"></span></h2>
+            <div class="mb-3 flex shrink-0 flex-wrap items-center gap-2">
+                <span class="flex gap-1" role="group" aria-label="How much of the report">
+                    <button type="button" class="btn btn-xs" :class="reportLevelIs('full') ? '' : 'btn-ghost'" :aria-pressed="reportLevelIs('full')" :disabled="reportBusy" @click="openReport('full')">Full</button>
+                    <button type="button" class="btn btn-xs" :class="reportLevelIs('summary') ? '' : 'btn-ghost'" :aria-pressed="reportLevelIs('summary')" :disabled="reportBusy" @click="openReport('summary')">Summary</button>
+                </span>
+                <span class="ml-auto flex gap-2">
+                    <button type="button" class="btn btn-sm btn-ghost" :disabled="reportBusy" @click="copyReport()">Copy as Markdown</button>
+                    <button type="button" class="btn btn-sm" :disabled="reportBusy" @click="downloadReport()">Download .md</button>
+                </span>
+            </div>
+            <div class="report-body md-body" data-report-html tabindex="0" aria-label="The item report"></div>
+    {{template "modal-close"}}
+
     {{template "modal-open" (dict "ID" "plans-modal" "Show" "planView.open" "Close" "closePlans()" "Size" "flex max-h-[94vh] w-[97vw] max-w-[97vw] flex-col max-sm:h-[100dvh] max-sm:max-h-[100dvh] max-sm:rounded-none max-sm:p-4" "Wrap" "max-sm:p-0")}}
             <h2 id="plans-modal-title" class="modal-title pr-8">Plans · <span x-text="plansTitle()"></span></h2>
             <div class="mb-3 flex shrink-0 flex-wrap items-center gap-2">

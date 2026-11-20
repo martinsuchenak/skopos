@@ -429,11 +429,25 @@ func (w *Worker) runAgent(ctx context.Context, ar AgentRun) AgentResult {
 		}
 		rl.notef("agent %s started: %s", what, strings.TrimSuffix(filepath.Base(ar.LogFile), ".log"))
 	}
+	started := time.Now()
 	res := r.Run(ctx, ar)
+	// The worker's own count of every call, whatever the runner reports;
+	// a runner that does not count per model used the account's model.
+	if res.Usage == nil {
+		res.Usage = &Usage{}
+	}
+	res.Usage.Count("agent_calls", 1)
+	res.Usage.Count("agent_ms", time.Since(started).Milliseconds())
+	if ar.Model != "" {
+		res.Usage.ForModel(ar.Model)
+	}
 	if rl != nil {
 		msg := "agent finished: " + string(res.Outcome)
 		if res.CostUSD > 0 {
 			msg += fmt.Sprintf(", $%.2f", res.CostUSD)
+		}
+		if b := usageBrief(res.Usage); b != "" {
+			msg += ", " + b
 		}
 		if res.Detail != "" {
 			msg += " — " + res.Detail

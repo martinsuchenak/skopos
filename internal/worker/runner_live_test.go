@@ -81,6 +81,10 @@ func TestLiveLockdown(t *testing.T) {
 		if res.Outcome != OutcomeOK {
 			t.Fatalf("agent run: %s %s", res.Outcome, res.Detail)
 		}
+		// Usage: the result event's tokens and the model that did the work.
+		if res.Usage.Counts["output_tokens"] == 0 || len(res.Usage.Models) == 0 {
+			t.Errorf("the run's usage: %+v", res.Usage)
+		}
 		return res.Text
 	}
 

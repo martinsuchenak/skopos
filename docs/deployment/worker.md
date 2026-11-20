@@ -1601,8 +1601,8 @@ What a run log holds:
   events.
 - **Setup and checks:** each command (`$ …`), its output and whether it
   passed.
-- **The worker's own notes:** the run starting, each agent turn and what it
-  cost, pauses, the result. Also every step before the agent that can take
+- **The worker's own notes:** the run starting, each agent turn with what
+  it cost and the tokens it used, pauses, the result. Also every step before the agent that can take
   a while: waiting for a branch-checkout clone (another worker process or
   the code indexing holds it), putting back a branch a killed run left,
   fetching and checking out the item's branch, and "setup skipped" when the

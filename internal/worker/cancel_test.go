@@ -59,6 +59,12 @@ func TestCancelledRunStops(t *testing.T) {
 	}
 	defer release()
 
+	// What an earlier agent call of the run used (and another run's, paused
+	// here and waiting for its resume).
+	w.addUsage(&Run{ID: "r1"}, AgentResult{CostUSD: 0.5, Usage: &Usage{Counts: map[string]int64{"output_tokens": 3}}})
+	w.addUsage(&Run{ID: "paused"}, AgentResult{CostUSD: 0.5, Usage: &Usage{Counts: map[string]int64{"output_tokens": 3}}})
+	w.pausedRuns = map[string]bool{"paused": true}
+
 	done := make(chan struct{})
 	go func() {
 		w.execute(t.Context(), &Run{ID: "r1", ItemID: "i1", WorkspaceID: "ws", Stage: "implement", Attempt: 1})
@@ -75,6 +81,12 @@ func TestCancelledRunStops(t *testing.T) {
 		if strings.HasSuffix(c, "/report") || strings.HasSuffix(c, "/pause") {
 			t.Fatalf("a cancelled run reports nothing: %v", calls)
 		}
+	}
+	if _, ok := w.usage["r1"]; ok || w.costs["r1"] != 0 {
+		t.Error("a run that ends without a report keeps nothing on the worker")
+	}
+	if w.usage["paused"] == nil || w.costs["paused"] != 0.5 {
+		t.Error("a paused run keeps its usage for the report its resume sends")
 	}
 	for _, want := range []string{"stopping: skopos cancelled the run (item rejected)", "stopped: item rejected"} {
 		if !strings.Contains(logged.String(), want) {

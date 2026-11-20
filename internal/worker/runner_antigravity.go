@@ -141,6 +141,21 @@ type antigravityJSON struct {
 		Action      string `json:"action"`
 		DisplayName string `json:"display_name"`
 	} `json:"denied_actions"`
+	NumTurns int64           `json:"num_turns"`
+	Usage    json.RawMessage `json:"usage"`
+}
+
+// usage: the usage object as agy reports it, and its turns.
+func (out antigravityJSON) usage() *Usage {
+	u := &Usage{}
+	for k, v := range usageFrom(out.Usage) {
+		u.Count(k, v)
+	}
+	u.Count("turns", out.NumTurns)
+	if u.Empty() {
+		return nil
+	}
+	return u
 }
 
 func (a antigravityRunner) Run(ctx context.Context, r AgentRun) AgentResult {
@@ -217,7 +232,7 @@ func parseAntigravity(stdout []byte, stderr string, runErr, ctxErr error, r Agen
 	if out.ConversationID != "" {
 		res.SessionID = out.ConversationID
 	}
-	res.Text = out.Response
+	res.Text, res.Usage = out.Response, out.usage()
 	if out.Status != "SUCCESS" {
 		text := strings.TrimSpace(out.Error + "\n" + out.Response + "\n" + stderr)
 		res.Outcome, res.Detail = classifyText(text, nil, runErr)

@@ -36,7 +36,8 @@ func TestRetryableFailureRequeues(t *testing.T) {
 	fail := func(r *Run, worker string) *Run {
 		t.Helper()
 		got, err := s.Report(ctx, r.ID, ReportInput{WorkerID: worker, Status: StatusFailed, Reason: "setup failed: no output for 10m", Retryable: true,
-			CostUSD: &cost, Checks: []Check{{Name: "make test", Stopped: true}}}, r.LeaseToken)
+			CostUSD: &cost, Checks: []Check{{Name: "make test", Stopped: true}},
+			Usage: &Usage{Counts: map[string]int64{"input_tokens": 100, "turns": 1}, Models: map[string]map[string]int64{"m": {"input_tokens": 100}}}}, r.LeaseToken)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -79,6 +80,9 @@ func TestRetryableFailureRequeues(t *testing.T) {
 	}
 	if got.CostUSD == nil || *got.CostUSD != 4.5 {
 		t.Fatalf("every attempt's cost adds up: %v", got.CostUSD)
+	}
+	if got.Usage == nil || got.Usage.Counts["input_tokens"] != 300 || got.Usage.Counts["turns"] != 3 || got.Usage.Models["m"]["input_tokens"] != 300 {
+		t.Fatalf("and its usage: %+v", got.Usage)
 	}
 	if len(got.Checks) != 1 || !got.Checks[0].Stopped {
 		t.Fatalf("a stopped check stays marked: %+v", got.Checks)

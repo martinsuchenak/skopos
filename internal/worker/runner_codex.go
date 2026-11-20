@@ -269,6 +269,15 @@ func (c codexRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 	var stdout, stderr bytes.Buffer
 	var flush func()
 	cmd.Stdout, cmd.Stderr, flush = teeOutput(ctx, &stdout, &stderr, codexEventLines)
+	// A resumed session's usage counts its earlier calls: what it had used
+	// before this one comes off, and only the lines this call adds are read
+	// after it (runner_codex_usage.go).
+	resumed := r.Resume && r.SessionID != ""
+	var before codexSession
+	var offset int64
+	if resumed {
+		before, offset = codexSessionBefore(codexSessionFile(codexHome(r.Env), r.SessionID))
+	}
 	runErr := settled(cmd, cmd.Run())
 	flush()
 	writeRunLog(r.LogFile, stdout.Bytes(), stderr.Bytes())
@@ -277,6 +286,15 @@ func (c codexRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 	if res.SessionID == "" {
 		res.SessionID = r.SessionID
 	}
+	after := codexSession{}
+	if res.SessionID != "" {
+		from := int64(0)
+		if res.SessionID == r.SessionID {
+			from = offset
+		}
+		after = readCodexSession(codexSessionFile(codexHome(r.Env), res.SessionID), from)
+	}
+	res.Usage = codexRunUsage(res.Usage, resumed, before, after)
 	if errors.Is(cctx.Err(), context.DeadlineExceeded) {
 		res.Outcome, res.Detail = OutcomeTimeout, fmt.Sprintf("no result after %s", r.Timeout)
 		return res
@@ -470,11 +488,14 @@ func codexInstallDir(bin string, env map[string]string) string {
 }
 
 // parseCodexEvents reads the JSONL stream: the thread id (the session to
-// resume), the last agent message, and how the turn ended. Plain `error`
+// resume), the last agent message, how the turn ended and its usage (the
+// session's total: codexRunUsage makes it the call's). Plain `error`
 // events are also retries ("Reconnecting… 2/5"); only turn.failed is final.
 func parseCodexEvents(out []byte, now time.Time) AgentResult {
 	var res AgentResult
 	lastErr := ""
+	var usage map[string]int64
+	var turns int64
 	sc := bufio.NewScanner(bytes.NewReader(out))
 	sc.Buffer(make([]byte, 0, 1<<20), 64<<20)
 	for sc.Scan() {
@@ -489,9 +510,16 @@ func parseCodexEvents(out []byte, now time.Time) AgentResult {
 			Error struct {
 				Message string `json:"message"`
 			} `json:"error"`
+			Usage json.RawMessage `json:"usage"`
 		}
 		if json.Unmarshal(sc.Bytes(), &ev) != nil {
 			continue
+		}
+		if ev.Type == "turn.completed" || ev.Type == "turn.failed" {
+			turns++
+			if c := codexUsage(ev.Usage); c != nil {
+				usage = c
+			}
 		}
 		switch ev.Type {
 		case "thread.started":
@@ -513,6 +541,10 @@ func parseCodexEvents(out []byte, now time.Time) AgentResult {
 	if res.Outcome == "" && lastErr != "" {
 		msg, _ := codexErrorMessage(lastErr)
 		res.Detail = msg
+	}
+	if usage != nil || turns > 0 {
+		res.Usage = &Usage{Counts: usage}
+		res.Usage.Count("turns", turns)
 	}
 	return res
 }

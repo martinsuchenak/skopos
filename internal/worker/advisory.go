@@ -142,7 +142,7 @@ func (w *Worker) stageCompare(ctx context.Context, run *Run, log *slog.Logger) e
 	}
 	log.Info("comparing candidates", "account", account.Name, "candidates", len(cands))
 	res := w.runAgent(ctx, w.agentRun(dir, prompt, compareSchema, w.planToolsFor(run.WorkspaceID), w.planTimeout(run.WorkspaceID), account, run, "compare"))
-	w.addCost(run, res)
+	w.addUsage(run, res)
 	if err := w.handleAgentOutcome(ctx, run, res, account, "compare"); err != nil {
 		return err
 	}
@@ -205,7 +205,7 @@ func (w *Worker) stageSynthesize(ctx context.Context, run *Run, log *slog.Logger
 	}
 	log.Info("synthesizing candidates", "account", account.Name, "candidates", len(cands))
 	res := w.runAgent(ctx, w.agentRun(dir, prompt, planSchema, w.planToolsFor(run.WorkspaceID), w.planTimeout(run.WorkspaceID), account, run, "synthesize"))
-	w.addCost(run, res)
+	w.addUsage(run, res)
 	if err := w.handleAgentOutcome(ctx, run, res, account, "synthesize"); err != nil {
 		return err
 	}

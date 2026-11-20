@@ -11,6 +11,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/findings"
 	"github.com/martinsuchenak/skopos/internal/qa"
 	"github.com/martinsuchenak/skopos/internal/runs"
+	"github.com/martinsuchenak/skopos/internal/usage"
 )
 
 // Markdown renders the report. The summary level fits a comment; the full
@@ -714,7 +715,7 @@ func (d *doc) runs(r *Report) {
 	}
 	d.h2("Who worked on it")
 	if d.full {
-		d.w("| Stage | Runner | Model | Provider | Contained by | Worker | Queued | Last change | Status | Cost |\n|---|---|---|---|---|---|---|---|---|---|\n")
+		d.w("| Stage | Runner | Model | Provider | Contained by | Worker | Queued | Last change | Status | Tokens | Cost |\n|---|---|---|---|---|---|---|---|---|---|---|\n")
 		for _, run := range r.Runs {
 			stage := words(run.Stage)
 			if run.Focus != "" {
@@ -724,8 +725,8 @@ func (d *doc) runs(r *Report) {
 			if run.CostUSD != nil {
 				cost = money(*run.CostUSD)
 			}
-			d.w("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", cell(stage), cell(run.Runner), cell(run.Model), cell(run.Provider),
-				cell(run.Executor), cell(run.WorkerID), stamp(run.QueuedAt), stamp(run.UpdatedAt), cell(words(run.Status)), cost)
+			d.w("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", cell(stage), cell(run.Runner), cell(modelOf(run)), cell(run.Provider),
+				cell(run.Executor), cell(run.WorkerID), stamp(run.QueuedAt), stamp(run.UpdatedAt), cell(words(run.Status)), tokenCell(run.Usage), cost)
 		}
 		d.w("\nA run records when it was queued and when it last changed, not when it started.\n\n")
 	}
@@ -747,7 +748,56 @@ func (d *doc) runs(r *Report) {
 	if r.CostUSD != nil {
 		d.w("- Cost as the runners reported it: %s\n", money(*r.CostUSD))
 	}
+	if line := tokenLine(r.Usage); line != "" {
+		d.w("- Tokens as the runners reported them: %s\n", line)
+		// The sum leaves out runs that recorded nothing: from a worker
+		// older than the record, or ended before an agent started.
+		missing := 0
+		for _, run := range r.Runs {
+			if run.WorkerID != "" && run.Usage.Empty() && finished(runs.Status(run.Status)) {
+				missing++
+			}
+		}
+		if missing > 0 {
+			d.w("- %s recorded no usage: a worker older than the record, or no agent started\n", plural(missing, "run"))
+		}
+	}
 	d.w("\n")
+}
+
+// modelOf is the model a run's runner said did the work, else the one its
+// account names.
+func modelOf(run Run) string {
+	if len(run.ModelsUsed) > 0 {
+		return strings.Join(run.ModelsUsed, ", ")
+	}
+	return run.Model
+}
+
+// tokenCell: "1.2M in · 56k out" (input with the cache's).
+func tokenCell(u *runs.Usage) string {
+	in, out := u.Tokens()
+	if in == 0 && out == 0 {
+		return ""
+	}
+	return usage.Compact(in) + " in · " + usage.Compact(out) + " out"
+}
+
+// tokenLine: "12M in (11M from the cache), 210k out (40k reasoning)".
+func tokenLine(u *runs.Usage) string {
+	in, out := u.Tokens()
+	if in == 0 && out == 0 {
+		return ""
+	}
+	line := usage.Compact(in) + " in"
+	if c := u.Counts["cache_read_tokens"]; c > 0 {
+		line += " (" + usage.Compact(c) + " from the cache)"
+	}
+	line += ", " + usage.Compact(out) + " out"
+	if rt := u.Counts["reasoning_tokens"]; rt > 0 {
+		line += " (" + usage.Compact(rt) + " reasoning)"
+	}
+	return line
 }
 
 // providers: "anthropic (claude: sonnet), openai (codex: gpt-5)".
@@ -763,11 +813,11 @@ func providers(rs []Run) string {
 			order = append(order, run.Provider)
 		}
 		via := run.Kind
-		if run.Model != "" {
+		if m := modelOf(run); m != "" {
 			if via != "" {
 				via += ": "
 			}
-			via += run.Model
+			via += m
 		}
 		if via != "" {
 			seen[run.Provider][via] = true

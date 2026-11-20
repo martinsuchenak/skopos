@@ -25,6 +25,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/plans"
 	"github.com/martinsuchenak/skopos/internal/qa"
 	"github.com/martinsuchenak/skopos/internal/runs"
+	"github.com/martinsuchenak/skopos/internal/usage"
 )
 
 // Levels of the Markdown and HTML documents.
@@ -114,6 +115,9 @@ type Report struct {
 	Runs     []Run     `json:"runs"`
 	// CostUSD: the sum of what the runners reported (nil when none did).
 	CostUSD *float64 `json:"cost_usd,omitempty"`
+	// Usage: the sum of what the runners reported the agents used (nil
+	// when none did).
+	Usage *runs.Usage `json:"usage,omitempty"`
 }
 
 // Item is the report's header.
@@ -347,6 +351,12 @@ type Run struct {
 	QueuedAt  time.Time `json:"queued_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	CostUSD   *float64  `json:"cost_usd,omitempty"`
+	// Usage: what the run's agents used, as the runner reported it.
+	Usage *runs.Usage `json:"usage,omitempty"`
+	// ModelsUsed: the models the runner said did the work, which may
+	// differ from Model (the configured one, empty when the account names
+	// none and the CLI picks its own).
+	ModelsUsed []string `json:"models_used,omitempty"`
 }
 
 // Build reads the item's records and puts the report together.
@@ -751,9 +761,15 @@ func work(run runs.Run) []runs.WorkEntry {
 func (r *Report) fromRuns(all []runs.Run) {
 	var cost float64
 	costed, implemented := false, false
+	var used []*runs.Usage
 	for _, run := range all {
 		row := Run{ID: run.ID, Stage: run.Stage, Focus: run.Focus, Runner: run.Runner, Executor: run.Executor,
-			WorkerID: run.WorkerID, Status: string(run.Status), QueuedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt, CostUSD: run.CostUSD}
+			WorkerID: run.WorkerID, Status: string(run.Status), QueuedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt, CostUSD: run.CostUSD,
+			Usage: run.Usage}
+		if run.Usage != nil {
+			row.ModelsUsed = run.Usage.ModelNames()
+			used = append(used, run.Usage)
+		}
 		// What the worker reported about the runner when it claimed the
 		// run: the model, and the provider the code went to.
 		var facts struct {
@@ -820,6 +836,7 @@ func (r *Report) fromRuns(all []runs.Run) {
 	if costed {
 		r.CostUSD = &cost
 	}
+	r.Usage = usage.Sum(used...)
 }
 
 // maxCheckLines is how much of a failed command's output the report keeps.

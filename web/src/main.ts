@@ -7,6 +7,7 @@ import Alpine from '@alpinejs/csp';
 import focus from '@alpinejs/focus';
 import type { EditorView } from '@codemirror/view';
 import { mountMarkdownEditor, editorText, destroyEditor } from './editor';
+import { whenText, whenFull, waitedText } from './when';
 
 type SessionSummary = { id: string; title: string; workspace: string; status: string; agent_count: number };
 type SessionDetail = SessionSummary & { agents?: AgentState[]; events?: Event[] };
@@ -130,7 +131,28 @@ type PlanRevisionInfo = { id: string; revision_no: number; content_hash: string;
 // One thing the approver can approve at the gate: the plan revision, or one
 // candidate of a multi-agent plan round.
 type ApproveTarget = { id: string; title: string; meta: string; steps: string[]; candidate: boolean; hash: string; toast: string };
-type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; findings?: { id?: string; severity: string; text: string; file?: string }[]; still_open?: number; lease_expires_at?: string; pushed?: boolean; pr_url?: string; checks?: { name: string; passed: boolean; output?: string }[]; setup?: { name: string; passed: boolean; output?: string }[]; fix_rounds?: number; phase?: string; adopt_from?: string; retries?: number; retry_after?: string; prefer_worker?: string; prefer_until?: string; stranded?: string; runner_picked?: boolean; policy_rev?: string; created_at: string; updated_at: string };
+// compactCount: 980, 1.2k, 56k, 4.1M — the rounding of the server's
+// usage.Compact (the run log and the item report), so the figures match.
+function compactCount(n: number): string {
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e4) return (n / 1e3).toFixed(0) + 'k';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+  return String(n);
+}
+// usageTokens: "1.2M in · 56k out" (input with the cache's), '' for none.
+function usageTokens(c: Record<string, number>): string {
+  const inp = (c.input_tokens || 0) + (c.cache_read_tokens || 0) + (c.cache_write_tokens || 0);
+  const out = c.output_tokens || 0;
+  return inp || out ? compactCount(inp) + ' in · ' + compactCount(out) + ' out' : '';
+}
+// usageDetail: every count, one per line, for a title.
+function usageDetail(c: Record<string, number>): string {
+  const keys = Object.keys(c).sort();
+  return keys.length ? '\n' + keys.map((k) => k.replace(/_/g, ' ') + ': ' + c[k].toLocaleString()).join('\n') : '';
+}
+// What a run's agents used, as their runners reported it (runs.Usage).
+type RunUsage = { counts?: Record<string, number>; models?: Record<string, Record<string, number>> };
+type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; usage?: RunUsage; findings?: { id?: string; severity: string; text: string; file?: string }[]; still_open?: number; lease_expires_at?: string; pushed?: boolean; pr_url?: string; checks?: { name: string; passed: boolean; output?: string }[]; setup?: { name: string; passed: boolean; output?: string }[]; fix_rounds?: number; phase?: string; adopt_from?: string; retries?: number; retry_after?: string; prefer_worker?: string; prefer_until?: string; stranded?: string; runner_picked?: boolean; policy_rev?: string; created_at: string; updated_at: string };
 // One row of the preview's stage tracker. state: done | run | you | bad |
 // up (not reached) | skip (not configured, or never reached on a discarded item).
 type LinkRow = { key: string; href: string; text: string };
@@ -142,7 +164,7 @@ type MoreRow = { key: string; label: string; text: string; mono?: boolean; work?
 // One thing a run says it did (runs.WorkEntry): an implementation's
 // verification, a review's check, a QA scenario.
 type WorkEntry = { name: string; result?: string; note?: string };
-type StageRow = { key: string; name: string; who: string; state: string; when: string; round: string; lines: string[]; links: LinkRow[]; more: MoreRow[]; moreLabel: string; warn: string; logs: LogButton[]; plans: boolean; hidden?: boolean };
+type StageRow = { key: string; name: string; who: string; state: string; when: string; at?: string; round: string; lines: string[]; links: LinkRow[]; more: MoreRow[]; moreLabel: string; warn: string; logs: LogButton[]; plans: boolean; hidden?: boolean };
 type TextRow = { key: string; ic: string; text: string; more?: MoreRow[] };
 // The item's record of review findings (GET /api/inbox/{id}/findings).
 type FindingUpdate = { id: string; kind: string; note?: string; run_id?: string; actor?: string; created_at: string };
@@ -222,9 +244,10 @@ let runLogAbort: AbortController | null = null;
 let runLogLooping = false;
 let runLogWatch: ReturnType<typeof setInterval> | null = null;
 let runLogKey = 0;
-// When the plans dialog was last closed: Escape reaches every open dialog,
-// and the item preview under it must not close with it.
-let plansClosedAt = 0;
+// When a dialog over the item preview (the plans, the report) was last
+// closed: Escape reaches every open dialog, and the preview under it must
+// not close with it.
+let overlayClosedAt = 0;
 // Lines the panel keeps (the server keeps the whole log).
 const RUN_LOG_KEEP = 5000;
 // The stages whose runs say what they did, and what an entry is called there.
@@ -322,6 +345,8 @@ const appState = () => ({
   // The side-by-side view of an item's plans: one planning round, and the
   // columns the reader hid.
   planView: { open: false, loading: false, view: null as PlansRound | null, hidden: {} as Record<string, boolean> },
+  // The item report read in the dashboard (openReport): full or summary.
+  reportView: { open: false, level: 'full', html: '' },
   previewFindings: [] as FindingRec[],
   // What each finished run says it did, by run id (GET /api/runs/{id}'s
   // observed.work: read once per run state, never with the run list).
@@ -1618,7 +1643,7 @@ const appState = () => ({
       await this.fetchPreviewRuns(item.id);
     } finally { this.secondOpinion.busy = false; }
   },
-  closeInboxPreview() { if (this.planView.open || Date.now() - plansClosedAt < 150) return; this.closeRunLog(); if (previewPoll) { clearInterval(previewPoll); previewPoll = null; } this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.previewCandidates = []; this.previewApprovedRev = null; this.previewPipe = null; this.previewStatusSeen = ''; this.previewWorkers = []; this.previewTimeline = []; this.previewQuestions = []; this.workflowNote = ''; this.workflowReason = ''; this.questionAnswers = {}; this.previewRoundOpen = {}; this.workflowBusy = false; },
+  closeInboxPreview() { if (this.planView.open || this.reportView.open || Date.now() - overlayClosedAt < 150) return; this.closeRunLog(); if (previewPoll) { clearInterval(previewPoll); previewPoll = null; } this.showInboxPreview = false; this.previewLoading = false; this.previewItem = null; this.previewRuns = []; this.previewRunsLoading = false; this.previewRevision = null; this.previewCandidates = []; this.previewApprovedRev = null; this.previewPipe = null; this.previewStatusSeen = ''; this.previewWorkers = []; this.previewTimeline = []; this.previewQuestions = []; this.workflowNote = ''; this.workflowReason = ''; this.questionAnswers = {}; this.previewRoundOpen = {}; this.workflowBusy = false; },
   // The newest revision of the previewed item's plan, while it waits at the
   // gate (revisions list newest first).
   async fetchPreviewRevision() {
@@ -2212,8 +2237,8 @@ const appState = () => ({
     for (const r of this.previewRuns) {
       if (this.runStep(r) !== step || (r.status !== 'claimed' && r.status !== 'running')) continue;
       const w = this.previewWorkers.find((x: WorkerSeen) => x.id === r.worker_id);
-      if (w && w.state === 'offline') return (r.worker_id || 'The worker') + ' is offline (last seen ' + this.timeAgo(w.last_seen) + '). The run resumes when it comes back.';
-      if (r.lease_expires_at && Date.parse(r.lease_expires_at) < Date.now()) return 'No heartbeat from ' + (r.worker_id || 'the worker') + ' since ' + this.timeAgo(r.lease_expires_at) + '; it may have stopped.';
+      if (w && w.state === 'offline') return (r.worker_id || 'The worker') + ' is offline (last seen ' + this.timeWhen(w.last_seen) + '). The run resumes when it comes back.';
+      if (r.lease_expires_at && Date.parse(r.lease_expires_at) < Date.now()) return 'No heartbeat from ' + (r.worker_id || 'the worker') + ' for ' + waitedText(r.lease_expires_at) + '; it may have stopped.';
     }
     return '';
   },
@@ -2290,7 +2315,7 @@ const appState = () => ({
       { name: 'Your sign-off', who: 'you' },
     ];
     // Evidence for a finished step.
-    const doneLines = (i: number): { lines: string[]; when: string; links?: LinkRow[]; more?: MoreRow[]; warn?: string } => {
+    const doneLines = (i: number): { lines: string[]; when: string; at?: string; links?: LinkRow[]; more?: MoreRow[]; warn?: string } => {
       if (i === 1 && planRuns.length) {
         const newest = planRuns[0];
         const round = newest.group_id ? planRuns.filter((r: RunRow) => r.group_id === newest.group_id) : [newest];
@@ -2298,13 +2323,13 @@ const appState = () => ({
         let text = round.length > 1 ? names.join(', ') + ' wrote ' + round.length + ' candidates' : names[0] + ' wrote the plan';
         if (main.some((r: RunRow) => r.stage === 'synthesize' && r.status === 'succeeded')) text += ', plus a synthesis';
         if (main.some((r: RunRow) => r.stage === 'compare' && r.status === 'succeeded')) text += ', compared';
-        return { lines: [text], when: this.timeAgo(newest.updated_at) };
+        return { lines: [text], when: this.timeWhen(newest.updated_at), at: newest.updated_at };
       }
       if (i === 2 && rev) {
         const steps = (rev.steps || []).filter(x => x.phase !== 'review').length;
         let text = 'Approved revision #' + rev.revision_no + (rev.label ? ' (' + rev.label + ')' : '') + ', ' + this.plural(steps, 'step');
         if (rev.base_sha) text += ' on base ' + this.shortSha(rev.base_sha);
-        return { lines: [text], when: rev.locked_at ? this.timeAgo(rev.locked_at) : '' };
+        return { lines: [text], when: rev.locked_at ? this.timeWhen(rev.locked_at) : '', at: rev.locked_at || '' };
       }
       // Being checked: committed, not yet reported (no head yet).
       if (i === 3 && implRun && !implRun.head_sha) {
@@ -2322,14 +2347,14 @@ const appState = () => ({
         const verified = this.workCount(implRun);
         if (verified) lines.push(verified);
         const warn = local ? 'Not pushed: the branch is only on ' + (implRun.worker_id || 'the worker') + ', so there is no link to it and reviewers can\'t fetch it. Set up push for this repository in the worker config.' : '';
-        return { lines, when: this.timeAgo(implRun.updated_at), links: this.changesLinks(this.trackBase(implRun), implRun.head_sha || ''), more: this.workMore(implRun, implRun.runner || 'implementer').concat(setup.more), warn };
+        return { lines, when: this.timeWhen(implRun.updated_at), at: implRun.updated_at, links: this.changesLinks(this.trackBase(implRun), implRun.head_sha || ''), more: this.workMore(implRun, implRun.runner || 'implementer').concat(setup.more), warn };
       }
       if (i === 4 && implRun && (implRun.checks || []).length) {
         const checks = this.checkSummary(implRun);
         const lines = [checks.line];
         const fixRounds = implRun.fix_rounds || 0;
         if (fixRounds > 0 && implRun.status === 'succeeded') lines.push('They failed at first; the implementer fixed them in ' + this.plural(fixRounds, 'fix round') + '.');
-        return { lines, when: this.timeAgo(implRun.updated_at), more: checks.more };
+        return { lines, when: this.timeWhen(implRun.updated_at), at: implRun.updated_at, more: checks.more };
       }
       if ((i === 5 || i === 6) && stepRuns(i).length) {
         const runs = stepRuns(i);
@@ -2339,13 +2364,13 @@ const appState = () => ({
         // The followed findings are counted once, on the last agent step that ran.
         const followed = i === 6 || !qaRuns.length ? this.followedLine() : '';
         if (followed) lines.push(followed);
-        return { lines, when: this.timeAgo(runs[0].updated_at), more: runs.flatMap((r: RunRow) => this.runMore(r, this.reviewerName(r))) };
+        return { lines, when: this.timeWhen(runs[0].updated_at), at: runs[0].updated_at, more: runs.flatMap((r: RunRow) => this.runMore(r, this.reviewerName(r))) };
       }
       if (i === 7 && st === 'done') {
         const head = impl && impl.head_sha ? impl.head_sha : '';
         const lines = [head ? 'Approved ' + this.shortSha(head) : 'Marked done'];
         if (head && !this.unpushed(head)) lines.push(this.pullRequestURL(head) ? 'Merge the pull request to land it.' : 'Merge the branch to land it.');
-        return { lines, when: this.timeAgo(item.updated_at), links: head ? this.changesLinks(this.trackBase(impl), head) : [] };
+        return { lines, when: this.timeWhen(item.updated_at), at: item.updated_at, links: head ? this.changesLinks(this.trackBase(impl), head) : [] };
       }
       return { lines: [], when: '' };
     };
@@ -2353,12 +2378,13 @@ const appState = () => ({
       let state = i < cur ? 'done' : i === cur ? curState : 'up';
       let lines: string[] = [];
       let when = '';
+      let at = '';
       let links: LinkRow[] = [];
       let more: MoreRow[] = [];
       let warn = '';
-      if (state === 'done') { const d = doneLines(i); lines = d.lines; when = d.when; links = d.links || []; more = d.more || []; warn = d.warn || ''; }
+      if (state === 'done') { const d = doneLines(i); lines = d.lines; when = d.when; at = d.at || ''; links = d.links || []; more = d.more || []; warn = d.warn || ''; }
       if (state === 'run') { lines = this.activeLines(i); if (!lines.length) lines = [i === 3 && st === 'approved' ? 'Starting' : 'Waiting for a worker']; warn = this.activeWarn(i); }
-      if (state === 'you') when = 'waiting ' + this.timeAgo(waitingSince).replace(' ago', '').replace('just now', 'under a minute');
+      if (state === 'you') { when = 'waiting ' + waitedText(waitingSince); at = waitingSince; }
       if (state === 'bad') {
         const failed = i === 4 ? last : main.find((r: RunRow) => this.stageOf(r.stage) === i && r.status === 'failed');
         const agentStep = i === 5 || i === 6;
@@ -2368,7 +2394,8 @@ const appState = () => ({
         if (i === 3 && failed) more = this.setupSummary(failed).more;
         // Blocked by its checks: each check with its output.
         if (i === 4 && failed) more = this.checkSummary(failed).more;
-        when = failed ? this.timeAgo(failed.updated_at) : '';
+        when = failed ? this.timeWhen(failed.updated_at) : '';
+        at = failed ? failed.updated_at : '';
       }
       // No checks configured: say the commit went untested instead of a
       // green check.
@@ -2417,7 +2444,7 @@ const appState = () => ({
       // (A panel's plan is linked at the first claim, before any candidate
       // is written: a finished plan run is what says there is one.)
       const plans = i === 1 && !!item.plan_id && state !== 'up' && state !== 'skip' && this.previewRuns.some((r: RunRow) => r.stage === 'plan' && r.status === 'succeeded');
-      return { key: i + '|' + state + '|' + round + '|' + lines.join('/') + '|' + warn + '|' + more.map((m: MoreRow) => m.key).join(',') + '|' + logs.map((l: LogButton) => l.id).join(',') + (plans ? '|p' : ''), name: d.name, who: d.who, state, when, round, lines, links, more, moreLabel, warn, logs, plans, hidden };
+      return { key: i + '|' + state + '|' + round + '|' + lines.join('/') + '|' + warn + '|' + more.map((m: MoreRow) => m.key).join(',') + '|' + logs.map((l: LogButton) => l.id).join(',') + (plans ? '|p' : ''), name: d.name, who: d.who, state, when, at, round, lines, links, more, moreLabel, warn, logs, plans, hidden };
     });
     return { rows, current: cur };
   },
@@ -2425,7 +2452,7 @@ const appState = () => ({
   // asked for changes, signed off, and when, plus pipeline failures. Left
   // out as noise: run claims, plan-lock bookkeeping (Plan approved covers
   // it) and the worker's own appends (the tracker shows their results).
-  historyRows(): { key: string; text: string; notes: string; when: string }[] {
+  historyRows(): { key: string; text: string; notes: string; when: string; at: string }[] {
     const names: Record<string, string> = {
       'inbox.queue': 'Queued', 'inbox.review': 'Queued for a branch review', 'inbox.approve': 'Plan approved', 'inbox.request_changes': 'Changes requested',
       'inbox.mark_done': 'Signed off', 'inbox.retry': 'Retried', 'inbox.reject': 'Rejected',
@@ -2443,13 +2470,25 @@ const appState = () => ({
         key: e.id,
         text: (names[e.action] || e.action) + ' by ' + e.actor + (e.via ? ' via ' + e.via : ''),
         notes: e.notes || '',
-        when: this.timeAgo(e.created_at),
+        when: this.timeWhen(e.created_at), at: e.created_at,
       }));
   },
   // What the agent runs on this item cost, when the runners report it.
-  previewCost(): { key: string; text: string }[] {
+  previewCost(): { key: string; text: string; title: string }[] {
     const total = this.previewRuns.reduce((n: number, r: RunRow) => n + (r.cost_usd || 0), 0);
-    return total > 0 ? [{ key: 'cost|' + total.toFixed(2), text: '$' + total.toFixed(2) }] : [];
+    const out = total > 0 ? [{ key: 'cost|' + total.toFixed(2), text: '$' + total.toFixed(2), title: 'What the agent runs on this item cost' }] : [];
+    const sum: Record<string, number> = {};
+    for (const r of this.previewRuns) {
+      for (const [k, v] of Object.entries(r.usage?.counts || {})) sum[k] = (sum[k] || 0) + v;
+    }
+    const t = usageTokens(sum);
+    if (t) out.push({ key: 'tokens|' + t, text: t, title: 'Tokens the agent runs on this item used, as the runners reported them' + usageDetail(sum) });
+    return out;
+  },
+  runTokens(run: RunRow): string { return usageTokens(run.usage?.counts || {}); },
+  runTokensTitle(run: RunRow): string {
+    const models = Object.keys(run.usage?.models || {});
+    return 'Tokens this run used' + (models.length ? ' (' + models.join(', ') + ')' : '') + usageDetail(run.usage?.counts || {});
   },
   // Screen-reader text for a row's state (the mark is aria-hidden).
   stageStateLabel(s: StageRow): string {
@@ -2480,22 +2519,24 @@ const appState = () => ({
     const pr = (o && o.pr_url) || (this.previewRuns.find((r: RunRow) => r.stage === 'implement' && !!r.pr_url) || { pr_url: '' }).pr_url || '';
     if (!o && !pr) return [];
     const links: LinkRow[] = pr ? [{ key: 'pr|' + pr, href: pr, text: 'Pull request' }] : [];
-    let state = 'up', when = '', lines: string[];
+    let state = 'up', when = '', at = '', lines: string[];
     if (!o) {
       lines = ['Not merged yet, as far as skopos knows: the worker that implemented the item checks the pull request hourly and records when it is merged or closed.'];
     } else if (o.state === 'merged') {
       state = 'done';
-      when = o.merged_at ? this.timeAgo(o.merged_at) : '';
+      when = o.merged_at ? this.timeWhen(o.merged_at) : '';
+      at = o.merged_at || '';
       lines = ['Merged' + (o.merged_at ? ' ' + this.formatDateTime(o.merged_at) : '') + (o.merge_sha ? ', merge commit ' + o.merge_sha.slice(0, 7) : '') + '.'];
     } else if (o.state === 'closed') {
       state = 'flag';
-      when = o.closed_at ? this.timeAgo(o.closed_at) : '';
+      when = o.closed_at ? this.timeWhen(o.closed_at) : '';
+      at = o.closed_at || '';
       lines = ['The pull request was closed without merging' + (o.closed_at ? ' ' + this.formatDateTime(o.closed_at) : '') + '.'];
     } else {
       state = 'flag';
       lines = ['The pull request was still open 30 days after sign-off; skopos no longer watches it.'];
     }
-    return [{ key: 'merge|' + state + '|' + lines.join('/') + '|' + pr, name: 'Merge', who: 'you', state, when, round: '', lines, links, more: [], moreLabel: '', warn: '', logs: [], plans: false }];
+    return [{ key: 'merge|' + state + '|' + lines.join('/') + '|' + pr, name: 'Merge', who: 'you', state, when, at, round: '', lines, links, more: [], moreLabel: '', warn: '', logs: [], plans: false }];
   },
   stageTrackTail(): StageRow[] {
     const m = this.stageModel();
@@ -2623,7 +2664,7 @@ const appState = () => ({
       this.injectPlans();
     } finally { this.planView.loading = false; }
   },
-  closePlans() { if (!this.planView.open) return; plansClosedAt = Date.now(); this.planView.open = false; },
+  closePlans() { if (!this.planView.open) return; overlayClosedAt = Date.now(); this.planView.open = false; },
   plansTitle(): string { return this.planView.view ? this.planView.view.title : ''; },
   plansRoundText(): string { const v = this.planView.view; return v ? 'Round ' + v.round + ' of ' + v.rounds : ''; },
   plansHasRounds(): boolean { return !!this.planView.view && this.planView.view.rounds > 1; },
@@ -2708,14 +2749,69 @@ const appState = () => ({
     const named = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '');
     return { text: await res.text(), name: named ? named[1] : 'report.' + format };
   },
+  // Opens the report in a dialog over the preview, rendered by the server
+  // (the same sanitised HTML as the html format), at the level asked for.
+  async openReport(level = 'full') {
+    if (this.reportBusy) return;
+    this.reportBusy = true;
+    try {
+      const doc = await this.itemReport(level, 'html');
+      if (!doc) return;
+      this.reportView = { open: true, level, html: doc.text };
+      this.injectReport();
+    } finally {
+      this.reportBusy = false;
+    }
+  },
+  closeReport() { if (!this.reportView.open) return; overlayClosedAt = Date.now(); this.reportView = { open: false, level: this.reportView.level, html: '' }; },
+  reportLevelIs(level: string): boolean { return this.reportView.level === level; },
+  // The CSP build has no x-html: the server's sanitised fragment goes in
+  // here, once the dialog's body exists.
+  injectReport() {
+    this.$nextTick(() => {
+      document.querySelectorAll('[data-report-html]').forEach((el) => { el.innerHTML = this.reportView.html; el.scrollTop = 0; });
+    });
+  },
   async downloadReport() {
     if (this.reportBusy) return;
     this.reportBusy = true;
     try {
-      const doc = await this.itemReport('full', 'md');
+      const doc = await this.itemReport(this.reportView.open ? this.reportView.level : 'full', 'md');
       if (doc) this.saveText(doc);
     } finally {
       this.reportBusy = false;
+    }
+  },
+  async copyReport() {
+    if (this.reportBusy) return;
+    this.reportBusy = true;
+    try {
+      await this.copyFetched(this.itemReport(this.reportView.level, 'md'), 'Report copied as Markdown');
+    } finally {
+      this.reportBusy = false;
+    }
+  },
+  // copyFetched puts a document still being fetched on the clipboard. The
+  // clipboard item is made in the click itself, with the fetch as its value:
+  // a browser that wants the write to start inside the click (Safari)
+  // refuses one made after the answer arrived. Call it before any await.
+  async copyFetched(doc: Promise<{ text: string } | null>, done: string) {
+    let fetched = true;
+    const text = doc.then((d: { text: string } | null) => {
+      if (!d) { fetched = false; throw new Error('nothing fetched'); }
+      return d.text;
+    });
+    text.catch(() => {});
+    try {
+      if (typeof ClipboardItem !== 'undefined' && navigator.clipboard && navigator.clipboard.write) {
+        await navigator.clipboard.write([new ClipboardItem({ 'text/plain': text.then((t: string) => new Blob([t], { type: 'text/plain' })) })]);
+      } else {
+        await navigator.clipboard.writeText(await text);
+      }
+      this.notify(done, 'success');
+    } catch {
+      // A failed fetch has said so itself.
+      if (fetched) this.notify('The browser did not allow copying; use Download instead', 'error');
     }
   },
   // The summary goes on the clipboard as HTML and as Markdown together: it
@@ -2753,14 +2849,7 @@ const appState = () => ({
     }
   },
   async copyPlans() {
-    const doc = await this.plansMarkdown();
-    if (!doc) return;
-    try {
-      await navigator.clipboard.writeText(doc.text);
-      this.notify('Plans copied as Markdown', 'success');
-    } catch {
-      this.notify('The browser did not allow copying; use Download instead', 'error');
-    }
+    await this.copyFetched(this.plansMarkdown(), 'Plans copied as Markdown');
   },
   // ---- review findings (the record: internal/findings) ----
   // Who raised a finding: "review", "review · security", "second opinion · codex".
@@ -2959,7 +3048,7 @@ const appState = () => ({
     // `when` stays out of the key, as for the other rows.
     return [{
       key: 'so|' + state + '|' + lines.join('/') + '|' + more.map((m: MoreRow) => m.key).join(',') + '|' + logs.map((l: LogButton) => l.id + l.text).join(','),
-      name: 'Second opinion', who: 'optional', state, when: this.timeAgo(newest.updated_at), round: '', lines, links: [], more,
+      name: 'Second opinion', who: 'optional', state, when: this.timeWhen(newest.updated_at), at: newest.updated_at, round: '', lines, links: [], more,
       moreLabel: more.some((m: MoreRow) => !!m.work) ? 'Checks, findings and summaries' : 'Findings and summaries', warn: '', logs, plans: false,
     }];
   },
@@ -3025,7 +3114,7 @@ const appState = () => ({
   // created date). Untouched rows carry identical RFC3339Nano strings, so a
   // strict compare decides — rows key on updated_at, so the label re-evaluates.
   inboxShowUpdated(item: InboxItem): boolean { return !!item.updated_at && item.updated_at !== item.created_at; },
-  inboxUpdatedLabel(item: InboxItem): string { return 'updated ' + this.timeAgo(item.updated_at); },
+  inboxUpdatedLabel(item: InboxItem): string { return 'updated ' + this.timeWhen(item.updated_at); },
 
   // ---- agent-pipeline workflow actions (approver-gated server-side) ----
   // The dashboard buttons render for every key; the server authorizes —
@@ -3164,8 +3253,7 @@ const appState = () => ({
   waitLabel(item: InboxItem): string {
     const gate = this.waitGate(item);
     if (!gate || !item.status_since) return '';
-    const age = this.timeAgo(item.status_since);
-    return gate + ' · waiting ' + (age === 'just now' ? 'under a minute' : age.replace(/ ago$/, ''));
+    return gate + ' · waiting ' + waitedText(item.status_since);
   },
   // A wait past a day is called out.
   waitLong(item: InboxItem): boolean {
@@ -3328,7 +3416,7 @@ const appState = () => ({
       key: s.id + '|' + s.enabled + '|' + (s.next || '') + '|' + s.rhythm + '|' + s.template,
       id: s.id, name: s.name, enabled: s.enabled,
       what: 'Template ' + s.template + ' for ' + this.scheduleOwnerLabel(s),
-      when: s.rhythm + ' (' + s.timezone + ')' + (s.enabled && s.next ? ' · next ' + new Date(s.next).toLocaleString() : '') + (s.last ? ' · last ' + this.timeAgo(s.last) : ''),
+      when: s.rhythm + ' (' + s.timezone + ')' + (s.enabled && s.next ? ' · next ' + this.timeWhen(s.next) : '') + (s.last ? ' · last ' + this.timeWhen(s.last) : ''),
     }));
   },
   scheduleOwnerOptions(): { value: string; label: string }[] {
@@ -3595,7 +3683,7 @@ const appState = () => ({
       return {
         key: b.name + '|' + b.rev + '|' + used + '|' + this.pipe.readOnly, name: b.name, held: true, own,
         where: own ? 'held here' : 'from ' + (b.source || '').replace('group:', 'group '), tone: own ? 'tone-accent' : 'tone-info',
-        detail: this.briefSize(b.bytes) + ' · saved ' + this.timeAgo(b.created_at) + ' by ' + b.created_by + ' · ' + used,
+        detail: this.briefSize(b.bytes) + ' · saved ' + this.timeWhen(b.created_at) + ' by ' + b.created_by + ' · ' + used,
         action: this.pipe.readOnly ? 'View' : (own ? 'Edit' : 'Override here'),
       };
     });
@@ -3698,7 +3786,7 @@ const appState = () => ({
       if (t.auto_approve_plan) notes.push('plan approved automatically');
       if (t.needs && t.needs.length) notes.push('needs ' + t.needs.join(', '));
       if (t.agents) notes.push(t.agents === 'solo' ? 'one agent' : 'agent panel');
-      notes.push('saved ' + this.timeAgo(t.created_at) + ' by ' + t.created_by);
+      notes.push('saved ' + this.timeWhen(t.created_at) + ' by ' + t.created_by);
       return {
         key: t.name + '|' + t.rev + '|' + this.pipe.readOnly, name: t.name, title: t.title, own,
         where: own ? 'held here' : 'from ' + (t.source || '').replace('group:', 'group '), tone: own ? 'tone-accent' : 'tone-info',
@@ -3909,7 +3997,7 @@ const appState = () => ({
         else if (!w.pastWorkspaces.includes(run.workspace_id)) w.pastWorkspaces.push(run.workspace_id);
       }
       if (run.stage && !w.stages.includes(run.stage)) w.stages.push(run.stage);
-      if (run.status === 'claimed' || run.status === 'running' || run.status === 'paused') { w.active++; w.currentLabel = run.stage + ' \u00b7 ' + run.status + (run.workspace_id ? ' \u00b7 ' + run.workspace_id : '') + ' \u00b7 ' + this.timeAgo(run.updated_at); }
+      if (run.status === 'claimed' || run.status === 'running' || run.status === 'paused') { w.active++; w.currentLabel = run.stage + ' \u00b7 ' + run.status + (run.workspace_id ? ' \u00b7 ' + run.workspace_id : '') + ' \u00b7 ' + this.timeWhen(run.updated_at); }
       if (run.status === 'succeeded') w.succeeded++;
       if (run.status === 'failed') w.failed++;
       if (run.updated_at > w.lastActive) w.lastActive = run.updated_at;
@@ -3960,8 +4048,8 @@ const appState = () => ({
   workerActivity(w: WorkerRow): string {
     if (w.active > 0 && w.currentLabel) return (w.active > 1 ? w.active + ' runs, newest: ' : '') + w.currentLabel;
     const parts: string[] = [];
-    if (w.lastSeen) parts.push('last seen ' + this.timeAgo(w.lastSeen));
-    if (w.lastActive) parts.push('last run ' + this.timeAgo(w.lastActive));
+    if (w.lastSeen) parts.push('last seen ' + this.timeWhen(w.lastSeen));
+    if (w.lastActive) parts.push('last run ' + this.timeWhen(w.lastActive));
     return parts.length ? parts.join(' \u00b7 ') : 'never seen';
   },
   // A row's third line: its runners and the workspaces it serves (the first
@@ -3985,9 +4073,9 @@ const appState = () => ({
       const k = this.keys.find(x => x.id === w.other_key_id);
       key = 'API key ' + (k ? k.name + ' (' + k.id + ')' : w.other_key_id);
     }
-    return key + ' also polls under this worker id (last ' + this.timeAgo(w.other_seen) + '). Its polls do not update this row: the id was first used with a key that is still valid. Give that worker its own id, or revoke the key this row belongs to.';
+    return key + ' also polls under this worker id (last ' + this.timeWhen(w.other_seen) + '). Its polls do not update this row: the id was first used with a key that is still valid. Give that worker its own id, or revoke the key this row belongs to.';
   },
-  workerWhen(v: string): string { return v ? this.timeAgo(v) + ' (' + this.formatDateTime(v) + ')' : ''; },
+  workerWhen(v: string): string { return v ? this.timeWhen(v) : ''; },
   toggleWorker(w: WorkerRow) { this.workerFold[w.id] = !this.workerFold[w.id]; },
   // What a worker takes from the server: commands for managed workspaces
   // (worker.server_commands), and which runner definitions it holds. Empty
@@ -5941,15 +6029,11 @@ const appState = () => ({
     const m = (e.metadata || {}) as Record<string, unknown>;
     return m.heartbeat === true;
   },
-  // timeAgo: "just now", "4m ago", "2h ago", "3d ago".
-  timeAgo(iso: string): string {
-    if (!iso) return '';
-    const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-    if (s < 60) return 'just now';
-    if (s < 3600) return Math.floor(s / 60) + 'm ago';
-    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
-    return Math.floor(s / 86400) + 'd ago';
-  },
+  // timeWhen: "12m ago", "3h ago", "yesterday 14:05", "Mon 14:05",
+  // "12 Nov 14:05", "12 Nov 2025" (when.ts); timeFull: the exact time with
+  // its zone, for a title.
+  timeWhen(iso: string): string { return whenText(iso); },
+  timeFull(iso: string): string { return whenFull(iso); },
   // durationBetween: "42s", "6m", "1h 23m", "2d 4h".
   durationBetween(startIso: string, endIso: string): string {
     if (!startIso || !endIso) return '';

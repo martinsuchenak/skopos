@@ -251,6 +251,15 @@ func TestLiveCodexLockdown(t *testing.T) {
 	if len(again.Structured) == 0 || again.SessionID != res.SessionID {
 		t.Errorf("the session must resume: %q %q→%q", again.Structured, res.SessionID, again.SessionID)
 	}
+	// Usage: the tokens of each call, the resumed one's without the
+	// session's earlier calls (read from the session file before it), and
+	// the model from the session file even when the run names none.
+	if res.Usage.Counts["output_tokens"] == 0 || len(res.Usage.Models) != 1 {
+		t.Errorf("the call's usage and model: %+v", res.Usage)
+	}
+	if again.Usage.Counts["output_tokens"] == 0 || again.Usage.Counts["cache_read_tokens"]+again.Usage.Counts["input_tokens"] == 0 {
+		t.Errorf("the resumed call's own usage: %+v", again.Usage)
+	}
 
 	// MCP servers (runner_codex_mcp.go). The run's file names two http
 	// servers and a command; the stage allows one tool of the first, all of

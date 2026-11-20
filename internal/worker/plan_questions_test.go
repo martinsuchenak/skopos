@@ -19,7 +19,7 @@ import (
 
 // A planner result with risks and questions (the planner's schema): the
 // questions as entries with options, one the old bare-string shape.
-const fakePlanner = `printf '%s' '{"type":"result","session_id":"s1","structured_output":{"title":"Cache layer","summary":"Adds a cache.","size":"m","needs_clarification":false,"steps":[{"title":"Add the cache","description":"depends on question 1"}],"risks":["stale reads"],"questions":[{"question":"Which backend?","options":["Redis","in-process"]},"Keep the flag?"]}}'
+const fakePlanner = `printf '%s' '{"type":"result","session_id":"s1","num_turns":2,"usage":{"input_tokens":7,"output_tokens":3},"structured_output":{"title":"Cache layer","summary":"Adds a cache.","size":"m","needs_clarification":false,"steps":[{"title":"Add the cache","description":"depends on question 1"}],"risks":["stale reads"],"questions":[{"question":"Which backend?","options":["Redis","in-process"]},"Keep the flag?"]}}'
 `
 
 // A plan with questions: the worker writes the plan (with its risks), then
@@ -84,6 +84,13 @@ func TestPlanWritesQuestionsAndRisks(t *testing.T) {
 	defer mu.Unlock()
 	if len(reports) != 1 || reports[0]["status"] != "succeeded" {
 		t.Fatalf("reports: %v", reports)
+	}
+	// What the agent used goes with the report, with the worker's own
+	// count of the call.
+	usage, _ := reports[0]["usage"].(map[string]any)
+	counts, _ := usage["counts"].(map[string]any)
+	if counts["input_tokens"] != 7.0 || counts["output_tokens"] != 3.0 || counts["turns"] != 2.0 || counts["agent_calls"] != 1.0 {
+		t.Errorf("the run's usage: %v", reports[0]["usage"])
 	}
 	_, secs := splitItem(content)
 	if len(secs) != 2 || secs[0].Heading != "Enrichment — skopos worker" || secs[1].Heading != "Questions — planner" {

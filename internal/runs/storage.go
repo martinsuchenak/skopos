@@ -47,7 +47,7 @@ const runColumns = `id, workspace_id, item_id, plan_rev_id, stage, runner, worke
 	resume_kind, lease_expires_at, resume_after, attempt, branch, base_sha, head_sha,
 	result_summary, diffstat, checks, log_ref, fail_reason, lease_token_hash, claimed_key_id, created_at, updated_at, executor,
 	group_id, focus, cost_usd, findings, pushed, pr_url, setup, fix_rounds, phase, retries, retry_after, avoid_worker,
-	prefer_worker, prefer_until, runner_picked, policy_rev, facts, stranded_reason, grants, config_rev, still_open, nothing_to_do, adopt_from,
+	prefer_worker, prefer_until, runner_picked, policy_rev, facts, stranded_reason, grants, config_rev, still_open, nothing_to_do, adopt_from, usage,
 	COALESCE((SELECT needs FROM inbox_items WHERE inbox_items.id = runs.item_id), '')`
 
 func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
@@ -58,12 +58,12 @@ func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	var cost sql.NullFloat64
 	var pushed sql.NullBool
 	var picked, nothing int
-	var facts, needs string
+	var facts, needs, usage string
 	if err := row.Scan(&r.ID, &r.WorkspaceID, &r.ItemID, &r.PlanRevID, &r.Stage, &r.Runner, &r.WorkerID, &r.Status,
 		&r.ResumeKind, &lease, &resumeAfter, &r.Attempt, &r.Branch, &r.BaseSHA, &r.HeadSHA,
 		&r.ResultSummary, &r.Diffstat, &checks, &r.LogRef, &r.FailReason, &r.LeaseTokenHash, &r.ClaimedKeyID, &createdAt, &updatedAt, &r.Executor,
 		&groupID, &focus, &cost, &findings, &pushed, &r.PRURL, &setup, &r.FixRounds, &r.Phase, &r.Retries, &retryAfter, &r.AvoidWorker,
-		&r.PreferWorker, &preferUntil, &picked, &r.PolicyRev, &facts, &r.Stranded, &r.Grants, &r.ConfigRev, &r.StillOpen, &nothing, &r.AdoptFrom, &needs); err != nil {
+		&r.PreferWorker, &preferUntil, &picked, &r.PolicyRev, &facts, &r.Stranded, &r.Grants, &r.ConfigRev, &r.StillOpen, &nothing, &r.AdoptFrom, &usage, &needs); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -72,6 +72,7 @@ func scanRun(row interface{ Scan(dest ...any) error }) (*Run, error) {
 	r.RunnerPicked = picked != 0
 	r.NothingToDo = nothing != 0
 	r.Needs = labels.Parse(needs)
+	r.Usage = parseUsage(usage)
 	if facts != "" {
 		r.Facts = json.RawMessage(facts)
 	}
@@ -986,6 +987,10 @@ func (s *Storage) Report(ctx context.Context, id, workerID, keyID, tokenHash str
 		return nil, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	usage, err := addUsage(ctx, tx, id, in.Usage)
+	if err != nil {
+		return nil, fmt.Errorf("reading the run's usage: %w", err)
+	}
 	res, err := tx.ExecContext(ctx, `
 		UPDATE runs SET status = ?, result_summary = ?, head_sha = CASE WHEN ? != '' THEN ? ELSE head_sha END, diffstat = ?, checks = ?,
 			log_ref = ?, fail_reason = ?, branch = CASE WHEN ? != '' THEN ? ELSE branch END,
@@ -994,13 +999,13 @@ func (s *Storage) Report(ctx context.Context, id, workerID, keyID, tokenHash str
 			grants = CASE WHEN ? != '' THEN ? ELSE grants END,
 			pr_url = CASE WHEN ? != '' THEN ? ELSE pr_url END,
 			setup = CASE WHEN ? != '' THEN ? ELSE setup END, fix_rounds = ?, phase = '', nothing_to_do = ?,
-			cost_usd = `+addCost+`, findings = COALESCE(?, findings), pushed = COALESCE(?, pushed),
+			cost_usd = `+addCost+`, usage = COALESCE(?, usage), findings = COALESCE(?, findings), pushed = COALESCE(?, pushed),
 			observed = COALESCE(?, observed),
 			lease_expires_at = '', resume_after = '', updated_at = ?
 		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
 		string(in.Status), in.Summary, in.HeadSHA, in.HeadSHA, in.Diffstat, string(checks),
 		in.LogRef, in.Reason, in.Branch, in.Branch, in.BaseSHA, in.BaseSHA, in.Executor, in.Executor, in.Grants, in.Grants, in.PRURL, in.PRURL, setupJSON, setupJSON, in.FixRounds, boolInt(in.NothingToDo && in.Status == StatusSucceeded),
-		costArg(in.CostUSD), costArg(in.CostUSD), findingsJSON(in.Findings), boolArg(in.Pushed),
+		costArg(in.CostUSD), costArg(in.CostUSD), usage, findingsJSON(in.Findings), boolArg(in.Pushed),
 		observedArg(in.Observed),
 		formatTime(now), id, workerID, keyID, tokenHash, string(StatusClaimed), string(StatusRunning), string(StatusPaused))
 	if err != nil {
@@ -1063,15 +1068,24 @@ func (s *Storage) Requeue(ctx context.Context, id, workerID, keyID, tokenHash st
 			setupJSON = string(b)
 		}
 	}
-	res, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	usage, err := addUsage(ctx, tx, id, in.Usage)
+	if err != nil {
+		return nil, fmt.Errorf("reading the run's usage: %w", err)
+	}
+	res, err := tx.ExecContext(ctx, `
 		UPDATE runs SET status = ?, worker_id = '', resume_kind = '', lease_expires_at = '', resume_after = '',
 			lease_token_hash = '', claimed_key_id = '', phase = '', fail_reason = ?, checks = ?,
-			setup = CASE WHEN ? != '' THEN ? ELSE setup END, cost_usd = `+addCost+`,
+			setup = CASE WHEN ? != '' THEN ? ELSE setup END, cost_usd = `+addCost+`, usage = COALESCE(?, usage),
 			retries = retries + 1, retry_after = ?, avoid_worker = ?, prefer_worker = '', prefer_until = '',
 			runner = CASE WHEN runner_picked = 1 THEN '' ELSE runner END, runner_picked = 0,
 			attempt = attempt + 1, updated_at = ?
 		WHERE id = ? AND worker_id = ? AND claimed_key_id = ? AND lease_token_hash = ? AND status IN (?, ?, ?)`,
-		string(StatusQueued), note, string(checks), setupJSON, setupJSON, costArg(in.CostUSD), costArg(in.CostUSD),
+		string(StatusQueued), note, string(checks), setupJSON, setupJSON, costArg(in.CostUSD), costArg(in.CostUSD), usage,
 		formatTime(retryAfter), avoid, formatTime(now),
 		id, workerID, keyID, tokenHash, string(StatusClaimed), string(StatusRunning), string(StatusPaused))
 	if err != nil {
@@ -1080,8 +1094,14 @@ func (s *Storage) Requeue(ctx context.Context, id, workerID, keyID, tokenHash st
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil, ErrLeaseHeld
 	}
-	row := s.db.QueryRowContext(ctx, `SELECT `+runColumns+` FROM runs WHERE id = ?`, id)
-	return scanRun(row)
+	run, err := scanRun(tx.QueryRowContext(ctx, `SELECT `+runColumns+` FROM runs WHERE id = ?`, id))
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return run, nil
 }
 
 // formatPreferUntil stores the zero time as ” (no preference).

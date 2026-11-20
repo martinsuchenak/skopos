@@ -127,8 +127,14 @@ type Worker struct {
 	// grants: the capabilities each run's stage profile granted (a hash),
 	// reported apart from the executor.
 	grants map[string]string
-	// costs: what each run's agent turns cost, sent with its report.
+	// costs and usage: what each run's agent calls cost and used, sent
+	// with its report.
 	costs map[string]float64
+	usage map[string]*Usage
+	// pausedRuns: runs paused here (quota, an amendment waiting for its
+	// approval), which keep their cost and usage for the report the resume
+	// sends; any other run that ends without a report drops them.
+	pausedRuns map[string]bool
 	// lastSweep: when finished items' worktrees were last cleaned up.
 	lastSweep time.Time
 	// phases: what each running implement run is doing past its first turn
@@ -380,6 +386,16 @@ func (w *Worker) execute(ctx context.Context, run *Run) {
 	// The credentials in the repository's own files (redact_files), for the
 	// same reason: an agent that reads them must not put them in the log.
 	w.runSecrets = append(w.runSecrets, w.fileSecrets(run.WorkspaceID)...)
+	// What the run's agents cost and used goes with its report; a run that
+	// ends without one (skopos cancelled it) drops it here, unless it was
+	// paused and its resume will report it.
+	defer func() {
+		if !w.pausedRuns[run.ID] {
+			delete(w.costs, run.ID)
+			delete(w.usage, run.ID)
+		}
+		delete(w.pausedRuns, run.ID)
+	}()
 	// The runners' temporary directories of this run go with it.
 	defer func() {
 		if w.cfg.StateDir != "" && plainRunID(run.ID) {
@@ -600,7 +616,7 @@ func (w *Worker) finish(ctx context.Context, run *Run, log *slog.Logger, err err
 		rl := runLogFrom(ctx)
 		rl.line("worker", "paused until "+resumeAt.Format(time.RFC3339)+": "+reason, true)
 		rl.flush()
-		_ = w.client.Pause(ctx, run.ID, w.cfg.ID, reason, resumeAt)
+		_ = w.pauseRun(ctx, run, reason, resumeAt)
 		// Another account (or runner) can still work: keep claiming — the
 		// claim no longer offers exhausted runners. Only when nothing at all
 		// is usable does the worker sleep through the back-off.
@@ -852,6 +868,13 @@ func (w *Worker) report(ctx context.Context, run *Run, succeeded bool, fields ma
 		fields["cost_usd"] = c
 		delete(w.costs, run.ID)
 	}
+	if u := w.usage[run.ID]; !u.Empty() {
+		if fields == nil {
+			fields = map[string]any{}
+		}
+		fields["usage"] = u
+	}
+	delete(w.usage, run.ID)
 	if rl := runLogFrom(ctx); rl != nil {
 		if succeeded {
 			rl.notef("%s succeeded", run.Stage)
@@ -864,10 +887,29 @@ func (w *Worker) report(ctx context.Context, run *Run, succeeded bool, fields ma
 	return w.client.ReportResult(ctx, run.ID, w.cfg.ID, succeeded, fields)
 }
 
-// addCost records what an agent run cost (summed over a stage's turns);
-// report() sends it with the result. Runners that report nothing add 0 and
-// stay unreported.
-func (w *Worker) addCost(run *Run, res AgentResult) {
+// pauseRun pauses the run on the server; its cost and usage so far stay
+// here for the report the resume sends.
+func (w *Worker) pauseRun(ctx context.Context, run *Run, reason string, resumeAfter time.Time) error {
+	if w.pausedRuns == nil {
+		w.pausedRuns = map[string]bool{}
+	}
+	w.pausedRuns[run.ID] = true
+	return w.client.Pause(ctx, run.ID, w.cfg.ID, reason, resumeAfter)
+}
+
+// addUsage records what an agent call cost and used (summed over a
+// stage's calls); report() sends it with the result. A cost a runner does
+// not report stays unreported.
+func (w *Worker) addUsage(run *Run, res AgentResult) {
+	if !res.Usage.Empty() {
+		if w.usage == nil {
+			w.usage = map[string]*Usage{}
+		}
+		if w.usage[run.ID] == nil {
+			w.usage[run.ID] = &Usage{}
+		}
+		w.usage[run.ID].Add(res.Usage)
+	}
 	if res.CostUSD <= 0 {
 		return
 	}

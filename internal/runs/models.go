@@ -205,6 +205,9 @@ type Run struct {
 	Focus   string `json:"focus,omitempty"`
 	// CostUSD is what the agent run cost, when the runner reports it.
 	CostUSD *float64 `json:"cost_usd,omitempty"`
+	// Usage: what the run's agents used, as their runners reported it
+	// (usage.go).
+	Usage *Usage `json:"usage,omitempty"`
 	// Findings are a review/QA member's structured findings: what this
 	// run found that no earlier review had (the record, internal/findings,
 	// follows each one afterwards).
@@ -398,6 +401,9 @@ type ReportInput struct {
 	Grants   string `json:"grants,omitempty"`
 	// CostUSD: the agent run's cost when the runner reports one.
 	CostUSD *float64 `json:"cost_usd,omitempty"`
+	// Usage: what the attempt's agents used (usage.go); added to what the
+	// run's earlier attempts reported.
+	Usage *Usage `json:"usage,omitempty"`
 	// Findings: review/QA structured findings (severity + text) — only what
 	// this run found new; what it says about earlier ones is in
 	// FindingAnswers.

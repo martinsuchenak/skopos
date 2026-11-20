@@ -4,6 +4,35 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.46.0] — 2026-11-20
+
+### Added
+
+- Runs record what their agents used: tokens (input, read from and written
+  to the cache, output, reasoning), turns, and how many times and for how
+  long the worker ran the agent. Each count is kept per model where the
+  runner names the model, and summed over the run's agent calls and
+  retries. Claude Code, codex, opencode and antigravity report tokens.
+  Any other count a runner reports is kept under its own name. The item
+  preview shows the tokens beside the cost (hover for every count). The
+  item report lists them per run and in total, and the run log notes them
+  for each agent turn.
+- The item preview's Report button opens the report in a dialog, full or
+  summary, with Copy as Markdown and Download .md in it.
+- The dashboard's times say when, not only how long ago. A recent one is
+  relative ("12m ago", "3h ago"); an older one shows the day or the date:
+  "yesterday 14:05", "Mon 14:05", "12 Nov 14:05", "12 Nov 2025", in the
+  browser's locale and time zone. Hover over a time for the exact moment
+  with its time zone. Waits still read as durations ("waiting 2d 4h").
+- The item report's model column names the model the runner reported. A
+  codex account that names no model shows the one codex picked, read from
+  codex's session file.
+
+### Fixed
+
+- Copy as Markdown in the plans dialog now works in Safari, which refused
+  a clipboard write that started only after the plans were fetched.
+
 ## [0.45.2] — 2026-11-19
 
 ### Fixed

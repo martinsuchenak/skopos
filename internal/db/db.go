@@ -326,6 +326,10 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "runs", "observed", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	// runs.usage: what a run's agents used (internal/runs/usage.go), JSON.
+	if err := ensureColumn(db, "runs", "usage", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	// runs.adopt_from: an implement run that checks the commits pushed to
 	// the branch after this one (internal/runs/adopt.go); '' = an ordinary run.
 	if err := ensureColumn(db, "runs", "adopt_from", "TEXT NOT NULL DEFAULT ''"); err != nil {

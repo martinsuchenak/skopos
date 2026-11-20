@@ -73,7 +73,7 @@
                             <span class="font-mono text-sm text-cyan-300" x-text="{{.}}.branch"></span>
                             <span class="text-xs text-zinc-500"><span x-text="{{.}}.file_count"></span> files · <span x-text="{{.}}.symbol_count"></span> symbols</span>
                             <span class="ml-auto text-xs text-zinc-500" x-text="{{.}}.source || ''"></span>
-                            <span class="text-xs text-zinc-500" x-text="formatDateTime({{.}}.built_at)"></span>
+                            <span class="text-xs text-zinc-500" :title="timeFull({{.}}.built_at)" x-text="formatDateTime({{.}}.built_at)"></span>
                         </li>{{end}}
 
 {{/*
@@ -96,7 +96,7 @@
                                     <span class="stage-name" x-text="s.name"></span>
                                     <span x-show="s.round" class="font-mono text-[11px] text-violet-300" x-text="s.round"></span>
                                     <span class="stage-who" :class="s.who === 'you' ? 'stage-who-you' : ''" x-text="s.who"></span>
-                                    <span x-show="s.when" class="ml-auto font-mono text-[11px] text-zinc-500" x-text="s.when"></span>
+                                    <span x-show="s.when" class="ml-auto font-mono text-[11px] text-zinc-500" :title="s.at ? timeFull(s.at) : ''" x-text="s.when"></span>
                                 </div>
                                 <template x-for="(l, li) in s.lines" :key="s.key + '|' + li">
                                     <p class="stage-line" x-text="l"></p>

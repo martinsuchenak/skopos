@@ -255,7 +255,7 @@ the order things happened:
 | Implementation | each implement run: commit, diffstat, setup and checks, fix rounds, pull request |
 | Reviews and QA | each review, QA run and second opinion: verdict, summary, findings |
 | Findings | every finding and what became of it: fixed and confirmed, waived (by whom, why), still open |
-| Who worked on it | each run's stage, runner, model, provider, executor and worker, and the cost the runners reported. Runs that recorded no provider are counted |
+| Who worked on it | each run's stage, runner, model (the one the runner reported, else the configured one), provider, executor and worker, and the tokens and cost the runners reported. Runs that recorded no provider, and runs that reported no token counts, are counted |
 
 | Parameter | Values |
 |---|---|

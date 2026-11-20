@@ -478,8 +478,8 @@ sign-off.
   a plan with its questions and your notes on it, a review with your change
   requests. The newest round is open; older ones are folded, numbered when a
   kind repeats ("Plan · round 2 of 3"). The header shows the item's ID (the
-  copy button copies it) and what the agent runs cost, when the runners
-  report it. On a phone the preview fills the screen.
+  copy button copies it), what the agent runs cost when the runners
+  report it, and the tokens they used (hover for every count). On a phone the preview fills the screen.
 
 **What's waiting for you.** Beside the Inbox entry in the sidebar, a count
 shows how many items wait for you in every workspace you can reach: plan
@@ -566,11 +566,13 @@ started, and pushes or reports nothing more. Its live log ends with
 Every transition, approval and edit is in the item's timeline
 (`GET /api/inbox/{id}/timeline`), labelled with who acted and from where.
 
-**The item's report.** The preview's **Report** button downloads the item's
-record as one Markdown document: the brief, the approved plan, questions
-and answers, every decision you took, the implementation with its checks,
-the reviews, what became of each finding, and which runner, model and
-provider worked on it.
+**The item's report.** The preview's **Report** button opens the item's
+record as one document over the preview: the brief, the approved plan,
+questions and answers, every decision you took, the implementation with
+its checks, the reviews, what became of each finding, and which runner,
+model and provider worked on it. Switch between the full report and the
+summary there, copy the one shown as Markdown, or download it as a `.md`
+file.
 - **Copy summary** puts a short form on the clipboard, formatted for a rich
   editor and as Markdown for a plain one, to paste into a comment.
 - `skopos inbox report --id <item>` writes the same document: `--level
@@ -689,6 +691,22 @@ run's `observed` (in `GET /api/runs/{id}`; lists leave it out) holds:
   item did not ask for;
 - **for an implementation, a review or QA,** `work`: what the run did,
   as in [What each stage did](#what-each-stage-did).
+
+Every run also records `usage`: what its agents used, as their runners
+reported it, summed over the run's agent calls and retries (in every run
+read). Counts runners share have one name whichever runner reported them:
+`input_tokens` (input not read from or written to the provider's cache),
+`cache_read_tokens`, `cache_write_tokens`, `output_tokens`,
+`reasoning_tokens` and `turns`. The worker adds `agent_calls` and
+`agent_ms`, how many times it started the agent and for how long. Any
+other count a runner reports keeps the runner's own name, and `models`
+holds the counts per model where the runner says which model did the work.
+That is how a run whose account names no model still shows the one the
+CLI picked. Claude Code, codex, opencode and antigravity report tokens;
+a `command` runner reports none. Claude Code and opencode also report a
+cost. codex does not, and a codex login through a ChatGPT plan is not
+billed per token. The item preview shows the tokens beside the cost, and
+the item report has them per run and in total.
 
 Your decisions at each gate are in the audit log, and each item's
 `status_since` says how long it has waited at its gate. After you sign an

@@ -91,6 +91,12 @@ func (o opencodeRunner) Run(ctx context.Context, r AgentRun) AgentResult {
 			"). Reply with ONLY that JSON object, in a ```json fenced block."+schemaInstruction(r.Schema), res.SessionID, true)
 		if repair.Outcome == OutcomeOK {
 			repair.CostUSD += res.CostUSD
+			if res.Usage != nil {
+				if repair.Usage == nil {
+					repair.Usage = &Usage{}
+				}
+				repair.Usage.Add(res.Usage)
+			}
 			res = repair
 			obj, err = extractStructured(res.Text, r.Schema)
 		}
@@ -211,8 +217,9 @@ func parseOpencodeEvents(out []byte) AgentResult {
 			Type      string `json:"type"`
 			SessionID string `json:"sessionID"`
 			Part      struct {
-				Text string  `json:"text"`
-				Cost float64 `json:"cost"`
+				Text   string          `json:"text"`
+				Cost   float64         `json:"cost"`
+				Tokens json.RawMessage `json:"tokens"`
 			} `json:"part"`
 			Error struct {
 				Name string `json:"name"`
@@ -233,6 +240,17 @@ func parseOpencodeEvents(out []byte) AgentResult {
 			texts = append(texts, ev.Part.Text)
 		case "step_finish":
 			res.CostUSD += ev.Part.Cost
+			// One model call: its tokens (input, output, reasoning,
+			// cache.read, cache.write).
+			if c := usageFrom(ev.Part.Tokens); c != nil {
+				if res.Usage == nil {
+					res.Usage = &Usage{}
+				}
+				for k, v := range c {
+					res.Usage.Count(k, v)
+				}
+				res.Usage.Count("turns", 1)
+			}
 		case "error":
 			msg := strings.TrimSpace(ev.Error.Name + ": " + ev.Error.Data.Message)
 			var status *int

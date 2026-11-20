@@ -173,7 +173,7 @@ func (w *Worker) stagePlan(ctx context.Context, run *Run, log *slog.Logger) erro
 	}
 	log.Info("planning", "account", account.Name, "base", baseSHA, "branch", branch, "handover", choice.Exists, "group", run.GroupID != "", "seeded", seed != nil)
 	res := w.runAgent(ctx, w.agentRun(dir, prompt, planSchema, w.planToolsFor(run.WorkspaceID), w.planTimeout(run.WorkspaceID), account, run, "plan"))
-	w.addCost(run, res)
+	w.addUsage(run, res)
 	if err := w.handleAgentOutcome(ctx, run, res, account, "plan"); err != nil {
 		return err
 	}
@@ -601,7 +601,7 @@ func (w *Worker) stageImplement(ctx context.Context, run *Run, log *slog.Logger)
 		}
 		log.Info("implementing", "account", account.Name, "branch", branch, "worktree", worktree)
 		res := w.runAgent(ctx, w.agentRun(worktree, prompt, implSchema, w.implToolsFor(run.WorkspaceID), w.implTimeout(run.WorkspaceID), account, run, "implement"))
-		w.addCost(run, res)
+		w.addUsage(run, res)
 		if err := w.handleAgentOutcome(ctx, run, res, account, "implement"); err != nil {
 			return err
 		}
@@ -794,7 +794,7 @@ func (w *Worker) fixChecksRound(ctx context.Context, run *Run, item *Item, repo 
 		return nil, err
 	}
 	res := w.runAgent(ctx, w.agentRun(worktree, prompt, implSchema, w.implToolsFor(run.WorkspaceID), w.implTimeout(run.WorkspaceID), account, run, "implement"))
-	w.addCost(run, res)
+	w.addUsage(run, res)
 	if err := w.handleAgentOutcome(ctx, run, res, account, "implement"); err != nil {
 		return nil, err
 	}
@@ -1193,7 +1193,7 @@ func (w *Worker) review(ctx context.Context, run *Run, log *slog.Logger, br *bra
 	}
 	log.Info("reviewing", "account", account.Name, "branch", run.Branch, "head", shortSHA(reviewed))
 	res := w.runAgent(ctx, w.agentRun(wt, prompt, schema, w.reviewToolsFor(run.WorkspaceID), timeout, account, run, phase))
-	w.addCost(run, res)
+	w.addUsage(run, res)
 	if err := w.handleAgentOutcome(ctx, run, res, account, phase); err != nil {
 		return err
 	}
@@ -1362,7 +1362,7 @@ func (w *Worker) proposeAmendment(ctx context.Context, run *Run, item *Item, ir 
 	rl := runLogFrom(ctx)
 	rl.line("worker", "paused for your decision: "+reason, false)
 	rl.flush()
-	return w.client.Pause(ctx, run.ID, w.cfg.ID, reason, time.Time{})
+	return w.pauseRun(ctx, run, reason, time.Time{})
 }
 
 // runKnowledge is what an implement/review/qa prompt carries: the repo
