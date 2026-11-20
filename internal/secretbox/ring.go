@@ -1,7 +1,6 @@
 // Package secretbox seals the secrets skopos stores — webhook signing
 // secrets, the credentials of MCP servers — under the server's secret key
-// (integrations.secret_key), and lets that key be rotated
-// (tmp/central-config — design.md, phase 2b).
+// (integrations.secret_key), and lets that key be rotated.
 //
 // A sealed value names the key that sealed it. A server holds the current
 // key and, while a rotation is under way, the previous one: it opens what

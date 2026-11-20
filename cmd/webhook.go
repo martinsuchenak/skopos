@@ -12,8 +12,8 @@ import (
 )
 
 // skopos webhook …: subscriptions that tell another system what happens to
-// items (tmp/integrations — design.md §3). Root manages any; an approver
-// key manages those for its own workspaces.
+// items. Root manages any; an approver key manages those for its own
+// workspaces.
 
 func init() {
 	Register(webhookCmd())

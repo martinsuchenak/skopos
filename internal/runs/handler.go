@@ -48,8 +48,7 @@ func (h *Handler) Claim(w http.ResponseWriter, r *http.Request) {
 		rest.RespondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	// The server's release, so an idle worker can upgrade itself to it
-	// (tmp/self-healing-workers — design.md §5).
+	// The server's release, so an idle worker can upgrade itself to it.
 	w.Header().Set("Skopos-Version", build.Version)
 	// This server reads runner facts: a run it hands a worker that sent
 	// them always names its runner (the worker refuses one that doesn't).
@@ -82,10 +81,9 @@ func (h *Handler) Claim(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// What to index while idle (tmp/agent-mcp-and-indexing — design.md
-	// §3), in headers so the body stays the run (or nothing).
-	// What the worker holds of its workspaces' config may be out of date:
-	// one value it compares, and refetches while idle when it changed.
+	// What to index while idle, in headers so the body stays the run (or
+	// nothing). What the worker holds of its workspaces' config may be out of
+	// date: one value it compares, and refetches while idle when it changed.
 	if d := h.service.ConfigDigest(r.Context(), in.Workspaces); d != "" {
 		w.Header().Set("Skopos-Config-Rev", d)
 	}

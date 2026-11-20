@@ -17,12 +17,11 @@ import (
 	"github.com/martinsuchenak/skopos/internal/labels"
 )
 
-// Item templates (tmp/templates-schedules — design.md, part 2): a request
-// that repeats ("update the dependencies and the related code"), held for a
-// workspace or a group, from which an item is started instead of typed
-// again. Held like briefs: every save is a new row of item_templates, the
-// newest row of an owner's name is the template, deleted = 1 says there is
-// none; a workspace's own wins over its group's.
+// Item templates: a request that repeats ("update the dependencies and the
+// related code"), held for a workspace or a group, from which an item is
+// started instead of typed again. Held like briefs: every save is a new row
+// of item_templates, the newest row of an owner's name is the template,
+// deleted = 1 says there is none; a workspace's own wins over its group's.
 
 // Template limits.
 const (

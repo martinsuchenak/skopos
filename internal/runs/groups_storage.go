@@ -9,10 +9,9 @@ import (
 	"time"
 )
 
-// Stage groups (tmp/multi-agent-stages — design.md §1). The table is
-// STRICT with CHECKs and a partial unique index ("one open group per item
-// and stage"), so the database refuses what the Go code must never write.
-// Timestamps are Unix milliseconds.
+// Stage groups. The table is STRICT with CHECKs and a partial unique index
+// ("one open group per item and stage"), so the database refuses what the Go
+// code must never write. Timestamps are Unix milliseconds.
 
 const groupColumns = `id, workspace_id, item_id, stage, round, size, policy, early_exit, state,
 	outcome, base_sha, deadline_ms, decided_ms, created_ms`

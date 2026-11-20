@@ -1510,12 +1510,11 @@ type branchReview struct {
 	Setup  []Check
 }
 
-// stageBranchReview reviews a review-only item's existing branch
-// (tmp/branch-handover — design.md §4): the repository's setup and checks at
-// the branch head, read-only — no fix rounds, nothing committed or pushed —
-// then the review, which gets the check results. Failed checks don't stop
-// it: they are findings. The run succeeds whatever the verdict; the approver
-// decides at in_review.
+// stageBranchReview reviews a review-only item's existing branch: the
+// repository's setup and checks at the branch head, read-only — no fix
+// rounds, nothing committed or pushed — then the review, which gets the check
+// results. Failed checks don't stop it: they are findings. The run succeeds
+// whatever the verdict; the approver decides at in_review.
 func (w *Worker) stageBranchReview(ctx context.Context, run *Run, log *slog.Logger) error {
 	repo := w.repo(run.WorkspaceID)
 	if repo == nil {

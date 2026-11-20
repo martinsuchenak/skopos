@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Another system can show an item as a card on its own record:
+  `POST /api/inbox/card` takes the system's reference and answers with the
+  item's status, whether a person must act, a one-line summary, a key that
+  changes only when something new happened, and an A2UI 1.0 surface (the
+  basic catalog) the system draws with its own components: the plan and its
+  questions at approval, why the work stopped, the pull request, checks,
+  reviews and open findings at sign-off. A key that may read the inbox may
+  ask for one. See "Show the item as a card" in
+  docs/guides/external-systems.md.
+
 ## [0.46.0] — 2026-11-20
 
 ### Added
@@ -1812,7 +1826,7 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **Workers heal themselves** (`tmp/self-healing-workers — design.md`):
+- **Workers heal themselves**:
   - **Retries.** A failure that is the worker's problem goes back to the
     queue instead of blocking the item: setup failed or hung, a check hung,
     git failed, the push was rejected, the provider kept failing. It waits 1
@@ -2252,7 +2266,6 @@ versions follow [Semantic Versioning](https://semver.org/).
     settings (`--second-opinion` on `skopos workspace|group pipeline set`).
   - **Limits:** approver-only, one at a time per item, `force` to repeat a
     runner on the same head, audited as `inbox.second_opinion`.
-  - Design: `tmp/second-opinion-review — design.md`.
 - **Codex runner (`kind = "codex"`)**, with a verified lockdown for
   read-only stages: plan, review, compare and second opinions. It refuses
   implement (Codex keeps `.git` read-only, so an implementer couldn't
@@ -2383,7 +2396,6 @@ versions follow [Semantic Versioning](https://semver.org/).
   merged across reviewers, nits separately), blocks or advances the item, and
   shows in Slack's blocked and branch-ready messages. One runner per stage
   behaves exactly as before. New endpoint: `GET /api/runs/groups?item_id=`.
-  Design: `tmp/multi-agent-stages — design.md`.
 - **Multi-agent planning (opt-in).** `--run-stage ws:plan=claude,opencode-glm`
   runs several planners at one pinned base commit; each writes a candidate
   plan without touching the live plan. The gate lists them (dashboard cards,

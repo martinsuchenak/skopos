@@ -3345,6 +3345,42 @@ paths:
                   cut: { type: boolean, description: The period holds more entries than one summary reads; the oldest are left out }
         "400": { description: A period that does not parse }
         "401": { description: Unauthorized }
+  /api/inbox/card:
+    post:
+      summary: The item of another system's reference, as a card
+      description: "For another system that shows skopos's item on its own record (a ticket, a job). The item is the newest one with subject.ref that is not closed, else the newest; none is a card too (status none). The answer is an envelope: status (one of none, not_started, agent, plan_approval, blocked, failed, sign_off, done, discarded, nothing_to_do) for the host to map to its own states, attention (a person must act), a one-line summary, key (changes exactly when something new happened: post a note only when it changes), url (the item in skopos), and a2ui: A2UI 1.0 messages (a2ui.org) — deleteSurface, then createSurface with its components, using the basic catalog only — for the host to draw with its own components. Built from the same state as GET /api/inbox/{id}/state, so a capped key sees the plan only with plans:read and the runs' details only with runs:read. A read, though a POST: a key with inbox:read may call it, and its answer is never replayed for an Idempotency-Key. Cards carry no buttons yet: a request with an action is refused."
+      operationId: inboxCard
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: workspace, in: query, schema: { type: string }, description: Look in this workspace only (default every workspace the key reaches) }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [subject]
+              properties:
+                subject:
+                  type: object
+                  additionalProperties: false
+                  required: [ref]
+                  properties:
+                    ref: { type: string, maxLength: 255, description: "The host's reference, as the item's ref holds it (e.g. JOB100235)" }
+                    title: { type: string }
+                    url: { type: string, description: The host's own page for the subject }
+                    text: { type: string, maxLength: 65536, description: The subject's text (used once cards can start items) }
+                action: { type: object, description: Reserved for an A2UI action message from a card's button; refused for now }
+      responses:
+        "200":
+          description: The envelope
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CardEnvelope" }
+        "400": { description: "No ref, a ref or text too long, an unknown field, or an action" }
+        "401": { description: Unauthorized }
+        "403": { description: A workspace outside the key's scope }
   /api/inbox/{id}/report:
     get:
       summary: The item's report
@@ -4571,6 +4607,19 @@ components:
         until: { type: string, format: date-time, description: When it ends; absent = until resumed }
         by: { type: string, description: "Who paused it: root, key <name>" }
         reason: { type: string }
+    CardEnvelope:
+      type: object
+      required: [status, attention, summary, key, a2ui]
+      properties:
+        status: { type: string, enum: [none, not_started, agent, plan_approval, blocked, failed, sign_off, done, discarded, nothing_to_do] }
+        attention: { type: boolean, description: A person must act }
+        summary: { type: string, description: One line for the host's timeline }
+        key: { type: string, description: Changes exactly when something new happened (a new item, status, plan round, question set, reviewed head, reason to stop) }
+        url: { type: string, description: The item in skopos (absent without server.public_url) }
+        a2ui:
+          type: array
+          description: "A2UI 1.0 agent-to-renderer messages: deleteSurface, then createSurface (surfaceId, catalogId = the basic catalog v1, components). Every card of an item has the same surfaceId: apply both in order to the renderer that shows the card."
+          items: { type: object }
     Answers:
       description: |
         Answers to the item's open questions: a list by question id, or free text. Free text is read

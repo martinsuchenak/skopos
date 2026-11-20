@@ -34,11 +34,10 @@ func hReq(t *testing.T, base, key, method, path, body string, headers map[string
 	return resp.StatusCode, string(b), resp.Header
 }
 
-// Another system's flow over REST (tmp/integrations — design.md): an
-// integration key creates and starts an item once (a retry with the same
-// Idempotency-Key gets the same item), finds it by its job's reference,
-// follows it through the state endpoint, and approves the plan on behalf
-// of a named person.
+// Another system's flow over REST: an integration key creates and starts an
+// item once (a retry with the same Idempotency-Key gets the same item), finds
+// it by its job's reference, follows it through the state endpoint, and
+// approves the plan on behalf of a named person.
 func TestIntegrationExternalSystemFlow(t *testing.T) {
 	sqlDB, base := workerStack(t)
 	root := workerClient{base: base, key: "root-secret"}

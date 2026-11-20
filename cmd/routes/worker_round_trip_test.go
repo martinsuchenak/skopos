@@ -18,6 +18,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
+	"github.com/martinsuchenak/skopos/internal/cards"
 	"github.com/martinsuchenak/skopos/internal/codeindex"
 	"github.com/martinsuchenak/skopos/internal/confrev"
 	"github.com/martinsuchenak/skopos/internal/db"
@@ -355,7 +356,9 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	bb := blackboard.NewHandler(blackboard.NewService(blackboard.NewStorage(sqlDB)), authn)
 	pl := plans.NewHandler(plansService, authn)
 	ib := inbox.NewHandler(inboxService, authn)
-	ib.SetStateHandler(itemstate.NewHandler(&itemstate.Service{Items: inboxService, Plans: plansService, Runs: runsService, Findings: findingsService}).Get)
+	stateService := &itemstate.Service{Items: inboxService, Plans: plansService, Runs: runsService, Findings: findingsService}
+	ib.SetStateHandler(itemstate.NewHandler(stateService).Get)
+	ib.SetCardHandler(cards.NewHandler(&cards.Service{Items: inboxService, States: stateService}).Post)
 	reportHandler := itemreport.NewHandler(&itemreport.Service{
 		Items: inboxService, Plans: plansService, Runs: runsService, Questions: qaService, Findings: findingsService, Approvals: approvalsService, Audit: auditService,
 	})

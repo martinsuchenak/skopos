@@ -236,12 +236,11 @@ func (s *Service) Queue(ctx context.Context, itemID, via string) (*Item, error) 
 	return item, err
 }
 
-// ReviewBranch queues a review-only item (tmp/branch-handover — design.md
-// §4): the agent runs the repository's checks on an existing branch and
-// reviews it; nothing is planned or implemented. The item needs its
-// branch, or the reference the repository's branch template names it by
-// (the worker resolves and finds it). Changes requested afterwards turn it
-// into a handover.
+// ReviewBranch queues a review-only item: the agent runs the repository's
+// checks on an existing branch and reviews it; nothing is planned or
+// implemented. The item needs its branch, or the reference the repository's
+// branch template names it by (the worker resolves and finds it). Changes
+// requested afterwards turn it into a handover.
 func (s *Service) ReviewBranch(ctx context.Context, itemID, via string) (*Item, error) {
 	if err := auth.RequireApprover(ctx); err != nil {
 		return nil, err

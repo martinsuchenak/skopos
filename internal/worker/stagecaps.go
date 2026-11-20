@@ -14,8 +14,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/wsconfig"
 )
 
-// Stage capabilities and wrappers from the server (tmp/central-config —
-// design.md, phase 2d).
+// Stage capabilities and wrappers from the server.
 //
 // A stage profile does two jobs: it says what the stage's agent is given
 // (tools, env, settings) and what contains the run (a wrapper, a sandbox).

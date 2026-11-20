@@ -1,0 +1,116 @@
+package cards
+
+import (
+	"fmt"
+	"maps"
+	"strings"
+)
+
+// A2UI 1.0 (a2ui.org): the protocol version and the catalog every surface
+// uses. A host draws the basic catalog's components with its own.
+const (
+	A2UIVersion  = "1.0"
+	BasicCatalog = "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json"
+)
+
+// Component is one A2UI component: id, component (its catalog name) and
+// its properties, flat as the protocol writes them.
+type Component map[string]any
+
+// surface collects a surface's components. Ids are generated in order, so
+// the same state builds the same JSON.
+type surface struct {
+	components []Component
+	n          int
+}
+
+func (s *surface) add(kind string, props Component) string {
+	s.n++
+	id := fmt.Sprintf("c%d", s.n)
+	c := Component{"id": id, "component": kind}
+	maps.Copy(c, props)
+	s.components = append(s.components, c)
+	return id
+}
+
+// text is a Text component: Markdown the host renders (and sanitises).
+func (s *surface) text(markdown string) string {
+	return s.add("Text", Component{"text": markdown})
+}
+
+// caption is a Text in the caption style.
+func (s *surface) caption(markdown string) string {
+	return s.add("Text", Component{"text": markdown, "variant": "caption"})
+}
+
+func (s *surface) card(child string) string {
+	return s.add("Card", Component{"child": child})
+}
+
+func (s *surface) divider() string {
+	return s.add("Divider", nil)
+}
+
+type tab struct{ title, child string }
+
+func (s *surface) tabs(ts []tab) string {
+	list := make([]map[string]any, 0, len(ts))
+	for _, t := range ts {
+		list = append(list, map[string]any{"title": t.title, "child": t.child})
+	}
+	return s.add("Tabs", Component{"tabs": list})
+}
+
+// createSurface is an envelope's A2UI messages: deleteSurface, then
+// createSurface with every component (the root a column of the given
+// children). A surface id may be created only once in a renderer's life
+// unless it is deleted first, and every card of an item has the same id:
+// deleting first lets a host keep one renderer and apply each card as it
+// comes. A renderer that has not seen the surface takes the delete as
+// nothing to do.
+func (s *surface) createSurface(surfaceID string, children []string) []any {
+	root := Component{"id": "root", "component": "Column", "children": children, "align": "stretch"}
+	comps := append([]Component{root}, s.components...)
+	return []any{
+		map[string]any{"version": A2UIVersion, "deleteSurface": map[string]any{"surfaceId": surfaceID}},
+		map[string]any{
+			"version": A2UIVersion,
+			"createSurface": map[string]any{
+				"surfaceId":  surfaceID,
+				"catalogId":  BasicCatalog,
+				"components": comps,
+			},
+		},
+	}
+}
+
+// clip cuts text a person reads on a card to n bytes on a rune boundary.
+func clip(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= n {
+		return s
+	}
+	cut := n
+	for cut > 0 && !utf8Start(s[cut]) {
+		cut--
+	}
+	return strings.TrimSpace(s[:cut]) + " …"
+}
+
+func utf8Start(b byte) bool { return b&0xC0 != 0x80 }
+
+// firstLine is a text's first non-empty line.
+func firstLine(s string) string {
+	for l := range strings.SplitSeq(s, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			return l
+		}
+	}
+	return ""
+}
+
+// indent puts text under a list item: every line after the first starts
+// with the item's indent.
+func indent(s, pad string) string {
+	return strings.ReplaceAll(strings.TrimSpace(s), "\n", "\n"+pad)
+}

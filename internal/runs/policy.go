@@ -16,7 +16,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/policy"
 )
 
-// The claim's runner decision (tmp/central-config — design.md, phase 1a).
+// The claim's runner decision.
 //
 // For every run it hands out, the claim resolves the one runner the worker
 // will run, checks that runner against the workspace's policy using what

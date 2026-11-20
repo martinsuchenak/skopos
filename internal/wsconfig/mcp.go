@@ -23,14 +23,13 @@ import (
 	"github.com/martinsuchenak/skopos/internal/secretbox"
 )
 
-// MCP servers for runs (tmp/central-config — design.md, phase 2b). A
-// server is defined once: where it is (an http URL, or a command the worker
-// runs) and which secrets it needs, by name. A workspace's or group's
-// config says which servers its runs get (`mcp`). The values of the secrets
-// are stored apart, sealed (internal/secretbox), and leave the server only
-// inside the answer to a claim — for that run's workspace, to the worker
-// that runs it. They are never part of a config fetch, an export, a
-// revision or an audit note.
+// MCP servers for runs. A server is defined once: where it is (an http URL,
+// or a command the worker runs) and which secrets it needs, by name. A
+// workspace's or group's config says which servers its runs get (`mcp`). The
+// values of the secrets are stored apart, sealed (internal/secretbox), and
+// leave the server only inside the answer to a claim — for that run's
+// workspace, to the worker that runs it. They are never part of a config
+// fetch, an export, a revision or an audit note.
 
 // KindMCPServer is the revision kind of MCP server definitions (owner
 // "mcp_server:<name>").

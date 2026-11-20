@@ -14,11 +14,10 @@ import (
 	"github.com/martinsuchenak/skopos/internal/events"
 )
 
-// Wrapper definitions (tmp/central-config — design.md, phase 2d): a wrapper
-// is defined once, by name, and a workspace's or group's stage block
-// attaches it to runs by rule (StageCaps.Wrap). Its argv is a command on
-// every worker that uses it, so only a fleet admin defines one, and a
-// worker runs it only with worker.server_commands.
+// Wrapper definitions: a wrapper is defined once, by name, and a workspace's
+// or group's stage block attaches it to runs by rule (StageCaps.Wrap). Its
+// argv is a command on every worker that uses it, so only a fleet admin
+// defines one, and a worker runs it only with worker.server_commands.
 
 // KindWrapper is the revision kind of wrapper definitions (owner
 // "wrapper:<name>").

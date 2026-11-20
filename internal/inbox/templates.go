@@ -10,9 +10,9 @@ import (
 	"github.com/martinsuchenak/skopos/internal/auth"
 )
 
-// Starting an item from a template (tmp/templates-schedules — design.md,
-// part 2). The templates are held by the pipeline settings; the inbox reads
-// the one in force for a workspace through TemplateSource.
+// Starting an item from a template. The templates are held by the pipeline
+// settings; the inbox reads the one in force for a workspace through
+// TemplateSource.
 
 // ItemTemplate is a template as an item is started from it.
 type ItemTemplate struct {

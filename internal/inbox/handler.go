@@ -20,6 +20,25 @@ type Handler struct {
 	// summary serves GET /api/inbox/summary: the count of plans approved
 	// automatically (internal/itemreport; nil = not served).
 	summary http.HandlerFunc
+	// card serves POST /api/inbox/card: an item shown to another system as
+	// a card (internal/cards; nil = not served).
+	card http.HandlerFunc
+}
+
+// SetCardHandler wires POST /api/inbox/card.
+func (h *Handler) SetCardHandler(fn http.HandlerFunc) { h.card = fn }
+
+// Card handles POST /api/inbox/card through the wired handler.
+func (h *Handler) Card(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		rest.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if h.card == nil {
+		rest.RespondError(w, http.StatusNotFound, "not found")
+		return
+	}
+	h.card(w, r)
 }
 
 // SetSummaryHandler wires GET /api/inbox/summary.

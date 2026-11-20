@@ -16,9 +16,9 @@ import (
 	"github.com/martinsuchenak/skopos/internal/policy"
 )
 
-// Runner policy (tmp/central-config — design.md, phase 1a): which runners
-// may work on which workspaces. A policy is a list of allow rules
-// (internal/policy), stored as revisions (internal/confrev) at four levels:
+// Runner policy: which runners may work on which workspaces. A policy is a
+// list of allow rules (internal/policy), stored as revisions
+// (internal/confrev) at four levels:
 //
 //	fleet ceiling   always applied; nothing in the fleet may use a runner
 //	                it does not allow

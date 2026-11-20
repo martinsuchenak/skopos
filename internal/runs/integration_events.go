@@ -2,8 +2,7 @@ package runs
 
 import "github.com/martinsuchenak/skopos/internal/integrations"
 
-// Run events for other systems (tmp/integrations — design.md §3.2),
-// written in the claim and report transactions.
+// Run events for other systems, written in the claim and report transactions.
 
 // SetEventEmitter records run events (internal/integrations; nil = none).
 func (s *Service) SetEventEmitter(e *integrations.Emitter) { s.storage.events = e }

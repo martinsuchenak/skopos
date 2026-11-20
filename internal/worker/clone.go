@@ -18,12 +18,11 @@ import (
 )
 
 // A repo the worker's file lists without a path is cloned by the worker
-// itself, into <state_dir>/clones/<workspace> (tmp/worker-setup —
-// design.md, part 1). Until the clone is there the workspace is unhealthy
-// for this worker ("cloning …"), so its runs go to other workers or wait;
-// the clone runs in the background, one at a time, into a temporary folder
-// renamed into place when it is complete. A clone the worker made and no
-// longer serves is removed after cloneKeep.
+// itself, into <state_dir>/clones/<workspace>. Until the clone is there the
+// workspace is unhealthy for this worker ("cloning …"), so its runs go to
+// other workers or wait; the clone runs in the background, one at a time,
+// into a temporary folder renamed into place when it is complete. A clone the
+// worker made and no longer serves is removed after cloneKeep.
 
 // cloneKeep: how long a clone the worker made stays after its workspace
 // left the worker's repos (another change may bring it back).

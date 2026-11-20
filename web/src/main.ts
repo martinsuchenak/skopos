@@ -5656,7 +5656,7 @@ const appState = () => ({
     this.requestDelete('apikeyhard', k.id, k.name);
   },
 
-  // ---- webhooks (tmp/integrations — design.md §3) ----
+  // ---- webhooks ----
   async fetchWebhooks() {
     this.webhooksLoading = true;
     try {

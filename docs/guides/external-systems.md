@@ -5,7 +5,7 @@ pipeline and follow it over REST:
 
 1. create the item from its job and start it, in one call;
 2. hear what happens to it: webhooks, or the event feed;
-3. read the item's state when it needs the details;
+3. read the item's state when it needs the details, or show it as a card;
 4. post people's decisions back: approve the plan, answer questions,
    request changes, sign off.
 
@@ -238,6 +238,77 @@ Each action names the endpoint to POST: `/api/inbox/{id}/<action>`.
 | `blocked` | `retry`, `answers`, `second-opinion` (when its review blocked it), `reject` |
 | `failed` | `retry`, `answers`, `reject` |
 | agent working | `reject` |
+
+## Show the item as a card
+
+A system that shows skopos's item on its own record (the job's page, say)
+can ask for a card instead of reading the state and drawing it itself.
+The card is UI as data: an [A2UI 1.0](https://a2ui.org) surface built
+from the basic catalog only, which the system draws with its own
+components. Around it, an envelope says what the system needs to follow
+the item without knowing skopos's workflow.
+
+```http
+POST /api/inbox/card?workspace=github.com/acme/app
+Authorization: Bearer sk_…
+Content-Type: application/json
+
+{"subject": {"ref": "JOB100235", "title": "AI configurations",
+             "url": "https://jobs.example.com/job/100235"}}
+```
+
+```json
+{
+  "status": "plan_approval",
+  "attention": true,
+  "summary": "Plan ready for approval — 2 questions",
+  "key": "01a1…:plan_approval:01a1…:01a1…",
+  "url": "https://skopos.example.com/?item=01a1…",
+  "a2ui": [{"version": "1.0", "deleteSurface": {"surfaceId": "skopos-01a1…"}},
+           {"version": "1.0", "createSurface": {"surfaceId": "skopos-01a1…",
+    "catalogId": "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json",
+    "components": [{"id": "root", "component": "Column", "children": ["c1", "c2"]}, …]}}]
+}
+```
+
+- The item is the newest one with that `ref` that is not closed, else the
+  newest. With none, the card says so (`status: none`). `workspace` limits
+  the lookup to one workspace.
+- `status` is one of the names below; map each to a state of your own.
+- `attention`: a person must act now.
+- `key` changes exactly when something new happened: another item or
+  status, a new plan round, a new set of questions, a new reviewed commit,
+  another reason to stop. Post a note to your record only when it changes,
+  and ignore a repeated one.
+- `a2ui` holds two A2UI messages: `deleteSurface`, then `createSurface`
+  with every component. Every card of an item has the same surface id, so
+  apply both in order to the renderer the card is shown with: the old card
+  goes and the new one takes its place. A renderer that has not shown the
+  surface yet takes the delete as nothing to do.
+- The `Text` components hold Markdown: render it without raw HTML, and
+  keep links to `https`.
+
+| `status` | The item |
+|---|---|
+| `none` | no item has the reference |
+| `not_started` | in skopos, waiting for someone to queue it |
+| `agent` | the agents are working (one status from queued until the next gate) |
+| `plan_approval` | the plan waits for approval: the plan's steps (several plans as tabs) and the open questions |
+| `blocked` / `failed` | the work stopped: the reason and the open questions |
+| `sign_off` | the branch waits for sign-off: the pull request, checks, reviews and the findings still open |
+| `done` | signed off (and merged, when the worker reported it) |
+| `discarded` | discarded |
+| `nothing_to_do` | closed because the planner found nothing to do |
+
+On a webhook, ask for the card again: the event names the item's `ref`
+(`data.ref`), so the card endpoint is the one read a system needs to
+follow its jobs. The card is built from the same state as
+`/api/inbox/{id}/state`: a key limited by capabilities sees the plan only
+with `plans:read` and the runs' details only with `runs:read`. Rendering a
+card is a read, though it is a `POST`: a key with `inbox:read` may ask for
+one, and a card is never replayed for an `Idempotency-Key`: every answer
+is the item as it is now. Cards carry no buttons yet; act through the
+endpoints above.
 
 ## Keep the item's report
 

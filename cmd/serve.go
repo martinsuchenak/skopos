@@ -24,6 +24,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/audit"
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/blackboard"
+	"github.com/martinsuchenak/skopos/internal/cards"
 	"github.com/martinsuchenak/skopos/internal/cleanup"
 	"github.com/martinsuchenak/skopos/internal/codeindex"
 	"github.com/martinsuchenak/skopos/internal/confrev"
@@ -293,9 +294,8 @@ func serveCmd() *cli.Command {
 			inboxService := inbox.NewService(inbox.NewStorage(sqlDB))
 			inboxService.SetAuditRecorder(auditService)
 			inboxService.SetApprovalLog(approvalsService)
-			// Questions and answers (tmp/questions-and-answers — design.md):
-			// the record the workflow actions answer through; items written
-			// before it are imported once.
+			// Questions and answers: the record the workflow actions answer
+			// through; items written before it are imported once.
 			qaService := qa.NewService(qa.NewStorage(sqlDB))
 			qaService.SetAuditRecorder(auditService)
 			inboxService.SetQuestionLog(qaService)
@@ -561,7 +561,7 @@ func serveCmd() *cli.Command {
 			keyRotator := secretbox.NewRotator(sqlDB, keyRing)
 			keyRotator.SetAuditSink(auditService)
 			// A run's MCP servers travel in its claim answer, and nowhere
-			// else (tmp/central-config — design.md, phase 2b).
+			// else.
 			runsService.SetMCPSource(configService.RunMCP, configService.MCPManaged)
 			pipelineService.SetRunnerDefs(configService.RunnerFacts)
 			if err := pipelineService.DropOrphans(ctx); err != nil {
@@ -700,8 +700,8 @@ func serveCmd() *cli.Command {
 			})
 			inboxService.SetRunQueuer(runsService)
 			inboxService.SetRunLister(runsListerAdapter{runs: runsService})
-			// Integrations (tmp/integrations — design.md §3): events in the
-			// transaction of each change, webhooks, and the event feed.
+			// Integrations: events in the transaction of each change,
+			// webhooks, and the event feed.
 			allowPrivate, err := integrations.ParseCIDRs(cmd.GetStringSlice("webhooks-allow-private"))
 			if err != nil {
 				return err
@@ -759,10 +759,16 @@ func serveCmd() *cli.Command {
 				}
 			}
 			// GET /api/inbox/{id}/state: the item's state for other
-			// systems (tmp/integrations — design.md §4).
-			inboxHandler.SetStateHandler(itemstate.NewHandler(&itemstate.Service{
+			// systems.
+			stateService := &itemstate.Service{
 				Items: inboxService, Plans: plansService, Runs: runsService, Questions: qaService, Findings: findingsService,
-			}).Get)
+			}
+			inboxHandler.SetStateHandler(itemstate.NewHandler(stateService).Get)
+			// POST /api/inbox/card: the item shown to another system as an
+			// A2UI card, found by the other system's reference.
+			inboxHandler.SetCardHandler(cards.NewHandler(&cards.Service{
+				Items: inboxService, States: stateService, PublicURL: integrationsService.PublicURL,
+			}).Post)
 			// GET /api/inbox/{id}/report: the item's record as one
 			// document, for a person to keep and another system to fetch.
 			reportHandler := itemreport.NewHandler(&itemreport.Service{

@@ -20,13 +20,11 @@ import (
 // their plan's steps — never the REST API (item transitions, runs, keys)
 // the worker's own key can use.
 //
-// The credential is the run's own agent token, minted by the claim
-// (tmp/central-config — design.md, phase 1b): valid while this attempt
-// runs, scoped to the run's workspace. The worker writes it into a per-run
-// MCP config (prepareRunMCP). A server from before run tokens sends none;
-// then the worker's agent key is used, if it has one
-// (tmp/agent-mcp-and-indexing — design.md §2): a capped, MCP-only key
-// shared by every run on the worker.
+// The credential is the run's own agent token, minted by the claim: valid
+// while this attempt runs, scoped to the run's workspace. The worker writes
+// it into a per-run MCP config (prepareRunMCP). A server from before run
+// tokens sends none; then the worker's agent key is used, if it has one: a
+// capped, MCP-only key shared by every run on the worker.
 
 // agentMCPServer is the server name runs see the skopos tools under
 // (mcp__skopos__<tool>).

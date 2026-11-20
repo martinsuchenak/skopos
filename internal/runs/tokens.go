@@ -12,11 +12,10 @@ import (
 	"github.com/martinsuchenak/skopos/internal/auth"
 )
 
-// Per-attempt tokens (tmp/central-config — design.md, phases 0 and 1b). A
-// claim mints an agent token for the attempt: the credential the run's
-// agent reaches skopos with over MCP, in place of an agent key shared by
-// every run on the worker. It is returned in clear only in the claim
-// response; run_tokens keeps its hash.
+// Per-attempt tokens. A claim mints an agent token for the attempt: the
+// credential the run's agent reaches skopos with over MCP, in place of an
+// agent key shared by every run on the worker. It is returned in clear only
+// in the claim response; run_tokens keeps its hash.
 //
 // A token is valid only while its run is being executed: the run is
 // claimed or running, the token is the attempt's and has not been ended,

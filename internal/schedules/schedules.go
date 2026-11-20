@@ -1,8 +1,8 @@
-// Package schedules runs an item template on a rhythm (tmp/templates-
-// schedules — design.md, part 3): for a workspace, or for every workspace of
-// a group, an item is started from the template and queued when the rhythm
-// comes round. One firing creates each item at most once; an item the
-// schedule started earlier that is still open is not followed by another.
+// Package schedules runs an item template on a rhythm: for a workspace, or
+// for every workspace of a group, an item is started from the template and
+// queued when the rhythm comes round. One firing creates each item at most
+// once; an item the schedule started earlier that is still open is not
+// followed by another.
 package schedules
 
 import (

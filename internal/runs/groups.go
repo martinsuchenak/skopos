@@ -12,9 +12,8 @@ import (
 )
 
 // Stage groups: several agents on one stage, decided once by a recorded
-// policy (tmp/multi-agent-stages — design.md). Opt-in: GroupMembers is nil
-// unless a workspace routes a stage to two or more members, and then
-// nothing here runs.
+// policy. Opt-in: GroupMembers is nil unless a workspace routes a stage to
+// two or more members, and then nothing here runs.
 
 // groupStage reports whether a stage may be fanned out as a group: review
 // and qa (decided by policy) and plan (every success is a candidate).

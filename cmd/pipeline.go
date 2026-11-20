@@ -14,7 +14,7 @@ import (
 )
 
 // pipelineCmd is `skopos workspace pipeline …` / `skopos group pipeline …`:
-// which agents run each stage (tmp/workspace-pipeline-settings — design.md).
+// which agents run each stage.
 func pipelineCmd(kind string) *cli.Command {
 	ownerFlag := &cli.StringFlag{Name: "workspace", Usage: "Workspace ID (default: resolved from this checkout's git remote)"}
 	if kind == pipeline.KindGroup {

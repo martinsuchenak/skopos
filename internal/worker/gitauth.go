@@ -15,10 +15,10 @@ import (
 
 // The worker's own fetches, ls-remotes and clones send the repo's push
 // token, as the push does, so a private repository needs no other git
-// credential on the machine (tmp/worker-setup — design.md, D7). Only to the
-// push URL's host: the token goes nowhere else, whatever the clone's origin
-// says. Never in an agent's, a setup's or a check's environment: only the
-// worker's own git process gets it, as GIT_CONFIG_VALUE_0.
+// credential on the machine. Only to the push URL's host: the token goes
+// nowhere else, whatever the clone's origin says. Never in an agent's, a
+// setup's or a check's environment: only the worker's own git process gets
+// it, as GIT_CONFIG_VALUE_0.
 
 // cloneRepos maps a clone's path to the repo it is the clone of (the
 // worker's current view of it, managed config included).

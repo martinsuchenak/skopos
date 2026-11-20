@@ -12,11 +12,10 @@ import (
 	"github.com/martinsuchenak/skopos/internal/policy"
 )
 
-// Runner facts (tmp/central-config — design.md, phase 1a): what the worker
-// tells the server about each runner it offers — the CLI, the model, and
-// above all where the code goes: the endpoint the CLI sends its requests
-// to and the provider behind it. The server matches a workspace's policy
-// against them at every claim.
+// Runner facts: what the worker tells the server about each runner it offers
+// — the CLI, the model, and above all where the code goes: the endpoint the
+// CLI sends its requests to and the provider behind it. The server matches a
+// workspace's policy against them at every claim.
 //
 // The endpoint is read from where each CLI reads it; the provider is
 // declared on the runner ([worker.runner_config.<name>] provider = "…") or

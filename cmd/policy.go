@@ -18,7 +18,7 @@ func init() {
 }
 
 // policyCmd is `skopos policy …`: which runners may work on which
-// workspaces (tmp/central-config — design.md, phase 1a).
+// workspaces.
 func policyCmd() *cli.Command {
 	owner := []cli.Flag{
 		&cli.StringFlag{Name: "workspace", Usage: "A workspace's policy (default for show: this checkout's workspace)"},

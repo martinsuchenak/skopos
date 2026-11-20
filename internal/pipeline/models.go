@@ -1,8 +1,7 @@
 // Package pipeline stores which agents run each workflow stage, per
 // workspace or per workspace group, and resolves the effective routing the
-// run queue reads at every queue (tmp/workspace-pipeline-settings —
-// design.md). Resolution per stage: the workspace's own setting, else its
-// group's, else not set.
+// run queue reads at every queue. Resolution per stage: the workspace's own
+// setting, else its group's, else not set.
 package pipeline
 
 import (
@@ -44,9 +43,8 @@ type Settings struct {
 	// SecondOpinionRunner is the runner a plain "second opinion" request
 	// uses (dashboard preselect, Slack `second`); "" = none at this level.
 	SecondOpinionRunner string `json:"second_opinion_runner,omitempty"`
-	// CodeIndex: idle workers keep this workspace's code index fresh
-	// (tmp/agent-mcp-and-indexing — design.md §3). Workspace owners only;
-	// nil = off.
+	// CodeIndex: idle workers keep this workspace's code index fresh.
+	// Workspace owners only; nil = off.
 	CodeIndex *bool `json:"code_index,omitempty"`
 	// NeedsStages: the stages in which an item's needed labels bind its
 	// runs to a labelled worker (runs.NeedsStageKeys: plan, implement,

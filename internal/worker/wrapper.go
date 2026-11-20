@@ -13,9 +13,8 @@ import (
 	"github.com/martinsuchenak/skopos/internal/wsconfig"
 )
 
-// Wrapper placeholders (tmp/central-config — design.md, phase 1c). A
-// wrapper that confines a run (bwrap, a container) has to name what the
-// run still needs:
+// Wrapper placeholders. A wrapper that confines a run (bwrap, a container)
+// has to name what the run still needs:
 //
 //	{dir}        the run's worktree (or the clone, for a branch checkout)
 //	{gitdir}     the clone's git directory — a worktree's .git file points

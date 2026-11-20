@@ -28,8 +28,8 @@ func init() {
 	RegisterIntegrations(registerIntegrationRoutes)
 }
 
-// Webhook subscriptions and the event feed (tmp/integrations — design.md
-// §3): management is root's, or an approver's for workspaces in scope.
+// Webhook subscriptions and the event feed: management is root's, or an
+// approver's for workspaces in scope.
 func registerIntegrationRoutes(mux *http.ServeMux, h *integrations.Handler) {
 	mux.HandleFunc("GET /api/events", h.Feed)
 	mux.HandleFunc("POST /api/webhooks", h.Create)

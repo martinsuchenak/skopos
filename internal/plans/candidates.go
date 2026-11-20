@@ -13,12 +13,12 @@ import (
 	"github.com/martinsuchenak/skopos/internal/ids"
 )
 
-// Plan candidates (tmp/multi-agent-stages — design.md §3): each planner of
-// a plan group writes a candidate revision WITHOUT touching the plan's live
-// steps. The approver picks one; approving materialises its steps as the
-// live items (with the candidate's own step ids, so the live plan hashes to
-// exactly the candidate), locks it, and supersedes its siblings — one
-// transaction. The candidate revision itself is what the approval names.
+// Plan candidates: each planner of a plan group writes a candidate revision
+// WITHOUT touching the plan's live steps. The approver picks one; approving
+// materialises its steps as the live items (with the candidate's own step
+// ids, so the live plan hashes to exactly the candidate), locks it, and
+// supersedes its siblings — one transaction. The candidate revision itself is
+// what the approval names.
 
 // Candidate states.
 const (

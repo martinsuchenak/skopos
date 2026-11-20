@@ -1,8 +1,8 @@
 // Package wsconfig holds the part of a workspace's configuration every
-// worker serving it shares, on the server (tmp/central-config — design.md,
-// phase 2): branches, setup and check commands, timeouts, push settings and
-// the MCP allow and deny lists. Machine facts and secrets (clone paths,
-// tokens, accounts) stay in each worker's file.
+// worker serving it shares, on the server: branches, setup and check
+// commands, timeouts, push settings and the MCP allow and deny lists. Machine
+// facts and secrets (clone paths, tokens, accounts) stay in each worker's
+// file.
 //
 // A workspace is managed when it has a config of its own; its groups' values
 // are then defaults under it, field by field. A workspace without one keeps

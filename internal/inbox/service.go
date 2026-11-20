@@ -666,8 +666,8 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, input UpdateInp
 }
 
 // ImportQuestions records the questions and answers of items written before
-// the record existed (tmp/questions-and-answers — design.md §3.6), once per
-// item: an item with rows is skipped. Internal caller (startup).
+// the record existed, once per item: an item with rows is skipped. Internal
+// caller (startup).
 func (s *Service) ImportQuestions(ctx context.Context) (int, error) {
 	if s.questions == nil {
 		return 0, nil

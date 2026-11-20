@@ -396,8 +396,7 @@ var executorStages = []string{"plan", "implement", "review", "qa", "compare", "s
 
 // ExecutorFor identifies what contains a run of a stage (the run's stage:
 // plan, implement, review, qa, compare, synthesize, second_opinion,
-// branch_review) on a runner, in order (tmp/central-config — design.md,
-// phase 1c):
+// branch_review) on a runner, in order:
 //
 //	wrapper:<name>:<hash>  the stage profile's wrapper (the hash covers its
 //	                       argv); the agent and the worker's setup and check
@@ -716,7 +715,7 @@ type Repo struct {
 	// Preflight: commands that say whether this worker's environment can
 	// take the repo's work right now (a database, a queue, a service). One
 	// failing keeps the workspace out of the worker's claims until it
-	// passes again (tmp/self-healing-workers — design.md §2).
+	// passes again.
 	Preflight []string `toml:"preflight"`
 	// PreflightInterval: how often the preflight runs (0 = 5m).
 	PreflightInterval time.Duration `toml:"preflight_interval"`
@@ -754,7 +753,7 @@ type Repo struct {
 		PullRequest string `toml:"pull_request"`
 		// Steps: push the implementer's commits as it makes them, so an
 		// interrupted round leaves its work on origin for the next one
-		// (nil = true; tmp/self-healing-workers — design.md §3).
+		// (nil = true).
 		Steps *bool `toml:"steps"`
 	} `toml:"push"`
 }

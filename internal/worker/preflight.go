@@ -36,8 +36,7 @@ func (r *Repo) PreflightEvery() time.Duration {
 // checkHealth runs every repo preflight that is due and returns the
 // workspaces whose last preflight failed (workspace → reason), for the
 // claim: skopos hands this worker none of their runs, so another worker
-// takes them, instead of this one failing them on a broken environment
-// (tmp/self-healing-workers — design.md §2).
+// takes them, instead of this one failing them on a broken environment.
 func (w *Worker) checkHealth(ctx context.Context) map[string]string {
 	var out map[string]string
 	now := time.Now()

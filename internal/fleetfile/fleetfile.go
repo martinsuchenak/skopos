@@ -1,9 +1,9 @@
 // Package fleetfile is the one-file form of everything the server holds
-// about how runs are configured (tmp/central-config — design.md, phase 2c):
-// runner and wrapper definitions, groups, runner policies, pipeline
-// settings and workspace config (each stage's capabilities among it). `skopos config export` writes it, `skopos config apply`
-// makes the server match it, and `--plan` lists what an apply would change —
-// what the reviewer of the pull request reads.
+// about how runs are configured: runner and wrapper definitions, groups,
+// runner policies, pipeline settings and workspace config (each stage's
+// capabilities among it). `skopos config export` writes it,
+// `skopos config apply` makes the server match it, and `--plan` lists what
+// an apply would change — what the reviewer of the pull request reads.
 //
 // The file is authoritative for what it lists:
 //   - a workspace or group in the file gets exactly the policy, pipeline and

@@ -166,3 +166,24 @@ func TestPlansMarkdown(t *testing.T) {
 		t.Fatalf("file name without words: %q", got)
 	}
 }
+
+// The newest round found nothing to do only when every plan of it says so:
+// in a panel round where one planner wrote a plan, the plan waits.
+func TestNewestRoundNothingToDo(t *testing.T) {
+	single := "Bump the deps.\n\n## Enrichment — skopos worker\n\n**Nothing to do.** Already current.\nEvery package is at its newest.\n"
+	nothing := func(label, why string) string {
+		return "\n## Candidate — " + label + "\n\n**Nothing to do.** " + why + "\n"
+	}
+	plan := "\n## Candidate — codex\n\n**Candidate:** codex · **Revision:** 01a1d342-e9d3-7036-bbef-16902557fb86\n\nA plan.\n"
+	for _, tc := range []struct{ name, content, want string }{
+		{"one planner", single, "Already current."},
+		{"a panel, all nothing", "Bump." + nothing("claude", "Nothing changed.") + nothing("codex", "Same here."), "Nothing changed."},
+		{"a panel, one plan", "Bump." + nothing("claude", "Nothing changed.") + plan, ""},
+		{"plans", plansContent, ""},
+		{"no round", "Just a brief.", ""},
+	} {
+		if got := NewestRoundNothingToDo(tc.content); got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

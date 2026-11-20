@@ -70,6 +70,8 @@ func TestAllowsRequest(t *testing.T) {
 		{"capped: preflight passes", agent, http.MethodOptions, "/api/blackboard", true},
 		{"pipeline settings are workspaces", capped("rest", "workspaces:read"), http.MethodGet, "/api/workspaces/ws/pipeline", true},
 		{"pipeline edit needs workspaces:write", capped("rest", "workspaces:read"), http.MethodPut, "/api/workspaces/ws/pipeline", false},
+		{"a card is a read, though a POST", capped("rest", "inbox:read"), http.MethodPost, "/api/inbox/card", true},
+		{"other inbox POSTs still need write", capped("rest", "inbox:read"), http.MethodPost, "/api/inbox", false},
 	} {
 		if got, why := tc.p.AllowsRequest(tc.method, tc.path); got != tc.want {
 			t.Errorf("%s: %s %s = %v (%s), want %v", tc.name, tc.method, tc.path, got, why, tc.want)

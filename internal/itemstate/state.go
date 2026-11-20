@@ -2,8 +2,8 @@
 // system needs to show an item and act on it, in one read — whose turn it
 // is, the plan waiting for approval, open questions, the implementation
 // and its checks, the latest reviews, the run in progress, and the actions
-// the caller may take now (tmp/integrations — design.md §4). It composes
-// the inbox, plans, runs and questions services; it stores nothing.
+// the caller may take now. It composes the inbox, plans, runs and questions
+// services; it stores nothing.
 package itemstate
 
 import (

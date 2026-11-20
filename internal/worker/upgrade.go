@@ -39,14 +39,13 @@ const (
 )
 
 // maybeUpgrade replaces the worker's binary with the server's release when
-// the server is newer (tmp/self-healing-workers — design.md §5). Called
-// only when idle: no run is cut off. It downloads the release's binary for
-// this platform, checks it against the release's checksums.txt, makes sure
-// it runs and names that version, and renames it over the running
-// executable. true = replaced, restart. Every failure is logged and
-// retried after upgradeRetry; it never stops the worker. Never a downgrade,
-// never from or to a pre-release or a dev build, never when auto_upgrade
-// is off.
+// the server is newer. Called only when idle: no run is cut off. It downloads
+// the release's binary for this platform, checks it against the release's
+// checksums.txt, makes sure it runs and names that version, and renames it
+// over the running executable. true = replaced, restart. Every failure is
+// logged and retried after upgradeRetry; it never stops the worker. Never a
+// downgrade, never from or to a pre-release or a dev build, never when
+// auto_upgrade is off.
 func (w *Worker) maybeUpgrade(ctx context.Context) bool {
 	if w.cfg.AutoUpgrade != nil && !*w.cfg.AutoUpgrade {
 		return false

@@ -43,7 +43,7 @@ func configPath(kind, id string) string {
 
 // configCmd is `skopos workspace config …` / `skopos group config …`: the
 // part of a workspace's configuration every worker shares, held on the
-// server (tmp/central-config — design.md, phase 2).
+// server.
 func configCmd(kind string) *cli.Command {
 	target := &cli.StringFlag{Name: "workspace", Usage: "Workspace ID (default: this checkout's workspace)"}
 	what := "a workspace's"

@@ -111,11 +111,16 @@ func TestIdempotencyKey(t *testing.T) {
 	if res, _ := post(t, srv.URL+"/api/inbox/x/queue", "job-1", `{"a":1}`); res.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("different path: %d", res.StatusCode)
 	}
-	// No header, or a path outside the prefixes: untouched.
+	// No header, a path outside the prefixes, or a POST that only reads
+	// (a card twice with the same key: both answers are the current ones).
 	post(t, srv.URL+"/api/inbox", "", `{"a":1}`)
 	post(t, srv.URL+"/api/inboxes", "job-1", `{"a":1}`)
-	if calls.Load() != 3 {
-		t.Fatalf("calls = %d, want 3", calls.Load())
+	post(t, srv.URL+"/api/inbox/card", "job-1-card", `{"a":1}`)
+	if res, _ := post(t, srv.URL+"/api/inbox/card", "job-1-card", `{"a":1}`); res.Header.Get(ReplayedHeader) != "" {
+		t.Fatal("a card is never replayed")
+	}
+	if calls.Load() != 5 {
+		t.Fatalf("calls = %d, want 5", calls.Load())
 	}
 	if res, _ := post(t, srv.URL+"/api/inbox", strings.Repeat("x", 256), `{}`); res.StatusCode != http.StatusBadRequest {
 		t.Fatalf("long key: %d", res.StatusCode)
@@ -124,21 +129,21 @@ func TestIdempotencyKey(t *testing.T) {
 	// A refusal is not kept: the retry runs.
 	post(t, srv.URL+"/api/inbox", "job-4", "refuse")
 	post(t, srv.URL+"/api/inbox", "job-4", "refuse")
-	if calls.Load() != 5 {
-		t.Fatalf("calls after 403s = %d, want 5", calls.Load())
+	if calls.Load() != 7 {
+		t.Fatalf("calls after 403s = %d, want 7", calls.Load())
 	}
 
 	// A server error is not kept: the retry runs.
 	post(t, srv.URL+"/api/inbox", "job-2", "fail")
 	post(t, srv.URL+"/api/inbox", "job-2", "fail")
-	if calls.Load() != 7 {
-		t.Fatalf("calls after 500s = %d, want 7", calls.Load())
+	if calls.Load() != 9 {
+		t.Fatalf("calls after 500s = %d, want 9", calls.Load())
 	}
 	// Nor is a panic.
 	post(t, srv.URL+"/api/inbox", "job-3", "panic")
 	post(t, srv.URL+"/api/inbox", "job-3", "panic")
-	if calls.Load() != 9 {
-		t.Fatalf("calls after panics = %d, want 9", calls.Load())
+	if calls.Load() != 11 {
+		t.Fatalf("calls after panics = %d, want 11", calls.Load())
 	}
 
 	// Another key's identical Idempotency-Key is its own.

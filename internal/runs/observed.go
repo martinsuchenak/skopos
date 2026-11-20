@@ -10,8 +10,8 @@ import (
 // an implementation made, what a plan says about itself, what the run says
 // it did (shown on the item's steps and in its report). It is recorded,
 // never decided on: the data the gate rules and the watcher are designed
-// from (tmp/roadmap.md, item 27). Raw facts, not their reading: which files
-// are migrations or CI is for whoever reads them.
+// from. Raw facts, not their reading: which files are migrations or CI is for
+// whoever reads them.
 type Observed struct {
 	Change *Change    `json:"change,omitempty"`
 	Plan   *PlanFacts `json:"plan,omitempty"`

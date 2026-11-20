@@ -35,8 +35,7 @@ type PushResult struct {
 // Push builds the checkout at opts.Root and pushes its branch index to a
 // skopos server: a manifest (which parsed blobs does the server lack?), the
 // missing blobs as ndjson in bounded chunks, then the branch commit. Used by
-// `skopos index push` and by idle workers (tmp/agent-mcp-and-indexing —
-// design.md §3).
+// `skopos index push` and by idle workers.
 func Push(ctx context.Context, opts PushOptions) (PushResult, error) {
 	var res PushResult
 	results, head, err := BuildWithCache(ctx, parse.NewExtractor(), opts.Root, opts.Branch, opts.Report, opts.Cache)

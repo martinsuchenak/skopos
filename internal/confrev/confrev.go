@@ -1,9 +1,9 @@
-// Package confrev stores policy and configuration as append-only revisions
-// (tmp/central-config — design.md, phase 0). Rows that change in place
-// leave nothing to show what applied last March; here every change is a new
-// revision with a content hash, who made it and how, and a head per owner
-// points at the current one. A revision is never updated or deleted by this
-// package: it is evidence of what a run was decided with.
+// Package confrev stores policy and configuration as append-only revisions.
+// Rows that change in place leave nothing to show what applied last March;
+// here every change is a new revision with a content hash, who made it and
+// how, and a head per owner points at the current one. A revision is never
+// updated or deleted by this package: it is evidence of what a run was
+// decided with.
 package confrev
 
 import (

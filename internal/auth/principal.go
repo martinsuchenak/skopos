@@ -28,8 +28,8 @@ type Principal struct {
 	Workspaces    map[string]struct{} // explicit scope
 	Approver      bool                // may perform human-only workflow actions (agent-pipeline §2)
 	// Admin: may change policy and configuration within its scope
-	// (RequireAdmin*; tmp/central-config — design.md, phase 0). Root has it
-	// implicitly; agent and worker keys never hold it.
+	// (RequireAdmin*). Root has it implicitly; agent and worker keys never
+	// hold it.
 	Admin bool
 	// Run is set for a run principal: the pipeline run whose agent token
 	// authenticated the request. Its KeyID is "run:<id>" — never empty, so
@@ -465,9 +465,9 @@ func MayHoldRunSecrets(ctx context.Context) bool {
 	return p.Worker && p.Run == nil
 }
 
-// The admin permission gates changes to policy and configuration
-// (tmp/central-config — design.md, phase 0). Root and internal callers pass
-// every level; a key needs the admin flag and enough scope for the level:
+// The admin permission gates changes to policy and configuration. Root and
+// internal callers pass every level; a key needs the admin flag and enough
+// scope for the level:
 //
 //	RequireAdmin          one workspace: the workspace is in the key's scope
 //	RequireAdminAll       a group: every one of its workspaces is in scope

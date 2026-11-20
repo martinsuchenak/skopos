@@ -20,9 +20,8 @@ type need struct {
 }
 
 // toolNeeds names what each tool requires from a capped key (key
-// capabilities, tmp/agent-mcp-and-indexing — design.md §1). A tool missing
-// here is refused to every capped key; TestEveryToolHasCapabilityNeeds keeps
-// the map complete.
+// capabilities). A tool missing here is refused to every capped key;
+// TestEveryToolHasCapabilityNeeds keeps the map complete.
 var toolNeeds = map[string][]need{
 	"blackboard_read":   {{auth.AreaBlackboard, false}},
 	"blackboard_write":  {{auth.AreaBlackboard, true}},

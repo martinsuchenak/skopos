@@ -48,12 +48,13 @@ func New(db *sql.DB) *Store { return &Store{db: db, now: time.Now} }
 
 // Middleware applies to POST requests under any of the path prefixes; it
 // must run after authentication (keys are per principal). Requests
-// without the header pass untouched.
+// without the header pass untouched, and so do POST routes that only read
+// (auth.ReadOnlyPost): their answer must be the current one.
 func (s *Store) Middleware(prefixes ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key := r.Header.Get(Header)
-			if r.Method != http.MethodPost || key == "" || !hasPrefix(r.URL.Path, prefixes) {
+			if r.Method != http.MethodPost || key == "" || !hasPrefix(r.URL.Path, prefixes) || auth.ReadOnlyPost(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}

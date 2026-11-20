@@ -15,12 +15,11 @@ import (
 	"github.com/martinsuchenak/skopos/internal/rest"
 )
 
-// The count of plans approved automatically (tmp/templates-schedules —
-// design.md, part 4): how many items had their plan approved by the
-// server, how many of those then needed no input until sign-off, how often
-// and why the server held a plan for the person, and how many items closed
-// with nothing to do. Read from the audit trail; per workspace and
-// template.
+// The count of plans approved automatically: how many items had their plan
+// approved by the server, how many of those then needed no input until
+// sign-off, how often and why the server held a plan for the person, and how
+// many items closed with nothing to do. Read from the audit trail; per
+// workspace and template.
 
 // SummaryRow is the numbers of one workspace and template ("" = items not
 // started from a template).

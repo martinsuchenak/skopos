@@ -9,12 +9,11 @@ import (
 	"strings"
 )
 
-// Advisory plan stages (tmp/multi-agent-stages — design.md §4): after a
-// multi-agent plan round, an optional merge writes one more candidate built
-// from the planners' and an optional judge then compares every candidate,
-// the merged one among them. Both are read-only and advisory: they never
-// approve, never hide a candidate, and a failure leaves the gate opening
-// with the candidates as they are.
+// Advisory plan stages: after a multi-agent plan round, an optional merge
+// writes one more candidate built from the planners' and an optional judge
+// then compares every candidate, the merged one among them. Both are
+// read-only and advisory: they never approve, never hide a candidate, and a
+// failure leaves the gate opening with the candidates as they are.
 
 // compareSchema: a score per candidate per criterion (1 = worst, 5 = best),
 // risks, and a recommendation with reasons. The dashboard and Slack show it

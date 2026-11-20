@@ -15,8 +15,7 @@ import (
 
 // antigravityRunner is the Antigravity CLI (`agy --print`, Gemini's route
 // now that the Gemini CLI is decommissioned). It is UNVERIFIED, so it runs
-// only on wrapped stages — the spike against agy 1.1.25 (tmp/second-opinion-
-// review — design.md) found:
+// only on wrapped stages — the spike against agy 1.1.25 found:
 //   - instruction files: agy always loads the working directory's AGENTS.md
 //     and GEMINI.md and has no switch to skip them (review worktrees reset
 //     them to the base version, as for every runner);

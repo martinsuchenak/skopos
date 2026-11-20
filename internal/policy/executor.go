@@ -5,9 +5,9 @@ import (
 	"strings"
 )
 
-// How a stage is contained (tmp/central-config — design.md, phase 1c). A
-// worker reports, per workspace, stage and runner, the executor a run would
-// get; a rule's `executor` field says what it must be.
+// How a stage is contained. A worker reports, per workspace, stage and
+// runner, the executor a run would get; a rule's `executor` field says what
+// it must be.
 //
 // Executor ids:
 //

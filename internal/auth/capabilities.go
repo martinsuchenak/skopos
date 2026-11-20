@@ -8,10 +8,10 @@ import (
 	"strings"
 )
 
-// Key capabilities (tmp/agent-mcp-and-indexing — design.md §1) limit what a
-// scoped key may do beyond its workspace scope. A key without capabilities —
-// every key minted before them, and the root key — keeps full access. A
-// capped key may use only the surfaces and areas it lists:
+// Key capabilities limit what a scoped key may do beyond its workspace scope.
+// A key without capabilities — every key minted before them, and the root key
+// — keeps full access. A capped key may use only the surfaces and areas it
+// lists:
 //
 //   - surfaces: "rest" (every /api route, the dashboard's SSE, metrics) and
 //     "mcp" (/mcp);
@@ -176,6 +176,16 @@ var restAreas = []struct{ prefix, area string }{
 // learns what its key may do.
 var alwaysAllowed = map[string]bool{"/api/whoami": true}
 
+// readPosts are POST routes that only read: the request carries a body a
+// query string would not hold. The handler checks write itself for a
+// request that changes something.
+var readPosts = map[string]bool{"/api/inbox/card": true}
+
+// ReadOnlyPost reports a POST route that only reads: a capped key needs
+// the area's read, and its answer is never kept for an Idempotency-Key
+// (a read replayed would show a past state).
+func ReadOnlyPost(path string) bool { return readPosts[path] }
+
 // RouteCapability names what a request to path with method needs from a
 // capped principal: the surface, and the area and mode (area "" = none).
 // ok=false means the route is refused to every capped key (key and group
@@ -187,7 +197,7 @@ func RouteCapability(method, path string) (surface, area string, write, ok bool)
 	if path == "/mcp" || strings.HasPrefix(path, "/mcp/") {
 		return SurfaceMCP, "", false, true
 	}
-	write = method != http.MethodGet && method != http.MethodHead
+	write = method != http.MethodGet && method != http.MethodHead && (method != http.MethodPost || !readPosts[path])
 	best := ""
 	for _, ra := range restAreas {
 		if (path == ra.prefix || strings.HasPrefix(path, ra.prefix+"/")) && len(ra.prefix) > len(best) {

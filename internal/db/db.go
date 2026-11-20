@@ -84,8 +84,7 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "api_keys", "delegate", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	// admin: the key may change policy and configuration within its scope
-	// (tmp/central-config — design.md, phase 0).
+	// admin: the key may change policy and configuration within its scope.
 	if err := ensureColumn(db, "api_keys", "admin", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
@@ -160,12 +159,12 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "runs", "phase", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	// Retryable failures (tmp/self-healing-workers — design.md §1): a run
-	// whose failure was the worker's problem goes back to the queue — not
-	// claimable before retry_after, and not by avoid_worker for a while.
-	// A run queued again for an item (Retry, change requests) waits a while
-	// for prefer_worker, the worker that ran the stage before: its clone has
-	// the branch, the setup and any uncommitted work.
+	// Retryable failures: a run whose failure was the worker's problem goes
+	// back to the queue — not claimable before retry_after, and not by
+	// avoid_worker for a while. A run queued again for an item (Retry, change
+	// requests) waits a while for prefer_worker, the worker that ran the
+	// stage before: its clone has the branch, the setup and any uncommitted
+	// work.
 	for _, col := range [][2]string{{"retries", "INTEGER NOT NULL DEFAULT 0"}, {"retry_after", "TEXT NOT NULL DEFAULT ''"}, {"avoid_worker", "TEXT NOT NULL DEFAULT ''"},
 		{"prefer_worker", "TEXT NOT NULL DEFAULT ''"}, {"prefer_until", "TEXT NOT NULL DEFAULT ''"}} {
 		if err := ensureColumn(db, "runs", col[0], col[1]); err != nil {
@@ -202,15 +201,14 @@ func RunMigrations(db *sql.DB) error {
 			return err
 		}
 	}
-	// Runner policy (tmp/central-config — design.md, phase 1a). A worker
-	// reports facts about each runner it offers (workers.runner_info, JSON
-	// array). The claim resolves one runner per run, checks it against the
-	// workspace's policy and records what it decided with: runner_picked (the
-	// server chose the runner of an unpinned run; cleared by a requeue),
-	// policy_rev (the effective policy's revision, '' = none applied),
-	// facts (the runner's facts and the policy revisions matched, JSON).
-	// stranded_ms/stranded_reason: a queued run no worker may take under
-	// the policy (NULL = not stranded).
+	// Runner policy. A worker reports facts about each runner it offers
+	// (workers.runner_info, JSON array). The claim resolves one runner per
+	// run, checks it against the workspace's policy and records what it
+	// decided with: runner_picked (the server chose the runner of an unpinned
+	// run; cleared by a requeue), policy_rev (the effective policy's
+	// revision, '' = none applied), facts (the runner's facts and the policy
+	// revisions matched, JSON). stranded_ms/stranded_reason: a queued run no
+	// worker may take under the policy (NULL = not stranded).
 	if err := ensureColumn(db, "workers", "runner_info", "TEXT"); err != nil {
 		return err
 	}
@@ -286,9 +284,9 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "inbox_items", "agents", "TEXT CHECK (agents IS NULL OR agents IN ('solo', 'panel'))"); err != nil {
 		return err
 	}
-	// Branch handover and review-only (tmp/branch-handover — design.md):
-	// the branch the item works on, its external reference for branch
-	// templates, and 'review' for a review-only item.
+	// Branch handover and review-only: the branch the item works on, its
+	// external reference for branch templates, and 'review' for a
+	// review-only item.
 	// external_url: the item's job in another system (integrations).
 	// auto_approve_by: who switched the item's automatic plan approval on
 	// ('' = off).

@@ -679,8 +679,8 @@ func (w *Worker) noAccount(run *Run, what string) error {
 // item's: setup failed or hung, a check hung, git (fetch, checkout,
 // worktree) failed, the push was rejected, the provider kept failing. The
 // report says retryable, and skopos queues the run again (another worker
-// may take it) until its retries are spent, instead of blocking the item
-// (tmp/self-healing-workers — design.md §1). Anything unmarked blocks.
+// may take it) until its retries are spent, instead of blocking the item.
+// Anything unmarked blocks.
 type retryableError struct{ err error }
 
 func (e *retryableError) Error() string { return e.err.Error() }

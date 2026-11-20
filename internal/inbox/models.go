@@ -69,8 +69,8 @@ var workflowEdges = map[Status]map[Status]TransitionActor{
 	StatusOpen:       {StatusQueued: ActorHuman},
 	StatusInProgress: {StatusQueued: ActorHuman}, // queue implies release (review fix 11)
 	// queued → implementing: a review-only item's branch_review run is
-	// claimed (tmp/branch-handover — design.md §4). Review-only items only
-	// (reviewOnlyEdge), like in_review → planning below.
+	// claimed. Review-only items only (reviewOnlyEdge), like in_review →
+	// planning below.
 	StatusQueued: {StatusPlanning: ActorSystem, StatusImplementing: ActorSystem, StatusDiscarded: ActorHuman},
 	// Planning runs block too (review fix 5): a planner needing clarification
 	// pauses exactly like an implementer.

@@ -12,12 +12,11 @@ import (
 	"github.com/martinsuchenak/skopos/internal/qa"
 )
 
-// A plan approved automatically (tmp/templates-schedules — design.md,
-// part 1). An approver switches an item's auto_approve_plan on; when its
-// plan run succeeds, the server approves the plan in their stead unless
-// something holds it for them: a question from the planner, several plans
-// to choose from, or a re-plan they asked for. The branch still comes to
-// them at sign-off.
+// A plan approved automatically. An approver switches an item's
+// auto_approve_plan on; when its plan run succeeds, the server approves the
+// plan in their stead unless something holds it for them: a question from the
+// planner, several plans to choose from, or a re-plan they asked for. The
+// branch still comes to them at sign-off.
 
 // ActionAutoApproveHeld is the audit action of a plan the server did not
 // approve although the item asked for it; its notes say why.
@@ -247,17 +246,33 @@ func firstLineOf(s string) string {
 const nothingToDoMark = "**Nothing to do.**"
 
 // newestRoundNothingToDo reports that the item's newest planning round
-// found nothing to do: every plan section of it is the planner's "nothing
-// to do", none names a revision.
+// found nothing to do (NewestRoundNothingToDo).
 func newestRoundNothingToDo(content string) bool {
+	return NewestRoundNothingToDo(content) != ""
+}
+
+// NewestRoundNothingToDo is why the item's newest planning round found
+// nothing to do, read from the item's content: every plan section of the
+// round is the planner's "nothing to do" and none names a revision. ""
+// when it did not — in a panel round where one planner found nothing to do
+// and another wrote a plan, the plan waits for approval.
+func NewestRoundNothingToDo(content string) string {
 	v, err := PlansOf("", "", content, 0)
 	if err != nil || len(v.Plans) == 0 {
-		return false
+		return ""
 	}
+	why := ""
 	for _, p := range v.Plans {
-		if p.RevisionID != "" || !strings.HasPrefix(strings.TrimSpace(p.Markdown), nothingToDoMark) {
-			return false
+		md := strings.TrimSpace(p.Markdown)
+		if p.RevisionID != "" || !strings.HasPrefix(md, nothingToDoMark) {
+			return ""
+		}
+		if why == "" {
+			why = firstLineOf(strings.TrimPrefix(md, nothingToDoMark))
 		}
 	}
-	return true
+	if why == "" {
+		why = "the planner found nothing to do"
+	}
+	return why
 }

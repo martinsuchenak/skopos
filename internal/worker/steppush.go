@@ -16,10 +16,10 @@ var stepPushEvery = 30 * time.Second
 // the one push path: validated name and prefix, protected patterns, the
 // env-only token, never force. An implement round cut off by a restart, a
 // kill or a lost lease then leaves its work on origin, and the next round —
-// here or on another worker — continues from there instead of redoing it
-// (tmp/self-healing-workers — design.md §3). A failed step push is only
-// logged: the final push decides the run. The returned stop waits for a
-// push in flight and is safe to call more than once.
+// here or on another worker — continues from there instead of redoing it. A
+// failed step push is only logged: the final push decides the run. The
+// returned stop waits for a push in flight and is safe to call more than
+// once.
 func (w *Worker) pushSteps(ctx context.Context, repo *Repo, worktree, branch string, log *slog.Logger) (stop func()) {
 	token := os.Getenv(repo.Push.TokenEnv)
 	if !repo.PushSteps() || token == "" {

@@ -23,7 +23,7 @@ import (
 
 // configImportCmd is `skopos workspace config import`: propose server
 // config from what a worker's file says, show the difference, and apply it
-// on --yes (tmp/central-config — design.md, phase 2, migration).
+// on --yes.
 func configImportCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "import",

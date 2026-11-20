@@ -17,14 +17,13 @@ import (
 	"github.com/martinsuchenak/skopos/internal/codeindex"
 )
 
-// Idle workers keep the code index fresh (tmp/agent-mcp-and-indexing —
-// design.md §3). The server's claim answer says what this worker indexes:
-// the workspaces with the code_index switch on (it indexes the item
-// branches it implemented there) and those whose default branch it keeps
-// fresh (one able worker per workspace). Indexing runs only while the
-// worker is idle, in the background: a claim that returns a run stops it,
-// and what was parsed so far stays in the parse cache. It works in a
-// detached worktree of its own per repo, so the clone a run uses is never
+// Idle workers keep the code index fresh. The server's claim answer says what
+// this worker indexes: the workspaces with the code_index switch on (it
+// indexes the item branches it implemented there) and those whose default
+// branch it keeps fresh (one able worker per workspace). Indexing runs only
+// while the worker is idle, in the background: a claim that returns a run
+// stops it, and what was parsed so far stays in the parse cache. It works in
+// a detached worktree of its own per repo, so the clone a run uses is never
 // touched beyond a fetch.
 
 const (

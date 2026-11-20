@@ -1,9 +1,8 @@
-// Package integrations tells other systems what happens to items
-// (tmp/integrations — design.md §3): every event is a row in
-// integration_events, written in the transaction of the change that caused
-// it; webhook subscriptions get each event delivered at least once, signed
-// per Standard Webhooks (standardwebhooks.com); GET /api/events serves the
-// same rows as a feed. Payloads are thin — ids and state — and the
+// Package integrations tells other systems what happens to items: every event
+// is a row in integration_events, written in the transaction of the change
+// that caused it; webhook subscriptions get each event delivered at least
+// once, signed per Standard Webhooks (standardwebhooks.com); GET /api/events
+// serves the same rows as a feed. Payloads are thin — ids and state — and the
 // receiver reads the details from GET /api/inbox/{id}/state.
 package integrations
 

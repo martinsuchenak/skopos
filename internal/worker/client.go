@@ -810,7 +810,8 @@ type Item struct {
 	Tags        []string `json:"tags"`
 	Status      string   `json:"status"`
 	PlanID      string   `json:"plan_id"`
-	// Branch, Ref and Flow: tmp/branch-handover — design.md.
+	// Branch, Ref and Flow: the item's existing branch, the external
+	// reference, and the review-only flow.
 	Branch string `json:"branch"`
 	Ref    string `json:"ref"`
 	Flow   string `json:"flow"`
@@ -882,11 +883,11 @@ type RunBrief struct {
 	Unreadable bool `json:"unreadable,omitempty"`
 }
 
-// RunMCP is the MCP servers of one run as the claim answer carries them
-// (tmp/central-config — design.md, phase 2b): by name, in the mcpServers
-// shape, with their secrets filled in. Secrets are those values, for the
-// redactor. Notes say which servers the workspace's config names and this
-// run does not get. Unreadable: the server could not resolve them.
+// RunMCP is the MCP servers of one run as the claim answer carries them: by
+// name, in the mcpServers shape, with their secrets filled in. Secrets are
+// those values, for the redactor. Notes say which servers the workspace's
+// config names and this run does not get. Unreadable: the server could not
+// resolve them.
 type RunMCP struct {
 	Servers    map[string]json.RawMessage `json:"servers"`
 	Secrets    []string                   `json:"secrets,omitempty"`

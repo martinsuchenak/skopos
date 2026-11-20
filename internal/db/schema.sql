@@ -354,11 +354,11 @@ CREATE TABLE IF NOT EXISTS workers (
 CREATE INDEX IF NOT EXISTS idx_runs_item ON runs(item_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_runs_worker ON runs(worker_id, status);
 
--- Stage groups (tmp/multi-agent-stages — design.md §1): N runs of one stage
--- for one item, decided once by a recorded policy. Opt-in: a stage routed to
--- a single runner never creates a group. STRICT + CHECKs let SQLite reject
--- bad values; timestamps are Unix milliseconds (they sort exactly, unlike
--- RFC3339Nano text); NULL means "not yet".
+-- Stage groups: N runs of one stage for one item, decided once by a recorded
+-- policy. Opt-in: a stage routed to a single runner never creates a group.
+-- STRICT + CHECKs let SQLite reject bad values; timestamps are Unix
+-- milliseconds (they sort exactly, unlike RFC3339Nano text); NULL means "not
+-- yet".
 CREATE TABLE IF NOT EXISTS run_groups (
     id            TEXT    PRIMARY KEY,
     workspace_id  TEXT    NOT NULL,
@@ -400,12 +400,11 @@ CREATE TABLE IF NOT EXISTS run_logs (
 CREATE INDEX IF NOT EXISTS idx_run_logs_run ON run_logs(run_id, seq);
 CREATE INDEX IF NOT EXISTS idx_run_logs_created ON run_logs(created_ms);
 
--- Policy and configuration as append-only revisions (tmp/central-config —
--- design.md, phase 0; internal/confrev). A change is a new row; nothing
--- here is updated or deleted, so what applied on a given day can be shown
--- later. owner: "fleet:ceiling", "fleet:default", "group:<id>",
--- "workspace:<id>". config_heads points each owner at its current revision
--- (NULL = cleared).
+-- Policy and configuration as append-only revisions (internal/confrev). A
+-- change is a new row; nothing here is updated or deleted, so what applied on
+-- a given day can be shown later. owner: "fleet:ceiling", "fleet:default",
+-- "group:<id>", "workspace:<id>". config_heads points each owner at its
+-- current revision (NULL = cleared).
 CREATE TABLE IF NOT EXISTS config_revisions (
     id            TEXT    PRIMARY KEY,
     kind          TEXT    NOT NULL,
@@ -428,11 +427,10 @@ CREATE TABLE IF NOT EXISTS config_heads (
     PRIMARY KEY (kind, owner)
 ) STRICT;
 
--- What applies to a workspace at a moment (tmp/central-config — design.md,
--- phase 2): rev names an ordered list of config_revisions (its groups', then
--- its own), so the config a run was claimed with can be read back after the
--- heads have moved on. Rows are written when a combination is first
--- resolved and never changed.
+-- What applies to a workspace at a moment: rev names an ordered list of
+-- config_revisions (its groups', then its own), so the config a run was
+-- claimed with can be read back after the heads have moved on. Rows are
+-- written when a combination is first resolved and never changed.
 CREATE TABLE IF NOT EXISTS config_effective (
     rev           TEXT    PRIMARY KEY,
     workspace_id  TEXT    NOT NULL,
@@ -441,12 +439,11 @@ CREATE TABLE IF NOT EXISTS config_effective (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS idx_config_effective_ws ON config_effective(workspace_id, created_ms);
 
--- Stored secrets (tmp/central-config — design.md, phase 2b): the values of
--- the secrets a definition names (an MCP server's credentials), sealed
--- under the server's secret key and kept apart from the definition, which
--- holds names only. owner is what the secret belongs to
--- ("mcp_server:<name>"); key_id names the key that sealed the value
--- (internal/secretbox). Never read except to hand a run its servers.
+-- Stored secrets: the values of the secrets a definition names (an MCP
+-- server's credentials), sealed under the server's secret key and kept apart
+-- from the definition, which holds names only. owner is what the secret
+-- belongs to ("mcp_server:<name>"); key_id names the key that sealed the
+-- value (internal/secretbox). Never read except to hand a run its servers.
 CREATE TABLE IF NOT EXISTS secrets (
     owner       TEXT    NOT NULL,
     name        TEXT    NOT NULL,
@@ -457,12 +454,12 @@ CREATE TABLE IF NOT EXISTS secrets (
     PRIMARY KEY (owner, name)
 ) STRICT;
 
--- Per-attempt run tokens (tmp/central-config — design.md, phase 0): the
--- hash of each token a claim mints. kind 'agent' is the credential the
--- run's agent reaches skopos with over MCP. A token is valid only while
--- its run is claimed or running with a live lease, read from the run
--- (internal/runs/tokens.go); ended_ms records when it stopped being so.
--- 'lease' and 'log' are reserved for the lease token and the run-log token.
+-- Per-attempt run tokens: the hash of each token a claim mints. kind 'agent'
+-- is the credential the run's agent reaches skopos with over MCP. A token is
+-- valid only while its run is claimed or running with a live lease, read from
+-- the run (internal/runs/tokens.go); ended_ms records when it stopped being
+-- so. 'lease' and 'log' are reserved for the lease token and the run-log
+-- token.
 CREATE TABLE IF NOT EXISTS run_tokens (
     token_hash  TEXT    PRIMARY KEY,
     run_id      TEXT    NOT NULL,
@@ -474,12 +471,12 @@ CREATE TABLE IF NOT EXISTS run_tokens (
 CREATE INDEX IF NOT EXISTS idx_run_tokens_run ON run_tokens(run_id, kind);
 CREATE INDEX IF NOT EXISTS idx_run_tokens_open ON run_tokens(run_id) WHERE ended_ms IS NULL;
 
--- Pipeline settings (tmp/workspace-pipeline-settings — design.md): which
--- agents run each stage, per workspace or per workspace group. Resolution
--- per stage: the workspace's own row, else its group's, else not set.
--- owner_id names a workspace or a group id (two tables, so no FK; the
--- service drops rows of deleted owners). members is a JSON array of
--- {"runner","focus"}; a list is only valid on plan, review and qa.
+-- Pipeline settings: which agents run each stage, per workspace or per
+-- workspace group. Resolution per stage: the workspace's own row, else its
+-- group's, else not set. owner_id names a workspace or a group id (two
+-- tables, so no FK; the service drops rows of deleted owners). members is a
+-- JSON array of {"runner","focus"}; a list is only valid on plan, review and
+-- qa.
 CREATE TABLE IF NOT EXISTS pipeline_stages (
     owner_kind  TEXT    NOT NULL CHECK (owner_kind IN ('workspace', 'group')),
     owner_id    TEXT    NOT NULL,
@@ -523,11 +520,10 @@ CREATE TABLE IF NOT EXISTS pipeline_briefs (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS idx_pipeline_briefs_owner ON pipeline_briefs(owner_kind, owner_id, name, id);
 
--- Item templates (tmp/templates-schedules — design.md, part 2): a request
--- that repeats, held for a workspace or a group, from which an item is
--- started. Append-only like pipeline_briefs: the newest row of an owner's
--- name is the template, deleted = 1 says there is none. body is the
--- template's fields as JSON ('' with deleted = 1).
+-- Item templates: a request that repeats, held for a workspace or a group,
+-- from which an item is started. Append-only like pipeline_briefs: the newest
+-- row of an owner's name is the template, deleted = 1 says there is none.
+-- body is the template's fields as JSON ('' with deleted = 1).
 CREATE TABLE IF NOT EXISTS item_templates (
     id          TEXT    PRIMARY KEY,
     owner_kind  TEXT    NOT NULL CHECK (owner_kind IN ('workspace', 'group')),
@@ -540,10 +536,10 @@ CREATE TABLE IF NOT EXISTS item_templates (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS idx_item_templates_owner ON item_templates(owner_kind, owner_id, name, id);
 
--- Schedules (tmp/templates-schedules — design.md, part 3): an item
--- template started on a rhythm for a workspace or each workspace of a
--- group. next_ms is the next occurrence (UTC ms); a firing records what one
--- occurrence did in one workspace, at most once (the unique index).
+-- Schedules: an item template started on a rhythm for a workspace or each
+-- workspace of a group. next_ms is the next occurrence (UTC ms); a firing
+-- records what one occurrence did in one workspace, at most once (the unique
+-- index).
 CREATE TABLE IF NOT EXISTS schedules (
     id          TEXT    PRIMARY KEY,
     name        TEXT    NOT NULL,
@@ -575,13 +571,13 @@ CREATE TABLE IF NOT EXISTS schedule_firings (
 ) STRICT;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_schedule_firings_once ON schedule_firings(schedule_id, occurrence_ms, workspace_id);
 
--- Questions and answers (tmp/questions-and-answers — design.md): the record
--- of what the planner and the implementer asked and what the approver answered.
--- Append-only: rows are never updated or deleted (answers.used_by_run is
--- set once, phase 2). No foreign key to inbox_items: the record outlives a
--- deleted item. A set is one asking (every question one result returned);
--- n is the number steps cite. State (open, answered, answered in free text,
--- skipped, superseded) is derived from the rows (internal/qa).
+-- Questions and answers: the record of what the planner and the implementer
+-- asked and what the approver answered. Append-only: rows are never updated
+-- or deleted (answers.used_by_run is set once, phase 2). No foreign key to
+-- inbox_items: the record outlives a deleted item. A set is one asking (every
+-- question one result returned); n is the number steps cite. State (open,
+-- answered, answered in free text, skipped, superseded) is derived from the
+-- rows (internal/qa).
 CREATE TABLE IF NOT EXISTS questions (
     id            TEXT    PRIMARY KEY,
     workspace_id  TEXT    NOT NULL,
@@ -732,10 +728,10 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
 
 CREATE INDEX IF NOT EXISTS idx_idempotency_created ON idempotency_keys(created_ms);
 
--- Integrations (internal/integrations, tmp/integrations — design.md §3):
--- every event another system may hear about, in write order. seq is the
--- feed cursor (AUTOINCREMENT: never reused, so a gap below the oldest row
--- means pruned events). data is the thin JSON payload.
+-- Integrations (internal/integrations): every event another system may hear
+-- about, in write order. seq is the feed cursor (AUTOINCREMENT: never reused,
+-- so a gap below the oldest row means pruned events). data is the thin JSON
+-- payload.
 CREATE TABLE IF NOT EXISTS integration_events (
     seq          INTEGER PRIMARY KEY AUTOINCREMENT,
     id           TEXT NOT NULL UNIQUE,

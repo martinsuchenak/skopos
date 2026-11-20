@@ -15,13 +15,12 @@ import (
 	"github.com/martinsuchenak/skopos/internal/policy"
 )
 
-// Stage capabilities and wrappers (tmp/central-config — design.md, phase
-// 2d). A worker's stage profile did two jobs: it said what a stage's agent
-// is given (extra tools, env, settings) and what contains it (a wrapper, a
-// sandbox). The first is the workspace's and lives here, per stage; the
-// second stays the host's — worker.contained_by, or what the worker's file
-// sets — except for a wrapper defined once on the server and attached to a
-// stage by rule.
+// Stage capabilities and wrappers. A worker's stage profile did two jobs: it
+// said what a stage's agent is given (extra tools, env, settings) and what
+// contains it (a wrapper, a sandbox). The first is the workspace's and lives
+// here, per stage; the second stays the host's — worker.contained_by, or what
+// the worker's file sets — except for a wrapper defined once on the server
+// and attached to a stage by rule.
 
 // StageNames are the stages a config may give capabilities to. A second
 // opinion and a branch review run as a review.

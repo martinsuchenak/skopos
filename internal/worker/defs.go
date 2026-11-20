@@ -10,10 +10,9 @@ import (
 	"github.com/martinsuchenak/skopos/internal/wsconfig"
 )
 
-// Runner definitions from the server (tmp/central-config — design.md,
-// phase 2). The server defines each runner once — its kind, model, effort
-// and declared provider. An account in the worker's file then only says
-// which CLI it is a login for:
+// Runner definitions from the server. The server defines each runner once —
+// its kind, model, effort and declared provider. An account in the worker's
+// file then only says which CLI it is a login for:
 //
 //	[[worker.accounts]]
 //	name = "claude-1"

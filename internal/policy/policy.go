@@ -1,8 +1,7 @@
-// Package policy decides which runners may work on a workspace
-// (tmp/central-config — design.md, phase 1a). It is pure: rules, the facts
-// a worker reports about a runner, and the match between them. Storage and
-// who may change a policy live in internal/pipeline; the claim that applies
-// it in internal/runs.
+// Package policy decides which runners may work on a workspace. It is pure:
+// rules, the facts a worker reports about a runner, and the match between
+// them. Storage and who may change a policy live in internal/pipeline; the
+// claim that applies it in internal/runs.
 package policy
 
 import (

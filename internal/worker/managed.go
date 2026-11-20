@@ -15,12 +15,12 @@ import (
 	"github.com/martinsuchenak/skopos/internal/wsconfig"
 )
 
-// Workspace config from the server (tmp/central-config — design.md, phase
-// 2). A workspace with a config of its own on the server is managed: every
-// shared field — branches, setup and check commands, timeouts, push
-// settings, the MCP lists — comes from there, and what the local file says
-// for those fields is ignored. The file keeps the machine's own facts: the
-// clone path, setup_env, the push token's variable, profiles.
+// Workspace config from the server. A workspace with a config of its own on
+// the server is managed: every shared field — branches, setup and check
+// commands, timeouts, push settings, the MCP lists — comes from there, and
+// what the local file says for those fields is ignored. The file keeps the
+// machine's own facts: the clone path, setup_env, the push token's variable,
+// profiles.
 //
 // A run executes under exactly the revision its claim named
 // (run.ConfigRev): the worker fetches it and holds it before the run

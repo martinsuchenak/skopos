@@ -10,10 +10,10 @@ import (
 	"github.com/martinsuchenak/skopos/internal/wsconfig"
 )
 
-// Branch names (tmp/branch-handover — design.md §2). An item works on the
-// branch the approver named (item.branch) or, without one, on the name the
-// repository's template gives it. Either may already exist on origin: the
-// item then takes it over (a handover, or a review-only item's subject).
+// Branch names. An item works on the branch the approver named (item.branch)
+// or, without one, on the name the repository's template gives it. Either may
+// already exist on origin: the item then takes it over (a handover, or a
+// review-only item's subject).
 
 // defaultBranchTemplate is the name every item got before templates:
 // prefix, the item id's tail, a slug of the title.

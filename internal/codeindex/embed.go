@@ -165,9 +165,9 @@ func (s *Service) RecordEmbeddingError(workspace string, err error) {
 // EmbeddingsGate says whether a workspace may use the embeddings endpoint:
 // what is embedded (symbol names, signatures, doc summaries) and every
 // semantic query goes to that endpoint, so a workspace's runner policy
-// covers it like a runner (tmp/central-config — design.md, phase 1a).
-// known is false while the answer cannot be given yet (the policy is not
-// wired, or could not be read): nothing is sent and nothing is dropped.
+// covers it like a runner. known is false while the answer cannot be given
+// yet (the policy is not wired, or could not be read): nothing is sent and
+// nothing is dropped.
 type EmbeddingsGate func(ctx context.Context, workspace string) (allowed, known bool)
 
 // SetEmbeddingsGate installs the policy check (nil = every workspace may).

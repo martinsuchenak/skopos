@@ -75,13 +75,12 @@ const (
 	// StageSecondOpinion is an advisory review the approver asks for on an item
 	// at in_review (or blocked by its review): one run, pinned to the
 	// runner he picked and to the head it reviews. Its result is appended
-	// to the item; it never moves or blocks it (tmp/second-opinion-review
-	// — design.md).
+	// to the item; it never moves or blocks it.
 	StageSecondOpinion = "second_opinion"
 	// StageBranchReview reviews a review-only item's existing branch: the
-	// repository's checks at its head, then a review (tmp/branch-handover
-	// — design.md §4). One run on the workspace's review runner; whatever
-	// the verdict, the item goes to the approver at in_review.
+	// repository's checks at its head, then a review. One run on the
+	// workspace's review runner; whatever the verdict, the item goes to the
+	// approver at in_review.
 	StageBranchReview = "branch_review"
 )
 
@@ -101,12 +100,11 @@ const takeoverGrace = 30 * time.Minute
 // run left uncommitted; after this, any worker takes it.
 const preferGrace = 15 * time.Minute
 
-// Retryable failures (tmp/self-healing-workers — design.md §1): up to
-// maxRetries requeues after the first failure, each after its back-off;
-// from the second retry on the failing worker is kept off the run for
-// avoidWindow past the back-off, so another worker gets the first go. The
-// window is short: a workspace often has one worker, and then the last
-// attempt waits it out (back-off + window = 10 minutes).
+// Retryable failures: up to maxRetries requeues after the first failure, each
+// after its back-off; from the second retry on the failing worker is kept off
+// the run for avoidWindow past the back-off, so another worker gets the first
+// go. The window is short: a workspace often has one worker, and then the
+// last attempt waits it out (back-off + window = 10 minutes).
 const (
 	maxRetries  = 2
 	avoidWindow = 5 * time.Minute
@@ -262,8 +260,7 @@ const (
 	SeverityNit      = "nit"
 )
 
-// Group is N runs of one stage for one item, decided once by Policy
-// (tmp/multi-agent-stages — design.md §1).
+// Group is N runs of one stage for one item, decided once by Policy.
 type Group struct {
 	ID          string    `json:"id"`
 	WorkspaceID string    `json:"workspace_id"`
@@ -327,17 +324,16 @@ type ClaimInput struct {
 	// Unhealthy: offered workspaces whose preflight fails on the worker
 	// (workspace → reason). The claim hands it none of their runs — not
 	// even its own interrupted ones, which age into takeovers for other
-	// workers (tmp/self-healing-workers — design.md §2).
+	// workers.
 	Unhealthy map[string]string `json:"unhealthy,omitempty"`
 	// Indexable: offered workspaces whose repo the worker can fetch and
-	// index (tmp/agent-mcp-and-indexing — design.md §3).
+	// index.
 	Indexable []string `json:"indexable,omitempty"`
 	// RunnerFacts: what the worker says about every runner it has
-	// configured — kind, model, provider, endpoint, the stages it can run
-	// (tmp/central-config — design.md, phase 1a). In the worker's order of
-	// preference: the server picks the first that fits for a run nothing
-	// pinned. A worker from before runner facts sends none; it then gets
-	// runs only from workspaces without a policy.
+	// configured — kind, model, provider, endpoint, the stages it can run. In
+	// the worker's order of preference: the server picks the first that fits
+	// for a run nothing pinned. A worker from before runner facts sends none;
+	// it then gets runs only from workspaces without a policy.
 	RunnerFacts []policy.Facts `json:"runner_facts,omitempty"`
 	// Executors: what contains a run on this worker, per offered workspace
 	// and then by stage and runner (policy.ExecutorFact; phase 1c). A rule
@@ -574,9 +570,9 @@ type QueueInput struct {
 	PreferWorker string
 }
 
-// RunMCP is the MCP servers of one run, as its claim answer carries them
-// (tmp/central-config — design.md, phase 2b). It holds credentials: it is
-// never stored, logged or returned by anything but the claim.
+// RunMCP is the MCP servers of one run, as its claim answer carries them. It
+// holds credentials: it is never stored, logged or returned by anything but
+// the claim.
 type RunMCP struct {
 	// Servers: by name, in the mcpServers shape agent CLIs read ({"type":
 	// "http","url":…,"headers":…} or {"command":…,"args":…,"env":…}), the
