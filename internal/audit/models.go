@@ -50,7 +50,10 @@ const (
 	ViaMCP       = "mcp"
 	// ViaAPI: a REST call that names no surface (an integration); the CLI
 	// and the dashboard send theirs.
-	ViaAPI       = "api"
+	ViaAPI = "api"
+	// ViaCard: a person's action on an item's card in another system
+	// (internal/cards).
+	ViaCard      = "card"
 	ViaWorker    = "worker"
 	ViaMigration = "migration"
 	ViaSystem    = "system"

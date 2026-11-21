@@ -28,6 +28,12 @@ type Items interface {
 	ReadItem(ctx context.Context, id string) (*inbox.Item, error)
 }
 
+// sendBacker names the action that sends findings back now (the inbox
+// service; a reader without it leaves SendBack empty).
+type sendBacker interface {
+	SendBackWith(ctx context.Context, item *inbox.Item) string
+}
+
 // Plans reads the plan revisions at the gate.
 type Plans interface {
 	LatestRevision(ctx context.Context, planID string) (*plans.Revision, error)
@@ -106,6 +112,9 @@ type ItemView struct {
 	PlanID          string    `json:"plan_id,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
+	// StatusSince: when the item entered its status (a new stop, a new
+	// stage of the agents' work is a new time).
+	StatusSince *time.Time `json:"status_since,omitempty"`
 }
 
 // PlanView: the revisions at the gate (the open candidates of the current
@@ -130,8 +139,11 @@ type RevisionView struct {
 // QuestionView is one open question; answer it through /answers (or with
 // approve, request-changes, retry) by id.
 type QuestionView struct {
-	ID       string   `json:"id"`
-	SetID    string   `json:"set_id"`
+	ID    string `json:"id"`
+	SetID string `json:"set_id"`
+	// N is the question's number in its set, as asked (an answered one
+	// leaves a gap).
+	N        int      `json:"n"`
 	Asker    string   `json:"asker"`
 	Label    string   `json:"label,omitempty"`
 	Text     string   `json:"text"`
@@ -176,8 +188,12 @@ type ReviewView struct {
 // state, and the ones something is still owed on (to fix, claimed fixed,
 // found still open). GET /api/inbox/{id}/findings is the full record.
 type FindingsView struct {
-	Counts map[string]int `json:"counts"`
-	Open   []FindingView  `json:"open"`
+	// SendBack is the action that sends findings back to the implementer
+	// now ("request-changes" at sign-off, "retry" when a retry starts an
+	// implementation; "" = none: inbox.SendBackWith).
+	SendBack string         `json:"send_back,omitempty"`
+	Counts   map[string]int `json:"counts"`
+	Open     []FindingView  `json:"open"`
 }
 
 // FindingView is one finding something is still owed on.
@@ -235,7 +251,7 @@ func (s *Service) Get(ctx context.Context, itemID string) (*State, error) {
 		Item: ItemView{
 			ID: item.ID, WorkspaceID: item.WorkspaceID, Title: item.Title, Ref: item.Ref, ExternalURL: item.ExternalURL,
 			Branch: item.Branch, Flow: item.Flow, Agents: item.Agents, Needs: item.Needs, AutoApprovePlan: item.AutoApprovePlan, Status: string(item.Status), PlanID: item.PlanID,
-			CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
+			CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, StatusSince: item.StatusSince,
 		},
 		Brief:     strings.TrimSpace(brief),
 		Questions: []QuestionView{},
@@ -264,6 +280,9 @@ func (s *Service) Get(ctx context.Context, itemID string) (*State, error) {
 				return nil, err
 			}
 			st.Findings = findingsView(fs)
+			if sb, ok := s.Items.(sendBacker); ok && st.Findings != nil {
+				st.Findings.SendBack = sb.SendBackWith(ctx, item)
+			}
 		}
 	}
 	if item.PlanID != "" && s.Plans != nil && p.Allows(auth.AreaPlans, false) {
@@ -409,7 +428,7 @@ func openQuestions(rec *qa.Record) []QuestionView {
 			if opts == nil {
 				opts = []string{}
 			}
-			out = append(out, QuestionView{ID: q.ID, SetID: set.ID, Asker: set.Asker, Label: set.Label,
+			out = append(out, QuestionView{ID: q.ID, SetID: set.ID, N: q.N, Asker: set.Asker, Label: set.Label,
 				Text: q.Text, Options: opts, Blocking: set.Blocking})
 		}
 	}

@@ -356,9 +356,9 @@ func workerStackWith(t *testing.T, configure func(*runs.Service)) (*sql.DB, stri
 	bb := blackboard.NewHandler(blackboard.NewService(blackboard.NewStorage(sqlDB)), authn)
 	pl := plans.NewHandler(plansService, authn)
 	ib := inbox.NewHandler(inboxService, authn)
-	stateService := &itemstate.Service{Items: inboxService, Plans: plansService, Runs: runsService, Findings: findingsService}
+	stateService := &itemstate.Service{Items: inboxService, Plans: plansService, Runs: runsService, Questions: qaService, Findings: findingsService}
 	ib.SetStateHandler(itemstate.NewHandler(stateService).Get)
-	ib.SetCardHandler(cards.NewHandler(&cards.Service{Items: inboxService, States: stateService}).Post)
+	ib.SetCardHandler(cards.NewHandler(&cards.Service{Items: inboxService, States: stateService, Actors: inboxService}).Post)
 	reportHandler := itemreport.NewHandler(&itemreport.Service{
 		Items: inboxService, Plans: plansService, Runs: runsService, Questions: qaService, Findings: findingsService, Approvals: approvalsService, Audit: auditService,
 	})

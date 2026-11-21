@@ -472,7 +472,7 @@ func actorOf(ctx context.Context) (string, string) { return auth.Actor(ctx) }
 func cleanVia(ctx context.Context, via string) string {
 	via = strings.TrimSpace(via)
 	switch via {
-	case audit.ViaDashboard, audit.ViaCLI, audit.ViaMCP, audit.ViaAPI, audit.ViaWorker:
+	case audit.ViaDashboard, audit.ViaCLI, audit.ViaMCP, audit.ViaAPI, audit.ViaCard, audit.ViaWorker:
 		return via
 	case audit.ViaSlack:
 		if p := auth.PrincipalFromContext(ctx); p == nil || p.Root || p.Approver {

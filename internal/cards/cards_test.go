@@ -4,14 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/inbox"
 	"github.com/martinsuchenak/skopos/internal/itemstate"
 	"github.com/martinsuchenak/skopos/internal/plans"
+	"github.com/martinsuchenak/skopos/internal/qa"
 	"github.com/martinsuchenak/skopos/internal/runs"
 )
 
@@ -230,18 +234,18 @@ func TestCardPerStatus(t *testing.T) {
 	}{
 		{"no item", Input{Subject: Subject{Ref: "JOB-9"}}, StatusNone, false, "Not sent to skopos", []string{"`JOB-9`"}},
 		{"not started", Input{State: state(inbox.StatusOpen)}, StatusNotStarted, true, "Not started", nil},
-		{"queued", Input{State: queued}, StatusAgent, false, "Skopos is working on it: planning", []string{"**Queued:** planning"}},
-		{"working", Input{State: working}, StatusAgent, false, "Skopos is working on it: implementing", []string{"implementing (claude)"}},
+		{"queued", Input{State: queued}, StatusAgent, false, "Skopos is working on it: planning", []string{"Queued: planning, waiting for a worker.", "**Plan**"}},
+		{"working", Input{State: working}, StatusAgent, false, "Skopos is working on it: implementing", []string{"claude is on it.", "**Implement**"}},
 		{"plan approval", Input{State: gate}, StatusPlanApproval, true, "Plan ready for approval — 2 questions",
-			[]string{"1. **Add the action**\\\n   do Add the action\n2. **Test it**", "**Questions — planner claude** (the work waits for the answers)",
+			[]string{"1. **Add the action**\\\n   do Add the action\n2. **Test it**", "#### Questions — planner claude", "The work waits for the answers.",
 				"1. Drafts too?\n   - (a) only on submit\n   - (b) on every save\n2. Preload setting here?"}},
 		{"plan approval, two plans", Input{State: panel}, StatusPlanApproval, true, "Plan ready for approval — 2 plans", nil},
 		{"plan approval, nothing to do", Input{State: state(inbox.StatusAwaitingApproval), NothingToDo: "already done upstream"}, StatusPlanApproval, true,
 			"Waiting for you: the planner found nothing to do — already done upstream", []string{"already done upstream"}},
-		{"blocked", Input{State: blocked}, StatusBlocked, true, "Blocked: qa needs an answer: no test form", []string{"more detail", "**Questions — QA**"}},
+		{"blocked", Input{State: blocked}, StatusBlocked, true, "Blocked: qa needs an answer: no test form", []string{"more detail", "#### Questions — QA", "#### Why it stopped"}},
 		{"failed", Input{State: state(inbox.StatusFailed)}, StatusFailed, true, "Failed", nil},
 		{"sign-off", Input{State: signOff}, StatusSignOff, true, "Branch ready for sign-off — 1 blocking finding open",
-			[]string{"[Pull request](https://github.com/acme/app/pull/7) at `3f9a2c1`", "Checks: passed — lint, test", "Review (claude): **1 blocking**, 2 nits", "- **blocking** no size limit (`a.php`)"}},
+			[]string{"pull request #7 · commit `3f9a2c1`", "- Pull request: https://github.com/acme/app/pull/7", "Checks: passed — lint, test", "Review (claude): **1 blocking**, 2 nits", "- **blocking** no size limit (`a.php`)"}},
 		{"done, merged", Input{State: state(inbox.StatusDone), Outcome: &inbox.BranchOutcome{State: inbox.OutcomeMerged}}, StatusDone, false, "Done, merged", nil},
 		{"done, nothing to do", Input{State: state(inbox.StatusDone), NothingToDo: "nothing changed"}, StatusNothingToDo, false, "Closed: nothing to do — nothing changed", nil},
 		{"discarded", Input{State: state(inbox.StatusDiscarded)}, StatusDiscarded, false, "Discarded", nil},
@@ -276,6 +280,246 @@ func TestCardPerStatus(t *testing.T) {
 
 // The key changes exactly when something new happened, and the same state
 // builds the same envelope.
+// byKind is a card's components by kind.
+func byKind(t *testing.T, env *Envelope) map[string][]map[string]any {
+	t.Helper()
+	out := map[string][]map[string]any{}
+	for _, c := range components(t, env) {
+		out[c["component"].(string)] = append(out[c["component"].(string)], c)
+	}
+	return out
+}
+
+// buttons are a card's buttons: action name and variant, in order.
+func buttons(t *testing.T, env *Envelope) []string {
+	t.Helper()
+	var out []string
+	for _, c := range byKind(t, env)["Button"] {
+		out = append(out, c["action"].(map[string]any)["event"].(map[string]any)["name"].(string)+"/"+c["variant"].(string))
+	}
+	return out
+}
+
+func dataModel(env *Envelope) map[string]any {
+	dm, _ := env.A2UI[1].(map[string]any)["createSurface"].(map[string]any)["dataModel"].(map[string]any)
+	return dm
+}
+
+// A key that may act gets a button per action the state allows, and the
+// inputs they take: the open questions (options and a text field each,
+// under the question's id), the plan to pick when there are several, the
+// open findings to send back, a notes field. Without actions the card is
+// text, as before.
+func TestActionForm(t *testing.T) {
+	gate := state(inbox.StatusAwaitingApproval)
+	gate.Plan = &itemstate.PlanView{PlanID: "p", Revisions: []itemstate.RevisionView{revision("r1", "claude", "Add the action")}}
+	gate.Questions = []itemstate.QuestionView{
+		{ID: "q1", SetID: "s1", N: 1, Asker: "planner", Text: "Drafts too?", Options: []string{"only on submit", "on every save"}},
+		{ID: "q2", SetID: "s1", N: 2, Asker: "planner", Text: "Anything to keep?"},
+	}
+	gate.Actions = []string{"approve", "request-changes", "answers", "reject"}
+	env := Build(Input{State: gate, Actions: true})
+	conforms(t, env)
+	kinds := byKind(t, env)
+	if len(kinds["ChoicePicker"]) != 1 || len(kinds["TextField"]) != 3 || len(kinds["CheckBox"]) != 0 {
+		t.Fatalf("the inputs: two questions and the notes: %v", kinds)
+	}
+	pick := kinds["ChoicePicker"][0]
+	if pick["value"].(map[string]any)["@path"] != "/answers/q1/option" ||
+		pick["options"].([]any)[1].(map[string]any)["value"] != "b" || pick["options"].([]any)[1].(map[string]any)["label"] != "(b) on every save" {
+		t.Fatalf("the options: %v", pick)
+	}
+	if kinds["TextField"][2]["value"].(map[string]any)["@path"] != "/notes" {
+		t.Fatalf("the notes field: %v", kinds["TextField"][2])
+	}
+	if got := buttons(t, env); fmt.Sprint(got) != "[approve/primary request-changes/default answers/default reject/borderless]" {
+		t.Fatalf("the buttons: %v", got)
+	}
+	ctx := kinds["Button"][0]["action"].(map[string]any)["event"].(map[string]any)["context"].(map[string]any)
+	if ctx["item"] != "01item" || ctx["key"] != env.Key || ctx["answers"].(map[string]any)["@path"] != "/answers" ||
+		ctx["notes"].(map[string]any)["@path"] != "/notes" || ctx["plan"] != nil {
+		t.Fatalf("the context: the item and the card's key, the inputs, no plan to pick for one plan: %v", ctx)
+	}
+	dm := dataModel(env)
+	if len(dm["answers"].(map[string]any)) != 2 || dm["notes"] != "" {
+		t.Fatalf("the data model: %v", dm)
+	}
+	all := strings.Join(texts(t, env), "\n")
+	if strings.Contains(all, "(a) only on submit") || !strings.Contains(all, "**Plan approval**") {
+		t.Fatalf("options are inputs, not text as well; the tracker shows the step: %s", all)
+	}
+
+	// Several plans: pick the one to approve.
+	panel := state(inbox.StatusAwaitingApproval)
+	panel.Plan = &itemstate.PlanView{PlanID: "p", Revisions: []itemstate.RevisionView{revision("r1", "claude", "A"), revision("r2", "codex", "B")}}
+	panel.Actions = gate.Actions
+	env = Build(Input{State: panel, Actions: true})
+	conforms(t, env)
+	picker := byKind(t, env)["ChoicePicker"]
+	if len(picker) != 1 || picker[0]["label"] != "The plan to approve" || picker[0]["options"].([]any)[1].(map[string]any)["value"] != "r2" {
+		t.Fatalf("the plan picker: %v", picker)
+	}
+
+	// A stopped gate: continue first; the question keeps its number.
+	blocked := state(inbox.StatusBlocked)
+	blocked.Questions = []itemstate.QuestionView{{ID: "q7", SetID: "s7", N: 2, Asker: "worker", Text: "Which form?"}}
+	blocked.Actions = []string{"retry", "answers", "reject"}
+	env = Build(Input{State: blocked, Actions: true})
+	conforms(t, env)
+	if got := buttons(t, env); fmt.Sprint(got) != "[retry/primary answers/default reject/borderless]" {
+		t.Fatalf("a stopped gate: %v", got)
+	}
+	if all := strings.Join(texts(t, env), "\n"); !strings.Contains(all, "**2.** Which form?") || !strings.Contains(all, "Send answers and continue") {
+		t.Fatalf("a stopped gate's text: %s", all)
+	}
+
+	// Sign-off: the open findings are tick boxes, not a list as well.
+	signOff := state(inbox.StatusInReview)
+	signOff.Implementation = &itemstate.Implementation{HeadSHA: "3f9a2c1d00"}
+	signOff.Findings = &itemstate.FindingsView{SendBack: "request-changes", Open: []itemstate.FindingView{{ID: "f1", Severity: "blocking", Text: "no size limit", File: "a.php"}}}
+	signOff.Actions = []string{"mark-done", "request-changes", "second-opinion", "reject"}
+	env = Build(Input{State: signOff, Actions: true})
+	conforms(t, env)
+	boxes := byKind(t, env)["CheckBox"]
+	if len(boxes) != 1 || boxes[0]["value"].(map[string]any)["@path"] != "/findings/f1" || boxes[0]["label"] != "blocking: no size limit (a.php)" {
+		t.Fatalf("the findings: %v", boxes)
+	}
+	if strings.Contains(strings.Join(texts(t, env), "\n"), "- **blocking** no size limit") {
+		t.Fatal("the findings are listed twice")
+	}
+	if got := buttons(t, env); fmt.Sprint(got) != "[mark-done/primary request-changes/default second-opinion/default reject/borderless]" {
+		t.Fatalf("sign-off: %v", got)
+	}
+
+	// Not started: send it to the agents; no notes field, no reject.
+	open := state(inbox.StatusOpen)
+	open.Actions = []string{"queue"}
+	env = Build(Input{State: open, Actions: true})
+	conforms(t, env)
+	if got := buttons(t, env); fmt.Sprint(got) != "[queue/primary]" || len(byKind(t, env)["TextField"]) != 0 {
+		t.Fatalf("not started: %v", byKind(t, env))
+	}
+
+	for name, in := range map[string]Input{
+		"no actions":         {State: gate},
+		"a key without them": {State: func() *itemstate.State { s := *gate; s.Actions = []string{}; return &s }(), Actions: true},
+	} {
+		env := Build(in)
+		if k := byKind(t, env); len(k["TextField"])+len(k["Button"]) != 0 || dataModel(env) != nil {
+			t.Errorf("%s: inputs on the card: %v", name, k)
+		}
+		if !strings.Contains(strings.Join(texts(t, env), "\n"), "(a) only on submit") {
+			t.Errorf("%s: the questions are text", name)
+		}
+	}
+}
+
+// Findings are tick boxes only when they can go back now, with an action the
+// key may take: a retry that only reruns QA cannot send them.
+func TestTickableFindings(t *testing.T) {
+	st := state(inbox.StatusBlocked)
+	st.Actions = []string{"retry", "answers", "reject"}
+	st.Findings = &itemstate.FindingsView{Open: []itemstate.FindingView{{ID: "f1", Severity: "blocking", Text: "x"}}}
+	for sendBack, want := range map[string]bool{"retry": true, "": false, "request-changes": false} {
+		st.Findings.SendBack = sendBack
+		if got := tickableFindings(st); got != want {
+			t.Errorf("send_back %q: %v", sendBack, got)
+		}
+		env := Build(Input{State: st, Actions: true})
+		if boxes := len(byKind(t, env)["CheckBox"]); (boxes == 1) != want {
+			t.Errorf("send_back %q: %d tick boxes", sendBack, boxes)
+		}
+		if listed := strings.Contains(strings.Join(texts(t, env), "\n"), "- **blocking** x"); listed == want {
+			t.Errorf("send_back %q: listed as text %v", sendBack, listed)
+		}
+	}
+}
+
+// A refusal reads as a sentence for the person who pressed the button.
+func TestForPerson(t *testing.T) {
+	for err, want := range map[error]string{
+		fmt.Errorf("%w: say why the item is rejected", ErrInvalid):           "Say why the item is rejected",
+		fmt.Errorf("%w: question 1 is answered", inbox.ErrInvalidInput):      "Question 1 is answered",
+		fmt.Errorf("%w: acting on a card needs …", auth.ErrApproverRequired): "Acting on a card needs …",
+	} {
+		if got := forPerson(err); got != want {
+			t.Errorf("%v: %q", err, got)
+		}
+	}
+}
+
+// Pull requests are named in text, without links.
+func TestPRName(t *testing.T) {
+	for url, want := range map[string]string{
+		"https://github.com/acme/app/pull/7":                 "pull request #7",
+		"https://gitlab.example.com/a/b/-/merge_requests/12": "pull request #12",
+		"https://example.com/review/abc":                     "pull request",
+	} {
+		if got := prName(url); got != want {
+			t.Errorf("%s: %q", url, got)
+		}
+	}
+}
+
+// At the plan gate the card holds the round as the item does: the comparison
+// first, then each plan in full under its number (the synthesis named as the
+// merge), with the questions its planner asked; a revision the item holds no
+// text for shows its steps.
+func TestFullPlans(t *testing.T) {
+	gate := state(inbox.StatusAwaitingApproval)
+	gate.Plan = &itemstate.PlanView{PlanID: "p", Revisions: []itemstate.RevisionView{
+		revision("r1", "claude", "A"), revision("r2", "codex", "B"), revision("r3", "synthesis", "C"), revision("r4", "glm", "Only steps")}}
+	round := &inbox.PlansView{Round: 2, Rounds: 2, Plans: []inbox.PlanDoc{
+		{Kind: "candidate", Label: "claude", RevisionID: "r1", Markdown: "# Approach\nKeep the report.\n\n## Steps\n1. A\n\n```\n# not a heading\n```",
+			QuestionsMarkdown: "1. Drafts too?"},
+		{Kind: "candidate", Label: "codex", RevisionID: "r2", Markdown: "**Revision:** r2\n\nRewrite the report."},
+		{Kind: "synthesis", Label: "synthesis", RevisionID: "r3", Markdown: "Both, merged."},
+	}, Comparison: &inbox.PlanNote{Heading: "Comparison — judge", Markdown: "## Verdict\nPlan 1 is safer."}}
+	env := Build(Input{State: gate, Plans: round})
+	conforms(t, env)
+	all := strings.Join(texts(t, env), "\n----\n")
+	for _, want := range []string{
+		"planning round 2",
+		"#### Comparison", "##### Verdict\nPlan 1 is safer.",
+		"##### Approach\nKeep the report.\n\n###### Steps", "```\n# not a heading\n```",
+		"##### Questions this planner asked", "1. Drafts too?",
+		"Rewrite the report.", "Both, merged.",
+		"1. **Only steps**",
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("no Text holds %q:\n%s", want, all)
+		}
+	}
+	tabs := byKind(t, env)["Tabs"][0]["tabs"].([]any)
+	var titles []string
+	for _, tb := range tabs {
+		titles = append(titles, tb.(map[string]any)["title"].(string))
+	}
+	if fmt.Sprint(titles) != "[Plan 1 — claude Plan 2 — codex Plan 3 — merged from the others Plan 4 — glm]" {
+		t.Fatalf("the tabs: %v", titles)
+	}
+	if strings.Contains(all, "**Revision:**") {
+		t.Fatal("the revision line is the item's bookkeeping, not the plan")
+	}
+	if strings.Index(all, "#### Comparison") > strings.Index(all, "Keep the report.") {
+		t.Fatal("the comparison comes before the plans")
+	}
+
+	gate.Actions = []string{"approve", "request-changes", "reject"}
+	picker := byKind(t, Build(Input{State: gate, Plans: round, Actions: true}))["ChoicePicker"][0]["options"].([]any)
+	if picker[2].(map[string]any)["label"] != "Plan 3 — merged from the others" {
+		t.Fatalf("the picker names the plans as the tabs do: %v", picker)
+	}
+
+	long := strings.Repeat("word ", maxPlanText)
+	if got := fullText(long); len(got) > maxPlanText+100 || !strings.Contains(got, "The rest is in skopos") {
+		t.Fatalf("a long plan is cut and says so: %d", len(got))
+	}
+	if got := nestHeadings("#### Deep\ntext", 5); got != "##### Deep\ntext" {
+		t.Fatalf("headings move below the card's: %q", got)
+	}
+}
+
 func TestKey(t *testing.T) {
 	gate := func(revs ...string) *itemstate.State {
 		st := state(inbox.StatusAwaitingApproval)
@@ -418,5 +662,180 @@ func TestRenderNothingToDo(t *testing.T) {
 		if !strings.Contains(all, tc.want) || strings.Contains(all, tc.not) {
 			t.Errorf("%s: want %q, not %q:\n%s", tc.name, tc.want, tc.not, all)
 		}
+	}
+}
+
+type fakeActors struct {
+	name     string
+	item     string
+	answers  qa.AnswersInput
+	notes    string
+	findings []string
+	approve  inbox.ApproveInput
+	head     string
+}
+
+func (f *fakeActors) did(name, item string) (*inbox.Item, error) {
+	f.name, f.item = name, item
+	return &inbox.Item{ID: item}, nil
+}
+func (f *fakeActors) Queue(_ context.Context, id, _ string) (*inbox.Item, error) {
+	return f.did(ActionQueue, id)
+}
+func (f *fakeActors) ReviewBranch(_ context.Context, id, _ string) (*inbox.Item, error) {
+	return f.did(ActionReview, id)
+}
+func (f *fakeActors) Approve(_ context.Context, id string, in inbox.ApproveInput) (*inbox.Item, error) {
+	f.approve, f.answers, f.notes = in, in.Answers, in.Notes
+	return f.did(ActionApprove, id)
+}
+func (f *fakeActors) RequestChangesWith(_ context.Context, id string, in inbox.ChangesInput) (*inbox.Item, error) {
+	f.answers, f.notes, f.findings = in.Answers, in.Notes, in.Findings
+	return f.did(ActionRequestChanges, id)
+}
+func (f *fakeActors) Answer(_ context.Context, id string, answers qa.AnswersInput, _ string) (*inbox.Item, error) {
+	f.answers = answers
+	return f.did(ActionAnswer, id)
+}
+func (f *fakeActors) RetryOn(_ context.Context, id string, in inbox.RetryInput) (*inbox.Item, error) {
+	f.answers, f.findings = in.Answers, in.Findings
+	return f.did(ActionRetry, id)
+}
+func (f *fakeActors) MarkDone(_ context.Context, id, head, _ string) (*inbox.Item, error) {
+	f.head = head
+	return f.did(ActionMarkDone, id)
+}
+func (f *fakeActors) CheckCommits(_ context.Context, id, _ string) (*inbox.Item, error) {
+	return f.did(ActionCheckCommits, id)
+}
+func (f *fakeActors) RequestSecondOpinion(_ context.Context, id string, _ inbox.SecondOpinionInput) (*inbox.SecondOpinionRequest, error) {
+	f.name, f.item = ActionSecondOpinion, id
+	return &inbox.SecondOpinionRequest{}, nil
+}
+func (f *fakeActors) Reject(_ context.Context, id, notes, _ string) (*inbox.Item, error) {
+	f.notes = notes
+	return f.did(ActionReject, id)
+}
+
+// A card's action is carried out on the card's item with what the person
+// gave, and only while the card is still the card (the same item and key)
+// and the state allows it.
+func TestAct(t *testing.T) {
+	run := func(st *itemstate.State, status inbox.Status, action string) (*fakeActors, error) {
+		t.Helper()
+		actors := &fakeActors{}
+		svc := &Service{Items: &fakeItems{items: []inbox.Item{{ID: "01item", Status: status}}}, States: &fakeStates{state: st}, Actors: actors}
+		_, err := svc.Render(context.Background(), Request{Subject: Subject{Ref: "JOB-1"}, Action: json.RawMessage(action)}, "")
+		return actors, err
+	}
+	act := func(name, key, rest string) string {
+		return `{"name":"` + name + `","context":{"item":"01item","key":"` + key + `"` + rest + `}}`
+	}
+
+	gate := state(inbox.StatusAwaitingApproval)
+	gate.Plan = &itemstate.PlanView{PlanID: "p", Revisions: []itemstate.RevisionView{revision("r1", "claude", "A")}}
+	gate.Plan.Revisions[0].ContentHash = "hash-r1"
+	gate.Questions = []itemstate.QuestionView{{ID: "q1", SetID: "s1", N: 1, Asker: "planner", Text: "Drafts?", Options: []string{"yes", "no"}}}
+	gate.Actions = []string{"approve", "request-changes", "answers", "reject"}
+	gateKey := Build(Input{State: gate}).Key
+
+	// Approve: the plan's hash from the state, the answers and the note
+	// with it; the A2UI message around the action is taken too.
+	a, err := run(gate, inbox.StatusAwaitingApproval, `{"version":"1.0","action":`+act("approve", gateKey,
+		`,"answers":{"q1":{"option":["b"],"text":""}},"notes":" keep it small ","plan":[]`)+`}`)
+	if err != nil || a.name != ActionApprove || a.approve.RevisionID != "r1" || a.approve.ContentHash != "hash-r1" || a.notes != "keep it small" ||
+		len(a.answers.Items) != 1 || a.answers.Items[0] != (qa.AnswerItem{QuestionID: "q1", Option: "b"}) {
+		t.Fatalf("approve: %v %+v", err, a)
+	}
+
+	for name, tc := range map[string]struct {
+		action string
+		want   error
+	}{
+		"another item":              {`{"name":"approve","context":{"item":"02item","key":"` + gateKey + `"}}`, ErrStale},
+		"the item moved on":         {act("approve", "01item:agent", ""), ErrStale},
+		"not possible now":          {act("mark-done", gateKey, ""), ErrStale},
+		"a plan no longer there":    {act("approve", gateKey, `,"plan":["r9"]`), ErrStale},
+		"changes without a word":    {act("request-changes", gateKey, `,"notes":"  "`), ErrInvalid},
+		"reject without a reason":   {act("reject", gateKey, ""), ErrInvalid},
+		"answers without an answer": {act("answers", gateKey, `,"answers":{"q1":{"option":[],"text":""}}`), ErrInvalid},
+		"an unknown action":         {act("delete", gateKey, ""), ErrInvalid},
+		"not an action":             {`"approve"`, ErrInvalid},
+	} {
+		if a, err := run(gate, inbox.StatusAwaitingApproval, tc.action); !errors.Is(err, tc.want) || a.name != "" {
+			t.Errorf("%s: %v (carried out: %q)", name, err, a.name)
+		}
+	}
+	if a, err := run(gate, inbox.StatusAwaitingApproval, act("reject", gateKey, `,"notes":"not needed"`)); err != nil || a.name != ActionReject || a.notes != "not needed" {
+		t.Fatalf("reject: %v %+v", err, a)
+	}
+
+	// Several plans: one must be picked.
+	panel := state(inbox.StatusAwaitingApproval)
+	panel.Plan = &itemstate.PlanView{PlanID: "p", Revisions: []itemstate.RevisionView{revision("r1", "claude", "A"), revision("r2", "codex", "B")}}
+	panel.Actions = gate.Actions
+	panelKey := Build(Input{State: panel}).Key
+	if _, err := run(panel, inbox.StatusAwaitingApproval, act("approve", panelKey, "")); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("several plans, none picked: %v", err)
+	}
+	if a, err := run(panel, inbox.StatusAwaitingApproval, act("approve", panelKey, `,"plan":["r2"]`)); err != nil || a.approve.RevisionID != "r2" {
+		t.Fatalf("the picked plan: %v %+v", err, a)
+	}
+
+	// A stopped gate: the note is an answer to the stop; ticked findings go
+	// back with the retry.
+	blocked := state(inbox.StatusBlocked)
+	blocked.Reason = "review blocked"
+	blocked.Findings = &itemstate.FindingsView{Open: []itemstate.FindingView{{ID: "f1", Severity: "blocking", Text: "x"}, {ID: "f2", Severity: "nit", Text: "y"}}}
+	blocked.Actions = []string{"retry", "answers", "reject"}
+	blockedKey := Build(Input{State: blocked}).Key
+	if a, err := run(blocked, inbox.StatusBlocked, act("retry", blockedKey, `,"notes":"use the staging data","findings":{"f1":true,"f2":false}`)); err != nil ||
+		a.name != ActionRetry || a.answers.Text != "use the staging data" || fmt.Sprint(a.findings) != "[f1]" {
+		t.Fatalf("retry: %v %+v", err, a)
+	}
+
+	// Sign-off: the reviewed commit is the state's.
+	signOff := state(inbox.StatusInReview)
+	signOff.Implementation = &itemstate.Implementation{HeadSHA: "3f9a2c1d00"}
+	signOff.Actions = []string{"mark-done", "request-changes", "reject"}
+	signOffKey := Build(Input{State: signOff}).Key
+	if a, err := run(signOff, inbox.StatusInReview, act("mark-done", signOffKey, "")); err != nil || a.head != "3f9a2c1d00" {
+		t.Fatalf("sign off: %v %+v", err, a)
+	}
+
+	// The other actions reach their own inbox action; a card drawn before
+	// the item entered its status (a new stop, a new stage) is out of date.
+	open := state(inbox.StatusOpen)
+	open.Item.Branch = "agent/x"
+	open.Actions = []string{"queue", "review"}
+	openKey := Build(Input{State: open}).Key
+	for _, name := range []string{ActionQueue, ActionReview} {
+		if a, err := run(open, inbox.StatusOpen, act(name, openKey, "")); err != nil || a.name != name {
+			t.Errorf("%s: %v %+v", name, err, a)
+		}
+	}
+	signOff.Actions = []string{"mark-done", "request-changes", "check-commits", "second-opinion", "reject"}
+	for _, name := range []string{ActionCheckCommits, ActionSecondOpinion} {
+		if a, err := run(signOff, inbox.StatusInReview, act(name, signOffKey, "")); err != nil || a.name != name || a.item != "01item" {
+			t.Errorf("%s: %v %+v", name, err, a)
+		}
+	}
+	stopped := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
+	blocked.Item.StatusSince = &stopped
+	if a, err := run(blocked, inbox.StatusBlocked, act("retry", blockedKey, `,"since":"2026-11-20T09:00:00Z"`)); !errors.Is(err, ErrStale) || a.name != "" {
+		t.Fatalf("a card from an earlier stop with the same reason: %v %+v", err, a)
+	}
+	if _, err := run(blocked, inbox.StatusBlocked, act("retry", blockedKey, `,"since":"2026-11-20T10:00:00Z"`)); err != nil {
+		t.Fatalf("the card of this stop: %v", err)
+	}
+
+	reader := auth.WithPrincipal(context.Background(), &auth.Principal{KeyID: "k1", Capabilities: map[string]struct{}{"rest": {}, "inbox:read": {}}})
+	actors := &fakeActors{}
+	svc := &Service{Items: &fakeItems{items: []inbox.Item{{ID: "01item", Status: inbox.StatusAwaitingApproval}}}, States: &fakeStates{state: gate}, Actors: actors}
+	if _, err := svc.Render(reader, Request{Subject: Subject{Ref: "JOB-1"}, Action: json.RawMessage(act("approve", gateKey, ""))}, ""); !errors.Is(err, auth.ErrApproverRequired) || actors.name != "" {
+		t.Fatalf("a key that may not act: %v", err)
+	}
+	if env, _ := svc.Render(reader, Request{Subject: Subject{Ref: "JOB-1"}}, ""); len(byKind(t, env)["Button"]) != 0 {
+		t.Fatal("a key that may not act gets no buttons")
 	}
 }

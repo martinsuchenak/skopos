@@ -249,13 +249,19 @@ components. Around it, an envelope says what the system needs to follow
 the item without knowing skopos's workflow.
 
 ```http
-POST /api/inbox/card?workspace=github.com/acme/app
+POST /api/inbox/card?ref=JOB100235&workspace=github.com/acme/app
 Authorization: Bearer sk_…
 Content-Type: application/json
 
-{"subject": {"ref": "JOB100235", "title": "AI configurations",
+{"subject": {"title": "AI configurations",
              "url": "https://jobs.example.com/job/100235"}}
 ```
+
+The reference goes in the address (`ref`), so a system set up with an
+endpoint template fills in its own record's key
+(`/api/inbox/card?ref={key}`); `subject.ref` in the body is taken too, and
+both must agree when both are given. The body is optional: `title`, `url`
+and `text` (up to 64 KB) only describe the record.
 
 ```json
 {
@@ -293,7 +299,7 @@ Content-Type: application/json
 | `none` | no item has the reference |
 | `not_started` | in skopos, waiting for someone to queue it |
 | `agent` | the agents are working (one status from queued until the next gate) |
-| `plan_approval` | the plan waits for approval: the plan's steps (several plans as tabs) and the open questions |
+| `plan_approval` | the plan waits for approval: each plan in full as its planner wrote it, with the questions it asked (several plans as tabs, the merged one named so, the judge's comparison above them), and the open questions |
 | `blocked` / `failed` | the work stopped: the reason and the open questions |
 | `sign_off` | the branch waits for sign-off: the pull request, checks, reviews and the findings still open |
 | `done` | signed off (and merged, when the worker reported it) |
@@ -307,8 +313,69 @@ follow its jobs. The card is built from the same state as
 with `plans:read` and the runs' details only with `runs:read`. Rendering a
 card is a read, though it is a `POST`: a key with `inbox:read` may ask for
 one, and a card is never replayed for an `Idempotency-Key`: every answer
-is the item as it is now. Cards carry no buttons yet; act through the
-endpoints above.
+is the item as it is now.
+
+### Act on the card
+
+For a key that may act on items for a person (`inbox:write` and the
+approver permission: the `integration` preset with `--approver`, and
+`--delegate` to name the person), the card is the item's page: it draws a
+button for each action the item allows now (the `actions` of
+`/api/inbox/{id}/state`) and the inputs they take. For any other key the
+card stays text.
+
+| Card | Inputs | Buttons (`name` of the action) |
+|---|---|---|
+| not started | | Send to the agents (`queue`), Review the existing branch (`review`) |
+| agents working | a note | Reject (`reject`) |
+| `plan_approval` | the open questions; the plan to approve when there are several; a note | Approve (`approve`), Request changes (`request-changes`), Only send the answers (`answers`), Reject (`reject`) |
+| `blocked` / `failed` | the open questions; the open findings when a review stopped it; a note | Retry, or Send answers and continue (`retry`), Only send the answers (`answers`), Ask for a second opinion (`second-opinion`), Reject (`reject`) |
+| `sign_off` | the open findings to send back; a note | Sign off (`mark-done`), Request changes (`request-changes`), Check the new commits (`check-commits`), Ask for a second opinion (`second-opinion`), Reject (`reject`) |
+
+Every card also shows where the item is: Plan → Plan approval → Implement
+→ Checks → Review → Sign-off, with the steps done and the current one.
+
+The inputs are bound in the surface's data model: a question under
+`/answers/<question id>/option` (the picked letter) and `/text`, the plan
+under `/plan/choice`, a finding under `/findings/<id>` (ticked = send it
+back), the note under `/notes`. When the person presses a button, send
+the action your A2UI renderer gives (its `name` and resolved `context`)
+back to the same endpoint with the same subject, naming the person:
+
+```http
+POST /api/inbox/card?ref=JOB100235&workspace=github.com/acme/app
+X-Skopos-On-Behalf-Of: alex@acme.example
+
+{"subject": {},
+ "action": {"name": "approve", "surfaceId": "skopos-01a1…", "sourceComponentId": "c12",
+            "timestamp": "2026-11-20T10:00:00Z",
+            "context": {"item": "01a1…", "key": "01a1…:plan_approval:01a1…",
+                        "since": "2026-11-20T09:58:12.031Z",
+                        "answers": {"01a1…q": {"option": ["a"], "text": ""}},
+                        "notes": "Keep the old report as it is."}}}
+```
+
+- The answer is the card after the action.
+- Each action is the item's own (`/api/inbox/{id}/<action>`), with its
+  checks, recorded as the person the request names, via `card`. Answers go with
+  Approve, Request changes and Retry; a note is the approval's notes, what
+  to change, the answer to what stopped the work, or why the item is
+  rejected. Request changes needs a note or a finding to send back, and
+  Reject a note. A question left blank stays open.
+- An approval names the plan the card showed: the only one, or the one
+  picked. Sign off names the reviewed commit the card showed.
+- The context names the item, the card's `key` and `since` (when the item
+  entered its status): when something has happened since the card was
+  drawn (another item, another status, a new stop, a new stage of the
+  agents' work, a new plan round or question set, a new reviewed commit)
+  the action is refused with `409`, and nothing is recorded. Draw the card
+  again. A double click is refused the same way.
+- Open findings are tick boxes only when they can go back to the
+  implementer now: at sign-off, and at a stop whose retry starts an
+  implementation (`findings.send_back` of the state).
+- A key that may not act gets `403`; an unknown action, or one missing
+  what it needs, `400`. The `error` of a refusal is a sentence to show the
+  person.
 
 ## Keep the item's report
 

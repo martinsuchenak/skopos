@@ -47,8 +47,45 @@ func (s *surface) card(child string) string {
 	return s.add("Card", Component{"child": child})
 }
 
-func (s *surface) divider() string {
-	return s.add("Divider", nil)
+func (s *surface) column(children ...string) string {
+	return s.add("Column", Component{"children": children})
+}
+
+// row lays its children out side by side, centred on one line.
+func (s *surface) row(children ...string) string {
+	return s.add("Row", Component{"children": children, "align": "center"})
+}
+
+// icon is one of the basic catalog's icons (Icon's name enum).
+func (s *surface) icon(name string) string {
+	return s.add("Icon", Component{"name": name})
+}
+
+// section is a part of the card: a Card holding a heading and the parts.
+func (s *surface) section(title string, parts ...string) string {
+	return s.card(s.column(append([]string{s.text("#### " + title)}, parts...)...))
+}
+
+// headline is the card's title with an icon, and a line under it ("" =
+// none).
+func (s *surface) headline(icon, title, sub string) string {
+	parts := []string{s.row(s.icon(icon), s.text("### "+title))}
+	if sub != "" {
+		parts = append(parts, s.caption(sub))
+	}
+	return s.column(parts...)
+}
+
+// bind is a value read from the surface's data model (and written back by an
+// input).
+func bind(path string) map[string]any { return map[string]any{"@path": path} }
+
+// button is a Button with a Text label; pressing it sends the action event
+// with the context (literals, or bind() paths the host resolves).
+func (s *surface) button(label, variant, action string, context map[string]any) string {
+	child := s.add("Text", Component{"text": label})
+	return s.add("Button", Component{"child": child, "variant": variant,
+		"action": map[string]any{"event": map[string]any{"name": action, "context": context}}})
 }
 
 type tab struct{ title, child string }
@@ -67,20 +104,21 @@ func (s *surface) tabs(ts []tab) string {
 // unless it is deleted first, and every card of an item has the same id:
 // deleting first lets a host keep one renderer and apply each card as it
 // comes. A renderer that has not seen the surface takes the delete as
-// nothing to do.
-func (s *surface) createSurface(surfaceID string, children []string) []any {
+// nothing to do. dataModel is the inputs' starting values (nil = none).
+func (s *surface) createSurface(surfaceID string, children []string, dataModel map[string]any) []any {
 	root := Component{"id": "root", "component": "Column", "children": children, "align": "stretch"}
 	comps := append([]Component{root}, s.components...)
+	create := map[string]any{
+		"surfaceId":  surfaceID,
+		"catalogId":  BasicCatalog,
+		"components": comps,
+	}
+	if dataModel != nil {
+		create["dataModel"] = dataModel
+	}
 	return []any{
 		map[string]any{"version": A2UIVersion, "deleteSurface": map[string]any{"surfaceId": surfaceID}},
-		map[string]any{
-			"version": A2UIVersion,
-			"createSurface": map[string]any{
-				"surfaceId":  surfaceID,
-				"catalogId":  BasicCatalog,
-				"components": comps,
-			},
-		},
+		map[string]any{"version": A2UIVersion, "createSurface": create},
 	}
 }
 

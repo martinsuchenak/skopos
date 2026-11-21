@@ -765,9 +765,10 @@ func serveCmd() *cli.Command {
 			}
 			inboxHandler.SetStateHandler(itemstate.NewHandler(stateService).Get)
 			// POST /api/inbox/card: the item shown to another system as an
-			// A2UI card, found by the other system's reference.
+			// A2UI card, found by the other system's reference; its buttons
+			// answer the item's questions (Actors).
 			inboxHandler.SetCardHandler(cards.NewHandler(&cards.Service{
-				Items: inboxService, States: stateService, PublicURL: integrationsService.PublicURL,
+				Items: inboxService, States: stateService, Actors: inboxService, PublicURL: integrationsService.PublicURL,
 			}).Post)
 			// GET /api/inbox/{id}/report: the item's record as one
 			// document, for a person to keep and another system to fetch.
