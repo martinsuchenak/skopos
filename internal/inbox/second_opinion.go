@@ -60,6 +60,15 @@ func (s *Service) SetSecondOpinionDefault(fn func(ctx context.Context, workspace
 	s.secondOpinionDefault = fn
 }
 
+// SecondOpinionRunner is the runner a second opinion that names none would
+// use on the workspace ("" = none: such a request is refused).
+func (s *Service) SecondOpinionRunner(ctx context.Context, workspaceID string) string {
+	if s.secondOpinionDefault == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.secondOpinionDefault(ctx, workspaceID))
+}
+
 // RequestSecondOpinion queues a second opinion. Approver-only, like every
 // human workflow action; audited as inbox.second_opinion.
 func (s *Service) RequestSecondOpinion(ctx context.Context, itemID string, in SecondOpinionInput) (*SecondOpinionRequest, error) {

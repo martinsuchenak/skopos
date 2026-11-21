@@ -4,6 +4,32 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- A person acts on an item from its card. For a key with inbox write and
+  the approver permission, the card holds a button per action the item
+  allows now (send to the agents, review the existing branch, approve,
+  request changes, answer, retry, sign off, check new commits, ask for a
+  second opinion, reject) and the inputs they take: the open questions, the
+  plan to pick when there are several, open findings to send back and a
+  note. The system sends the pressed button back to `POST /api/inbox/card`,
+  which carries the action out as the request's person (recorded via
+  `card`) and answers with the card after it. An action on a card that
+  changed since it was drawn is refused with 409. A second opinion is
+  offered only where the workspace has a default runner for it.
+- The reference may be given in the address: `POST
+  /api/inbox/card?ref=JOB100235`, with the body optional, so a system can
+  fill it into the address it is set up with.
+
+### Changed
+
+- Cards show where the item is (Plan → Plan approval → Implement → Checks
+  → Review → Sign-off) and lay their parts out as titled sections. At plan
+  approval each plan is shown in full as its planner wrote it, with the
+  questions it asked and, for several plans, the comparison.
+
 ## [0.47.0] — 2026-11-20
 
 ### Added

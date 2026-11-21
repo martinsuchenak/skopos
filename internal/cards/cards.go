@@ -368,27 +368,61 @@ func planBody(s *surface, r itemstate.RevisionView, doc *inbox.PlanDoc) []string
 
 // withoutRevisionLine drops the "**Revision:** <id>" line a plan section
 // starts with: the item's bookkeeping, not part of the plan a person reads.
+// Only the first such line outside code, so a plan's own text keeps its
+// lines.
 func withoutRevisionLine(md string) string {
 	lines := strings.Split(md, "\n")
-	out := lines[:0]
-	for _, l := range lines {
-		if strings.HasPrefix(strings.TrimSpace(l), "**Revision:**") {
-			continue
+	var f fences
+	for i, l := range lines {
+		if !f.step(l) && strings.HasPrefix(strings.TrimSpace(l), "**Revision:**") {
+			return strings.Join(append(lines[:i:i], lines[i+1:]...), "\n")
 		}
-		out = append(out, l)
 	}
-	return strings.Join(out, "\n")
+	return md
 }
 
 // fullText is a plan's or the comparison's text for a card: its headings
 // moved below the card's own (a section heading is level 4) and the text
-// cut at maxPlanText, saying so.
+// cut at maxPlanText, saying so (a code block the cut falls in is closed
+// first).
 func fullText(md string) string {
 	md = nestHeadings(strings.TrimSpace(md), 5)
 	if len(md) > maxPlanText {
-		md = clip(md, maxPlanText) + "\n\n_The rest is in skopos (Open)._"
+		md = clip(md, maxPlanText)
+		var f fences
+		for _, l := range strings.Split(md, "\n") {
+			f.step(l)
+		}
+		if f.open != "" {
+			md += "\n" + f.open
+		}
+		md += "\n\n_The rest is in skopos (Open)._"
 	}
 	return md
+}
+
+// fences follows Markdown's fenced code blocks line by line (``` or ~~~; a
+// block ends only at the marker that opened it).
+type fences struct{ open string }
+
+// step takes the next line and reports whether it is code: inside a block,
+// or a fence line.
+func (f *fences) step(l string) bool {
+	t := strings.TrimSpace(l)
+	for _, m := range []string{"```", "~~~"} {
+		if !strings.HasPrefix(t, m) {
+			continue
+		}
+		switch f.open {
+		case "":
+			f.open = m
+			return true
+		case m:
+			f.open = ""
+			return true
+		}
+	}
+	return f.open != ""
 }
 
 // nestHeadings moves Markdown's ATX headings down so the highest becomes
@@ -405,24 +439,19 @@ func nestHeadings(md string, base int) string {
 		}
 		return n
 	}
-	top, fence := 0, false
+	top := 0
+	var f fences
 	for _, l := range lines {
-		if strings.HasPrefix(strings.TrimSpace(l), "```") {
-			fence = !fence
-		}
-		if n := level(l); !fence && n > 0 && (top == 0 || n < top) {
+		if n := level(l); !f.step(l) && n > 0 && (top == 0 || n < top) {
 			top = n
 		}
 	}
 	if top == 0 || top >= base {
 		return md
 	}
-	fence = false
+	f = fences{}
 	for i, l := range lines {
-		if strings.HasPrefix(strings.TrimSpace(l), "```") {
-			fence = !fence
-		}
-		if n := level(l); !fence && n > 0 {
+		if n := level(l); !f.step(l) && n > 0 {
 			lines[i] = strings.Repeat("#", min(6, n+base-top)) + l[n:]
 		}
 	}

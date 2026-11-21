@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
 	"strings"
@@ -42,6 +43,12 @@ type Actors interface {
 	CheckCommits(ctx context.Context, itemID, via string) (*inbox.Item, error)
 	RequestSecondOpinion(ctx context.Context, itemID string, in inbox.SecondOpinionInput) (*inbox.SecondOpinionRequest, error)
 	Reject(ctx context.Context, itemID, notes, via string) (*inbox.Item, error)
+}
+
+// secondOpinionRunner is the runner a second opinion that names none would
+// use (the inbox service; "" = none).
+type secondOpinionRunner interface {
+	SecondOpinionRunner(ctx context.Context, workspaceID string) string
 }
 
 // Service builds cards.
@@ -151,6 +158,11 @@ func (s *Service) current(ctx context.Context, req Request, workspace string) (I
 		return Input{}, nil, err
 	}
 	in := Input{Subject: req.Subject, State: st, Outcome: item.Outcome, PublicURL: s.PublicURL, Actions: s.Actors != nil && CanAct(ctx)}
+	// A card names no runner, so it asks for a second opinion only where
+	// the workspace has a default one (a request without one is refused).
+	if r, ok := s.Actors.(secondOpinionRunner); ok && slices.Contains(st.Actions, ActionSecondOpinion) && r.SecondOpinionRunner(ctx, item.WorkspaceID) == "" {
+		st.Actions = slices.DeleteFunc(slices.Clone(st.Actions), func(a string) bool { return a == ActionSecondOpinion })
+	}
 	// Whether the newest plan round found nothing to do matters at the plan
 	// gate and on a closed item; it is read from the item's own text, by
 	// the rule the approval checks.
@@ -329,7 +341,8 @@ func firstOption(raw json.RawMessage) string {
 // button: the reason, without the error's kind in front of it.
 func forPerson(err error) string {
 	msg := err.Error()
-	for _, kind := range []error{ErrInvalid, ErrStale, inbox.ErrInvalidInput, auth.ErrApproverRequired} {
+	for _, kind := range []error{ErrInvalid, ErrStale, inbox.ErrInvalidInput, auth.ErrApproverRequired,
+		inbox.ErrSecondOpinionConflict, inbox.ErrPolicyRefused} {
 		msg = strings.TrimPrefix(msg, kind.Error()+": ")
 	}
 	if msg == "" {
@@ -368,7 +381,9 @@ func NewHandler(s *Service) *Handler { return &Handler{service: s} }
 func (h *Handler) Post(w http.ResponseWriter, r *http.Request) {
 	var req Request
 	if r.ContentLength != 0 {
-		if err := rest.DecodeJSONStrict(w, r, &req); err != nil {
+		// A body of unknown length (chunked) may still be empty: EOF before
+		// any JSON is no body.
+		if err := rest.DecodeJSONStrict(w, r, &req); err != nil && !errors.Is(err, io.EOF) {
 			rest.RespondError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 			return
 		}
@@ -388,7 +403,11 @@ func (h *Handler) Post(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrStale):
 			reason := strings.TrimPrefix(err.Error(), ErrStale.Error()+": ")
 			rest.RespondError(w, http.StatusConflict, "This card is out of date: "+reason+". Look at it again before you act.")
-		case errors.Is(err, auth.ErrApproverRequired):
+		case errors.Is(err, inbox.ErrStaleRevision), errors.Is(err, inbox.ErrSecondOpinionConflict), errors.Is(err, inbox.ErrAlreadyConverted):
+			// The inbox refused the action: its own refusals, as its
+			// endpoints answer them.
+			rest.RespondError(w, http.StatusConflict, forPerson(err))
+		case errors.Is(err, auth.ErrApproverRequired), errors.Is(err, inbox.ErrPolicyRefused):
 			rest.RespondError(w, http.StatusForbidden, forPerson(err))
 		case errors.Is(err, auth.ErrOutOfScope):
 			rest.RespondError(w, http.StatusForbidden, err.Error())

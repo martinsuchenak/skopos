@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http/httptest"
 	"os"
 	"slices"
 	"strings"
@@ -673,6 +674,7 @@ type fakeActors struct {
 	findings []string
 	approve  inbox.ApproveInput
 	head     string
+	err      error // what the second opinion answers
 }
 
 func (f *fakeActors) did(name, item string) (*inbox.Item, error) {
@@ -709,6 +711,9 @@ func (f *fakeActors) CheckCommits(_ context.Context, id, _ string) (*inbox.Item,
 	return f.did(ActionCheckCommits, id)
 }
 func (f *fakeActors) RequestSecondOpinion(_ context.Context, id string, _ inbox.SecondOpinionInput) (*inbox.SecondOpinionRequest, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
 	f.name, f.item = ActionSecondOpinion, id
 	return &inbox.SecondOpinionRequest{}, nil
 }
@@ -837,5 +842,86 @@ func TestAct(t *testing.T) {
 	}
 	if env, _ := svc.Render(reader, Request{Subject: Subject{Ref: "JOB-1"}}, ""); len(byKind(t, env)["Button"]) != 0 {
 		t.Fatal("a key that may not act gets no buttons")
+	}
+}
+
+// defaultRunner is the inbox's answer to which runner a second opinion that
+// names none would use.
+type defaultRunner struct {
+	*fakeActors
+	runner string
+}
+
+func (d defaultRunner) SecondOpinionRunner(context.Context, string) string { return d.runner }
+
+// A card names no runner: it offers a second opinion only where the
+// workspace has a default one, and the inbox's refusal of one is a 409
+// with its reason.
+func TestSecondOpinionFromACard(t *testing.T) {
+	st := state(inbox.StatusInReview)
+	st.Implementation = &itemstate.Implementation{HeadSHA: "3f9a2c1d00"}
+	st.Actions = []string{"mark-done", "second-opinion", "reject"}
+	cardKey := Build(Input{State: st}).Key
+	action := json.RawMessage(`{"name":"second-opinion","context":{"item":"01item","key":"` + cardKey + `"}}`)
+	svc := func(runner string, err error) *Service {
+		items := &fakeItems{items: []inbox.Item{{ID: "01item", Status: inbox.StatusInReview}}}
+		clone := *st
+		clone.Actions = slices.Clone(st.Actions)
+		return &Service{Items: items, States: &fakeStates{state: &clone}, Actors: defaultRunner{&fakeActors{err: err}, runner}}
+	}
+
+	env, err := svc("", nil).Render(context.Background(), Request{Subject: Subject{Ref: "JOB-1"}}, "")
+	if err != nil || strings.Contains(strings.Join(texts(t, env), "\n"), "Ask for a second opinion") {
+		t.Fatalf("no default runner, no button: %v", err)
+	}
+	if _, err := svc("", nil).Render(context.Background(), Request{Subject: Subject{Ref: "JOB-1"}, Action: action}, ""); !errors.Is(err, ErrStale) {
+		t.Fatalf("no default runner, the action is refused: %v", err)
+	}
+	env, err = svc("codex", nil).Render(context.Background(), Request{Subject: Subject{Ref: "JOB-1"}}, "")
+	if err != nil || !strings.Contains(strings.Join(texts(t, env), "\n"), "Ask for a second opinion") {
+		t.Fatalf("a default runner, the button: %v", err)
+	}
+
+	conflict := fmt.Errorf("%w: codex already reviewed head 3f9a2c1", inbox.ErrSecondOpinionConflict)
+	h := NewHandler(svc("codex", conflict))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/inbox/card?ref=JOB-1", strings.NewReader(`{"action":`+string(action)+`}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.Post(rec, req)
+	if rec.Code != 409 || !strings.Contains(rec.Body.String(), "Codex already reviewed head 3f9a2c1") {
+		t.Fatalf("the inbox's refusal: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The body is optional with the reference in the address, also when its
+// length is not known (chunked).
+func TestEmptyChunkedBody(t *testing.T) {
+	h := NewHandler(&Service{Items: &fakeItems{}, States: &fakeStates{}})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/inbox/card?ref=JOB-1", strings.NewReader(""))
+	req.ContentLength = -1
+	req.Header.Set("Content-Type", "application/json")
+	h.Post(rec, req)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"status":"none"`) {
+		t.Fatalf("an empty chunked body: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Plan text on a card: code blocks of either fence are left alone, a cut
+// inside one closes it, and only the bookkeeping revision line goes.
+func TestPlanTextCode(t *testing.T) {
+	if got := nestHeadings("## Steps\n~~~sh\n# install deps\n~~~", 5); got != "##### Steps\n~~~sh\n# install deps\n~~~" {
+		t.Fatalf("a ~~~ block keeps its comment lines: %q", got)
+	}
+	if got := nestHeadings("## A\n~~~\n```\n# x\n~~~\n## B", 5); got != "##### A\n~~~\n```\n# x\n~~~\n##### B" {
+		t.Fatalf("a block ends only at its own fence: %q", got)
+	}
+	long := "Intro\n```go\n" + strings.Repeat("x := 1\n", maxPlanText)
+	got := fullText(long)
+	if !strings.HasSuffix(got, "```\n\n_The rest is in skopos (Open)._") {
+		t.Fatalf("a cut inside a code block closes it: %q", got[len(got)-80:])
+	}
+	if got := withoutRevisionLine("**Revision:** r1\n\n1. Set **Revision:** in the form\n**Revision:** kept"); got != "\n1. Set **Revision:** in the form\n**Revision:** kept" {
+		t.Fatalf("only the first revision line goes: %q", got)
 	}
 }

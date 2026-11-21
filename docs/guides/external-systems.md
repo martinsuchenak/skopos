@@ -332,6 +332,10 @@ card stays text.
 | `blocked` / `failed` | the open questions; the open findings when a review stopped it; a note | Retry, or Send answers and continue (`retry`), Only send the answers (`answers`), Ask for a second opinion (`second-opinion`), Reject (`reject`) |
 | `sign_off` | the open findings to send back; a note | Sign off (`mark-done`), Request changes (`request-changes`), Check the new commits (`check-commits`), Ask for a second opinion (`second-opinion`), Reject (`reject`) |
 
+A card names no runner, so it offers a second opinion only where the
+workspace has a default runner for it (`second_opinion_runner` in the
+pipeline settings).
+
 Every card also shows where the item is: Plan → Plan approval → Implement
 → Checks → Review → Sign-off, with the steps done and the current one.
 
@@ -374,8 +378,10 @@ X-Skopos-On-Behalf-Of: alex@acme.example
   implementer now: at sign-off, and at a stop whose retry starts an
   implementation (`findings.send_back` of the state).
 - A key that may not act gets `403`; an unknown action, or one missing
-  what it needs, `400`. The `error` of a refusal is a sentence to show the
-  person.
+  what it needs, `400`. An action skopos itself refuses answers as its own
+  endpoint does: `409` (a second opinion already running, or one from the
+  same runner on the same commit), `403` (the runner policy). The `error`
+  of a refusal is a sentence to show the person.
 
 ## Keep the item's report
 
