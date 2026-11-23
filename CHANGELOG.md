@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.49.0] — 2026-11-23
+
+### Added
+
+- Desktop notifications in the dashboard. The bell in the header turns
+  them on for the browser it is clicked in. While the dashboard's tab is in
+  the background, each item that comes to wait for you (plan approval,
+  sign-off, blocked or failed, again too when it comes back) shows a
+  notification, and clicking it opens the item; more than three at once
+  are one notification that opens the Needs you queue. They need the
+  dashboard on https or localhost.
+
 ## [0.48.0] — 2026-11-21
 
 ### Added
