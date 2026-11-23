@@ -1565,9 +1565,15 @@ Before every run the clone goes back on its default branch:
   clone back on the default branch. The worker knows the branch was its own
   from a marker it writes in the clone's `.git` before the checkout.
 - **Uncommitted or untracked files no run left** — on the default branch, or
-  on a branch you checked out by hand — aren't skopos's: every run on the repo
-  stops with an error naming them until you commit, stash or remove them (or
-  `.gitignore` them). Nothing is stashed or switched under you. To work in the
+  on a branch you checked out by hand — aren't skopos's. Nothing is stashed or
+  switched under you. While they are on the default branch (or a detached
+  HEAD), the worker's health check marks the workspace unhealthy on this
+  worker, so its runs go to other workers and none fails here. It looks once
+  a minute while idle, and the reason shows with the worker and in the claim's
+  `unhealthy` list. A run that finds them anyway (they appeared after the last
+  look, or on a branch you checked out) stops with an error naming them.
+  Commit, stash or remove them (or `.gitignore` them) and the workspace takes
+  work again at the next look. To work in the
   clone yourself, [pause the worker](#pausing-a-worker) first.
 
 If the repo used worktrees before, an item's old worktree is removed when its

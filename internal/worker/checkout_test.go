@@ -340,3 +340,75 @@ func TestSweepBranchCheckout(t *testing.T) {
 		t.Fatalf("the finished item's stash must be dropped: %v", refs)
 	}
 }
+
+// A branch-checkout clone with someone's files on the default branch holds
+// the workspace back in the health check, so its runs go to other workers
+// instead of failing here; files on an item branch (a killed run's) and a
+// clone another process holds don't; cleaning it up makes it healthy again
+// at the next look.
+func TestCheckHealthDirtyClone(t *testing.T) {
+	w, repo := branchCloneWorker(t, nil)
+	w.cfg.Workspaces = []string{"ws"}
+	dir := repo.Path
+	if got := w.checkHealth(t.Context()); len(got) != 0 {
+		t.Fatalf("a clean clone is healthy: %v", got)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "public_html"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "public_html", "index.php"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.checkHealth(t.Context()); got["ws"] != "" {
+		t.Fatalf("the last look stands until cloneDirtEvery passes: %v", got)
+	}
+	expire := func() {
+		r := w.dirt["ws"]
+		r.at = r.at.Add(-cloneDirtEvery)
+		w.dirt["ws"] = r
+	}
+	expire()
+	got := w.checkHealth(t.Context())
+	if !strings.Contains(got["ws"], "needs it clean") || !strings.Contains(got["ws"], "public_html/") {
+		t.Fatalf("files on the default branch hold the workspace back: %v", got)
+	}
+
+	// Held by another process (a run): not looked at, the last answer stands.
+	expire()
+	release, ok, err := tryLockClone(t.Context(), dir)
+	if !ok || err != nil {
+		t.Fatalf("lock: ok %v err %v", ok, err)
+	}
+	if err := os.RemoveAll(filepath.Join(dir, "public_html")); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.checkHealth(t.Context()); got["ws"] == "" {
+		t.Fatalf("a held clone keeps the last answer: %v", got)
+	}
+	release()
+	if got := w.checkHealth(t.Context()); len(got) != 0 {
+		t.Fatalf("a clean clone is healthy again: %v", got)
+	}
+
+	// A killed run's work on its own branch is the next run's to stash.
+	expire()
+	setRunMarker(t.Context(), dir, "agent/x")
+	gitOut(t, dir, "checkout", "-q", "-b", "agent/x")
+	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.checkHealth(t.Context()); len(got) != 0 {
+		t.Fatalf("files on an item branch are not someone else's: %v", got)
+	}
+
+	// A worktree-checkout repo is never looked at.
+	w2, repo2 := branchCloneWorker(t, nil)
+	w2.cfg.Workspaces = []string{"ws"}
+	repo2.Checkout = checkoutWorktree
+	if err := os.WriteFile(filepath.Join(repo2.Path, "stray.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := w2.checkHealth(t.Context()); len(got) != 0 {
+		t.Fatalf("a worktree checkout runs beside the clone: %v", got)
+	}
+}

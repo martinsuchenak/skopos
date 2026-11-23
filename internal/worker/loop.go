@@ -142,6 +142,9 @@ type Worker struct {
 	phases sync.Map
 	// health: each repo's last preflight (workspace → result).
 	health map[string]preflightResult
+	// dirt: each branch-checkout clone's last look for someone's files
+	// (workspace → result, preflight.go cloneDirt).
+	dirt map[string]preflightResult
 	// stageChecks: each workspace's last stage check (stagecheck.go).
 	stageChecks map[string]stageCheck
 	// codexCheck: the last codex sandbox check (codexsandbox.go).

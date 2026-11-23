@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -108,9 +109,8 @@ func (w *Worker) readyClone(ctx context.Context, repo *Repo, log *slog.Logger) e
 	if err != nil {
 		return err
 	}
-	if dirty != "" && (current == repo.DefaultBranch || current == "") {
-		return fmt.Errorf("the clone %s has uncommitted or untracked files on %s; a branch checkout needs it clean (commit, remove or .gitignore them): %s",
-			repo.Path, cmp.Or(current, "a detached HEAD"), firstLine(dirty))
+	if why := uncleanClone(repo, current, dirty); why != "" {
+		return errors.New(why)
 	}
 	if current == repo.DefaultBranch {
 		setRunMarker(ctx, repo.Path, "")
@@ -329,6 +329,18 @@ func setCheckMarker(ctx context.Context, clone string, on bool) {
 	} else {
 		_ = os.Remove(p)
 	}
+}
+
+// uncleanClone says why readyClone refuses the clone ("" = it takes it):
+// uncommitted or untracked files on the default branch or a detached HEAD
+// are someone else's work. current is the checked-out branch ("" =
+// detached), dirty what git status --porcelain printed.
+func uncleanClone(repo *Repo, current, dirty string) string {
+	if dirty == "" || (current != repo.DefaultBranch && current != "") {
+		return ""
+	}
+	return fmt.Sprintf("the clone %s has uncommitted or untracked files on %s; a branch checkout needs it clean (commit, remove or .gitignore them): %s",
+		repo.Path, cmp.Or(current, "a detached HEAD"), firstLine(dirty))
 }
 
 func checkMarked(ctx context.Context, clone string) bool {
