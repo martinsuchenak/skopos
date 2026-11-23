@@ -4,6 +4,24 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- How long workers spent on each run: every attempt counts from its claim
+  to its report (a pause, a cancel or a worker that died ends it, the last
+  at its lease). The item report shows it per run in a Time column and in
+  total, beside the agents' own time; the item's preview shows the total
+  next to the cost and tokens. Runs from before show their agent's time,
+  marked "agent".
+
+### Changed
+
+- A worker whose branch-checkout clone holds files no run left on the
+  default branch takes none of the workspace's runs until they are gone:
+  its health check now marks the workspace unhealthy, so another worker
+  takes them, where each run used to fail asking for a person.
+
 ## [0.49.0] — 2026-11-23
 
 ### Added

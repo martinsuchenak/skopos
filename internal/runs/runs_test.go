@@ -1091,3 +1091,83 @@ func TestCancelledHeartbeatIsGone(t *testing.T) {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
 }
+
+// Workers' time on a run: each attempt counts from its claim (or resume)
+// to its end — report, pause, the lease running out — and the attempts add
+// up; a dead worker's attempt counts only to its lease.
+func TestWorkTime(t *testing.T) {
+	s := testService(t)
+	ctx := rootCtx()
+	db := s.storage.db
+	nowMS := func() int64 { return time.Now().UnixMilli() }
+	backdate := func(id string, ms int64) {
+		t.Helper()
+		if _, err := db.Exec(`UPDATE runs SET started_ms = started_ms - ? WHERE id = ?`, ms, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	near := func(what string, got *int64, want int64) {
+		t.Helper()
+		if got == nil || *got < want-1000 || *got > want+5000 { // julianday rounds
+			if got != nil {
+				t.Fatalf("%s: work_ms %d, want about %d", what, *got, want)
+			}
+			t.Fatalf("%s: no work_ms, want about %d", what, want)
+		}
+	}
+
+	// Claim → report.
+	_ = mustQueue(t, s, ctx, "ws", "item-1", StageImplement)
+	run, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws"}})
+	if run.StartedAt == nil || run.WorkMS != nil {
+		t.Fatalf("a claimed run has a start and no time yet: %+v %v", run.StartedAt, run.WorkMS)
+	}
+	backdate(run.ID, 90_000)
+	if err := s.Heartbeat(ctx, run.ID, "w1", run.LeaseToken, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Report(ctx, run.ID, ReportInput{WorkerID: "w1", Status: StatusSucceeded, Summary: "ok"}, run.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get(ctx, run.ID)
+	near("claim to report (claimed → running is one attempt)", got.WorkMS, 90_000)
+	if got.StartedAt != nil {
+		t.Fatalf("a finished run has no attempt in progress: %v", got.StartedAt)
+	}
+
+	// A pause ends an attempt; the resumed one adds to it.
+	_ = mustQueue(t, s, ctx, "ws", "item-2", StageImplement)
+	run, _ = s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws"}})
+	backdate(run.ID, 60_000)
+	if err := s.Pause(ctx, run.ID, "w1", "quota", time.Time{}, run.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.Get(ctx, run.ID)
+	near("to the pause", got.WorkMS, 60_000)
+	if _, err := db.Exec(`UPDATE runs SET status = 'running' WHERE id = ?`, run.ID); err != nil { // as Resume does
+		t.Fatal(err)
+	}
+	backdate(run.ID, 30_000)
+	if _, err := db.Exec(`UPDATE runs SET status = 'succeeded' WHERE id = ?`, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.Get(ctx, run.ID)
+	near("both attempts", got.WorkMS, 90_000)
+
+	// A worker that died: its attempt counts to the lease, not to the sweep.
+	_ = mustQueue(t, s, ctx, "ws", "item-3", StageImplement)
+	run, _ = s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws"}})
+	start := nowMS() - 3_600_000
+	lease := time.UnixMilli(start + 600_000).UTC().Format("2006-01-02T15:04:05.000000000Z")
+	if _, err := db.Exec(`UPDATE runs SET started_ms = ?, lease_expires_at = ? WHERE id = ?`, start, lease, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ClaimNext(ctx, ClaimInput{WorkerID: "w2", Workspaces: []string{"other"}}); err != nil { // sweeps expired leases
+		t.Fatal(err)
+	}
+	got, _ = s.Get(ctx, run.ID)
+	if got.Status != StatusInterrupted {
+		t.Fatalf("status %s", got.Status)
+	}
+	near("to the lease", got.WorkMS, 600_000)
+}

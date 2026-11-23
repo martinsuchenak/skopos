@@ -55,9 +55,17 @@ export function whenFull(iso: string): string {
 // "3h 12m", "2d 4h".
 export function waitedText(iso: string, now: Date = new Date()): string {
   if (!iso) return '';
-  let s = Math.max(0, (now.getTime() - new Date(iso).getTime()) / 1000);
+  const ms = Math.max(0, now.getTime() - new Date(iso).getTime());
+  if (Number.isNaN(ms)) return '';
+  if (ms < 60_000) return 'under a minute';
+  return spanText(ms);
+}
+
+// spanText: a length of time in ms as "45s", "6m", "3h 12m", "2d 4h".
+export function spanText(ms: number): string {
+  let s = Math.max(0, ms / 1000);
   if (Number.isNaN(s)) return '';
-  if (s < 60) return 'under a minute';
+  if (s < 60) return Math.round(s) + 's';
   const d = Math.floor(s / 86400); s -= d * 86400;
   const h = Math.floor(s / 3600); s -= h * 3600;
   const m = Math.floor(s / 60);

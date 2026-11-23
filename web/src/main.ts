@@ -7,7 +7,7 @@ import Alpine from '@alpinejs/csp';
 import focus from '@alpinejs/focus';
 import type { EditorView } from '@codemirror/view';
 import { mountMarkdownEditor, editorText, destroyEditor } from './editor';
-import { whenText, whenFull, waitedText } from './when';
+import { whenText, whenFull, waitedText, spanText } from './when';
 
 type SessionSummary = { id: string; title: string; workspace: string; status: string; agent_count: number };
 type SessionDetail = SessionSummary & { agents?: AgentState[]; events?: Event[] };
@@ -152,7 +152,7 @@ function usageDetail(c: Record<string, number>): string {
 }
 // What a run's agents used, as their runners reported it (runs.Usage).
 type RunUsage = { counts?: Record<string, number>; models?: Record<string, Record<string, number>> };
-type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; usage?: RunUsage; findings?: { id?: string; severity: string; text: string; file?: string }[]; still_open?: number; lease_expires_at?: string; pushed?: boolean; pr_url?: string; checks?: { name: string; passed: boolean; output?: string }[]; setup?: { name: string; passed: boolean; output?: string }[]; fix_rounds?: number; phase?: string; adopt_from?: string; retries?: number; retry_after?: string; prefer_worker?: string; prefer_until?: string; stranded?: string; runner_picked?: boolean; policy_rev?: string; created_at: string; updated_at: string };
+type RunRow = { id: string; stage: string; status: string; worker_id?: string; runner?: string; attempt: number; branch?: string; base_sha?: string; head_sha?: string; result_summary?: string; diffstat?: string; fail_reason?: string; executor?: string; group_id?: string; focus?: string; cost_usd?: number; usage?: RunUsage; work_ms?: number; started_at?: string; findings?: { id?: string; severity: string; text: string; file?: string }[]; still_open?: number; lease_expires_at?: string; pushed?: boolean; pr_url?: string; checks?: { name: string; passed: boolean; output?: string }[]; setup?: { name: string; passed: boolean; output?: string }[]; fix_rounds?: number; phase?: string; adopt_from?: string; retries?: number; retry_after?: string; prefer_worker?: string; prefer_until?: string; stranded?: string; runner_picked?: boolean; policy_rev?: string; created_at: string; updated_at: string };
 // One row of the preview's stage tracker. state: done | run | you | bad |
 // up (not reached) | skip (not configured, or never reached on a discarded item).
 type LinkRow = { key: string; href: string; text: string };
@@ -2552,6 +2552,19 @@ const appState = () => ({
     }
     const t = usageTokens(sum);
     if (t) out.push({ key: 'tokens|' + t, text: t, title: 'Tokens the agent runs on this item used, as the runners reported them' + usageDetail(sum) });
+    // Time on workers (claim to report, every attempt); a run from before
+    // skopos kept it counts its agent's time instead, and the badge says so.
+    let worked = 0, agentOnly = 0;
+    for (const r of this.previewRuns) {
+      if (r.work_ms != null) worked += r.work_ms;
+      else agentOnly += r.usage?.counts?.agent_ms || 0;
+    }
+    if (worked + agentOnly > 0) {
+      const text = spanText(worked + agentOnly);
+      out.push({ key: 'time|' + text, text, title: agentOnly
+        ? 'Time workers spent on this item’s runs; some runs recorded only their agent’s time'
+        : 'Time workers spent on this item’s runs, from each claim to its report' });
+    }
     return out;
   },
   runTokens(run: RunRow): string { return usageTokens(run.usage?.counts || {}); },

@@ -118,6 +118,9 @@ type Report struct {
 	// Usage: the sum of what the runners reported the agents used (nil
 	// when none did).
 	Usage *runs.Usage `json:"usage,omitempty"`
+	// WorkMS: the sum of the runs' time on workers (nil when none
+	// recorded it).
+	WorkMS *int64 `json:"work_ms,omitempty"`
 }
 
 // Item is the report's header.
@@ -346,11 +349,15 @@ type Run struct {
 	Executor string `json:"executor,omitempty"`
 	WorkerID string `json:"worker_id,omitempty"`
 	Status   string `json:"status"`
-	// QueuedAt and UpdatedAt: a run records no start time, so the time
-	// between them includes the wait for a worker.
+	// QueuedAt and UpdatedAt: the time between them includes the wait
+	// for a worker; WorkMS is the time workers spent on it.
 	QueuedAt  time.Time `json:"queued_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-	CostUSD   *float64  `json:"cost_usd,omitempty"`
+	// WorkMS: how long workers spent on the run, every attempt from its
+	// claim to its end (nil = not recorded: the run is from before skopos
+	// kept it, or no attempt ended yet).
+	WorkMS  *int64   `json:"work_ms,omitempty"`
+	CostUSD *float64 `json:"cost_usd,omitempty"`
 	// Usage: what the run's agents used, as the runner reported it.
 	Usage *runs.Usage `json:"usage,omitempty"`
 	// ModelsUsed: the models the runner said did the work, which may
@@ -760,12 +767,17 @@ func work(run runs.Run) []runs.WorkEntry {
 // and the header's branch, head and pull request (all oldest first).
 func (r *Report) fromRuns(all []runs.Run) {
 	var cost float64
-	costed, implemented := false, false
+	var worked int64
+	costed, implemented, timed := false, false, false
 	var used []*runs.Usage
 	for _, run := range all {
 		row := Run{ID: run.ID, Stage: run.Stage, Focus: run.Focus, Runner: run.Runner, Executor: run.Executor,
 			WorkerID: run.WorkerID, Status: string(run.Status), QueuedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt, CostUSD: run.CostUSD,
-			Usage: run.Usage}
+			Usage: run.Usage, WorkMS: run.WorkMS}
+		if run.WorkMS != nil {
+			worked += *run.WorkMS
+			timed = true
+		}
 		if run.Usage != nil {
 			row.ModelsUsed = run.Usage.ModelNames()
 			used = append(used, run.Usage)
@@ -835,6 +847,9 @@ func (r *Report) fromRuns(all []runs.Run) {
 	}
 	if costed {
 		r.CostUSD = &cost
+	}
+	if timed {
+		r.WorkMS = &worked
 	}
 	r.Usage = usage.Sum(used...)
 }

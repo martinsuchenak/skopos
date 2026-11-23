@@ -206,6 +206,12 @@ type Run struct {
 	// Usage: what the run's agents used, as their runners reported it
 	// (usage.go).
 	Usage *Usage `json:"usage,omitempty"`
+	// WorkMS: how long workers spent on the run, every attempt from its
+	// claim to its end added up (nil = none recorded: the run never ended
+	// an attempt, or ran before skopos kept it). StartedAt: when the
+	// attempt in progress was claimed (nil = no worker has it).
+	WorkMS    *int64     `json:"work_ms,omitempty"`
+	StartedAt *time.Time `json:"started_at,omitempty"`
 	// Findings are a review/QA member's structured findings: what this
 	// run found that no earlier review had (the record, internal/findings,
 	// follows each one afterwards).

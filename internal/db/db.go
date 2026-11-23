@@ -333,6 +333,37 @@ func RunMigrations(db *sql.DB) error {
 	if err := ensureColumn(db, "runs", "adopt_from", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	// runs.started_ms / runs.work_ms: how long workers spent on a run
+	// (Unix ms). started_ms is when the current attempt was claimed or
+	// resumed (NULL while no worker has it); work_ms adds up every attempt
+	// from its claim to its end — report, pause, requeue, cancel, or the
+	// lease running out, whichever came first — and is NULL until one
+	// ended. Triggers on the status keep both, so no claim or end path can
+	// miss them; a run already in progress when this came in records none.
+	if err := ensureColumn(db, "runs", "started_ms", "INTEGER"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "runs", "work_ms", "INTEGER"); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`
+CREATE TRIGGER IF NOT EXISTS runs_work_start AFTER UPDATE OF status ON runs
+WHEN NEW.status IN ('claimed', 'running') AND OLD.status NOT IN ('claimed', 'running')
+BEGIN
+  UPDATE runs SET started_ms = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) WHERE id = NEW.id;
+END;
+CREATE TRIGGER IF NOT EXISTS runs_work_end AFTER UPDATE OF status ON runs
+WHEN OLD.status IN ('claimed', 'running') AND NEW.status NOT IN ('claimed', 'running') AND OLD.started_ms IS NOT NULL
+BEGIN
+  UPDATE runs SET started_ms = NULL, work_ms = COALESCE(work_ms, 0) + MAX(0, MIN(
+      CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+      COALESCE(CAST((julianday(NULLIF(OLD.lease_expires_at, '')) - 2440587.5) * 86400000 AS INTEGER),
+               CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))
+    ) - OLD.started_ms)
+  WHERE id = NEW.id;
+END;`); err != nil {
+		return fmt.Errorf("keeping runs.work_ms: %w", err)
+	}
 	// inbox_items.status_since_ms: when the item entered its status (Unix
 	// ms). Triggers keep it on every write path, so no status change can
 	// miss it. A row from before starts at its newest status change the

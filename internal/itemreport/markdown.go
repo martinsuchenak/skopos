@@ -715,7 +715,7 @@ func (d *doc) runs(r *Report) {
 	}
 	d.h2("Who worked on it")
 	if d.full {
-		d.w("| Stage | Runner | Model | Provider | Contained by | Worker | Queued | Last change | Status | Tokens | Cost |\n|---|---|---|---|---|---|---|---|---|---|---|\n")
+		d.w("| Stage | Runner | Model | Provider | Contained by | Worker | Queued | Last change | Status | Time | Tokens | Cost |\n|---|---|---|---|---|---|---|---|---|---|---|---|\n")
 		for _, run := range r.Runs {
 			stage := words(run.Stage)
 			if run.Focus != "" {
@@ -725,10 +725,10 @@ func (d *doc) runs(r *Report) {
 			if run.CostUSD != nil {
 				cost = money(*run.CostUSD)
 			}
-			d.w("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", cell(stage), cell(run.Runner), cell(modelOf(run)), cell(run.Provider),
-				cell(run.Executor), cell(run.WorkerID), stamp(run.QueuedAt), stamp(run.UpdatedAt), cell(words(run.Status)), tokenCell(run.Usage), cost)
+			d.w("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", cell(stage), cell(run.Runner), cell(modelOf(run)), cell(run.Provider),
+				cell(run.Executor), cell(run.WorkerID), stamp(run.QueuedAt), stamp(run.UpdatedAt), cell(words(run.Status)), timeCell(run), tokenCell(run.Usage), cost)
 		}
-		d.w("\nA run records when it was queued and when it last changed, not when it started.\n\n")
+		d.w("\nTime is how long workers spent on a run, from its claim to its report, every attempt added up; \"agent\" marks a run that recorded only its agent's time.\n\n")
 	}
 	if line := providers(r.Runs); line != "" {
 		d.w("- Providers that received the code: %s\n", line)
@@ -747,6 +747,22 @@ func (d *doc) runs(r *Report) {
 	d.w("- Runs: %d\n", len(r.Runs))
 	if r.CostUSD != nil {
 		d.w("- Cost as the runners reported it: %s\n", money(*r.CostUSD))
+	}
+	if r.WorkMS != nil {
+		d.w("- Time on workers: %s\n", span(*r.WorkMS))
+		// Runs from before skopos kept the time, or still in progress.
+		missing := 0
+		for _, run := range r.Runs {
+			if run.WorkerID != "" && run.WorkMS == nil {
+				missing++
+			}
+		}
+		if missing > 0 {
+			d.w("- %s recorded no time on workers: from before skopos kept it, or still in progress\n", plural(missing, "run"))
+		}
+	}
+	if ms := agentMS(r.Usage); ms > 0 {
+		d.w("- Agent time as the workers measured it: %s\n", span(ms))
 	}
 	if line := tokenLine(r.Usage); line != "" {
 		d.w("- Tokens as the runners reported them: %s\n", line)
@@ -772,6 +788,43 @@ func modelOf(run Run) string {
 		return strings.Join(run.ModelsUsed, ", ")
 	}
 	return run.Model
+}
+
+// timeCell: the run's time on workers, else its agent's time marked
+// "agent" (a run from before skopos kept the time), else nothing.
+func timeCell(run Run) string {
+	if run.WorkMS != nil {
+		return span(*run.WorkMS)
+	}
+	if ms := agentMS(run.Usage); ms > 0 {
+		return span(ms) + " agent"
+	}
+	return ""
+}
+
+// agentMS: the time the worker measured its agents running (usage
+// agent_ms), 0 when not recorded.
+func agentMS(u *runs.Usage) int64 {
+	if u == nil {
+		return 0
+	}
+	return u.Counts["agent_ms"]
+}
+
+// span: "45s", "12m", "1h 42m", "2d 3h".
+func span(ms int64) string {
+	d := time.Duration(ms) * time.Millisecond
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Round(time.Second)/time.Second))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Round(time.Minute)/time.Minute))
+	case d < 24*time.Hour:
+		d = d.Round(time.Minute)
+		return fmt.Sprintf("%dh %dm", int(d/time.Hour), int(d%time.Hour/time.Minute))
+	}
+	d = d.Round(time.Hour)
+	return fmt.Sprintf("%dd %dh", int(d/(24*time.Hour)), int(d%(24*time.Hour)/time.Hour))
 }
 
 // tokenCell: "1.2M in · 56k out" (input with the cache's).

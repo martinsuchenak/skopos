@@ -685,3 +685,25 @@ func TestMarkdownRunsWithoutUsage(t *testing.T) {
 	}}
 	mustHold(t, "the summary", Markdown(r, LevelSummary), "- Tokens as the runners reported them: 5 in, 0 out\n- 1 run recorded no usage: a worker older than the record, or no agent started\n")
 }
+
+// Time on workers: each run's in the table (its agent's time, marked, for
+// a run from before skopos kept it), the sum below with the runs that
+// recorded none counted, and the agents' own time from the usage record.
+func TestMarkdownRunTime(t *testing.T) {
+	ms := func(v int64) *int64 { return &v }
+	r := &Report{Item: Item{ID: "i", Title: "t"}, WorkMS: ms(6_300_000),
+		Usage: &runs.Usage{Counts: map[string]int64{"agent_ms": 5_400_000}}, Runs: []Run{
+			{ID: "a", Stage: "plan", WorkerID: "w", Status: "succeeded", WorkMS: ms(45_000)},
+			{ID: "b", Stage: "implement", WorkerID: "w", Status: "succeeded", WorkMS: ms(6_255_000)},
+			{ID: "c", Stage: "review", WorkerID: "w", Status: "succeeded", Usage: &runs.Usage{Counts: map[string]int64{"agent_ms": 720_000}}},
+		}}
+	full := Markdown(r, LevelFull)
+	mustHold(t, "the table", full, "| Status | Time | Tokens | Cost |", "| succeeded | 45s |", "| succeeded | 1h 44m |", "| succeeded | 12m agent |")
+	mustHold(t, "the totals", Markdown(r, LevelSummary),
+		"- Time on workers: 1h 45m\n- 1 run recorded no time on workers: from before skopos kept it, or still in progress\n- Agent time as the workers measured it: 1h 30m\n")
+	for ms, want := range map[int64]string{59_400: "59s", 90_000: "2m", 3_600_000: "1h 0m", 93_600_000: "1d 2h"} {
+		if got := span(ms); got != want {
+			t.Errorf("span(%d) = %q, want %q", ms, got, want)
+		}
+	}
+}
