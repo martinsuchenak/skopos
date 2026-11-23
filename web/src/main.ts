@@ -297,6 +297,16 @@ const appState = () => ({
   // the browser tab title); refreshed on inbox events.
   needsYouCount: 0,
   baseTitle: '',
+  // Desktop notifications (this browser's choice, skopos:notify): one per
+  // item that newly waits for a person while the tab is hidden or not
+  // focused. needsYouSeen holds id|status|since of the queue last read; nil
+  // until the first read, which notifies nothing (what waited already).
+  notifyOn: false,
+  needsYouSeen: null as Set<string> | null,
+  // needsYouSeq numbers the reads: refresh and every inbox event start one,
+  // and only the newest started may set the count and the seen set (an
+  // older answer arriving last would bring an item back as new).
+  needsYouSeq: 0,
   inboxTagFilter: '',
   // The labels the list is narrowed to ("stock,plant-2"): items that need
   // every one of them. Set from an item's "needs …" badge.
@@ -566,6 +576,7 @@ const appState = () => ({
         if (this.theme === 'system') this.applyTheme();
       });
     }
+    this.notifyOn = localStorage.getItem('skopos:notify') === '1' && this.notifyPermission() === 'granted';
     this.activeView = (localStorage.getItem('skopos:view') || 'sessions') as View;
     // Restore the persisted workspace filter; refresh() sanitizes it against
     // the options the key can actually see once whoami/registry have loaded.
@@ -1304,14 +1315,72 @@ const appState = () => ({
   // every workspace of the key's scope, whichever workspace is picked: the
   // sidebar badge and the tab title count the one queue the badge opens.
   async fetchNeedsYou() {
+    const seq = ++this.needsYouSeq;
     try {
       const p = new URLSearchParams({ status: 'needs_you' });
       const res = await this.authFetch('/api/inbox?' + p.toString());
-      if (!res.ok) return;
-      this.needsYouCount = (((await res.json()) as InboxItem[]) ?? []).length;
+      if (!res.ok || seq !== this.needsYouSeq) return;
+      const items = ((await res.json()) as InboxItem[]) ?? [];
+      if (seq !== this.needsYouSeq) return;
+      this.needsYouCount = items.length;
+      this.notifyWaiting(items);
     } catch { return; }
     if (!this.baseTitle) this.baseTitle = document.title.replace(/^\(\d+\) /, '');
     document.title = (this.needsYouCount ? '(' + this.needsYouCount + ') ' : '') + this.baseTitle;
+  },
+  // notifyPermission: the browser's answer, 'unsupported' where there is no
+  // Notification API (an http page other than localhost has none).
+  notifyPermission(): NotificationPermission | 'unsupported' {
+    return typeof Notification === 'undefined' || !window.isSecureContext ? 'unsupported' : Notification.permission;
+  },
+  notifyTitle(): string {
+    const p = this.notifyPermission();
+    if (p === 'unsupported') return 'Desktop notifications need https (or localhost)';
+    if (p === 'denied') return 'Notifications are blocked for this site in the browser settings';
+    return this.notifyOn ? 'Desktop notifications on: click to turn off' : 'Desktop notifications off: click to be told when something waits for you';
+  },
+  async toggleNotify() {
+    if (this.notifyOn) {
+      this.notifyOn = false;
+      try { localStorage.setItem('skopos:notify', '0'); } catch { /* the page works without it */ }
+      return;
+    }
+    const p = this.notifyPermission();
+    if (p === 'unsupported') { this.notify(this.notifyTitle(), 'error'); return; }
+    const answer = p === 'granted' ? p : await Notification.requestPermission();
+    if (answer !== 'granted') { this.notify('Notifications are blocked for this site in the browser settings', 'error'); return; }
+    this.notifyOn = true;
+    try { localStorage.setItem('skopos:notify', '1'); } catch { /* the page works without it */ }
+    this.notify('You will be notified when something waits for you', 'success');
+  },
+  // notifyWaiting compares the Needs you queue with the last read and shows
+  // a notification for each item that came into it (an item that leaves and
+  // comes back — blocked again, the next gate — counts again). More than
+  // three at once (the laptop woke, the stream reconnected) are one
+  // notification that opens the queue.
+  notifyWaiting(items: InboxItem[]) {
+    const keys = new Map(items.map((i) => [i.id + '|' + i.status + '|' + (i.status_since || ''), i]));
+    const seen = this.needsYouSeen;
+    this.needsYouSeen = new Set(keys.keys());
+    if (!seen || !this.notifyOn || this.notifyPermission() !== 'granted') return;
+    if (document.visibilityState === 'visible' && document.hasFocus()) return;
+    const fresh = [...keys].filter(([key]) => !seen.has(key)).map(([, item]) => item);
+    const show = (title: string, body: string, tag: string, open: () => void) => {
+      try {
+        const n = new Notification(title, { body, tag });
+        n.onclick = () => { window.focus(); n.close(); open(); };
+      } catch { /* a browser that only notifies through a service worker */ }
+    };
+    if (fresh.length > 3) {
+      show(fresh.length + ' items wait for you', fresh.slice(0, 3).map((i) => i.title).join(', ') + ', …', 'skopos:needs-you', () => this.openNeedsYou());
+      return;
+    }
+    for (const item of fresh) {
+      show((this.waitGate(item) || 'Needs you') + ': ' + item.title, this.workspaceLabel(item.workspace_id) || 'skopos', 'skopos:' + item.id, () => {
+        this.switchView('inbox');
+        this.openInboxPreview(item);
+      });
+    }
   },
   // The sidebar badge opens the inbox list on the Needs you chip.
   openNeedsYou() {

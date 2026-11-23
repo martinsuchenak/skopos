@@ -490,6 +490,11 @@ longest wait first, each row saying what it waits for and since when
 ("Sign-off · waiting 3h"; amber past a day), with the workspace named
 when it is not the one picked and a button for the next step (Review plan,
 Review branch, See why). Board cards show the seven steps as dots.
+The bell in the header turns on desktop notifications in this browser:
+while the dashboard's tab is in the background, each item that comes to
+wait for you (again, too: blocked after a retry, the next gate) shows one,
+and clicking it opens the item. The browser asks for permission the first
+time; notifications need the dashboard on https or localhost.
 
 **Review and finish.** At `in_review`, look at the branch (or its pull
 request), the review verdicts and the run history. Then:
