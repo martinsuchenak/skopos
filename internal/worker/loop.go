@@ -145,6 +145,9 @@ type Worker struct {
 	// dirt: each branch-checkout clone's last look for someone's files
 	// (workspace → result, preflight.go cloneDirt).
 	dirt map[string]preflightResult
+	// guarded: the last look at each workspace clone's recorded git config
+	// and hooks (preflight.go cloneGuardProblem).
+	guarded map[string]preflightResult
 	// stageChecks: each workspace's last stage check (stagecheck.go).
 	stageChecks map[string]stageCheck
 	// codexCheck: the last codex sandbox check (codexsandbox.go).
@@ -243,9 +246,12 @@ func New(cfg *Config, client *Client, log *slog.Logger) *Worker {
 	}
 	// The worker's own fetches in a clone send its repo's push token
 	// (gitauth.go): which repo each clone is, as the worker sees it now.
+	// And each clone's git directory and what in it runs programs, while
+	// no agent has worked there since this start (gitpin.go).
 	for ws, repo := range cfg.Repos {
 		if repo != nil && repo.Path != "" {
 			registerCloneRepo(repo.Path, func() *Repo { return w.repo(ws) })
+			registerClone(repo.Path)
 		}
 	}
 	if client != nil {

@@ -183,6 +183,7 @@ func (w *Worker) maybeClone(ctx context.Context) {
 			defer w.clones.mu.Unlock()
 			st.running, w.clones.busy = false, false
 			if err == nil {
+				registerClone(dest) // the worker's own: nothing has run in it yet
 				st.failures, st.reason, st.next = 0, "", time.Time{}
 				w.log.Info("cloned the repository", "workspace", ws, "into", dest)
 				return

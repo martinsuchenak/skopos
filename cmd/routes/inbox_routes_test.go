@@ -65,7 +65,10 @@ func (s *noopInboxStore) UpdateItem(context.Context, string, string, string, str
 func (s *noopInboxStore) ReorderItems(context.Context, []string, time.Time) error { return nil }
 func (s *noopInboxStore) RestoreItem(context.Context, string, time.Time) error    { return nil }
 func (s *noopInboxStore) ReopenItem(context.Context, string, time.Time) error     { return nil }
-func (s *noopInboxStore) ClaimItem(context.Context, string, string, time.Time) error {
+func (s *noopInboxStore) ClaimedByKey(context.Context, string) (string, bool, error) {
+	return "", false, nil
+}
+func (s *noopInboxStore) ClaimItem(context.Context, string, string, string, time.Time) error {
 	return nil
 }
 func (s *noopInboxStore) ReleaseItem(context.Context, string, time.Time) error { return nil }

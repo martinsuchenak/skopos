@@ -8,13 +8,41 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/martinsuchenak/skopos/internal/dbtime"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/martinsuchenak/skopos/internal/dbtime"
 	"github.com/martinsuchenak/skopos/internal/ids"
 )
+
+// reBaseSHA is the only shape a revision's base may take: a full object id
+// (40 hex for SHA-1 repositories, 64 for SHA-256). Everything else — a git
+// option ("--no-checkout"), a revision selector ("HEAD~1"), a ref name — is
+// refused: the base is handed to the worker's git as an ARGUMENT, git reads
+// a leading "-" as an option, and a selector resolves to whatever it points
+// at when the worker runs rather than to the commit the approver saw. A
+// full id is also what the worker's containment check binds (its own
+// reSHA), so an abbreviated one would silently skip that check.
+var reBaseSHA = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
+
+// ValidBaseSHA reports whether base is a commit id a revision may carry.
+// Empty is allowed (a plan without one starts from the default branch);
+// any other non-object-id string is not.
+func ValidBaseSHA(base string) bool {
+	base = strings.TrimSpace(base)
+	return base == "" || reBaseSHA.MatchString(base)
+}
+
+// requireBaseSHA refuses a base that is not a commit id, at every entry
+// point a revision's base is written (snapshot, candidate, amend, replan).
+func requireBaseSHA(baseSHA string) error {
+	if !ValidBaseSHA(baseSHA) {
+		return fmt.Errorf("%w: base_sha must be a full commit id", ErrInvalidInput)
+	}
+	return nil
+}
 
 // Plan revisions (docs/design/agent-pipeline.md §4). A revision is an
 // immutable snapshot of a plan's steps plus the base commit the planner
@@ -121,6 +149,9 @@ func (s *Service) Amend(ctx context.Context, planID string, steps []RevisionStep
 	if err := s.requirePlanScope(ctx, planID); err != nil {
 		return nil, err
 	}
+	if err := requireBaseSHA(baseSHA); err != nil {
+		return nil, err
+	}
 	planID = strings.TrimSpace(planID)
 	latest, err := s.store.LatestRevision(ctx, planID)
 	if err != nil {
@@ -154,6 +185,9 @@ func (s *Service) SetPlannableGuard(fn func(planID string) error) { s.plannableG
 // the latest revision to be unlocked (planning has nothing approved).
 func (s *Service) Replan(ctx context.Context, planID string, steps []RevisionStep, baseSHA string, skills ...string) (*Revision, error) {
 	if err := s.requirePlanScope(ctx, planID); err != nil {
+		return nil, err
+	}
+	if err := requireBaseSHA(baseSHA); err != nil {
 		return nil, err
 	}
 	planID = strings.TrimSpace(planID)
@@ -209,6 +243,9 @@ func (s *Service) VerifyRevisionCurrent(ctx context.Context, planID string) (*Re
 
 func (s *Service) snapshot(ctx context.Context, planID, baseSHA string) (*Revision, error) {
 	planID = strings.TrimSpace(planID)
+	if err := requireBaseSHA(baseSHA); err != nil {
+		return nil, err
+	}
 	plan, err := s.store.GetPlan(ctx, planID)
 	if err != nil {
 		return nil, err

@@ -44,7 +44,9 @@ func (q *stubQueuer) CancelRun(ctx context.Context, runID, reason string) error 
 	return nil
 }
 func (q *stubQueuer) CancelItem(ctx context.Context, itemID, reason string) error { return nil }
-func (q *stubQueuer) ResumeItem(ctx context.Context, itemID string) error         { return nil }
+func (q *stubQueuer) ResumeItem(ctx context.Context, itemID, planRevID, baseSHA string) error {
+	return nil
+}
 
 // agentCtx is a scoped key WITHOUT the approver permission (agent/worker).
 func agentCtx() context.Context {

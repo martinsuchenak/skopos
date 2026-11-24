@@ -93,7 +93,7 @@ func TestSecondOpinionNotResumedWithItem(t *testing.T) {
 	if err := s.Pause(ctx, c.ID, "w2", "quota", time.Now().Add(time.Hour), c.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ResumeItem(ctx, "item-1"); err != nil {
+	if err := s.ResumeItem(ctx, "item-1", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	paused, err := s.storage.List(ctx, StatusPaused, "item-1")

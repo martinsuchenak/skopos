@@ -369,12 +369,74 @@ func TestPausedNotReclaimed(t *testing.T) {
 	}
 	// Explicit resume re-arms it for the owner (N7: as an immediately
 	// claimable interrupted run).
-	if err := s.ResumeItem(ctx, "item-1"); err != nil {
+	if err := s.ResumeItem(ctx, "item-1", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	again, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
 	if again == nil || again.ID != run.ID {
 		t.Fatalf("owner must re-claim after ResumeItem: %+v", again)
+	}
+}
+
+// H3/H4: a run resumed by an approval re-arms under the revision that
+// approval named. It paused for an amendment and implements the amended
+// plan when it returns (the steps come from the live plan), so its record
+// must name the amended revision — not the one it paused under.
+func TestResumeItemBindsTheApprovedRevision(t *testing.T) {
+	s := testService(t)
+	ctx := rootCtx()
+	queued, err := s.Queue(ctx, QueueInput{WorkspaceID: "ws-a", ItemID: "item-1", Stage: StageImplement, PlanRevID: "rev-a", BaseSHA: "base-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	if run.ID != queued.ID {
+		t.Fatalf("claimed %s, want the queued run %s", run.ID, queued.ID)
+	}
+	if err := s.Pause(ctx, run.ID, "w1", "amendment", time.Time{}, run.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	// The approver approves the amendment: the run resumes bound to it.
+	if err := s.ResumeItem(ctx, "item-1", "rev-b", "base-b"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusInterrupted {
+		t.Fatalf("resumed run is %s, want interrupted (owner-claimable)", got.Status)
+	}
+	if got.PlanRevID != "rev-b" || got.BaseSHA != "base-b" {
+		t.Fatalf("resumed run must carry the approved revision and base: plan_rev_id=%q base_sha=%q, want rev-b/base-b", got.PlanRevID, got.BaseSHA)
+	}
+	// What the owner is handed on reclaim is what the record says.
+	again, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	if again == nil || again.ID != run.ID {
+		t.Fatalf("owner must re-claim after ResumeItem: %+v", again)
+	}
+	if again.PlanRevID != "rev-b" || again.BaseSHA != "base-b" {
+		t.Fatalf("reclaimed run carries plan_rev_id=%q base_sha=%q, want rev-b/base-b", again.PlanRevID, again.BaseSHA)
+	}
+}
+
+// A resume with no revision to bind keeps the run's own.
+func TestResumeItemWithoutRevisionKeepsTheRuns(t *testing.T) {
+	s := testService(t)
+	ctx := rootCtx()
+	if _, err := s.Queue(ctx, QueueInput{WorkspaceID: "ws-a", ItemID: "item-1", Stage: StageImplement, PlanRevID: "rev-a", BaseSHA: "base-a"}); err != nil {
+		t.Fatal(err)
+	}
+	run, _ := s.ClaimNext(ctx, ClaimInput{WorkerID: "w1", Workspaces: []string{"ws-a"}})
+	if err := s.Pause(ctx, run.ID, "w1", "amendment", time.Time{}, run.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ResumeItem(ctx, "item-1", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get(ctx, run.ID)
+	if got.PlanRevID != "rev-a" || got.BaseSHA != "base-a" {
+		t.Fatalf("an unbound resume must keep the run's own revision: plan_rev_id=%q base_sha=%q, want rev-a/base-a", got.PlanRevID, got.BaseSHA)
 	}
 }
 

@@ -56,7 +56,11 @@ type Store interface {
 	// ReopenItem moves a done item back to open — fresh cycle: claim, plan
 	// link, and priority are cleared.
 	ReopenItem(ctx context.Context, id string, updatedAt time.Time) error
-	ClaimItem(ctx context.Context, id, agentID string, updatedAt time.Time) error
+	// ClaimItem records the claiming agent and the key it came with
+	// (claimKey); ClaimedByKey reads that key back ("" with ok false for a
+	// claim recorded without one).
+	ClaimItem(ctx context.Context, id, agentID, keyID string, updatedAt time.Time) error
+	ClaimedByKey(ctx context.Context, id string) (keyID string, ok bool, err error)
 	ReleaseItem(ctx context.Context, id string, updatedAt time.Time) error
 	ConvertItem(ctx context.Context, id, planID string, updatedAt time.Time) error
 	// SetItemPlan attaches a plan to a workflow item without a status change.
@@ -422,11 +426,11 @@ func (s *Storage) ReorderItems(ctx context.Context, ids []string, updatedAt time
 	return nil
 }
 
-func (s *Storage) ClaimItem(ctx context.Context, id, agentID string, updatedAt time.Time) error {
+func (s *Storage) ClaimItem(ctx context.Context, id, agentID, keyID string, updatedAt time.Time) error {
 	result, err := s.db.ExecContext(ctx, `
-		UPDATE inbox_items SET status = ?, claimed_by_agent_id = ?, updated_at = ?
+		UPDATE inbox_items SET status = ?, claimed_by_agent_id = ?, claimed_by_key = ?, updated_at = ?
 		WHERE id = ? AND status = ? AND (claimed_by_agent_id IS NULL OR claimed_by_agent_id = '')
-	`, string(StatusInProgress), agentID, formatTime(updatedAt), id, string(StatusOpen))
+	`, string(StatusInProgress), agentID, keyID, formatTime(updatedAt), id, string(StatusOpen))
 	if err != nil {
 		return fmt.Errorf("claiming inbox item: %w", err)
 	}
@@ -437,9 +441,21 @@ func (s *Storage) ClaimItem(ctx context.Context, id, agentID string, updatedAt t
 	return nil
 }
 
+// ClaimedByKey implements Store.ClaimedByKey.
+func (s *Storage) ClaimedByKey(ctx context.Context, id string) (string, bool, error) {
+	var key sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT claimed_by_key FROM inbox_items WHERE id = ?`, id).Scan(&key); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", false, fmt.Errorf("%w: item %s", ErrNotFound, id)
+		}
+		return "", false, err
+	}
+	return key.String, key.Valid, nil
+}
+
 func (s *Storage) ReleaseItem(ctx context.Context, id string, updatedAt time.Time) error {
 	result, err := s.db.ExecContext(ctx, `
-		UPDATE inbox_items SET status = ?, claimed_by_agent_id = NULL, updated_at = ?
+		UPDATE inbox_items SET status = ?, claimed_by_agent_id = NULL, claimed_by_key = NULL, updated_at = ?
 		WHERE id = ? AND status = ?
 	`, string(StatusOpen), formatTime(updatedAt), id, string(StatusInProgress))
 	if err != nil {

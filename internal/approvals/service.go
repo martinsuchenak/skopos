@@ -25,6 +25,21 @@ func NewService(storage *Storage) *Service {
 // Record appends one decision. Actor rendering mirrors internal/audit:
 // root, key <name> (+actor_key_id), or system for internal callers.
 func (s *Service) Record(ctx context.Context, input RecordInput) (Entry, error) {
+	e, err := s.Prepare(ctx, input)
+	if err != nil {
+		return Entry{}, err
+	}
+	if err := s.storage.Write(ctx, e); err != nil {
+		return Entry{}, err
+	}
+	return e, nil
+}
+
+// Prepare checks a decision and builds its entry, as Record does, without
+// writing it: the caller writes it with WriteIn inside the transaction that
+// makes the decision take effect, so a decision that is refused leaves no
+// entry (a plan approval whose status change fails).
+func (s *Service) Prepare(ctx context.Context, input RecordInput) (Entry, error) {
 	input.ItemID = strings.TrimSpace(input.ItemID)
 	input.WorkspaceID = strings.TrimSpace(input.WorkspaceID)
 	input.Subject = strings.TrimSpace(input.Subject)
@@ -69,10 +84,13 @@ func (s *Service) Record(ctx context.Context, input RecordInput) (Entry, error) 
 		CreatedAt:   s.now().UTC(),
 	}
 	e.Actor, e.ActorKeyID = auth.Actor(ctx)
-	if err := s.storage.Write(ctx, e); err != nil {
-		return Entry{}, err
-	}
 	return e, nil
+}
+
+// WriteIn writes an entry Prepare built through db — the caller's
+// transaction.
+func (s *Service) WriteIn(ctx context.Context, db Execer, e Entry) error {
+	return writeEntry(ctx, db, e)
 }
 
 // List returns an item's decisions, newest-first, scoped like every domain

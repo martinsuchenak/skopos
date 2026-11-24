@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,11 +53,11 @@ func candidateFixture(t *testing.T) (*Service, *sql.DB, string, string) {
 func TestCandidates(t *testing.T) {
 	svc, _, planID, g1 := candidateFixture(t)
 	ctx := context.Background()
-	c1, err := svc.CreateCandidate(ctx, planID, []RevisionStep{{Title: "small fix"}}, "base1", nil, g1, "claude")
+	c1, err := svc.CreateCandidate(ctx, planID, []RevisionStep{{Title: "small fix"}}, strings.Repeat("a", 40), nil, g1, "claude")
 	if err != nil {
 		t.Fatal(err)
 	}
-	c2, err := svc.CreateCandidate(ctx, planID, []RevisionStep{{Title: "bigger"}, {Title: "tests", Description: "table-driven"}}, "base1", []string{"go-tests", "go-tests"}, g1, "glm")
+	c2, err := svc.CreateCandidate(ctx, planID, []RevisionStep{{Title: "bigger"}, {Title: "tests", Description: "table-driven"}}, strings.Repeat("a", 40), []string{"go-tests", "go-tests"}, g1, "glm")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +94,7 @@ func TestCandidates(t *testing.T) {
 		t.Fatalf("a superseded candidate must be stale: %v", err)
 	}
 	// The plan is locked now: no new candidates.
-	if _, err := svc.CreateCandidate(ctx, planID, []RevisionStep{{Title: "late"}}, "b", nil, g1, "late"); !errors.Is(err, ErrRevisionLocked) {
+	if _, err := svc.CreateCandidate(ctx, planID, []RevisionStep{{Title: "late"}}, strings.Repeat("b", 40), nil, g1, "late"); !errors.Is(err, ErrRevisionLocked) {
 		t.Fatalf("candidate on a locked plan: %v", err)
 	}
 }
@@ -103,8 +104,8 @@ func TestCandidates(t *testing.T) {
 func TestCandidateOldRoundIsStale(t *testing.T) {
 	svc, _, planID, g1 := candidateFixture(t)
 	ctx := context.Background()
-	old, _ := svc.CreateCandidate(ctx, planID, []RevisionStep{{Title: "r1"}}, "b", nil, g1, "claude")
-	if _, err := svc.CreateCandidate(ctx, planID, []RevisionStep{{Title: "r2"}}, "b", nil, "g2", "claude"); err != nil {
+	old, _ := svc.CreateCandidate(ctx, planID, []RevisionStep{{Title: "r1"}}, strings.Repeat("b", 40), nil, g1, "claude")
+	if _, err := svc.CreateCandidate(ctx, planID, []RevisionStep{{Title: "r2"}}, strings.Repeat("b", 40), nil, "g2", "claude"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.ApproveCandidate(ctx, planID, old.ID); !errors.Is(err, ErrStaleRevision) {

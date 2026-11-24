@@ -261,9 +261,9 @@ func registerInboxTools(server *mcplib.Server, service *inbox.Service) {
 
 	registerTool(server,
 		mcplib.NewTool("inbox_claim",
-			"Claim an open item to start processing it (moves to in_progress; another agent's claim returns a conflict). Pass an empty agent_id to release back to open.",
+			"Claim an open item to start processing it (moves to in_progress; another agent's claim returns a conflict). Pass an empty agent_id to release back to open: only the key that claimed the item, or an approver, may release a claim.",
 			itemRefToolParams(
-				mcplib.String("agent_id", "Claiming agent ID; empty string releases the item"),
+				mcplib.String("agent_id", "Claiming agent ID; empty string releases the item (your own claim, or any as an approver)"),
 			)...,
 		),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {

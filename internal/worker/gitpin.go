@@ -2,10 +2,14 @@ package worker
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -26,8 +30,17 @@ import (
 // GIT_WORK_TREE. What remains is the clone's own config and hooks, which
 // the documented wrapper profile binds read-only.
 //
-// A clone the agent works in directly (checkout = "branch") is not covered:
-// there the agent can write to the directory git starts from.
+// A clone the agent works in directly (checkout = "branch") cannot be
+// protected by naming directories alone: there the agent can write the
+// clone's git directory itself — its config and its hooks. So the worker
+// also records, for every clone it knows, the config entries and hooks that
+// make git run a program or send a request elsewhere (cloneGuard), while
+// the clone is still its own: at start for a clone that exists, right after
+// cloning for its own. Every git command it runs in that clone or in one of
+// its worktrees first compares them with the record, and nothing is run
+// when they differ. The clone itself is pinned like a worktree: GIT_DIR and
+// GIT_COMMON_DIR from the record, so a .git file or a commondir the agent
+// writes is not followed.
 
 // worktreeRoots maps a directory the worker makes worktrees in
 // (<state_dir>/worktrees/<repo>) to the clones whose worktrees are there.
@@ -40,6 +53,142 @@ var (
 )
 
 type gitPin struct{ dir, common string }
+
+// clonePins: a clone's own git directory, recorded by registerClone.
+var clonePins sync.Map // clean clone path -> gitPin
+
+// cloneGuards: what each recorded git directory held when it was recorded
+// (cloneGuardState), by the directory's clean path.
+var cloneGuards sync.Map // clean git dir -> string
+
+// registerClone records the clone's git directory and what in it can make
+// git run a program, as they are now. Called while no agent has worked in
+// the clone since the worker started: at start, and after the worker's own
+// clone. A clone that is not there (yet) is not recorded.
+func registerClone(clone string) {
+	clone = filepath.Clean(clone)
+	if _, err := os.Stat(clone); err != nil {
+		return
+	}
+	common, err := cloneGitDir(clone)
+	if err != nil {
+		return
+	}
+	state, err := cloneGuardState(common)
+	if err != nil {
+		return
+	}
+	cloneGuards.Store(common, state)
+	clonePins.Store(clone, gitPin{dir: common, common: common})
+}
+
+// guardedKey matches the config entries that make git run a program, read
+// files from elsewhere, or send a request elsewhere: their values are part
+// of the record. Broad on purpose — an entry here is only compared, never
+// refused for being there.
+var guardedKey = regexp.MustCompile(`^(include|includeif|core|diff|difftool|merge|mergetool|filter|credential|url|http|https|protocol|gpg|ssh|sequence|pager|alias|uploadpack|receive|extensions|safe|fsmonitor|hook|submodule|lfs)\.|^remote\..*\.(url|pushurl|uploadpack|receivepack|proxy|vcs|helper)$`)
+
+// cloneGuardState is what in the git directory can make git run a program:
+// the guarded config entries, and every hook (name, link target, content
+// hash), from the directory and from core.hooksPath when it names one.
+func cloneGuardState(gitdir string) (string, error) {
+	cmd := exec.CommandContext(context.Background(), "git", "config", "--file", filepath.Join(gitdir, "config"), "--list", "-z")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+	out, err := cmd.Output()
+	if err != nil {
+		if _, statErr := os.Stat(filepath.Join(gitdir, "config")); statErr != nil {
+			return "", err
+		}
+		return "", fmt.Errorf("reading %s: %w", filepath.Join(gitdir, "config"), err)
+	}
+	var lines []string
+	hooksPath := ""
+	for _, entry := range strings.Split(string(out), "\x00") {
+		key, value, _ := strings.Cut(entry, "\n")
+		if key == "" || !guardedKey.MatchString(key) {
+			continue
+		}
+		if key == "core.hookspath" {
+			hooksPath = value
+		}
+		lines = append(lines, "config "+key+"="+value)
+	}
+	sort.Strings(lines)
+	dirs := []string{filepath.Join(gitdir, "hooks")}
+	if hooksPath != "" {
+		if !filepath.IsAbs(hooksPath) {
+			hooksPath = filepath.Join(filepath.Dir(gitdir), hooksPath)
+		}
+		dirs = append(dirs, hooksPath)
+	}
+	for _, d := range dirs {
+		entries, err := os.ReadDir(d)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if strings.HasSuffix(e.Name(), ".sample") {
+				continue
+			}
+			path := filepath.Join(d, e.Name())
+			target, _ := os.Readlink(path)
+			sum := ""
+			if data, err := os.ReadFile(path); err == nil {
+				h := sha256.Sum256(data)
+				sum = hex.EncodeToString(h[:])
+			}
+			lines = append(lines, "hook "+path+" "+target+" "+sum)
+		}
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+// checkCloneGuard refuses a git directory whose config entries or hooks
+// that run programs are not what was recorded for it. A directory never
+// recorded is not checked (nothing to compare with).
+func checkCloneGuard(gitdir string) error {
+	want, ok := cloneGuards.Load(filepath.Clean(gitdir))
+	if !ok {
+		return nil
+	}
+	// Retryable: the worker's own clone is the problem, not the item —
+	// the run goes back and another worker takes it, while this one
+	// reports the workspace unhealthy (cloneGuardProblem).
+	got, err := cloneGuardState(gitdir)
+	if err != nil {
+		return retryable(fmt.Errorf("the git config in %s cannot be read: not running git there: %w", gitdir, err))
+	}
+	if got != want.(string) {
+		return retryable(fmt.Errorf("the git config or hooks in %s changed since the worker started (%s): not running git there — something that ran in the clone may have written them; check them, then restart the worker", gitdir, guardDiff(want.(string), got)))
+	}
+	return nil
+}
+
+// guardDiff names what changed, briefly (entry names, not values: a value
+// may hold a credential).
+func guardDiff(want, got string) string {
+	seen := map[string]bool{}
+	for _, l := range strings.Split(want, "\n") {
+		seen[l] = true
+	}
+	var changed []string
+	for _, l := range strings.Split(got, "\n") {
+		if l != "" && !seen[l] {
+			name, _, _ := strings.Cut(l, "=")
+			if strings.HasPrefix(l, "hook ") {
+				name = strings.Fields(l)[1]
+			}
+			changed = append(changed, name)
+		}
+	}
+	if len(changed) == 0 {
+		return "entries removed"
+	}
+	if len(changed) > 5 {
+		changed = append(changed[:5], "…")
+	}
+	return strings.Join(changed, ", ")
+}
 
 // registerWorktreeRoot says that worktrees under root belong to clone.
 func registerWorktreeRoot(root, clone string) {
@@ -64,6 +213,12 @@ func forgetWorktreePin(worktree string) { worktreePins.Delete(filepath.Clean(wor
 // cannot be told from the clone's side: nothing is run there on trust.
 func gitPinEnv(dir string) ([]string, bool, error) {
 	dir = filepath.Clean(dir)
+	if p, ok := clonePins.Load(dir); ok {
+		if err := checkCloneGuard(p.(gitPin).common); err != nil {
+			return nil, true, err
+		}
+		return pinEnv(dir, p.(gitPin)), true, nil
+	}
 	worktreeRootsMu.Lock()
 	clones := worktreeRoots[filepath.Dir(dir)]
 	worktreeRootsMu.Unlock()
@@ -71,6 +226,9 @@ func gitPinEnv(dir string) ([]string, bool, error) {
 		return nil, false, nil
 	}
 	if p, ok := worktreePins.Load(dir); ok {
+		if err := checkCloneGuard(p.(gitPin).common); err != nil {
+			return nil, true, err
+		}
 		return pinEnv(dir, p.(gitPin)), true, nil
 	}
 	if _, err := os.Lstat(filepath.Join(dir, ".git")); err != nil {
@@ -96,6 +254,9 @@ func gitPinEnv(dir string) ([]string, bool, error) {
 	}
 	if len(found) != 1 {
 		return nil, true, fmt.Errorf("the git directory of worktree %s cannot be told from its clone (%d candidates): not running git there", dir, len(found))
+	}
+	if err := checkCloneGuard(found[0].common); err != nil {
+		return nil, true, err
 	}
 	worktreePins.Store(dir, found[0])
 	return pinEnv(dir, found[0]), true, nil
@@ -130,8 +291,9 @@ func samePath(a, b string) bool {
 }
 
 // gitCommand builds a git command for dir. In a worktree the worker made,
-// the repository is named explicitly (gitPinEnv) and the file system
-// monitor, which runs a configured command, is off.
+// and in a clone it recorded, the repository is named explicitly
+// (gitPinEnv), the config entries and hooks that run programs are what was
+// recorded (checkCloneGuard), and the file system monitor is off.
 func gitCommand(ctx context.Context, dir string, env []string, args ...string) (*exec.Cmd, error) {
 	pin, isWorktree, err := gitPinEnv(dir)
 	if err != nil {

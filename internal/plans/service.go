@@ -480,6 +480,19 @@ func (s *Service) RemoveDependency(ctx context.Context, planID, itemID, dependsO
 		return fmt.Errorf("%w: plan_id, item_id, and depends_on_id are required", ErrInvalidInput)
 	}
 	if err := s.store.RunInTx(ctx, func(tx Store) error {
+		// Both ids must belong to the plan whose scope was checked: the
+		// DELETE matches on item ids alone, so a foreign plan's item named
+		// here (its workspace out of the caller's reach) would have its edge
+		// removed by a key that may only see this plan.
+		for _, id := range []string{itemID, dependsOnID} {
+			exists, err := tx.ItemExistsInPlan(ctx, planID, id)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				return fmt.Errorf("%w: item %s not found in plan", ErrNotFound, id)
+			}
+		}
 		if err := tx.RemoveDependency(ctx, itemID, dependsOnID); err != nil {
 			return err
 		}

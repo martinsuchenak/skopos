@@ -64,7 +64,7 @@ func TestIntegrationAutoApprovePlan(t *testing.T) {
 			mustDo(t, worker.req("POST", "/api/plans/"+planID+"/items", `{"title":"bump the dependencies"}`), 201)
 			mustDo(t, worker.req("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+planID+`"}`), 200)
 		}
-		mustDo(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"0a1b2c3"}`), 201)
+		mustDo(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`), 201)
 		report(run, `"status":"succeeded","summary":"plan ready","branch":"agent/deps"`)
 	}
 
@@ -268,7 +268,7 @@ func TestIntegrationNothingToDo(t *testing.T) {
 	p := mustJSON(t, worker.req("POST", "/api/plans", `{"workspace_id":"`+ws+`","name":"p","author_agent_id":"worker-1"}`), 201).(map[string]any)["id"].(string)
 	mustDo(t, worker.req("POST", "/api/plans/"+p+"/items", `{"title":"tidy"}`), 201)
 	mustDo(t, worker.req("POST", "/api/inbox/"+again+"/link-plan", `{"plan_id":"`+p+`"}`), 200)
-	rev := mustJSON(t, worker.req("POST", "/api/plans/"+p+"/revisions", `{"base_sha":"0a1b2c3"}`), 201).(map[string]any)["id"].(string)
+	rev := mustJSON(t, worker.req("POST", "/api/plans/"+p+"/revisions", `{"base_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`), 201).(map[string]any)["id"].(string)
 	mustDo(t, worker.req("PATCH", "/api/inbox/"+again, `{"content":"Tidy.\n\n## Enrichment — skopos worker\n\n**Revision:** `+rev+`\n\nThe plan."}`), 204)
 	report(first, `"status":"succeeded","summary":"plan ready"`)
 	mustDo(t, approver.req("POST", "/api/inbox/"+again+"/request-changes", `{"notes":"check again"}`), 200)

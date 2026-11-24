@@ -22,12 +22,20 @@ func parseTime(s string) time.Time {
 	return t
 }
 
-func (s *Storage) Write(ctx context.Context, e Entry) error {
+func (s *Storage) Write(ctx context.Context, e Entry) error { return writeEntry(ctx, s.db, e) }
+
+// Execer is what an entry is written through: the database or a
+// transaction on it.
+type Execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func writeEntry(ctx context.Context, db Execer, e Entry) error {
 	var actorKeyID any
 	if e.ActorKeyID != "" {
 		actorKeyID = e.ActorKeyID
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := db.ExecContext(ctx, `
 		INSERT INTO approvals (id, workspace_id, item_id, gate, subject, decision, actor, actor_key_id, via, notes, reason, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, e.WorkspaceID, e.ItemID, e.Gate, e.Subject, e.Decision, e.Actor, actorKeyID, e.Via, e.Notes, e.Reason, formatTime(e.CreatedAt)); err != nil {

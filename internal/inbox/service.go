@@ -903,7 +903,7 @@ func (s *Service) Claim(ctx context.Context, itemID, agentID string) (*Item, err
 		if agentID != "" {
 			switch {
 			case item.Status == StatusOpen:
-				if err := tx.ClaimItem(ctx, itemID, agentID, s.now().UTC()); err != nil {
+				if err := tx.ClaimItem(ctx, itemID, agentID, claimKey(ctx), s.now().UTC()); err != nil {
 					return err
 				}
 				return s.emitStatus(ctx, tx, item, StatusInProgress, actorAgent, "")
@@ -920,6 +920,9 @@ func (s *Service) Claim(ctx context.Context, itemID, agentID string) (*Item, err
 		case StatusOpen:
 			return nil // nothing to release
 		case StatusInProgress:
+			if err := mayRelease(ctx, tx, item); err != nil {
+				return err
+			}
 			if err := tx.ReleaseItem(ctx, itemID, s.now().UTC()); err != nil {
 				return err
 			}
@@ -933,6 +936,37 @@ func (s *Service) Claim(ctx context.Context, itemID, agentID string) (*Item, err
 	}
 	s.publishItem(ctx, itemID)
 	return s.store.GetItem(ctx, itemID)
+}
+
+// claimKey names the key a claim comes with: the agent id is the caller's
+// word, the key is what authenticated it.
+func claimKey(ctx context.Context) string {
+	p := auth.PrincipalFromContext(ctx)
+	switch {
+	case p == nil:
+		return "system"
+	case p.Root:
+		return "root"
+	}
+	return p.KeyID
+}
+
+// mayRelease: a claim is released by the key that made it, or by a person
+// who may act on the workflow (an approver, root, the server). Anyone else
+// would take the item from the agent working on it. A claim from before
+// keys were recorded is released by an approver only.
+func mayRelease(ctx context.Context, tx Store, item *Item) error {
+	if item.ClaimedByAgentID == "" || auth.RequireApprover(ctx) == nil {
+		return nil
+	}
+	key, ok, err := tx.ClaimedByKey(ctx, item.ID)
+	if err != nil {
+		return err
+	}
+	if ok && key == claimKey(ctx) {
+		return nil
+	}
+	return fmt.Errorf("%w: item is claimed by %q; only the key that claimed it, or an approver, can release it", ErrClaimConflict, item.ClaimedByAgentID)
 }
 
 // Convert links an existing plan to the item and moves it to converted. The

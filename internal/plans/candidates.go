@@ -42,6 +42,9 @@ func (s *Service) CreateCandidate(ctx context.Context, planID string, steps []Re
 	if err := s.requirePlanScope(ctx, planID); err != nil {
 		return nil, err
 	}
+	if err := requireBaseSHA(baseSHA); err != nil {
+		return nil, err
+	}
 	planID, groupID, label = strings.TrimSpace(planID), strings.TrimSpace(groupID), strings.TrimSpace(label)
 	if groupID == "" {
 		return nil, fmt.Errorf("%w: group_id is required for a candidate", ErrInvalidInput)

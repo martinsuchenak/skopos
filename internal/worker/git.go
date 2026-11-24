@@ -288,6 +288,20 @@ func pushBranch(ctx context.Context, worktree, remoteURL, token, authKind, branc
 	if remoteURL, err = srvurl.Resolve(ctx, remoteURL); err != nil {
 		return fmt.Errorf("push: %w", err)
 	}
+	// git rewrites a command-line URL too: a url.*.insteadOf (or
+	// pushInsteadOf) rule would carry the push, and the token's header,
+	// to another host. The fetch sends no token where one is set
+	// (fetchAuthEnv); the push is not made at all.
+	// A rule for other addresses (git@github.com: to https, a common
+	// global one) does not touch this push and is left alone.
+	if rules, err := git(ctx, worktree, "config", "--get-regexp", `^url\..*\.(insteadof|pushinsteadof)$`); err == nil {
+		for _, line := range strings.Split(rules, "\n") {
+			key, prefix, _ := strings.Cut(line, " ")
+			if prefix = strings.TrimSpace(prefix); prefix != "" && strings.HasPrefix(remoteURL, prefix) {
+				return needsPerson(fmt.Errorf("push refused: git's config rewrites the push URL (%s), which would send the push token elsewhere — remove the rule", key))
+			}
+		}
+	}
 	_, err = gitEnv(ctx, worktree, []string{
 		"GIT_CONFIG_COUNT=2",
 		"GIT_CONFIG_KEY_0=http.extraHeader", "GIT_CONFIG_VALUE_0=" + pushAuthHeader(authKind, token),

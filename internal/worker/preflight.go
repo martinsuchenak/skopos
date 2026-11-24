@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/martinsuchenak/skopos/internal/wsconfig"
@@ -73,6 +74,17 @@ func (w *Worker) checkHealth(ctx context.Context) map[string]string {
 			out[ws] = why
 			continue
 		}
+		// A clone whose git config or hooks changed since the worker
+		// recorded them (gitpin.go): the worker runs no git there, so
+		// another worker takes the workspace's runs until a person has
+		// looked and restarted this one.
+		if why := w.cloneGuardProblem(ws); why != "" {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[ws] = why
+			continue
+		}
 		// What the workspace's runs need on this host: the sandbox, the
 		// commands its stages run, the push token (stagecheck.go). A
 		// failure holds back only the stages it concerns.
@@ -124,6 +136,34 @@ func (w *Worker) preflight(ctx context.Context, repo *Repo) string {
 		}
 	}
 	return ""
+}
+
+// cloneGuardProblem says why the workspace's clone may not be used: its
+// git config entries that run programs, or its hooks, are not what the
+// worker recorded ("" = they are, or nothing was recorded). Looked at once
+// a minute; a changed clone stays held back until the worker restarts and
+// records it again.
+func (w *Worker) cloneGuardProblem(ws string) string {
+	repo := w.repo(ws)
+	if repo == nil || repo.Path == "" {
+		return ""
+	}
+	last, seen := w.guarded[ws]
+	if seen && (last.reason != "" || time.Since(last.at) < cloneDirtEvery) {
+		return last.reason
+	}
+	reason := ""
+	if p, ok := clonePins.Load(filepath.Clean(repo.Path)); ok {
+		if err := checkCloneGuard(p.(gitPin).common); err != nil {
+			reason = err.Error()
+			w.log.Warn("the clone's git config or hooks changed: not taking this repo's work until a person has looked and the worker restarted", "workspace", ws, "reason", reason)
+		}
+	}
+	if w.guarded == nil {
+		w.guarded = map[string]preflightResult{}
+	}
+	w.guarded[ws] = preflightResult{at: time.Now(), reason: reason}
+	return reason
 }
 
 // cloneDirtEvery: how often an idle worker looks at a branch-checkout

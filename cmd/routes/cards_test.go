@@ -64,7 +64,7 @@ func TestIntegrationCards(t *testing.T) {
 	planID := plan["id"].(string)
 	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/items", `{"title":"step one","description":"do the first thing"}`), 201)
 	mustDo(t, worker.req("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+planID+`"}`), 200)
-	revID := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"0a1b2c3"}`), 201).(map[string]any)["id"].(string)
+	revID := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`), 201).(map[string]any)["id"].(string)
 	mustDo(t, worker.reqH("POST", "/api/runs/"+runID+"/questions", `{"worker_id":"w1","asker":"planner","blocking":false,"subject_kind":"plan_revision","subject":"`+revID+`",
 		"questions":[{"question":"Which configurations?","options":["all of them","only the new ones"]},{"question":"Anything to keep?","options":[]}]}`, leases[runID]), 201)
 	mustDo(t, worker.reqH("POST", "/api/runs/"+runID+"/report", `{"worker_id":"w1","status":"succeeded","summary":"plan ready","branch":"agent/x"}`, leases[runID]), 200)

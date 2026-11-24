@@ -62,6 +62,10 @@ type QuestionLog interface {
 
 type ApprovalLog interface {
 	Record(ctx context.Context, input approvals.RecordInput) (approvals.Entry, error)
+	// Prepare and WriteIn record a decision inside the transaction of the
+	// status change it is for (a plan approval): refused, it leaves nothing.
+	Prepare(ctx context.Context, input approvals.RecordInput) (approvals.Entry, error)
+	WriteIn(ctx context.Context, db approvals.Execer, e approvals.Entry) error
 	List(ctx context.Context, itemID string) ([]approvals.Entry, error)
 }
 
@@ -75,7 +79,7 @@ type RunQueuer interface {
 	QueueStage(ctx context.Context, itemID, workspaceID, stage, planRevID, baseSHA, branch string) (string, error)
 	CancelRun(ctx context.Context, runID, reason string) error
 	CancelItem(ctx context.Context, itemID, reason string) error
-	ResumeItem(ctx context.Context, itemID string) error
+	ResumeItem(ctx context.Context, itemID, planRevID, baseSHA string) error
 }
 
 const auditEntityItem = "inbox_item"
@@ -319,8 +323,9 @@ type ApproveInput struct {
 	// approval and in the audit trail; the implementer never reads it.
 	Reason string
 
-	prepared   *qa.Prepared // the answers, checked before any bookkeeping
-	approvalID string       // the approval record the answers go with
+	prepared   *qa.Prepared     // the answers, checked before any bookkeeping
+	approvalID string           // the approval record the answers go with
+	approval   *approvals.Entry // written with the status change (finishApprove)
 }
 
 // Approve records the approver's plan approval (awaiting_approval → approved),
@@ -391,9 +396,10 @@ func (s *Service) Approve(ctx context.Context, itemID string, input ApproveInput
 		return nil, err
 	}
 	// Order matters (review fix 3): every gate's bookkeeping happens BEFORE
-	// the status change — lock, approval record, then transition. A failure
-	// at any earlier step leaves the item unapproved rather than approved
-	// with nothing bound. The residual race (item mutated between the read
+	// the status change — lock, then transition with the approval record
+	// written in its transaction. A failure at any earlier step leaves the
+	// item unapproved rather than approved with nothing bound, and a
+	// refused transition leaves no approval record. The residual race (item mutated between the read
 	// above and the transition's own tx) is caught by the transition's
 	// matrix check.
 	if err := s.plans.LockRevision(ctx, rev.ID); err != nil {
@@ -401,7 +407,7 @@ func (s *Service) Approve(ctx context.Context, itemID string, input ApproveInput
 	}
 	s.auditItem(ctx, item.ID, "plan.lock_revision", input.Via, rev.ID, "")
 	if s.approvals != nil {
-		e, err := s.approvals.Record(ctx, approvals.RecordInput{
+		e, err := s.approvals.Prepare(ctx, approvals.RecordInput{
 			WorkspaceID: item.WorkspaceID,
 			ItemID:      item.ID,
 			Gate:        approvals.GatePlan,
@@ -414,7 +420,7 @@ func (s *Service) Approve(ctx context.Context, itemID string, input ApproveInput
 		if err != nil {
 			return nil, fmt.Errorf("recording approval: %w", err)
 		}
-		input.approvalID = e.ID
+		input.approvalID, input.approval = e.ID, &e
 	}
 	_ = verified
 	return s.finishApprove(ctx, item, rev, input)
@@ -436,7 +442,7 @@ func (s *Service) approveCandidate(ctx context.Context, item *Item, cand *plans.
 	}
 	s.auditItem(ctx, item.ID, "plan.lock_revision", input.Via, rev.ID+" (candidate "+rev.Label+")", "")
 	if s.approvals != nil {
-		e, err := s.approvals.Record(ctx, approvals.RecordInput{
+		e, err := s.approvals.Prepare(ctx, approvals.RecordInput{
 			WorkspaceID: item.WorkspaceID,
 			ItemID:      item.ID,
 			Gate:        approvals.GatePlan,
@@ -449,7 +455,7 @@ func (s *Service) approveCandidate(ctx context.Context, item *Item, cand *plans.
 		if err != nil {
 			return nil, fmt.Errorf("recording approval: %w", err)
 		}
-		input.approvalID = e.ID
+		input.approvalID, input.approval = e.ID, &e
 	}
 	return s.finishApprove(ctx, item, rev, input)
 }
@@ -464,7 +470,11 @@ func (s *Service) finishApprove(ctx context.Context, item *Item, rev *plans.Revi
 	var queuedRun string
 	if s.runQueuer != nil {
 		if s.hasPausedRun(ctx, item.ID) {
-			if rErr := s.runQueuer.ResumeItem(ctx, item.ID); rErr != nil {
+			// The run re-arms under the revision just approved: it paused for
+			// this amendment, and what it implements on return is the amended
+			// plan (the steps come from the live plan), so its record must
+			// name this revision as the one it executes (H3).
+			if rErr := s.runQueuer.ResumeItem(ctx, item.ID, rev.ID, rev.BaseSHA); rErr != nil {
 				return nil, rErr
 			}
 		} else {
@@ -490,7 +500,20 @@ func (s *Service) finishApprove(ctx context.Context, item *Item, rev *plans.Revi
 	if input.Reason != "" {
 		auditNotes = joinNotes(auditNotes, "Why this plan: "+input.Reason)
 	}
-	item, terr := s.transitionWith(ctx, item.ID, StatusApproved, ActorHuman, "inbox.approve", input.Via, auditNotes, "", chainMutations(appendAnswers, appendApproval))
+	// The approval record is written in the status change's transaction:
+	// an approval that does not take effect (a concurrent one won, the item
+	// moved on) leaves no record of a decision that never happened.
+	var writeApproval func(tx Store, cur *Item) error
+	if input.approval != nil {
+		e := *input.approval
+		writeApproval = func(tx Store, _ *Item) error {
+			if err := s.approvals.WriteIn(ctx, tx.EventDB(), e); err != nil {
+				return fmt.Errorf("recording approval: %w", err)
+			}
+			return nil
+		}
+	}
+	item, terr := s.transitionWith(ctx, item.ID, StatusApproved, ActorHuman, "inbox.approve", input.Via, auditNotes, "", chainMutations(writeApproval, appendAnswers, appendApproval))
 	if terr != nil && s.runQueuer != nil && queuedRun != "" {
 		_ = s.runQueuer.CancelRun(ctx, queuedRun, "approve transition failed")
 	}
@@ -997,6 +1020,13 @@ func (s *Service) MarkDone(ctx context.Context, itemID, headSHA, via string) (*I
 	if headSHA == "" {
 		return nil, fmt.Errorf("%w: head_sha is required — the review approval names the commit being approved", ErrInvalidInput)
 	}
+	// The sign-off names the commit review and QA tested: the head of the
+	// item's newest successful implementation. A head the item never
+	// implemented must not be recorded as the approved one — the record is
+	// what the item's report and the audit trail later say was signed off.
+	if err := s.requireImplementedHead(ctx, strings.TrimSpace(itemID), headSHA); err != nil {
+		return nil, err
+	}
 	// The sign-off's audit entry says what it was given with the commit:
 	// the review findings' state, with the ones no review settled by id.
 	item, err := s.transition(ctx, itemID, StatusDone, ActorHuman, "inbox.mark_done", via, s.signOffFindings(ctx, strings.TrimSpace(itemID)), "")
@@ -1017,6 +1047,43 @@ func (s *Service) MarkDone(ctx context.Context, itemID, headSHA, via string) (*I
 		_ = s.runQueuer.CancelItem(ctx, item.ID, "item done")
 	}
 	return item, nil
+}
+
+// requireImplementedHead refuses a sign-off whose head is not the commit the
+// item's implementation produced — the one review and QA test (the rule
+// SecondOpinionHead and the item state read: the newest successful
+// implement run, or on a review-only item its branch_review). With a run
+// lister wired (the server always wires one) a sign-off that names any
+// other head, or an item with no implemented head at all, is refused: an
+// in_review item always has one. Without a lister (a service built without
+// the run queue) nothing can be compared and the head is taken as given,
+// as before.
+func (s *Service) requireImplementedHead(ctx context.Context, itemID, headSHA string) error {
+	if s.runLister == nil {
+		return nil
+	}
+	item, err := s.store.GetItem(ctx, itemID)
+	if err != nil {
+		return err
+	}
+	runs, err := s.runLister.ListRuns(ctx, item.ID) // newest first
+	if err != nil {
+		return err
+	}
+	head := ""
+	for _, r := range runs {
+		if (r.Stage == "implement" || r.Stage == StageBranchReview) && r.Status == "succeeded" && r.HeadSHA != "" {
+			head = r.HeadSHA
+			break
+		}
+	}
+	if head == "" {
+		return fmt.Errorf("%w: the item has no implemented head to sign off — nothing review and QA tested", ErrInvalidInput)
+	}
+	if head != headSHA {
+		return fmt.Errorf("%w: head_sha %s is not the commit review and QA tested (%s) — sign off the implemented head", ErrInvalidInput, shortSHA(headSHA), shortSHA(head))
+	}
+	return nil
 }
 
 // Approvals lists the item's recorded decisions, newest-first, scoped to the

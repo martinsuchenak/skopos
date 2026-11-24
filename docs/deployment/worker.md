@@ -1082,8 +1082,9 @@ wrapper = ["bwrap", "--unshare-all", "--share-net", "--die-with-parent",
   the worker itself runs in a run's worktree, and for the value of
   `{gitdir}`, it names the directories from the clone's side
   (`GIT_DIR`, `GIT_COMMON_DIR`, `GIT_WORK_TREE`) and turns the file system
-  monitor off. This does not cover `checkout = "branch"`, where the agent
-  works in the clone itself.
+  monitor off. With `checkout = "branch"` the agent works in the clone
+  itself and can write its git directory; see
+  [The clone's git configuration](#the-clones-git-configuration).
 - **`{gitdir}` is the whole git directory of the clone,** so a run can read
   and write every branch of its own repository. Its `config` and `hooks`
   are read-only: the worker runs git in that clone afterwards. It can't
@@ -1462,7 +1463,9 @@ the worker's own problems from blocking items:
   it makes them (checked every 30 s, through the same push path: prefix,
   protected branches, never force). A round cut off by a restart or a kill
   leaves its work on origin, and the next round continues from there. Set
-  `push.steps = false` to push only at the end.
+  `push.steps = false` to push only at the end. With `checkout = "branch"`
+  there are no step pushes: the commits stay in the clone until the final
+  push, made after the agent has exited.
 - **Continuing a cut-off implementation.** When an implement run starts on a
   branch that already has the implementer's commits (`agent: step N -
   <title>`, matched by title, so an amendment's renumbering doesn't matter),
@@ -1584,6 +1587,39 @@ Each worker host needs its own clone (and its own database, if setup migrates
 one). Several workers can serve the same repo, each with its own clone. The
 approved base is a commit, so it doesn't matter which worker planned the
 item. Branch checkout needs a unix host.
+
+### The clone's git configuration
+
+With `checkout = "branch"` the agent can write the clone's `.git`: its
+config and its hooks. A config entry or a hook can make git run a program,
+and the worker's own git (a status, the push with its token) would run it
+outside any wrapper, as the worker's user. So:
+
+- **The worker records the clone's git directory** when it starts (and
+  after making its own clone), with the config entries that can run a
+  program or send requests elsewhere (`core.*`, `filter.*`, `diff.*`,
+  `url.*`, `http.*`, `credential.*`, `include.*` and the like) and every
+  hook.
+- **Every git command the worker runs** in the clone, or in one of its
+  worktrees, first compares them with the record, and runs nothing when
+  they differ. The run goes back to the queue, and the workspace is marked
+  unhealthy on this worker (in the claim's `unhealthy` list and the Workers
+  view), so other workers take its runs.
+- **It stays held back until the worker restarts.** Look at the clone's
+  `.git/config` and `.git/hooks`, put back or remove what you did not
+  make, then restart the worker: it records the clone as it then is. A
+  change you make yourself (`git lfs install --local`, a new hook) needs
+  the same restart.
+- **A push whose URL a `url.*.insteadOf` or `pushInsteadOf` rule
+  rewrites is refused,** in every checkout mode: the rule would send the
+  push token to another host.
+
+The record does not stop a program the agent left running in the
+background from changing the config again just before a command of the
+worker's. Run branch-checkout repos under a wrapper ([A bwrap profile](#a-bwrap-profile)) that gives
+the agent its own process namespace (bubblewrap's `--unshare-pid
+--die-with-parent`), so nothing of the agent outlives it, and require it
+with a [runner policy](../concepts/runner-policy.md#containment) rule for the implement stage with `executor=isolated`.
 
 ## Run logs
 

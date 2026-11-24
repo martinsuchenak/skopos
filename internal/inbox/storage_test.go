@@ -152,11 +152,11 @@ func TestStorageLifecycleTransitions(t *testing.T) {
 	if err := s.CreateItem(ctx, testItem("i1", "ws-a", "T")); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ClaimItem(ctx, "i1", "agent-1", now); err != nil {
+	if err := s.ClaimItem(ctx, "i1", "agent-1", "k1", now); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
 	// Claiming again fails as a conflict (guarded by status=open).
-	if err := s.ClaimItem(ctx, "i1", "agent-2", now); err != ErrClaimConflict {
+	if err := s.ClaimItem(ctx, "i1", "agent-2", "k2", now); err != ErrClaimConflict {
 		t.Fatalf("second claim: %v", err)
 	}
 	if err := s.ReleaseItem(ctx, "i1", now); err != nil {

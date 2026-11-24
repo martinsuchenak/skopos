@@ -20,9 +20,15 @@ var stepPushEvery = 30 * time.Second
 // failed step push is only logged: the final push decides the run. The
 // returned stop waits for a push in flight and is safe to call more than
 // once.
+//
+// Not with checkout = "branch": there the agent works in the clone and can
+// write its git directory, and a push while it runs could read a config
+// it wrote between the worker's check (gitpin.go) and git's own read. The
+// commits stay in the clone, and the final push, made after the agent has
+// exited, sends them.
 func (w *Worker) pushSteps(ctx context.Context, repo *Repo, worktree, branch string, log *slog.Logger) (stop func()) {
 	token := os.Getenv(repo.Push.TokenEnv)
-	if !repo.PushSteps() || token == "" {
+	if !repo.PushSteps() || token == "" || repo.Checkout == checkoutBranch {
 		return func() {}
 	}
 	pctx, cancel := context.WithCancel(ctx)

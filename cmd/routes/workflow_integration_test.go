@@ -122,7 +122,7 @@ func TestIntegrationWorkflowRoundTrip(t *testing.T) {
 	}
 	mustStatus(t, worker.do("POST", "/api/plans/"+plan.ID+"/items", `{"title":"step 1"}`), 201, "add step")
 	mustStatus(t, worker.do("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+plan.ID+`"}`), 200, "link plan")
-	revResp := mustStatus(t, worker.do("POST", "/api/plans/"+plan.ID+"/revisions", `{"base_sha":"0a1b2c3d4e5"}`), 201, "snapshot revision")
+	revResp := mustStatus(t, worker.do("POST", "/api/plans/"+plan.ID+"/revisions", `{"base_sha":"0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d"}`), 201, "snapshot revision")
 	var rev struct {
 		ID string `json:"id"`
 	}
@@ -152,7 +152,7 @@ func TestIntegrationWorkflowRoundTrip(t *testing.T) {
 	}
 	ap := mustStatus(t, root.do("GET", "/api/inbox/"+itemID+"/approvals", ""), 200, "approvals")
 	body := ap.Body.String()
-	if !strings.Contains(body, `"gate":"plan"`) || !strings.Contains(body, rev.ID+"+0a1b2c3d4e5") {
+	if !strings.Contains(body, `"gate":"plan"`) || !strings.Contains(body, rev.ID+"+0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d") {
 		t.Fatalf("plan approval missing or wrong subject: %s", body)
 	}
 	if !strings.Contains(body, `"gate":"review"`) || !strings.Contains(body, "abc123") {

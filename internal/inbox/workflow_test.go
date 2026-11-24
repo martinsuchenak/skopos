@@ -64,7 +64,7 @@ func mustReadyForApproval(t *testing.T, svc *Service, plansSvc *plans.Service, t
 	if _, err := svc.LinkPlan(root, item.ID, plan.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := plansSvc.CreateRevision(root, plan.ID, "0a1b2c3d4e5"); err != nil {
+	if _, err := plansSvc.CreateRevision(root, plan.ID, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); err != nil {
 		t.Fatal(err)
 	}
 	gated, err := svc.SystemTransition(root, item.ID, StatusAwaitingApproval, "", "", "")

@@ -78,7 +78,7 @@ func TestIntegrationStubWorkerRoundTrip(t *testing.T) {
 	planID := plan["id"].(string)
 	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/items", `{"title":"do the thing"}`), 201)
 	mustDo(t, worker.req("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+planID+`"}`), 200)
-	snap := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"0a1b2c3"}`), 201).(map[string]any)
+	snap := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`), 201).(map[string]any)
 	revID := snap["id"].(string)
 	mustDo(t, worker.reqH("POST", "/api/runs/"+runID+"/heartbeat", `{"worker_id":"w1"}`, leases[runID]), 204)
 	mustDo(t, worker.reqH("POST", "/api/runs/"+runID+"/report", `{"worker_id":"w1","status":"succeeded","summary":"plan ready","branch":"agent/stub-item"}`, leases[runID]), 200)
@@ -418,8 +418,8 @@ func TestIntegrationReplanSkillsAndExecutor(t *testing.T) {
 	plan := mustJSON(t, worker.req("POST", "/api/plans", `{"workspace_id":"github.com/globex/shop","name":"p","author_agent_id":"worker-1"}`), 201).(map[string]any)
 	planID := plan["id"].(string)
 	mustDo(t, worker.req("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+planID+`"}`), 200)
-	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/replan", `{"base_sha":"0a1b2c3","steps":[{"title":"one"}],"skills":["../etc"]}`), 400)
-	rev := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/replan", `{"base_sha":"0a1b2c3","steps":[{"title":"one"}],"skills":["php-dto","e2e"]}`), 200).(map[string]any)
+	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/replan", `{"base_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","steps":[{"title":"one"}],"skills":["../etc"]}`), 400)
+	rev := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/replan", `{"base_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","steps":[{"title":"one"}],"skills":["php-dto","e2e"]}`), 200).(map[string]any)
 	if sk, _ := rev["skills"].([]any); len(sk) != 2 || sk[0] != "e2e" || sk[1] != "php-dto" {
 		t.Fatalf("replan must bind the skills into the revision: %v", rev["skills"])
 	}
@@ -463,7 +463,7 @@ func TestIntegrationReviewGroupRoundTrip(t *testing.T) {
 	planID := plan["id"].(string)
 	mustDo(t, worker.req("POST", "/api/plans/"+planID+"/items", `{"title":"step"}`), 201)
 	mustDo(t, worker.req("POST", "/api/inbox/"+itemID+"/link-plan", `{"plan_id":"`+planID+`"}`), 200)
-	revID := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"0a1b2c3"}`), 201).(map[string]any)["id"].(string)
+	revID := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/revisions", `{"base_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`), 201).(map[string]any)["id"].(string)
 	mustDo(t, worker.reqH("POST", "/api/runs/"+runID+"/report", `{"worker_id":"w1","status":"succeeded","summary":"plan ready","branch":"agent/g","cost_usd":0.12}`, leases[runID]), 200)
 	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/approve", `{"revision_id":"`+revID+`"}`), 200)
 	run = claim(t, worker, `{"worker_id":"w1","runners":["claude"],"workspaces":["`+ws+`"]}`)
@@ -541,13 +541,13 @@ func TestIntegrationPlanCandidatesRoundTrip(t *testing.T) {
 	}
 	aID, bID := a["id"].(string), b["id"].(string)
 	// The first member pins the base; the second gets it back.
-	pin := mustJSON(t, worker.reqH("POST", "/api/runs/"+aID+"/pin-base", `{"base_sha":"aaaa111"}`, leases[aID]), 200).(map[string]any)
-	pin2 := mustJSON(t, worker.reqH("POST", "/api/runs/"+bID+"/pin-base", `{"base_sha":"bbbb222"}`, leases[bID]), 200).(map[string]any)
-	if pin["base_sha"] != "aaaa111" || pin2["base_sha"] != "aaaa111" {
+	pin := mustJSON(t, worker.reqH("POST", "/api/runs/"+aID+"/pin-base", `{"base_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`, leases[aID]), 200).(map[string]any)
+	pin2 := mustJSON(t, worker.reqH("POST", "/api/runs/"+bID+"/pin-base", `{"base_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}`, leases[bID]), 200).(map[string]any)
+	if pin["base_sha"] != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" || pin2["base_sha"] != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
 		t.Fatalf("pinned base: %v / %v", pin, pin2)
 	}
-	c1 := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/candidates", `{"base_sha":"aaaa111","group_id":"`+a["group_id"].(string)+`","label":"claude","steps":[{"title":"small fix"}]}`), 201).(map[string]any)
-	c2 := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/candidates", `{"base_sha":"aaaa111","group_id":"`+a["group_id"].(string)+`","label":"glm","steps":[{"title":"extract module","description":"move x"},{"title":"add tests"}],"skills":["go-tests"]}`), 201).(map[string]any)
+	c1 := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/candidates", `{"base_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","group_id":"`+a["group_id"].(string)+`","label":"claude","steps":[{"title":"small fix"}]}`), 201).(map[string]any)
+	c2 := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/candidates", `{"base_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","group_id":"`+a["group_id"].(string)+`","label":"glm","steps":[{"title":"extract module","description":"move x"},{"title":"add tests"}],"skills":["go-tests"]}`), 201).(map[string]any)
 	planNow := mustJSON(t, root.req("GET", "/api/plans/"+planID, ""), 200).(map[string]any)
 	if items, _ := planNow["items"].([]any); len(items) != 0 {
 		t.Fatalf("candidates must not touch the live plan: %v", items)
@@ -585,7 +585,7 @@ func TestIntegrationPlanCandidatesRoundTrip(t *testing.T) {
 		t.Fatalf("approved candidate must become the plan (2 steps + review): %v", items)
 	}
 	impl := claim(t, worker, `{"worker_id":"w-claude","runners":["claude"],"workspaces":["`+ws+`"]}`)
-	if impl["stage"] != "implement" || impl["plan_rev_id"] != c2["id"] || impl["base_sha"] != "aaaa111" {
+	if impl["stage"] != "implement" || impl["plan_rev_id"] != c2["id"] || impl["base_sha"] != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
 		t.Fatalf("implement must bind candidate 2 and its base: %v", impl)
 	}
 	_ = c1
@@ -618,7 +618,7 @@ func TestIntegrationPlanCandidatesRequestChanges(t *testing.T) {
 		planID = got["plan_id"].(string)
 		for _, m := range []map[string]any{a, b} {
 			id := m["id"].(string)
-			c := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/candidates", `{"base_sha":"abc","group_id":"`+m["group_id"].(string)+`","label":"`+m["runner"].(string)+`","steps":[{"title":"s"}]}`), 201).(map[string]any)
+			c := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/candidates", `{"base_sha":"cccccccccccccccccccccccccccccccccccccccc","group_id":"`+m["group_id"].(string)+`","label":"`+m["runner"].(string)+`","steps":[{"title":"s"}]}`), 201).(map[string]any)
 			cands = append(cands, c)
 			mustDo(t, worker.reqH("POST", "/api/runs/"+id+"/report", `{"worker_id":"`+m["worker_id"].(string)+`","status":"succeeded","summary":"ok"}`, leases[id]), 200)
 		}
@@ -639,7 +639,7 @@ func TestIntegrationPlanCandidatesRequestChanges(t *testing.T) {
 	// The revise writes an ordinary plan; at the reopened gate, round 1's
 	// candidates are closed (stale) and the revised plan is approvable.
 	planID := mustJSON(t, root.req("GET", "/api/inbox/"+itemID, ""), 200).(map[string]any)["plan_id"].(string)
-	revised := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/replan", `{"base_sha":"abc","steps":[{"title":"s1a"},{"title":"s1b"}]}`), 200).(map[string]any)
+	revised := mustJSON(t, worker.req("POST", "/api/plans/"+planID+"/replan", `{"base_sha":"cccccccccccccccccccccccccccccccccccccccc","steps":[{"title":"s1a"},{"title":"s1b"}]}`), 200).(map[string]any)
 	revID := rev["id"].(string)
 	mustDo(t, worker.reqH("POST", "/api/runs/"+revID+"/report", `{"worker_id":"w-glm","status":"succeeded","summary":"revised"}`, leases[revID]), 200)
 	mustDo(t, approver.req("POST", "/api/inbox/"+itemID+"/approve", `{"revision_id":"`+cands[0]["id"].(string)+`"}`), 409)

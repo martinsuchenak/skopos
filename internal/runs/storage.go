@@ -1227,14 +1227,25 @@ func (s *Storage) Pause(ctx context.Context, id, workerID, reason string, resume
 // interrupted run (review N7: setting it straight to claimed made it
 // invisible to Claim until the lease expired — an approved amendment took
 // ~10 minutes to re-arm).
-func (s *Storage) Resume(ctx context.Context, id, workerID string, lease time.Duration, now time.Time) error {
+func (s *Storage) Resume(ctx context.Context, id, workerID string, lease time.Duration, planRevID, baseSHA string, now time.Time) error {
 	// lease_expires_at = now: resumed runs keep aging into the branch
 	// grace like any other interrupted run (A3 — an empty lease exempted
 	// them forever).
+	// plan_rev_id / base_sha: the run re-arms under the revision the
+	// approver just approved. The run paused for an amendment; what it
+	// implements when it returns is the amended plan, so the record must
+	// name the amended revision (H3: the run carries the approved revision).
+	// An empty planRevID keeps the run's own (a resume with no revision to
+	// bind, e.g. a test service).
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE runs SET status = ?, resume_kind = ?, lease_expires_at = ?, resume_after = '', updated_at = ?
+		UPDATE runs SET status = ?, resume_kind = ?, lease_expires_at = ?, resume_after = '',
+			plan_rev_id = CASE WHEN ? = '' THEN plan_rev_id ELSE ? END,
+			base_sha = CASE WHEN ? = '' THEN base_sha ELSE ? END,
+			updated_at = ?
 		WHERE id = ? AND worker_id = ? AND status = ?`,
-		string(StatusInterrupted), ResumeSession, formatTime(now), formatTime(now),
+		string(StatusInterrupted), ResumeSession, formatTime(now),
+		planRevID, planRevID, baseSHA, baseSHA,
+		formatTime(now),
 		id, workerID, string(StatusPaused))
 	if err != nil {
 		return fmt.Errorf("resuming run: %w", err)

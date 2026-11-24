@@ -14,6 +14,7 @@ import (
 	"github.com/martinsuchenak/skopos/internal/auth"
 	"github.com/martinsuchenak/skopos/internal/findings"
 	"github.com/martinsuchenak/skopos/internal/ids"
+	"github.com/martinsuchenak/skopos/internal/plans"
 )
 
 // Service is the run queue. Workers pull: ClaimNext asks for work, Report
@@ -727,6 +728,13 @@ func (s *Service) PinGroupBase(ctx context.Context, runID, baseSHA string) (stri
 	if err := s.checkScope(ctx, runID); err != nil {
 		return "", err
 	}
+	// The base is handed to the worker's git as an argument: a git option
+	// ("--no-checkout") or a revision selector ("HEAD~1") is not a base.
+	// Refuse it before it is pinned for every member of the group.
+	baseSHA = strings.TrimSpace(baseSHA)
+	if baseSHA != "" && !plans.ValidBaseSHA(baseSHA) {
+		return "", fmt.Errorf("%w: base_sha must be a full commit id", ErrInvalidInput)
+	}
 	r, err := s.storage.Get(ctx, strings.TrimSpace(runID))
 	if err != nil {
 		return "", err
@@ -1073,8 +1081,11 @@ func (s *Service) CancelItem(ctx context.Context, itemID, reason string) error {
 }
 
 // ResumeItem resumes an item's paused run back to its owner (system action:
-// approving an amendment re-arms the run it paused; review H4).
-func (s *Service) ResumeItem(ctx context.Context, itemID string) error {
+// approving an amendment re-arms the run it paused; review H4) bound to the
+// revision and base the approval just named: the run paused for that
+// amendment and implements the amended plan when it returns, so its record
+// must name the amended revision, not the one it paused under.
+func (s *Service) ResumeItem(ctx context.Context, itemID, planRevID, baseSHA string) error {
 	runs, err := s.storage.List(ctx, StatusPaused, strings.TrimSpace(itemID))
 	if err != nil {
 		return err
@@ -1083,7 +1094,7 @@ func (s *Service) ResumeItem(ctx context.Context, itemID string) error {
 		if runs[i].Stage == StageSecondOpinion { // advisory: resumes on its own, never with an amendment
 			continue
 		}
-		_ = s.storage.Resume(ctx, runs[i].ID, runs[i].WorkerID, s.lease, s.now().UTC())
+		_ = s.storage.Resume(ctx, runs[i].ID, runs[i].WorkerID, s.lease, strings.TrimSpace(planRevID), strings.TrimSpace(baseSHA), s.now().UTC())
 	}
 	return nil
 }

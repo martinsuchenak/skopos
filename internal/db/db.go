@@ -372,6 +372,11 @@ END;`); err != nil {
 	if err := ensureColumn(db, "inbox_items", "status_since_ms", "INTEGER"); err != nil {
 		return err
 	}
+	// The key that claimed an open item (Service.Claim): only that key, or
+	// an approver, may release the claim. NULL = a claim from before.
+	if err := ensureColumn(db, "inbox_items", "claimed_by_key", "TEXT"); err != nil {
+		return err
+	}
 	if _, err := db.Exec(`
 WITH changed AS MATERIALIZED (
   SELECT item_id, MAX(occurred_ms) AS ms FROM integration_events

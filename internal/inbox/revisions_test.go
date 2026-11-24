@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -80,11 +81,11 @@ func TestApproveLocksRevisionAndRecordsApproval(t *testing.T) {
 	if _, err := svc.LinkPlan(root, item.ID, planID); err != nil {
 		t.Fatalf("link plan: %v", err)
 	}
-	rev, err := plansSvc.CreateRevision(root, planID, "0a1b2c3d4e5")
+	rev, err := plansSvc.CreateRevision(root, planID, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rev.RevisionNo != 1 || len(rev.Steps) != 2 || rev.BaseSHA != "0a1b2c3d4e5" {
+	if rev.RevisionNo != 1 || len(rev.Steps) != 2 || rev.BaseSHA != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
 		t.Fatalf("revision 1 wrong: %+v", rev)
 	}
 	if _, err := svc.SystemTransition(root, item.ID, StatusAwaitingApproval, "", "", ""); err != nil {
@@ -106,7 +107,7 @@ func TestApproveLocksRevisionAndRecordsApproval(t *testing.T) {
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("approvals: %+v err %v", entries, err)
 	}
-	if entries[0].Gate != approvals.GatePlan || entries[0].Subject != rev.ID+"+0a1b2c3d4e5" {
+	if entries[0].Gate != approvals.GatePlan || entries[0].Subject != rev.ID+"+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
 		t.Fatalf("approval subject wrong: %+v", entries[0])
 	}
 	if entries[0].Actor != "key relay" || entries[0].Via != "slack" || entries[0].Notes != "job=100236" {
@@ -176,7 +177,7 @@ func TestReplanAtomic(t *testing.T) {
 	rev, err := plansSvc.Replan(root, plan.ID, []plans.RevisionStep{
 		{Title: "step one", Description: "first"},
 		{Title: "step two", Description: "second"},
-	}, "base-r")
+	}, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 	if err != nil {
 		t.Fatalf("replan: %v", err)
 	}
@@ -199,7 +200,7 @@ func TestReplanAtomic(t *testing.T) {
 	}
 	// A re-plan replaces everything again and still ends with exactly one
 	// review step (the server re-creates it — no stacking).
-	rev2, err := plansSvc.Replan(root, plan.ID, []plans.RevisionStep{{Title: "reshaped"}}, "base-r2")
+	rev2, err := plansSvc.Replan(root, plan.ID, []plans.RevisionStep{{Title: "reshaped"}}, "cccccccccccccccccccccccccccccccccccccccc")
 	if err != nil {
 		t.Fatalf("re-plan: %v", err)
 	}
@@ -228,7 +229,7 @@ func TestReplanNotPlannable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = plansSvc.Replan(root, plan.ID, steps, "base")
+	_, err = plansSvc.Replan(root, plan.ID, steps, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	if !errors.Is(err, plans.ErrNotPlannable) || errors.Is(err, plans.ErrRevisionLocked) || !strings.Contains(err.Error(), "link-plan") {
 		t.Fatalf("unlinked plan: want ErrNotPlannable naming link-plan, got %v", err)
 	}
@@ -240,14 +241,14 @@ func TestReplanNotPlannable(t *testing.T) {
 	if _, err := svc.LinkPlan(root, item.ID, plan.ID); err != nil {
 		t.Fatal(err)
 	}
-	_, err = plansSvc.Replan(root, plan.ID, steps, "base")
+	_, err = plansSvc.Replan(root, plan.ID, steps, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	if !errors.Is(err, plans.ErrNotPlannable) || !strings.Contains(err.Error(), "queued, not planning") {
 		t.Fatalf("queued item: want ErrNotPlannable naming the status, got %v", err)
 	}
 	if _, err := svc.SystemTransition(root, item.ID, StatusPlanning, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := plansSvc.Replan(root, plan.ID, steps, "base"); err != nil {
+	if _, err := plansSvc.Replan(root, plan.ID, steps, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); err != nil {
 		t.Fatalf("planning item: replan must pass: %v", err)
 	}
 }
@@ -276,7 +277,7 @@ func TestReviewStepSurvivesAmendment(t *testing.T) {
 	rev, err := plansSvc.Replan(root, plan.ID, []plans.RevisionStep{
 		{Title: "step one", Description: "first"},
 		{Title: "step two", Description: "second"},
-	}, "base-1")
+	}, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	if err != nil {
 		t.Fatalf("replan: %v", err)
 	}
@@ -294,7 +295,7 @@ func TestReviewStepSurvivesAmendment(t *testing.T) {
 	}
 	if _, err := plansSvc.Amend(root, plan.ID, []plans.RevisionStep{
 		{Title: "amended one", Description: "revised"},
-	}, "base-2"); err != nil {
+	}, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"); err != nil {
 		t.Fatalf("amend: %v", err)
 	}
 	mustEndWithReviewStep(t, plansSvc, plan.ID)
@@ -371,7 +372,7 @@ func TestAmendReplaceSnapshotAndApprove(t *testing.T) {
 	if _, err := svc.LinkPlan(root, item.ID, plan.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := plansSvc.CreateRevision(root, plan.ID, "base-1"); err != nil {
+	if _, err := plansSvc.CreateRevision(root, plan.ID, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.SystemTransition(root, item.ID, StatusAwaitingApproval, "", "", ""); err != nil {
@@ -389,11 +390,11 @@ func TestAmendReplaceSnapshotAndApprove(t *testing.T) {
 		{Title: "amended one", Description: "new way"},
 		{Title: "amended two", Description: "other"},
 	}
-	rev2, err := plansSvc.Amend(root, plan.ID, steps, "base-2")
+	rev2, err := plansSvc.Amend(root, plan.ID, steps, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 	if err != nil {
 		t.Fatalf("amend: %v", err)
 	}
-	if rev2.BaseSHA != "base-2" || rev2.RevisionNo != 2 {
+	if rev2.BaseSHA != "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" || rev2.RevisionNo != 2 {
 		t.Fatalf("amend revision wrong: %+v", rev2)
 	}
 	after, err := plansSvc.GetPlan(root, plan.ID)
@@ -446,7 +447,7 @@ func TestApproveBindsToRevision(t *testing.T) {
 	}
 	_ = plan
 	// Fresh snapshot, then approve binds to it.
-	rev, err := plansSvc.CreateRevision(root, item.PlanID, "base1")
+	rev, err := plansSvc.CreateRevision(root, item.PlanID, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,6 +537,78 @@ func TestMarkDoneRecordsReviewApproval(t *testing.T) {
 	}
 }
 
+// The review gate binds the sign-off to the commit the implementation
+// produced: with the run lister wired, a head no run reported is refused,
+// the item stays in review, and nothing is recorded for it.
+func TestMarkDoneRefusesAHeadTheItemNeverImplemented(t *testing.T) {
+	svc, plansSvc, _ := fullStack(t)
+	root := context.Background()
+	item := mustReadyForApproval(t, svc, plansSvc, "bound sign-off")
+	for _, fn := range []func() error{
+		func() error { _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{}); return err },
+		func() error {
+			_, err := svc.SystemTransition(root, item.ID, StatusImplementing, "", "", "")
+			return err
+		},
+		func() error { _, err := svc.SystemTransition(root, item.ID, StatusInReview, "", "", ""); return err },
+	} {
+		if err := fn(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The implement run the worker reported: head H1 (what review and QA
+	// tested). A review of that head, so the item is a realistic sign-off.
+	svc.SetRunLister(fixedRuns{
+		{Stage: "review", Status: "succeeded", HeadSHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		{Stage: "implement", Status: "succeeded", HeadSHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	})
+
+	// A head the item never implemented is refused and records nothing.
+	if _, err := svc.MarkDone(approverCtx(), item.ID, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", ""); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("a head no run reported must be refused, got %v", err)
+	}
+	got, err := svc.GetItem(root, item.ID)
+	if err != nil || got.Status != StatusInReview {
+		t.Fatalf("a refused sign-off must leave the item in review: %s %v", got.Status, err)
+	}
+	if entries, err := svc.Approvals(root, item.ID); err != nil {
+		t.Fatal(err)
+	} else {
+		for _, e := range entries {
+			if e.Gate == approvals.GateReview {
+				t.Fatalf("a refused sign-off must record no review approval: %+v", e)
+			}
+		}
+	}
+
+	// An item with no implemented head at all (its run lister is wired but
+	// nothing succeeded) is refused too: there is nothing that was tested.
+	svc.SetRunLister(fixedRuns{{Stage: "implement", Status: "failed", HeadSHA: "cccccccccccccccccccccccccccccccccccccccc"}})
+	if _, err := svc.MarkDone(approverCtx(), item.ID, "cccccccccccccccccccccccccccccccccccccccc", ""); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("signing off with no implemented head must be refused, got %v", err)
+	}
+
+	// The implemented head itself is accepted, and recorded as the subject.
+	svc.SetRunLister(fixedRuns{
+		{Stage: "review", Status: "succeeded", HeadSHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		{Stage: "implement", Status: "succeeded", HeadSHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	})
+	done, err := svc.MarkDone(approverCtx(), item.ID, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done.Status != StatusDone {
+		t.Fatalf("the implemented head must sign off: %s", done.Status)
+	}
+	entries, err := svc.Approvals(root, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) == 0 || entries[0].Gate != approvals.GateReview || entries[0].Subject != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("review approval must name the implemented head: %+v", entries)
+	}
+}
+
 // LinkPlan rules: workflow items only, same workspace, once.
 func TestLinkPlanRules(t *testing.T) {
 	svc, plansSvc, _ := fullStack(t)
@@ -609,14 +682,14 @@ func TestReplanSkillsBindIntoRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	steps := []plans.RevisionStep{{Title: "one", Description: "d"}}
-	plain, err := plansSvc.Replan(root, plan.ID, steps, "base-1")
+	plain, err := plansSvc.Replan(root, plan.ID, steps, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(plain.Skills) != 0 {
 		t.Fatalf("no skills selected: %v", plain.Skills)
 	}
-	withSkills, err := plansSvc.Replan(root, plan.ID, steps, "base-1", "php-dto", "e2e", "php-dto", " ")
+	withSkills, err := plansSvc.Replan(root, plan.ID, steps, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "php-dto", "e2e", "php-dto", " ")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -635,7 +708,7 @@ func TestReplanSkillsBindIntoRevision(t *testing.T) {
 	if _, err := svc.SystemTransition(root, item.ID, StatusImplementing, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	amended, err := plansSvc.Amend(root, plan.ID, []plans.RevisionStep{{Title: "two"}}, "base-2")
+	amended, err := plansSvc.Amend(root, plan.ID, []plans.RevisionStep{{Title: "two"}}, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 	if err != nil {
 		t.Fatalf("amend: %v", err)
 	}
@@ -647,5 +720,46 @@ func TestReplanSkillsBindIntoRevision(t *testing.T) {
 	}
 	if _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{}); err != nil {
 		t.Fatalf("approve after amend with skills: %v", err)
+	}
+}
+
+// A plan approval that does not take effect leaves no approval record
+// (strix vuln-0005): the record is written in the status change's
+// transaction. Two ways one is refused: notes over the limit, and a
+// concurrent approval that won.
+func TestRefusedApprovalLeavesNoRecord(t *testing.T) {
+	svc, plansSvc, apprSvc := fullStack(t)
+	item := mustReadyForApproval(t, svc, plansSvc, "phantom approvals")
+
+	_, err := svc.Approve(approverCtx(), item.ID, ApproveInput{Notes: strings.Repeat("x", maxAnswerLen+1)})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("oversized notes: want ErrInvalidInput, got %v", err)
+	}
+	if entries, err := apprSvc.List(context.Background(), item.ID); err != nil || len(entries) != 0 {
+		t.Fatalf("a refused approval was recorded: %+v err %v", entries, err)
+	}
+
+	const n = 8
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	won := 0
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := svc.Approve(approverCtx(), item.ID, ApproveInput{}); err == nil {
+				mu.Lock()
+				won++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	entries, err := apprSvc.List(context.Background(), item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if won != 1 || len(entries) != 1 {
+		t.Fatalf("concurrent approvals: %d took effect, %d recorded — want 1 and 1", won, len(entries))
 	}
 }

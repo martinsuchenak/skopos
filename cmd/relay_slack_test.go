@@ -165,7 +165,7 @@ func mustReachGate(t *testing.T, svc *inbox.Service, plansSvc *plans.Service, ti
 	if _, err := svc.LinkPlan(root, item.ID, plan.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := plansSvc.CreateRevision(root, plan.ID, "base1"); err != nil {
+	if _, err := plansSvc.CreateRevision(root, plan.ID, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.SystemTransition(root, item.ID, inbox.StatusAwaitingApproval, "", "", ""); err != nil {
@@ -596,7 +596,7 @@ func TestRelayApproveBindsShownRevision(t *testing.T) {
 	}
 
 	// A newer revision lands after the re-post (an unlocked plan re-snapshot).
-	if _, err := plansSvc.CreateRevision(root, item.PlanID, "base2"); err != nil {
+	if _, err := plansSvc.CreateRevision(root, item.PlanID, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"); err != nil {
 		t.Fatal(err)
 	}
 	if !fresh.Apply(root, item.ID, "approve") {
@@ -727,7 +727,7 @@ func TestRelayCandidatesGate(t *testing.T) {
 		t.Fatal("claiming a plan member must link the plan")
 	}
 	for i, steps := range [][]plans.RevisionStep{{{Title: "patch it"}}, {{Title: "rewrite module"}, {Title: "add tests"}}} {
-		if _, err := plansSvc.CreateCandidate(root, item.PlanID, steps, "base1", nil, members[i].GroupID, members[i].Runner); err != nil {
+		if _, err := plansSvc.CreateCandidate(root, item.PlanID, steps, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", nil, members[i].GroupID, members[i].Runner); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1024,7 +1024,7 @@ func TestRelayAutoApprove(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := plansSvc.CreateRevision(root, planID, "base1"); err != nil {
+		if _, err := plansSvc.CreateRevision(root, planID, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); err != nil {
 			t.Fatal(err)
 		}
 		if ask {

@@ -227,7 +227,7 @@ interface, `now func() time.Time`, `SetPublisher` (publishes
 | GET | `/api/inbox` | filters `workspace_id`/`workspace`, `status`, `tag`, `q` (LIKE title+content); scoped keys see their slice; rows carry a plain-text excerpt |
 | GET | `/api/inbox/{id}` | full item: `content`, `content_html`, `tags`, hydrated plan summary |
 | PATCH | `/api/inbox/{id}` | `{title?, content?, tags?}` — enrichment; frozen after `in_progress` |
-| POST | `/api/inbox/{id}/claim` | `{agent_id}` → `in_progress`; empty agent_id releases → `open`; 409 on foreign claim |
+| POST | `/api/inbox/{id}/claim` | `{agent_id}` → `in_progress`; empty agent_id releases → `open` (only the key that claimed it, or an approver); 409 on foreign claim |
 | POST | `/api/inbox/{id}/convert` | `{plan_id}` → `converted`; 409 if already converted; 400 plan/item workspace mismatch |
 | POST | `/api/inbox/{id}/discard` | → `discarded` |
 | DELETE | `/api/inbox/{id}` | hard delete (confirm-gated in UI) |
