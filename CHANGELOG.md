@@ -4,6 +4,48 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.51.0] — 2026-11-24
+
+### Security
+
+- **A branch-checkout clone's git config and hooks can no longer run
+  programs as the worker.** With `checkout = "branch"` the agent works in
+  the clone and can write its `.git`. The worker now records the clone's
+  git directory, the config entries that run programs or send requests
+  elsewhere, and its hooks when it starts (and after making its own
+  clone), and runs its own git there only while they match. When they
+  differ, the run goes back to the queue and the workspace is unhealthy on
+  that worker until it restarts; look at the clone's `.git/config` and
+  `.git/hooks` first. A change you make yourself (`git lfs install
+  --local`, a new hook) needs the same restart. See [The clone's git
+  configuration](docs/deployment/worker.md#the-clones-git-configuration).
+- **No step pushes with `checkout = "branch"`.** The implementer's commits
+  stay in the clone until the final push, made after the agent exited.
+- **A push whose URL a `url.*.insteadOf` or `pushInsteadOf` rule rewrites
+  is refused**, in every checkout mode: the rule would send the push token
+  to another host. Rules for other addresses are left alone.
+- **A plan revision's base must be a full commit id** (40 or 64 hex),
+  where it is written and where a group pins it; it reaches git as an
+  argument.
+- **The sign-off must name the head the item's implementation produced**
+  (the newest successful implement or branch review). Any other head is
+  refused with 400.
+- **A plan approval that does not take effect leaves no approval record.**
+  The record is written in the same transaction as the status change.
+- **A run resumed after an approved amendment carries the amended
+  revision** and its base.
+- **A claim on an inbox item is released only by the key that made it, or
+  by an approver.** Claims made before this release are released by an
+  approver.
+- **Removing a plan dependency checks that both items belong to the
+  plan.**
+
+### Added
+
+- A logo: a σ whose bar ends in a dot. The dashboard shows it in the
+  sidebar and as its favicon; `brand/` holds the logo files for the web,
+  the favicon and a square for listings.
+
 ## [0.50.0] — 2026-11-23
 
 ### Added

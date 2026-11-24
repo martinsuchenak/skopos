@@ -54,7 +54,7 @@ are **snapshotted into revisions**.
 - **Amendments re-approve.** A deviation during implementation becomes an
   **amendment**: a new revision that keeps the done steps and the approved
   skills, then goes back to the approval gate.
-- **Replan.** `POST /api/plans/{id}/replan` (`steps`, `base_sha`, optional
+- **Replan.** `POST /api/plans/{id}/replan` (`steps`, `base_sha` — a full commit id —, optional
   `skills`) replaces the steps and snapshots in one transaction. Workers use
   it for every plan.
 
