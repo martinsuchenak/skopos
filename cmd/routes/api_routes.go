@@ -206,7 +206,7 @@ func registerWebRoutes(mux *http.ServeMux) {
 		// The dashboard renders agent-authored content (via escaped text
 		// interpolation only). CSP is the backstop keeping a future HTML-rendering
 		// change from becoming stored XSS: scripts/styles/statics are same-origin,
-		// data: for the favicon, and framing is denied (the UI has destructive
+		// data: for the icons inlined in style.css, and framing is denied (the UI has destructive
 		// buttons — clickjacking). Alpine runs its CSP build (@alpinejs/csp) so no
 		// 'unsafe-eval' is needed; 'unsafe-inline' applies to styles only
 		// (Alpine's :style writes style attributes).
