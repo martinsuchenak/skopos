@@ -790,7 +790,11 @@ const appState = () => ({
     // Every dashboard request names its surface for the audit trail.
     if (!headers.has('X-Skopos-Via')) headers.set('X-Skopos-Via', 'dashboard');
     try {
-      const res = await fetch(url, { ...opts, headers });
+      // Never from the browser's cache: API answers are no-store anyway,
+      // but a redirect cached while the server was being replaced (the
+      // ingress answering for it) was followed on every poll, a hard
+      // reload left it in place, and the dashboard showed nothing.
+      const res = await fetch(url, { cache: 'no-store', ...opts, headers });
       if (res.status === 401) this.authFailed();
       return res;
     } catch {

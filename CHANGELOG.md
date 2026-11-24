@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.51.1] — 2026-11-24
+
+### Fixed
+
+- **The dashboard's API requests no longer go through the browser's
+  cache.** A redirect the browser had cached while the server was being
+  replaced was followed on every request, even after a reload, and the
+  dashboard showed no items.
+
 ## [0.51.0] — 2026-11-24
 
 ### Security
